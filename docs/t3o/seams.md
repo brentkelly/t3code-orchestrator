@@ -96,6 +96,40 @@ Corollaries:
 - **One seam, one reason.** If the marker comment needs an "and", it is probably two seams or it
   belongs in our module.
 
+### Seam grammar (since `t3o-02a`)
+
+A core seam may contain **only** one of these four shapes:
+
+1. **A predicate delegation** — `if (isBoardCommand(command)) return decideBoardCommand(...)`,
+   placed inside upstream's existing `default` branch _before_ its `satisfies never` (so upstream's
+   exhaustiveness checks keep firing on upstream additions) or before its permissive fallback.
+2. **A spread of a board-owned registry** — `...BOARD_CLIENT_COMMANDS,`, `...BOARD_MIGRATIONS,`,
+   `...BOARD_PROJECTOR_NAMES,` etc., appended at a list/record tail.
+3. **A single injected factory call** — `...makeBoardOrchestrationEvents(EventBaseFields),` (the
+   base fields are injected because `board.ts` importing them back would be a module cycle).
+4. **A re-export** — `export * from "./board.ts"`.
+
+Plus the frozen once-only edits recorded in the inventory (D9 aggregate-id union widenings, the two
+optional snapshot fields). Everything else — registries, factories, type guards, reducers, SQL —
+lives in board-owned files (`packages/contracts/src/board.ts`, `apps/server/src/board/*`,
+`packages/client-runtime/src/state/board.ts`). The consequence, and the test of this grammar:
+**adding a board command, event, projector, or migration touches zero upstream-owned files.**
+
+### The `board.` prefix rule
+
+The predicates that make generic seams possible key on naming:
+
+- Every board command `type` starts with **`board.`** —
+  `BoardCommand = Extract<OrchestrationCommand, { type: `board.${string}` }>`.
+- Every board event `type` starts with **`board.`**.
+- Every board shell-stream delta `kind` starts with **`card-`** (revisit if non-card board deltas
+  ever appear).
+
+`isBoardCommand` / `isBoardEvent` / `isBoardShellStreamEvent` are type guards exported from
+`packages/contracts/src/board.ts` (server and clients both need them), implemented as
+`type.startsWith("board.")` etc. The convention is self-policing: a board command named without the
+prefix falls outside the `Extract`, reaches upstream's `satisfies never`, and fails the build.
+
 ### Rules that ride alongside
 
 - **Migrations are numbered from `900_` upward.** Colliding with an upstream migration number
@@ -174,68 +208,96 @@ resolution is regenerate, not hand-merge.
 
 ## Seam inventory
 
-Maintained by hand. Every row is one `T3o:` marker in an upstream-owned file. After an upstream
-merge, `rg -n "T3o:"` should match this table row for row; a marker that vanished is a seam a
-conflict resolution silently dropped.
+Maintained by hand. Every row is one `T3o:` marker in an upstream-owned file (`AGENTS.md`'s
+self-contained fork block is one row even though the block itself contains several marker lines).
+After an upstream merge, `rg -n "T3o:"` should match this table row for row; a marker that vanished
+is a seam a conflict resolution silently dropped.
 
 New files are **not** listed — they are ours and they never conflict. Only insertions into
-upstream-owned files belong here.
+upstream-owned files belong here. (Board-owned files also carry `T3o` headers; they are outside
+this inventory.)
 
-| File                                                                   | Spec     | Reason                                                                  | Shape                                    |
-| ---------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------- | ---------------------------------------- |
-| `AGENTS.md`                                                            | `t3o-01` | Fork status, branch topology, seam rules                                | Self-contained block at the top          |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02` | `BoardCardId` type import                                               | one-line append (import)                 |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02` | Widen `commandToAggregateRef` return type with `"card"` / `BoardCardId` | two-line edit (type annotation)          |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02` | Board commands aggregate on the card                                    | case append (2 lines)                    |
-| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02` | Import board projection module                                          | one-line append (import)                 |
-| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02` | `boardCards` entry in `ORCHESTRATION_PROJECTOR_NAMES`                   | one-line append                          |
-| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02` | Board projector joins the projector list                                | one-line append (spread delegating call) |
-| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`      | `t3o-02` | Import board snapshot enrichment                                        | one-line append (import)                 |
-| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`      | `t3o-02` | Wrap `getCommandReadModel` with board state (D8)                        | one-line edit (delegating call)          |
-| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`      | `t3o-02` | Wrap `getShellSnapshot` with cards (D2)                                 | one-line edit (delegating call)          |
-| `apps/server/src/orchestration/decider.ts`                             | `t3o-02` | Import board decider                                                    | one-line append (import)                 |
-| `apps/server/src/orchestration/decider.ts`                             | `t3o-02` | Delegate board commands at the head of the switch                       | case append (2 lines, delegating call)   |
-| `apps/server/src/orchestration/projector.ts`                           | `t3o-02` | Import board projector                                                  | one-line append (import)                 |
-| `apps/server/src/orchestration/projector.ts`                           | `t3o-02` | Delegate board events before the default case                           | case append (2 lines, delegating call)   |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02` | `BoardCardId` import                                                    | one-line append (import)                 |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02` | Widen append-request `streamId` union                                   | one-line edit                            |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02` | Widen persisted-row `aggregateId` union                                 | one-line edit                            |
-| `apps/server/src/persistence/Migrations.ts`                            | `t3o-02` | Import `900_BoardCards`                                                 | one-line append (import)                 |
-| `apps/server/src/persistence/Migrations.ts`                            | `t3o-02` | Registry entry `[900, "BoardCards", …]`                                 | one-line append                          |
-| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02` | `BoardCardId` import                                                    | one-line append (import)                 |
-| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02` | Widen receipt `aggregateId` union                                       | one-line edit                            |
-| `apps/server/src/ws.ts`                                                | `t3o-02` | Import board shell-delta mapper                                         | one-line append (import)                 |
-| `apps/server/src/ws.ts`                                                | `t3o-02` | Board events become card shell deltas in `toShellStreamEvent`           | case append (2 lines, delegating call)   |
-| `apps/web/src/components/sidebar/SidebarChrome.tsx`                    | `t3o-02` | Import `SidebarBoardLink`                                               | one-line append (import)                 |
-| `apps/web/src/components/sidebar/SidebarChrome.tsx`                    | `t3o-02` | Board mode entry above Settings                                         | one-line append (delegating element)     |
-| `packages/client-runtime/src/state/shell.ts`                           | `t3o-02` | Export board client state through `state/shell`                         | one-line append (re-export)              |
-| `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02` | Import board reducer                                                    | one-line append (import)                 |
-| `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02` | Card deltas delegate to the board reducer                               | case append (3 lines, delegating call)   |
-| `packages/contracts/src/index.ts`                                      | `t3o-02` | Export `board.ts`                                                       | one-line append                          |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02` | Import board schema                                                     | one-line append (import)                 |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02` | `board` field on `OrchestrationReadModel` (optional)                    | one-line append                          |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02` | `cards` field on `OrchestrationShellSnapshot` (optional)                | one-line append                          |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02` | Card deltas in `OrchestrationShellStreamEvent` union                    | two-line append                          |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02` | `BoardCardCreateCommand` in `DispatchableClientOrchestrationCommand`    | one-line append                          |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02` | `BoardCardCreateCommand` in `ClientOrchestrationCommand`                | one-line append                          |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02` | `board.card-created` in `OrchestrationEventType`                        | one-line append                          |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02` | `"card"` in `OrchestrationAggregateKind` (D9)                           | one-line edit                            |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02` | `BoardCardId` in event-base `aggregateId` union (D9)                    | one-line edit                            |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02` | Board event member in the `OrchestrationEvent` union                    | block (5-line union member)              |
+Shapes marked **frozen** are once-only edits that never grow again; every other seam is a
+predicate, spread, injected factory call, or re-export whose growth happens inside board-owned
+files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
+
+| File                                                                   | Spec      | Reason                                                                  | Shape                                                                   |
+| ---------------------------------------------------------------------- | --------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `AGENTS.md`                                                            | `t3o-01`  | Fork status, branch topology, seam rules                                | Self-contained block at the top                                         |
+| `AGENTS.md`                                                            | `t3o-01`  | Default-branch note (`t3o`, not `main`) in upstream's git guidance      | one-line edit (frozen)                                                  |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02`  | `BoardCardId` type import                                               | one-line append, import (frozen, D9)                                    |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02a` | Import board aggregate-ref builder + predicate                          | one-line append (import)                                                |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02`  | Widen `commandToAggregateRef` return type with `"card"` / `BoardCardId` | two-line edit, type annotation (frozen)                                 |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02a` | Board commands aggregate on the card                                    | predicate delegation in `default`                                       |
+| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02`  | Import board projection module                                          | one-line append (import)                                                |
+| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02a` | Board projector names join `ORCHESTRATION_PROJECTOR_NAMES`              | registry spread                                                         |
+| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02`  | Board projectors join the projector list                                | registry spread (factory call)                                          |
+| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`      | `t3o-02`  | Import board snapshot enrichment                                        | one-line append (import)                                                |
+| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`      | `t3o-02a` | Board-wrapped query methods override the base methods (D2/D8)           | spread (factory call), after base methods                               |
+| `apps/server/src/orchestration/decider.ts`                             | `t3o-02`  | Import board decider + predicate                                        | one-line append (import)                                                |
+| `apps/server/src/orchestration/decider.ts`                             | `t3o-02a` | Board commands are decided in the board module                          | predicate delegation in `default`, before `satisfies never`             |
+| `apps/server/src/orchestration/projector.ts`                           | `t3o-02`  | Import board projector + predicate                                      | one-line append (import)                                                |
+| `apps/server/src/orchestration/projector.ts`                           | `t3o-02a` | Board events are projected in the board module                          | predicate delegation in `default`                                       |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`  | `BoardCardId` import                                                    | one-line append, import (frozen, D9)                                    |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`  | Widen append-request `streamId` union                                   | one-line edit (frozen, D9)                                              |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`  | Widen persisted-row `aggregateId` union                                 | one-line edit (frozen, D9)                                              |
+| `apps/server/src/persistence/Migrations.ts`                            | `t3o-02a` | Import board migration registry                                         | one-line append (import)                                                |
+| `apps/server/src/persistence/Migrations.ts`                            | `t3o-02a` | Board migrations join `migrationEntries`                                | registry spread                                                         |
+| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02`  | `BoardCardId` import                                                    | one-line append, import (frozen, D9)                                    |
+| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02`  | Widen receipt `aggregateId` union                                       | one-line edit (frozen, D9)                                              |
+| `apps/server/src/ws.ts`                                                | `t3o-02`  | Import board shell-delta mapper + predicate                             | one-line append (import)                                                |
+| `apps/server/src/ws.ts`                                                | `t3o-02a` | Board events become card shell deltas in `toShellStreamEvent`           | predicate delegation in `default`, before the thread-aggregate check    |
+| `apps/web/src/components/sidebar/SidebarChrome.tsx`                    | `t3o-02`  | Import `SidebarBoardLink`                                               | one-line append (import)                                                |
+| `apps/web/src/components/sidebar/SidebarChrome.tsx`                    | `t3o-02`  | Board mode entry above Settings                                         | one-line append (delegating element)                                    |
+| `packages/client-runtime/src/state/shell.ts`                           | `t3o-02`  | Export board client state through `state/shell`                         | one-line append (re-export)                                             |
+| `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02`  | Import board reducer + predicate                                        | one-line append (import)                                                |
+| `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02a` | Card deltas delegate to the board reducer                               | predicate delegation in `default`                                       |
+| `packages/contracts/src/index.ts`                                      | `t3o-02`  | Export `board.ts`                                                       | one-line append (re-export)                                             |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | Import board schema + registries                                        | one-line append (import)                                                |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `board` field on `OrchestrationReadModel` (optional)                    | one-line append (frozen)                                                |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `cards` field on `OrchestrationShellSnapshot` (optional)                | one-line append (frozen)                                                |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Card shell deltas in `OrchestrationShellStreamEvent` union              | registry spread (`BOARD_SHELL_STREAM_EVENTS`)                           |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board commands in `DispatchableClientOrchestrationCommand`              | registry spread (`BOARD_CLIENT_COMMANDS`)                               |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board commands in `ClientOrchestrationCommand`                          | registry spread (`BOARD_CLIENT_COMMANDS`)                               |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board event types in `OrchestrationEventType`                           | registry spread (`BOARD_EVENT_TYPES`)                                   |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `"card"` in `OrchestrationAggregateKind` (D9)                           | one-line edit (frozen)                                                  |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `BoardCardId` in event-base `aggregateId` union (D9)                    | one-line edit (frozen)                                                  |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board event members in the `OrchestrationEvent` union                   | injected factory call (`makeBoardOrchestrationEvents(EventBaseFields)`) |
+
+Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
+(4 marker lines: the fork block's open/end markers, the convention's own mention of the token, and
+the default-branch note). The count is now **frozen by construction**: `t3o-03`'s seven commands
+and seven events must land with zero new lines in upstream-owned files — check that claim
+explicitly when it lands.
 
 Marker-less upstream churn that rides along with `t3o-02`:
 
 - `apps/web/src/routeTree.gen.ts` — regenerated by TanStack Router for the new `/board` route file.
   Never hand-edited; on a conflicted merge, take either side and regenerate.
 
-Where the spec's estimate met reality: the spec listed ~20 insertion points; the landed count is
-**38 markers across 14 upstream files**. The delta is almost entirely the card aggregate (D9)
+Where `t3o-02`'s estimate met reality: the spec listed ~20 insertion points; the landed count was
+**38 markers across 14 upstream files**. The delta was almost entirely the card aggregate (D9)
 rippling through three narrowly-typed `ProjectId | ThreadId` unions (event store, receipts, engine)
 plus one import line per touched file — all mechanical one-liners. Two planned seams turned out to
 be unnecessary: `OrchestrationCommand` (derived union — covered by the dispatchable append) and
 `createEmptyReadModel` (the `board` field is optional, so the empty model needs no edit). The
 `ClientOrchestrationCommand` → engine path also needed **no** Normalizer seam — unrecognized
-commands pass through untouched.
+commands pass through untouched. `t3o-02a` then converted every enumeration seam (a case per
+command, a union member per event, a registry entry per projector/migration) into the
+predicate/spread/injected-factory shapes above without changing the marker count materially.
+
+### Core-only diff audit
+
+The fork's invasiveness claim rests on one command: the diff against upstream, excluding
+board-owned paths, must show _only_ the surgical seams above.
+
+```bash
+git diff upstream/main...t3o -- . ':!*/board/*' ':!*board*' ':!docs/t3o' ':!.plans' ':!AGENTS.md' ':!*routeTree.gen.ts'
+```
+
+Keep the exclusion list honest as board-owned paths are added. Run it after each spec lands and
+after each upstream merge; a hunk you cannot map to an inventory row is a seam that escaped the
+grammar.
 
 ---
 

@@ -1,14 +1,16 @@
 /**
  * T3o board decider — `decideBoardCommand`.
  *
- * Pure decision logic for board commands, delegated to from the head of the
- * orchestration decider's switch. Mirrors the upstream decider contract
- * exactly: read model in, planned event(s) out, `Crypto` as the only
+ * Pure decision logic for board commands, delegated to from the upstream
+ * decider behind the `isBoardCommand` predicate. Mirrors the upstream decider
+ * contract exactly: read model in, planned event(s) out, `Crypto` as the only
  * requirement (D8 — the decider has no SQL client).
  */
 import {
   EMPTY_BOARD_STATE,
   EventId,
+  isBoardCommand,
+  type BoardCardId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -22,7 +24,25 @@ import { requireProject } from "../orchestration/commandInvariants.ts";
 
 export type BoardCommand = Extract<OrchestrationCommand, { type: `board.${string}` }>;
 
+// Re-exported so upstream seams import predicate + delegate on one line.
+export { isBoardCommand };
+
 type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
+
+/**
+ * Aggregate ref for a board command — every board command aggregates on its
+ * card (D9). Called from `commandToAggregateRef` in the upstream engine
+ * behind the `isBoardCommand` predicate.
+ */
+export function boardCommandAggregateRef(command: BoardCommand): {
+  readonly aggregateKind: "card";
+  readonly aggregateId: BoardCardId;
+} {
+  return {
+    aggregateKind: "card",
+    aggregateId: command.cardId,
+  };
+}
 
 export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
   command,

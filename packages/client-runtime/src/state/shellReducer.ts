@@ -1,7 +1,7 @@
 import * as Arr from "effect/Array";
 import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@t3tools/contracts";
 // T3o: card shell deltas are reduced in the board module.
-import { applyBoardShellStreamEvent } from "./board.ts";
+import { applyBoardShellStreamEvent, isBoardShellStreamEvent } from "./board.ts";
 
 /**
  * Reduce a single shell stream event into an existing snapshot, returning a new
@@ -42,11 +42,9 @@ export function applyShellStreamEvent(
         threads: Arr.filter(snapshot.threads, (t) => t.id !== event.threadId),
         snapshotSequence: event.sequence,
       };
-    // T3o: card shell deltas are reduced in the board module.
-    case "card-upserted":
-    case "card-removed":
-      return applyBoardShellStreamEvent(snapshot, event);
     default:
+      // T3o: card shell deltas are reduced in the board module.
+      if (isBoardShellStreamEvent(event)) return applyBoardShellStreamEvent(snapshot, event);
       return snapshot;
   }
 }

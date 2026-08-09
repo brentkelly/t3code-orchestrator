@@ -22,15 +22,15 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
-// T3o: board schema (cards, commands, events) lives in board.ts.
+// T3o: board schema (cards, command/event registries) lives in board.ts.
 import {
+  BOARD_CLIENT_COMMANDS,
+  BOARD_EVENT_TYPES,
+  BOARD_SHELL_STREAM_EVENTS,
   BoardCard,
-  BoardCardCreateCommand,
-  BoardCardCreatedPayload,
   BoardCardId,
-  BoardCardRemovedShellEvent,
-  BoardCardUpsertedShellEvent,
   BoardState,
+  makeBoardOrchestrationEvents,
 } from "./board.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
@@ -513,8 +513,7 @@ export const OrchestrationShellStreamEvent = Schema.Union([
     threadId: ThreadId,
   }),
   // T3o: card shell deltas, mirroring thread-upserted/thread-removed.
-  BoardCardUpsertedShellEvent,
-  BoardCardRemovedShellEvent,
+  ...BOARD_SHELL_STREAM_EVENTS,
 ]);
 export type OrchestrationShellStreamEvent = typeof OrchestrationShellStreamEvent.Type;
 
@@ -914,7 +913,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
   // T3o: board commands ride orchestration.dispatchCommand (D2).
-  BoardCardCreateCommand,
+  ...BOARD_CLIENT_COMMANDS,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -944,7 +943,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
   // T3o: board commands ride orchestration.dispatchCommand (D2).
-  BoardCardCreateCommand,
+  ...BOARD_CLIENT_COMMANDS,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1070,7 +1069,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.turn-diff-completed",
   "thread.activity-appended",
   // T3o: board events join the orchestration event log.
-  "board.card-created",
+  ...BOARD_EVENT_TYPES,
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1470,12 +1469,8 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
   }),
-  // T3o: board event member (payload schema lives in board.ts).
-  Schema.Struct({
-    ...EventBaseFields,
-    type: Schema.Literal("board.card-created"),
-    payload: BoardCardCreatedPayload,
-  }),
+  // T3o: board event members (base fields injected — board.ts cannot import them).
+  ...makeBoardOrchestrationEvents(EventBaseFields),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 

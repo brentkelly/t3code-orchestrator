@@ -4,12 +4,15 @@
  * `makeBoardProjectors` returns the `board_cards` projector definition that
  * the upstream ProjectionPipeline spreads into its projector list — same
  * transaction, same cursor bookkeeping as the stock projectors.
+ * `BOARD_PROJECTOR_NAMES` is spread into the pipeline's name registry the
+ * same way; new board projectors register in both, never at the seam.
  *
- * `withBoardReadModel` / `withBoardShellCards` wrap the upstream snapshot
- * queries at their assembly point, so every consumer (engine bootstrap,
- * subscribeShell, HTTP snapshot) sees board state without further seams. The
- * card read runs just after the wrapped query's transaction; a card committed
- * in that window also arrives as a live `card-upserted` delta with a higher
+ * `boardSnapshotQueryMethods` wraps the upstream snapshot queries at their
+ * assembly point (spread after the base methods so the board-wrapped
+ * versions override), so every consumer (engine bootstrap, subscribeShell,
+ * HTTP snapshot) sees board state without further seams. The card read runs
+ * just after the wrapped query's transaction; a card committed in that
+ * window also arrives as a live `card-upserted` delta with a higher
  * sequence, and the client upsert is idempotent, so nothing is lost.
  */
 import {
@@ -24,8 +27,19 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
+import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 export const BOARD_CARDS_PROJECTOR_NAME = "projection.board-cards" as const;
+
+/**
+ * Spread into upstream's `ORCHESTRATION_PROJECTOR_NAMES`. Keeping board
+ * projectors inside that record (rather than only widening the name type)
+ * keeps `Object.keys(ORCHESTRATION_PROJECTOR_NAMES)` equal to the set of
+ * projection_state rows the pipeline writes, which upstream tests assert on.
+ */
+export const BOARD_PROJECTOR_NAMES = {
+  boardCards: BOARD_CARDS_PROJECTOR_NAME,
+} as const;
 
 const BoardCardDbRow = Schema.Struct({
   cardId: BoardCard.fields.id,
@@ -156,4 +170,26 @@ export function withBoardShellCards(
   return Effect.all([snapshot, listBoardCards(sql)]).pipe(
     Effect.map(([shell, cards]) => (cards.length === 0 ? shell : { ...shell, cards })),
   );
+}
+
+/**
+ * Board-wrapped snapshot query methods, spread over the base methods in the
+ * upstream ProjectionSnapshotQuery's returned object literal. The board
+ * module decides which methods it wraps; when a future spec needs to wrap
+ * another one (e.g. `getSnapshot`), only this factory grows.
+ */
+export function boardSnapshotQueryMethods(
+  sql: SqlClient.SqlClient,
+  base: Pick<ProjectionSnapshotQueryShape, "getCommandReadModel" | "getShellSnapshot">,
+  // Typed Partial deliberately: the spread in the upstream object literal sits
+  // after the base methods, and TS rejects a spread that *definitely* rewrites
+  // an earlier key (TS2783). Optional keys express "board may override any
+  // subset", so wrapping more methods later needs no seam change.
+): Partial<ProjectionSnapshotQueryShape> {
+  return {
+    // Board cards join the engine's command read model (D8).
+    getCommandReadModel: () => withBoardReadModel(sql, base.getCommandReadModel()),
+    // Board cards ride the shell snapshot (D2).
+    getShellSnapshot: () => withBoardShellCards(sql, base.getShellSnapshot()),
+  };
 }

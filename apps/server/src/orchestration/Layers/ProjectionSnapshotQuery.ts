@@ -59,7 +59,7 @@ import {
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 // T3o: board snapshot enrichment lives in the board module.
-import { withBoardReadModel, withBoardShellCards } from "../../board/projection.ts";
+import { boardSnapshotQueryMethods } from "../../board/projection.ts";
 import {
   ProjectionSnapshotQuery,
   type ProjectionFullThreadDiffContext,
@@ -2653,11 +2653,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
 
   return {
-    // T3o: board cards join the engine's command read model (D8).
-    getCommandReadModel: () => withBoardReadModel(sql, getCommandReadModel()),
+    getCommandReadModel,
     getSnapshot,
-    // T3o: board cards ride the shell snapshot (D2).
-    getShellSnapshot: () => withBoardShellCards(sql, getShellSnapshot()),
+    getShellSnapshot,
     getArchivedShellSnapshot,
     searchThreads,
     getSnapshotSequence,
@@ -2670,6 +2668,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadShellById,
     getThreadDetailById,
     getThreadDetailSnapshot,
+    // T3o: board snapshot enrichment (D2/D8) — board module wraps what it needs.
+    ...boardSnapshotQueryMethods(sql, { getCommandReadModel, getShellSnapshot }),
   } satisfies ProjectionSnapshotQueryShape;
 });
 

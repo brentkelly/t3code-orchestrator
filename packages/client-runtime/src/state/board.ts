@@ -6,10 +6,11 @@
  * applies card deltas without further seams (D17: board client state lives in
  * client-runtime). Exported to apps through `state/shell.ts`.
  */
-import type {
-  BoardCardRemovedShellEvent,
-  BoardCardUpsertedShellEvent,
-  OrchestrationShellSnapshot,
+import {
+  isBoardShellStreamEvent,
+  type BoardCardRemovedShellEvent,
+  type BoardCardUpsertedShellEvent,
+  type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import type * as Crypto from "effect/Crypto";
@@ -22,6 +23,9 @@ import { createEnvironmentCommand } from "./runtime.ts";
 export type { CreateBoardCardInput };
 
 export type BoardShellStreamEvent = BoardCardUpsertedShellEvent | BoardCardRemovedShellEvent;
+
+// Re-exported so the upstream reducer imports predicate + delegate on one line.
+export { isBoardShellStreamEvent };
 
 export function applyBoardShellStreamEvent(
   snapshot: OrchestrationShellSnapshot,
