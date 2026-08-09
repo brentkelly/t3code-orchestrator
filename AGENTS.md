@@ -49,7 +49,6 @@ The fork's survival depends on keeping the diff into upstream files small, mecha
 
 <!-- T3o: end fork block -->
 
-
 ## What makes T3 Code special?
 
 We have over 100,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
@@ -163,7 +162,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - **Rebase onto latest `t3o` before opening.** Stale branches conflict and burn a review round.
   <!-- T3o: was `main`; in this fork `main` is an upstream mirror and `t3o` is the trunk. -->
 - **PRs target `t3o`, never `main`.** The one exception is the `main → t3o` upstream sync, which is
-  run by hand from the runbook in `docs/t3o/seams.md`. <!-- T3o: -->
+  run by hand from the runbook in `docs/t3o/seams.md`. <!-- T3o: fork PR-target rule — upstream's text targeted `main`. -->
 - UI changes need before/after images. Motion or timing needs a short video.
 - One concern per PR. If the description says "also", split it.
 - When babysitting: poll checks and comments newer than the last push, verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when the bots are green on the latest commit.
