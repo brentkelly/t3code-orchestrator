@@ -23,6 +23,7 @@
 import {
   areBoardStagesAdjacent,
   BOARD_CARD_BRIEF_BODY_KIND,
+  boardStageIndex,
   DEFAULT_BOARD_KEY_PREFIX,
   deriveBoardCardBlocked,
   EMPTY_BOARD_STATE,
@@ -30,6 +31,7 @@ import {
   isBoardCommand,
   isBoardStageBeforeReady,
   sortBoardCardThreadLinks,
+  unmetBoardCardDependencies,
   type BoardCard,
   type BoardCardId,
   type BoardState,
@@ -228,6 +230,29 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           command,
           `Card '${command.cardId}' is a sub-board plan card and cannot enter '${command.toStage}'.`,
         );
+      }
+      // Ready is as far as unmet dependencies allow (D18, t3o-05): a card may
+      // sit blocked in Ready, but never crosses it. The message names the
+      // unmet dependencies so the client can say why, not just snap back.
+      if (boardStageIndex(command.toStage) > boardStageIndex("ready")) {
+        const unmet = unmetBoardCardDependencies({
+          dependsOn: card.dependsOn,
+          cards: board.cards,
+        });
+        if (unmet.length > 0) {
+          const names = unmet.map((dependencyId) => {
+            const dependency = board.cards.find((existing) => existing.id === dependencyId);
+            return dependency === undefined
+              ? `an archived or deleted card ('${dependencyId}')`
+              : `${dependency.key} "${dependency.title}"`;
+          });
+          return yield* invariant(
+            command,
+            `Card '${card.key}' cannot enter '${command.toStage}' until ${
+              names.length === 1 ? "its dependency is" : "its dependencies are"
+            } done: ${names.join(", ")}.`,
+          );
+        }
       }
 
       const nextCard: BoardCard = {

@@ -172,7 +172,9 @@ export function planBoardCardReorder(input: {
   }).map((assignment) => ({ cardId: assignment.id, orderKey: assignment.orderKey }));
 }
 
-// ── Atoms ──────────────────────────────────────────────────────────────
+// ── Board views and drag support (t3o-05) ──────────────────────────────
+// Pure helpers shared by every board UI (D17): the web board consumes them
+// today, a mobile board reuses them without a rewrite.
 
 export type BoardStageColumns = Readonly<Record<BoardStage, ReadonlyArray<BoardCardShell>>>;
 
@@ -214,6 +216,107 @@ function groupBoardCards(
     }
   }
   return byProject;
+}
+
+/**
+ * Stage columns for the "All projects" scope — a view over the per-project
+ * grouping, never a stored entity: cards stay keyed to their own
+ * `ProjectId` and each merged column re-sorts with the canonical
+ * comparator so every client agrees on the cross-project order.
+ */
+export function mergeBoardStageColumns(
+  columnsList: Iterable<BoardStageColumns>,
+): BoardStageColumns {
+  const merged = emptyBoardColumns();
+  for (const columns of columnsList) {
+    for (const stage of BOARD_STAGES) {
+      if (columns[stage].length > 0) merged[stage].push(...columns[stage]);
+    }
+  }
+  for (const stage of BOARD_STAGES) {
+    merged[stage].sort(compareBoardCardShells);
+  }
+  return merged;
+}
+
+/** The stage and order key a drop expects the server to store — held
+    client-side until the shell confirms it (optimistic reordering with
+    server reconciliation; the drag never blocks on a round trip). */
+export interface BoardCardPlacement {
+  readonly cardId: string;
+  readonly stage: BoardStage;
+  readonly orderKey: string;
+}
+
+/**
+ * Columns with optimistic placements laid over the live shells. Pure and
+ * idempotent — re-applying a placement the server has since confirmed
+ * changes nothing, and a placement for a card that left the board is
+ * ignored — so callers only prune placements to bound the list (see
+ * `isBoardCardPlacementSettled`). Returns the input columns object when no
+ * placement changes anything, so memoized consumers keep their identity.
+ */
+export function applyBoardCardPlacements(
+  columns: BoardStageColumns,
+  placements: ReadonlyArray<BoardCardPlacement>,
+): BoardStageColumns {
+  if (placements.length === 0) return columns;
+  const placementByCardId = new Map(placements.map((placement) => [placement.cardId, placement]));
+  const next = emptyBoardColumns();
+  let changed = false;
+  for (const stage of BOARD_STAGES) {
+    for (const card of columns[stage]) {
+      const placement = placementByCardId.get(card.cardId);
+      if (
+        placement === undefined ||
+        (placement.stage === card.stage && placement.orderKey === card.orderKey)
+      ) {
+        next[card.stage].push(card);
+        continue;
+      }
+      changed = true;
+      next[placement.stage].push({ ...card, stage: placement.stage, orderKey: placement.orderKey });
+    }
+  }
+  if (!changed) return columns;
+  for (const stage of BOARD_STAGES) {
+    next[stage].sort(compareBoardCardShells);
+  }
+  return next;
+}
+
+/** True once the live columns already reflect the placement — the server
+    confirmed the drop (or the card left the board) and the optimistic
+    overlay entry can be dropped. */
+export function isBoardCardPlacementSettled(
+  columns: BoardStageColumns,
+  placement: BoardCardPlacement,
+): boolean {
+  for (const stage of BOARD_STAGES) {
+    const card = columns[stage].find((existing) => existing.cardId === placement.cardId);
+    if (card !== undefined) {
+      return card.stage === placement.stage && card.orderKey === placement.orderKey;
+    }
+  }
+  return true;
+}
+
+/**
+ * Queue view of the Building column (D11: the column is the queue,
+ * position is priority). Derived strictly from the `queued` flag on the
+ * shells — until t3o-11 populates it nothing is queued and the map is
+ * empty. UIs render this, never invented queue state.
+ */
+export function boardBuildingQueueInfo(
+  buildingColumn: ReadonlyArray<BoardCardShell>,
+): ReadonlyMap<string, { readonly position: number; readonly startsNext: boolean }> {
+  const queue = new Map<string, { readonly position: number; readonly startsNext: boolean }>();
+  for (const card of buildingColumn) {
+    if (!card.queued) continue;
+    const position = queue.size + 1;
+    queue.set(card.cardId, { position, startsNext: position === 1 });
+  }
+  return queue;
 }
 
 /** Card-detail subscriptions get a short grace so closing and immediately

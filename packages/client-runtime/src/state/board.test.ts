@@ -11,15 +11,21 @@ import {
   ThreadId,
   type BoardCard,
   type BoardCardShell,
+  type BoardStage,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  applyBoardCardPlacements,
+  boardBuildingQueueInfo,
   boardColumnAppendOrderKey,
   compareBoardCardShells,
+  isBoardCardPlacementSettled,
+  mergeBoardStageColumns,
   planBoardCardReorder,
+  type BoardStageColumns,
 } from "./board.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 
@@ -197,5 +203,110 @@ describe("board column ordering", () => {
     expect(assignments[0]?.cardId).toBe("card-c");
     const key = assignments[0]?.orderKey ?? "";
     expect(key > "c" && key < "m").toBe(true);
+  });
+});
+
+const columnsOf = (cards: ReadonlyArray<BoardCardShell>): BoardStageColumns => {
+  const columns: Record<BoardStage, BoardCardShell[]> = {
+    backlog: [],
+    sprint: [],
+    planning: [],
+    ready: [],
+    building: [],
+    review: [],
+    merge: [],
+    done: [],
+  };
+  for (const card of cards) columns[card.stage].push(card);
+  for (const stage of Object.keys(columns) as BoardStage[]) {
+    columns[stage].sort(compareBoardCardShells);
+  }
+  return columns;
+};
+
+describe("mergeBoardStageColumns", () => {
+  it("merges per-project columns into canonical cross-project order", () => {
+    const otherProject = ProjectId.make("project-2");
+    const a = cardShell("card-a", { orderKey: "c" });
+    const b = cardShell("card-b", { projectId: otherProject, orderKey: "m" });
+    const c = cardShell("card-c", { orderKey: "t" });
+    const merged = mergeBoardStageColumns([columnsOf([a, c]), columnsOf([b])]);
+    expect(merged.backlog.map((card) => card.cardId)).toEqual(["card-a", "card-b", "card-c"]);
+    expect(merged.done).toHaveLength(0);
+  });
+});
+
+describe("applyBoardCardPlacements", () => {
+  it("moves a card between stages and re-sorts the target column", () => {
+    const columns = columnsOf([
+      cardShell("card-a", { orderKey: "c" }),
+      cardShell("card-b", { stage: "ready", orderKey: "m" }),
+    ]);
+    const next = applyBoardCardPlacements(columns, [
+      { cardId: "card-a", stage: "ready", orderKey: "t" },
+    ]);
+    expect(next.backlog).toHaveLength(0);
+    expect(next.ready.map((card) => card.cardId)).toEqual(["card-b", "card-a"]);
+  });
+
+  it("reorders within a stage", () => {
+    const columns = columnsOf([
+      cardShell("card-a", { orderKey: "c" }),
+      cardShell("card-b", { orderKey: "m" }),
+    ]);
+    const next = applyBoardCardPlacements(columns, [
+      { cardId: "card-b", stage: "backlog", orderKey: "a" },
+    ]);
+    expect(next.backlog.map((card) => card.cardId)).toEqual(["card-b", "card-a"]);
+  });
+
+  it("returns the same columns object when every placement is already live", () => {
+    const columns = columnsOf([cardShell("card-a", { orderKey: "c" })]);
+    const next = applyBoardCardPlacements(columns, [
+      { cardId: "card-a", stage: "backlog", orderKey: "c" },
+      { cardId: "card-gone", stage: "ready", orderKey: "m" },
+    ]);
+    expect(next).toBe(columns);
+  });
+});
+
+describe("isBoardCardPlacementSettled", () => {
+  it("reports settled when the live card matches, unsettled when it does not", () => {
+    const columns = columnsOf([cardShell("card-a", { stage: "ready", orderKey: "m" })]);
+    expect(
+      isBoardCardPlacementSettled(columns, { cardId: "card-a", stage: "ready", orderKey: "m" }),
+    ).toBe(true);
+    expect(
+      isBoardCardPlacementSettled(columns, { cardId: "card-a", stage: "building", orderKey: "m" }),
+    ).toBe(false);
+  });
+
+  it("treats a card that left the board as settled", () => {
+    expect(
+      isBoardCardPlacementSettled(columnsOf([]), {
+        cardId: "card-gone",
+        stage: "ready",
+        orderKey: "m",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("boardBuildingQueueInfo", () => {
+  it("is empty while nothing carries the queued flag (t3o-11 populates it)", () => {
+    const column = [cardShell("card-a", { stage: "building" })];
+    expect(boardBuildingQueueInfo(column).size).toBe(0);
+  });
+
+  it("numbers queued cards in column order and marks the head as starting next", () => {
+    const column = [
+      { ...cardShell("card-a", { stage: "building", orderKey: "c" }), queued: false },
+      { ...cardShell("card-b", { stage: "building", orderKey: "m" }), queued: true },
+      { ...cardShell("card-c", { stage: "building", orderKey: "t" }), queued: true },
+    ];
+    const queue = boardBuildingQueueInfo(column);
+    expect(queue.get("card-b")).toEqual({ position: 1, startsNext: true });
+    expect(queue.get("card-c")).toEqual({ position: 2, startsNext: false });
+    expect(queue.has("card-a")).toBe(false);
   });
 });

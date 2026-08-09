@@ -249,6 +249,8 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
+// T3o: Threads/Board mode tabs live in the board module.
+import { BoardModeTabs } from "../board/BoardModeTabs";
 import {
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
@@ -6034,6 +6036,8 @@ function ChatViewContent(props: ChatViewProps) {
           )}
         >
           {!rightPanelOpen ? panelLayoutControls : null}
+          {/* T3o: Threads/Board mode tabs, before the breadcrumb (D1 shell tab). */}
+          <BoardModeTabs mode="threads" />
           <ChatHeader
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}

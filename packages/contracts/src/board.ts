@@ -189,10 +189,27 @@ export const BoardCard = Schema.Struct({
 export type BoardCard = typeof BoardCard.Type;
 
 /**
+ * The unmet subset of a card's dependencies. A dependency is met only when
+ * its card is in `done`; an unknown id counts as unmet (nothing can prove it
+ * finished). The single definition of "unmet" — `deriveBoardCardBlocked`
+ * and the decider's past-Ready move gate both build on it, so the blocked
+ * flag and the rejection message can never disagree about which
+ * dependencies are outstanding.
+ */
+export function unmetBoardCardDependencies(input: {
+  readonly dependsOn: ReadonlyArray<BoardCardId>;
+  readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "stage">>;
+}): ReadonlyArray<BoardCardId> {
+  return input.dependsOn.filter((dependencyId) => {
+    const dependency = input.cards.find((card) => card.id === dependencyId);
+    return dependency === undefined || dependency.stage !== "done";
+  });
+}
+
+/**
  * Blocked derivation (D18): unmet dependencies block a card from Ready
- * onward and never earlier. A dependency is met only when its card is in
- * `done`; an unknown id counts as unmet (nothing can prove it finished).
- * Shared by the decider and any client that wants a live view.
+ * onward and never earlier. Shared by the decider and any client that wants
+ * a live view.
  */
 export function deriveBoardCardBlocked(input: {
   readonly stage: BoardStage;
@@ -200,10 +217,7 @@ export function deriveBoardCardBlocked(input: {
   readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "stage">>;
 }): boolean {
   if (!isBoardStageReadyOrBeyond(input.stage)) return false;
-  return input.dependsOn.some((dependencyId) => {
-    const dependency = input.cards.find((card) => card.id === dependencyId);
-    return dependency === undefined || dependency.stage !== "done";
-  });
+  return unmetBoardCardDependencies(input).length > 0;
 }
 
 /**
