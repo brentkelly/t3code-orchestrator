@@ -71,8 +71,17 @@ existing `orchestration.dispatchCommand`; board *shell* data rides the existing
 `orchestration.subscribeShell`. This inherits ordering, idempotent retries, crash consistency,
 replay, and the entire remote-connection story at no cost.
 
-**Seam size:** ~20 insertion points, nearly all one-line appends into existing arrays and structs,
-plus new files that upstream will never touch. See `t3o-02`.
+**Seam size — measured, not estimated.** `t3o-02` landed **39 markers across 15 upstream files**.
+The original estimate of ~20 across ~8 was low: introducing a new *aggregate kind* (D9) means every
+`ProjectId | ThreadId` union in the persistence layer needs `BoardCardId` too — `OrchestrationEngine`,
+`OrchestrationEventStore`, `OrchestrationCommandReceipts` and `ProjectionSnapshotQuery` were all
+missed in planning. Every one is still a union append or a wrapped call; the *shape* held even though
+the count did not.
+
+**The bet is validated.** First upstream merge: 20 commits, 101 files, ~9.2k insertions → **one
+conflict**, in `Migrations.ts`, of the exact predicted form (upstream appends `039` where we append
+`900`; keep both, upstream first). All markers survived. ~1 minute to merge, ~4 to verify. The merge
+log in `docs/t3o/seams.md` is the running record — keep writing to it.
 
 ### D3 — Agents write to the board over MCP, not files
 
@@ -313,7 +322,8 @@ paid off, not before.
 | --- | --- | --- | --- |
 | 01 | `t3o-01-fork-foundation.md` | 0 | — |
 | 02 | `t3o-02-walking-skeleton.md` | 0 | 01 |
-| 03 | `t3o-03-board-domain-model.md` | 1 | 02 |
+| 02a | `t3o-02a-seam-generalisation.md` | 0 | 02 |
+| 03 | `t3o-03-board-domain-model.md` | 1 | 02a |
 | 04 | `t3o-04-board-rpc-and-client-state.md` | 1 | 03 |
 | 05 | `t3o-05-board-shell-and-navigation.md` | 1 | 04 |
 | 06 | `t3o-06-card-ui-and-detail.md` | 1 | 05 |
@@ -327,15 +337,23 @@ paid off, not before.
 Waves, once prerequisites are honoured:
 
 ```
-01 → 02 → 03 ─┬─→ 04 → 05 → 06 ─┐
-              ├─→ 07 ────────────┤
-              ├─→ 08 ─┐          │
-              └─→ 09 ─┴→ 10 → 11 ┴→ 12
+01 → 02 → 02a → 03 ─┬─→ 04 → 05 → 06 ─┐
+                    ├─→ 07 ────────────┤
+                    ├─→ 08 ─┐          │
+                    └─→ 09 ─┴→ 10 → 11 ┴→ 12
 ```
 
 **02 is deliberately first and deliberately thin.** It lands every seam end-to-end with a trivial
 board command before any volume is built on top. Pull upstream once or twice against it. If the
-~20-append estimate is wrong, that is discovered in week one with nothing invested.
+seam estimate is wrong, that is discovered in week one with nothing invested. *(Done — the estimate
+was low on count and right on shape; see D2.)*
+
+**02a exists because 02 taught us the seams were the wrong shape.** They *enumerated* — a case per
+command in three files, an entry per projector in a fourth — so the core would have changed every
+time the board grew. 02a converts them to predicate-delegation and registry-spread, which freezes the
+seam count. It runs while there is exactly one board command, because refactoring one enumeration is
+trivial and refactoring nine is not. **After 02a, adding a board command, event or projector must
+touch zero upstream files** — and `t3o-03` is the test of that claim.
 
 ## Dogfooding note
 
