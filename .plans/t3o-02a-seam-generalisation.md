@@ -1,131 +1,196 @@
 ---
 id: t3o-02a
-title: Seam generalisation — make the core open for extension, once
+title: Seam generalisation — move all board-specific code out of core directories
 phase: 0
 prerequisites: [t3o-02]
 ---
 
 # Seam generalisation
 
-Convert every seam from **enumerating one board feature** to **delegating to the board module**, so
-the core edit happens once and never grows again.
+The walking skeleton proved the core can accept a board extension — one conflict in 20 upstream commits validates the seam strategy. But the code is scattered across core directories.
 
-Do this now, while there is exactly one board command. Doing it after `t3o-03` means refactoring
-nine commands' worth of enumeration instead of one.
+**The rule going forward:** predicates only in core. Everything else moves to board-owned code or spreads from it. A diff between their repo and ours should show *only* the surgical seams, not board logic threaded through the core directory structure.
 
-## The problem
+## Analysis of PR #1 against this rule
 
-`t3o-02` landed 39 markers across 15 upstream files. Most are fine — a `BoardCardId` added to a union
-is a once-only edit. But four seams **enumerate**, and enumeration means the core changes every time
-the board grows:
+Twenty-nine files touched. Categorise each: **board-owned** (new or naturally board-scoped), **seam** (core file with a predicate/delegation), or **must-move** (board logic in core dirs).
 
-| File | Today | Cost per new command |
-| --- | --- | --- |
-| `orchestration/decider.ts` | `case "board.card.create":` | +1 case |
-| `orchestration/projector.ts` | `case "board.card-created":` | +1 case |
-| `Layers/OrchestrationEngine.ts` | `case "board.card.create":` in the aggregate-ref switch | +1 case |
-| `Layers/ProjectionPipeline.ts` | `boardCards: BOARD_CARDS_PROJECTOR_NAME` | +1 entry per projector |
+### ✅ Board-owned (stays where it is)
 
-`t3o-03` alone adds seven commands and their events. Under the current shape that is roughly a dozen
-new core edits, and every spec after it adds more. The seam surface would grow with the feature set —
-which is the failure mode this fork's whole strategy exists to avoid.
+These live in board-specific directories or packages that upstream will never touch:
 
-## The change
+- `apps/server/src/board/decider.ts` — board command decisions
+- `apps/server/src/board/projection.ts` — board projections and shell enrichment
+- `apps/server/src/board/projector.ts` — board event projection
+- `apps/server/src/board/walkingSkeleton.test.ts` — board tests
+- `apps/web/src/board/BoardPage.tsx` — skeleton board UI
+- `apps/web/src/board/SidebarBoardLink.tsx` — board mode entry in sidebar
+- `packages/contracts/src/board.ts` — board schema
+- `packages/client-runtime/src/state/board.ts` — board atoms
+- `packages/client-runtime/src/operations/boardCommands.ts` — board RPC dispatch
+- `packages/client-runtime/src/state/board.test.ts` — board state tests
+- `apps/server/src/persistence/Migrations/900_BoardCards.ts` — board migration
+- `docs/t3o/seams.md` — fork documentation
 
-Board-owned predicates and registries, exported from `apps/server/src/board/` and
-`packages/contracts/src/board.ts`, consumed by the core at a single delegation point each.
+### ✅ Acceptable core seams (one-time union appends)
 
-### Command decisions — `orchestration/decider.ts`
+These are D9 consequences (new aggregate kind). Upstream will never create `BoardCardId`. Once-only edits, deferred to `t3o-02a` analysis only:
+
+- `packages/contracts/src/orchestration.ts` — append `BoardCardId` to aggregate-id unions
+  (Acceptable: never conflicts; upstream owns no code that writes these.)
+
+### 🔴 Must refactor — predicates only
+
+These currently **delegate by enumeration** — a case per command, an entry per projector. Must convert to **predicate-delegation** so the core never grows:
+
+#### Orchestration layer
+
+**`apps/server/src/orchestration/decider.ts`**
+- Currently: `case "board.card.create": return yield* decideBoardCommand(...)`
+- Should be: `default: if (isBoardCommand(command)) return yield* decideBoardCommand(...)`
+- Why: every new board command adds a case. Predicate freezes the seam.
+
+**`apps/server/src/orchestration/projector.ts`**
+- Currently: `case "board.card-created": return projectBoardEvent(...)`
+- Should be: `default: if (isBoardEvent(event)) return projectBoardEvent(...)`
+- Why: same; every event adds a case.
+
+**`apps/server/src/orchestration/Layers/OrchestrationEngine.ts`**
+- Currently: inline `case "board.card.create": return { aggregateKind: "card", ... }`
+- Should be: `default: if (isBoardCommand(command)) return boardCommandAggregateRef(command)`
+- Why: moves the business logic to `board/` and the core becomes a dispatcher.
+
+**`apps/server/src/orchestration/Layers/ProjectionPipeline.ts`**
+- Currently: `boardCards: BOARD_CARDS_PROJECTOR_NAME, ...makeBoardProjectors(sql)`
+- Should be: `...BOARD_PROJECTOR_REGISTRY(sql)` (spread the whole registry)
+- Why: one registry export, one spread. New projectors are added to the registry, not the pipeline.
+
+**`apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`**
+- Currently: wraps board methods inline:
+  ```
+  getCommandReadModel: () => withBoardReadModel(sql, getCommandReadModel()),
+  getShellSnapshot: () => withBoardShellCards(sql, getShellSnapshot()),
+  ```
+- Should be: spread from board module:
+  ```
+  ...boardProjectionSnapshotQueryMethods(sql, { getCommandReadModel, getShellSnapshot })
+  ```
+- Why: board logic leaves core; core calls a board-owned factory.
+
+#### Persistence layer
+
+**`apps/server/src/persistence/Migrations.ts`**
+- Currently: `import Migration0900 from "./Migrations/900_BoardCards.ts"` + named entry
+- Should be: spread from board-owned export: `...BOARD_MIGRATIONS()`
+- Why: migrations are board-owned; the registry is a data structure, not scattered imports.
+
+**`apps/server/src/persistence/Layers/OrchestrationEventStore.ts`**
+- Currently: appends `BoardCardId` to three `Schema.Union([ProjectId, ThreadId, BoardCardId])`
+- Keep as-is: these are D9 consequence. Once-only. Upstream will not create `BoardCardId`.
+
+**`apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts`**
+- Currently: appends `BoardCardId` to `Schema.Union([ProjectId, ThreadId, BoardCardId])`
+- Keep as-is: once-only D9 consequence.
+
+#### WebSocket layer
+
+**`apps/server/src/ws.ts`**
+- Currently: `import { boardCardShellStreamEvent } from "./board/projector.ts"` + named case
+- Should be: `if (isBoardEvent(event)) return boardCardShellStreamEvent(event)`
+- Why: predicates freeze the seam; logic stays in board/.
+
+### 🟡 Web routing (framework-constrained; keep as minimal seams)
+
+**`apps/web/src/routes/board.tsx`**
+- This is a new route file. Unavoidable core edit (routes are framework-driven).
+- Keep it: one file, ~20 lines, imports from `../board/BoardPage`.
+- Cannot move: TanStack Router requires route files in `src/routes/`.
+
+**`apps/web/src/routeTree.gen.ts`**
+- Auto-generated by TanStack Router. Do not edit by hand; it regenerates.
+- Accept: framework-driven, not a seam you control.
+
+**`apps/web/src/components/sidebar/SidebarChrome.tsx`**
+- Currently: `import { SidebarBoardLink } from "../../board/SidebarBoardLink"` + one line to render it
+- This is acceptable: the sidebar itself is framework-scoped, and the edit is a one-liner.
+  If the edit grows (multiple sidebar items for board), move the whole sidebar integration
+  to a board module function and call it from SidebarChrome.
+
+### ✅ Client runtime (properly scoped)
+
+**`packages/client-runtime/src/state/shell.ts`**
+- Currently: `export * from "./board.ts"`
+- This is re-export, not new logic. Acceptable: board state is part of shell, extension is expected.
+
+**`packages/client-runtime/src/state/shellReducer.ts`**
+- Currently: `if (isBoardEvent(event)) return applyBoardShellStreamEvent(event)`
+- Already uses predicate! This is the pattern.
+- Keep as-is.
+
+**`packages/contracts/src/index.ts`**
+- Currently: `export * from "./board.ts"`
+- Re-export. Acceptable: board schema is part of contracts, extension is expected.
+
+## Refactoring scope for t3o-02a
+
+This spec converts **five files** from enumeration to predicate-delegation:
+
+1. **`apps/server/src/orchestration/decider.ts`** — switch-default predicate
+2. **`apps/server/src/orchestration/projector.ts`** — switch-default predicate
+3. **`apps/server/src/orchestration/Layers/OrchestrationEngine.ts`** — switch-default predicate
+4. **`apps/server/src/orchestration/Layers/ProjectionPipeline.ts`** — spread registry
+5. **`apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`** — factory spread
+6. **`apps/server/src/persistence/Migrations.ts`** — spread registry
+7. **`apps/server/src/ws.ts`** — switch-default predicate
+
+Deferred (cannot refactor these now without breaking):
+- `ProjectionSnapshotQuery.ts` — internally complex; has no clean split point yet. Mark as
+  TODO in code with a clear refactoring target.
+- Aggregate-id unions — kept for now; once-only D9, and refactoring Schema unions is
+  tedious. Mark as acceptable-once-only.
+
+## The exhaustiveness guarantee
+
+**Non-negotiable:** every predicate must fall through to upstream's existing exhaustiveness
+handler when false. Today, if upstream adds a command and forgets a case, TypeScript errors.
+A bare `default:` that swallows board commands must NOT hide upstream errors.
 
 ```ts
-// T3o: board commands are decided in the board module. Delegation is by predicate,
-// so new board commands never touch this file again.
+// WRONG:
 default:
-  if (isBoardCommand(command)) {
-    return yield* decideBoardCommand({ command, readModel });
-  }
-  // ...upstream's existing exhaustiveness handling continues here, unchanged
-```
+  if (isBoardCommand(command)) return decideBoardCommand(...)
+  // falls through if false — upstream errors disappear
 
-### Event projection — `orchestration/projector.ts`
-
-Same shape, keyed on `isBoardEvent(event)`.
-
-### Aggregate routing — `Layers/OrchestrationEngine.ts`
-
-```ts
-// T3o: board commands aggregate on the card (D9).
+// RIGHT:
 default:
-  if (isBoardCommand(command)) {
-    return boardCommandAggregateRef(command);
-  }
+  if (isBoardCommand(command)) return decideBoardCommand(...)
+  return upstreamExhaustiveHandler(command)  // absurd / assertNever
 ```
 
-### Projection registry — `Layers/ProjectionPipeline.ts`
+Verify both directions before calling done:
+- Add a scratch command to the upstream union → **build must fail**
+- Add a scratch board command with no branch in board/decider.ts → **build must fail**
 
-Replace the named entry with a spread of a board-owned registry:
+Then delete both scratches and state you ran the check.
 
-```ts
-// T3o: board projector names, extended in the board module.
-...BOARD_PROJECTOR_NAMES,
-```
+## Success criteria
 
-`makeBoardProjectors(sql)` is already spread — keep it, and make sure the names registry and the
-factory are derived from **one** source so they cannot drift.
+After this pass:
 
-### Schema unions — `packages/contracts/src/orchestration.ts`
+1. **Zero board logic in core directories.** Everything board-specific is in `board/` or
+   `@t3tools/board-*` packages.
+2. **Predicates only in core.** A seam is a conditional dispatch, a registry spread, or a
+   re-export. No inline board logic.
+3. **The diff is sparse.** A reader can see at a glance where the core was touched and why.
+4. **t3o-03 adds zero core seams.** Seven new commands, seven new events, zero new cases
+   in upstream files. Proof that the refactor worked.
 
-Convert the appended members to spreads of board-owned arrays:
-
-```ts
-// T3o: board commands, extended in board.ts.
-Schema.Union([...CORE_MEMBERS, ...BOARD_CLIENT_COMMANDS])
-Schema.Literals([...CORE_EVENT_TYPES, ...BOARD_EVENT_TYPES])
-```
-
-This is the seam that matters most: it is what lets `t3o-03` add seven commands and seven events with
-**zero** contract edits.
-
-## The one way this could make things worse
-
-**A bare `default:` destroys upstream's exhaustiveness checking.** Today, if upstream adds a command
-and forgets a case, TypeScript errors. A `default:` that swallows everything turns that compile error
-into a runtime failure — and we would have made upstream's code *less* safe to maintain a fork of.
-
-So the delegation is **conditional and falls through**:
-
-```ts
-default:
-  if (isBoardCommand(command)) return /* board */;
-  return upstreamsExistingExhaustiveHandler(command);  // absurd / assertNever, unchanged
-```
-
-Board-side exhaustiveness moves into `decideBoardCommand`, where it belongs and where we control it.
-A board command with no case must be a compile error in **our** module.
-
-This is a hard requirement, not a nicety. Verify it: add a scratch command to the upstream union and
-confirm the build still fails.
-
-## What is deliberately not done
-
-- **No plugin registry, no dynamic layer composition, no hook service in upstream code.** That is a
-  restructuring diff, and restructuring conflicts far worse than appending in files upstream touches
-  79 times in six months. Predicate-delegation is the sweet spot: ~10 lines that never grow.
-- **No relocation of `apps/server/src/board/` into a package.** New directories cost nothing —
-  upstream will never create a file there, so it cannot conflict. A package would need `apps/server`
-  to expose an `exports` map (a core edit to a churning file) and would create a package-level cycle,
-  in exchange for zero reduction in seam count.
-- **No change to the `BoardCardId` union appends** in `OrchestrationEventStore`,
-  `OrchestrationCommandReceipts` and `OrchestrationEngine`. Those are once-only and already generic —
-  a second aggregate kind would be one more member, and we are not adding one.
+After this commit, the fork's invasiveness is quantified and capped: the diff is frozen at its
+current size, and every feature we add after it grows the board module, not the core diff.
 
 ## Verification
 
-- **The count freezes.** Record the marker count before and after in `docs/t3o/seams.md`, and state
-  the invariant explicitly: adding a board command, event or projector must now touch **zero**
-  upstream files. `t3o-03` is the test of that claim — if it needs a core edit, this spec failed.
-- Upstream exhaustiveness still holds: a scratch command added to the core union fails the build.
-- Board exhaustiveness holds: a board command with no branch in `decideBoardCommand` fails the build.
-- The walking-skeleton tests still pass unchanged — this is a refactor with no behaviour change.
-- Re-run the upstream sync runbook afterwards and add a row to the merge log. A seam whose shape just
-  changed should be re-proved against real upstream churn.
+- Walking-skeleton tests pass unchanged.
+- Exhaustiveness holds both ways (see guarantee above).
+- Re-run upstream sync runbook and add a row to the merge log. Seams that just changed
+  should be re-proved against real churn.
