@@ -6,6 +6,8 @@ import {
   AuthRelayWriteScope,
   AuthReviewWriteScope,
   AuthTerminalOperateScope,
+  // T3o: board RPC scopes live in the board-owned registry (t3o-04).
+  BOARD_RPC_SCOPES,
   ORCHESTRATION_WS_METHODS,
   type AuthEnvironmentScope,
   WS_METHODS,
@@ -102,6 +104,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
+  // T3o: board RPC scopes register from the board-owned registry.
+  ...BOARD_RPC_SCOPES,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

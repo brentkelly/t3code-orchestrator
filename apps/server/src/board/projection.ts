@@ -19,6 +19,7 @@
  * sequence, and the client upsert is idempotent, so nothing is lost.
  */
 import {
+  activeBoardCardThreadId,
   BOARD_CARD_BRIEF_BODY_KIND,
   BoardCard,
   BoardCardExternalRef,
@@ -26,7 +27,9 @@ import {
   BoardCardRecipeSnapshot,
   BoardCardThreadLink,
   isBoardEvent,
+  makeBoardCardShell,
   sortBoardCardThreadLinks,
+  type BoardCardDetail,
   type BoardState,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -34,6 +37,7 @@ import {
   ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
@@ -90,6 +94,28 @@ type BoardCardThreadLinkDbRow = typeof BoardCardThreadLinkDbRow.Type;
 const NextCardNumberDbRow = Schema.Struct({
   projectId: ProjectId,
   maxCardNumber: Schema.Int,
+});
+
+/**
+ * The narrow row behind `BoardCardShell` (t3o-04): exactly the columns the
+ * shell needs, computed in SQL — never `SELECT *` mapped down. `dependsOn`,
+ * `externalRef`, `recipeSnapshot` and the other heavy columns are not read
+ * at all; the point of the shell split is to stop moving those bytes, not
+ * to move them and discard them. `createdAt` is fetched for canonical
+ * ordering only and never enters the shell.
+ */
+const BoardCardShellDbRow = Schema.Struct({
+  cardId: BoardCard.fields.id,
+  key: BoardCard.fields.key,
+  projectId: BoardCard.fields.projectId,
+  cardType: BoardCard.fields.type,
+  stage: BoardCard.fields.stage,
+  orderKey: BoardCard.fields.orderKey,
+  title: BoardCard.fields.title,
+  blocked: Schema.Int,
+  dependencyCount: Schema.Int,
+  hasBrief: Schema.Int,
+  createdAt: BoardCard.fields.createdAt,
 });
 
 function boardCardToRow(card: BoardCard): BoardCardDbRow {
@@ -249,6 +275,81 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // Shell rows exclude archived cards at the source (D15): they never reach
+  // the wire, so they should never leave the table either.
+  const listBoardCardShellRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardCardShellDbRow,
+    execute: () => sql`
+      SELECT
+        card_id AS "cardId",
+        key,
+        project_id AS "projectId",
+        card_type AS "cardType",
+        stage,
+        order_key AS "orderKey",
+        title,
+        blocked,
+        json_array_length(depends_on) AS "dependencyCount",
+        CASE WHEN brief_ref IS NULL THEN 0 ELSE 1 END AS "hasBrief",
+        created_at AS "createdAt"
+      FROM board_cards
+      WHERE archived_at IS NULL
+    `,
+  });
+
+  const findBoardCardRow = SqlSchema.findOneOption({
+    Request: BoardCardId,
+    Result: BoardCardDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        card_id AS "cardId",
+        key,
+        card_number AS "cardNumber",
+        project_id AS "projectId",
+        card_type AS "cardType",
+        stage,
+        order_key AS "orderKey",
+        title,
+        brief_ref AS "briefRef",
+        depends_on AS "dependsOn",
+        parent_card_id AS "parentCardId",
+        external_ref AS "externalRef",
+        recipe_snapshot AS "recipeSnapshot",
+        blocked,
+        archived_at AS "archivedAt",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM board_cards
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  const listBoardCardThreadLinkRowsForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardThreadLinkDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        thread_id AS "threadId",
+        card_id AS "cardId",
+        role,
+        linked_at AS "linkedAt",
+        tombstoned_at AS "tombstonedAt"
+      FROM board_card_thread_links
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  const findBoardCardBodyRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ cardId: BoardCardId, kind: Schema.String }),
+    Result: Schema.Struct({ body: Schema.String }),
+    execute: (request) => sql`
+      SELECT body
+      FROM board_card_bodies
+      WHERE card_id = ${request.cardId} AND kind = ${request.kind}
+    `,
+  });
+
   // MAX over ALL rows — archived cards keep their numbers reserved, so a
   // future D15 cleanup that drops archived cards from the read model can
   // never re-issue a key.
@@ -330,6 +431,10 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     upsertBoardCardRow,
     listBoardCardRows,
     listBoardCardThreadLinkRows,
+    listBoardCardShellRows,
+    findBoardCardRow,
+    listBoardCardThreadLinkRowsForCard,
+    findBoardCardBodyRow,
     listNextCardNumberRows,
     deleteBoardCardThreadLinksForCard,
     insertBoardCardThreadLinkRow,
@@ -488,25 +593,151 @@ export function withBoardReadModel(
   );
 }
 
+/** Canonical shell-row order, same comparator family as `compareBoardCards`
+    ((createdAt, cardId) by code units) applied to the narrow rows. */
+function compareBoardCardShellRows(
+  left: { readonly createdAt: string; readonly cardId: string },
+  right: { readonly createdAt: string; readonly cardId: string },
+): number {
+  const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  return compare(left.createdAt, right.createdAt) || compare(left.cardId, right.cardId);
+}
+
+/**
+ * Bounded `BoardCardShell`s ride the shell snapshot (t3o-04, D7): a narrow
+ * SQL projection of the live (non-archived) cards, joined in JS against the
+ * snapshot's own thread shells for the thread-derived fields — the thread
+ * data is already in the snapshot being enriched, so no thread SQL is
+ * needed. Archived cards leave the shell (D15) but stay in the table and
+ * the read model, so unarchive can bring them back.
+ */
 export function withBoardShellCards(
   sql: SqlClient.SqlClient,
   snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
 ): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
-  return Effect.all([snapshot, loadBoardState(sql)]).pipe(
-    Effect.map(([shell, board]) => {
-      // Archived cards leave the shell snapshot (D15) but stay in the table
-      // and the read model, so unarchive can bring them back.
-      const cards = (board?.cards ?? []).filter((card) => card.archivedAt === null);
-      return cards.length === 0 ? shell : { ...shell, cards };
+  const queries = makeBoardCardQueries(sql);
+  const shellRows = Effect.all([
+    queries.listBoardCardShellRows(),
+    queries.listBoardCardThreadLinkRows(),
+  ]).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shell:query")));
+  return Effect.all([snapshot, shellRows]).pipe(
+    Effect.map(([shell, [cardRows, linkRows]]) => {
+      if (cardRows.length === 0) return shell;
+      const linksByCard = new Map<BoardCardId, BoardCardThreadLink[]>();
+      for (const row of linkRows) {
+        const links = linksByCard.get(row.cardId) ?? [];
+        links.push({
+          threadId: row.threadId,
+          role: row.role,
+          linkedAt: row.linkedAt,
+          tombstonedAt: row.tombstonedAt,
+        });
+        linksByCard.set(row.cardId, links);
+      }
+      const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
+      const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
+        const activeThreadId = activeBoardCardThreadId(linksByCard.get(row.cardId) ?? []);
+        return makeBoardCardShell({
+          cardId: row.cardId,
+          key: row.key,
+          projectId: row.projectId,
+          type: row.cardType,
+          stage: row.stage,
+          orderKey: row.orderKey,
+          title: row.title,
+          blocked: row.blocked !== 0,
+          dependencyCount: row.dependencyCount,
+          hasBrief: row.hasBrief !== 0,
+          activeThreadId,
+          thread: activeThreadId === null ? null : (threadsById.get(activeThreadId) ?? null),
+        });
+      });
+      return { ...shell, cards };
     }),
   );
+}
+
+/**
+ * Full detail for one open card (`board.subscribeCard`, t3o-04): the whole
+ * aggregate (thread links incl. tombstones from 902) plus the brief body
+ * from `board_card_bodies` (901). Archived cards resolve too — an archive
+ * landing while the card is open must not kill the viewer's subscription.
+ * Null when the card has never existed.
+ */
+export function loadBoardCardDetail(
+  sql: SqlClient.SqlClient,
+  cardId: BoardCardId,
+): Effect.Effect<BoardCardDetail | null, ProjectionRepositoryError> {
+  const queries = makeBoardCardQueries(sql);
+  return Effect.all([
+    queries.findBoardCardRow(cardId),
+    queries.listBoardCardThreadLinkRowsForCard(cardId),
+    queries.findBoardCardBodyRow({ cardId, kind: BOARD_CARD_BRIEF_BODY_KIND }),
+  ]).pipe(
+    Effect.map(([cardRow, linkRows, bodyRow]) => {
+      if (Option.isNone(cardRow)) return null;
+      const links = sortBoardCardThreadLinks(
+        linkRows.map((row) => ({
+          threadId: row.threadId,
+          role: row.role,
+          linkedAt: row.linkedAt,
+          tombstonedAt: row.tombstonedAt,
+        })),
+      );
+      return {
+        card: rowToBoardCard(cardRow.value, links),
+        brief: Option.match(bodyRow, {
+          onNone: () => null,
+          onSome: (row) => row.body,
+        }),
+      };
+    }),
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.detail:query")),
+  );
+}
+
+/**
+ * Board-only methods riding the `ProjectionSnapshotQuery` record (t3o-04).
+ *
+ * The upstream service's declared shape erases these keys, so consumers
+ * recover them with `boardSnapshotQueryMethodsOf` (a runtime-checked,
+ * board-owned accessor). This is deliberate: the snapshot-query assembly is
+ * the one place the board already receives the `SqlClient`, so a board
+ * reader added HERE needs no new upstream seam — while a board reader
+ * anywhere else would either grow the ws layer's requirements (leaking
+ * `SqlClient` into every upstream test context) or need a new service
+ * layer provided in upstream composition. Growth stays inside this factory,
+ * which is exactly what the t3o-02a seam comment promises ("board module
+ * wraps what it needs").
+ */
+export interface BoardSnapshotQueryMethods {
+  /** Full detail for `board.subscribeCard`; null when the card does not exist. */
+  readonly boardCardDetail: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<BoardCardDetail | null, ProjectionRepositoryError>;
+}
+
+/**
+ * Recover the board-only methods from a `ProjectionSnapshotQuery` service
+ * instance. Null when the instance was built without the board factory —
+ * e.g. upstream tests that mock the service — so callers degrade to a typed
+ * error instead of a crash.
+ */
+export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQueryMethods | null {
+  const candidate = service as Partial<BoardSnapshotQueryMethods>;
+  return typeof candidate.boardCardDetail === "function"
+    ? { boardCardDetail: candidate.boardCardDetail }
+    : null;
 }
 
 /**
  * Board-wrapped snapshot query methods, spread over the base methods in the
  * upstream ProjectionSnapshotQuery's returned object literal. The board
  * module decides which methods it wraps; when a future spec needs to wrap
- * another one (e.g. `getSnapshot`), only this factory grows.
+ * another one (e.g. `getSnapshot`), only this factory grows. Board-only
+ * additions (`BoardSnapshotQueryMethods`) ride the same spread — TS's
+ * excess-property checking does not apply to spread members, so the
+ * upstream `satisfies ProjectionSnapshotQueryShape` stays intact.
  */
 export function boardSnapshotQueryMethods(
   sql: SqlClient.SqlClient,
@@ -515,11 +746,13 @@ export function boardSnapshotQueryMethods(
   // after the base methods, and TS rejects a spread that *definitely* rewrites
   // an earlier key (TS2783). Optional keys express "board may override any
   // subset", so wrapping more methods later needs no seam change.
-): Partial<ProjectionSnapshotQueryShape> {
+): Partial<ProjectionSnapshotQueryShape> & BoardSnapshotQueryMethods {
   return {
     // Board cards join the engine's command read model (D8).
     getCommandReadModel: () => withBoardReadModel(sql, base.getCommandReadModel()),
-    // Board cards ride the shell snapshot (D2).
+    // Bounded card shells ride the shell snapshot (D2/D7).
     getShellSnapshot: () => withBoardShellCards(sql, base.getShellSnapshot()),
+    // Board-only detail reader for board.subscribeCard (t3o-04).
+    boardCardDetail: (cardId) => loadBoardCardDetail(sql, cardId),
   };
 }

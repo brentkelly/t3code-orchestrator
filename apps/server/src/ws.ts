@@ -73,6 +73,8 @@ import {
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 // T3o: board events map to card shell deltas in the board module.
 import { boardShellStreamEvent, isBoardEvent } from "./board/projector.ts";
+// T3o: board RPC handlers live in the board module (t3o-04).
+import { boardRpcHandlers } from "./board/rpc.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -2136,6 +2138,8 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "server" },
           ),
+        // T3o: board RPC handlers register from the board module (t3o-04).
+        ...boardRpcHandlers({ currentSession, orchestrationEngine, projectionSnapshotQuery }),
       });
     }),
   );

@@ -6,6 +6,7 @@
  */
 import {
   BoardCardId,
+  boardCardShellFromCard,
   EventId,
   LEGACY_BOARD_CARD_KEY,
   LEGACY_BOARD_CARD_NUMBER,
@@ -150,7 +151,8 @@ describe("board projector", () => {
         cardId,
       });
 
-      // And unarchiving emits the card back onto the shell.
+      // And unarchiving emits the card back onto the shell — as the bounded
+      // shell (t3o-04), never the full aggregate.
       const restoredCard = makeCard({});
       const unarchived: BoardEvent = {
         ...eventBase,
@@ -161,7 +163,7 @@ describe("board projector", () => {
       assert.deepStrictEqual(Option.getOrNull(boardShellStreamEvent(unarchived)), {
         kind: "card-upserted",
         sequence: 2,
-        card: restoredCard,
+        card: boardCardShellFromCard(restoredCard),
       });
     }),
   );

@@ -3,7 +3,8 @@
  * seams (t3o-02a).
  *
  * Everything board-shaped lives here, in a T3o-owned file, so upstream merges
- * never touch it. This file deliberately imports only from `baseSchemas.ts`:
+ * never touch it. This file deliberately imports only from `baseSchemas.ts`
+ * and `auth.ts` (which itself imports only `baseSchemas.ts`):
  * `orchestration.ts` imports this module to append board members to its
  * unions, so an import in the other direction would be a module cycle.
  *
@@ -30,7 +31,9 @@
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Rpc from "effect/unstable/rpc/Rpc";
 
+import { AuthOrchestrationReadScope, EnvironmentAuthorizationError } from "./auth.ts";
 import {
   CommandId,
   IsoDateTime,
@@ -426,17 +429,228 @@ export const BoardCardUnarchivedPayload = Schema.Struct({
 });
 export type BoardCardUnarchivedPayload = typeof BoardCardUnarchivedPayload.Type;
 
+// ── Card shell (t3o-04, D7) ────────────────────────────────────────────
+
+/**
+ * Activity state of the card's active linked thread, for the column-card
+ * status indicator. Derived — never stored: `deriveBoardCardThreadState`
+ * computes it from the linked thread's shell fields wherever current thread
+ * shells are at hand (the server at snapshot time, the client continuously).
+ */
+export const BoardCardThreadState = Schema.Literals(["working", "waiting", "stopped", "none"]);
+export type BoardCardThreadState = typeof BoardCardThreadState.Type;
+
+/**
+ * The bounded per-card summary that rides `OrchestrationShellSnapshot` and
+ * the `card-upserted` shell delta (D7): exactly what a column card renders,
+ * and nothing more. Scalars only — no id arrays, no bodies, no snapshots.
+ * The full aggregate (`BoardCard`) stays server-side and reaches a client
+ * only through `board.subscribeCard` for the one open card.
+ *
+ * Several fields have no data source yet; they are part of the shape now so
+ * `t3o-06` renders against a stable contract, with the owning spec noted
+ * beside each. A hardcoded `false` / `0` / absent key on one of those
+ * fields is deliberate, not a bug.
+ *
+ * `BoardCardShell` payload discipline is enforced by tests
+ * (`board.test.ts` in this package): a serialized shell stays under a fixed
+ * byte budget, and the shell snapshot grows linearly with card count.
+ */
+export const BoardCardShell = Schema.Struct({
+  // Identity — projected from `board_cards` (t3o-03).
+  cardId: BoardCardId,
+  key: TrimmedNonEmptyString,
+  projectId: ProjectId,
+  type: BoardCardType,
+  stage: BoardStage,
+  orderKey: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  // Flags — projected from `board_cards` (t3o-03).
+  blocked: Schema.Boolean,
+  /** `dependsOn.length`; the ids themselves never ride the shell. */
+  dependencyCount: NonNegativeInt,
+  /** `briefRef !== null`. Named `hasBrief`, not the spec draft's `hasPlan`:
+      the brief is the card's write-up, while "plan" is the sub-board plan
+      concept that owns `planTotal`/`planDone` below — a `hasPlan` derived
+      from briefs would collide with it the day real plans land. */
+  hasBrief: Schema.Boolean,
+  /** Always false until t3o-11 wires PR detection. */
+  hasPr: Schema.Boolean,
+  /** Always 0 until t3o-11 wires attachments. */
+  attachmentCount: NonNegativeInt,
+  /** Always false until t3o-11 wires the work queue. */
+  queued: Schema.Boolean,
+  // Thread-derived — joined from `board_card_thread_links` (902) and the
+  // linked thread's shell; no new plumbing (t3o-04).
+  threadState: BoardCardThreadState,
+  /** The active linked thread's `hasPendingUserInput`. */
+  awaitingInput: Schema.Boolean,
+  /** The most recently linked live (non-tombstoned) thread, so clients can
+      re-derive `threadState` / `awaitingInput` from the thread shells they
+      already hold as those threads change — card deltas are a pure function
+      of the card event and cannot carry live thread state (see
+      `boardCardShellFromCard`). */
+  activeThreadId: Schema.NullOr(ThreadId),
+  // The summary fields below are KEY-optional, not nullable: an absent key
+  // costs zero wire bytes, and with ~13 of them a `"field":null` per card
+  // would rebuild a third of the payload the shell split just removed.
+  // Absent means "no data" — today always, later "not a parent" / "not in
+  // review".
+  // Sub-board summary — absent until post-MVP sub-boards (D12
+  // materialisation).
+  planTotal: Schema.optionalKey(NonNegativeInt),
+  planDone: Schema.optionalKey(NonNegativeInt),
+  // Review summary — counts, never bodies; absent until the post-MVP
+  // review pipeline lands, then populated only in the review stage.
+  prNumber: Schema.optionalKey(NonNegativeInt),
+  roundCurrent: Schema.optionalKey(NonNegativeInt),
+  roundMax: Schema.optionalKey(NonNegativeInt),
+  stepLabel: Schema.optionalKey(TrimmedNonEmptyString),
+  severityCritical: Schema.optionalKey(NonNegativeInt),
+  severityImprovement: Schema.optionalKey(NonNegativeInt),
+  severityNitpick: Schema.optionalKey(NonNegativeInt),
+  issuesFixed: Schema.optionalKey(NonNegativeInt),
+  issuesRejected: Schema.optionalKey(NonNegativeInt),
+  issuesOpen: Schema.optionalKey(NonNegativeInt),
+  issuesDisputed: Schema.optionalKey(NonNegativeInt),
+});
+export type BoardCardShell = typeof BoardCardShell.Type;
+
+/**
+ * The thread-shell fields the card shell derives its thread state from.
+ * Structural (not `Pick<OrchestrationThreadShell, …>`) because this file
+ * cannot import `orchestration.ts` — any `OrchestrationThreadShell`
+ * satisfies it.
+ */
+export interface BoardThreadStateSource {
+  readonly hasPendingUserInput: boolean;
+  readonly hasPendingApprovals: boolean;
+  readonly session?: { readonly status: string } | null | undefined;
+  readonly backgroundLiveness?: "working" | "monitoring" | null | undefined;
+}
+
+/**
+ * Thread-derived card fields, shared by the server (snapshot enrichment)
+ * and the client (live re-derivation as thread shells change). "Waiting"
+ * outranks "working": a blocked agent needs the human, which is the signal
+ * the board exists to surface.
+ */
+export function deriveBoardCardThreadState(thread: BoardThreadStateSource | null | undefined): {
+  readonly threadState: BoardCardThreadState;
+  readonly awaitingInput: boolean;
+} {
+  if (thread === null || thread === undefined) {
+    return { threadState: "none", awaitingInput: false };
+  }
+  const awaitingInput = thread.hasPendingUserInput;
+  if (thread.hasPendingUserInput || thread.hasPendingApprovals) {
+    return { threadState: "waiting", awaitingInput };
+  }
+  const sessionStatus = thread.session?.status;
+  if (
+    sessionStatus === "starting" ||
+    sessionStatus === "running" ||
+    thread.backgroundLiveness === "working"
+  ) {
+    return { threadState: "working", awaitingInput };
+  }
+  return { threadState: "stopped", awaitingInput };
+}
+
+/** The card's active thread: the most recently linked live link, by the
+    same canonical (linkedAt, threadId) order the aggregate uses. */
+export function activeBoardCardThreadId(
+  links: ReadonlyArray<BoardCardThreadLink>,
+): ThreadId | null {
+  const live = sortBoardCardThreadLinks(links.filter((link) => link.tombstonedAt === null));
+  return live.at(-1)?.threadId ?? null;
+}
+
+/**
+ * Shell assembly shared by every producer (SQL snapshot rows, event-carried
+ * cards, tests), so the not-yet-sourced fields are hardcoded in exactly one
+ * place with their owning specs documented on the schema above.
+ */
+export function makeBoardCardShell(input: {
+  readonly cardId: BoardCardId;
+  readonly key: string;
+  readonly projectId: ProjectId;
+  readonly type: BoardCardType;
+  readonly stage: BoardStage;
+  readonly orderKey: string;
+  readonly title: string;
+  readonly blocked: boolean;
+  readonly dependencyCount: number;
+  readonly hasBrief: boolean;
+  readonly activeThreadId: ThreadId | null;
+  readonly thread?: BoardThreadStateSource | null | undefined;
+}): BoardCardShell {
+  const { threadState, awaitingInput } = deriveBoardCardThreadState(input.thread);
+  return {
+    cardId: input.cardId,
+    key: input.key,
+    projectId: input.projectId,
+    type: input.type,
+    stage: input.stage,
+    orderKey: input.orderKey,
+    title: input.title,
+    blocked: input.blocked,
+    dependencyCount: input.dependencyCount,
+    hasBrief: input.hasBrief,
+    hasPr: false, // t3o-11
+    attachmentCount: 0, // t3o-11
+    queued: false, // t3o-11
+    threadState,
+    awaitingInput,
+    activeThreadId: input.activeThreadId,
+    // planTotal / planDone (post-MVP sub-boards), prNumber / round* /
+    // stepLabel / severity* / issues* (post-MVP review pipeline): key-
+    // optional and deliberately absent until their producing specs land.
+  };
+}
+
+/**
+ * Shell from a full card. The `thread` source is optional because the shell
+ * delta mapping in the projector is a pure function of the board event — it
+ * has the card but no thread shells, so delta-carried shells leave the
+ * thread-derived fields at their "none" resting state and the client
+ * reducer immediately re-derives them via `activeThreadId` against the
+ * thread shells it already holds (`applyBoardShellStreamEvent`). Snapshot
+ * producers pass the joined thread and emit the real values directly.
+ */
+export function boardCardShellFromCard(
+  card: BoardCard,
+  thread?: BoardThreadStateSource | null,
+): BoardCardShell {
+  return makeBoardCardShell({
+    cardId: card.id,
+    key: card.key,
+    projectId: card.projectId,
+    type: card.type,
+    stage: card.stage,
+    orderKey: card.orderKey,
+    title: card.title,
+    blocked: card.blocked,
+    dependencyCount: card.dependsOn.length,
+    hasBrief: card.briefRef !== null,
+    activeThreadId: activeBoardCardThreadId(card.threadLinks),
+    thread,
+  });
+}
+
 // ── Shell deltas ───────────────────────────────────────────────────────
 
 /**
  * Card deltas on the shell stream, mirroring `thread-upserted` /
  * `thread-removed`. Archiving emits `card-removed` (the card leaves the
  * live board every client renders); unarchiving emits `card-upserted`.
+ * Deltas carry the bounded `BoardCardShell`, never the full aggregate —
+ * the same payload discipline as the snapshot (D7).
  */
 export const BoardCardUpsertedShellEvent = Schema.Struct({
   kind: Schema.Literal("card-upserted"),
   sequence: NonNegativeInt,
-  card: BoardCard,
+  card: BoardCardShell,
 });
 export type BoardCardUpsertedShellEvent = typeof BoardCardUpsertedShellEvent.Type;
 
@@ -571,3 +785,88 @@ type BoardEventTypeFromFactory = ReturnType<
 type _AssertExtends<A extends B, B> = A;
 type _RegistryCoversFactory = _AssertExtends<BoardEventTypeFromFactory, BoardEventTypeFromRegistry>;
 type _FactoryCoversRegistry = _AssertExtends<BoardEventTypeFromRegistry, BoardEventTypeFromFactory>;
+
+// ── Board RPC surface (t3o-04) ─────────────────────────────────────────
+// Board RPCs register through the registries below, spread into upstream's
+// `WS_METHODS` / `WsRpcGroup` (rpc.ts) and `RPC_REQUIRED_SCOPES`
+// (RpcAuthorization.ts). Adding a board RPC grows these registries and the
+// server-side `boardRpcHandlers` factory — zero upstream files.
+
+export const BOARD_WS_METHODS = {
+  subscribeCard: "board.subscribeCard",
+} as const;
+
+/**
+ * The streaming subset of `BOARD_WS_METHODS`, spread as one member into
+ * client-runtime's `EnvironmentSubscriptionRpcTag` union. Grows here when a
+ * future board RPC streams; a future *unary* board RPC needs nothing — the
+ * upstream union derives unary tags by exclusion.
+ */
+export type BoardSubscriptionRpcTag = (typeof BOARD_WS_METHODS)["subscribeCard"];
+
+export const BoardSubscribeCardInput = Schema.Struct({
+  cardId: BoardCardId,
+});
+export type BoardSubscribeCardInput = typeof BoardSubscribeCardInput.Type;
+
+/**
+ * Heavy detail for the one open card (D7). Carries the full aggregate —
+ * including `dependsOn`, `threadLinks` with tombstones (902), `externalRef`
+ * and `recipeSnapshot` — plus the brief body from `board_card_bodies`
+ * (901). One card's worth of detail is cheap; ALL cards' worth is what the
+ * shell split exists to keep off the wire.
+ *
+ * Deliberately absent, added as optional fields by the spec that creates
+ * their data (t3o-03's no-speculative-tables rule):
+ * - plan bodies — post-MVP sub-boards
+ * - review issue ledger — post-MVP review pipeline
+ * - activity log — t3o-08 (`board_report_progress`)
+ */
+export const BoardCardDetail = Schema.Struct({
+  card: BoardCard,
+  /** Brief body text, or null when the card has no brief. */
+  brief: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardCardDetail = typeof BoardCardDetail.Type;
+
+/**
+ * `board.subscribeCard` stream items. A single re-emitting frame: the
+ * server sends the full detail on subscribe and again on every change to
+ * the card (detail is one card — re-emitting whole beats event grammar).
+ * A union so future item kinds are additive.
+ */
+export const BoardCardDetailStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("card-detail"),
+    detail: BoardCardDetail,
+  }),
+]);
+export type BoardCardDetailStreamItem = typeof BoardCardDetailStreamItem.Type;
+
+export class BoardSubscribeCardError extends Schema.TaggedErrorClass<BoardSubscribeCardError>()(
+  "BoardSubscribeCardError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+/** Spread into `WsRpcGroup` (`RpcGroup.make` is variadic). */
+export const BOARD_RPCS = [
+  Rpc.make(BOARD_WS_METHODS.subscribeCard, {
+    payload: BoardSubscribeCardInput,
+    success: BoardCardDetailStreamItem,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+    stream: true,
+  }),
+] as const;
+
+/**
+ * Spread into `RPC_REQUIRED_SCOPES`. Board reads use the same scope class
+ * as thread reads (D7 mirrors `subscribeThread`); board RPCs never invent a
+ * scope tier — an authorization change is a security change and belongs to
+ * a security-scoped spec.
+ */
+export const BOARD_RPC_SCOPES = {
+  [BOARD_WS_METHODS.subscribeCard]: AuthOrchestrationReadScope,
+} as const;
