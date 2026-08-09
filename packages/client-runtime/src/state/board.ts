@@ -136,14 +136,19 @@ export function compareBoardCardShells(left: BoardCardShell, right: BoardCardShe
   return compare(left.orderKey, right.orderKey) || compare(left.cardId, right.cardId);
 }
 
-/** Order key for a card appended at the bottom of a column. Falls back to
-    the open-bounds midpoint when the column is empty or its last key is
-    corrupt. */
+/** Order key for a card appended at the bottom of a column. Scans for the
+    maximum existing key rather than trusting input order, so callers may
+    pass the column in any order (snapshot order is createdAt, not
+    orderKey). Falls back to the open-bounds midpoint when the column is
+    empty or its bottom key is corrupt. */
 export function boardColumnAppendOrderKey(
   column: ReadonlyArray<Pick<BoardCardShell, "orderKey">>,
 ): string {
-  const lastKey = column.at(-1)?.orderKey ?? null;
-  return pinOrderKeyBetween(lastKey, null) ?? (pinOrderKeyBetween(null, null) as string);
+  let bottomKey: string | null = null;
+  for (const card of column) {
+    if (bottomKey === null || card.orderKey > bottomKey) bottomKey = card.orderKey;
+  }
+  return pinOrderKeyBetween(bottomKey, null) ?? (pinOrderKeyBetween(null, null) as string);
 }
 
 /**
@@ -318,6 +323,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
   };
 }
 
+/** Mirrors `runtime.ts`'s private `parseEnvironmentRpcKey` for the
+    `environmentRpcKey` encoding. Duplicated deliberately: exporting the
+    upstream parser would add a seam to an upstream-owned file for eight
+    lines of JSON plumbing. */
 function parseBoardCardDetailKey(key: string): {
   readonly environmentId: EnvironmentId;
   readonly cardId: BoardCardId;

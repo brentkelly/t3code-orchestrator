@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BOARD_CARD_SHELL_TITLE_MAX_LENGTH,
   BoardCardId,
   boardCardShellFromCard,
   BoardCardShell,
@@ -27,15 +28,17 @@ const utf8Bytes = (value: unknown): number =>
   new TextEncoder().encode(JSON.stringify(value)).length;
 
 /**
- * Measured at 726 bytes on implementation (2026-08-10) for a worst-case
- * shell — review stage with every nullable field populated, UUID-length
- * ids, and a 67-character title — then rounded up modestly. Not a guess: if
- * a change pushes past this, it added real bytes to every card on every
- * reconnect, and the right fix is almost never raising the number.
+ * Measured at 860 bytes on implementation (2026-08-10) for a worst-case
+ * shell — review stage with every optional field populated, UUID-length
+ * ids, and the title cap fully saturated — then rounded up modestly. Not a
+ * guess: if a change pushes past this, it added real bytes to every card
+ * on every reconnect, and the right fix is almost never raising the
+ * number.
  */
 const BOARD_CARD_SHELL_BYTE_BUDGET = 1024;
 
-/** Worst case: every nullable populated (review stage), long ids, long title. */
+/** Worst case: every optional populated (review stage), long ids, and the
+    title at exactly `BOARD_CARD_SHELL_TITLE_MAX_LENGTH`. */
 const fullyPopulatedShell = {
   cardId: BoardCardId.make("0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
   key: "T3O-1234",
@@ -43,7 +46,7 @@ const fullyPopulatedShell = {
   type: "feature",
   stage: "review",
   orderKey: "mmmmzz",
-  title: "Implement the board RPC surface and shared client state end to end",
+  title: "t".repeat(BOARD_CARD_SHELL_TITLE_MAX_LENGTH),
   blocked: true,
   dependencyCount: 12,
   hasBrief: true,
@@ -149,6 +152,18 @@ describe("board card shell derivation", () => {
     // reducer re-derives them via activeThreadId).
     expect(shell.threadState).toBe("none");
     expect(shell.awaitingInput).toBe(false);
+  });
+
+  it("caps the shell title at the documented maximum", () => {
+    const shell = boardCardShellFromCard({
+      ...typicalCard(1),
+      title: "long ".repeat(200).trim(),
+    });
+    expect(shell.title.length).toBeLessThanOrEqual(BOARD_CARD_SHELL_TITLE_MAX_LENGTH);
+    expect(shell.title.endsWith("…")).toBe(true);
+    // A title at the cap passes through untouched.
+    const exact = "t".repeat(BOARD_CARD_SHELL_TITLE_MAX_LENGTH);
+    expect(boardCardShellFromCard({ ...typicalCard(2), title: exact }).title).toBe(exact);
   });
 
   it("picks the most recently linked live thread as active", () => {

@@ -464,6 +464,8 @@ export const BoardCardShell = Schema.Struct({
   type: BoardCardType,
   stage: BoardStage,
   orderKey: TrimmedNonEmptyString,
+  /** Capped at `BOARD_CARD_SHELL_TITLE_MAX_LENGTH` by `makeBoardCardShell`
+      (the aggregate's title is unbounded; the shell's is not). */
   title: TrimmedNonEmptyString,
   // Flags — projected from `board_cards` (t3o-03).
   blocked: Schema.Boolean,
@@ -567,6 +569,22 @@ export function activeBoardCardThreadId(
 }
 
 /**
+ * The one unbounded scalar on the card aggregate is the user-entered
+ * title; the shell caps it here so the serialized shell has a real upper
+ * bound (the byte-budget test saturates this cap). A column card renders
+ * at most a couple of lines; the full title rides `board.subscribeCard`
+ * with the rest of the detail.
+ */
+export const BOARD_CARD_SHELL_TITLE_MAX_LENGTH = 200;
+
+function boundShellTitle(title: string): string {
+  if (title.length <= BOARD_CARD_SHELL_TITLE_MAX_LENGTH) return title;
+  // trimEnd before the ellipsis: a trailing space would fail the schema's
+  // trimmed-string decode on the receiving client.
+  return `${title.slice(0, BOARD_CARD_SHELL_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
+}
+
+/**
  * Shell assembly shared by every producer (SQL snapshot rows, event-carried
  * cards, tests), so the not-yet-sourced fields are hardcoded in exactly one
  * place with their owning specs documented on the schema above.
@@ -593,7 +611,7 @@ export function makeBoardCardShell(input: {
     type: input.type,
     stage: input.stage,
     orderKey: input.orderKey,
-    title: input.title,
+    title: boundShellTitle(input.title),
     blocked: input.blocked,
     dependencyCount: input.dependencyCount,
     hasBrief: input.hasBrief,

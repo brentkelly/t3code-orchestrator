@@ -169,6 +169,16 @@ describe("board column ordering", () => {
     expect(key > "m").toBe(true);
   });
 
+  it("appends after the bottom key even when the column is not sorted by orderKey", () => {
+    // Snapshot order is (createdAt, cardId), not orderKey — the append key
+    // must clear the maximum key, not the last element's.
+    const key = boardColumnAppendOrderKey([
+      cardShell("card-1", { orderKey: "t" }),
+      cardShell("card-2", { orderKey: "c" }),
+    ]);
+    expect(key > "t").toBe(true);
+  });
+
   it("yields a key for an empty column", () => {
     expect(boardColumnAppendOrderKey([]).length).toBeGreaterThan(0);
   });

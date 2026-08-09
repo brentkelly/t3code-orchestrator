@@ -36,6 +36,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
+import { observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { boardSnapshotQueryMethodsOf } from "./projection.ts";
@@ -102,7 +103,10 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      * grammar and needs no client-side merge.
      */
     [BOARD_WS_METHODS.subscribeCard]: (input: BoardSubscribeCardInput) =>
-      Stream.unwrap(
+      // Same metrics/tracing wrapper as the ws.ts inline handlers — board
+      // RPCs must not be dark spots in RPC observability.
+      observeRpcStreamEffect(
+        BOARD_WS_METHODS.subscribeCard,
         authorized(
           BOARD_WS_METHODS.subscribeCard,
           Effect.gen(function* () {
@@ -110,9 +114,11 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
             // initial read, exactly like subscribeShell/subscribeThread: an
             // event committed while the initial detail read is in flight
             // must trigger a re-read, not vanish. The buffer carries no
-            // payload — every wake-up re-reads the projected tables, so
-            // bursts collapse to at-least-once freshness.
-            const liveBuffer = yield* Queue.unbounded<void>();
+            // payload and slides at capacity 1: any burst that lands while
+            // a re-read is in flight collapses into one queued wake-up, so
+            // the follow-up read observes the latest projected state and
+            // the stream emits one frame for the whole burst.
+            const liveBuffer = yield* Queue.sliding<void>(1);
             yield* Effect.forkScoped(
               deps.orchestrationEngine.streamDomainEvents.pipe(
                 Stream.filter((event) => isBoardEvent(event) && event.aggregateId === input.cardId),
@@ -143,6 +149,7 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
             );
           }),
         ),
+        { "rpc.aggregate": "board" },
       ),
   };
 }

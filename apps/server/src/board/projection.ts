@@ -663,37 +663,40 @@ export function withBoardShellCards(
  * from `board_card_bodies` (901). Archived cards resolve too — an archive
  * landing while the card is open must not kill the viewer's subscription.
  * Null when the card has never existed.
+ *
+ * A maker (queries compiled once at assembly) rather than a per-call
+ * loader: the reader runs on every board event for a subscribed card.
  */
-export function loadBoardCardDetail(
+export function makeBoardCardDetailLoader(
   sql: SqlClient.SqlClient,
-  cardId: BoardCardId,
-): Effect.Effect<BoardCardDetail | null, ProjectionRepositoryError> {
+): (cardId: BoardCardId) => Effect.Effect<BoardCardDetail | null, ProjectionRepositoryError> {
   const queries = makeBoardCardQueries(sql);
-  return Effect.all([
-    queries.findBoardCardRow(cardId),
-    queries.listBoardCardThreadLinkRowsForCard(cardId),
-    queries.findBoardCardBodyRow({ cardId, kind: BOARD_CARD_BRIEF_BODY_KIND }),
-  ]).pipe(
-    Effect.map(([cardRow, linkRows, bodyRow]) => {
-      if (Option.isNone(cardRow)) return null;
-      const links = sortBoardCardThreadLinks(
-        linkRows.map((row) => ({
-          threadId: row.threadId,
-          role: row.role,
-          linkedAt: row.linkedAt,
-          tombstonedAt: row.tombstonedAt,
-        })),
-      );
-      return {
-        card: rowToBoardCard(cardRow.value, links),
-        brief: Option.match(bodyRow, {
-          onNone: () => null,
-          onSome: (row) => row.body,
-        }),
-      };
-    }),
-    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.detail:query")),
-  );
+  return (cardId) =>
+    Effect.all([
+      queries.findBoardCardRow(cardId),
+      queries.listBoardCardThreadLinkRowsForCard(cardId),
+      queries.findBoardCardBodyRow({ cardId, kind: BOARD_CARD_BRIEF_BODY_KIND }),
+    ]).pipe(
+      Effect.map(([cardRow, linkRows, bodyRow]) => {
+        if (Option.isNone(cardRow)) return null;
+        const links = sortBoardCardThreadLinks(
+          linkRows.map((row) => ({
+            threadId: row.threadId,
+            role: row.role,
+            linkedAt: row.linkedAt,
+            tombstonedAt: row.tombstonedAt,
+          })),
+        );
+        return {
+          card: rowToBoardCard(cardRow.value, links),
+          brief: Option.match(bodyRow, {
+            onNone: () => null,
+            onSome: (row) => row.body,
+          }),
+        };
+      }),
+      Effect.mapError(toPersistenceSqlError("BoardCardsProjection.detail:query")),
+    );
 }
 
 /**
@@ -753,6 +756,6 @@ export function boardSnapshotQueryMethods(
     // Bounded card shells ride the shell snapshot (D2/D7).
     getShellSnapshot: () => withBoardShellCards(sql, base.getShellSnapshot()),
     // Board-only detail reader for board.subscribeCard (t3o-04).
-    boardCardDetail: (cardId) => loadBoardCardDetail(sql, cardId),
+    boardCardDetail: makeBoardCardDetailLoader(sql),
   };
 }
