@@ -21,6 +21,8 @@ import {
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+// T3o: board command decisions live in the board module.
+import { decideBoardCommand } from "../board/decider.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -224,6 +226,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   Crypto.Crypto
 > {
   switch (command.type) {
+    // T3o: board commands are decided in the board module.
+    case "board.card.create":
+      return yield* decideBoardCommand({ command, readModel });
+
     case "project.create": {
       yield* requireProjectAbsent({
         readModel,

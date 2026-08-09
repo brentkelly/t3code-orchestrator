@@ -415,6 +415,8 @@ export function createEnvironmentShellAtoms<R, E>(
 }
 
 export * from "./models.ts";
+// T3o: board client state rides the shell export surface.
+export * from "./board.ts";
 export * from "./shellCommands.ts";
 export * from "./shellReducer.ts";
 export * from "./shellSnapshotHttp.ts";

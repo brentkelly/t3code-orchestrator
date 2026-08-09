@@ -71,6 +71,8 @@ import {
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+// T3o: board events map to card shell deltas in the board module.
+import { boardCardShellStreamEvent } from "./board/projector.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -563,6 +565,9 @@ const makeWsRpcLayer = (
             );
           case "thread.unarchived":
             return threadUpsertOrRemove(event.payload.threadId, event.sequence);
+          // T3o: board events become card shell deltas.
+          case "board.card-created":
+            return Effect.succeed(boardCardShellStreamEvent(event));
           default:
             if (event.aggregateKind !== "thread") {
               return Effect.succeed(Option.none());
