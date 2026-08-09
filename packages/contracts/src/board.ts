@@ -93,8 +93,11 @@ export type BoardCardType = typeof BoardCardType.Type;
 /**
  * Thread link (D9). `role` is a free string discriminator (`planning`,
  * `build`, `review:r1:triage`, …) so the review pipeline can extend it
- * without a schema change. A deleted thread's link is tombstoned, never
- * removed — a card whose triage thread vanished must say so.
+ * without a schema change. A deleted thread's link is never removed, only
+ * tombstoned — recorded when the link is next touched: unlinking a deleted
+ * thread sets `tombstonedAt` instead of removing the link. (Nothing reacts
+ * to `thread.deleted` itself in t3o-03; eager tombstoning needs the Phase-2
+ * reactor seam, t3o-10.)
  */
 export const BoardCardThreadLink = Schema.Struct({
   threadId: ThreadId,
@@ -105,17 +108,21 @@ export const BoardCardThreadLink = Schema.Struct({
 export type BoardCardThreadLink = typeof BoardCardThreadLink.Type;
 
 /**
- * Canonical thread-link order. MUST match the `ORDER BY linked_at, thread_id`
- * of the `board_card_thread_links` read in the board projection, or a
- * from-empty replay would diverge from table rehydration whenever links are
- * made out of timestamp order (linkedAt is client-supplied).
+ * Canonical thread-link order: (linkedAt, threadId), needed because linkedAt
+ * is client-supplied, so link order ≠ linkedAt order in general. Compared by
+ * code units (not localeCompare, which is locale-sensitive) and applied on
+ * BOTH sides of the replay-equals-rehydration invariant: the decider sorts
+ * links into event payloads with it, and the board projection re-sorts rows
+ * read back from `board_card_thread_links` with it — never trusting SQL
+ * collation to agree with JS.
  */
 export function sortBoardCardThreadLinks(
   links: ReadonlyArray<BoardCardThreadLink>,
 ): ReadonlyArray<BoardCardThreadLink> {
+  const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
   return [...links].sort(
     (left, right) =>
-      left.linkedAt.localeCompare(right.linkedAt) || left.threadId.localeCompare(right.threadId),
+      compare(left.linkedAt, right.linkedAt) || compare(left.threadId, right.threadId),
   );
 }
 

@@ -294,8 +294,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
 
-      if (command.dependsOn !== undefined) {
-        for (const dependencyId of command.dependsOn) {
+      // Duplicate edges add nothing to the graph; store each dependency once.
+      const proposedDependsOn =
+        command.dependsOn === undefined ? undefined : [...new Set(command.dependsOn)];
+      if (proposedDependsOn !== undefined) {
+        for (const dependencyId of proposedDependsOn) {
           if (!board.cards.some((candidate) => candidate.id === dependencyId)) {
             return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
           }
@@ -303,7 +306,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         const cycle = findDependencyCycle({
           board,
           cardId: command.cardId,
-          proposed: command.dependsOn,
+          proposed: proposedDependsOn,
         });
         if (cycle !== null) {
           return yield* invariant(
@@ -313,7 +316,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         }
       }
 
-      const dependsOn = command.dependsOn ?? card.dependsOn;
+      const dependsOn = proposedDependsOn ?? card.dependsOn;
       const nextCard: BoardCard = {
         ...card,
         title: command.title ?? card.title,
@@ -327,7 +330,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
               ? null
               : BOARD_CARD_BRIEF_BODY_KIND,
         blocked:
-          command.dependsOn === undefined
+          proposedDependsOn === undefined
             ? card.blocked
             : deriveBoardCardBlocked({ stage: card.stage, dependsOn, cards: board.cards }),
         updatedAt: command.createdAt,

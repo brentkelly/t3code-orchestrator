@@ -26,6 +26,7 @@ import {
   BoardCardRecipeSnapshot,
   BoardCardThreadLink,
   isBoardEvent,
+  sortBoardCardThreadLinks,
   type BoardState,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -39,7 +40,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { boardCardFromCreatedPayload } from "./projector.ts";
+import { boardCardFromCreatedPayload, compareBoardCards } from "./projector.ts";
 
 export const BOARD_CARDS_PROJECTOR_NAME = "projection.board-cards" as const;
 
@@ -202,8 +203,10 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
-  // Canonical card order: matches the in-memory projector's
-  // `compareBoardCards` (see projector.ts) so replay equals rehydration.
+  // Read order is advisory only: `loadBoardState` re-sorts with the same
+  // JS comparators the replay path uses (`compareBoardCards`,
+  // `sortBoardCardThreadLinks`), so SQL collation can never make
+  // rehydration order diverge from replay order.
   const listBoardCardRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: BoardCardDbRow,
@@ -231,7 +234,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
-  // Canonical link order: matches `sortBoardCardThreadLinks` in contracts.
   const listBoardCardThreadLinkRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: BoardCardThreadLinkDbRow,
@@ -451,8 +453,14 @@ export function loadBoardState(
         });
         linksByCard.set(row.cardId, links);
       }
+      // Canonical ordering comes from the shared JS comparators — the same
+      // ones the replay path uses — never from SQL collation.
       return {
-        cards: cardRows.map((row) => rowToBoardCard(row, linksByCard.get(row.cardId) ?? [])),
+        cards: cardRows
+          .map((row) =>
+            rowToBoardCard(row, sortBoardCardThreadLinks(linksByCard.get(row.cardId) ?? [])),
+          )
+          .sort(compareBoardCards),
         nextCardNumberByProject: Object.fromEntries(
           counterRows.map((row) => [row.projectId, row.maxCardNumber + 1]),
         ),

@@ -53,15 +53,18 @@ const decodeBoardCardThreadUnlinkedPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardArchivedPayload = Schema.decodeUnknownEffect(BoardCardArchivedPayload);
 const decodeBoardCardUnarchivedPayload = Schema.decodeUnknownEffect(BoardCardUnarchivedPayload);
 
-// Canonical card order — MUST match the `ORDER BY created_at ASC, card_id ASC`
-// of the board projection's card read, or the from-empty replay read model
-// would diverge from the table-rehydrated one whenever cards are created out
-// of timestamp order (createdAt is client-supplied, so dispatch order ≠
-// createdAt order in general). Mirrors the upstream projector's
-// `localeCompare` sort idiom, which agrees with SQLite's ordering for the
-// ASCII ISO timestamps and ids used here.
-function compareBoardCards(left: BoardCard, right: BoardCard): number {
-  return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+// Canonical card order: (createdAt, id), needed because createdAt is
+// client-supplied, so dispatch order ≠ createdAt order in general. Compared
+// by code units (not localeCompare, which is locale-sensitive, and not SQL
+// ORDER BY, whose collation can disagree with JS on non-ASCII ids) — the
+// rehydration path in projection.ts applies this same comparator after
+// reading rows, so replay and rehydration cannot diverge on ordering.
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function compareBoardCards(left: BoardCard, right: BoardCard): number {
+  return compareStrings(left.createdAt, right.createdAt) || compareStrings(left.id, right.id);
 }
 
 /**
