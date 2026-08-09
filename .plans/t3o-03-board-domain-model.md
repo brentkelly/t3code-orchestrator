@@ -117,17 +117,23 @@ Migrations from `900_`:
 - `901_BoardCardBodies` — `board_card_bodies (card_id, kind, body, updated_at)`, following the
   `checkpoint_diff_blobs` precedent for large payloads.
 - `902_BoardCardThreadLinks` — indexed both ways so "which card owns this thread" is a lookup.
-- `903_BoardPlans` — `board_plans (plan_id, card_id, ord, title, summary, depends_on, status,
-  locked, body, created_at, updated_at)`. Schema lands now; the plan *flow* is post-MVP. This is the
-  single queryable place for plans that D8 promised; it is written only by the projector.
+
+`board_plans` is **not** created here. An empty table nobody reads or writes is not a foundation, it
+is speculative inventory; it lands with the plan flow post-MVP. Migration numbers are cheap and
+there is no cost to allocating one later.
 
 All projections are written inside the engine's existing transaction.
 
 ## Archival
 
-`board.card.archive` is emitted by a reactor 7 days after entry to `done` (window is a setting).
-Archiving drops the card from the read model and the shell snapshot, and triggers worktree reclaim
-(`t3o-09`). Unarchive exists and is reachable from a settings route — a one-way door is a bug.
+`board.card.archive` and `board.card.unarchive` are ordinary commands here: archiving drops the card
+from the read model and the shell snapshot, unarchiving restores it. Both are exercised manually.
+
+**The automatic 7-day timer is not in this spec.** It needs a reactor (a registration seam and a
+background worker) and a settings value that does not exist until `t3o-07`. Deferred to Phase 2,
+alongside the worktree reclaim it triggers (`t3o-09`). Unarchive must exist and be reachable from the
+moment archive does — a one-way door is a bug — but "reachable" here means dispatchable; the settings
+route is `t3o-06`'s problem.
 
 ## Out of scope
 
