@@ -53,9 +53,12 @@ function EnvironmentBoard({ environmentId }: { environmentId: EnvironmentId }) {
         projectId: defaultProject.id,
         title,
         cardType: "feature",
-        // Fractional key appended after the current Backlog tail (client
-        // computes, server stores — the pinOrderKey precedent).
-        orderKey: boardColumnAppendOrderKey(cards.filter((card) => card.stage === "backlog")),
+        // Fractional key appended after the tail of THIS project's Backlog
+        // column (client computes, server stores — the pinOrderKey
+        // precedent).
+        orderKey: boardColumnAppendOrderKey(
+          cards.filter((card) => card.stage === "backlog" && card.projectId === defaultProject.id),
+        ),
       },
     });
     setTitle("");

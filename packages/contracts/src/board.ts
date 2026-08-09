@@ -464,8 +464,9 @@ export const BoardCardShell = Schema.Struct({
   type: BoardCardType,
   stage: BoardStage,
   orderKey: TrimmedNonEmptyString,
-  /** Capped at `BOARD_CARD_SHELL_TITLE_MAX_LENGTH` by `makeBoardCardShell`
-      (the aggregate's title is unbounded; the shell's is not). */
+  /** Capped at `BOARD_CARD_SHELL_TITLE_MAX_BYTES` (UTF-8) by
+      `makeBoardCardShell` (the aggregate's title is unbounded; the
+      shell's is not). */
   title: TrimmedNonEmptyString,
   // Flags — projected from `board_cards` (t3o-03).
   blocked: Schema.Boolean,
@@ -574,14 +575,30 @@ export function activeBoardCardThreadId(
  * bound (the byte-budget test saturates this cap). A column card renders
  * at most a couple of lines; the full title rides `board.subscribeCard`
  * with the rest of the detail.
+ *
+ * The cap is measured in UTF-8 **bytes**, not string length — the budget
+ * it protects is a wire-byte budget, and a 200-code-unit CJK title would
+ * serialize to ~3× the bytes of an ASCII one. Truncation walks code points
+ * (never splitting a surrogate pair) and reserves room for the ellipsis.
  */
-export const BOARD_CARD_SHELL_TITLE_MAX_LENGTH = 200;
+export const BOARD_CARD_SHELL_TITLE_MAX_BYTES = 200;
+
+const shellTitleEncoder = new TextEncoder();
+const ELLIPSIS_UTF8_BYTES = 3;
 
 function boundShellTitle(title: string): string {
-  if (title.length <= BOARD_CARD_SHELL_TITLE_MAX_LENGTH) return title;
+  if (shellTitleEncoder.encode(title).length <= BOARD_CARD_SHELL_TITLE_MAX_BYTES) return title;
+  let kept = "";
+  let keptBytes = 0;
+  for (const codePoint of title) {
+    const codePointBytes = shellTitleEncoder.encode(codePoint).length;
+    if (keptBytes + codePointBytes > BOARD_CARD_SHELL_TITLE_MAX_BYTES - ELLIPSIS_UTF8_BYTES) break;
+    kept += codePoint;
+    keptBytes += codePointBytes;
+  }
   // trimEnd before the ellipsis: a trailing space would fail the schema's
   // trimmed-string decode on the receiving client.
-  return `${title.slice(0, BOARD_CARD_SHELL_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
+  return `${kept.trimEnd()}…`;
 }
 
 /**

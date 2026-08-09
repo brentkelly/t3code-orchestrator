@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  BOARD_CARD_SHELL_TITLE_MAX_LENGTH,
+  BOARD_CARD_SHELL_TITLE_MAX_BYTES,
   BoardCardId,
   boardCardShellFromCard,
   BoardCardShell,
@@ -38,7 +38,7 @@ const utf8Bytes = (value: unknown): number =>
 const BOARD_CARD_SHELL_BYTE_BUDGET = 1024;
 
 /** Worst case: every optional populated (review stage), long ids, and the
-    title at exactly `BOARD_CARD_SHELL_TITLE_MAX_LENGTH`. */
+    title at exactly `BOARD_CARD_SHELL_TITLE_MAX_BYTES`. */
 const fullyPopulatedShell = {
   cardId: BoardCardId.make("0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
   key: "T3O-1234",
@@ -46,7 +46,7 @@ const fullyPopulatedShell = {
   type: "feature",
   stage: "review",
   orderKey: "mmmmzz",
-  title: "t".repeat(BOARD_CARD_SHELL_TITLE_MAX_LENGTH),
+  title: "t".repeat(BOARD_CARD_SHELL_TITLE_MAX_BYTES),
   blocked: true,
   dependencyCount: 12,
   hasBrief: true,
@@ -154,16 +154,34 @@ describe("board card shell derivation", () => {
     expect(shell.awaitingInput).toBe(false);
   });
 
-  it("caps the shell title at the documented maximum", () => {
+  it("caps the shell title at the documented UTF-8 byte maximum", () => {
+    const utf8Length = (value: string) => new TextEncoder().encode(value).length;
     const shell = boardCardShellFromCard({
       ...typicalCard(1),
       title: "long ".repeat(200).trim(),
     });
-    expect(shell.title.length).toBeLessThanOrEqual(BOARD_CARD_SHELL_TITLE_MAX_LENGTH);
+    expect(utf8Length(shell.title)).toBeLessThanOrEqual(BOARD_CARD_SHELL_TITLE_MAX_BYTES);
     expect(shell.title.endsWith("…")).toBe(true);
     // A title at the cap passes through untouched.
-    const exact = "t".repeat(BOARD_CARD_SHELL_TITLE_MAX_LENGTH);
+    const exact = "t".repeat(BOARD_CARD_SHELL_TITLE_MAX_BYTES);
     expect(boardCardShellFromCard({ ...typicalCard(2), title: exact }).title).toBe(exact);
+  });
+
+  it("caps multi-byte titles by encoded size and never splits a surrogate pair", () => {
+    const utf8Length = (value: string) => new TextEncoder().encode(value).length;
+    // 200 CJK code points ≈ 600 UTF-8 bytes; the shell must stay within the
+    // byte cap, and therefore within the overall byte budget.
+    const cjk = boardCardShellFromCard({ ...typicalCard(1), title: "板".repeat(200) });
+    expect(utf8Length(cjk.title)).toBeLessThanOrEqual(BOARD_CARD_SHELL_TITLE_MAX_BYTES);
+    expect(cjk.title.endsWith("…")).toBe(true);
+    expect(
+      utf8Length(encodeShell({ ...fullyPopulatedShell, title: cjk.title }).title as string),
+    ).toBeLessThanOrEqual(BOARD_CARD_SHELL_TITLE_MAX_BYTES);
+    // Astral code points (surrogate pairs in UTF-16) truncate on code-point
+    // boundaries — the result is always well-formed.
+    const emoji = boardCardShellFromCard({ ...typicalCard(2), title: "🚀".repeat(100) });
+    expect(utf8Length(emoji.title)).toBeLessThanOrEqual(BOARD_CARD_SHELL_TITLE_MAX_BYTES);
+    expect(emoji.title.isWellFormed()).toBe(true);
   });
 
   it("picks the most recently linked live thread as active", () => {
