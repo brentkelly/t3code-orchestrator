@@ -41,12 +41,21 @@ bodies; this is what makes the stage-specific card summaries cheap.
 A new streaming RPC for the one open card: brief body, plan bodies, full issue ledger, activity log,
 thread link detail.
 
-Seams (each one line, `T3o:` marked):
+Seams — **four spreads, frozen** (`T3o:` marked). This spec originally enumerated five insertions
+per RPC method; `t3o-02a` forbids that. Every target is a literal that accepts a spread, so board
+RPCs register from board-owned registries and the seam never grows:
 
-- `packages/contracts/src/rpc.ts` — method name in `WS_METHODS`, an `Rpc.make`, a group member.
-- `apps/server/src/ws.ts` — handler.
-- `apps/server/src/auth/RpcAuthorization.ts` — scope entry. Use the same scope class as thread
-  reads; do not invent a new scope tier.
+- `packages/contracts/src/rpc.ts` — `...BOARD_WS_METHODS,` into `WS_METHODS` (object literal,
+  `rpc.ts:168`) and `...BOARD_RPCS,` into `WsRpcGroup` (`RpcGroup.make` is variadic, `rpc.ts:805`).
+  Both registries live in `packages/contracts/src/board.ts` beside `BOARD_CLIENT_COMMANDS`.
+- `apps/server/src/ws.ts` — `...boardRpcHandlers(deps),` into the `WsRpcGroup.toLayer` handler
+  object (`ws.ts:355`). Same injected-factory shape as `boardSnapshotQueryMethods`.
+- `apps/server/src/auth/RpcAuthorization.ts` — `...BOARD_RPC_SCOPES,` into `RPC_REQUIRED_SCOPES`
+  (object literal, `RpcAuthorization.ts:23`). Use the same scope class as thread reads; do not
+  invent a new scope tier.
+
+Adding a second board RPC (the post-MVP review pipeline will want several) must touch zero
+upstream files. Prove it the way `t3o-03` proves the command seams: core-only diff, empty.
 
 ### Client runtime
 
