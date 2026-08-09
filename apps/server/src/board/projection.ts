@@ -530,6 +530,10 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
   ];
 }
 
+/** The compiled query set — built once at snapshot-query assembly and
+    threaded through every reader below, never rebuilt per call. */
+type BoardCardQueries = ReturnType<typeof makeBoardCardQueries>;
+
 /**
  * The board slice rehydrated from the projection tables, or null when no
  * card has ever been created (the board field stays absent then — see the
@@ -537,9 +541,8 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
  * model so unarchive and replay work; the shell filter drops them.
  */
 export function loadBoardState(
-  sql: SqlClient.SqlClient,
+  queries: BoardCardQueries,
 ): Effect.Effect<BoardState | null, ProjectionRepositoryError> {
-  const queries = makeBoardCardQueries(sql);
   return Effect.all([
     queries.listBoardCardRows(),
     queries.listBoardCardThreadLinkRows(),
@@ -585,10 +588,10 @@ export function loadBoardState(
 // through `board ?? EMPTY_BOARD_STATE` / `cards ?? []`, so absent and empty
 // are equivalent downstream.
 export function withBoardReadModel(
-  sql: SqlClient.SqlClient,
+  queries: BoardCardQueries,
   readModel: Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>,
 ): Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError> {
-  return Effect.all([readModel, loadBoardState(sql)]).pipe(
+  return Effect.all([readModel, loadBoardState(queries)]).pipe(
     Effect.map(([model, board]) => (board === null ? model : { ...model, board })),
   );
 }
@@ -612,10 +615,9 @@ function compareBoardCardShellRows(
  * the read model, so unarchive can bring them back.
  */
 export function withBoardShellCards(
-  sql: SqlClient.SqlClient,
+  queries: BoardCardQueries,
   snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
 ): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
-  const queries = makeBoardCardQueries(sql);
   const shellRows = Effect.all([
     queries.listBoardCardShellRows(),
     queries.listBoardCardThreadLinkRows(),
@@ -668,9 +670,8 @@ export function withBoardShellCards(
  * loader: the reader runs on every board event for a subscribed card.
  */
 export function makeBoardCardDetailLoader(
-  sql: SqlClient.SqlClient,
+  queries: BoardCardQueries,
 ): (cardId: BoardCardId) => Effect.Effect<BoardCardDetail | null, ProjectionRepositoryError> {
-  const queries = makeBoardCardQueries(sql);
   return (cardId) =>
     Effect.all([
       queries.findBoardCardRow(cardId),
@@ -750,12 +751,14 @@ export function boardSnapshotQueryMethods(
   // an earlier key (TS2783). Optional keys express "board may override any
   // subset", so wrapping more methods later needs no seam change.
 ): Partial<ProjectionSnapshotQueryShape> & BoardSnapshotQueryMethods {
+  // Compiled once here — every reader below closes over the same query set.
+  const queries = makeBoardCardQueries(sql);
   return {
     // Board cards join the engine's command read model (D8).
-    getCommandReadModel: () => withBoardReadModel(sql, base.getCommandReadModel()),
+    getCommandReadModel: () => withBoardReadModel(queries, base.getCommandReadModel()),
     // Bounded card shells ride the shell snapshot (D2/D7).
-    getShellSnapshot: () => withBoardShellCards(sql, base.getShellSnapshot()),
+    getShellSnapshot: () => withBoardShellCards(queries, base.getShellSnapshot()),
     // Board-only detail reader for board.subscribeCard (t3o-04).
-    boardCardDetail: makeBoardCardDetailLoader(sql),
+    boardCardDetail: makeBoardCardDetailLoader(queries),
   };
 }
