@@ -156,6 +156,20 @@ Record what it cost — how many files conflicted, which seams needed re-applyin
 The central bet of this fork is that ~20 mechanical seams stay cheap, and the only evidence that
 settles it is a few merges done by hand. `t3o-02` is the first place that gets written down.
 
+### Merge log
+
+| Date       | Upstream delta                                                       | Conflicts                                                                                                                                     | Resolution                                                                                                                                       | Time                                                                                                                                                                               |
+| ---------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-09 | 20 commits, 101 files, ~9.2k insertions (`main` ff'd to `05eb05118`) | **1 file**: `apps/server/src/persistence/Migrations.ts` — two hunks, both "upstream appended `039` where we appended `900`" at the list tails | Kept both lines, upstream's first. No seam needed re-applying; all 38 markers survived intact (verified with `rg "T3o:"` against the inventory). | Merge + resolution ≈ 1 minute; full verification (install, typechecks for contracts/client-runtime/server/web, walking-skeleton + engine + pipeline tests, all green) ≈ 4 minutes. |
+
+Notes from the first run: the merge was executed against a scratch branch carrying the full `t3o-02`
+seam set (a merge against bare `t3o` would not have exercised the seams). Every other seamed file —
+including the two heaviest (`orchestration.ts`, `ProjectionPipeline.ts`) — auto-merged cleanly
+through real upstream churn. The one conflict was the migration registry, which is a _predictable_
+conflict site: upstream appends `NNN` at the same tail where we append `9xx`, and the resolution is
+always "keep both, upstream first". `routeTree.gen.ts` also auto-merged; had it conflicted, the
+resolution is regenerate, not hand-merge.
+
 ---
 
 ## Seam inventory
@@ -215,7 +229,7 @@ Marker-less upstream churn that rides along with `t3o-02`:
   Never hand-edited; on a conflicted merge, take either side and regenerate.
 
 Where the spec's estimate met reality: the spec listed ~20 insertion points; the landed count is
-**38 markers across 13 upstream files**. The delta is almost entirely the card aggregate (D9)
+**38 markers across 14 upstream files**. The delta is almost entirely the card aggregate (D9)
 rippling through three narrowly-typed `ProjectId | ThreadId` unions (event store, receipts, engine)
 plus one import line per touched file — all mechanical one-liners. Two planned seams turned out to
 be unnecessary: `OrchestrationCommand` (derived union — covered by the dispatchable append) and
