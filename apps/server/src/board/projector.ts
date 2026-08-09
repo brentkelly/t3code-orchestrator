@@ -2,13 +2,15 @@
  * T3o board projector — `projectBoardEvent`.
  *
  * Applies board events to the in-memory orchestration read model, delegated
- * to from the upstream projector's switch. Also maps board events to card
- * shell deltas for the shell stream (delegated to from ws.ts), which needs no
- * projection re-read: the created payload already carries the whole card.
+ * to from the upstream projector behind the `isBoardEvent` predicate. Also
+ * maps board events to card shell deltas for the shell stream (delegated to
+ * from ws.ts behind the same predicate), which needs no projection re-read:
+ * the created payload already carries the whole card.
  */
 import {
   BoardCardCreatedPayload,
   EMPTY_BOARD_STATE,
+  isBoardEvent,
   type BoardCard,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -24,6 +26,9 @@ import {
 } from "../orchestration/Errors.ts";
 
 export type BoardEvent = Extract<OrchestrationEvent, { type: `board.${string}` }>;
+
+// Re-exported so upstream seams import predicate + delegate on one line.
+export { isBoardEvent };
 
 const decodeBoardCardCreatedPayload = Schema.decodeUnknownEffect(BoardCardCreatedPayload);
 
@@ -74,7 +79,7 @@ export function projectBoardEvent(
   }
 }
 
-export function boardCardShellStreamEvent(
+export function boardShellStreamEvent(
   event: BoardEvent,
 ): Option.Option<OrchestrationShellStreamEvent> {
   switch (event.type) {

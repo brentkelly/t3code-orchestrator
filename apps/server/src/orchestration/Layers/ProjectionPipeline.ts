@@ -55,7 +55,7 @@ import {
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
 // T3o: board card persisted projection lives in the board module.
-import { BOARD_CARDS_PROJECTOR_NAME, makeBoardProjectors } from "../../board/projection.ts";
+import { BOARD_PROJECTOR_NAMES, makeBoardProjectors } from "../../board/projection.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -67,8 +67,8 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
-  // T3o: board card projection.
-  boardCards: BOARD_CARDS_PROJECTOR_NAME,
+  // T3o: board projector names join the registry (grow in the board module).
+  ...BOARD_PROJECTOR_NAMES,
 } as const;
 
 type ProjectorName =

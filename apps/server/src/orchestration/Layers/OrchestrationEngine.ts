@@ -40,6 +40,8 @@ import {
   type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
+// T3o: board command aggregate refs live in the board module.
+import { boardCommandAggregateRef, isBoardCommand } from "../../board/decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -71,13 +73,9 @@ function commandToAggregateRef(command: OrchestrationCommand): {
         aggregateKind: "project",
         aggregateId: command.projectId,
       };
-    // T3o: board commands aggregate on the card.
-    case "board.card.create":
-      return {
-        aggregateKind: "card",
-        aggregateId: command.cardId,
-      };
     default:
+      // T3o: board commands aggregate on the card (ref built in the board module).
+      if (isBoardCommand(command)) return boardCommandAggregateRef(command);
       return {
         aggregateKind: "thread",
         aggregateId: command.threadId,
