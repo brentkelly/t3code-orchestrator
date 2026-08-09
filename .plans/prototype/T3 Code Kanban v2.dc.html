@@ -1,0 +1,2394 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fcfcfc; --fg:#27272a; --card:#ffffff; --popover:#ffffff;
+  --muted:#fafafa; --muted-fg:#71717a; --accent:#f4f4f5; --accent-fg:#18181b;
+  --border:#e4e4e7; --input:#d4d4d8; --sidebar:#fafafa; --sidebar-row-hover:#fcfcfc;
+  --column-bg:color-mix(in srgb,var(--fg) 4.5%,transparent); --column-bg-over:color-mix(in srgb,var(--fg) 9%,transparent);
+  --sidebar-row-selected:#ffffff; --primary:oklch(0.488 0.217 264); --primary-fg:#fff;
+  --info:#3b82f6; --info-fg:#1d4ed8; --success:#10b981; --success-fg:#047857;
+  --warning:#f59e0b; --warning-fg:#b45309; --destructive:#ef4444; --destructive-fg:#b91c1c;
+  --radius:10px; --control-radius:0.5rem; --sidebar-content-inset:0.5rem; --sidebar-control-gap:0.5rem;
+  --sidebar-row-content-inset:0.625rem;
+  --sidebar-icon-color:color-mix(in srgb,var(--muted-fg) 60%,var(--sidebar));
+  --shadow-xs:0 1px 2px rgb(0 0 0 / 5%);
+  --shadow-pop:0 24px 64px -24px rgb(0 0 0 / 35%);
+  --grain:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  --font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace;
+}
+html[data-t3-theme="dark"]{
+  color-scheme:dark;
+  --bg:#000000; --fg:#f1f3f7; --card:#18181b; --popover:#141416;
+  --column-bg:#131316; --column-bg-over:#1e1e22;
+  --muted:#0a0a0a; --muted-fg:#a3a3a3; --accent:#191a1d; --accent-fg:#f7f9ff;
+  --border:rgb(255 255 255 / 8%); --input:rgb(255 255 255 / 18%); --sidebar:#000000;
+  --sidebar-row-hover:rgb(255 255 255 / 6%); --sidebar-row-selected:rgb(255 255 255 / 8%);
+  --primary:oklch(0.588 0.217 264); --primary-fg:#fff;
+  --info-fg:#60a5fa; --success-fg:#34d399; --warning-fg:#fbbf24; --destructive-fg:#f87171;
+  --shadow-xs:none; --shadow-pop:0 24px 72px -20px rgb(0 0 0 / 90%);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);
+  -webkit-font-smoothing:antialiased;background-image:var(--grain);background-size:256px 256px}
+a{color:var(--info-fg);text-decoration:none}
+a:hover{text-decoration:underline}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgb(140 140 150 / 35%);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgb(140 140 150 / 55%)}
+@keyframes t3pop{from{opacity:0;transform:scale(.98) translateY(4px)}to{opacity:1;transform:none}}
+@keyframes t3fade{from{opacity:0}to{opacity:1}}
+@keyframes t3slide{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+@keyframes t3spin{to{transform:rotate(360deg)}}
+@keyframes t3pulse{0%,100%{opacity:1}50%{opacity:.35}}
+</style>
+</helmet>
+
+<div style="display:flex;height:100vh;width:100%;overflow:hidden;background:var(--bg);color:var(--fg);font-size:14px">
+
+  <sc-if value="{{ isThreads }}" hint-placeholder-val="{{ true }}">
+  <aside style="width:288px;min-width:288px;display:flex;flex-direction:column;background:var(--sidebar);border-right:1px solid var(--border);overflow:hidden">
+    <div style="position:relative;height:104px;flex:none;overflow:hidden">
+      <div style="position:absolute;inset:0;height:80px;overflow:hidden;pointer-events:none;-webkit-mask-image:linear-gradient(to bottom,black 0%,black 55%,transparent 92%);mask-image:linear-gradient(to bottom,black 0%,black 55%,transparent 92%)">
+        <svg width="100%" height="100%" viewBox="0 0 8192 96" preserveAspectRatio="xMinYMin slice" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="t3-night-sky" x1="24" y1="0" x2="264" y2="96" gradientUnits="userSpaceOnUse" spreadMethod="reflect">
+              <stop stop-color="#07152F"></stop>
+              <stop offset="0.5" stop-color="#151443"></stop>
+              <stop offset="1" stop-color="#32155B"></stop>
+            </linearGradient>
+            <radialGradient id="t3-night-glow" cx="0" cy="0" r="1" gradientTransform="translate(216 18) rotate(137) scale(120 84)" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#5165D8" stop-opacity="0.4"></stop>
+              <stop offset="0.5" stop-color="#283075" stop-opacity="0.16"></stop>
+              <stop offset="1" stop-color="#111635" stop-opacity="0"></stop>
+            </radialGradient>
+            <linearGradient id="t3-night-cloud" x1="0" y1="60" x2="288" y2="96" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#4EA4FF" stop-opacity="0.5"></stop>
+              <stop offset="0.52" stop-color="#696FEA" stop-opacity="0.62"></stop>
+              <stop offset="1" stop-color="#A85BEA" stop-opacity="0.5"></stop>
+            </linearGradient>
+            <filter id="t3-night-soft" x="-24" y="-24" width="336" height="144" filterUnits="userSpaceOnUse"><feGaussianBlur stdDeviation="4"></feGaussianBlur></filter>
+            <pattern id="t3-night-stars" width="288" height="96" patternUnits="userSpaceOnUse">
+              <g fill="#E4EAFF">
+                <circle cx="14" cy="10" r="0.6" fill-opacity="0.85"></circle>
+                <circle cx="38" cy="22" r="0.4" fill-opacity="0.55"></circle>
+                <circle cx="58" cy="8" r="0.5" fill-opacity="0.7"></circle>
+                <circle cx="84" cy="16" r="0.4" fill-opacity="0.5"></circle>
+                <circle cx="104" cy="7" r="0.6" fill-opacity="0.8"></circle>
+                <circle cx="126" cy="20" r="0.4" fill-opacity="0.55"></circle>
+                <circle cx="148" cy="11" r="0.5" fill-opacity="0.7"></circle>
+                <circle cx="170" cy="24" r="0.4" fill-opacity="0.5"></circle>
+                <circle cx="192" cy="9" r="0.6" fill-opacity="0.8"></circle>
+                <circle cx="214" cy="18" r="0.4" fill-opacity="0.55"></circle>
+                <circle cx="236" cy="8" r="0.5" fill-opacity="0.7"></circle>
+                <circle cx="258" cy="20" r="0.45" fill-opacity="0.6"></circle>
+                <circle cx="278" cy="11" r="0.55" fill-opacity="0.75"></circle>
+                <circle cx="26" cy="34" r="0.4" fill-opacity="0.45"></circle>
+                <circle cx="118" cy="34" r="0.4" fill-opacity="0.45"></circle>
+                <circle cx="202" cy="32" r="0.4" fill-opacity="0.5"></circle>
+                <circle cx="268" cy="34" r="0.4" fill-opacity="0.45"></circle>
+              </g>
+              <g stroke="#C8D7FF" stroke-linecap="round" stroke-opacity="0.7" stroke-width="0.6">
+                <path d="M68.5 28H71.5"></path><path d="M70 26.5V29.5"></path>
+                <path d="M158.5 36H161.5"></path><path d="M160 34.5V37.5"></path>
+                <path d="M244.5 26H247.5"></path><path d="M246 24.5V27.5"></path>
+              </g>
+            </pattern>
+            <pattern id="t3-night-glows" width="640" height="96" patternUnits="userSpaceOnUse"><rect width="640" height="96" fill="url(#t3-night-glow)"></rect></pattern>
+          </defs>
+          <rect width="100%" height="96" fill="url(#t3-night-sky)"></rect>
+          <rect width="100%" height="96" fill="url(#t3-night-glows)"></rect>
+          <rect width="100%" height="96" fill="url(#t3-night-stars)"></rect>
+          <g filter="url(#t3-night-soft)"><path d="M-12 88C-12 74 0 63 14 63C18 50 30 41 44 41C58 41 70 49 74 62C79 57 86 54 94 54C110 54 123 66 124 82C132 83 138 88 141 96H-12V88Z" fill="url(#t3-night-cloud)"></path></g>
+          <g filter="url(#t3-night-soft)"><path d="M150 96C151 84 161 75 173 75C176 64 186 57 198 57C210 57 220 64 223 75C231 75 238 80 241 87C250 87 257 91 260 96H150Z" fill="url(#t3-night-cloud)" fill-opacity="0.8"></path></g>
+        </svg>
+      </div>
+      <div style="position:relative;display:flex;align-items:center;gap:12px;height:52px;padding:0 12px">
+        <button type="button" onClick="{{ noop }}" title="Toggle main sidebar" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;border:1px solid transparent;background:transparent;color:rgba(255,255,255,.9);cursor:pointer" style-hover="background:rgba(255,255,255,.15)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path></svg>
+        </button>
+        <div style="display:flex;align-items:baseline;gap:5px;font-size:15px;letter-spacing:-0.01em">
+          <span style="font-weight:700;color:#fff">T3</span><span style="font-weight:500;color:rgba(255,255,255,.82)">Code</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:4px;padding:8px">
+      <div style="display:flex;align-items:center;gap:4px">
+        <div style="display:flex;flex:1;min-width:0;align-items:center;gap:8px;height:32px;padding:6px 8px;border-radius:8px;color:var(--muted-fg);font:500 14px var(--font-sans)" style-hover="background:var(--sidebar-row-hover);color:var(--fg)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--sidebar-icon-color,#9a9aa2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+          <input type="text" placeholder="Search" style="flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--fg);font:500 14px var(--font-sans)">
+        </div>
+        <button type="button" onClick="{{ openCreate }}" title="New task" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;flex:none;border:none;border-radius:8px;background:transparent;color:var(--sidebar-icon-color,#9a9aa2);cursor:pointer" style-hover="background:var(--sidebar-row-hover);color:var(--fg)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"></path></svg>
+        </button>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <button type="button" onClick="{{ noop }}" style="display:flex;flex:1;min-width:0;align-items:center;gap:8px;height:32px;padding:6px 9px;border:none;border-radius:8px;background:transparent;color:var(--fg);font:500 14px var(--font-sans);cursor:pointer;text-align:left" style-hover="background:var(--sidebar-row-hover)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--sidebar-icon-color,#9a9aa2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ crumbProject }}</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--sidebar-icon-color,#9a9aa2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-right:-1px"><path d="m6 9 6 6 6-6"></path></svg>
+        </button>
+        <button type="button" onClick="{{ noop }}" title="Add project" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;flex:none;border:none;border-radius:8px;background:transparent;color:var(--sidebar-icon-color,#9a9aa2);cursor:pointer" style-hover="background:var(--sidebar-row-hover);color:var(--fg)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6"></path><path d="M9 13h6"></path><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <div style="flex:1;min-height:0;overflow-y:auto;padding:6px 8px 8px">
+      <sc-if value="{{ isBoard }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <div style="padding:6px 10px 4px;font:500 10.5px var(--font-sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)">Boards</div>
+          <sc-for list="{{ projectNav }}" as="p" hint-placeholder-count="4">
+            <button type="button" onClick="{{ p.select }}" style="{{ p.style }}">
+              <span style="width:6px;height:6px;border-radius:99px;background:{{ p.dot }};flex:none"></span>
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left">{{ p.name }}</span>
+              <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ p.count }}</span>
+            </button>
+          </sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isThreads }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:1px">
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 10px 6px">
+            <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">Active</span>
+            <span style="flex:1;height:1px;background:var(--border)"></span>
+          </div>
+          <sc-for list="{{ liveThreads }}" as="t" hint-placeholder-count="3">
+            <div onClick="{{ t.open }}" title="{{ t.tip }}" style="{{ t.style }}">
+              <sc-if value="{{ t.working }}" hint-placeholder-val="{{ false }}">
+                <span style="width:13px;height:13px;flex:none;border-radius:99px;border:2px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+              </sc-if>
+              <sc-if value="{{ t.waiting }}" hint-placeholder-val="{{ false }}">
+                <span style="width:13px;height:13px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--info-fg);animation:t3pulse 1.8s ease-in-out infinite">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5"></path><path d="M12 17h.01"></path></svg>
+                </span>
+              </sc-if>
+              <sc-if value="{{ t.idle }}" hint-placeholder-val="{{ false }}">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--sidebar-icon-color,#9a9aa2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+              </sc-if>
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.title }}</span>
+              <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ t.age }}</span>
+            </div>
+          </sc-for>
+          <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 6px">
+            <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">Settled</span>
+            <span style="flex:1;height:1px;background:var(--border)"></span>
+          </div>
+          <sc-for list="{{ threads }}" as="t" hint-placeholder-count="8">
+            <div style="display:flex;align-items:center;gap:8px;height:32px;padding:6px 10px;border-radius:8px;color:var(--fg);font:500 14px var(--font-sans);cursor:pointer" style-hover="background:var(--sidebar-row-hover)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--sidebar-icon-color,#9a9aa2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.title }}</span>
+              <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ t.age }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="flex:none;border-top:1px solid var(--border);padding:8px;display:flex;align-items:center;gap:6px">
+      <button type="button" onClick="{{ noop }}" style="display:flex;flex:1;align-items:center;gap:8px;height:32px;padding:6px 10px;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);font:500 14px var(--font-sans);cursor:pointer;text-align:left" style-hover="background:var(--sidebar-row-hover);color:var(--fg)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--sidebar-icon-color,#9a9aa2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        Settings
+      </button>
+      <button type="button" onClick="{{ toggleTheme }}" title="Toggle theme" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px;border:none;background:transparent;color:var(--sidebar-icon-color,#9a9aa2);cursor:pointer" style-hover="background:var(--sidebar-row-hover);color:var(--fg)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>
+      </button>
+    </div>
+  </aside>
+  </sc-if>
+
+  <main style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">
+    <header style="display:flex;align-items:center;gap:12px;height:52px;min-height:52px;padding:0 14px;flex:none">
+      <sc-if value="{{ isBoard }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:baseline;gap:5px;flex:none;font-size:15px;letter-spacing:-0.01em;padding-right:2px">
+          <span style="font-weight:700;color:var(--fg)">T3</span><span style="font-weight:500;color:var(--muted-fg)">Code</span>
+        </div>
+      </sc-if>
+      <div style="display:flex;align-items:center;gap:3px;padding:2px;border-radius:10px;background:var(--accent);flex:none">
+        <button type="button" onClick="{{ showThreads }}" style="{{ threadsTabStyle }}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+          Threads
+        </button>
+        <button type="button" onClick="{{ showBoard }}" style="{{ boardTabStyle }}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path><path d="M15 3v18"></path></svg>
+          Board
+        </button>
+      </div>
+      <sc-if value="{{ isThreads }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;color:var(--muted-fg)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+          <span style="font-size:13.5px;color:var(--muted-fg);white-space:nowrap">{{ crumbProject }}</span>
+          <span style="color:var(--border)">/</span>
+          <span style="font-size:13.5px;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ crumbLeaf }}</span>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isBoard }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:1;min-width:0"></div>
+      </sc-if>
+      <sc-if value="{{ isBoard }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:6px;flex:none">
+          <div style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 7px;border:1px solid var(--input);border-radius:8px;background:var(--popover);box-shadow:var(--shadow-xs)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+            <input type="text" value="{{ query }}" onInput="{{ onQuery }}" placeholder="Filter tasks" style="border:none;outline:none;background:transparent;color:var(--fg);font:500 12px var(--font-sans);width:104px">
+          </div>
+          <button type="button" onClick="{{ openCreate }}" style="display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 7px;border:1px solid var(--primary);border-radius:8px;background:var(--primary);color:var(--primary-fg);font:500 12px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="filter:brightness(1.08)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+            New task
+          </button>
+          <button type="button" onClick="{{ toggleTheme }}" title="Toggle theme" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--muted-fg);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="color:var(--fg)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>
+          </button>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isThreads }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:6px;flex:none">
+          <div style="display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 7px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12px var(--font-sans);box-shadow:var(--shadow-xs)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add action
+          </div>
+          <div style="display:inline-flex;align-items:stretch;border:1px solid var(--input);border-radius:8px;background:var(--popover);box-shadow:var(--shadow-xs);overflow:hidden">
+            <span style="display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px;color:var(--fg);font:500 12px var(--font-sans)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>Open
+            </span>
+            <span style="width:1px;background:var(--border)"></span>
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;color:var(--muted-fg)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+            </span>
+          </div>
+          <div style="display:inline-flex;align-items:stretch;border:1px solid var(--input);border-radius:8px;background:var(--popover);box-shadow:var(--shadow-xs);overflow:hidden">
+            <span style="display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px;color:var(--fg);font:500 12px var(--font-sans)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>Commit &amp; push
+            </span>
+            <span style="width:1px;background:var(--border)"></span>
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;color:var(--muted-fg)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+            </span>
+          </div>
+        </div>
+      </sc-if>
+    </header>
+
+    <sc-if value="{{ threadOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:8px 24px 40px">
+        <div style="width:100%;max-width:760px;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;gap:10px;padding-top:8px">
+            <h1 style="margin:0;font:600 20px/1.3 var(--font-sans);letter-spacing:-0.015em;color:var(--fg);flex:1;min-width:0;text-wrap:pretty">{{ threadView.title }}</h1>
+            <sc-if value="{{ threadView.working }}" hint-placeholder-val="{{ false }}">
+              <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px 0 7px;border-radius:7px;font:500 11.5px var(--font-sans);background:var(--accent);color:var(--muted-fg)">
+                <span style="width:11px;height:11px;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>Running
+              </span>
+            </sc-if>
+            <sc-if value="{{ threadView.waiting }}" hint-placeholder-val="{{ false }}">
+              <span style="display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px 0 7px;border-radius:7px;font:500 11.5px var(--font-sans);background:color-mix(in srgb,var(--info) 14%,transparent);color:var(--info-fg)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5"></path><path d="M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>Awaiting input
+              </span>
+            </sc-if>
+            <button type="button" onClick="{{ threadView.openCard }}" style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">{{ threadView.key }} on board</button>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="align-self:flex-end;max-width:560px;padding:10px 13px;border:1px solid var(--border);border-radius:14px 14px 4px 14px;background:var(--muted);font:400 13.5px/1.6 var(--font-sans);color:var(--fg)">{{ threadView.prompt }}</div>
+            <div style="display:flex;gap:10px">
+              <span style="width:20px;height:20px;flex:none;margin-top:2px;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444)"></span>
+              <div style="font:400 13.5px/1.65 var(--font-sans);color:var(--fg);max-width:600px">{{ threadView.summary }}</div>
+            </div>
+            <sc-if value="{{ threadView.hasQuestion }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;gap:10px">
+                <span style="width:20px;height:20px;flex:none;margin-top:2px;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444)"></span>
+                <div style="max-width:600px;padding:11px 13px;border:1px solid color-mix(in srgb,var(--info) 50%,transparent);border-radius:12px;background:color-mix(in srgb,var(--info) 8%,transparent);font:400 13.5px/1.6 var(--font-sans);color:var(--fg)">{{ threadView.question }}</div>
+              </div>
+            </sc-if>
+          </div>
+          <div style="border:1px solid var(--border);border-radius:18px;background:var(--card);box-shadow:0 12px 28px -18px rgb(0 0 0 / 40%);padding:14px 16px 10px;margin-top:4px">
+            <div style="min-height:40px;color:var(--muted-fg);font-size:14px">Reply to Claude</div>
+            <div style="display:flex;align-items:center;gap:14px;padding-top:8px;color:var(--muted-fg);font-size:12.5px">
+              <span style="display:inline-flex;align-items:center;gap:7px;color:var(--fg)"><span style="width:13px;height:13px;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444)"></span>Claude Opus 4.8</span>
+              <span>High</span>
+              <span style="flex:1"></span>
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:99px;background:var(--accent);color:var(--muted-fg)">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ threadEmpty }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;padding:0 24px 80px">
+        <h1 style="margin:0;font:400 34px/1.15 var(--font-sans);letter-spacing:-0.02em;text-align:center;color:var(--fg)">What should we build in <span style="border-bottom:1.5px solid color-mix(in srgb,var(--fg) 35%,transparent);padding-bottom:2px">core.agent.advisor</span>?</h1>
+        <div style="width:100%;max-width:760px;border:1px solid var(--border);border-radius:22px;background:var(--card);box-shadow:0 12px 28px -18px rgb(0 0 0 / 40%);padding:16px 18px 12px">
+          <div style="min-height:56px;color:var(--muted-fg);font-size:14.5px">Ask for follow-up changes or attach images</div>
+          <div style="display:flex;align-items:center;gap:14px;padding-top:10px;color:var(--muted-fg);font-size:13px">
+            <span style="display:inline-flex;align-items:center;gap:7px;color:var(--fg)"><span style="width:14px;height:14px;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444)"></span>Claude Opus 4.8</span>
+            <span>High</span>
+            <span style="width:1px;height:14px;background:var(--border)"></span>
+            <span>Full access</span>
+            <span>Build</span>
+            <span style="flex:1"></span>
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:99px;background:var(--accent);color:var(--muted-fg)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg>
+            </span>
+          </div>
+        </div>
+        <p style="margin:0;font-size:12.5px;color:var(--muted-fg)">Switch to <strong style="font-weight:600;color:var(--fg)">Board</strong> in the top-left to plan and track work.</p>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isBoard }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column">
+        <sc-for list="{{ boards }}" as="b" hint-placeholder-count="1">
+          <section style="{{ b.sectionStyle }}">
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 18px 10px;position:sticky;top:0;z-index:2;background:var(--bg)">
+              <div style="position:relative;flex:none">
+                <button type="button" onClick="{{ togglePicker }}" style="display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 8px 0 9px;border:1px solid transparent;border-radius:8px;background:transparent;cursor:pointer" style-hover="background:var(--accent);border-color:var(--border)">
+                  <span style="{{ b.dotStyle }}"></span>
+                  <span style="font:600 13.5px var(--font-sans);color:var(--fg);white-space:nowrap">{{ b.name }}</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:{{ pickerCaret }};transition:transform .12s ease"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                <sc-if value="{{ pickerOpen }}" hint-placeholder-val="{{ false }}">
+                  <div onClick="{{ togglePicker }}" style="position:fixed;inset:0;z-index:25"></div>
+                  <div style="position:absolute;top:34px;left:0;z-index:30;min-width:216px;padding:5px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:0 18px 34px -20px rgb(0 0 0 / 55%);display:flex;flex-direction:column;gap:1px">
+                    <sc-for list="{{ projectMenu }}" as="o" hint-placeholder-count="4">
+                      <button type="button" onClick="{{ o.select }}" style="{{ o.style }}">
+                        <span style="width:7px;height:7px;border-radius:99px;background:{{ o.dot }};flex:none"></span>
+                        <span style="flex:1;text-align:left;white-space:nowrap">{{ o.name }}</span>
+                        <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ o.count }}</span>
+                      </button>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+              <sc-if value="{{ b.isAll }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;align-items:center;gap:12px;margin-left:2px">
+                  <sc-for list="{{ b.legend }}" as="l" hint-placeholder-count="3">
+                    <span style="display:inline-flex;align-items:center;gap:6px;font:500 11.5px var(--font-sans);color:var(--muted-fg)">
+                      <span style="{{ l.swatch }}"></span>{{ l.name }}
+                    </span>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+            <sc-if value="{{ b.open }}" hint-placeholder-val="{{ true }}">
+              <div style="{{ b.rowStyle }}">
+                <sc-for list="{{ b.columns }}" as="col" hint-placeholder-count="8">
+                  <sc-if value="{{ col.collapsed }}" hint-placeholder-val="{{ false }}">
+                    <div onClick="{{ col.toggleCollapsed }}" onDragOver="{{ col.onDragOver }}" onDrop="{{ col.onDrop }}" title="Expand column" style="{{ col.collapsedStyle }}" style-hover="background:var(--column-bg-over)">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--muted-fg);flex:none"><path d="m9 6 6 6-6 6"></path></svg>
+                      <span style="font:500 11px var(--font-sans);color:var(--muted-fg);flex:none">{{ col.count }}</span>
+                      <span style="writing-mode:vertical-rl;font:600 14px var(--font-sans);letter-spacing:.01em;color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ col.name }}</span>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ col.expanded }}" hint-placeholder-val="{{ true }}">
+                  <div onDragOver="{{ col.onDragOver }}" onDrop="{{ col.onDrop }}" style="{{ col.style }}">
+                    <div style="display:flex;align-items:center;gap:4px;padding:2px 4px 10px">
+                      <div onMouseEnter="{{ col.onHeaderEnter }}" onMouseLeave="{{ col.onHeaderLeave }}" style="display:flex;align-items:center;gap:4px;min-width:0">
+                      <sc-if value="{{ col.showCollapse }}" hint-placeholder-val="{{ false }}">
+                        <button type="button" onClick="{{ col.toggleCollapsed }}" title="Collapse column" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:-4px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer;flex:none" style-hover="background:var(--accent);color:var(--fg)">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"></path></svg>
+                        </button>
+                      </sc-if>
+                      <span style="font:600 14px var(--font-sans);letter-spacing:.01em;color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ col.name }}</span>
+                      </div>
+                      <div style="flex:1"></div>
+                      <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ col.count }}</span>
+                      <button type="button" onClick="{{ col.add }}" title="New task here" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+                      </button>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                      <sc-for list="{{ col.items }}" as="c" hint-placeholder-count="2">
+                        <sc-if value="{{ c.isPlaceholder }}" hint-placeholder-val="{{ false }}">
+                          <div data-ph="1" style="{{ c.style }}"></div>
+                        </sc-if>
+                        <sc-if value="{{ c.isCard }}" hint-placeholder-val="{{ true }}">
+                        <article data-card="1" draggable="true" onDragStart="{{ c.onDragStart }}" onDragEnd="{{ c.onDragEnd }}" onClick="{{ c.open }}" title="{{ c.tip }}" style="{{ c.style }}" style-hover="border-color:color-mix(in srgb,var(--fg) 18%,transparent);box-shadow:0 4px 14px -8px rgb(0 0 0 / 35%)">
+                          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                            <span title="{{ c.projectName }}" style="{{ c.keyStyle }}">{{ c.key }}</span>
+                            <span style="{{ c.typeStyle }}">{{ c.type }}</span>
+                            <sc-if value="{{ c.working }}" hint-placeholder-val="{{ false }}">
+                              <span title="Thread running" style="width:11px;height:11px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+                            </sc-if>
+                            <sc-if value="{{ c.awaiting }}" hint-placeholder-val="{{ false }}">
+                              <span style="display:inline-flex;align-items:center;gap:3px;font:500 10.5px var(--font-sans);color:var(--info-fg)">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5"></path><path d="M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
+                                Input needed
+                              </span>
+                            </sc-if>
+                            <span style="flex:1"></span>
+                            <sc-if value="{{ c.blocked }}" hint-placeholder-val="{{ false }}">
+                              <span title="Blocked by dependencies" style="display:inline-flex;align-items:center;gap:3px;font:500 10.5px var(--font-sans);color:var(--info-fg)">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                                Blocked
+                              </span>
+                            </sc-if>
+                          </div>
+                          <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ c.title }}</div>
+                          <sc-if value="{{ c.hasMeta }}" hint-placeholder-val="{{ false }}">
+                            <div style="display:flex;align-items:center;gap:10px;margin-top:9px;color:var(--muted-fg)">
+                              <sc-if value="{{ c.hasDeps }}" hint-placeholder-val="{{ false }}">
+                                <span style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans)">
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"></path><path d="M15 7h2a5 5 0 1 1 0 10h-2"></path><line x1="8" x2="16" y1="12" y2="12"></line></svg>
+                                  {{ c.depCount }}
+                                </span>
+                              </sc-if>
+                              <sc-if value="{{ c.hasPlan }}" hint-placeholder-val="{{ false }}">
+                                <span title="1 attachment" style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans)">
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                                  1
+                                </span>
+                              </sc-if>
+                              <sc-if value="{{ c.hasPr }}" hint-placeholder-val="{{ false }}">
+                                <span style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans);color:var(--info-fg)">
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>
+                                  {{ c.prLabel }}
+                                </span>
+                              </sc-if>
+                              <span style="flex:1"></span>
+                              <sc-if value="{{ c.hasImage }}" hint-placeholder-val="{{ false }}">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path></svg>
+                              </sc-if>
+                            </div>
+                          </sc-if>
+                        </article>
+                        </sc-if>
+                      </sc-for>
+                      <sc-if value="{{ col.empty }}" hint-placeholder-val="{{ false }}">
+                        <button type="button" onClick="{{ col.add }}" style="border:1px dashed var(--border);border-radius:10px;background:transparent;color:var(--muted-fg);font:400 12px var(--font-sans);padding:14px 10px;cursor:pointer" style-hover="border-color:var(--input);color:var(--fg)">Drop a task here</button>
+                      </sc-if>
+                    </div>
+                  </div>
+                  </sc-if>
+                </sc-for>
+              </div>
+            </sc-if>
+          </section>
+        </sc-for>
+      </div>
+    </sc-if>
+  </main>
+
+  <sc-if value="{{ artifact }}" hint-placeholder-val="{{ false }}">
+    <aside style="position:fixed;top:0;right:0;bottom:0;width:560px;max-width:92vw;z-index:60;display:flex;flex-direction:column;background:var(--card);border-left:1px solid var(--border);box-shadow:var(--shadow-pop);animation:t3slide 180ms ease-out">
+      <div style="display:flex;align-items:center;gap:10px;height:52px;flex:none;padding:0 14px;border-bottom:1px solid var(--border)">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;background:var(--accent);color:var(--muted-fg)">
+          <sc-if value="{{ artifactIsPlan }}" hint-placeholder-val="{{ true }}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>
+          </sc-if>
+          <sc-if value="{{ artifactIsPr }}" hint-placeholder-val="{{ false }}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>
+          </sc-if>
+        </span>
+        <span style="font:600 13.5px var(--font-sans)">{{ artifact.title }}</span>
+        <span style="font:500 11px var(--font-sans);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:1px 6px;background:var(--muted)">{{ artifact.meta }}</span>
+        <span style="flex:1"></span>
+        <button type="button" onClick="{{ closeArtifact }}" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+        </button>
+      </div>
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:18px 20px 40px">{{ artifactBody }}</div>
+    </aside>
+  </sc-if>
+
+  <sc-if value="{{ activeCard }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeCard }}" style="position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:32px;background:color-mix(in srgb,var(--bg) 60%,transparent);backdrop-filter:blur(4px);animation:t3fade 160ms ease-out">
+      <div onClick="{{ stop }}" style="{{ cardModalStyle }}">
+        <div style="display:flex;align-items:center;gap:9px;padding:16px 16px 0">
+          <span style="font:500 11.5px var(--font-sans);color:var(--muted-fg)">{{ activeCard.key }}</span>
+          <span style="{{ activeCard.typeStyle }}">{{ activeCard.type }}</span>
+          <span style="{{ activeCard.statusStyle }}">{{ activeCard.statusName }}</span>
+          <sc-if value="{{ activeCard.threadWorking }}" hint-placeholder-val="{{ false }}">
+            <span style="display:inline-flex;align-items:center;gap:6px;height:18px;padding:0 8px 0 6px;border-radius:6px;font:500 11px var(--font-sans);background:var(--accent);color:var(--muted-fg)">
+              <span style="width:10px;height:10px;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+              Thread running
+            </span>
+          </sc-if>
+          <sc-if value="{{ activeCard.threadWaiting }}" hint-placeholder-val="{{ false }}">
+            <span style="display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 8px 0 6px;border-radius:6px;font:500 11px var(--font-sans);background:color-mix(in srgb,var(--info) 14%,transparent);color:var(--info-fg)">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5"></path><path d="M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
+              Awaiting input
+            </span>
+          </sc-if>
+          <span style="flex:1"></span>
+          <sc-if value="{{ hasThreadPane }}" hint-placeholder-val="{{ true }}">
+          <button type="button" onClick="{{ toggleBrief }}" title="{{ briefToggleTitle }}" style="{{ briefToggleStyle }}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>
+            Brief
+          </button>
+          </sc-if>
+          <button type="button" onClick="{{ closeCard }}" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+          </button>
+        </div>
+        <sc-if value="{{ titleEditing }}" hint-placeholder-val="{{ false }}">
+          <div contenteditable="true" ref="{{ titleEditRef }}" onBlur="{{ commitTitle }}" onKeyDown="{{ titleKey }}" style="margin:8px 10px 0;padding:2px 6px;border-radius:7px;font:600 21px/1.25 var(--font-sans);letter-spacing:-0.015em;color:var(--fg);text-wrap:pretty;outline:none;background:var(--muted);box-shadow:0 0 0 1px var(--primary)"></div>
+        </sc-if>
+        <sc-if value="{{ titleViewing }}" hint-placeholder-val="{{ true }}">
+          <h2 onClick="{{ startTitleEdit }}" title="Click to edit" style="margin:8px 10px 0;padding:2px 6px;border-radius:7px;font:600 21px/1.25 var(--font-sans);letter-spacing:-0.015em;color:var(--fg);text-wrap:pretty;cursor:text" style-hover="background:var(--accent)">{{ activeCard.title }}</h2>
+        </sc-if>
+        <div style="{{ cardBodyStyle }}">
+          <sc-if value="{{ briefPane }}" hint-placeholder-val="{{ false }}">
+          <section style="display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--border);background:color-mix(in srgb,var(--muted) 55%,var(--card))">
+            <div style="display:flex;align-items:center;gap:8px;flex:none;height:44px;padding:0 12px 0 14px;border-bottom:1px solid var(--border)">
+              <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Brief</span>
+              <span style="flex:1"></span>
+              <button type="button" onClick="{{ toggleBrief }}" title="Back to thread" style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border:1px solid var(--input);border-radius:7px;background:var(--popover);color:var(--muted-fg);font:500 11.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent);color:var(--fg)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+                Back to thread
+              </button>
+            </div>
+            <div style="flex:1;min-height:0;overflow-y:auto;padding:16px 18px 24px">
+              <sc-if value="{{ briefEditing }}" hint-placeholder-val="{{ false }}">
+                <div contenteditable="true" ref="{{ briefEditRef }}" onBlur="{{ commitBrief }}" onKeyDown="{{ briefKey }}" style="padding:4px 7px;margin:-4px -7px;border-radius:8px;font:400 13.5px/1.6 var(--font-sans);color:var(--fg);outline:none;background:var(--muted);box-shadow:0 0 0 1px var(--primary)"></div>
+              </sc-if>
+              <sc-if value="{{ briefViewing }}" hint-placeholder-val="{{ true }}">
+                <div onClick="{{ startBriefEdit }}" title="Click to edit" style="padding:4px 7px;margin:-4px -7px;border-radius:8px;font:400 13.5px/1.6 var(--font-sans);color:var(--fg);cursor:text" style-hover="background:var(--accent)">{{ briefNode }}</div>
+              </sc-if>
+            </div>
+          </section>
+          </sc-if>
+
+
+          <sc-if value="{{ threadPaneVisible }}" hint-placeholder-val="{{ true }}">
+          <section style="display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--border);background:color-mix(in srgb,var(--muted) 55%,var(--card))">
+            <div style="display:flex;align-items:center;gap:8px;flex:none;height:44px;padding:0 12px 0 10px;border-bottom:1px solid var(--border)">
+              <div style="display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto">
+                <sc-for list="{{ cardThread.tabs }}" as="tb" hint-placeholder-count="1">
+                  <div onClick="{{ tb.select }}" title="{{ tb.tip }}" style="{{ tb.style }}">
+                    <sc-if value="{{ tb.working }}" hint-placeholder-val="{{ false }}">
+                      <span style="width:10px;height:10px;flex:none;border-radius:99px;border:1.6px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+                    </sc-if>
+                    <sc-if value="{{ tb.waiting }}" hint-placeholder-val="{{ false }}">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--info-fg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 8v5"></path><path d="M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
+                    </sc-if>
+                    <sc-if value="{{ tb.plain }}" hint-placeholder-val="{{ true }}">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;opacity:.7"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+                    </sc-if>
+                    <span style="white-space:nowrap">{{ tb.label }}</span>
+                    <sc-if value="{{ tb.removable }}" hint-placeholder-val="{{ false }}">
+                      <button type="button" onClick="{{ tb.remove }}" title="Close thread" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;flex:none;margin-right:-3px;border:none;border-radius:4px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+                        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+                      </button>
+                    </sc-if>
+                  </div>
+                </sc-for>
+                <button type="button" onClick="{{ cardThread.addTab }}" title="New thread on this task" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex:none;margin-left:2px;border:none;border-radius:7px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+                </button>
+              </div>
+              <span style="flex:1"></span>
+              <div style="display:flex;align-items:center;gap:6px;flex:none">
+                <button type="button" onClick="{{ toggleCardMax }}" title="{{ cardMaxTitle }}" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--input);border-radius:7px;background:var(--popover);color:var(--muted-fg);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent);color:var(--fg)">
+                  <sc-if value="{{ cardMaxed }}" hint-placeholder-val="{{ false }}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6"></path><path d="M20 10h-6V4"></path><path d="m14 10 7-7"></path><path d="m3 21 7-7"></path></svg>
+                  </sc-if>
+                  <sc-if value="{{ cardNotMaxed }}" hint-placeholder-val="{{ true }}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"></path><path d="M9 21H3v-6"></path><path d="M21 3l-7 7"></path><path d="M3 21l7-7"></path></svg>
+                  </sc-if>
+                </button>
+                <button type="button" onClick="{{ openThread }}" title="Open in the threads view" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--input);border-radius:7px;background:var(--popover);color:var(--muted-fg);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent);color:var(--fg)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>
+                </button>
+              </div>
+            </div>
+
+            <div ref="{{ msgScrollRef }}" style="flex:1;min-height:0;overflow-y:auto;padding:16px 16px 8px;display:flex;flex-direction:column;gap:14px">
+              <sc-if value="{{ cardThread.empty }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:10px;margin:auto 0;padding:16px 14px;border:1px dashed var(--border);border-radius:12px;background:var(--card)">
+                  <div style="font:500 13px var(--font-sans);color:var(--fg)">{{ cardThread.emptyTitle }}</div>
+                  <div style="font:400 12.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ cardThread.emptyBody }}</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px;padding-top:2px">
+                    <sc-for list="{{ cardThread.starters }}" as="s" hint-placeholder-count="3">
+                      <button type="button" onClick="{{ s.pick }}" style="height:26px;padding:0 10px;border:1px solid var(--input);border-radius:99px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer" style-hover="background:var(--accent)">{{ s.label }}</button>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-for list="{{ cardThread.messages }}" as="m" hint-placeholder-count="0">
+                <sc-if value="{{ m.isUser }}" hint-placeholder-val="{{ false }}">
+                  <div style="align-self:flex-end;max-width:86%;padding:9px 12px;border:1px solid var(--border);border-radius:13px 13px 4px 13px;background:var(--card);font:400 13px/1.6 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ m.text }}</div>
+                </sc-if>
+                <sc-if value="{{ m.isClaude }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;gap:9px">
+                    <span style="width:18px;height:18px;flex:none;margin-top:2px;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444)"></span>
+                    <div style="min-width:0;font:400 13px/1.65 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ m.text }}</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ m.isQuestion }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;gap:9px">
+                    <span style="width:18px;height:18px;flex:none;margin-top:2px;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444)"></span>
+                    <div style="min-width:0;padding:10px 12px;border:1px solid color-mix(in srgb,var(--info) 50%,transparent);border-radius:11px;background:color-mix(in srgb,var(--info) 8%,transparent);font:400 13px/1.6 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ m.text }}</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ m.isEvent }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;align-items:center;gap:8px;color:var(--muted-fg)">
+                    <span style="flex:1;height:1px;background:var(--border)"></span>
+                    <span style="font:500 10.5px var(--font-sans);letter-spacing:.04em;text-transform:uppercase">{{ m.text }}</span>
+                    <span style="flex:1;height:1px;background:var(--border)"></span>
+                  </div>
+                </sc-if>
+              </sc-for>
+              <sc-if value="{{ cardThread.pending }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;align-items:center;gap:9px;color:var(--muted-fg)">
+                  <span style="width:18px;height:18px;flex:none;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444);animation:t3pulse 1.4s ease-in-out infinite"></span>
+                  <span style="font:400 12.5px var(--font-sans)">Claude is working…</span>
+                </div>
+              </sc-if>
+            </div>
+
+            <div style="flex:none;padding:0 14px 14px">
+              <div style="{{ cardThread.composerStyle }}">
+                <textarea onInput="{{ cardThread.onDraft }}" onKeyDown="{{ cardThread.onKey }}" onFocus="{{ cardThread.onFocus }}" onBlur="{{ cardThread.onBlur }}" ref="{{ composerRef }}" placeholder="{{ cardThread.placeholder }}" rows="3" style="width:100%;resize:none;border:none;outline:none;background:transparent;color:var(--fg);font:400 13.5px/1.6 var(--font-sans);min-height:56px"></textarea>
+                <div style="display:flex;align-items:center;gap:12px;padding-top:6px;color:var(--muted-fg);font-size:12px">
+                  <span style="display:inline-flex;align-items:center;gap:6px;color:var(--fg)"><span style="width:12px;height:12px;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444)"></span>Claude Opus 4.8</span>
+                  <span>High</span>
+                  <span style="width:1px;height:12px;background:var(--border)"></span>
+                  <span>{{ activeCard.key }}</span>
+                  <span style="flex:1"></span>
+                  <span style="font:400 11px var(--font-sans)">⏎ send</span>
+                  <button type="button" onClick="{{ cardThread.send }}" title="Send" style="{{ cardThread.sendStyle }}">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+          </sc-if>
+
+          <div style="{{ cardSideStyle }}">
+            <div style="{{ cardLeftColStyle }}">
+            <sc-if value="{{ plainBrief }}" hint-placeholder-val="{{ false }}">
+            <div style="{{ groupBriefStyle }}">
+              <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg);margin-bottom:7px">Brief</div>
+              <sc-if value="{{ briefEditing }}" hint-placeholder-val="{{ false }}">
+                <div contenteditable="true" ref="{{ briefEditRef }}" onBlur="{{ commitBrief }}" onKeyDown="{{ briefKey }}" style="padding:4px 7px;margin:-4px -7px;border-radius:8px;font:400 13.5px/1.6 var(--font-sans);color:var(--fg);outline:none;background:var(--muted);box-shadow:0 0 0 1px var(--primary)"></div>
+              </sc-if>
+              <sc-if value="{{ briefViewing }}" hint-placeholder-val="{{ true }}">
+                <div onClick="{{ startBriefEdit }}" title="Click to edit" style="padding:4px 7px;margin:-4px -7px;border-radius:8px;font:400 13.5px/1.6 var(--font-sans);color:var(--fg);cursor:text" style-hover="background:var(--accent)">{{ briefNode }}</div>
+              </sc-if>
+            </div>
+            </sc-if>
+            <div style="{{ groupDetailsStyle }}">
+            <div onMouseEnter="{{ depHoverOn }}" onMouseLeave="{{ depHoverOff }}" style="{{ sideSectionStyle }}">
+              <div style="display:flex;align-items:center;gap:5px;margin-bottom:7px">
+                <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Dependencies</div>
+                <button type="button" onClick="{{ toggleDepEdit }}" title="{{ depEditTitle }}" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer;transition:opacity 120ms ease;opacity:{{ depPencilOpacity }}" style-hover="background:var(--accent);color:var(--fg)">
+                  <sc-if value="{{ depEditing }}" hint-placeholder-val="{{ false }}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+                  </sc-if>
+                  <sc-if value="{{ depNotEditing }}" hint-placeholder-val="{{ true }}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+                  </sc-if>
+                </button>
+              </div>
+              <sc-if value="{{ depEditing }}" hint-placeholder-val="{{ false }}">
+                <div style="position:relative">
+                  <div onClick="{{ focusDepInput }}" style="{{ depFieldStyle }}">
+                    <sc-for list="{{ depChips }}" as="t" hint-placeholder-count="0">
+                      <span style="display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 4px 0 7px;border:1px solid var(--border);border-radius:6px;background:var(--muted);max-width:230px">
+                        <span style="font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ t.key }}</span>
+                        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 12px var(--font-sans);color:var(--fg)">{{ t.title }}</span>
+                        <button type="button" onClick="{{ t.remove }}" title="Remove" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;flex:none;border:none;border-radius:4px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+                        </button>
+                      </span>
+                    </sc-for>
+                    <input type="text" value="{{ depQuery }}" onInput="{{ onDepQuery }}" onKeyDown="{{ onDepKey }}" onFocus="{{ onDepFocus }}" onBlur="{{ onDepBlur }}" ref="{{ depInputRef }}" placeholder="{{ depPlaceholder }}" style="flex:1;min-width:120px;height:24px;border:none;outline:none;background:transparent;color:var(--fg);font:400 13px var(--font-sans)">
+                  </div>
+                  <sc-if value="{{ depOpen }}" hint-placeholder-val="{{ false }}">
+                    <div style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:5;max-height:194px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;background:var(--popover);box-shadow:var(--shadow-pop);padding:4px;display:flex;flex-direction:column;gap:1px">
+                      <sc-for list="{{ depMatches }}" as="o" hint-placeholder-count="4">
+                        <button type="button" onMouseDown="{{ o.pick }}" onMouseEnter="{{ o.hover }}" style="{{ o.style }}">
+                          <span style="font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ o.key }}</span>
+                          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--fg);text-align:left">{{ o.title }}</span>
+                          <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">{{ o.statusName }}</span>
+                        </button>
+                      </sc-for>
+                      <sc-if value="{{ depNoMatch }}" hint-placeholder-val="{{ false }}">
+                        <div style="padding:9px 9px;font:400 12.5px var(--font-sans);color:var(--muted-fg)">No matching tasks.</div>
+                      </sc-if>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+              <sc-if value="{{ depsListVisible }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <sc-for list="{{ activeCard.deps }}" as="d" hint-placeholder-count="2">
+                    <button type="button" onClick="{{ d.open }}" style="display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--muted);cursor:pointer;text-align:left" style-hover="background:var(--accent)">
+                      <span style="width:6px;height:6px;border-radius:99px;background:{{ d.dot }};flex:none"></span>
+                      <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ d.key }}</span>
+                      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--fg)">{{ d.title }}</span>
+                      <span style="font:400 11px var(--font-sans);color:{{ d.color }}">{{ d.statusName }}</span>
+                    </button>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{ depsEmptyVisible }}" hint-placeholder-val="{{ true }}">
+                <div onClick="{{ toggleDepEdit }}" style="font:400 13px var(--font-sans);color:var(--muted-fg);cursor:pointer">No dependencies.</div>
+              </sc-if>
+            </div>
+            <div style="{{ sideSectionStyle }}">
+              <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg);margin-bottom:7px">Activity</div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <sc-for list="{{ activeCard.activity }}" as="a" hint-placeholder-count="3">
+                  <div style="display:flex;gap:9px;align-items:flex-start">
+                    <sc-if value="{{ a.live }}" hint-placeholder-val="{{ false }}">
+                      <span style="width:11px;height:11px;margin-top:3px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+                    </sc-if>
+                    <sc-if value="{{ a.dot }}" hint-placeholder-val="{{ true }}">
+                      <span style="width:6px;height:6px;border-radius:99px;background:var(--input);margin-top:6px;flex:none"></span>
+                    </sc-if>
+                    <sc-if value="{{ a.plain }}" hint-placeholder-val="{{ true }}">
+                      <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span style="color:var(--fg);font-weight:500">{{ a.who }}</span> {{ a.what }} · {{ a.when }}</span>
+                    </sc-if>
+                    <sc-if value="{{ a.isLink }}" hint-placeholder-val="{{ false }}">
+                      <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span style="color:var(--fg);font-weight:500">{{ a.who }}</span> <a href="#" onClick="{{ a.open }}" title="Open thread" style="font-weight:500">{{ a.what }}</a> · {{ a.when }}</span>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            </div>
+            </div>
+            <div style="{{ cardRightColStyle }}">
+            <div style="{{ groupActionsStyle }}">
+            <sc-if value="{{ activeCard.canProgress }}" hint-placeholder-val="{{ true }}">
+              <button type="button" onClick="{{ progressCard }}" style="{{ activeCard.progressStyle }}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+                {{ activeCard.progressLabel }}
+              </button>
+            </sc-if>
+            <sc-if value="{{ activeCard.blocked }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;gap:7px;padding:9px 10px;border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);border-radius:8px;background:color-mix(in srgb,var(--warning) 8%,transparent);font:400 11.5px/1.45 var(--font-sans);color:var(--warning-fg)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                <span>{{ activeCard.blockedBy }}</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{ activeCard.hasPlan }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ openPlan }}" style="display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 11px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>
+                View plan
+              </button>
+            </sc-if>
+            <sc-if value="{{ activeCard.hasPr }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ openPr }}" style="display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 11px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>
+                View PR {{ activeCard.prLabel }}
+              </button>
+            </sc-if>
+            </div>
+
+            <div style="{{ groupMetaStyle }}">
+            <div style="{{ sideStageStyle }}">
+            <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Stage</div>
+            <div style="display:flex;flex-direction:column;gap:1px">
+              <sc-for list="{{ activeCard.stages }}" as="s" hint-placeholder-count="8">
+                <button type="button" onClick="{{ s.select }}" style="{{ s.style }}">
+                  <span style="width:6px;height:6px;border-radius:99px;background:{{ s.dot }};flex:none"></span>
+                  <span style="flex:1;text-align:left">{{ s.name }}</span>
+                  <sc-if value="{{ s.current }}" hint-placeholder-val="{{ false }}">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+                  </sc-if>
+                </button>
+              </sc-for>
+            </div>
+            </div>
+            <div style="font:400 11.5px/1.7 var(--font-sans);color:var(--muted-fg);{{ sideInfoStyle }}">
+              <div>Project · <span style="color:var(--fg)">{{ activeCard.projectName }}</span></div>
+              <div>Branch · <span style="font-family:var(--font-sans);color:var(--fg)">{{ activeCard.branch }}</span></div>
+              <div>Created · {{ activeCard.created }}</div>
+            </div>
+            </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ createOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeCreate }}" style="position:fixed;inset:0;z-index:55;display:grid;place-items:center;padding:32px;background:color-mix(in srgb,var(--bg) 60%,transparent);backdrop-filter:blur(4px);animation:t3fade 160ms ease-out">
+      <div onClick="{{ stop }}" style="width:600px;max-width:100%;max-height:86vh;display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--fg) 10%,transparent);border-radius:16px;background:var(--card);box-shadow:var(--shadow-pop);overflow:hidden;animation:t3pop 180ms cubic-bezier(.2,.8,.2,1)">
+        <div style="display:flex;align-items:center;gap:10px;padding:18px 18px 12px">
+          <h2 style="margin:0;font:600 17px var(--font-sans);letter-spacing:-0.01em">New task</h2>
+          <span style="font:500 11px var(--font-sans);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:1px 6px;background:var(--muted)">{{ createStatusName }}</span>
+          <span style="flex:1"></span>
+          <button type="button" onClick="{{ closeCreate }}" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+          </button>
+        </div>
+        <div style="flex:1;min-height:0;overflow-y:auto;padding:0 18px 6px;display:flex;flex-direction:column;gap:14px">
+          <div>
+            <label style="display:block;font:500 12px var(--font-sans);color:var(--fg);margin-bottom:6px">Project</label>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">
+              <sc-for list="{{ createProjects }}" as="p" hint-placeholder-count="3">
+                <button type="button" onClick="{{ p.select }}" style="{{ p.style }}">
+                  <span style="width:7px;height:7px;border-radius:99px;flex:none;background:{{ p.dot }}"></span>
+                  <span style="font-family:var(--font-sans);font-size:12px">{{ p.name }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+          <div>
+            <label style="display:block;font:500 12px var(--font-sans);color:var(--fg);margin-bottom:6px">Title</label>
+            <input type="text" value="{{ draftTitle }}" onInput="{{ onDraftTitle }}" placeholder="What needs building?" style="width:100%;height:34px;padding:0 11px;border:1px solid var(--input);border-radius:10px;background:var(--bg);color:var(--fg);font:400 13.5px var(--font-sans);outline:none;box-shadow:var(--shadow-xs)">
+          </div>
+          <div>
+            <label style="display:flex;align-items:baseline;gap:8px;font:500 12px var(--font-sans);color:var(--fg);margin-bottom:6px">Brief<span style="font-weight:400;font-size:11.5px;color:var(--muted-fg)">paste screenshots straight in (⌘V)</span></label>
+            <div contenteditable="true" onPaste="{{ onBriefPaste }}" onInput="{{ onBriefInput }}" ref="{{ briefRef }}" style="min-height:118px;max-height:230px;overflow-y:auto;padding:10px 11px;border:1px solid var(--input);border-radius:10px;background:var(--bg);color:var(--fg);font:400 13.5px/1.6 var(--font-sans);outline:none;box-shadow:var(--shadow-xs)"></div>
+          </div>
+          <div>
+            <label style="display:flex;align-items:baseline;gap:8px;font:500 12px var(--font-sans);color:var(--fg);margin-bottom:6px">Dependencies<span style="font-weight:400;font-size:11.5px;color:var(--muted-fg)">tasks this one is blocked by</span></label>
+            <div style="position:relative">
+              <div onClick="{{ focusDepInput }}" style="{{ depFieldStyle }}">
+                <sc-for list="{{ depChips }}" as="t" hint-placeholder-count="0">
+                  <span style="display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 4px 0 7px;border:1px solid var(--border);border-radius:6px;background:var(--muted);max-width:230px">
+                    <span style="font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ t.key }}</span>
+                    <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 12px var(--font-sans);color:var(--fg)">{{ t.title }}</span>
+                    <button type="button" onClick="{{ t.remove }}" title="Remove" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;flex:none;border:none;border-radius:4px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+                    </button>
+                  </span>
+                </sc-for>
+                <input type="text" value="{{ depQuery }}" onInput="{{ onDepQuery }}" onKeyDown="{{ onDepKey }}" onFocus="{{ onDepFocus }}" onBlur="{{ onDepBlur }}" ref="{{ depInputRef }}" placeholder="{{ depPlaceholder }}" style="flex:1;min-width:120px;height:24px;border:none;outline:none;background:transparent;color:var(--fg);font:400 13px var(--font-sans)">
+              </div>
+              <sc-if value="{{ depOpen }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;left:0;right:0;bottom:calc(100% + 4px);z-index:5;max-height:194px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;background:var(--popover);box-shadow:var(--shadow-pop);padding:4px;display:flex;flex-direction:column;gap:1px">
+                  <sc-for list="{{ depMatches }}" as="o" hint-placeholder-count="4">
+                    <button type="button" onMouseDown="{{ o.pick }}" onMouseEnter="{{ o.hover }}" style="{{ o.style }}">
+                      <span style="font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ o.key }}</span>
+                      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--fg);text-align:left">{{ o.title }}</span>
+                      <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">{{ o.statusName }}</span>
+                    </button>
+                  </sc-for>
+                  <sc-if value="{{ depNoMatch }}" hint-placeholder-val="{{ false }}">
+                    <div style="padding:9px 9px;font:400 12.5px var(--font-sans);color:var(--muted-fg)">No matching tasks.</div>
+                  </sc-if>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;padding:14px 18px;border-top:1px solid var(--border);background:color-mix(in srgb,var(--muted) 72%,transparent)">
+          <button type="button" onClick="{{ closeCreate }}" style="height:32px;padding:0 12px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">Cancel</button>
+          <button type="button" onClick="{{ submitCard }}" style="{{ submitStyle }}">Create task</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;defaultMode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;threads&quot;,&quot;board&quot;],&quot;default&quot;:&quot;board&quot;,&quot;tsType&quot;:&quot;\&quot;threads\&quot; | \&quot;board\&quot;&quot;},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;\&quot;light\&quot; | \&quot;dark\&quot;&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;comfortable&quot;,&quot;compact&quot;],&quot;default&quot;:&quot;comfortable&quot;,&quot;tsType&quot;:&quot;\&quot;comfortable\&quot; | \&quot;compact\&quot;&quot;},&quot;showKeys&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;defaultScope&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;advisor&quot;,&quot;web&quot;,&quot;relay&quot;,&quot;all&quot;],&quot;default&quot;:&quot;advisor&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const STAGES = [
+  { id: "backlog", name: "Backlog", dot: "#a1a1aa", action: "Add to sprint" },
+  { id: "sprint", name: "Sprint", dot: "#a1a1aa", action: "Begin planning" },
+  { id: "planning", name: "Planning", dot: "#a1a1aa", action: "Approve plan" },
+  { id: "ready", name: "Ready", dot: "#a1a1aa", action: "Begin build" },
+  { id: "building", name: "Building", dot: "#a1a1aa", action: "Submit for review" },
+  { id: "review", name: "Code review", dot: "#a1a1aa", action: "Approve review" },
+  { id: "merge", name: "Ready for merge", dot: "#a1a1aa", action: "Merge" },
+  { id: "done", name: "Done", dot: "#a1a1aa", action: null },
+];
+const PRIMARY_ACTIONS = { backlog: true, sprint: true, ready: true, merge: true };
+const TYPE_COLORS = {
+  feature: ["--info", "--info-fg"],
+  bug: ["--destructive", "--destructive-fg"],
+  chore: ["--warning", "--warning-fg"],
+};
+const PROJECTS = [
+  { id: "advisor", name: "core.agent.advisor", branch: "main", dot: "#8b8bf5" },
+  { id: "web", name: "mesh.web", branch: "feat/board", dot: "#38bdf8" },
+  { id: "relay", name: "mesh.relay", branch: "main", dot: "#f59e0b" },
+];
+const PLAN = (title, bullets, files) =>
+  `# ${title}\n\n## Approach\n${bullets.map((b) => "- " + b).join("\n")}\n\n## Files\n${files
+    .map((f) => "  " + f)
+    .join("\n")}\n\n## Verification\n- pnpm test --filter web\n- Manual pass in desktop shell (light + dark)\n`;
+
+const SEED = [
+  { key: "T3-201", p: "advisor", type: "feature", status: "backlog", title: "Stream tool-call deltas into the timeline", brief: "Tool calls currently land as one block when the turn settles. Stream them so long-running edits show progress inline." },
+  { key: "T3-198", p: "advisor", type: "bug", status: "backlog", title: "Context window pill shows a stale token count", brief: "After a compaction the pill keeps the pre-compaction number until the next turn." },
+  { key: "T3-195", p: "advisor", type: "feature", status: "sprint", title: "Persist composer drafts per worktree", brief: "Drafts are keyed by thread today; switching worktrees loses the in-progress prompt." },
+  { key: "T3-193", p: "advisor", type: "chore", status: "planning", t: "working", title: "Group worktrees by environment in the branch picker", brief: "The picker lists 40+ worktrees flat. Group by environment with a sticky header per group." },
+  { key: "T3-188", p: "advisor", type: "feature", status: "ready", title: "Kanban board mode in the workspace shell", brief: "Add a top-level mode switch: threads or board. Board is per project, with drag between stages.", deps: ["T3-195"], plan: PLAN("Kanban board mode", ["Add workspaceMode atom persisted in client storage", "Mount BoardView beside ChatView under AppSidebarLayout", "Cards are server-authoritative events, same store as threads", "Dependencies are edges on the task record, validated on progress"], ["apps/web/src/components/BoardView.tsx", "apps/web/src/state/board.ts", "packages/contracts/src/task.ts"]) },
+  { key: "T3-186", p: "advisor", type: "feature", status: "building", t: "working", title: "Server-authoritative event sourcing cleanup", brief: "Collapse the duplicate client reducer so the server event log is the single source of truth.", plan: PLAN("Event sourcing cleanup", ["Delete the client-side mirror reducer", "Replay from the server log on reconnect", "Add a determinism test over recorded fixtures"], ["apps/server/src/events/log.ts", "packages/client-runtime/src/replay.ts"]) },
+  { key: "T3-182", p: "advisor", type: "feature", status: "review", t: "waiting", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
+  { key: "T3-179", p: "advisor", type: "chore", status: "merge", title: "Pre-commit format and lint gate", brief: "Formatting drift keeps landing on main. Gate commits with the same checks CI runs.", plan: PLAN("Pre-commit gate", ["Wire lefthook with a staged-file filter", "Run oxlint + prettier on staged files only", "Document the escape hatch in CONTRIBUTING"], ["lefthook.yml", "CONTRIBUTING.md"]), pr: { n: 284, title: "chore: pre-commit format and lint", add: 96, del: 12, files: ["lefthook.yml", "package.json", "CONTRIBUTING.md"], state: "Approved" } },
+  { key: "T3-171", p: "advisor", type: "chore", status: "done", title: "Diff panel scroll fade", brief: "Rows now fade under the sticky header instead of cutting hard.", plan: PLAN("Diff panel scroll fade", ["Reuse the chat timeline mask", "Respect the scrollbar gutter"], ["apps/web/src/components/DiffPanel.tsx"]), pr: { n: 276, title: "fix(diff): scroll fade under header", add: 41, del: 9, files: ["apps/web/src/components/DiffPanel.tsx", "apps/web/src/index.css"], state: "Merged" } },
+  { key: "T3-168", p: "advisor", type: "bug", status: "done", title: "Fix knowledge capture skill lookup", brief: "Skill ids were resolved case-sensitively, so captures silently no-oped.", plan: PLAN("Skill lookup fix", ["Normalize ids at the registry boundary", "Add a regression test"], ["packages/shared/src/skills.ts"]), pr: { n: 268, title: "fix: normalize skill ids", add: 28, del: 6, files: ["packages/shared/src/skills.ts"], state: "Merged" } },
+  { key: "MW-42", p: "web", type: "feature", status: "backlog", title: "Marketing site: pricing comparison table", brief: "Three tiers, sticky header row on scroll." },
+  { key: "MW-39", p: "web", type: "feature", status: "sprint", title: "Docs search with keyboard nav", brief: "Cmd-K over the docs index, arrow keys to move, enter to open." },
+  { key: "MW-33", p: "web", type: "bug", status: "building", t: "stopped", title: "Nav overlaps hero on iPad portrait", brief: "The sticky nav collides with the hero headline between 768 and 834px.", plan: PLAN("Nav overlap", ["Move the breakpoint to a container query", "Reserve nav height as a layout offset"], ["apps/marketing/src/components/Nav.tsx"]) },
+  { key: "RL-18", p: "relay", type: "chore", status: "ready", title: "Rotate relay signing keys without downtime", brief: "Support two active keys during a rollover window.", plan: PLAN("Key rotation", ["Accept N active keys in the verifier", "Publish both in the JWKS", "Retire the old key after the TTL"], ["infra/relay/src/keys.ts"]) },
+  { key: "RL-14", p: "relay", type: "feature", status: "review", t: "waiting", title: "Backpressure on session fan-out", brief: "Slow consumers currently stall the whole fan-out loop.", deps: ["RL-18"], plan: PLAN("Fan-out backpressure", ["Bounded queue per subscriber", "Drop-oldest with a metric"], ["infra/relay/src/fanout.ts"]), pr: { n: 88, title: "feat(relay): bounded fan-out queues", add: 214, del: 63, files: ["infra/relay/src/fanout.ts", "infra/relay/test/fanout.test.ts"], state: "In review" } },
+];
+
+const THREADS = [
+  { title: "Context window display shows stale count", age: "33m" },
+  { title: "Datadog egress in mesh.advisor", age: "9h" },
+  { title: "Fix knowledge capture skill lookup", age: "11h" },
+  { title: "Add launcher ID to launch config", age: "11h" },
+  { title: "Company brief runs bypass cache", age: "12h" },
+  { title: "Fix interactive skills marked settled", age: "12h" },
+  { title: "PR #282: skip distilled facts", age: "1d" },
+  { title: "You are working on the Advisor", age: "1d" },
+  { title: "Delete knowledge entry by id", age: "1d" },
+  { title: "/pullrequest feature/knowledge", age: "1d" },
+];
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    const cards = SEED.map((c, i) => ({
+      id: "c" + i,
+      key: c.key,
+      project: c.p,
+      type: c.type,
+      status: c.status,
+      tstate: c.t || "stopped",
+      title: c.title,
+      brief: "<p style=\"margin:0 0 8px\">" + c.brief + "</p>",
+      depKeys: c.deps || [],
+      plan: c.plan || null,
+      pr: c.pr || null,
+      created: ["2d ago", "3d ago", "5d ago", "1w ago"][i % 4],
+    }));
+    this.state = {
+      activeThread: null,
+      cardMaxed: false,
+      mode: props.defaultMode === "board" ? "board" : "threads",
+      scope: props.defaultScope || "advisor",
+      cards,
+      query: "",
+      activeId: null,
+      createOpen: false,
+      createStatus: "backlog",
+      createProject: "advisor",
+      draftTitle: "",
+      draftBrief: "",
+      draftDeps: [],
+      depQuery: "",
+      depIndex: 0,
+      depOpen: false,
+      artifact: null,
+      collapsed: {},
+      colCollapsed: this.loadColCollapsed(),
+      hoverCol: null,
+      dragId: null,
+      dragH: 0,
+      overCol: null,
+      overIndex: null,
+      editField: null,
+      editDeps: false,
+      depHover: false,
+      msgs: {},
+      pending: {},
+      tabs: {},
+      tab: {},
+      briefOpen: {},
+      composer: "",
+      composerFocus: false,
+    };
+    this.briefEl = null;
+  }
+
+  threadCopy(c) {
+    const th = this.threadFor(c);
+    if (!th) return null;
+    const kind = th.kind;
+    return {
+      summary:
+        kind === "planning"
+          ? "Reading the affected modules and drafting a plan. I'll post the step list as soon as the shape is settled."
+          : kind === "build"
+            ? th.state === "working"
+              ? "Implementing the approved plan — 3 of 6 files touched so far."
+              : "Stopped after the third step. Resume whenever you're ready."
+            : "PR is up and checks are green. Waiting on review feedback.",
+      question:
+        th.state !== "waiting"
+          ? ""
+          : kind === "planning"
+            ? "Two shapes are possible here. Should the grouped picker stay collapsible, or always expand?"
+            : kind === "build"
+              ? "This touches a shared contract. Ship it behind a flag, or migrate both sides at once?"
+              : "Review flagged the fallback path. Should I change it, or reply with the rationale?",
+      label:
+        kind === "planning"
+          ? "Planning thread"
+          : kind === "build"
+            ? "Build thread"
+            : "Review thread",
+      state: th.state,
+    };
+  }
+
+  seedMessages(c) {
+    const copy = this.threadCopy(c);
+    if (!copy) return [];
+    const out = [
+      { who: "you", text: c.brief.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() },
+      { who: "claude", text: copy.summary },
+    ];
+    if (copy.question) out.push({ who: "claude", q: true, text: copy.question });
+    return out;
+  }
+
+  scrollThread() {
+    const el = this.msgEl;
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  sendMessage(card, key, isMain) {
+    const text = (this.state.composer || "").trim();
+    if (!text || !card) return;
+    const id = key;
+    const started =
+      (!isMain || this.seedMessages(card).length === 0) && !(this.state.msgs[key] || []).length;
+    this.setState(
+      (s) => {
+        const prior = s.msgs[id] || [];
+        const add = started ? [{ who: "event", text: "Thread started on " + card.key }] : [];
+        return {
+          msgs: { ...s.msgs, [id]: prior.concat(add, [{ who: "you", text }]) },
+          pending: { ...s.pending, [id]: true },
+          composer: "",
+        };
+      },
+      () => this.scrollThread(),
+    );
+    if (this.composerEl) this.composerEl.value = "";
+    clearTimeout(this.replyTimer);
+    this.replyTimer = setTimeout(() => {
+      const reply = started
+        ? "Picking this up now. I'll read the surrounding modules first and come back with a plan before touching anything."
+        : "Got it — taking that route. I'll push the change and report back with the diff.";
+      this.setState(
+        (s) => ({
+          msgs: { ...s.msgs, [id]: (s.msgs[id] || []).concat([{ who: "claude", text: reply }]) },
+          pending: { ...s.pending, [id]: false },
+        }),
+        () => this.scrollThread(),
+      );
+      if (isMain) this.patchCard(card.id, { tstate: "working" });
+    }, 1100);
+  }
+
+  patchCard(id, patch) {
+    this.setState((s) => ({
+      cards: s.cards.map((c) => (c.id === id ? Object.assign({}, c, patch) : c)),
+    }));
+  }
+
+  placeCaretEnd(el) {
+    el.focus();
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+
+  componentDidMount() {
+    if ((this.props.theme || "light") === "dark") {
+      document.documentElement.setAttribute("data-t3-theme", "dark");
+    }
+  }
+
+  loadColCollapsed() {
+    try {
+      return JSON.parse(localStorage.getItem("t3-kanban-collapsed-columns")) || {};
+    } catch (e) {
+      return {};
+    }
+  }
+  toggleColumn(colKey) {
+    this.setState(
+      (s) => ({
+        colCollapsed: { ...s.colCollapsed, [colKey]: !s.colCollapsed[colKey] },
+      }),
+      () => {
+        try {
+          localStorage.setItem(
+            "t3-kanban-collapsed-columns",
+            JSON.stringify(this.state.colCollapsed),
+          );
+        } catch (e) {}
+      },
+    );
+  }
+
+  threadFor(c) {
+    const kind =
+      c.status === "planning"
+        ? "planning"
+        : c.status === "building"
+          ? "build"
+          : c.status === "review"
+            ? "review"
+            : null;
+    if (!kind) return null;
+    return { kind, state: c.tstate || "stopped", title: c.title, id: c.id };
+  }
+
+  stageIndex(id) {
+    return STAGES.findIndex((s) => s.id === id);
+  }
+  stage(id) {
+    return STAGES[this.stageIndex(id)] || STAGES[0];
+  }
+  cardByKey(key) {
+    return this.state.cards.find((c) => c.key === key) || null;
+  }
+  hasUnmetDeps(card) {
+    return card.depKeys.some((k) => {
+      const d = this.cardByKey(k);
+      return d && d.status !== "done";
+    });
+  }
+  // Dependencies only gate the hand-off into build: a card can move all the way
+  // to Ready with unmet deps, and is blocked from Ready onward.
+  isBlocked(card) {
+    return this.stageIndex(card.status) >= this.stageIndex("ready") && this.hasUnmetDeps(card);
+  }
+  keyPillStyle(hex) {
+    const h = hex.replace("#", "");
+    const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+    const r = parseInt(n.slice(0, 2), 16) / 255,
+      g = parseInt(n.slice(2, 4), 16) / 255,
+      b = parseInt(n.slice(4, 6), 16) / 255;
+    const lin = (v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    const fg = L > 0.45 ? "#26262b" : "#ffffff";
+    return (
+      "display:inline-flex;align-items:center;height:16px;padding:0 6px;border-radius:5px;font:600 10px var(--font-sans);letter-spacing:.03em;cursor:default;background:" +
+      hex +
+      ";color:" +
+      fg
+    );
+  }
+  typeStyle(type) {
+    const [bg, fg] = TYPE_COLORS[type] || TYPE_COLORS.chore;
+    return `display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;background:color-mix(in srgb,var(${bg}) 10%,transparent);color:var(${fg})`;
+  }
+  startDrag(e, card, colKey, index) {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    e.dataTransfer.effectAllowed = "move";
+    try {
+      e.dataTransfer.setData("text/plain", card.key);
+    } catch (err) {}
+    const ghost = el.cloneNode(true);
+    ghost.style.cssText =
+      el.style.cssText +
+      ";position:fixed;top:-1000px;left:-1000px;width:" +
+      r.width +
+      "px;transform:rotate(4deg);box-shadow:0 18px 34px -14px rgb(0 0 0 / 55%);background:var(--card);opacity:1;pointer-events:none";
+    document.body.appendChild(ghost);
+    this.ghostEl = ghost;
+    if (e.dataTransfer.setDragImage)
+      e.dataTransfer.setDragImage(ghost, e.clientX - r.left, e.clientY - r.top);
+    setTimeout(() => {
+      if (this.ghostEl === ghost) {
+        ghost.remove();
+        this.ghostEl = null;
+      }
+    }, 0);
+    this.setState({
+      dragId: card.id,
+      dragH: Math.round(r.height),
+      overCol: colKey,
+      overIndex: index,
+    });
+  }
+  // Drop index measured in "unshifted" coordinates: cards below the visible
+  // placeholder are offset by its height, so we subtract it before comparing
+  // midpoints. Otherwise inserting the placeholder moves the cards and the
+  // next dragover computes a different index -> flicker loop.
+  dropIndexIn(colEl, y) {
+    const ph = colEl.querySelector("[data-ph]");
+    const cards = colEl.querySelectorAll("[data-card]");
+    if (!cards.length) return 0;
+    let shift = 0;
+    let phTop = null;
+    if (ph) {
+      const pr = ph.getBoundingClientRect();
+      shift = pr.height + 8;
+      phTop = pr.top;
+    }
+    for (let i = 0; i < cards.length; i++) {
+      const r = cards[i].getBoundingClientRect();
+      const off = phTop != null && r.top > phTop ? shift : 0;
+      if (y < r.top + r.height / 2 - off) return i;
+    }
+    return cards.length;
+  }
+  endDrag() {
+    if (this.ghostEl) {
+      this.ghostEl.remove();
+      this.ghostEl = null;
+    }
+    this.setState({ dragId: null, overCol: null, overIndex: null });
+  }
+  dropCard(projectId, status, colCards) {
+    const id = this.state.dragId;
+    const at = this.state.overIndex;
+    if (!id) return this.endDrag();
+    this.setState((s) => {
+      const card = s.cards.find((c) => c.id === id);
+      if (!card) return { dragId: null, overCol: null, overIndex: null };
+      const rest = s.cards.filter((c) => c.id !== id);
+      const pid = projectId == null ? card.project : projectId;
+      const moved = { ...card, status };
+      const own = colCards.findIndex((c) => c.id === id);
+      const list = colCards.filter((c) => c.id !== id);
+      let idx = at == null ? list.length : at;
+      if (own >= 0 && idx > own) idx -= 1;
+      const target = idx >= list.length ? null : list[idx].id;
+      colCards = list;
+      let pos;
+      if (target) {
+        pos = rest.findIndex((c) => c.id === target);
+      } else if (colCards.length) {
+        pos = rest.findIndex((c) => c.id === colCards[colCards.length - 1].id) + 1;
+      } else {
+        const lastOfProject = rest
+          .map((c, i) => (c.project === pid ? i : -1))
+          .filter((i) => i >= 0)
+          .pop();
+        pos = lastOfProject == null ? rest.length : lastOfProject + 1;
+      }
+      if (pos < 0) pos = rest.length;
+      rest.splice(pos, 0, moved);
+      return { cards: rest, dragId: null, overCol: null, overIndex: null };
+    });
+  }
+  setStatus(id, status) {
+    this.setState((s) => ({
+      cards: s.cards.map((c) => (c.id === id ? { ...c, status } : c)),
+    }));
+  }
+
+  renderVals() {
+    const st = this.state;
+    const isBoard = st.mode === "board";
+    const q = st.query.trim().toLowerCase();
+    const compact = (this.props.density || "comfortable") === "compact";
+    const showKeys = this.props.showKeys !== false;
+
+    const visibleProjects = PROJECTS.filter(
+      (p) => st.scope === "all" || p.id === st.scope,
+    );
+
+    const single = st.scope === "all" || visibleProjects.length === 1;
+    const projColor = (id) => (PROJECTS.find((p) => p.id === id) || PROJECTS[0]).dot;
+    const projName = (id) => (PROJECTS.find((p) => p.id === id) || PROJECTS[0]).name;
+
+    const cardVm = (c, index, colKey) => {
+      const th = this.threadFor(c);
+      const working = !!th && th.state === "working";
+      const awaiting = !!th && th.state === "waiting";
+      const blocked = this.isBlocked(c);
+      const hasDeps = c.depKeys.length > 0;
+      const hasPlan = !!c.plan;
+      const hasPr = !!c.pr;
+      return {
+        id: c.id,
+        isCard: true,
+        isPlaceholder: false,
+        key: showKeys ? c.key : "",
+        type: c.type,
+        title: c.title,
+        blocked,
+        hasDeps,
+        depCount: c.depKeys.length,
+        hasPlan,
+        hasPr,
+        prLabel: hasPr ? "#" + c.pr.n : "",
+        hasImage: c.brief.indexOf("<img") !== -1,
+        hasMeta: hasDeps || hasPlan || hasPr,
+        working,
+        awaiting,
+        tip: awaiting ? "Awaiting input" : working ? "Thread running" : "",
+        projectName: projName(c.project),
+        keyStyle: showKeys ? this.keyPillStyle(projColor(c.project)) : "display:none",
+        typeStyle: this.typeStyle(c.type),
+        style:
+          "border:1px solid " +
+          (awaiting
+            ? "color-mix(in srgb,var(--info) 55%,transparent)"
+            : "var(--border)") +
+          ";border-radius:10px;background:" +
+          (awaiting
+            ? "color-mix(in srgb,var(--info) 7%,var(--card))"
+            : "var(--card)") +
+          ";padding:" +
+          (compact ? "8px 10px" : "10px 11px") +
+          ";cursor:grab;box-shadow:" +
+          (awaiting
+            ? "0 0 0 1px color-mix(in srgb,var(--info) 40%,transparent)"
+            : "var(--shadow-xs)") +
+          ";transition:border-color 120ms ease,box-shadow 120ms ease,opacity 120ms ease;opacity:" +
+          (st.dragId === c.id ? "0.4" : "1"),
+        open: () => this.setState({ activeId: c.id, composer: "", composerFocus: false }),
+        onDragStart: (e) => this.startDrag(e, c, colKey, index),
+        onDragEnd: () => this.endDrag(),
+      };
+    };
+
+    const placeholderVm = () => ({
+      isCard: false,
+      isPlaceholder: true,
+      style:
+        "border:1px dashed color-mix(in srgb,var(--fg) 22%,transparent);border-radius:10px;background:color-mix(in srgb,var(--fg) 5%,transparent);height:" +
+        (st.dragH || 62) +
+        "px;flex:none",
+    });
+
+    const buildBoard = (projs, isAll) => {
+      const ids = projs.map((p) => p.id);
+      const bkey = isAll ? "all" : projs[0].id;
+      const mine = st.cards.filter(
+        (c) =>
+          ids.indexOf(c.project) !== -1 &&
+          (!q || (c.title + " " + c.key).toLowerCase().includes(q)),
+      );
+      const open = !st.collapsed[bkey];
+      const p = { id: bkey };
+      return {
+        name: isAll ? "All projects" : projs[0].name,
+        isAll,
+        legend: PROJECTS.map((x) => ({
+          name: x.name,
+          swatch:
+            "width:9px;height:3px;border-radius:2px;background:" + x.dot,
+        })),
+        dotStyle:
+          "width:7px;height:7px;border-radius:99px;flex:none;background:" +
+          (isAll ? "#a1a1aa" : projs[0].dot),
+        branch: isAll ? "" : projs[0].branch,
+        count: mine.length,
+        open,
+        sectionStyle:
+          "border-top:1px solid var(--border);" +
+          (single
+            ? "flex:1;min-height:0;display:flex;flex-direction:column"
+            : "flex:none"),
+        rowStyle:
+          "display:flex;gap:12px;padding:0 18px 18px;align-items:flex-start;" +
+          (single
+            ? "flex:1;min-height:0;overflow:auto"
+            : "overflow-x:auto;padding-bottom:22px"),
+        caret: open ? "none" : "rotate(-90deg)",
+        toggle: () =>
+          this.setState((s) => ({
+            collapsed: { ...s.collapsed, [p.id]: !s.collapsed[p.id] },
+          })),
+        columns: STAGES.map((stage) => {
+          const all = mine.filter((c) => c.status === stage.id);
+          const colKey = p.id + ":" + stage.id;
+          const cards = all;
+          const items = cards.map((c, i) => cardVm(c, i, colKey));
+          const own = all.findIndex((c) => c.id === st.dragId);
+          let at = st.overIndex == null ? all.length : st.overIndex;
+          at = Math.max(0, Math.min(all.length, at));
+          const sameSpot = own >= 0 && (at === own || at === own + 1);
+          const isOver = !!st.dragId && st.overCol === colKey && !sameSpot;
+          if (isOver) items.splice(at, 0, placeholderVm());
+          const isCollapsed = !!st.colCollapsed[colKey];
+          return {
+            items,
+            isOver,
+            name: stage.name,
+            dot: stage.dot,
+            count: all.length,
+            empty: items.length === 0,
+            collapsed: isCollapsed,
+            expanded: !isCollapsed,
+            showCollapse: st.hoverCol === colKey,
+            onHeaderEnter: () => {
+              if (this.state.hoverCol !== colKey)
+                this.setState({ hoverCol: colKey });
+            },
+            onHeaderLeave: () => {
+              if (this.state.hoverCol === colKey)
+                this.setState({ hoverCol: null });
+            },
+            toggleCollapsed: () => this.toggleColumn(colKey),
+            collapsedStyle:
+              "flex:none;width:44px;align-self:stretch;min-height:104px;display:flex;flex-direction:column;align-items:center;gap:10px;border:none;border-radius:12px;background:var(--column-bg);padding:10px 0;cursor:pointer;transition:background-color 120ms ease",
+            style:
+              "flex:none;width:268px;border:none;border-radius:12px;background:" +
+              (isOver ? "var(--column-bg-over)" : "var(--column-bg)") +
+              ";padding:10px;min-height:104px;transition:background-color 120ms ease",
+            add: () =>
+              this.setState({
+                createOpen: true,
+                createStatus: stage.id,
+                createProject: isAll ? "advisor" : p.id,
+                draftTitle: "",
+                draftBrief: "",
+                draftDeps: [],
+      depQuery: "",
+      depIndex: 0,
+      depOpen: false,
+              }),
+            onDragOver: (e) => {
+              if (!this.state.dragId) return;
+              e.preventDefault();
+              const at = this.dropIndexIn(e.currentTarget, e.clientY);
+              if (this.state.overCol !== colKey || this.state.overIndex !== at)
+                this.setState({ overCol: colKey, overIndex: at });
+            },
+            onDrop: (e) => {
+              e.preventDefault();
+              this.dropCard(isAll ? null : p.id, stage.id, all);
+            },
+          };
+        }),
+      };
+    };
+
+    const boards =
+      st.scope === "all"
+        ? [buildBoard(PROJECTS, true)]
+        : visibleProjects.map((p) => buildBoard([p], false));
+
+    const active = st.cards.find((c) => c.id === st.activeId) || null;
+    let activeCard = null;
+    let briefNode = null;
+    const activeThread = active ? this.threadFor(active) : null;
+    if (active) {
+      const idx = this.stageIndex(active.status);
+      const stage = STAGES[idx];
+      const blocked = this.isBlocked(active);
+      const next = STAGES[idx + 1];
+      const isPrimary = !!PRIMARY_ACTIONS[active.status];
+      briefNode = React.createElement("div", {
+        dangerouslySetInnerHTML: { __html: active.brief },
+      });
+      activeCard = {
+        key: active.key,
+        type: active.type,
+        typeStyle: this.typeStyle(active.type),
+        statusName: stage.name,
+        statusStyle:
+          "display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 7px;border-radius:6px;font:500 11px var(--font-sans);background:color-mix(in srgb," +
+          stage.dot +
+          " 14%,transparent);color:var(--fg)",
+        title: active.title,
+        hasDeps: active.depKeys.length > 0,
+        noDeps: active.depKeys.length === 0,
+        deps: active.depKeys.map((k) => {
+          const d = this.cardByKey(k);
+          const ds = d ? this.stage(d.status) : STAGES[0];
+          return {
+            key: k,
+            title: d ? d.title : "Unknown task",
+            statusName: ds.name,
+            dot: ds.dot,
+            color: d && d.status === "done" ? "var(--success-fg)" : "var(--muted-fg)",
+            open: () => d && this.setState({ activeId: d.id, artifact: null }),
+          };
+        }),
+        blocked,
+        blockedBy:
+          "Blocked by " +
+          active.depKeys
+            .filter((k) => {
+              const d = this.cardByKey(k);
+              return d && d.status !== "done";
+            })
+            .join(", "),
+        canProgress: !!(stage.action && next),
+        progressLabel: stage.action || "",
+        progressStyle:
+          "display:inline-flex;align-items:center;justify-content:center;gap:7px;height:34px;padding:0 12px;border-radius:8px;font:500 13px var(--font-sans);cursor:" +
+          (blocked ? "not-allowed" : "pointer") +
+          ";opacity:" +
+          (blocked ? "0.5" : "1") +
+          ";box-shadow:var(--shadow-xs);" +
+          (isPrimary
+            ? "border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg)"
+            : "border:1px solid var(--input);background:var(--popover);color:var(--fg)"),
+        hasPlan: !!active.plan,
+        hasPr: !!active.pr,
+        prLabel: active.pr ? "#" + active.pr.n : "",
+        projectName: (PROJECTS.find((p) => p.id === active.project) || {}).name,
+        branch: (PROJECTS.find((p) => p.id === active.project) || {}).branch,
+        created: active.created,
+        activity: (() => {
+          const th = this.threadFor(active);
+          const openIt = (e) => {
+            if (e && e.preventDefault) e.preventDefault();
+            this.setState({ mode: "threads", activeId: null, activeThread: active.title });
+          };
+          const rows = [
+            { who: "brent", what: "created the task", when: active.created },
+          ];
+          if (idx === 2)
+            rows.push({
+              who: "Claude Opus 4.8",
+              what: "is assisting with planning",
+              when: "now",
+              live: active.tstate === "working",
+            });
+          if (idx > 2)
+            rows.push({
+              who: "Claude Opus 4.8",
+              what: "drafted the plan",
+              when: "2h ago",
+              isLink: true,
+              open: openIt,
+            });
+          if (idx > 4)
+            rows.push({
+              who: "Claude Opus 4.8",
+              what: "implemented the plan",
+              when: "1h ago",
+              isLink: true,
+              open: openIt,
+            });
+          rows.push({
+            who: "brent",
+            what: "moved to " + stage.name.toLowerCase(),
+            when: "40m ago",
+          });
+          return rows.map((r) => ({
+            ...r,
+            live: !!r.live,
+            dot: !r.live,
+            isLink: !!r.isLink,
+            plain: !r.isLink,
+          }));
+        })(),
+        hasThread: !!activeThread,
+        threadWorking: !!activeThread && activeThread.state === "working",
+        threadWaiting: !!activeThread && activeThread.state === "waiting",
+        threadIcon: !activeThread || activeThread.state !== "working",
+        threadBtnLabel: activeThread ? "Open thread in full view" : "",
+        threadBtnStyle:
+          "display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border-radius:8px;font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);" +
+          (activeThread && activeThread.state === "waiting"
+            ? "border:1px solid color-mix(in srgb,var(--info) 55%,transparent);background:color-mix(in srgb,var(--info) 12%,var(--popover));color:var(--info-fg)"
+            : "border:1px solid var(--input);background:var(--popover);color:var(--fg)"),
+        stages: STAGES.map((s, i) => ({
+          name: s.name,
+          dot: s.dot,
+          current: i === idx,
+          select: () => this.setStatus(active.id, s.id),
+          style:
+            "display:flex;align-items:center;gap:8px;height:26px;padding:0 8px;border:none;border-radius:7px;cursor:pointer;font:" +
+            (i === idx ? "500" : "400") +
+            " 12.5px var(--font-sans);background:" +
+            (i === idx ? "var(--accent)" : "transparent") +
+            ";color:" +
+            (i === idx ? "var(--fg)" : "var(--muted-fg)"),
+        })),
+      };
+    }
+
+    const depEditing = !!(st.editDeps && active);
+    const depScope = depEditing ? active.project : st.createProject;
+    const depPool = st.cards.filter(
+      (c) =>
+        c.project === depScope &&
+        c.status !== "done" &&
+        !(depEditing && c.id === active.id),
+    );
+    const depQ = (st.depQuery || "").trim().toLowerCase();
+    const depMatches = depPool.filter(
+      (c) =>
+        !st.draftDeps.includes(c.key) &&
+        (!depQ ||
+          c.key.toLowerCase().includes(depQ) ||
+          c.title.toLowerCase().includes(depQ)),
+    );
+    const addDep = (key) => {
+      this.setState((s) => ({
+        draftDeps: s.draftDeps.includes(key) ? s.draftDeps : s.draftDeps.concat(key),
+        depQuery: "",
+        depIndex: 0,
+        depOpen: true,
+      }));
+      if (this.depEl) this.depEl.focus();
+    };
+
+    const tCard = st.activeThread
+      ? st.cards.find((c) => c.title === st.activeThread)
+      : null;
+    const tMeta = tCard ? this.threadFor(tCard) : null;
+    let threadView = null;
+    if (tCard && tMeta) {
+      const kind = tMeta.kind;
+      threadView = {
+        title: tCard.title,
+        key: tCard.key,
+        prompt: tCard.brief.replace(/<[^>]+>/g, ""),
+        summary:
+          kind === "planning"
+            ? "Reading the affected modules and drafting a plan. I'll post the step list as soon as the shape is settled."
+            : kind === "build"
+              ? tMeta.state === "working"
+                ? "Implementing the approved plan — 3 of 6 files touched so far."
+                : "Stopped after the third step. Resume whenever you're ready."
+              : "PR is up and checks are green. Waiting on review feedback.",
+        question:
+          tMeta.state !== "waiting"
+            ? ""
+            : kind === "planning"
+              ? "Two shapes are possible here. Should the grouped picker stay collapsible, or always expand?"
+              : kind === "build"
+                ? "This touches a shared contract. Ship it behind a flag, or migrate both sides at once?"
+                : "Review flagged the fallback path. Should I change it, or reply with the rationale?",
+        hasQuestion: tMeta.state === "waiting",
+        working: tMeta.state === "working",
+        waiting: tMeta.state === "waiting",
+        stopped: tMeta.state === "stopped",
+        stateLabel:
+          tMeta.state === "working"
+            ? "Running"
+            : tMeta.state === "waiting"
+              ? "Awaiting input"
+              : "Stopped",
+        openCard: () =>
+          this.setState({ mode: "board", activeId: tCard.id, activeThread: null }),
+      };
+    }
+
+    const hasThreadPane = !!active && this.stageIndex(active.status) >= 2;
+    const briefShown = !!(active && st.briefOpen[active.id]);
+    const cardMaxed = !!st.cardMaxed;
+    const ctCopy = active ? this.threadCopy(active) : null;
+    const extraTabs = active ? st.tabs[active.id] || [] : [];
+    const mainLabel = ctCopy ? ctCopy.label.replace(" thread", "") : "Task thread";
+    const allTabs = [{ id: "main", label: mainLabel }].concat(extraTabs);
+    const tabId = active
+      ? allTabs.some((t) => t.id === st.tab[active.id])
+        ? st.tab[active.id]
+        : "main"
+      : "main";
+    const isMain = tabId === "main";
+    const msgKey = active ? active.id + ":" + tabId : "";
+    const ctSeed = active && isMain ? this.seedMessages(active) : [];
+    const ctExtra = active ? st.msgs[msgKey] || [] : [];
+    const ctAll = ctSeed.concat(ctExtra);
+    const ctPending = !!(active && st.pending[msgKey]);
+    const draftFilled = !!(st.composer || "").trim();
+    const cardThread = active && hasThreadPane
+      ? {
+          label: ctCopy ? ctCopy.label : ctAll.length ? "Thread" : "New thread",
+          working: !!ctCopy && isMain && ctCopy.state === "working" && !ctPending,
+          waiting: !!ctCopy && isMain && ctCopy.state === "waiting",
+          tabs: allTabs.map((t, i) => {
+            const on = t.id === tabId;
+            const live = t.id === "main" && ctCopy ? ctCopy.state : null;
+            const busy = !!st.pending[active.id + ":" + t.id];
+            return {
+              label: t.label,
+              tip: live === "waiting" ? "Awaiting your input" : "",
+              working: live === "working" || busy,
+              waiting: live === "waiting",
+              plain: !busy && live !== "working" && live !== "waiting",
+              removable: on && t.id !== "main",
+              select: () =>
+                this.setState((s) => ({
+                  tab: { ...s.tab, [active.id]: t.id },
+                  composer: "",
+                })),
+              remove: (e) => {
+                e.stopPropagation();
+                this.setState((s) => ({
+                  tabs: { ...s.tabs, [active.id]: (s.tabs[active.id] || []).filter((x) => x.id !== t.id) },
+                  tab: { ...s.tab, [active.id]: "main" },
+                  composer: "",
+                }));
+              },
+              style:
+                "display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:8px;cursor:pointer;font:" +
+                (on ? "500" : "400") +
+                " 12px var(--font-sans);background:" +
+                (on ? "var(--card)" : "transparent") +
+                ";color:" +
+                (on ? "var(--fg)" : "var(--muted-fg)") +
+                ";box-shadow:" +
+                (on ? "0 0 0 1px var(--border)" : "none"),
+            };
+          }),
+          addTab: () => {
+            const id = "t" + Date.now();
+            const n = (st.tabs[active.id] || []).length + 2;
+            this.setState((s) => ({
+              tabs: { ...s.tabs, [active.id]: (s.tabs[active.id] || []).concat([{ id, label: "Thread " + n }]) },
+              tab: { ...s.tab, [active.id]: id },
+              composer: "",
+            }));
+            if (this.composerEl) {
+              this.composerEl.value = "";
+              setTimeout(() => this.composerEl && this.composerEl.focus(), 0);
+            }
+          },
+          empty: ctAll.length === 0 && !ctPending,
+          emptyTitle: isMain
+            ? "No thread on " + active.key + " yet"
+            : "New side thread on " + active.key,
+          emptyBody: isMain
+            ? "Send a message to start one. The brief and dependencies travel with it, and the card picks up its state."
+            : "A second track on the same task — useful for a spike or a question you don't want mixed into the main thread.",
+          pending: ctPending,
+          messages: ctAll.map((m) => ({
+            text: m.text,
+            isUser: m.who === "you",
+            isClaude: m.who === "claude" && !m.q,
+            isQuestion: m.who === "claude" && !!m.q,
+            isEvent: m.who === "event",
+          })),
+          starters: [
+            { label: "Draft a plan", text: "Draft a plan for this before writing any code." },
+            { label: "Investigate first", text: "Investigate where this lives and report back before changing anything." },
+            { label: "Just build it", text: "Go ahead and build this end to end, then open a PR." },
+          ].map((s) => ({
+            label: s.label,
+            pick: () => {
+              this.setState({ composer: s.text });
+              if (this.composerEl) {
+                this.composerEl.value = s.text;
+                this.composerEl.focus();
+              }
+            },
+          })),
+          placeholder: ctAll.length
+            ? "Reply to Claude…"
+            : "Tell Claude what to do with " + active.key + "…",
+          onDraft: (e) => {
+            const v = e.target.value;
+            if (!!v.trim() !== draftFilled) this.setState({ composer: v });
+            else this.state.composer = v;
+          },
+          onKey: (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              this.state.composer = e.target.value;
+              this.sendMessage(active, msgKey, isMain);
+            }
+          },
+          onFocus: () => this.setState({ composerFocus: true }),
+          onBlur: () => this.setState({ composerFocus: false }),
+          send: () => this.sendMessage(active, msgKey, isMain),
+          composerStyle:
+            "border-radius:14px;background:var(--card);padding:11px 13px 9px;transition:box-shadow 120ms ease;border:1px solid " +
+            (st.composerFocus ? "color-mix(in srgb,var(--primary) 55%,transparent)" : "var(--border)") +
+            ";box-shadow:" +
+            (st.composerFocus
+              ? "0 0 0 3px color-mix(in srgb,var(--primary) 12%,transparent)"
+              : "0 8px 22px -18px rgb(0 0 0 / 45%)"),
+          sendStyle:
+            "display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:99px;cursor:pointer;transition:opacity 120ms ease;background:" +
+            (draftFilled ? "var(--primary)" : "var(--accent)") +
+            ";color:" +
+            (draftFilled ? "var(--primary-fg)" : "var(--muted-fg)"),
+        }
+      : null;
+
+    const artifact = st.artifact;
+    return {
+      cardThread,
+      msgScrollRef: (el) => {
+        this.msgEl = el;
+        if (el && active && el.dataset.card !== msgKey) {
+          el.dataset.card = msgKey;
+          el.scrollTop = el.scrollHeight;
+        }
+      },
+      composerRef: (el) => {
+        this.composerEl = el;
+        if (el && active && el.dataset.card !== msgKey) {
+          el.dataset.card = msgKey;
+          el.value = st.composer || "";
+        }
+      },
+      toggleBrief: () => {
+        if (!active) return;
+        this.setState((s) => ({
+          briefOpen: { ...s.briefOpen, [active.id]: !briefShown },
+          editField: briefShown && s.editField === "brief" ? null : s.editField,
+        }));
+      },
+      briefShown,
+      briefPane: hasThreadPane && briefShown,
+      plainBrief: !!active && !hasThreadPane,
+      threadPaneVisible: hasThreadPane && !briefShown,
+      groupBriefStyle: "min-width:0",
+      groupActionsStyle: hasThreadPane
+        ? "display:flex;flex-direction:column;gap:8px;padding:14px;order:-1"
+        : "display:flex;flex-direction:column;gap:8px;padding:14px",
+      sideSectionStyle: hasThreadPane ? "padding:14px;border-top:1px solid var(--border)" : "",
+      sideStageStyle: "display:flex;flex-direction:column;gap:8px;padding:14px;border-top:1px solid var(--border)",
+      sideInfoStyle: "padding:14px;border-top:1px solid var(--border)",
+      groupDetailsStyle: hasThreadPane
+        ? "display:flex;flex-direction:column"
+        : "display:flex;flex-direction:column;gap:18px;min-width:0",
+      groupMetaStyle: "display:flex;flex-direction:column",
+      briefToggleTitle: briefShown ? "Hide brief" : "Show brief",
+      briefToggleStyle:
+        "display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px 0 6px;border-radius:7px;cursor:pointer;font:500 11.5px var(--font-sans);border:1px solid " +
+        (briefShown ? "var(--input)" : "transparent") +
+        ";background:" +
+        (briefShown ? "var(--accent)" : "transparent") +
+        ";color:" +
+        (briefShown ? "var(--fg)" : "var(--muted-fg)"),
+      hasThreadPane,
+      cardMaxed: hasThreadPane && cardMaxed,
+      cardNotMaxed: !(hasThreadPane && cardMaxed),
+      cardMaxTitle: cardMaxed ? "Exit fullscreen" : "Fullscreen",
+      toggleCardMax: () => this.setState((s) => ({ cardMaxed: !s.cardMaxed })),
+      cardModalStyle: (hasThreadPane && cardMaxed
+        ? "position:fixed;inset:0;width:100vw;max-width:100vw;height:100vh;border-radius:0;border:none"
+        : "width:min(" +
+          (hasThreadPane ? "1220px" : "760px") +
+          ",calc(100vw - 64px));max-width:calc(100vw - 64px);" +
+          (hasThreadPane ? "height:86vh" : "max-height:86vh") +
+          ";border-radius:16px;border:1px solid color-mix(in srgb,var(--fg) 10%,transparent)") +
+        ";display:flex;flex-direction:column;background:var(--card);box-shadow:var(--shadow-pop);overflow:hidden;animation:t3pop 180ms cubic-bezier(.2,.8,.2,1)",
+      cardBodyStyle: hasThreadPane
+        ? "display:grid;grid-template-columns:minmax(0,1fr) 336px;min-height:0;flex:1;margin-top:12px;border-top:1px solid var(--border)"
+        : "display:flex;flex-direction:column;min-height:0;flex:0 1 auto;overflow-y:auto;margin-top:12px;border-top:1px solid var(--border)",
+      cardSideStyle: hasThreadPane
+        ? "display:flex;flex-direction:column;min-height:0;overflow-y:auto"
+        : "display:flex;align-items:stretch",
+      cardLeftColStyle: hasThreadPane
+        ? "display:contents"
+        : "flex:1;min-width:0;display:flex;flex-direction:column;gap:18px;padding:16px 20px 20px",
+      cardRightColStyle: hasThreadPane
+        ? "display:contents"
+        : "flex:none;width:244px;display:flex;flex-direction:column;border-left:1px solid var(--border)",
+      noop: () => {},
+      stop: (e) => e.stopPropagation(),
+      isBoard,
+      isThreads: !isBoard,
+      threads: THREADS,
+      liveThreads: (() => {
+        const ids = visibleProjects.map((p) => p.id);
+        const rank = { working: 0, waiting: 1, stopped: 2 };
+        return st.cards
+          .filter((c) => ids.indexOf(c.project) !== -1 && !!this.threadFor(c))
+          .sort((a, b) => rank[a.tstate] - rank[b.tstate])
+          .map((c) => {
+            const t = this.threadFor(c);
+            const sel = st.activeThread === c.title;
+            return {
+              title: c.title,
+              age: t.state === "working" ? "now" : t.state === "waiting" ? "12m" : "3h",
+              working: t.state === "working",
+              waiting: t.state === "waiting",
+              idle: t.state === "stopped",
+              tip: t.state === "waiting" ? "Awaiting input" : "",
+              open: () => this.setState({ mode: "threads", activeThread: c.title }),
+              style:
+                "display:flex;align-items:center;gap:8px;height:32px;padding:6px 10px;border-radius:8px;font:500 14px var(--font-sans);cursor:pointer;color:var(--fg);" +
+                (sel ? "background:var(--sidebar-row-selected)" : "") +
+                (t.state === "waiting"
+                  ? ";box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--info) 45%,transparent)"
+                  : ""),
+            };
+          });
+      })(),
+      openThread: (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        if (!active) return;
+        this.setState({ mode: "threads", activeId: null, activeThread: active.title });
+      },
+      threadView,
+      threadOpen: !isBoard && !!threadView,
+      threadEmpty: !isBoard && !threadView,
+      showThreads: () => this.setState({ mode: "threads" }),
+      showBoard: () => this.setState({ mode: "board" }),
+      threadsTabStyle: this.tabStyle(!isBoard),
+      boardTabStyle: this.tabStyle(isBoard),
+      crumbProject:
+        st.scope === "all"
+          ? "All projects"
+          : (PROJECTS.find((p) => p.id === st.scope) || PROJECTS[0]).name,
+      crumbLeaf: isBoard ? "Board" : st.activeThread || "New thread",
+      query: st.query,
+      onQuery: (e) => this.setState({ query: e.target.value }),
+      toggleTheme: () => {
+        const el = document.documentElement;
+        el.setAttribute(
+          "data-t3-theme",
+          el.getAttribute("data-t3-theme") === "dark" ? "light" : "dark",
+        );
+      },
+      projectNav: [{ id: "all", name: "All projects", dot: "#a1a1aa" }]
+        .concat(PROJECTS)
+        .map((p) => ({
+          name: p.name,
+          dot: p.dot,
+          count:
+            p.id === "all"
+              ? st.cards.length
+              : st.cards.filter((c) => c.project === p.id).length,
+          select: () => this.setState({ scope: p.id }),
+          style:
+            "display:flex;align-items:center;gap:var(--sidebar-control-gap,8px);height:32px;padding:6px 10px;border:none;border-radius:var(--control-radius,8px);cursor:pointer;font:500 14px var(--font-sans);background:" +
+            (st.scope === p.id ? "var(--sidebar-row-selected)" : "transparent") +
+            ";box-shadow:" +
+            (st.scope === p.id ? "var(--shadow-xs)" : "none") +
+            ";color:" +
+            (st.scope === p.id ? "var(--fg)" : "color-mix(in srgb,var(--muted-fg) 80%,transparent)"),
+        })),
+      pickerOpen: !!st.pickerOpen,
+      pickerCaret: st.pickerOpen ? "rotate(180deg)" : "none",
+      togglePicker: () => this.setState((s) => ({ pickerOpen: !s.pickerOpen })),
+      projectMenu: [{ id: "all", name: "All projects", dot: "#a1a1aa" }]
+        .concat(PROJECTS)
+        .map((p) => ({
+          name: p.name,
+          dot: p.dot,
+          count:
+            p.id === "all"
+              ? st.cards.length
+              : st.cards.filter((c) => c.project === p.id).length,
+          select: () => this.setState({ scope: p.id, pickerOpen: false }),
+          style:
+            "display:flex;align-items:center;gap:9px;height:30px;padding:0 9px;border:none;border-radius:8px;cursor:pointer;font:500 12.5px var(--font-sans);background:" +
+            (st.scope === p.id ? "var(--accent)" : "transparent") +
+            ";color:" +
+            (st.scope === p.id ? "var(--fg)" : "var(--muted-fg)"),
+        })),
+      boards,
+      activeCard,
+      briefNode,
+      titleEditing: !!active && st.editField === "title",
+      titleViewing: !!active && st.editField !== "title",
+      briefEditing: !!active && st.editField === "brief",
+      briefViewing: !!active && st.editField !== "brief" && (briefShown || !hasThreadPane),
+      startTitleEdit: () => {
+        if (!active) return;
+        this.editSeedTitle = active.title;
+        this.titleSeeded = false;
+        this.setState({ editField: "title" });
+      },
+      startBriefEdit: () => {
+        if (!active) return;
+        this.editSeedBrief = active.brief;
+        this.briefSeeded = false;
+        this.setState({ editField: "brief" });
+      },
+      titleEditRef: this.titleRef || (this.titleRef = (el) => {
+        if (!el) return;
+        this.titleEl = el;
+        if (this.titleSeeded) return;
+        this.titleSeeded = true;
+        el.textContent = this.editSeedTitle || "";
+        this.placeCaretEnd(el);
+      }),
+      briefEditRef: this.briefRefFn || (this.briefRefFn = (el) => {
+        if (!el) return;
+        this.briefEditEl = el;
+        if (this.briefSeeded) return;
+        this.briefSeeded = true;
+        el.innerHTML = this.editSeedBrief || "";
+        this.placeCaretEnd(el);
+      }),
+      commitTitle: () => {
+        const el = this.titleEl;
+        if (el && active && !this.cancelEdit) {
+          const v = el.textContent.replace(/\s+/g, " ").trim();
+          if (v) this.patchCard(active.id, { title: v });
+        }
+        this.cancelEdit = false;
+        this.titleSeeded = false;
+        this.setState({ editField: null });
+      },
+      commitBrief: () => {
+        const el = this.briefEditEl;
+        if (el && active && !this.cancelEdit) {
+          const html = el.innerHTML.trim();
+          this.patchCard(active.id, {
+            brief: html || '<p style="margin:0;color:var(--muted-fg)">No brief yet.</p>',
+          });
+        }
+        this.cancelEdit = false;
+        this.briefSeeded = false;
+        this.setState({ editField: null });
+      },
+      titleKey: (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.target.blur();
+        } else if (e.key === "Escape") {
+          this.cancelEdit = true;
+          e.target.blur();
+        }
+      },
+      briefKey: (e) => {
+        if (e.key === "Escape") {
+          this.cancelEdit = true;
+          e.target.blur();
+        } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          e.target.blur();
+        }
+      },
+      depEditing,
+      depNotEditing: !depEditing,
+      depsListVisible: !depEditing && !!active && active.depKeys.length > 0,
+      depsEmptyVisible: !depEditing && !!active && active.depKeys.length === 0,
+      depEditTitle: depEditing ? "Done" : "Edit dependencies",
+      depPencilOpacity: depEditing || st.depHover ? "1" : "0",
+      depHoverOn: () => {
+        if (!this.state.depHover) this.setState({ depHover: true });
+      },
+      depHoverOff: () => {
+        if (this.state.depHover) this.setState({ depHover: false });
+      },
+      toggleDepEdit: () => {
+        if (!active) return;
+        if (this.state.editDeps) {
+          this.patchCard(active.id, { depKeys: this.state.draftDeps.slice() });
+          this.setState({ editDeps: false, depOpen: false, depQuery: "" });
+        } else {
+          this.setState({
+            editDeps: true,
+            draftDeps: active.depKeys.slice(),
+            depQuery: "",
+            depIndex: 0,
+            depOpen: false,
+          });
+        }
+      },
+      closeCard: () =>
+        this.setState({
+          activeId: null,
+          cardMaxed: false,
+          composer: "",
+          composerFocus: false,
+          editField: null,
+          editDeps: false,
+          depHover: false,
+          depOpen: false,
+          depQuery: "",
+        }),
+      progressCard: () => {
+        if (!active || this.isBlocked(active)) return;
+        const next = STAGES[this.stageIndex(active.status) + 1];
+        if (next) this.setStatus(active.id, next.id);
+      },
+      openPlan: () =>
+        this.setState({
+          artifact: {
+            kind: "plan",
+            title: "Implementation plan",
+            meta: active.key,
+            body: active.plan,
+          },
+        }),
+      openPr: () =>
+        this.setState({
+          artifact: {
+            kind: "pr",
+            title: "Pull request #" + active.pr.n,
+            meta: active.pr.state,
+            pr: active.pr,
+            key: active.key,
+          },
+        }),
+      artifact,
+      artifactIsPlan: !!artifact && artifact.kind === "plan",
+      artifactIsPr: !!artifact && artifact.kind === "pr",
+      artifactBody: artifact ? this.artifactBody(artifact) : null,
+      closeArtifact: () => this.setState({ artifact: null }),
+      createOpen: st.createOpen,
+      createStatusName: this.stage(st.createStatus).name,
+      openCreate: () =>
+        this.setState({
+          createOpen: true,
+          createStatus: "backlog",
+          createProject: st.scope === "all" ? "advisor" : st.scope,
+          draftTitle: "",
+          draftBrief: "",
+          draftDeps: [],
+      depQuery: "",
+      depIndex: 0,
+      depOpen: false,
+        }),
+      closeCreate: () => this.setState({ createOpen: false }),
+      draftTitle: st.draftTitle,
+      onDraftTitle: (e) => this.setState({ draftTitle: e.target.value }),
+      briefRef: (el) => {
+        this.briefEl = el;
+      },
+      onBriefInput: () => {
+        if (this.briefEl) this.state.draftBrief = this.briefEl.innerHTML;
+      },
+      onBriefPaste: (e) => {
+        const items = Array.from((e.clipboardData || {}).items || []);
+        const img = items.find((i) => i.type && i.type.indexOf("image/") === 0);
+        if (!img) return;
+        e.preventDefault();
+        const file = img.getAsFile();
+        const reader = new FileReader();
+        reader.onload = () => {
+          document.execCommand(
+            "insertHTML",
+            false,
+            '<img src="' +
+              reader.result +
+              '" style="max-width:100%;border-radius:8px;border:1px solid var(--border);margin:6px 0" />',
+          );
+          if (this.briefEl) this.state.draftBrief = this.briefEl.innerHTML;
+        };
+        reader.readAsDataURL(file);
+      },
+      createProjects: PROJECTS.map((p) => {
+        const on = st.createProject === p.id;
+        return {
+          id: p.id,
+          name: p.name,
+          dot: p.dot,
+          select: () =>
+            this.setState({
+              createProject: p.id,
+              draftDeps: [],
+              depQuery: "",
+              depIndex: 0,
+              depOpen: false,
+            }),
+          style:
+            "display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:9px;cursor:pointer;font:500 13px var(--font-sans);box-shadow:var(--shadow-xs);border:1px solid " +
+            (on ? "var(--primary)" : "var(--input)") +
+            ";background:" +
+            (on ? "var(--accent)" : "var(--popover)") +
+            ";color:var(--fg)",
+        };
+      }),
+      depChips: st.draftDeps.map((k) => {
+        const c = st.cards.find((x) => x.key === k);
+        return {
+          key: k,
+          title: c ? c.title : "",
+          remove: (e) => {
+            e.stopPropagation();
+            this.setState((s) => ({ draftDeps: s.draftDeps.filter((x) => x !== k) }));
+          },
+        };
+      }),
+      depQuery: st.depQuery,
+      depPlaceholder: st.draftDeps.length ? "Add another…" : "Search tasks by key or title…",
+      depFieldStyle:
+        "display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-height:34px;padding:4px 8px;border-radius:10px;background:var(--bg);cursor:text;box-shadow:var(--shadow-xs);border:1px solid " +
+        (st.depOpen ? "var(--primary)" : "var(--input)"),
+      depInputRef: (el) => {
+        this.depEl = el;
+      },
+      focusDepInput: () => {
+        if (this.depEl) this.depEl.focus();
+      },
+      onDepQuery: (e) =>
+        this.setState({ depQuery: e.target.value, depOpen: true, depIndex: 0 }),
+      onDepFocus: () => {
+        this.setState({ depOpen: true, depIndex: 0 });
+        let n = this.depEl && this.depEl.parentElement;
+        while (n) {
+          if (n.scrollHeight > n.clientHeight + 4 && getComputedStyle(n).overflowY !== "visible") {
+            n.scrollTop = n.scrollHeight;
+            break;
+          }
+          n = n.parentElement;
+        }
+      },
+      onDepBlur: () => this.setState({ depOpen: false }),
+      onDepKey: (e) => {
+        const list = depMatches;
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          if (!list.length) return;
+          const d = e.key === "ArrowDown" ? 1 : -1;
+          this.setState((s) => ({
+            depOpen: true,
+            depIndex: (s.depIndex + d + list.length) % list.length,
+          }));
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          const pick = list[Math.min(st.depIndex, list.length - 1)];
+          if (pick) addDep(pick.key);
+        } else if (e.key === "Escape") {
+          this.setState({ depOpen: false });
+        } else if (e.key === "Backspace" && !st.depQuery && st.draftDeps.length) {
+          this.setState((s) => ({ draftDeps: s.draftDeps.slice(0, -1) }));
+        }
+      },
+      depOpen: st.depOpen && (depMatches.length > 0 || !!st.depQuery),
+      depNoMatch: depMatches.length === 0,
+      depMatches: depMatches.map((c, i) => ({
+        key: c.key,
+        title: c.title,
+        statusName: this.stage(c.status).name,
+        hover: () => {
+          if (this.state.depIndex !== i) this.setState({ depIndex: i });
+        },
+        pick: (e) => {
+          e.preventDefault();
+          addDep(c.key);
+        },
+        style:
+          "display:flex;align-items:center;gap:8px;height:30px;padding:0 9px;border:none;border-radius:7px;cursor:pointer;background:" +
+          (i === Math.min(st.depIndex, depMatches.length - 1) ? "var(--accent)" : "transparent"),
+      })),
+      submitStyle:
+        "height:32px;padding:0 13px;border:1px solid var(--primary);border-radius:8px;background:var(--primary);color:var(--primary-fg);font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);opacity:" +
+        (st.draftTitle.trim() ? "1" : "0.5"),
+      submitCard: () => {
+        const title = this.state.draftTitle.trim();
+        if (!title) return;
+        const html = this.briefEl ? this.briefEl.innerHTML : "";
+        const prefix = this.state.createProject === "advisor" ? "T3-" : this.state.createProject === "web" ? "MW-" : "RL-";
+        const nums = this.state.cards
+          .filter((c) => c.key.indexOf(prefix) === 0)
+          .map((c) => parseInt(c.key.slice(prefix.length), 10));
+        const nextNum = (nums.length ? Math.max.apply(null, nums) : 100) + 1;
+        const card = {
+          id: "c" + Date.now(),
+          key: prefix + nextNum,
+          project: this.state.createProject,
+          type: "feature",
+          status: this.state.createStatus,
+          title,
+          brief: html || '<p style="margin:0;color:var(--muted-fg)">No brief yet.</p>',
+          depKeys: this.state.draftDeps.slice(),
+          plan: null,
+          pr: null,
+          created: "just now",
+        };
+        this.setState((s) => ({
+          cards: s.cards.concat(card),
+          createOpen: false,
+          mode: "board",
+          draftTitle: "",
+          draftBrief: "",
+          draftDeps: [],
+      depQuery: "",
+      depIndex: 0,
+      depOpen: false,
+        }));
+      },
+    };
+  }
+
+  tabStyle(activeTab) {
+    return (
+      "display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:none;border-radius:8px;cursor:pointer;font:500 12.5px var(--font-sans);background:" +
+      (activeTab ? "var(--card)" : "transparent") +
+      ";color:" +
+      (activeTab ? "var(--fg)" : "var(--muted-fg)") +
+      ";box-shadow:" +
+      (activeTab ? "var(--shadow-xs)" : "none")
+    );
+  }
+
+  artifactBody(a) {
+    if (a.kind === "plan") {
+      return React.createElement(
+        "pre",
+        {
+          style: {
+            margin: 0,
+            whiteSpace: "pre-wrap",
+            font: "400 12.5px/1.75 var(--font-sans)",
+            color: "var(--fg)",
+          },
+        },
+        a.body,
+      );
+    }
+    const pr = a.pr;
+    return React.createElement(
+      "div",
+      { style: { display: "flex", flexDirection: "column", gap: "16px" } },
+      React.createElement(
+        "div",
+        { style: { font: "600 15px var(--font-sans)", color: "var(--fg)" } },
+        pr.title,
+      ),
+      React.createElement(
+        "div",
+        { style: { display: "flex", gap: "12px", font: "500 12px var(--font-sans)" } },
+        React.createElement("span", { style: { color: "var(--success-fg)" } }, "+" + pr.add),
+        React.createElement("span", { style: { color: "var(--destructive-fg)" } }, "-" + pr.del),
+        React.createElement(
+          "span",
+          { style: { color: "var(--muted-fg)" } },
+          pr.files.length + " files changed",
+        ),
+      ),
+      React.createElement(
+        "div",
+        {
+          style: {
+            border: "1px solid var(--border)",
+            borderRadius: "10px",
+            overflow: "hidden",
+          },
+        },
+        pr.files.map((f, i) =>
+          React.createElement(
+            "div",
+            {
+              key: f,
+              style: {
+                padding: "9px 12px",
+                font: "400 12px var(--font-sans)",
+                color: "var(--fg)",
+                background: i % 2 ? "var(--muted)" : "transparent",
+                borderTop: i ? "1px solid var(--border)" : "none",
+              },
+            },
+            f,
+          ),
+        ),
+      ),
+      React.createElement(
+        "a",
+        {
+          href: "#",
+          onClick: (e) => e.preventDefault(),
+          style: {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "7px",
+            alignSelf: "flex-start",
+            height: "32px",
+            padding: "0 12px",
+            border: "1px solid var(--input)",
+            borderRadius: "8px",
+            background: "var(--popover)",
+            color: "var(--fg)",
+            font: "500 13px var(--font-sans)",
+            textDecoration: "none",
+          },
+        },
+        "Open on GitHub ↗",
+      ),
+    );
+  }
+}
+
+</script>
+</body>
+</html>
