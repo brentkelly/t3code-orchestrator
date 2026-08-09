@@ -27,11 +27,23 @@ export type BoardEvent = Extract<OrchestrationEvent, { type: `board.${string}` }
 
 const decodeBoardCardCreatedPayload = Schema.decodeUnknownEffect(BoardCardCreatedPayload);
 
+// Canonical card order — MUST match the `ORDER BY created_at ASC, card_id ASC`
+// of `listBoardCards`, or the from-empty replay read model would diverge from
+// the table-rehydrated one whenever cards are created out of timestamp order
+// (createdAt is client-supplied, so dispatch order ≠ createdAt order in
+// general). Mirrors the upstream projector's `localeCompare` sort idiom, which
+// agrees with SQLite's ordering for the ASCII ISO timestamps and ids used here.
+function compareBoardCards(left: BoardCard, right: BoardCard): number {
+  return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+}
+
 function upsertCard(model: OrchestrationReadModel, card: BoardCard): OrchestrationReadModel {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  const cards = board.cards.some((existing) => existing.id === card.id)
-    ? board.cards.map((existing) => (existing.id === card.id ? card : existing))
-    : [...board.cards, card];
+  const cards = (
+    board.cards.some((existing) => existing.id === card.id)
+      ? board.cards.map((existing) => (existing.id === card.id ? card : existing))
+      : [...board.cards, card]
+  ).toSorted(compareBoardCards);
   return { ...model, board: { cards } };
 }
 

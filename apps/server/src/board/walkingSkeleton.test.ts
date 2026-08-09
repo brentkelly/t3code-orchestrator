@@ -161,6 +161,61 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
   );
 });
 
+// Separate layer = a pristine empty database. Two cards created OUT of
+// timestamp order (the second dispatched carries an earlier createdAt) would
+// expose any divergence between the in-memory projector's ordering and the
+// table's `ORDER BY created_at, card_id` — the single-card happy path cannot.
+it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-order-test-"))(
+  "board walking skeleton (out-of-order cards)",
+  (it) => {
+    it.effect("replay equals rehydration when cards are created out of timestamp order", () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+        yield* engine.dispatch(createProjectCommand);
+        // Dispatched first, but LATER timestamp.
+        yield* engine.dispatch({
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-card-late"),
+          cardId: BoardCardId.make("card-late"),
+          projectId,
+          title: "Later card",
+          createdAt: "2026-01-02T00:00:00.000Z",
+        });
+        // Dispatched second, but EARLIER timestamp — so dispatch order and
+        // canonical (createdAt) order disagree.
+        yield* engine.dispatch({
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-card-early"),
+          cardId: BoardCardId.make("card-early"),
+          projectId,
+          title: "Earlier card",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+
+        const rehydrated = yield* snapshotQuery.getCommandReadModel();
+        // Canonical order is by createdAt: the earlier card sorts first even
+        // though it was dispatched second.
+        assert.deepStrictEqual(
+          rehydrated.board?.cards.map((card) => card.id),
+          [BoardCardId.make("card-early"), BoardCardId.make("card-late")],
+        );
+
+        const events: OrchestrationEvent[] = Array.from(
+          yield* Stream.runCollect(engine.readEvents(0)),
+        );
+        let replayed = createEmptyReadModel(createdAt);
+        for (const event of events) {
+          replayed = yield* projectEvent(replayed, event);
+        }
+        // The order-sensitive equality must hold for ≥2 out-of-order cards.
+        assert.deepStrictEqual(replayed.board, rehydrated.board);
+      }),
+    );
+  },
+);
+
 // Separate layer = a pristine empty database, so the zero-card case is not
 // contaminated by the card the shared-layer block above creates.
 it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-empty-test-"))(
