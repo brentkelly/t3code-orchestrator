@@ -5,10 +5,22 @@
  * to from the upstream projector behind the `isBoardEvent` predicate. Also
  * maps board events to card shell deltas for the shell stream (delegated to
  * from ws.ts behind the same predicate), which needs no projection re-read:
- * the created payload already carries the whole card.
+ * every board event payload carries the whole post-change card (and the
+ * created payload carries every field of it).
+ *
+ * Archived cards stay in the read model with `archivedAt` set — the shell
+ * drops them (`card-removed`), but the model keeps them so unarchive can
+ * restore the card on a from-empty replay.
  */
 import {
+  BoardCardArchivedPayload,
   BoardCardCreatedPayload,
+  BoardCardMovedPayload,
+  BoardCardReorderedPayload,
+  BoardCardThreadLinkedPayload,
+  BoardCardThreadUnlinkedPayload,
+  BoardCardUnarchivedPayload,
+  BoardCardUpdatedPayload,
   EMPTY_BOARD_STATE,
   isBoardEvent,
   type BoardCard,
@@ -31,15 +43,54 @@ export type BoardEvent = Extract<OrchestrationEvent, { type: `board.${string}` }
 export { isBoardEvent };
 
 const decodeBoardCardCreatedPayload = Schema.decodeUnknownEffect(BoardCardCreatedPayload);
+const decodeBoardCardMovedPayload = Schema.decodeUnknownEffect(BoardCardMovedPayload);
+const decodeBoardCardReorderedPayload = Schema.decodeUnknownEffect(BoardCardReorderedPayload);
+const decodeBoardCardUpdatedPayload = Schema.decodeUnknownEffect(BoardCardUpdatedPayload);
+const decodeBoardCardThreadLinkedPayload = Schema.decodeUnknownEffect(BoardCardThreadLinkedPayload);
+const decodeBoardCardThreadUnlinkedPayload = Schema.decodeUnknownEffect(
+  BoardCardThreadUnlinkedPayload,
+);
+const decodeBoardCardArchivedPayload = Schema.decodeUnknownEffect(BoardCardArchivedPayload);
+const decodeBoardCardUnarchivedPayload = Schema.decodeUnknownEffect(BoardCardUnarchivedPayload);
 
 // Canonical card order — MUST match the `ORDER BY created_at ASC, card_id ASC`
-// of `listBoardCards`, or the from-empty replay read model would diverge from
-// the table-rehydrated one whenever cards are created out of timestamp order
-// (createdAt is client-supplied, so dispatch order ≠ createdAt order in
-// general). Mirrors the upstream projector's `localeCompare` sort idiom, which
-// agrees with SQLite's ordering for the ASCII ISO timestamps and ids used here.
+// of the board projection's card read, or the from-empty replay read model
+// would diverge from the table-rehydrated one whenever cards are created out
+// of timestamp order (createdAt is client-supplied, so dispatch order ≠
+// createdAt order in general). Mirrors the upstream projector's
+// `localeCompare` sort idiom, which agrees with SQLite's ordering for the
+// ASCII ISO timestamps and ids used here.
 function compareBoardCards(left: BoardCard, right: BoardCard): number {
   return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+}
+
+/**
+ * The full card a created payload describes. Fields no `board.card-created`
+ * payload carries start at their empty defaults — and for walking-skeleton
+ * events the payload's own decoding defaults fill the rest, mirroring
+ * migration 903's column defaults so replay equals rehydration.
+ */
+export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): BoardCard {
+  return {
+    id: payload.cardId,
+    key: payload.key,
+    cardNumber: payload.cardNumber,
+    projectId: payload.projectId,
+    type: payload.cardType,
+    stage: payload.stage,
+    orderKey: payload.orderKey,
+    title: payload.title,
+    briefRef: null,
+    dependsOn: [],
+    parentCardId: null,
+    threadLinks: [],
+    externalRef: null,
+    recipeSnapshot: null,
+    blocked: false,
+    archivedAt: null,
+    createdAt: payload.createdAt,
+    updatedAt: payload.updatedAt,
+  };
 }
 
 function upsertCard(model: OrchestrationReadModel, card: BoardCard): OrchestrationReadModel {
@@ -49,7 +100,28 @@ function upsertCard(model: OrchestrationReadModel, card: BoardCard): Orchestrati
       ? board.cards.map((existing) => (existing.id === card.id ? card : existing))
       : [...board.cards, card]
   ).toSorted(compareBoardCards);
-  return { ...model, board: { cards } };
+  return { ...model, board: { ...board, cards } };
+}
+
+/** Counter bump on create: monotonic max, so replaying a legacy event
+    (cardNumber 0) still lands the counter at 1, matching the
+    `MAX(card_number) + 1` rehydration. */
+function bumpNextCardNumber(
+  model: OrchestrationReadModel,
+  payload: BoardCardCreatedPayload,
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const current = board.nextCardNumberByProject[payload.projectId] ?? 1;
+  return {
+    ...model,
+    board: {
+      ...board,
+      nextCardNumberByProject: {
+        ...board.nextCardNumberByProject,
+        [payload.projectId]: Math.max(current, payload.cardNumber + 1),
+      },
+    },
+  };
 }
 
 export function projectBoardEvent(
@@ -61,21 +133,59 @@ export function projectBoardEvent(
       return decodeBoardCardCreatedPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) =>
-          upsertCard(model, {
-            id: payload.cardId,
-            projectId: payload.projectId,
-            title: payload.title,
-            createdAt: payload.createdAt,
-            updatedAt: payload.updatedAt,
-          }),
+          bumpNextCardNumber(upsertCard(model, boardCardFromCreatedPayload(payload)), payload),
         ),
       );
 
-    default:
-      // Explicit terminal default: an unrecognized board event leaves the
-      // read model unchanged rather than throwing. (Becomes a compile-time
-      // exhaustiveness guard once BoardEvent has a second member.)
+    case "board.card-moved":
+      return decodeBoardCardMovedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-reordered":
+      return decodeBoardCardReorderedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-updated":
+      return decodeBoardCardUpdatedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-thread-linked":
+      return decodeBoardCardThreadLinkedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-thread-unlinked":
+      return decodeBoardCardThreadUnlinkedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-archived":
+      // The card stays in the model (archivedAt set) so unarchive can
+      // restore it on replay; only the shell drops it.
+      return decodeBoardCardArchivedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-unarchived":
+      return decodeBoardCardUnarchivedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    default: {
+      event satisfies never;
+      // Runtime backstop for an undecoded event: leave the model unchanged.
       return Effect.succeed(model);
+    }
   }
 }
 
@@ -87,19 +197,32 @@ export function boardShellStreamEvent(
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
-        card: {
-          id: event.payload.cardId,
-          projectId: event.payload.projectId,
-          title: event.payload.title,
-          createdAt: event.payload.createdAt,
-          updatedAt: event.payload.updatedAt,
-        },
+        card: boardCardFromCreatedPayload(event.payload),
       });
 
-    default:
-      // Explicit terminal default: an event with no shell projection yields
-      // no delta. (Becomes a compile-time exhaustiveness guard once BoardEvent
-      // has a second member.)
+    case "board.card-moved":
+    case "board.card-reordered":
+    case "board.card-updated":
+    case "board.card-thread-linked":
+    case "board.card-thread-unlinked":
+    case "board.card-unarchived":
+      return Option.some({
+        kind: "card-upserted",
+        sequence: event.sequence,
+        card: event.payload.card,
+      });
+
+    case "board.card-archived":
+      // Archiving removes the card from the live board every client renders.
+      return Option.some({
+        kind: "card-removed",
+        sequence: event.sequence,
+        cardId: event.payload.cardId,
+      });
+
+    default: {
+      event satisfies never;
       return Option.none();
+    }
   }
 }

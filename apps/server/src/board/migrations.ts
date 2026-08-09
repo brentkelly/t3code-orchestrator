@@ -8,5 +8,13 @@
  * and `Migrator.fromRecord` sorts by id, so tail position is irrelevant.
  */
 import Migration0900 from "../persistence/Migrations/900_BoardCards.ts";
+import Migration0901 from "../persistence/Migrations/901_BoardCardBodies.ts";
+import Migration0902 from "../persistence/Migrations/902_BoardCardThreadLinks.ts";
+import Migration0903 from "../persistence/Migrations/903_BoardCardsColumns.ts";
 
-export const BOARD_MIGRATIONS = [[900, "BoardCards", Migration0900]] as const;
+export const BOARD_MIGRATIONS = [
+  [900, "BoardCards", Migration0900],
+  [901, "BoardCardBodies", Migration0901],
+  [902, "BoardCardThreadLinks", Migration0902],
+  [903, "BoardCardsColumns", Migration0903],
+] as const;
