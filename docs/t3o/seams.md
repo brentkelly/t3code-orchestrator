@@ -265,12 +265,34 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `"card"` in `OrchestrationAggregateKind` (D9)                           | one-line edit (frozen)                                                  |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `BoardCardId` in event-base `aggregateId` union (D9)                    | one-line edit (frozen)                                                  |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board event members in the `OrchestrationEvent` union                   | injected factory call (`makeBoardOrchestrationEvents(EventBaseFields)`) |
+| `packages/contracts/src/rpc.ts`                                        | `t3o-04`  | Import board RPC registries                                             | one-line append (import)                                                |
+| `packages/contracts/src/rpc.ts`                                        | `t3o-04`  | Board methods join `WS_METHODS`                                         | registry spread (`BOARD_WS_METHODS`)                                    |
+| `packages/contracts/src/rpc.ts`                                        | `t3o-04`  | Board RPCs join `WsRpcGroup` (`RpcGroup.make` is variadic)              | registry spread (`BOARD_RPCS`)                                          |
+| `apps/server/src/auth/RpcAuthorization.ts`                             | `t3o-04`  | Import board RPC scope registry                                         | one-line append (import)                                                |
+| `apps/server/src/auth/RpcAuthorization.ts`                             | `t3o-04`  | Board scopes join `RPC_REQUIRED_SCOPES`                                 | registry spread (`BOARD_RPC_SCOPES`)                                    |
+| `apps/server/src/ws.ts`                                                | `t3o-04`  | Import board RPC handler factory                                        | one-line append (import)                                                |
+| `apps/server/src/ws.ts`                                                | `t3o-04`  | Board RPC handlers join the `toLayer` handler record                    | spread (injected factory call, `boardRpcHandlers(deps)`)                |
+| `packages/client-runtime/src/rpc/client.ts`                            | `t3o-04`  | Import board subscription tag type                                      | one-line append (type import)                                           |
+| `packages/client-runtime/src/rpc/client.ts`                            | `t3o-04`  | Board tags join `EnvironmentSubscriptionRpcTag`                         | one-line union member (`BoardSubscriptionRpcTag`, grows in board.ts)    |
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
 (5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the
 rebase-target note, and the PR-target note). The count is now **frozen by construction**:
 `t3o-03`'s seven commands and seven events must land with zero new lines in upstream-owned files —
-check that claim explicitly when it lands.
+that claim held when `t3o-03` landed (zero new upstream lines; verified against this inventory).
+
+`t3o-04` opened the **RPC seam layer** — a layer `t3o-02a` never generalised because the walking
+skeleton created no RPCs. It added **9 marker lines across 3 new upstream files and ws.ts**
+(marker count now **47**): the four registry spreads its spec declares (`WS_METHODS`,
+`WsRpcGroup`, `RPC_REQUIRED_SCOPES`, the ws `toLayer` handler record) plus one the spec did not
+anticipate — a one-line union widening of client-runtime's hardcoded
+`EnvironmentSubscriptionRpcTag` (`rpc/client.ts`), without which a streaming board RPC types as
+unary on the client. Each spread's registry lives in `packages/contracts/src/board.ts`; adding
+another board RPC grows those registries and `apps/server/src/board/rpc.ts` only (a further
+_streaming_ RPC also grows the board-owned `BoardSubscriptionRpcTag` type, still zero upstream
+edits). Note also that `t3o-04` narrowed the existing frozen
+`OrchestrationShellSnapshot.cards` seam from `BoardCard` to `BoardCardShell` (D7 payload split) —
+a content change inside an inventoried line, not a new seam.
 
 Marker-less upstream churn that rides along with `t3o-02`:
 
@@ -296,15 +318,17 @@ board-owned paths, must show _only_ the surgical seams above.
 ```bash
 git diff upstream/main...t3o -- . \
   ':!*/board/*' ':!*/board.ts' ':!*/board.test.ts' ':!*/board.tsx' \
-  ':!*/boardCommands.ts' ':!*/900_BoardCards.ts' \
+  ':!*/boardCommands.ts' ':!*/Migrations/9[0-9][0-9]_*.ts' \
   ':!docs/t3o' ':!.plans' ':!AGENTS.md' ':!*routeTree.gen.ts'
 ```
 
 The excludes name board-owned paths **precisely** — a catch-all like `':!*board*'` would silently
 hide unrelated upstream files (`Dashboard*`, `Keyboard*`, `clipboard*`, …) and make the audit read
-clean when it is not. Keep the exclusion list honest as board-owned paths are added. Run it after
-each spec lands and after each upstream merge; a hunk you cannot map to an inventory row is a seam
-that escaped the grammar. (Today it yields exactly the 14 seamed code files.)
+clean when it is not. The one glob, `9[0-9][0-9]_*.ts` under `Migrations/`, is the numbering rule
+the fork already enforces (board migrations are `900_`+), so the exclude no longer drifts every
+time a migration lands. Keep the exclusion list honest as board-owned paths are added. Run it
+after each spec lands and after each upstream merge; a hunk you cannot map to an inventory row is
+a seam that escaped the grammar. (After `t3o-04` it yields exactly the 17 seamed code files.)
 
 ---
 

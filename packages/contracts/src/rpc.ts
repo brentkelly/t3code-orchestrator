@@ -19,6 +19,8 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
+// T3o: board RPC registries live in board.ts (t3o-04).
+import { BOARD_RPCS, BOARD_WS_METHODS } from "./board.ts";
 import {
   GitActionProgressEvent,
   VcsSwitchRefInput,
@@ -265,6 +267,9 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+
+  // T3o: board RPC methods register from the board-owned registry.
+  ...BOARD_WS_METHODS,
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -884,4 +889,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  // T3o: board RPCs register from the board-owned registry (t3o-04).
+  ...BOARD_RPCS,
 );

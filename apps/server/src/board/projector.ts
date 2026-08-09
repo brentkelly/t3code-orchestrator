@@ -21,6 +21,7 @@ import {
   BoardCardThreadUnlinkedPayload,
   BoardCardUnarchivedPayload,
   BoardCardUpdatedPayload,
+  boardCardShellFromCard,
   EMPTY_BOARD_STATE,
   isBoardEvent,
   type BoardCard,
@@ -192,6 +193,13 @@ export function projectBoardEvent(
   }
 }
 
+/**
+ * Deltas carry the bounded `BoardCardShell` (t3o-04), built purely from the
+ * event's own card. This mapping has no thread shells at hand, so the
+ * shell's thread-derived fields leave here at their "none" resting state
+ * and the client reducer re-derives them from `activeThreadId` against the
+ * thread shells it already holds — see `boardCardShellFromCard`.
+ */
 export function boardShellStreamEvent(
   event: BoardEvent,
 ): Option.Option<OrchestrationShellStreamEvent> {
@@ -200,7 +208,7 @@ export function boardShellStreamEvent(
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
-        card: boardCardFromCreatedPayload(event.payload),
+        card: boardCardShellFromCard(boardCardFromCreatedPayload(event.payload)),
       });
 
     case "board.card-moved":
@@ -212,7 +220,7 @@ export function boardShellStreamEvent(
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
-        card: event.payload.card,
+        card: boardCardShellFromCard(event.payload.card),
       });
 
     case "board.card-archived":

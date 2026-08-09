@@ -27,8 +27,8 @@ import {
   BOARD_CLIENT_COMMANDS,
   BOARD_EVENT_TYPES,
   BOARD_SHELL_STREAM_EVENTS,
-  BoardCard,
   BoardCardId,
+  BoardCardShell,
   BoardState,
   makeBoardOrchestrationEvents,
 } from "./board.ts";
@@ -485,8 +485,8 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationThreadShell),
-  // T3o: board cards ride the shell snapshot (D2/D7); optional for interop.
-  cards: Schema.optional(Schema.Array(BoardCard)),
+  // T3o: bounded card shells ride the shell snapshot (D2/D7); optional for interop.
+  cards: Schema.optional(Schema.Array(BoardCardShell)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;

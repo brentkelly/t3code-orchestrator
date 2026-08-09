@@ -3,7 +3,8 @@
  * create form, proving the full seam path command → event → projection →
  * shell delta → pixel. The real board UI arrives with t3o-05/06.
  */
-import { BoardCardId, type BoardCard, type EnvironmentId } from "@t3tools/contracts";
+import { BoardCardId, type BoardCardShell, type EnvironmentId } from "@t3tools/contracts";
+import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -40,7 +41,7 @@ function EnvironmentBoard({ environmentId }: { environmentId: EnvironmentId }) {
   const [title, setTitle] = useState("");
 
   const snapshot = Option.getOrNull(shellState.snapshot);
-  const cards: ReadonlyArray<BoardCard> = snapshot?.cards ?? [];
+  const cards: ReadonlyArray<BoardCardShell> = snapshot?.cards ?? [];
   const defaultProject = snapshot?.projects[0] ?? null;
 
   const submit = async () => {
@@ -51,6 +52,13 @@ function EnvironmentBoard({ environmentId }: { environmentId: EnvironmentId }) {
         cardId: BoardCardId.make(randomUUID()),
         projectId: defaultProject.id,
         title,
+        cardType: "feature",
+        // Fractional key appended after the tail of THIS project's Backlog
+        // column (client computes, server stores — the pinOrderKey
+        // precedent).
+        orderKey: boardColumnAppendOrderKey(
+          cards.filter((card) => card.stage === "backlog" && card.projectId === defaultProject.id),
+        ),
       },
     });
     setTitle("");
@@ -86,7 +94,7 @@ function EnvironmentBoard({ environmentId }: { environmentId: EnvironmentId }) {
       ) : (
         <ul className="flex flex-col gap-1">
           {cards.map((card) => (
-            <li className="rounded-md border border-border px-3 py-2 text-sm" key={card.id}>
+            <li className="rounded-md border border-border px-3 py-2 text-sm" key={card.cardId}>
               {card.title}
             </li>
           ))}

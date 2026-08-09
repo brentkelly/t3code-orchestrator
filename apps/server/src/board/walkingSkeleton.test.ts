@@ -99,6 +99,30 @@ const expectedCard = {
   updatedAt: createdAt,
 } as const;
 
+// The shell carries the bounded BoardCardShell (t3o-04), never the full
+// aggregate above. Spelled out literally — building it through
+// makeBoardCardShell would make the assertion tautological.
+const expectedCardShell = {
+  cardId,
+  key: "CARD-1",
+  projectId,
+  type: "feature",
+  stage: "backlog",
+  orderKey: "m",
+  title: "First card",
+  blocked: false,
+  dependencyCount: 0,
+  hasBrief: false,
+  hasPr: false,
+  attachmentCount: 0,
+  queued: false,
+  threadState: "none",
+  awaitingInput: false,
+  activeThreadId: null,
+  // Sub-board and review summary fields are key-optional and absent until
+  // their producing specs land — zero wire bytes per unsourced field.
+} as const;
+
 it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking skeleton", (it) => {
   it.effect(
     "projects a dispatched board.card.create everywhere and replays it identically from an empty read model",
@@ -118,9 +142,10 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
           nextCardNumberByProject: { [projectId]: 2 },
         });
 
-        // Shell snapshot carries the card to every connecting client.
+        // Shell snapshot carries the bounded card shell to every connecting
+        // client — never the full aggregate (t3o-04, D7).
         const shell = yield* snapshotQuery.getShellSnapshot();
-        assert.deepStrictEqual(shell.cards, [expectedCard]);
+        assert.deepStrictEqual(shell.cards, [expectedCardShell]);
 
         // Replaying the persisted event log from a truly empty read model
         // must land on the same board state.
