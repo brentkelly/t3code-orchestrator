@@ -152,3 +152,18 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     }),
   ] as const;
 }
+
+/**
+ * Compile-time drift guard: the `type` literals produced by
+ * `makeBoardOrchestrationEvents` and the `BOARD_EVENT_TYPES` registry must
+ * stay in lockstep — a member added to one but not the other would otherwise
+ * surface only as a runtime decode failure. Both directions are asserted; if
+ * either alias errors, a registry and the factory have drifted.
+ */
+type BoardEventTypeFromRegistry = (typeof BOARD_EVENT_TYPES)[number];
+type BoardEventTypeFromFactory = ReturnType<
+  typeof makeBoardOrchestrationEvents<Record<never, never>>
+>[number]["Type"]["type"];
+type _AssertExtends<A extends B, B> = A;
+type _RegistryCoversFactory = _AssertExtends<BoardEventTypeFromFactory, BoardEventTypeFromRegistry>;
+type _FactoryCoversRegistry = _AssertExtends<BoardEventTypeFromRegistry, BoardEventTypeFromFactory>;

@@ -266,10 +266,10 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board event members in the `OrchestrationEvent` union                   | injected factory call (`makeBoardOrchestrationEvents(EventBaseFields)`) |
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
-(4 marker lines: the fork block's open/end markers, the convention's own mention of the token, and
-the default-branch note). The count is now **frozen by construction**: `t3o-03`'s seven commands
-and seven events must land with zero new lines in upstream-owned files — check that claim
-explicitly when it lands.
+(5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the
+rebase-target note, and the PR-target note). The count is now **frozen by construction**:
+`t3o-03`'s seven commands and seven events must land with zero new lines in upstream-owned files —
+check that claim explicitly when it lands.
 
 Marker-less upstream churn that rides along with `t3o-02`:
 
@@ -293,12 +293,17 @@ The fork's invasiveness claim rests on one command: the diff against upstream, e
 board-owned paths, must show _only_ the surgical seams above.
 
 ```bash
-git diff upstream/main...t3o -- . ':!*/board/*' ':!*board*' ':!docs/t3o' ':!.plans' ':!AGENTS.md' ':!*routeTree.gen.ts'
+git diff upstream/main...t3o -- . \
+  ':!*/board/*' ':!*/board.ts' ':!*/board.test.ts' ':!*/board.tsx' \
+  ':!*/boardCommands.ts' ':!*/900_BoardCards.ts' \
+  ':!docs/t3o' ':!.plans' ':!AGENTS.md' ':!*routeTree.gen.ts'
 ```
 
-Keep the exclusion list honest as board-owned paths are added. Run it after each spec lands and
-after each upstream merge; a hunk you cannot map to an inventory row is a seam that escaped the
-grammar.
+The excludes name board-owned paths **precisely** — a catch-all like `':!*board*'` would silently
+hide unrelated upstream files (`Dashboard*`, `Keyboard*`, `clipboard*`, …) and make the audit read
+clean when it is not. Keep the exclusion list honest as board-owned paths are added. Run it after
+each spec lands and after each upstream merge; a hunk you cannot map to an inventory row is a seam
+that escaped the grammar. (Today it yields exactly the 14 seamed code files.)
 
 ---
 

@@ -95,9 +95,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     default: {
       // Explicit terminal default: an unhandled board command fails loudly
       // with an invariant error rather than letting the generator fall through
-      // and return `undefined` in place of an event. (Once BoardCommand has a
-      // second member this default also becomes a compile-time exhaustiveness
-      // guard — TS narrows a multi-member discriminant to `never` here.)
+      // and return `undefined` in place of an event. There is deliberately no
+      // `command satisfies never` here yet: BoardCommand has one member, and a
+      // single-member union does not narrow through the handled case, so the
+      // guard would spuriously fail to compile. When t3o-03 gives the union a
+      // second member, add `command satisfies never;` above this comment —
+      // that guard is verified to fire (t3o-02a scratch check 2: a 2-member
+      // union with an unhandled member failed the build at exactly that line).
       const fallback = command as { readonly type: string };
       return yield* new OrchestrationCommandInvariantError({
         commandType: fallback.type,
