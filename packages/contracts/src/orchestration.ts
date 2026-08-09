@@ -22,6 +22,16 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+// T3o: board schema (cards, commands, events) lives in board.ts.
+import {
+  BoardCard,
+  BoardCardCreateCommand,
+  BoardCardCreatedPayload,
+  BoardCardId,
+  BoardCardRemovedShellEvent,
+  BoardCardUpsertedShellEvent,
+  BoardState,
+} from "./board.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -401,6 +411,8 @@ export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),
+  // T3o: board slice of the read model; optional so pre-board models decode.
+  board: Schema.optional(BoardState),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
@@ -473,6 +485,8 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationThreadShell),
+  // T3o: board cards ride the shell snapshot (D2/D7); optional for interop.
+  cards: Schema.optional(Schema.Array(BoardCard)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
@@ -498,6 +512,9 @@ export const OrchestrationShellStreamEvent = Schema.Union([
     sequence: NonNegativeInt,
     threadId: ThreadId,
   }),
+  // T3o: card shell deltas, mirroring thread-upserted/thread-removed.
+  BoardCardUpsertedShellEvent,
+  BoardCardRemovedShellEvent,
 ]);
 export type OrchestrationShellStreamEvent = typeof OrchestrationShellStreamEvent.Type;
 
@@ -896,6 +913,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  // T3o: board commands ride orchestration.dispatchCommand (D2).
+  BoardCardCreateCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -924,6 +943,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  // T3o: board commands ride orchestration.dispatchCommand (D2).
+  BoardCardCreateCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1048,10 +1069,13 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  // T3o: board events join the orchestration event log.
+  "board.card-created",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+// T3o: cards are a new aggregate (D9) — "card" appended to the literals.
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "card"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -1291,7 +1315,8 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  // T3o: BoardCardId appended for card-aggregate events (D9).
+  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -1444,6 +1469,12 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  // T3o: board event member (payload schema lives in board.ts).
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("board.card-created"),
+    payload: BoardCardCreatedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

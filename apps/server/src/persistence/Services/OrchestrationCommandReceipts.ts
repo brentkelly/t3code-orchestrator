@@ -7,6 +7,8 @@
  * @module OrchestrationCommandReceiptRepository
  */
 import {
+  // T3o: card aggregate ids (D9).
+  BoardCardId,
   CommandId,
   IsoDateTime,
   NonNegativeInt,
@@ -25,7 +27,8 @@ import type { OrchestrationCommandReceiptRepositoryError } from "../Errors.ts";
 export const OrchestrationCommandReceipt = Schema.Struct({
   commandId: CommandId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  // T3o: BoardCardId appended for card-aggregate receipts (D9).
+  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId]),
   acceptedAt: IsoDateTime,
   resultSequence: NonNegativeInt,
   status: OrchestrationCommandReceiptStatus,

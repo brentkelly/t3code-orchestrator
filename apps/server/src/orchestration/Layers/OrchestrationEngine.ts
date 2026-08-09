@@ -1,4 +1,6 @@
 import type {
+  // T3o: card aggregate ids (D9).
+  BoardCardId,
   OrchestrationEvent,
   OrchestrationReadModel,
   ProjectId,
@@ -57,8 +59,9 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+  // T3o: "card" kind and BoardCardId appended for board commands (D9).
+  readonly aggregateKind: "project" | "thread" | "card";
+  readonly aggregateId: ProjectId | ThreadId | BoardCardId;
 } {
   switch (command.type) {
     case "project.create":
@@ -67,6 +70,12 @@ function commandToAggregateRef(command: OrchestrationCommand): {
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
+      };
+    // T3o: board commands aggregate on the card.
+    case "board.card.create":
+      return {
+        aggregateKind: "card",
+        aggregateId: command.cardId,
       };
     default:
       return {

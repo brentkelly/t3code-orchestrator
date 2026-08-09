@@ -54,6 +54,8 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
+// T3o: board card persisted projection lives in the board module.
+import { BOARD_CARDS_PROJECTOR_NAME, makeBoardProjectors } from "../../board/projection.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -65,6 +67,8 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  // T3o: board card projection.
+  boardCards: BOARD_CARDS_PROJECTOR_NAME,
 } as const;
 
 type ProjectorName =
@@ -1635,6 +1639,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
         apply: applyThreadsProjection,
       },
+      // T3o: board card persisted projection.
+      ...makeBoardProjectors(sql),
     ];
 
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (
