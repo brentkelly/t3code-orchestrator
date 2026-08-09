@@ -53,6 +53,12 @@ export function projectBoardEvent(
           }),
         ),
       );
+
+    default:
+      // Explicit terminal default: an unrecognized board event leaves the
+      // read model unchanged rather than throwing. (Becomes a compile-time
+      // exhaustiveness guard once BoardEvent has a second member.)
+      return Effect.succeed(model);
   }
 }
 
@@ -72,5 +78,11 @@ export function boardCardShellStreamEvent(
           updatedAt: event.payload.updatedAt,
         },
       });
+
+    default:
+      // Explicit terminal default: an event with no shell projection yields
+      // no delta. (Becomes a compile-time exhaustiveness guard once BoardEvent
+      // has a second member.)
+      return Option.none();
   }
 }

@@ -71,5 +71,18 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         },
       };
     }
+
+    default: {
+      // Explicit terminal default: an unhandled board command fails loudly
+      // with an invariant error rather than letting the generator fall through
+      // and return `undefined` in place of an event. (Once BoardCommand has a
+      // second member this default also becomes a compile-time exhaustiveness
+      // guard — TS narrows a multi-member discriminant to `never` here.)
+      const fallback = command as { readonly type: string };
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: fallback.type,
+        detail: `Unhandled board command type: ${fallback.type}`,
+      });
+    }
   }
 });

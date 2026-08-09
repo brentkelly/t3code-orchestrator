@@ -131,12 +131,21 @@ export function listBoardCards(
   );
 }
 
+// Both enrichers omit the board field entirely when there are no cards. An
+// empty board is represented as an *absent* field, never as `{ cards: [] }`,
+// for two reasons: (1) it makes a from-empty replay's read model equal the
+// table-rehydrated one for the zero-card case — createEmptyReadModel and
+// projectBoardEvent never synthesize an empty `board`, so rehydration must
+// not either; (2) it keeps an empty `cards: []` off every shell payload
+// (payload discipline). Every consumer already reads through
+// `board ?? EMPTY_BOARD_STATE` / `cards ?? []`, so absent and empty are
+// equivalent downstream.
 export function withBoardReadModel(
   sql: SqlClient.SqlClient,
   readModel: Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>,
 ): Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError> {
   return Effect.all([readModel, listBoardCards(sql)]).pipe(
-    Effect.map(([model, cards]) => ({ ...model, board: { cards } })),
+    Effect.map(([model, cards]) => (cards.length === 0 ? model : { ...model, board: { cards } })),
   );
 }
 
@@ -145,6 +154,6 @@ export function withBoardShellCards(
   snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
 ): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
   return Effect.all([snapshot, listBoardCards(sql)]).pipe(
-    Effect.map(([shell, cards]) => ({ ...shell, cards })),
+    Effect.map(([shell, cards]) => (cards.length === 0 ? shell : { ...shell, cards })),
   );
 }

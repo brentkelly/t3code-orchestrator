@@ -160,3 +160,30 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
     }),
   );
 });
+
+// Separate layer = a pristine empty database, so the zero-card case is not
+// contaminated by the card the shared-layer block above creates.
+it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-empty-test-"))(
+  "board walking skeleton (empty database)",
+  (it) => {
+    it.effect("an empty board rehydrates to the same read model a from-empty replay produces", () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+        // The replay-equality invariant must hold for zero cards too: an
+        // empty board is an *absent* field on both sides, never `{cards:[]}`
+        // on one and `undefined` on the other.
+        const rehydrated = yield* snapshotQuery.getCommandReadModel();
+        const replayed = createEmptyReadModel(createdAt);
+        assert.strictEqual(rehydrated.board, undefined);
+        assert.deepStrictEqual(rehydrated.board, replayed.board);
+
+        // And the shell snapshot carries no empty `cards` array (payload
+        // discipline — nothing board-shaped reaches the client until a card
+        // exists).
+        const shell = yield* snapshotQuery.getShellSnapshot();
+        assert.strictEqual(shell.cards, undefined);
+      }),
+    );
+  },
+);
