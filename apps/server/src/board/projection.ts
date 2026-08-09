@@ -275,6 +275,26 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // Live links only, for the shell path: tombstoned links and links whose
+  // card is archived can never contribute an activeThreadId, so they should
+  // never leave the table — the reconnect read must scale with the current
+  // board, not with link history.
+  const listLiveBoardCardThreadLinkRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardCardThreadLinkDbRow,
+    execute: () => sql`
+      SELECT
+        thread_id AS "threadId",
+        card_id AS "cardId",
+        role,
+        linked_at AS "linkedAt",
+        tombstoned_at AS "tombstonedAt"
+      FROM board_card_thread_links
+      WHERE tombstoned_at IS NULL
+        AND card_id IN (SELECT card_id FROM board_cards WHERE archived_at IS NULL)
+    `,
+  });
+
   // Shell rows exclude archived cards at the source (D15): they never reach
   // the wire, so they should never leave the table either.
   const listBoardCardShellRows = SqlSchema.findAll({
@@ -431,6 +451,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     upsertBoardCardRow,
     listBoardCardRows,
     listBoardCardThreadLinkRows,
+    listLiveBoardCardThreadLinkRows,
     listBoardCardShellRows,
     findBoardCardRow,
     listBoardCardThreadLinkRowsForCard,
@@ -620,7 +641,7 @@ export function withBoardShellCards(
 ): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
   const shellRows = Effect.all([
     queries.listBoardCardShellRows(),
-    queries.listBoardCardThreadLinkRows(),
+    queries.listLiveBoardCardThreadLinkRows(),
   ]).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shell:query")));
   return Effect.all([snapshot, shellRows]).pipe(
     Effect.map(([shell, [cardRows, linkRows]]) => {
