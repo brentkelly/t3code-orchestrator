@@ -4,6 +4,52 @@ T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provid
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
+<!-- T3o: fork status and branch topology. Keep this block self-contained so upstream merges only ever conflict here. -->
+
+## You are in T3o, a fork
+
+This repository is **T3o** (`brentkelly/t3code-orchestrator`), a fork of
+[`pingdotgg/t3code`](https://github.com/pingdotgg/t3code). Everything below this section is upstream's
+guidance and still applies. This section overrides it where they disagree.
+
+T3o adds a **Board** mode alongside the stock Threads view: work is managed as cards moving through a
+fixed engineering pipeline (Backlog → Sprint → Planning → Ready → Building → Code review → Ready for
+merge → Done), and the app itself spawns, supervises and restarts the agent threads that do the work.
+It is a supervisor, not a view.
+
+**Read `.plans/t3o-00-overview.md` before making any T3o change.** It holds 18 locked architectural
+decisions with their rationale and rejected alternatives. Per-feature specs are `.plans/t3o-01`
+through `.plans/t3o-12`; the build order and dependency waves are in the overview.
+
+**Status:** design complete and locked. Implementation starts at `.plans/t3o-01-fork-foundation.md`.
+No board code exists yet.
+
+### Branches — the rule that matters most
+
+- **`t3o` is the working trunk and the default branch.** All work happens here. All PRs target it.
+- **`main` is a pristine, fast-forward-only mirror of `upstream/main`. Never commit to it.** Its only
+  job is to be conflict-free so an upstream sync can fast-forward. A single commit on `main` breaks
+  that permanently, and the sync is meant to fail loudly rather than force.
+- Upstream is merged (never rebased) into `t3o` from `main`, **manually and on demand** — there is
+  no sync automation during MVP. The runbook is in `docs/t3o/seams.md`.
+
+### Touching upstream-owned files
+
+The fork's survival depends on keeping the diff into upstream files small, mechanical and greppable.
+
+- Every insertion into an upstream-owned file is preceded by a **`T3o:`** marker comment naming the
+  reason. Lowercase `o` — `T3O` reads as `T30`.
+- Prefer a one-line delegating call into a T3o-owned module over inline logic. If a seam is growing
+  past a few lines, it belongs in our own file.
+- New files never conflict. Reach for a new file before editing an existing one.
+- Database migrations are numbered from **`900_`**. Colliding with an upstream migration number
+  corrupts the applied-migration ledger on every machine — that is data loss, not a merge conflict.
+- Do not rename the `@t3tools/*` workspace packages. They are `private: true` and resolved through
+  `workspace:*`, so nothing is fetched from NPM and renaming would touch every import for no gain.
+
+<!-- T3o: end fork block -->
+
+
 ## What makes T3 Code special?
 
 We have over 100,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
@@ -114,7 +160,10 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - Never make a PR unless the developer explicitly asks you to do so.
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
-- **Rebase onto latest main before opening.** Stale branches conflict and burn a review round.
+- **Rebase onto latest `t3o` before opening.** Stale branches conflict and burn a review round.
+  <!-- T3o: was `main`; in this fork `main` is an upstream mirror and `t3o` is the trunk. -->
+- **PRs target `t3o`, never `main`.** The one exception is the `main → t3o` upstream sync, which is
+  run by hand from the runbook in `docs/t3o/seams.md`. <!-- T3o: -->
 - UI changes need before/after images. Motion or timing needs a short video.
 - One concern per PR. If the description says "also", split it.
 - When babysitting: poll checks and comments newer than the last push, verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when the bots are green on the latest commit.

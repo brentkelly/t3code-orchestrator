@@ -226,8 +226,11 @@ in the log. Archived cards remain searchable and restorable through a settings r
 - `main` is a **pristine fast-forward-only mirror** of `upstream/main`. Never commit to it.
 - `t3o` is the trunk and the **repo default branch**, so nothing can accidentally land on
   the mirror.
-- Weekly: fast-forward `main`, open PR `main → t3o`. All conflict resolution happens in one
-  reviewed place. **Merge, not rebase** — the branch is long-lived with real PR history.
+- Sync **manually and on demand** — fast-forward `main`, then merge `main → t3o`. Not on a calendar,
+  and **not automated during MVP**: a scheduled workflow defends a bet that has not been placed yet,
+  and the information worth having from early merges (how bad are the conflicts, really) comes from
+  doing a few by hand. Automation returns post-MVP. **Merge, not rebase** — the branch is long-lived
+  with real PR history.
 - Every seam insertion carries a **`T3o:`** marker comment, making the whole fork surface greppable
   after each merge. (Lowercase `o` deliberately — `T3O` reads as `T30`.)
 - Workspace packages keep their `@t3tools/*` names. They are `private: true` and resolved via
@@ -297,7 +300,12 @@ supervisor is the product.
 
 Deferred to follow-up work: the full Code Review pipeline (rounds, issue ledger, adjudication),
 sub-boards, forge human-activity polling, scheduled/recurring cards, outbound external sync,
-adaptive resource-based throttling, mobile board UI.
+adaptive resource-based throttling, mobile board UI, **upstream-sync automation**, and a **seam-count
+CI gate**.
+
+The last two are deliberately last. Both are maintenance machinery for a fork whose central bet —
+that ~20 mechanical seams stay cheap — is unproven until the MVP ships. Build them once the bet has
+paid off, not before.
 
 ## Build order
 

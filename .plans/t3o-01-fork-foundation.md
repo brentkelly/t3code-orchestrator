@@ -26,37 +26,47 @@ exists to make the next twelve months of upstream merges cheap.
 ### Git topology
 
 1. Add the `upstream` remote.
-2. Create `t3o` from current `main`.
-3. Set `t3o` as the GitHub default branch.
-4. Add branch protection on `main` allowing only fast-forward pushes from the sync workflow.
+2. Create `t3o` from current `main`. *(done)*
+3. Set `t3o` as the GitHub default branch. *(manual — the repo PAT lacks `administration` scope)*
+4. Optional: branch protection on `main`, fast-forward only. Convention plus `t3o` being the default
+   branch already covers this; add it if a stray commit ever lands.
 
-### Upstream sync workflow
+### Upstream sync — manual, documented as a runbook
 
-New file `.github/workflows/upstream-sync.yml` — new files never conflict.
+**No automation during MVP.** A scheduled workflow automates something that happens three or four
+times before the MVP is proved, and it is machinery built to defend a bet that has not been placed
+yet. The value we actually want from upstream merges during MVP is *information* — how bad are the
+conflicts — and that comes from doing it by hand and writing down the answer (`t3o-02`).
 
-Behaviour:
+Record the runbook in `docs/t3o/seams.md` instead:
 
-- Runs on a weekly schedule and on `workflow_dispatch`.
-- Fetches `upstream`, fast-forwards `main`. If the fast-forward fails, that means someone committed
-  to the mirror — fail loudly, do not force.
-- Opens or updates a PR `main → t3o` titled `chore: sync upstream <short-sha>`.
-- Body lists upstream commits touching any file containing a `T3o:` marker, so the reviewer sees
-  immediately whether a seam moved.
-- Enables auto-merge when the PR is mergeable and CI is green; leaves it open and conflicted
-  otherwise.
+```bash
+git fetch upstream
+git checkout main && git merge --ff-only upstream/main   # never force; a failure means
+                                                          # someone committed to the mirror
+git checkout t3o && git merge main
+```
 
-This stays permanently, even after the scheduled-cards feature (post-MVP) could take it over. An
+Run it when there is a reason to — a bug fix you want, or before starting a spec that touches a
+file upstream has been churning. Not on a calendar.
+
+Automating this returns as a post-MVP item, at which point the scheduled-cards feature may be the
+better home for it than a GitHub workflow. Either way the manual runbook stays, permanently: an
 orchestrator that is broken cannot merge the fix that unbreaks it.
 
 ### Seam convention
 
 Document and adopt in `docs/t3o/seams.md` (new directory, ours):
 
-- Every insertion into an upstream-owned file is preceded by a `// T3o:` comment naming the reason.
-- The seam inventory table is maintained in that doc and must match `rg "T3o:"` output. A CI check
-  that greps and compares counts is cheap and worth it.
+- Every insertion into an upstream-owned file is preceded by a `// T3o:` comment naming the reason
+  (`<!-- T3o: -->` in markdown).
+- The doc carries a seam inventory table, maintained by hand, so `rg "T3o:"` can be eyeballed
+  against it after a merge.
 - Anything larger than a few lines does **not** go inline — it goes in a T3o-owned module and the
   seam becomes a single delegating call.
+
+No CI check on the seam count during MVP: seams are being added on nearly every commit, so a count
+gate would be friction rather than protection. It becomes worth adding once the inventory stabilises.
 
 ### Branding
 
@@ -74,11 +84,12 @@ reader knows they were disabled deliberately, not broken.
 
 - Any board code.
 - Renaming `@t3tools/*` packages or the published `t3` CLI.
-- Automating conflict *resolution* — the workflow only mechanises fetch, fast-forward, and PR.
+- **Any upstream-sync automation.** Deferred to post-MVP — see the runbook above.
+- **Any seam-count CI gate.** Deferred until the seam inventory stops moving.
 
 ## Verification
 
-- `git log upstream/main..main` is empty after a sync run.
-- A deliberate test conflict (touch a marked line on both branches) produces a conflicted PR rather
-  than a silent overwrite.
-- `rg "T3o:"` returns the documented count.
+- `git fetch upstream` succeeds and `git log upstream/main..main` is empty.
+- `docs/t3o/seams.md` exists with the marker convention, the manual sync runbook, an empty seam
+  inventory table, and the disabled-workflow list with reasons.
+- A dry run of the runbook fast-forwards `main` cleanly.
