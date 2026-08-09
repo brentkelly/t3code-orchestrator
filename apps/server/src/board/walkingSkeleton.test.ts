@@ -73,16 +73,31 @@ const createCardCommand = {
   cardId,
   projectId,
   title: "First card",
+  cardType: "feature",
+  orderKey: "m",
   createdAt,
 } as const;
 
 const expectedCard = {
   id: cardId,
+  key: "CARD-1",
+  cardNumber: 1,
   projectId,
+  type: "feature",
+  stage: "backlog",
+  orderKey: "m",
   title: "First card",
+  briefRef: null,
+  dependsOn: [],
+  parentCardId: null,
+  threadLinks: [],
+  externalRef: null,
+  recipeSnapshot: null,
+  blocked: false,
+  archivedAt: null,
   createdAt,
   updatedAt: createdAt,
-};
+} as const;
 
 it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking skeleton", (it) => {
   it.effect(
@@ -98,7 +113,10 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         // Engine-facing read model, rehydrated from the projection tables
         // the same way a server restart bootstraps (getCommandReadModel).
         const rehydrated = yield* snapshotQuery.getCommandReadModel();
-        assert.deepStrictEqual(rehydrated.board, { cards: [expectedCard] });
+        assert.deepStrictEqual(rehydrated.board, {
+          cards: [expectedCard],
+          nextCardNumberByProject: { [projectId]: 2 },
+        });
 
         // Shell snapshot carries the card to every connecting client.
         const shell = yield* snapshotQuery.getShellSnapshot();
@@ -152,6 +170,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
           cardId: BoardCardId.make("card-orphan"),
           projectId: ProjectId.make("project-missing"),
           title: "Orphan card",
+          cardType: "feature",
+          orderKey: "m",
           createdAt,
         }),
       );
@@ -181,6 +201,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-order-test-"))(
           cardId: BoardCardId.make("card-late"),
           projectId,
           title: "Later card",
+          cardType: "feature",
+          orderKey: "m",
           createdAt: "2026-01-02T00:00:00.000Z",
         });
         // Dispatched second, but EARLIER timestamp — so dispatch order and
@@ -191,6 +213,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-order-test-"))(
           cardId: BoardCardId.make("card-early"),
           projectId,
           title: "Earlier card",
+          cardType: "feature",
+          orderKey: "t",
           createdAt: "2026-01-01T00:00:00.000Z",
         });
 

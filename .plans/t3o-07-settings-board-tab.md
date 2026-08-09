@@ -17,24 +17,37 @@ A native settings tab, and the typed recipe that D10 promised would be data rath
 
 ## Seam inventory
 
-Six one-line appends plus new files.
+Six one-line appends plus new files. Checked against `t3o-02a`: five are **frozen** (one entry per
+settings *page*, and the board has exactly one), but the sixth was an enumeration and is corrected
+below.
 
-**Server** (`packages/contracts/src/settings.ts`):
+**Server** (`packages/contracts/src/settings.ts`) — frozen:
 
 1. `ServerSettings` — `board: BoardSettings.pipe(Schema.withDecodingDefault(…))`.
 2. `ServerSettingsPatch` — `board: Schema.optionalKey(BoardSettingsPatch)`.
 
-`DEFAULT_SERVER_SETTINGS` and `UnifiedSettings` derive automatically. `BoardSettings` itself lives in
-`packages/contracts/src/board.ts`.
+Single fields whose shape grows inside board-owned `BoardSettings`, never at the seam — the same
+category as `OrchestrationReadModel.board`. `DEFAULT_SERVER_SETTINGS` and `UnifiedSettings` derive
+automatically. `BoardSettings` itself lives in `packages/contracts/src/board.ts`.
 
-**Web:**
+**Web** — frozen at one entry each, because Board is one settings page:
 
 3. `SettingsPath` union (`settingsSearch.ts`).
 4. `SETTINGS_SECTION_LABELS`.
 5. `SETTINGS_SECTION_ICONS` (`SettingsSidebarNav.tsx`).
 6. `SETTINGS_NAV_ITEMS`.
 
-Plus a new `apps/web/src/routes/settings.board.tsx` and searchable-setting index entries.
+If the board ever needs a *second* settings page, generalise all four to spreads of one board-owned
+nav registry rather than appending a second entry to each.
+
+**Searchable-setting index — must be a spread, not entries.** `SETTINGS_SEARCH_ITEMS`
+(`apps/web/src/components/settings/settingsSearch.ts:37`) carries one entry *per setting*, and the
+board contributes many (key prefix, accent, recipe steps, concurrency, archive window, worktree
+retention). Enumerating them in a core file is exactly what `t3o-02a` forbids. It is an array
+literal, so spread a board-owned registry: `...BOARD_SETTINGS_SEARCH_ITEMS,`. New board settings
+then register beside the settings they belong to.
+
+Plus a new `apps/web/src/routes/settings.board.tsx`.
 
 ## Settings content
 
