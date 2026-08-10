@@ -34,6 +34,7 @@ import {
   BoardPlanId,
   BoardStepCompletion,
   compareBoardLabels,
+  BoardCardWorktree,
   isBoardEvent,
   makeBoardCardShell,
   sortBoardCardThreadLinks,
@@ -87,6 +88,7 @@ const BoardCardDbRow = Schema.Struct({
   parentCardId: BoardCard.fields.parentCardId,
   externalRef: Schema.NullOr(Schema.fromJsonString(BoardCardExternalRef)),
   recipeSnapshot: Schema.NullOr(Schema.fromJsonString(BoardCardRecipeSnapshot)),
+  worktree: Schema.NullOr(Schema.fromJsonString(BoardCardWorktree)),
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -201,6 +203,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     parentCardId: card.parentCardId,
     externalRef: card.externalRef,
     recipeSnapshot: card.recipeSnapshot,
+    worktree: card.worktree,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -227,6 +230,7 @@ function rowToBoardCard(
     parentCardId: row.parentCardId,
     externalRef: row.externalRef,
     recipeSnapshot: row.recipeSnapshot,
+    worktree: row.worktree,
     blocked: row.blocked !== 0,
     threadLinks,
     archivedAt: row.archivedAt,
@@ -276,6 +280,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         parent_card_id,
         external_ref,
         recipe_snapshot,
+        worktree,
         blocked,
         archived_at,
         created_at,
@@ -294,6 +299,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.parentCardId},
         ${row.externalRef},
         ${row.recipeSnapshot},
+        ${row.worktree},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -312,6 +318,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         parent_card_id = excluded.parent_card_id,
         external_ref = excluded.external_ref,
         recipe_snapshot = excluded.recipe_snapshot,
+        worktree = excluded.worktree,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -340,6 +347,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         parent_card_id AS "parentCardId",
         external_ref AS "externalRef",
         recipe_snapshot AS "recipeSnapshot",
+        worktree,
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -423,6 +431,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         parent_card_id AS "parentCardId",
         external_ref AS "externalRef",
         recipe_snapshot AS "recipeSnapshot",
+        worktree,
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -931,6 +940,13 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       case "board.card-reordered":
       case "board.card-archived":
       case "board.card-unarchived":
+      // Worktree lifecycle (t3o-09): every payload carries the whole card, so
+      // the persisted projection is the same idempotent upsert — the worktree
+      // column rides `board_cards` with the rest of the aggregate.
+      case "board.card-worktree-provisioning":
+      case "board.card-worktree-ready":
+      case "board.card-worktree-failed":
+      case "board.card-worktree-reclaimed":
         yield* upsertCard(event.payload.card);
         return;
 

@@ -26,6 +26,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   BOARD_CLIENT_COMMANDS,
   BOARD_EVENT_TYPES,
+  BOARD_INTERNAL_COMMANDS,
   BOARD_SHELL_STREAM_EVENTS,
   BoardCardId,
   BoardCardShell,
@@ -1034,6 +1035,10 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  // T3o: server-internal board commands (worktree lifecycle, t3o-09) join the
+  // internal command union — dispatched by the board's own services, never by
+  // a client.
+  ...BOARD_INTERNAL_COMMANDS,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 

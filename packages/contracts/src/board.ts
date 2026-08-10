@@ -423,6 +423,68 @@ export type BoardCardRecipeSnapshot = typeof BoardCardRecipeSnapshot.Type;
     `board_card_bodies`; `BoardCard.briefRef` holds it when a brief exists. */
 export const BOARD_CARD_BRIEF_BODY_KIND = "brief";
 
+// ── Worktree / branch lifecycle (t3o-09, D6) ───────────────────────────
+
+/**
+ * Provisioning state of a card's worktree — the "step with its own state,
+ * retries and visible failure" the lazy-worktree design (D6) demands.
+ * Worktree creation runs `runOnWorktreeCreate` (minutes and gigabytes), so
+ * it is a real step, never a silent precondition: a card stuck installing
+ * dependencies must be able to say so, and a failed `git worktree add` must
+ * surface as a retryable step rather than a wedged card.
+ *
+ * - `provisioning` — the step is in flight (branch + `git worktree add` +
+ *   setup script). `path` is still null.
+ * - `ready` — the worktree exists on disk at `path`; every subsequent thread
+ *   on the card is created against it.
+ * - `failed` — provisioning failed; `lastError` says why, and a retry re-runs
+ *   the step (`attempts` counts them).
+ * - `reclaimed` — the worktree was removed (D6/D15: reclaimed at archive);
+ *   `path` returns to null. This is the reverse state worktree creation owes.
+ */
+export const BoardCardWorktreeStatus = Schema.Literals([
+  "provisioning",
+  "ready",
+  "failed",
+  "reclaimed",
+]);
+export type BoardCardWorktreeStatus = typeof BoardCardWorktreeStatus.Type;
+
+/** Outcome of a reclaim attempt (D6): the worktree was `removed`, or the
+    reclaim was `blocked` because the tree was not clean-and-pushed and
+    deleting it would lose work. */
+export const BoardCardWorktreeReclaimOutcome = Schema.Literals(["removed", "blocked"]);
+export type BoardCardWorktreeReclaimOutcome = typeof BoardCardWorktreeReclaimOutcome.Type;
+
+/**
+ * The branch + worktree a card owns once it enters Building (D6). Absent
+ * (`BoardCard.worktree === null`) for every card that has not entered
+ * Building — a planned card left for a week has no branch and no worktree,
+ * which is the entire point of laziness. Created on entry to Building and
+ * reclaimed at archive; the reverse state (D6/D15) is `status: "reclaimed"`
+ * with a null `path`.
+ */
+export const BoardCardWorktree = Schema.Struct({
+  /** The card's branch, created from `baseRefName`. */
+  branch: TrimmedNonEmptyString,
+  /** Default branch for a top-level card, or the parent card's integration
+      branch for a sub-board plan card (D12). */
+  baseRefName: TrimmedNonEmptyString,
+  /** Filesystem path of the worktree; null while provisioning and again once
+      reclaimed. */
+  path: Schema.NullOr(TrimmedNonEmptyString),
+  status: BoardCardWorktreeStatus,
+  /** Provisioning attempts, so a retried step is visible rather than silent. */
+  attempts: PositiveInt,
+  /** Failure detail when `status` is `failed`; null otherwise. */
+  lastError: Schema.NullOr(TrimmedNonEmptyString),
+  /** Why the most recent reclaim was skipped (dirty tree, unpushed commits) —
+      reclaim never deletes uncommitted work to save disk, it flags the card
+      and skips (D6). Null when no reclaim has been blocked. */
+  reclaimBlockedReason: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardCardWorktree = typeof BoardCardWorktree.Type;
+
 // ── Card aggregate ─────────────────────────────────────────────────────
 
 export const BoardCard = Schema.Struct({
@@ -456,6 +518,13 @@ export const BoardCard = Schema.Struct({
   threadLinks: Schema.Array(BoardCardThreadLink),
   externalRef: Schema.NullOr(BoardCardExternalRef),
   recipeSnapshot: Schema.NullOr(BoardCardRecipeSnapshot),
+  /** Branch + worktree the card owns once it enters Building (D6, t3o-09);
+      null for every card that has not — planning is worktree-free. Decodes
+      to null on the legacy `card`-carrying event payloads written before
+      t3o-09, so a from-empty replay of a pre-t3o-09 log matches the
+      table-rehydrated model (migration 904's `worktree` column defaults to
+      NULL to the same end). */
+  worktree: Schema.NullOr(BoardCardWorktree).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -997,6 +1066,60 @@ export const BoardPlanWriteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardPlanWriteCommand = typeof BoardPlanWriteCommand.Type;
+// ── Worktree lifecycle commands (t3o-09, D6) ───────────────────────────
+// Server-INTERNAL commands (BOARD_INTERNAL_COMMANDS, never
+// BOARD_CLIENT_COMMANDS): the worktree lifecycle service dispatches them
+// after the effectful git work has actually happened. A client cannot create
+// a worktree on the server's filesystem, so letting a client record one would
+// desync card state from disk — and worktree provisioning is downstream of
+// the human "Begin build" gate (D18), not a thing a client pokes directly.
+
+export const BoardCardProvisionWorktreeCommand = Schema.Struct({
+  type: Schema.Literal("board.card.provision-worktree"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  /** The branch the worktree service is creating for this card. */
+  branch: TrimmedNonEmptyString,
+  /** Base ref the branch was cut from (default branch, or parent integration
+      branch for a sub-board plan card). */
+  baseRefName: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardProvisionWorktreeCommand = typeof BoardCardProvisionWorktreeCommand.Type;
+
+export const BoardCardRecordWorktreeCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-worktree"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  /** Filesystem path of the worktree that now exists on disk. */
+  path: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordWorktreeCommand = typeof BoardCardRecordWorktreeCommand.Type;
+
+export const BoardCardFailWorktreeCommand = Schema.Struct({
+  type: Schema.Literal("board.card.fail-worktree"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  /** Why provisioning failed; surfaced on the card so the step is visibly
+      failed and retryable, never a silent wedge. */
+  error: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardFailWorktreeCommand = typeof BoardCardFailWorktreeCommand.Type;
+
+export const BoardCardReclaimWorktreeCommand = Schema.Struct({
+  type: Schema.Literal("board.card.reclaim-worktree"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  /** `removed` when the worktree service deleted a clean-and-pushed tree;
+      `blocked` when it refused because deleting would lose work. */
+  outcome: BoardCardWorktreeReclaimOutcome,
+  /** Present when `outcome` is `blocked`: why the worktree was kept. */
+  reason: Schema.optional(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+export type BoardCardReclaimWorktreeCommand = typeof BoardCardReclaimWorktreeCommand.Type;
 
 // ── Event payloads ─────────────────────────────────────────────────────
 
@@ -1201,6 +1324,40 @@ export const BoardPlanWrittenPayload = Schema.Struct({
   plan: BoardPlan,
 });
 export type BoardPlanWrittenPayload = typeof BoardPlanWrittenPayload.Type;
+// Worktree lifecycle payloads (t3o-09). Each carries the whole post-change
+// card, like every other non-created board event, so the shell-delta mapping
+// stays a pure function of the event and the projectors upsert exactly what
+// the decider computed.
+
+export const BoardCardWorktreeProvisioningPayload = Schema.Struct({
+  cardId: BoardCardId,
+  branch: TrimmedNonEmptyString,
+  baseRefName: TrimmedNonEmptyString,
+  card: BoardCard,
+});
+export type BoardCardWorktreeProvisioningPayload = typeof BoardCardWorktreeProvisioningPayload.Type;
+
+export const BoardCardWorktreeReadyPayload = Schema.Struct({
+  cardId: BoardCardId,
+  path: TrimmedNonEmptyString,
+  card: BoardCard,
+});
+export type BoardCardWorktreeReadyPayload = typeof BoardCardWorktreeReadyPayload.Type;
+
+export const BoardCardWorktreeFailedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  error: TrimmedNonEmptyString,
+  card: BoardCard,
+});
+export type BoardCardWorktreeFailedPayload = typeof BoardCardWorktreeFailedPayload.Type;
+
+export const BoardCardWorktreeReclaimedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  outcome: BoardCardWorktreeReclaimOutcome,
+  reason: Schema.NullOr(TrimmedNonEmptyString),
+  card: BoardCard,
+});
+export type BoardCardWorktreeReclaimedPayload = typeof BoardCardWorktreeReclaimedPayload.Type;
 
 // ── Card shell (t3o-04, D7) ────────────────────────────────────────────
 
@@ -1548,6 +1705,23 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardPlanWriteCommand,
 ] as const;
 
+/**
+ * Server-internal board commands (t3o-09), spread into upstream's
+ * `InternalOrchestrationCommand` — NOT `DispatchableClientOrchestrationCommand`
+ * — so they join `OrchestrationCommand` (and thus `BoardCommand` and the
+ * board decider) without ever becoming client-dispatchable. This is the
+ * internal-command analogue of the client-command registry above; t3o-09 is
+ * the first board spec to need it, exactly as t3o-04 was the first to open
+ * the RPC seam layer. Adding another internal board command grows this
+ * registry and touches no upstream-owned file.
+ */
+export const BOARD_INTERNAL_COMMANDS = [
+  BoardCardProvisionWorktreeCommand,
+  BoardCardRecordWorktreeCommand,
+  BoardCardFailWorktreeCommand,
+  BoardCardReclaimWorktreeCommand,
+] as const;
+
 export const BOARD_EVENT_TYPES = [
   "board.card-created",
   "board.card-moved",
@@ -1566,6 +1740,10 @@ export const BOARD_EVENT_TYPES = [
   "board.card-step-completed",
   "board.plans-proposed",
   "board.plan-written",
+  "board.card-worktree-provisioning",
+  "board.card-worktree-ready",
+  "board.card-worktree-failed",
+  "board.card-worktree-reclaimed",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
@@ -1667,6 +1845,26 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.plan-written"),
       payload: BoardPlanWrittenPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-worktree-provisioning"),
+      payload: BoardCardWorktreeProvisioningPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-worktree-ready"),
+      payload: BoardCardWorktreeReadyPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-worktree-failed"),
+      payload: BoardCardWorktreeFailedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-worktree-reclaimed"),
+      payload: BoardCardWorktreeReclaimedPayload,
     }),
   ] as const;
 }

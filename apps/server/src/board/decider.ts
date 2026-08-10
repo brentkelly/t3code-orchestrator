@@ -1041,6 +1041,181 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       };
     }
 
+    // ── Worktree lifecycle (t3o-09, D6) ──────────────────────────────
+    // These are server-internal commands (BOARD_INTERNAL_COMMANDS): the
+    // worktree lifecycle service dispatches them after the effectful git
+    // work. The decider stays pure (D8) — it records the branch/worktree
+    // state the service reports, and gates provisioning on the card already
+    // being in Building (D6/D18: the worktree is created ON entry to
+    // Building, which is the human "Begin build"; nothing here advances a
+    // stage).
+
+    case "board.card.provision-worktree": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (card.stage !== "building") {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' must be in 'building' to provision a worktree (D6); it is in '${card.stage}'.`,
+        );
+      }
+      // Provisioning starts fresh, or retries a failed step. A worktree that
+      // is already provisioning, ready or reclaimed is never re-provisioned
+      // behind its own back.
+      if (card.worktree !== null && card.worktree.status !== "failed") {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed worktree can be re-provisioned.`,
+        );
+      }
+      const attempts = card.worktree === null ? 1 : card.worktree.attempts + 1;
+      const nextCard: BoardCard = {
+        ...card,
+        worktree: {
+          branch: command.branch,
+          baseRefName: command.baseRefName,
+          path: null,
+          status: "provisioning",
+          attempts,
+          lastError: null,
+          reclaimBlockedReason: null,
+        },
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-worktree-provisioning",
+        payload: {
+          cardId: command.cardId,
+          branch: command.branch,
+          baseRefName: command.baseRefName,
+          card: nextCard,
+        },
+      };
+    }
+
+    case "board.card.record-worktree": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (card.worktree === null || card.worktree.status !== "provisioning") {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has no worktree in 'provisioning'; cannot record a ready worktree.`,
+        );
+      }
+      const nextCard: BoardCard = {
+        ...card,
+        worktree: {
+          ...card.worktree,
+          path: command.path,
+          status: "ready",
+          lastError: null,
+        },
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-worktree-ready",
+        payload: {
+          cardId: command.cardId,
+          path: command.path,
+          card: nextCard,
+        },
+      };
+    }
+
+    case "board.card.fail-worktree": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (card.worktree === null || card.worktree.status !== "provisioning") {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has no worktree in 'provisioning'; cannot fail it.`,
+        );
+      }
+      const nextCard: BoardCard = {
+        ...card,
+        worktree: {
+          ...card.worktree,
+          status: "failed",
+          lastError: command.error,
+        },
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-worktree-failed",
+        payload: {
+          cardId: command.cardId,
+          error: command.error,
+          card: nextCard,
+        },
+      };
+    }
+
+    case "board.card.reclaim-worktree": {
+      // Reclaim runs at archive (D6/D15), so the card is usually archived —
+      // requireBoardCard, not requireActiveBoardCard.
+      const card = yield* requireBoardCard({ board, command });
+      if (card.worktree === null) {
+        return yield* invariant(command, `Card '${command.cardId}' has no worktree to reclaim.`);
+      }
+      // A reclaimed worktree is gone; neither a repeat `removed` nor a late
+      // `blocked` re-flag should touch it (symmetric idempotency).
+      if (card.worktree.status === "reclaimed") {
+        return yield* invariant(command, `Card '${command.cardId}' worktree is already reclaimed.`);
+      }
+      // `removed`: the service deleted a clean-and-pushed tree — the worktree
+      // is gone, path returns to null (reverse state, D6). `blocked`: the
+      // service refused because deleting would lose work; the card keeps its
+      // worktree and records why, never silently discarding uncommitted work.
+      const reason = command.reason ?? null;
+      const nextCard: BoardCard =
+        command.outcome === "removed"
+          ? {
+              ...card,
+              worktree: {
+                ...card.worktree,
+                path: null,
+                status: "reclaimed",
+                reclaimBlockedReason: null,
+              },
+              updatedAt: command.createdAt,
+            }
+          : {
+              ...card,
+              worktree: {
+                ...card.worktree,
+                reclaimBlockedReason: reason ?? "Worktree not clean and pushed.",
+              },
+              updatedAt: command.createdAt,
+            };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-worktree-reclaimed",
+        payload: {
+          cardId: command.cardId,
+          outcome: command.outcome,
+          reason:
+            command.outcome === "removed" ? null : (reason ?? "Worktree not clean and pushed."),
+          card: nextCard,
+        },
+      };
+    }
+
     default: {
       command satisfies never;
       // Runtime backstop for undecoded input: fail loudly rather than let
