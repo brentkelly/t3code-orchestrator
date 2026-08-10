@@ -66,15 +66,6 @@ export interface BoardCardWorktreeProvisionResult {
 }
 
 /**
- * Create the card's branch and worktree from `baseRefName` (D6). One
- * `git worktree add -b <branch> <path> <baseRefName>`, exactly as the thread
- * bootstrap does — the branch is created as part of the worktree add, and
- * `baseRefName` records the merge base. Slow and fallible by nature (it
- * triggers `runOnWorktreeCreate`), so the caller wraps it as the "provisioning"
- * step: dispatch `provision-worktree` first, run this, then `record-worktree`
- * on success or `fail-worktree` on error.
- */
-/**
  * The worktree path already checked out for `branch`, parsed from
  * `git worktree list --porcelain`, or null if the branch has no worktree.
  * Pure so it is unit-tested without a repo. Porcelain output is blank-line
