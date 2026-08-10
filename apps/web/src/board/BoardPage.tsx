@@ -34,6 +34,7 @@ import {
 import {
   DndContext,
   DragOverlay,
+  KeyboardSensor,
   PointerSensor,
   closestCorners,
   useSensor,
@@ -41,7 +42,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { arrayMove } from "@dnd-kit/sortable";
+import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 import { getRouteApi } from "@tanstack/react-router";
@@ -150,6 +151,12 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     [shellState.snapshot],
   );
   const scopeProjectId = (search.project ?? null) as ProjectId | null;
+  // A stale deep link (project deleted, or another environment's id) still
+  // needs a visible scope so the user can switch back to All projects.
+  const scopeIsStale =
+    scopeProjectId !== null &&
+    projects.length > 0 &&
+    !projects.some((project) => project.id === scopeProjectId);
 
   const liveColumns = useMemo(() => {
     if (scopeProjectId !== null) {
@@ -178,7 +185,10 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   const queueSlots = useMemo(() => boardBuildingQueueInfo(columns.building), [columns.building]);
 
   // ── Drag ────────────────────────────────────────────────────────────
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const activeCard = useMemo(() => findBoardCard(columns, activeCardId), [columns, activeCardId]);
   const suppressClickRef = useRef(false);
@@ -307,9 +317,11 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           // D11: within Building, position is queue priority. Announce the
           // slot the drop landed in — derived from the `queued` field, so
           // this stays silent until t3o-11 populates the queue.
+          const movedAssignment = assignments.find((next) => next.cardId === cardId);
+          if (movedAssignment === undefined) return;
           const slot = boardBuildingQueueInfo(
             applyBoardCardPlacements(liveColumns, [
-              { cardId, stage: targetStage, orderKey: assignments[0]!.orderKey },
+              { cardId, stage: targetStage, orderKey: movedAssignment.orderKey },
             ]).building,
           ).get(cardId);
           if (slot !== undefined) {
@@ -443,6 +455,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           items={[
             { value: ALL_PROJECTS, label: "All projects" },
             ...projects.map((project) => ({ value: project.id as string, label: project.title })),
+            ...(scopeIsStale ? [{ value: scopeProjectId, label: "Unknown project" }] : []),
           ]}
           modal={false}
           onValueChange={(value: string | null) => {
@@ -478,6 +491,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
                 </span>
               </SelectItem>
             ))}
+            {scopeIsStale ? <SelectItem value={scopeProjectId}>Unknown project</SelectItem> : null}
           </SelectPopup>
         </Select>
         {scopeProjectId === null && projects.length > 1 ? (

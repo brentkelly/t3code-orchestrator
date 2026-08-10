@@ -231,10 +231,18 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' is a sub-board plan card and cannot enter '${command.toStage}'.`,
         );
       }
-      // Ready is as far as unmet dependencies allow (D18, t3o-05): a card may
-      // sit blocked in Ready, but never crosses it. The message names the
-      // unmet dependencies so the client can say why, not just snap back.
-      if (boardStageIndex(command.toStage) > boardStageIndex("ready")) {
+      // Unmet dependencies gate the CROSSING of the Ready boundary (D18,
+      // t3o-05): a card may sit blocked in Ready, but never moves from
+      // Ready-or-earlier into the stages beyond it. Moves that stay within
+      // the past-Ready zone — dragging a card backwards from review to
+      // building, say — are not a crossing and stay open, matching the
+      // rule that dependencies gate the hand-off into build, not movement
+      // in general. The message names the unmet dependencies so the client
+      // can say why, not just snap back.
+      if (
+        boardStageIndex(card.stage) <= boardStageIndex("ready") &&
+        boardStageIndex(command.toStage) > boardStageIndex("ready")
+      ) {
         const unmet = unmetBoardCardDependencies({
           dependsOn: card.dependsOn,
           cards: board.cards,

@@ -98,6 +98,13 @@ export const useBoardUiStore = create<BoardUiStore>()(
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
       migrate: migratePersistedBoardUiState,
+      // `migrate` only runs on a version bump; same-version persisted data
+      // (hand-edited or corrupted localStorage) would otherwise be spread in
+      // unchecked. Sanitise on every rehydrate.
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...migratePersistedBoardUiState(persistedState),
+      }),
       partialize: (state) => ({
         mode: state.mode,
         lastLocationByMode: state.lastLocationByMode,

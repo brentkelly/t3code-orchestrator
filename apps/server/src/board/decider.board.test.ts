@@ -421,6 +421,24 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         makeReadModel({ board }),
       );
       assert.strictEqual(backward.type, "board.card-moved");
+
+      // The gate guards the Ready crossing only: a card already past Ready
+      // whose dependencies became unmet mid-flight (edited, or a dependency
+      // reopened) still moves freely WITHIN the past-Ready zone — e.g.
+      // dragged backwards from review to building.
+      const inFlightBoard: BoardState = {
+        cards: [dependency, { ...card, stage: "review" }],
+        nextCardNumberByProject: {},
+      };
+      const withinZone = yield* decide(
+        moveCommand({ cardId: "card-1", toStage: "building" }),
+        makeReadModel({ board: inFlightBoard }),
+      );
+      assert.strictEqual(withinZone.type, "board.card-moved");
+      if (withinZone.type === "board.card-moved") {
+        // Still blocked — the flag keeps reporting the unmet dependency.
+        assert.strictEqual(withinZone.payload.card.blocked, true);
+      }
     }),
   );
 

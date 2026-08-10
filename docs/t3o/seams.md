@@ -251,6 +251,8 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/ws.ts`                                                | `t3o-02a` | Board events become card shell deltas in `toShellStreamEvent`           | predicate delegation in `default`, before the thread-aggregate check    |
 | `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`  | Import `BoardModeTabs`                                                  | one-line append (import)                                                |
 | `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`  | Threads/Board mode tabs before the breadcrumb (D1 shell tab)            | one-line append (delegating element)                                    |
+| `apps/web/src/components/NoActiveThreadState.tsx`                      | `t3o-05`  | Import `BoardModeTabs`                                                  | one-line append (import)                                                |
+| `apps/web/src/components/NoActiveThreadState.tsx`                      | `t3o-05`  | Mode tabs in the no-thread top bar (Board entry must survive it)        | one-line append (delegating element)                                    |
 | `packages/client-runtime/src/state/shell.ts`                           | `t3o-02`  | Export board client state through `state/shell`                         | one-line append (re-export)                                             |
 | `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02`  | Import board reducer + predicate                                        | one-line append (import)                                                |
 | `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02a` | Card deltas delegate to the board reducer                               | predicate delegation in `default`                                       |
@@ -281,14 +283,15 @@ rebase-target note, and the PR-target note). The count is now **frozen by constr
 `t3o-03`'s seven commands and seven events must land with zero new lines in upstream-owned files —
 that claim held when `t3o-03` landed (zero new upstream lines; verified against this inventory).
 
-`t3o-05` **moved the D1 shell-tab hook point** and left the marker count at **47**: the walking
-skeleton's sidebar-footer Board entry (`SidebarChrome.tsx`, 2 markers) is removed — two entry
-points to the same mode is exactly the "entry points" defect upstream's `AGENTS.md` warns about,
-and the spec's Threads/Board segmented control in the workspace top bar is the canonical entry —
-and replaced by 2 markers in `ChatView.tsx` (import + delegating `<BoardModeTabs mode="threads" />`
-before the breadcrumb). `SidebarChrome.tsx` is pristine upstream again and its inventory rows are
-retired. The board surface's own top bar is board-owned (`apps/web/src/board/BoardPage.tsx`) and
-needs no seam.
+`t3o-05` **moved the D1 shell-tab hook point** (marker count **49**): the walking skeleton's
+sidebar-footer Board entry (`SidebarChrome.tsx`, 2 markers) is removed — two entry points to the
+same mode is exactly the "entry points" defect upstream's `AGENTS.md` warns about, and the spec's
+Threads/Board segmented control in the workspace top bar is the canonical entry — and replaced by
+2 markers in `ChatView.tsx` (import + delegating `<BoardModeTabs mode="threads" />` before the
+breadcrumb) plus 2 in `NoActiveThreadState.tsx` (the same delegating element; without it the
+no-thread state would strand a user with no Board entry at all once the sidebar link is gone).
+`SidebarChrome.tsx` is pristine upstream again and its inventory rows are retired. The board
+surface's own top bar is board-owned (`apps/web/src/board/BoardPage.tsx`) and needs no seam.
 
 `t3o-04` opened the **RPC seam layer** — a layer `t3o-02a` never generalised because the walking
 skeleton created no RPCs. It added **9 marker lines across 3 new upstream files and ws.ts**

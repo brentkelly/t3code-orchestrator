@@ -13,9 +13,16 @@ import { LayoutDashboardIcon, MessageSquareIcon } from "lucide-react";
 import { useCallback, useEffect } from "react";
 
 import { Button } from "../components/ui/button";
+import { cn } from "../lib/utils";
 import { useBoardUiStore, type WorkspaceMode } from "./boardUiStore";
 
-export function BoardModeTabs({ mode }: { readonly mode: WorkspaceMode }) {
+export function BoardModeTabs({
+  mode,
+  className,
+}: {
+  readonly mode: WorkspaceMode;
+  readonly className?: string;
+}) {
   const router = useRouter();
   const locationHref = useRouterState({ select: (state) => state.location.href });
   const recordModeLocation = useBoardUiStore((state) => state.recordModeLocation);
@@ -37,7 +44,10 @@ export function BoardModeTabs({ mode }: { readonly mode: WorkspaceMode }) {
   return (
     <div
       aria-label="Workspace mode"
-      className="flex shrink-0 items-center gap-0.5 rounded-[calc(var(--control-radius)+2px)] bg-muted/70 p-0.5"
+      className={cn(
+        "flex shrink-0 items-center gap-0.5 rounded-[calc(var(--control-radius)+2px)] bg-muted/70 p-0.5",
+        className,
+      )}
       role="group"
     >
       <ModeTab active={mode === "threads"} label="Threads" onSelect={() => switchTo("threads")}>
