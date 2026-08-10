@@ -5,6 +5,7 @@
  * counter bump is monotonic.
  */
 import {
+  BOARD_SEED_LABEL_IDS,
   BoardCardId,
   boardCardShellFromCard,
   EventId,
@@ -41,7 +42,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     key: "CARD-1",
     cardNumber: 1,
     projectId,
-    type: "feature",
+    labels: [],
     stage: "backlog",
     orderKey: "m",
     title: "Card",
@@ -92,7 +93,8 @@ describe("board projector", () => {
       assert.isDefined(card);
       assert.strictEqual(card?.key, LEGACY_BOARD_CARD_KEY);
       assert.strictEqual(card?.cardNumber, LEGACY_BOARD_CARD_NUMBER);
-      assert.strictEqual(card?.type, "feature");
+      // A legacy payload with no cardType/labels maps to the feature seed label.
+      assert.deepStrictEqual(card?.labels, [BOARD_SEED_LABEL_IDS.feature]);
       assert.strictEqual(card?.stage, "backlog");
       assert.strictEqual(card?.orderKey, LEGACY_BOARD_CARD_ORDER_KEY);
       // Legacy card 0 still reserves number 1 for the next create, matching
@@ -136,7 +138,7 @@ describe("board projector", () => {
       const model = yield* projectBoardEvent(
         {
           ...emptyModel(),
-          board: { cards: [makeCard({})], nextCardNumberByProject: { [projectId]: 2 } },
+          board: { cards: [makeCard({})], labels: [], nextCardNumberByProject: { [projectId]: 2 } },
         },
         event,
       );
@@ -193,7 +195,7 @@ describe("board projector", () => {
       const model = yield* projectBoardEvent(
         {
           ...emptyModel(),
-          board: { cards: [makeCard({})], nextCardNumberByProject: {} },
+          board: { cards: [makeCard({})], labels: [], nextCardNumberByProject: {} },
         },
         event,
       );

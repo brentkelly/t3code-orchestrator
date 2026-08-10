@@ -49,6 +49,219 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 export const BoardCardId = TrimmedNonEmptyString.pipe(Schema.brand("BoardCardId"));
 export type BoardCardId = typeof BoardCardId.Type;
 
+export const BoardLabelId = TrimmedNonEmptyString.pipe(Schema.brand("BoardLabelId"));
+export type BoardLabelId = typeof BoardLabelId.Type;
+
+// ── Labels (t3o-06a) ───────────────────────────────────────────────────
+// The user-managed vocabulary that replaces the closed `BoardCardType`
+// union: a catalogue of named, coloured labels (its own aggregate, D9-class)
+// and a per-card `labels: BoardLabelId[]`. Labels are a SECOND board
+// aggregate kind — `"label"` joins `"card"` in `OrchestrationAggregateKind`
+// and `BoardLabelId` joins the aggregate-id unions (the once-only widenings
+// recorded in the seam inventory). Every other part of labels grows the
+// board-owned registries at the bottom of this file, touching no upstream
+// file.
+
+/** Colour is a 6-digit hex, validated against a bounded pattern — the 24
+    swatches below are all 6-digit, and free choice is allowed as long as it
+    matches. Not branded: it stays a plain string so seed constants and test
+    fixtures need no `.make`. */
+export const BOARD_LABEL_COLOUR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+export const BoardLabelColour = TrimmedNonEmptyString.check(
+  Schema.isPattern(BOARD_LABEL_COLOUR_PATTERN),
+);
+export type BoardLabelColour = typeof BoardLabelColour.Type;
+
+/**
+ * Label names are length-bounded (D7 payload discipline): the catalogue rides
+ * every shell snapshot, so an unbounded name would let one label bloat the
+ * payload every client pulls on reconnect — the same discipline the card
+ * title's byte cap enforces. Validated on the command (rejected at decode) and
+ * on the stored `BoardLabel`, so no path introduces an over-long name. 64 is
+ * generous for a chip label; the prototype's are single words.
+ */
+export const BOARD_LABEL_NAME_MAX_LENGTH = 64;
+export const BoardLabelName = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(BOARD_LABEL_NAME_MAX_LENGTH),
+);
+export type BoardLabelName = typeof BoardLabelName.Type;
+
+/**
+ * The prototype's 24-entry swatch (`LABEL_SWATCHES`): the default colour
+ * path for a new label. Free hex is still allowed, but the swatch is what
+ * `pickNextBoardLabelColour` walks so back-to-back creations do not collide.
+ */
+export const BOARD_LABEL_SWATCHES = [
+  "#ef4444",
+  "#f97316",
+  "#f59e0b",
+  "#eab308",
+  "#84cc16",
+  "#22c55e",
+  "#10b981",
+  "#14b8a6",
+  "#06b6d4",
+  "#0ea5e9",
+  "#3b82f6",
+  "#6366f1",
+  "#8b5cf6",
+  "#a855f7",
+  "#d946ef",
+  "#ec4899",
+  "#f43f5e",
+  "#78716c",
+  "#a1a1aa",
+  "#64748b",
+  "#0f766e",
+  "#7c2d12",
+  "#1e40af",
+  "#4c1d95",
+] as const;
+
+/**
+ * New-label colour assignment, ported from the prototype's `addLabel`: walk
+ * the swatch from `catalogueSize * stride` (stride 7 is coprime with 24, so
+ * each pick lands ~105° away on the wheel) and skip colours already in use,
+ * so two labels created back to back get different swatch colours. Falls
+ * back to the strided entry when every swatch is in use. Fed the live label
+ * colours by the decider (D8: the decider branches on the catalogue, so the
+ * catalogue lives in the read model).
+ */
+export function pickNextBoardLabelColour(usedColours: ReadonlyArray<string>): BoardLabelColour {
+  const stride = 7;
+  const size = usedColours.length;
+  const base = BOARD_LABEL_SWATCHES[(size * stride) % BOARD_LABEL_SWATCHES.length]!;
+  for (let offset = 0; offset < BOARD_LABEL_SWATCHES.length; offset += 1) {
+    const candidate = BOARD_LABEL_SWATCHES[(size * stride + offset) % BOARD_LABEL_SWATCHES.length]!;
+    if (!usedColours.includes(candidate)) return candidate;
+  }
+  return base;
+}
+
+/**
+ * The label catalogue entry. Deleting is a tombstone (`deletedAt` set), not
+ * a removal — the same choice t3o-03 made for thread links: a card carrying
+ * a retired label keeps rendering it (muted) rather than silently losing
+ * information (referential integrity, option 3 in the spec). `deletedAt` set
+ * hides the label from the picker; undelete clears it (reverse states).
+ */
+export const BoardLabel = Schema.Struct({
+  labelId: BoardLabelId,
+  name: BoardLabelName,
+  colour: BoardLabelColour,
+  deletedAt: Schema.NullOr(IsoDateTime),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type BoardLabel = typeof BoardLabel.Type;
+
+/** Max labels a single card may carry (enforced in the decider). Uncapped,
+    the shell's `labelIds` array is unbounded and the card design has no
+    worst case to lay out for. */
+export const BOARD_CARD_LABELS_MAX = 5;
+
+/**
+ * Canonical label order — (createdAt, labelId) by code units, the same
+ * comparator family as `compareBoardCards`. Applied on BOTH sides of the
+ * replay-equals-rehydration invariant: the projector keeps the read model's
+ * labels sorted with it, and `loadBoardState` re-sorts rows read back from
+ * `board_labels` with it, so replay and table rehydration cannot diverge on
+ * catalogue order. The seed labels below carry staggered genesis timestamps
+ * precisely so this comparator reproduces their feature/bug/chore order.
+ */
+export function compareBoardLabels(left: BoardLabel, right: BoardLabel): number {
+  const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  return compare(left.createdAt, right.createdAt) || compare(left.labelId, right.labelId);
+}
+
+// ── Seed labels ────────────────────────────────────────────────────────
+// The three prototype values (`SEED_LABELS`) at their prototype colours.
+// They are COMPILED into `EMPTY_BOARD_STATE` (below) and inserted verbatim
+// by the 906 data migration, so both the from-empty event replay and the
+// table rehydration start from an identical catalogue — a migration writes
+// tables but emits no event, so the only way replay can reproduce the seeds
+// is to start from them. Ids and timestamps are therefore FIXED and must
+// never change. The staggered millisecond timestamps make `compareBoardLabels`
+// reproduce the feature → bug → chore order deterministically.
+
+export const BOARD_SEED_LABEL_IDS = {
+  feature: BoardLabelId.make("label-feature"),
+  bug: BoardLabelId.make("label-bug"),
+  chore: BoardLabelId.make("label-chore"),
+} as const;
+
+const BOARD_SEED_LABEL_AT = {
+  feature: "1970-01-01T00:00:00.000Z",
+  bug: "1970-01-01T00:00:00.001Z",
+  chore: "1970-01-01T00:00:00.002Z",
+} as const;
+
+export const BOARD_SEED_LABELS: ReadonlyArray<BoardLabel> = [
+  {
+    labelId: BOARD_SEED_LABEL_IDS.feature,
+    name: "feature",
+    colour: "#3b82f6",
+    deletedAt: null,
+    createdAt: BOARD_SEED_LABEL_AT.feature,
+    updatedAt: BOARD_SEED_LABEL_AT.feature,
+  },
+  {
+    labelId: BOARD_SEED_LABEL_IDS.bug,
+    name: "bug",
+    colour: "#ef4444",
+    deletedAt: null,
+    createdAt: BOARD_SEED_LABEL_AT.bug,
+    updatedAt: BOARD_SEED_LABEL_AT.bug,
+  },
+  {
+    labelId: BOARD_SEED_LABEL_IDS.chore,
+    name: "chore",
+    colour: "#f59e0b",
+    deletedAt: null,
+    createdAt: BOARD_SEED_LABEL_AT.chore,
+    updatedAt: BOARD_SEED_LABEL_AT.chore,
+  },
+];
+
+/**
+ * Whether a catalogue is exactly the compiled seed set, untouched — no label
+ * created, renamed, recoloured or deleted. `loadBoardState` uses it to decide
+ * a no-card board is still "empty" and report the board slice as absent (the
+ * decider falls back to `EMPTY_BOARD_STATE`, which carries the same seeds), so
+ * a migrated-but-unused board rehydrates to the same read model a from-empty
+ * replay produces — a migration seeds tables but emits no event. Assumes the
+ * input is in canonical `compareBoardLabels` order (both `loadBoardState` and
+ * `BOARD_SEED_LABELS` are).
+ */
+export function boardLabelsAreSeedOnly(labels: ReadonlyArray<BoardLabel>): boolean {
+  if (labels.length !== BOARD_SEED_LABELS.length) return false;
+  return labels.every((label, index) => {
+    const seed = BOARD_SEED_LABELS[index]!;
+    return (
+      label.labelId === seed.labelId &&
+      label.name === seed.name &&
+      label.colour === seed.colour &&
+      label.deletedAt === seed.deletedAt &&
+      label.createdAt === seed.createdAt &&
+      label.updatedAt === seed.updatedAt
+    );
+  });
+}
+
+/**
+ * The closed type union that labels replace, kept ONLY to decode
+ * walking-skeleton / pre-t3o-06a `board.card-created` events and pre-migration
+ * rows, which still carry a `cardType`. New events carry `labels`; no live
+ * command or card field references this. A legacy card's single type maps to
+ * exactly one seed label, so the 906 migration is a rename in disguise.
+ */
+export const LegacyBoardCardType = Schema.Literals(["feature", "bug", "chore"]);
+export type LegacyBoardCardType = typeof LegacyBoardCardType.Type;
+
+export function legacyBoardCardTypeLabelId(type: LegacyBoardCardType): BoardLabelId {
+  return BOARD_SEED_LABEL_IDS[type];
+}
+
 // ── Stages ─────────────────────────────────────────────────────────────
 
 /**
@@ -90,10 +303,21 @@ export function isBoardStageBeforeReady(stage: BoardStage): boolean {
   return boardStageIndex(stage) < boardStageIndex("ready");
 }
 
-// ── Card pieces ────────────────────────────────────────────────────────
+/**
+ * Cards may be created only into these stages (t3o-06a): later stages
+ * describe work the board has already started shepherding, so a card cannot
+ * appear mid-pipeline. A card still REACHES later stages the only way it
+ * ever could — by being moved, under D18's human gate. The decider rejects a
+ * create targeting any other stage; the web add button appears only on these
+ * columns. Generalises t3o-03's "no create path may land a card in Building".
+ */
+export const BOARD_CREATABLE_STAGES = ["backlog", "sprint", "planning"] as const;
 
-export const BoardCardType = Schema.Literals(["feature", "bug", "chore"]);
-export type BoardCardType = typeof BoardCardType.Type;
+export function isBoardCreatableStage(stage: BoardStage): boolean {
+  return (BOARD_CREATABLE_STAGES as ReadonlyArray<BoardStage>).includes(stage);
+}
+
+// ── Card pieces ────────────────────────────────────────────────────────
 
 /**
  * Thread link (D9). `role` is a free string discriminator (`planning`,
@@ -209,7 +433,13 @@ export const BoardCard = Schema.Struct({
       counter can be rebuilt exactly on rehydration and replay. */
   cardNumber: NonNegativeInt,
   projectId: ProjectId,
-  type: BoardCardType,
+  /** User-managed label vocabulary (t3o-06a), replacing the closed
+      `BoardCardType`. Mirrors `dependsOn`: an ordered id array, the names and
+      colours never denormalised onto the card (they ride the catalogue once).
+      Capped at `BOARD_CARD_LABELS_MAX` by the decider. May reference a
+      tombstoned label (rendered muted) — deleting a label never rewrites the
+      cards that carry it. */
+  labels: Schema.Array(BoardLabelId),
   stage: BoardStage,
   /** Fractional ordering key within the stage column, following the
       `pinOrderKey` precedent: the client computes it (threadSort.ts helpers)
@@ -279,6 +509,15 @@ export function deriveBoardCardBlocked(input: {
  */
 export const BoardState = Schema.Struct({
   cards: Schema.Array(BoardCard),
+  /** The label catalogue (t3o-06a). In the read model because the decider
+      branches on it (D8): name-uniqueness and label-existence gates read it.
+      Includes tombstoned labels (`deletedAt` set). Kept in canonical
+      `compareBoardLabels` order. Optional and read through
+      `boardLabelCatalogue` (absent means the compiled seeds), mirroring the
+      `board ?? EMPTY_BOARD_STATE` fallback: a board that has never touched a
+      label still resolves feature/bug/chore, and a persisted pre-label read
+      model decodes unchanged. */
+  labels: Schema.optional(Schema.Array(BoardLabel)),
   /** Next key number per project (D14). Lives in the read model so
       allocation is exact and race-free under the engine's total command
       ordering; rebuilt from `MAX(card_number)` on rehydration. */
@@ -286,7 +525,19 @@ export const BoardState = Schema.Struct({
 });
 export type BoardState = typeof BoardState.Type;
 
-export const EMPTY_BOARD_STATE: BoardState = { cards: [], nextCardNumberByProject: {} };
+export const EMPTY_BOARD_STATE: BoardState = {
+  cards: [],
+  labels: BOARD_SEED_LABELS,
+  nextCardNumberByProject: {},
+};
+
+/** The label catalogue for a board slice: its `labels`, or the compiled seeds
+    when absent (a board that has never touched a label). The single reader
+    every decider/projector path goes through, so "absent" and "the three
+    seeds" are always the same catalogue. */
+export function boardLabelCatalogue(board: BoardState): ReadonlyArray<BoardLabel> {
+  return board.labels ?? BOARD_SEED_LABELS;
+}
 
 // ── Key allocation ─────────────────────────────────────────────────────
 
@@ -319,8 +570,15 @@ export const BoardCardCreateCommand = Schema.Struct({
   cardId: BoardCardId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
-  cardType: BoardCardType,
-  /** Client-computed fractional position in the Backlog column. */
+  /** Labels to tag the new card with (t3o-06a). Absent is an empty set. The
+      decider rejects the create when it exceeds `BOARD_CARD_LABELS_MAX` or
+      references an unknown / tombstoned label. */
+  labels: Schema.optional(Schema.Array(BoardLabelId)),
+  /** Target stage (t3o-06a). Absent lands in Backlog. The decider rejects any
+      stage outside `BOARD_CREATABLE_STAGES` — a card cannot appear
+      mid-pipeline. t3o-06 wires the create dialog's stage picker to this. */
+  stage: Schema.optional(BoardStage),
+  /** Client-computed fractional position in the target column. */
   orderKey: TrimmedNonEmptyString,
   /** Overrides DEFAULT_BOARD_KEY_PREFIX; the t3o-07 settings surface will
       supply the per-project value. */
@@ -363,7 +621,10 @@ export const BoardCardUpdateCommand = Schema.Struct({
   /** Brief body text, stored in `board_card_bodies` — never in the read
       model (D8). */
   brief: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  cardType: Schema.optional(BoardCardType),
+  /** New full label set for the card (t3o-06a); absent leaves labels
+      unchanged. The decider caps it and requires each id to be either already
+      on the card (grandfathering a tombstoned reference) or a live label. */
+  labels: Schema.optional(Schema.Array(BoardLabelId)),
   dependsOn: Schema.optional(Schema.Array(BoardCardId)),
   externalRef: Schema.optional(Schema.NullOr(BoardCardExternalRef)),
   createdAt: IsoDateTime,
@@ -405,6 +666,59 @@ export const BoardCardUnarchiveCommand = Schema.Struct({
 });
 export type BoardCardUnarchiveCommand = typeof BoardCardUnarchiveCommand.Type;
 
+// ── Label commands (t3o-06a) ───────────────────────────────────────────
+// A second board aggregate: label commands carry `labelId` (client-generated,
+// like `cardId`, so an inline create-then-tag needs no round trip) and
+// aggregate on the label. Labels get commands and events like everything the
+// board writes (D8) rather than riding settings — creating a label while
+// tagging a card must not race the settings map.
+
+export const BoardLabelCreateCommand = Schema.Struct({
+  type: Schema.Literal("board.label.create"),
+  commandId: CommandId,
+  labelId: BoardLabelId,
+  name: BoardLabelName,
+  /** Absent: the decider assigns a swatch colour via `pickNextBoardLabelColour`
+      (guaranteeing back-to-back creates differ). Present: an explicit hex,
+      validated against `BOARD_LABEL_COLOUR_PATTERN`. */
+  colour: Schema.optional(BoardLabelColour),
+  createdAt: IsoDateTime,
+});
+export type BoardLabelCreateCommand = typeof BoardLabelCreateCommand.Type;
+
+/** Rename and/or recolour; absent fields are unchanged. A recolour repaints
+    every card carrying the label through the normal catalogue delta path — no
+    per-card write. */
+export const BoardLabelUpdateCommand = Schema.Struct({
+  type: Schema.Literal("board.label.update"),
+  commandId: CommandId,
+  labelId: BoardLabelId,
+  name: Schema.optional(BoardLabelName),
+  colour: Schema.optional(BoardLabelColour),
+  createdAt: IsoDateTime,
+});
+export type BoardLabelUpdateCommand = typeof BoardLabelUpdateCommand.Type;
+
+/** Tombstone the label (referential integrity, option 3): it leaves the
+    picker, cards keep the reference and render it muted. */
+export const BoardLabelDeleteCommand = Schema.Struct({
+  type: Schema.Literal("board.label.delete"),
+  commandId: CommandId,
+  labelId: BoardLabelId,
+  createdAt: IsoDateTime,
+});
+export type BoardLabelDeleteCommand = typeof BoardLabelDeleteCommand.Type;
+
+/** Undelete — a one-way door is a bug (reverse states). Rejected if the
+    name now collides with a live label. */
+export const BoardLabelUndeleteCommand = Schema.Struct({
+  type: Schema.Literal("board.label.undelete"),
+  commandId: CommandId,
+  labelId: BoardLabelId,
+  createdAt: IsoDateTime,
+});
+export type BoardLabelUndeleteCommand = typeof BoardLabelUndeleteCommand.Type;
+
 // ── Event payloads ─────────────────────────────────────────────────────
 
 /**
@@ -424,7 +738,14 @@ export const BoardCardCreatedPayload = Schema.Struct({
   cardNumber: NonNegativeInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(LEGACY_BOARD_CARD_NUMBER)),
   ),
-  cardType: BoardCardType.pipe(Schema.withDecodingDefault(Effect.succeed("feature" as const))),
+  /** Legacy only (t3o-06a): walking-skeleton and pre-label `card-created`
+      events carry a `cardType`; new events carry `labels` instead. When both
+      are absent the projector maps the missing type to the `feature` seed
+      label, mirroring migration 903's `card_type DEFAULT 'feature'`. */
+  cardType: Schema.optionalKey(LegacyBoardCardType),
+  /** New events (t3o-06a): the card's labels at creation. Absent on legacy
+      events, where the projector derives a one-element set from `cardType`. */
+  labels: Schema.optionalKey(Schema.Array(BoardLabelId)),
   stage: BoardStage.pipe(Schema.withDecodingDefault(Effect.succeed("backlog" as const))),
   orderKey: TrimmedNonEmptyString.pipe(
     Schema.withDecodingDefault(Effect.succeed(LEGACY_BOARD_CARD_ORDER_KEY)),
@@ -433,6 +754,18 @@ export const BoardCardCreatedPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type BoardCardCreatedPayload = typeof BoardCardCreatedPayload.Type;
+
+/**
+ * The card's labels as of a `card-created` event: the new-event `labels`
+ * field, or a one-element set derived from the legacy `cardType` (defaulting
+ * to `feature`) — the migration-in-replay that keeps a from-empty replay of a
+ * pre-t3o-06a log equal to the post-906-migration table rehydration.
+ */
+export function boardCardCreatedLabels(
+  payload: BoardCardCreatedPayload,
+): ReadonlyArray<BoardLabelId> {
+  return payload.labels ?? [legacyBoardCardTypeLabelId(payload.cardType ?? "feature")];
+}
 
 export const BoardCardMovedPayload = Schema.Struct({
   cardId: BoardCardId,
@@ -490,6 +823,39 @@ export const BoardCardUnarchivedPayload = Schema.Struct({
 });
 export type BoardCardUnarchivedPayload = typeof BoardCardUnarchivedPayload.Type;
 
+// ── Label event payloads (t3o-06a) ─────────────────────────────────────
+// Every label event carries the full post-change `label`, exactly as card
+// events carry the full `card`: the catalogue shell delta is a pure function
+// of the event (no projection re-read in ws.ts), and the projector gets
+// replay determinism for free by upserting exactly what the decider computed.
+// Delete/undelete are `label` upserts with `deletedAt` set/cleared (tombstone,
+// not removal), so a single `label-upserted` delta covers all four verbs.
+
+export const BoardLabelCreatedPayload = Schema.Struct({
+  labelId: BoardLabelId,
+  label: BoardLabel,
+});
+export type BoardLabelCreatedPayload = typeof BoardLabelCreatedPayload.Type;
+
+export const BoardLabelUpdatedPayload = Schema.Struct({
+  labelId: BoardLabelId,
+  label: BoardLabel,
+});
+export type BoardLabelUpdatedPayload = typeof BoardLabelUpdatedPayload.Type;
+
+export const BoardLabelDeletedPayload = Schema.Struct({
+  labelId: BoardLabelId,
+  deletedAt: IsoDateTime,
+  label: BoardLabel,
+});
+export type BoardLabelDeletedPayload = typeof BoardLabelDeletedPayload.Type;
+
+export const BoardLabelUndeletedPayload = Schema.Struct({
+  labelId: BoardLabelId,
+  label: BoardLabel,
+});
+export type BoardLabelUndeletedPayload = typeof BoardLabelUndeletedPayload.Type;
+
 // ── Card shell (t3o-04, D7) ────────────────────────────────────────────
 
 /**
@@ -522,7 +888,12 @@ export const BoardCardShell = Schema.Struct({
   cardId: BoardCardId,
   key: TrimmedNonEmptyString,
   projectId: ProjectId,
-  type: BoardCardType,
+  /** Label ids only (t3o-06a) — never `{name, colour}` per card. Names and
+      colours ride the catalogue once (`OrchestrationShellSnapshot.boardLabels`);
+      a client renders chips by looking each id up there. Bounded by
+      `BOARD_CARD_LABELS_MAX`, so the shell stays scalar-plus-one-small-array
+      and grows linearly with card count (asserted in `board.test.ts`). */
+  labelIds: Schema.Array(BoardLabelId),
   stage: BoardStage,
   orderKey: TrimmedNonEmptyString,
   /** Capped at `BOARD_CARD_SHELL_TITLE_MAX_BYTES` (UTF-8) by
@@ -671,7 +1042,7 @@ export function makeBoardCardShell(input: {
   readonly cardId: BoardCardId;
   readonly key: string;
   readonly projectId: ProjectId;
-  readonly type: BoardCardType;
+  readonly labelIds: ReadonlyArray<BoardLabelId>;
   readonly stage: BoardStage;
   readonly orderKey: string;
   readonly title: string;
@@ -686,7 +1057,7 @@ export function makeBoardCardShell(input: {
     cardId: input.cardId,
     key: input.key,
     projectId: input.projectId,
-    type: input.type,
+    labelIds: input.labelIds,
     stage: input.stage,
     orderKey: input.orderKey,
     title: boundShellTitle(input.title),
@@ -722,7 +1093,7 @@ export function boardCardShellFromCard(
     cardId: card.id,
     key: card.key,
     projectId: card.projectId,
-    type: card.type,
+    labelIds: card.labels,
     stage: card.stage,
     orderKey: card.orderKey,
     title: card.title,
@@ -758,6 +1129,26 @@ export const BoardCardRemovedShellEvent = Schema.Struct({
 export type BoardCardRemovedShellEvent = typeof BoardCardRemovedShellEvent.Type;
 
 /**
+ * Catalogue delta (t3o-06a): a label created, renamed, recoloured, tombstoned
+ * or restored. Carries the whole `BoardLabel` (including `deletedAt`), so a
+ * recolour repaints every card that references it with no card deltas and no
+ * snapshot refetch — the cards hold ids; the colour lives here. There is no
+ * `label-removed`: a delete is a tombstone, so the label stays in the
+ * catalogue with `deletedAt` set and rides as an upsert.
+ *
+ * This is the non-card board delta t3o-02a's `card-`-prefix rule flagged
+ * ("revisit if non-card board deltas ever appear"). Its `kind` starts with
+ * `label-`, and `isBoardShellStreamEvent` is widened to admit that prefix; the
+ * rule is updated in docs/t3o/seams.md.
+ */
+export const BoardLabelUpsertedShellEvent = Schema.Struct({
+  kind: Schema.Literal("label-upserted"),
+  sequence: NonNegativeInt,
+  label: BoardLabel,
+});
+export type BoardLabelUpsertedShellEvent = typeof BoardLabelUpsertedShellEvent.Type;
+
+/**
  * Type guards for the `board.` / `card-` prefix rule. Generic over the input
  * union (rather than typed against `OrchestrationCommand` etc.) because this
  * file cannot import `orchestration.ts` — narrowing still resolves to the
@@ -779,8 +1170,11 @@ export function isBoardEvent<Event extends { readonly type: string }>(
 
 export function isBoardShellStreamEvent<Event extends { readonly kind: string }>(
   event: Event,
-): event is Extract<Event, { kind: `card-${string}` }> {
-  return event.kind.startsWith("card-");
+): event is Extract<Event, { kind: `card-${string}` | `label-${string}` }> {
+  // t3o-06a widened this beyond the original `card-` prefix: label catalogue
+  // deltas (`label-upserted`) are board shell deltas too. Both prefixes route
+  // to the board reducer / mapper; see docs/t3o/seams.md's prefix rule.
+  return event.kind.startsWith("card-") || event.kind.startsWith("label-");
 }
 
 /**
@@ -797,6 +1191,10 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardCardUnlinkThreadCommand,
   BoardCardArchiveCommand,
   BoardCardUnarchiveCommand,
+  BoardLabelCreateCommand,
+  BoardLabelUpdateCommand,
+  BoardLabelDeleteCommand,
+  BoardLabelUndeleteCommand,
 ] as const;
 
 export const BOARD_EVENT_TYPES = [
@@ -808,11 +1206,16 @@ export const BOARD_EVENT_TYPES = [
   "board.card-thread-unlinked",
   "board.card-archived",
   "board.card-unarchived",
+  "board.label-created",
+  "board.label-updated",
+  "board.label-deleted",
+  "board.label-undeleted",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
   BoardCardUpsertedShellEvent,
   BoardCardRemovedShellEvent,
+  BoardLabelUpsertedShellEvent,
 ] as const;
 
 /**
@@ -863,6 +1266,26 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-unarchived"),
       payload: BoardCardUnarchivedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.label-created"),
+      payload: BoardLabelCreatedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.label-updated"),
+      payload: BoardLabelUpdatedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.label-deleted"),
+      payload: BoardLabelDeletedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.label-undeleted"),
+      payload: BoardLabelUndeletedPayload,
     }),
   ] as const;
 }

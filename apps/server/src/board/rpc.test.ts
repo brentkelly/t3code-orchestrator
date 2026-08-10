@@ -85,7 +85,6 @@ const seedCard = Effect.gen(function* () {
     cardId,
     projectId,
     title: "RPC card",
-    cardType: "feature",
     orderKey: "m",
     createdAt: t0,
   });

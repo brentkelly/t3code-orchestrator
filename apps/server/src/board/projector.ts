@@ -14,6 +14,7 @@
  */
 import {
   BoardCardArchivedPayload,
+  boardCardCreatedLabels,
   BoardCardCreatedPayload,
   BoardCardMovedPayload,
   BoardCardReorderedPayload,
@@ -22,9 +23,16 @@ import {
   BoardCardUnarchivedPayload,
   BoardCardUpdatedPayload,
   boardCardShellFromCard,
+  boardLabelCatalogue,
+  BoardLabelCreatedPayload,
+  BoardLabelDeletedPayload,
+  BoardLabelUndeletedPayload,
+  BoardLabelUpdatedPayload,
+  compareBoardLabels,
   EMPTY_BOARD_STATE,
   isBoardEvent,
   type BoardCard,
+  type BoardLabel,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationShellStreamEvent,
@@ -53,6 +61,10 @@ const decodeBoardCardThreadUnlinkedPayload = Schema.decodeUnknownEffect(
 );
 const decodeBoardCardArchivedPayload = Schema.decodeUnknownEffect(BoardCardArchivedPayload);
 const decodeBoardCardUnarchivedPayload = Schema.decodeUnknownEffect(BoardCardUnarchivedPayload);
+const decodeBoardLabelCreatedPayload = Schema.decodeUnknownEffect(BoardLabelCreatedPayload);
+const decodeBoardLabelUpdatedPayload = Schema.decodeUnknownEffect(BoardLabelUpdatedPayload);
+const decodeBoardLabelDeletedPayload = Schema.decodeUnknownEffect(BoardLabelDeletedPayload);
+const decodeBoardLabelUndeletedPayload = Schema.decodeUnknownEffect(BoardLabelUndeletedPayload);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -80,7 +92,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     key: payload.key,
     cardNumber: payload.cardNumber,
     projectId: payload.projectId,
-    type: payload.cardType,
+    labels: boardCardCreatedLabels(payload),
     stage: payload.stage,
     orderKey: payload.orderKey,
     title: payload.title,
@@ -105,6 +117,22 @@ function upsertCard(model: OrchestrationReadModel, card: BoardCard): Orchestrati
       : [...board.cards, card]
   ).toSorted(compareBoardCards);
   return { ...model, board: { ...board, cards } };
+}
+
+/** Upsert a label into the read model's catalogue, kept in canonical
+    `compareBoardLabels` order — the same comparator `loadBoardState` applies to
+    rows, so replay and rehydration cannot diverge on catalogue order. Every
+    label event (create/update/delete/undelete) carries the full post-change
+    label, so this one path serves them all. */
+function upsertLabel(model: OrchestrationReadModel, label: BoardLabel): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const catalogue = boardLabelCatalogue(board);
+  const labels = (
+    catalogue.some((existing) => existing.labelId === label.labelId)
+      ? catalogue.map((existing) => (existing.labelId === label.labelId ? label : existing))
+      : [...catalogue, label]
+  ).toSorted(compareBoardLabels);
+  return { ...model, board: { ...board, labels } };
 }
 
 /** Counter bump on create: monotonic max, so replaying a legacy event
@@ -185,6 +213,30 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    case "board.label-created":
+      return decodeBoardLabelCreatedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertLabel(model, payload.label)),
+      );
+
+    case "board.label-updated":
+      return decodeBoardLabelUpdatedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertLabel(model, payload.label)),
+      );
+
+    case "board.label-deleted":
+      return decodeBoardLabelDeletedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertLabel(model, payload.label)),
+      );
+
+    case "board.label-undeleted":
+      return decodeBoardLabelUndeletedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertLabel(model, payload.label)),
+      );
+
     default: {
       event satisfies never;
       // Runtime backstop for an undecoded event: leave the model unchanged.
@@ -229,6 +281,20 @@ export function boardShellStreamEvent(
         kind: "card-removed",
         sequence: event.sequence,
         cardId: event.payload.cardId,
+      });
+
+    case "board.label-created":
+    case "board.label-updated":
+    case "board.label-deleted":
+    case "board.label-undeleted":
+      // Catalogue delta (t3o-06a): the full post-change label rides once, so a
+      // recolour repaints every card that references it with no card deltas.
+      // Delete/undelete are tombstone upserts — the label stays in the
+      // catalogue with `deletedAt` set/cleared.
+      return Option.some({
+        kind: "label-upserted",
+        sequence: event.sequence,
+        label: event.payload.label,
       });
 
     default: {

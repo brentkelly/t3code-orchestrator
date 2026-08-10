@@ -23,17 +23,24 @@
 import {
   areBoardStagesAdjacent,
   BOARD_CARD_BRIEF_BODY_KIND,
+  BOARD_CARD_LABELS_MAX,
+  BOARD_CREATABLE_STAGES,
+  boardLabelCatalogue,
   boardStageIndex,
   DEFAULT_BOARD_KEY_PREFIX,
   deriveBoardCardBlocked,
   EMPTY_BOARD_STATE,
   EventId,
   isBoardCommand,
+  isBoardCreatableStage,
   isBoardStageBeforeReady,
+  pickNextBoardLabelColour,
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
   type BoardCardId,
+  type BoardLabel,
+  type BoardLabelId,
   type BoardState,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -47,6 +54,17 @@ import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import { requireProject } from "../orchestration/commandInvariants.ts";
 
 export type BoardCommand = Extract<OrchestrationCommand, { type: `board.${string}` }>;
+
+/** Label commands (t3o-06a) aggregate on the label, not the card — they carry
+    `labelId` instead of `cardId`. Keyed on the `board.label.` prefix. */
+type BoardLabelCommand = Extract<BoardCommand, { type: `board.label.${string}` }>;
+function isBoardLabelCommand(command: BoardCommand): command is BoardLabelCommand {
+  return command.type.startsWith("board.label.");
+}
+
+/** Card-aggregate commands — every board command except the label ones; the
+    only commands that carry a `cardId`. */
+type BoardCardCommand = Exclude<BoardCommand, BoardLabelCommand>;
 
 // Re-exported so upstream seams import predicate + delegate on one line.
 export { isBoardCommand };
@@ -63,13 +81,13 @@ type PlannedOrchestrationEvent = DistributiveOmit<OrchestrationEvent, "sequence"
  * behind the `isBoardCommand` predicate.
  */
 export function boardCommandAggregateRef(command: BoardCommand): {
-  readonly aggregateKind: "card";
-  readonly aggregateId: BoardCardId;
+  readonly aggregateKind: "card" | "label";
+  readonly aggregateId: BoardCardId | BoardLabelId;
 } {
-  return {
-    aggregateKind: "card",
-    aggregateId: command.cardId,
-  };
+  if (isBoardLabelCommand(command)) {
+    return { aggregateKind: "label", aggregateId: command.labelId };
+  }
+  return { aggregateKind: "card", aggregateId: command.cardId };
 }
 
 const invariant = (command: BoardCommand, detail: string) =>
@@ -77,7 +95,7 @@ const invariant = (command: BoardCommand, detail: string) =>
 
 function requireBoardCard(input: {
   readonly board: BoardState;
-  readonly command: BoardCommand;
+  readonly command: BoardCardCommand;
 }): Effect.Effect<BoardCard, OrchestrationCommandInvariantError> {
   const card = input.board.cards.find((candidate) => candidate.id === input.command.cardId);
   return card === undefined
@@ -87,7 +105,7 @@ function requireBoardCard(input: {
 
 function requireActiveBoardCard(input: {
   readonly board: BoardState;
-  readonly command: BoardCommand;
+  readonly command: BoardCardCommand;
 }): Effect.Effect<BoardCard, OrchestrationCommandInvariantError> {
   return requireBoardCard(input).pipe(
     Effect.filterOrFail(
@@ -161,6 +179,74 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
   };
 });
 
+/** Event base for label events (t3o-06a): aggregates on the label. Separate
+    from `makeBoardEventBase` rather than parametrised so the card call sites
+    stay untouched. */
+const makeBoardLabelEventBase = Effect.fn("makeBoardLabelEventBase")(function* (input: {
+  readonly labelId: BoardLabelId;
+  readonly occurredAt: string;
+  readonly commandId: BoardCommand["commandId"];
+}) {
+  const crypto = yield* Crypto.Crypto;
+  const eventId = yield* crypto.randomUUIDv4;
+  return {
+    eventId: EventId.make(eventId),
+    aggregateKind: "label" as const,
+    aggregateId: input.labelId,
+    occurredAt: input.occurredAt,
+    commandId: input.commandId,
+    causationEventId: null,
+    correlationId: input.commandId,
+    metadata: {},
+  };
+});
+
+/** Live (non-tombstoned) labels — the picker's view, and the set a name
+    uniqueness check runs against. */
+function liveBoardLabels(board: BoardState): ReadonlyArray<BoardLabel> {
+  return boardLabelCatalogue(board).filter((label) => label.deletedAt === null);
+}
+
+/**
+ * Validate and normalise a card's label set (t3o-06a). Dedupes (a card holds
+ * each label once), enforces `BOARD_CARD_LABELS_MAX`, and requires every id to
+ * be either already on the card (grandfathering a reference to a
+ * since-tombstoned label the user did not touch) or a live label — so a card
+ * keeps a retired label it already carried but cannot ADD an unknown or
+ * tombstoned one. `existing` is the card's current labels for a create.
+ */
+function validateCardLabels(input: {
+  readonly board: BoardState;
+  readonly command: BoardCommand;
+  readonly proposed: ReadonlyArray<BoardLabelId>;
+  readonly existing: ReadonlyArray<BoardLabelId>;
+}): Effect.Effect<ReadonlyArray<BoardLabelId>, OrchestrationCommandInvariantError> {
+  const deduped = [...new Set(input.proposed)];
+  if (deduped.length > BOARD_CARD_LABELS_MAX) {
+    return Effect.fail(
+      invariant(
+        input.command,
+        `A card may carry at most ${BOARD_CARD_LABELS_MAX} labels; ${deduped.length} were given.`,
+      ),
+    );
+  }
+  const existingSet = new Set(input.existing);
+  const catalogue = boardLabelCatalogue(input.board);
+  for (const labelId of deduped) {
+    if (existingSet.has(labelId)) continue;
+    const label = catalogue.find((candidate) => candidate.labelId === labelId);
+    if (label === undefined) {
+      return Effect.fail(invariant(input.command, `Label '${labelId}' does not exist.`));
+    }
+    if (label.deletedAt !== null) {
+      return Effect.fail(
+        invariant(input.command, `Label '${labelId}' is deleted and cannot be added.`),
+      );
+    }
+  }
+  return Effect.succeed(deduped);
+}
+
 export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
   command,
   readModel,
@@ -185,6 +271,24 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         return yield* invariant(command, `Card '${command.cardId}' already exists.`);
       }
 
+      // Cards may be created only into Backlog, Sprint or Planning (t3o-06a):
+      // later stages describe work the board has already started shepherding.
+      // Generalises t3o-03's "no create path may land a card in Building".
+      const stage = command.stage ?? "backlog";
+      if (!isBoardCreatableStage(stage)) {
+        return yield* invariant(
+          command,
+          `Cards can be created only into ${BOARD_CREATABLE_STAGES.join(", ")}; '${stage}' is not a creation stage.`,
+        );
+      }
+
+      const labels = yield* validateCardLabels({
+        board,
+        command,
+        proposed: command.labels ?? [],
+        existing: [],
+      });
+
       const cardNumber = board.nextCardNumberByProject[command.projectId] ?? 1;
       const keyPrefix = command.keyPrefix ?? DEFAULT_BOARD_KEY_PREFIX;
       return {
@@ -200,8 +304,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           title: command.title,
           key: `${keyPrefix}-${cardNumber}`,
           cardNumber,
-          cardType: command.cardType,
-          stage: "backlog",
+          labels,
+          stage,
           orderKey: command.orderKey,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -320,12 +424,22 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       if (
         command.title === undefined &&
         command.brief === undefined &&
-        command.cardType === undefined &&
+        command.labels === undefined &&
         command.dependsOn === undefined &&
         command.externalRef === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
+
+      const nextLabels =
+        command.labels === undefined
+          ? card.labels
+          : yield* validateCardLabels({
+              board,
+              command,
+              proposed: command.labels,
+              existing: card.labels,
+            });
 
       // Duplicate edges add nothing to the graph; store each dependency once.
       const proposedDependsOn =
@@ -353,7 +467,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       const nextCard: BoardCard = {
         ...card,
         title: command.title ?? card.title,
-        type: command.cardType ?? card.type,
+        labels: nextLabels,
         dependsOn,
         externalRef: command.externalRef === undefined ? card.externalRef : command.externalRef,
         briefRef:
@@ -537,6 +651,153 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           cardId: command.cardId,
           card: nextCard,
         },
+      };
+    }
+
+    case "board.label.create": {
+      if (boardLabelCatalogue(board).some((label) => label.labelId === command.labelId)) {
+        return yield* invariant(command, `Label '${command.labelId}' already exists.`);
+      }
+      // Case-insensitive uniqueness against LIVE labels — the prototype's
+      // picker treats the catalogue as case-insensitively unique.
+      const nameKey = command.name.toLowerCase();
+      if (liveBoardLabels(board).some((label) => label.name.toLowerCase() === nameKey)) {
+        return yield* invariant(command, `A label named '${command.name}' already exists.`);
+      }
+      const colour =
+        command.colour ??
+        pickNextBoardLabelColour(liveBoardLabels(board).map((label) => label.colour));
+      const label: BoardLabel = {
+        labelId: command.labelId,
+        name: command.name,
+        colour,
+        deletedAt: null,
+        createdAt: command.createdAt,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardLabelEventBase({
+          labelId: command.labelId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.label-created",
+        payload: { labelId: command.labelId, label },
+      };
+    }
+
+    case "board.label.update": {
+      const label = boardLabelCatalogue(board).find(
+        (candidate) => candidate.labelId === command.labelId,
+      );
+      if (label === undefined) {
+        return yield* invariant(command, `Label '${command.labelId}' does not exist.`);
+      }
+      // A tombstoned label is inert: it is out of the picker and cards render
+      // it muted, so renaming or recolouring it is meaningless. Restore it
+      // first (board.label.undelete), then edit — one clear path, and it keeps
+      // undelete's name-collision gate the single guard on a name re-entering
+      // the live set.
+      if (label.deletedAt !== null) {
+        return yield* invariant(
+          command,
+          `Label '${command.labelId}' is deleted; restore it before editing.`,
+        );
+      }
+      if (command.name === undefined && command.colour === undefined) {
+        return yield* invariant(
+          command,
+          `Update for label '${command.labelId}' carries no changes.`,
+        );
+      }
+      if (command.name !== undefined) {
+        const nameKey = command.name.toLowerCase();
+        const collision = liveBoardLabels(board).some(
+          (candidate) =>
+            candidate.labelId !== command.labelId && candidate.name.toLowerCase() === nameKey,
+        );
+        if (collision) {
+          return yield* invariant(command, `A label named '${command.name}' already exists.`);
+        }
+      }
+      const nextLabel: BoardLabel = {
+        ...label,
+        name: command.name ?? label.name,
+        colour: command.colour ?? label.colour,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardLabelEventBase({
+          labelId: command.labelId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.label-updated",
+        payload: { labelId: command.labelId, label: nextLabel },
+      };
+    }
+
+    case "board.label.delete": {
+      const label = boardLabelCatalogue(board).find(
+        (candidate) => candidate.labelId === command.labelId,
+      );
+      if (label === undefined) {
+        return yield* invariant(command, `Label '${command.labelId}' does not exist.`);
+      }
+      if (label.deletedAt !== null) {
+        return yield* invariant(command, `Label '${command.labelId}' is already deleted.`);
+      }
+      const nextLabel: BoardLabel = {
+        ...label,
+        deletedAt: command.createdAt,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardLabelEventBase({
+          labelId: command.labelId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.label-deleted",
+        payload: { labelId: command.labelId, deletedAt: command.createdAt, label: nextLabel },
+      };
+    }
+
+    case "board.label.undelete": {
+      const label = boardLabelCatalogue(board).find(
+        (candidate) => candidate.labelId === command.labelId,
+      );
+      if (label === undefined) {
+        return yield* invariant(command, `Label '${command.labelId}' does not exist.`);
+      }
+      if (label.deletedAt === null) {
+        return yield* invariant(command, `Label '${command.labelId}' is not deleted.`);
+      }
+      // Undelete cannot resurrect into a name collision with a live label.
+      const nameKey = label.name.toLowerCase();
+      const collision = liveBoardLabels(board).some(
+        (candidate) =>
+          candidate.labelId !== command.labelId && candidate.name.toLowerCase() === nameKey,
+      );
+      if (collision) {
+        return yield* invariant(
+          command,
+          `Cannot restore label '${label.name}': a live label with that name already exists.`,
+        );
+      }
+      const nextLabel: BoardLabel = {
+        ...label,
+        deletedAt: null,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardLabelEventBase({
+          labelId: command.labelId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.label-undeleted",
+        payload: { labelId: command.labelId, label: nextLabel },
       };
     }
 

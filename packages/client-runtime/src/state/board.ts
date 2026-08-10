@@ -32,6 +32,8 @@ import {
   type BoardCardRemovedShellEvent,
   type BoardCardShell,
   type BoardCardUpsertedShellEvent,
+  type BoardLabel,
+  type BoardLabelUpsertedShellEvent,
   type BoardStage,
   type EnvironmentId,
   type OrchestrationShellSnapshot,
@@ -48,20 +50,28 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   archiveBoardCard,
   createBoardCard,
+  createBoardLabel,
+  deleteBoardLabel,
   linkBoardCardThread,
   moveBoardCard,
   reorderBoardCard,
   unarchiveBoardCard,
+  undeleteBoardLabel,
   unlinkBoardCardThread,
   updateBoardCard,
+  updateBoardLabel,
   type ArchiveBoardCardInput,
   type CreateBoardCardInput,
+  type CreateBoardLabelInput,
+  type DeleteBoardLabelInput,
   type LinkBoardCardThreadInput,
   type MoveBoardCardInput,
   type ReorderBoardCardInput,
   type UnarchiveBoardCardInput,
+  type UndeleteBoardLabelInput,
   type UnlinkBoardCardThreadInput,
   type UpdateBoardCardInput,
+  type UpdateBoardLabelInput,
 } from "../operations/boardCommands.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import {
@@ -74,15 +84,22 @@ import { pinOrderKeyBetween, planPinnedReorder } from "./threadSort.ts";
 export type {
   ArchiveBoardCardInput,
   CreateBoardCardInput,
+  CreateBoardLabelInput,
+  DeleteBoardLabelInput,
   LinkBoardCardThreadInput,
   MoveBoardCardInput,
   ReorderBoardCardInput,
   UnarchiveBoardCardInput,
+  UndeleteBoardLabelInput,
   UnlinkBoardCardThreadInput,
   UpdateBoardCardInput,
+  UpdateBoardLabelInput,
 };
 
-export type BoardShellStreamEvent = BoardCardUpsertedShellEvent | BoardCardRemovedShellEvent;
+export type BoardShellStreamEvent =
+  | BoardCardUpsertedShellEvent
+  | BoardCardRemovedShellEvent
+  | BoardLabelUpsertedShellEvent;
 
 // Re-exported so the upstream reducer imports predicate + delegate on one line.
 export { isBoardShellStreamEvent };
@@ -124,6 +141,19 @@ export function applyBoardShellStreamEvent(
         cards: Arr.filter(cards, (card) => card.cardId !== event.cardId),
         snapshotSequence: event.sequence,
       };
+    case "label-upserted": {
+      // Catalogue delta (t3o-06a): the whole board's label vocabulary rides
+      // once. A recolour arrives here and repaints every chip that references
+      // the id, with no card deltas. Delete/undelete are upserts carrying
+      // `deletedAt` set/cleared — the label stays in the catalogue.
+      const labels = snapshot.boardLabels ?? [];
+      const nextLabels = labels.some((existing) => existing.labelId === event.label.labelId)
+        ? Arr.map(labels, (existing) =>
+            existing.labelId === event.label.labelId ? event.label : existing,
+          )
+        : Arr.append(labels, event.label);
+      return { ...snapshot, boardLabels: nextLabels, snapshotSequence: event.sequence };
+    }
   }
 }
 
@@ -346,6 +376,22 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-cards:${environmentId}`)),
   );
 
+  /** The board's label catalogue (t3o-06a) — the vocabulary every card chip
+      and the label picker read, keyed by id. Rides the shell snapshot once,
+      so this is a cheap projection over cached state, not a subscription.
+      Includes tombstoned labels (a card carrying one renders it muted); the
+      picker filters `deletedAt !== null`. Empty until the first snapshot. */
+  const EMPTY_LABELS: ReadonlyArray<BoardLabel> = [];
+  const labelCatalogueAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const state = get(options.shellStateValueAtom(environmentId));
+      return Option.match(state.snapshot, {
+        onNone: () => EMPTY_LABELS,
+        onSome: (snapshot) => snapshot.boardLabels ?? EMPTY_LABELS,
+      });
+    }).pipe(Atom.withLabel(`environment-board-labels:${environmentId}`)),
+  );
+
   const cardDetailStateAtom = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-board-card-detail",
     tag: BOARD_WS_METHODS.subscribeCard,
@@ -387,6 +433,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
 
   return {
     cardsByProjectAtom,
+    labelCatalogueAtom,
     /** Raw subscription state (loading/failure visible), keyed like
         `cardDetailValueAtom`. */
     cardDetailStateAtom,
@@ -422,6 +469,22 @@ export function createBoardEnvironmentAtoms<R, ER>(
     unarchiveCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:unarchive-card",
       execute: (input: UnarchiveBoardCardInput) => unarchiveBoardCard(input),
+    }),
+    createLabel: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:create-label",
+      execute: (input: CreateBoardLabelInput) => createBoardLabel(input),
+    }),
+    updateLabel: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:update-label",
+      execute: (input: UpdateBoardLabelInput) => updateBoardLabel(input),
+    }),
+    deleteLabel: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:delete-label",
+      execute: (input: DeleteBoardLabelInput) => deleteBoardLabel(input),
+    }),
+    undeleteLabel: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:undelete-label",
+      execute: (input: UndeleteBoardLabelInput) => undeleteBoardLabel(input),
     }),
   };
 }

@@ -70,6 +70,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { BoardCardContent } from "./BoardCardItem";
 import { BoardColumn } from "./BoardColumn";
+import { indexBoardLabels } from "./labelColour";
 import { BoardModeTabs } from "./BoardModeTabs";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
 import { projectAccent } from "./projectAccent";
@@ -142,6 +143,8 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   const navigate = routeApi.useNavigate();
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
+  const labelCatalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
+  const labelsById = useMemo(() => indexBoardLabels(labelCatalogue), [labelCatalogue]);
   const createCard = useAtomCommand(boardEnvironment.createCard);
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
   const reorderCard = useAtomCommand(boardEnvironment.reorderCard);
@@ -404,54 +407,32 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   const handleAddCard = useCallback(
     (stage: BoardStage, title: string, projectId: ProjectId) => {
       const cardId = BoardCardId.make(randomUUID());
-      const stageAppendKey = boardColumnAppendOrderKey(columns[stage]);
+      // Creation is restricted to Backlog, Sprint and Planning (t3o-06a), and
+      // the add button only appears on those columns — so the card is created
+      // directly into the target stage, no follow-up move.
       void createCard({
         environmentId,
         input: {
           cardId,
           projectId,
           title,
-          cardType: "feature",
+          stage,
           // The per-project key prefix from settings (t3o-07); the decider
           // falls back to the default when unset, so this is always safe.
           keyPrefix: resolveBoardKeyPrefix(boardSettings, projectId),
-          // The domain creates into Backlog; landing in another column is a
-          // follow-up move with a key appended to that column.
-          orderKey:
-            stage === "backlog" ? stageAppendKey : boardColumnAppendOrderKey(columns.backlog),
+          orderKey: boardColumnAppendOrderKey(columns[stage]),
         },
       }).then((created) => {
-        if (created._tag === "Failure") {
-          if (!isAtomCommandInterrupted(created)) {
-            toastManager.add({
-              type: "error",
-              title: "Card not created",
-              description: commandFailureDescription(created),
-            });
-          }
-          return;
+        if (created._tag === "Failure" && !isAtomCommandInterrupted(created)) {
+          toastManager.add({
+            type: "error",
+            title: "Card not created",
+            description: commandFailureDescription(created),
+          });
         }
-        if (stage === "backlog") return;
-        void moveCard({
-          environmentId,
-          input: {
-            cardId,
-            toStage: stage,
-            orderKey: stageAppendKey,
-            ...(areBoardStagesAdjacent("backlog", stage) ? {} : { override: true }),
-          },
-        }).then((moved) => {
-          if (moved._tag === "Failure" && !isAtomCommandInterrupted(moved)) {
-            toastManager.add({
-              type: "error",
-              title: "Card created in Backlog",
-              description: commandFailureDescription(moved),
-            });
-          }
-        });
       });
     },
-    [boardSettings, columns, createCard, environmentId, moveCard],
+    [boardSettings, columns, createCard, environmentId],
   );
 
   const addProjects = useMemo(
@@ -546,6 +527,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
               accentNameFor={accentNameFor}
               addProjects={addProjects}
               cards={columns[stage]}
+              labelsById={labelsById}
               collapsed={isBoardColumnCollapsed(collapsedByStage, stage)}
               key={stage}
               listRef={registerListRef}
@@ -563,6 +545,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
             <div className="w-68">
               <BoardCardContent
                 card={activeCard.card}
+                labelsById={labelsById}
                 queueSlot={undefined}
                 selected={false}
                 accentName={accentNameFor(activeCard.card.projectId)}
