@@ -43,6 +43,8 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { DEFAULT_TEXT_GENERATION_MODEL } from "./model.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const BoardCardId = TrimmedNonEmptyString.pipe(Schema.brand("BoardCardId"));
 export type BoardCardId = typeof BoardCardId.Type;
@@ -139,13 +141,58 @@ export const BoardCardExternalRef = Schema.Struct({
 });
 export type BoardCardExternalRef = typeof BoardCardExternalRef.Type;
 
+// ── Pipeline recipe (D10, t3o-07) ──────────────────────────────────────
+// Stages are fixed (D12); the steps within a stage are configurable data in
+// `ServerSettings.board` (`BoardSettings`, at the bottom of this file). A
+// step is one short-lived thread with one job (D4): a prompt wrapped by the
+// provider-neutral envelope (D5), pinned to a provider instance and model
+// (D11 governs concurrency per instance), with a timeout and attempt cap. For
+// the MVP only Building's recipe is executed (t3o-12); the rest are stored and
+// displayed until later stages automate.
+
+export const BoardStep = Schema.Struct({
+  /** Stable within its stage; identifies the step across settings edits and
+      through recovery/escalation (D13). */
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  /** The step prompt, wrapped by the envelope at execution (D5). A reference
+      to a user skill instead of an inline template is post-MVP (t3o-10). */
+  promptTemplate: Schema.String,
+  providerInstanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  timeoutMs: PositiveInt,
+  maxAttempts: PositiveInt,
+});
+export type BoardStep = typeof BoardStep.Type;
+
 /**
- * Placeholder for the resolved recipe captured on stage entry (D10). Schema
- * only in t3o-03 — nothing writes it until the settings surface (t3o-07) and
- * step execution (t3o-10) land, at which point this alias tightens to the
- * real recipe shape with no seam change.
+ * The resolved recipe for one stage: exactly the ordered steps that stage
+ * runs, resolved from `BoardSettings.pipeline` by `resolveBoardRecipeForStage`.
+ * This is the value snapshotted onto a card on stage entry (D10).
  */
-export const BoardCardRecipeSnapshot = Schema.Record(Schema.String, Schema.Unknown);
+export const BoardResolvedRecipe = Schema.Struct({
+  stage: Schema.Literals(BOARD_STAGES),
+  steps: Schema.Array(BoardStep),
+});
+export type BoardResolvedRecipe = typeof BoardResolvedRecipe.Type;
+
+/**
+ * The resolved recipe captured on stage entry (D10). t3o-03 shipped this as an
+ * opaque `Record` placeholder; t3o-07 tightens it to the real resolved-recipe
+ * shape with no seam change — the `BoardCard.recipeSnapshot` field, its
+ * `NullOr` wrapper, and the `board_cards.recipe_snapshot` JSON column are all
+ * unchanged, and every existing writer stores `null`.
+ *
+ * Nothing in t3o-07 writes a non-null snapshot: the stage-entry reactor that
+ * stamps the resolved recipe onto the card (calling `resolveBoardRecipeForStage`
+ * against current settings, server-side where settings are in hand — the pure
+ * decider cannot read settings, D8) lands with step execution (t3o-10), and
+ * the Building automation consumes it (t3o-12). t3o-07 ships the resolver and
+ * the divergence check (`boardRecipeSnapshotDiffersFromCurrent`) those specs
+ * and the card UI build on, so "this card is running an older recipe than
+ * current settings" is a one-call comparison the moment snapshots exist.
+ */
+export const BoardCardRecipeSnapshot = BoardResolvedRecipe;
 export type BoardCardRecipeSnapshot = typeof BoardCardRecipeSnapshot.Type;
 
 /** The `kind` under which a card's brief body is stored in
@@ -919,3 +966,207 @@ export const BOARD_RPCS = [
 export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.subscribeCard]: AuthOrchestrationReadScope,
 } as const;
+
+// ── Board settings (D10, t3o-07) ───────────────────────────────────────
+// The typed configuration D10 promised would be data, not code. It lives in
+// `ServerSettings.board`; the upstream seam in `contracts/settings.ts` is two
+// one-line field appends (`board` on `ServerSettings` and `ServerSettingsPatch`)
+// — the same frozen-single-field shape as `providerInstances`. Everything
+// board-shaped grows here, never at the seam. Compiled-in defaults make an
+// empty settings file a working pipeline.
+
+/**
+ * Per-project card identity (D14). The key prefix cannot be derived from the
+ * project name (`core.agent.advisor -> T3` is not computable), so it is
+ * explicit; the accent colours the project's cards. Keyed by `ProjectId`
+ * because the board never owns project identity — it references T3's registry.
+ */
+export const BoardProjectSettings = Schema.Struct({
+  /** Null falls back to `DEFAULT_BOARD_KEY_PREFIX` — so a project entry can
+      carry only a custom accent, or only a custom prefix, or both. */
+  keyPrefix: Schema.NullOr(TrimmedNonEmptyString),
+  /** Null means the deterministic hash accent (the `projectAccent` fallback). */
+  accentColor: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardProjectSettings = typeof BoardProjectSettings.Type;
+
+export const BoardProjectSettingsMap = Schema.Record(ProjectId, BoardProjectSettings);
+export type BoardProjectSettingsMap = typeof BoardProjectSettingsMap.Type;
+
+/**
+ * The pipeline recipe: per stage, an ordered list of steps. Keyed by stage
+ * name (a `BoardStage` string; the resolver reads `pipeline[stage] ?? []`), so
+ * a settings edit that rewrites a stage's steps replaces that stage's whole
+ * array — `deepMerge` in `applyServerSettingsPatch` replaces arrays wholesale,
+ * so a step list is never half-merged. That is the same whole-map discipline
+ * `providerInstances` documents, achieved without a merge seam. A stage absent
+ * from the map runs no steps.
+ */
+export const BoardPipeline = Schema.Record(Schema.String, Schema.Array(BoardStep));
+export type BoardPipeline = typeof BoardPipeline.Type;
+
+/** Concurrency governance (D11, consumed by t3o-11): a ceiling per provider
+    instance plus a global ceiling. */
+export const BoardConcurrencySettings = Schema.Struct({
+  perInstance: Schema.Record(ProviderInstanceId, PositiveInt),
+  globalMaxConcurrent: PositiveInt,
+});
+export type BoardConcurrencySettings = typeof BoardConcurrencySettings.Type;
+
+/**
+ * Worktree reclaim policy. t3o-09 owns the worktree lifecycle and the exact
+ * execution semantics, and may extend this set; t3o-07 provides the setting
+ * the user edits and t3o-09 reads. Default matches D15 (archiving reclaims any
+ * surviving worktree).
+ */
+export const BoardWorktreeRetention = Schema.Literals([
+  "reclaim-on-archive",
+  "reclaim-on-merge",
+  "keep",
+]);
+export type BoardWorktreeRetention = typeof BoardWorktreeRetention.Type;
+
+export const BoardLifecycleSettings = Schema.Struct({
+  /** Days a card sits in Done before auto-archiving (D15, consumed by the
+      Phase-2 archiver). */
+  archiveAfterDays: PositiveInt,
+  worktreeRetention: BoardWorktreeRetention,
+});
+export type BoardLifecycleSettings = typeof BoardLifecycleSettings.Type;
+
+export const DEFAULT_BOARD_ARCHIVE_AFTER_DAYS = 7;
+export const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
+export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
+export const DEFAULT_BOARD_STEP_MAX_ATTEMPTS = 3;
+export const DEFAULT_BOARD_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
+
+/**
+ * The one stage the MVP executes (t3o-12). A compiled-in Building step makes
+ * the default pipeline a working pipeline with an empty settings file (the
+ * spec's third verification). Provider instance and model mirror the stock
+ * text-generation default so the default step is runnable, not a placeholder.
+ */
+export const DEFAULT_BOARD_BUILD_STEP: BoardStep = {
+  id: "build",
+  label: "Build",
+  promptTemplate:
+    "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.",
+  providerInstanceId: DEFAULT_BOARD_PROVIDER_INSTANCE_ID,
+  model: DEFAULT_TEXT_GENERATION_MODEL,
+  timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
+  maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+};
+
+export const BoardSettings = Schema.Struct({
+  projects: BoardProjectSettingsMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  pipeline: BoardPipeline.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ building: [DEFAULT_BOARD_BUILD_STEP] })),
+  ),
+  concurrency: BoardConcurrencySettings.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        perInstance: {},
+        globalMaxConcurrent: DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT,
+      }),
+    ),
+  ),
+  lifecycle: BoardLifecycleSettings.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        archiveAfterDays: DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
+        worktreeRetention: "reclaim-on-archive" as const,
+      }),
+    ),
+  ),
+});
+export type BoardSettings = typeof BoardSettings.Type;
+
+/** Compiled-in defaults so zero configuration works (the empty-file case). */
+export const DEFAULT_BOARD_SETTINGS: BoardSettings = Schema.decodeSync(BoardSettings)({});
+
+// Patch mirrors `ServerSettingsPatch`'s optional-key style. `projects` and
+// `pipeline` are whole-map fields: the web panel sends a fully-formed map
+// every edit, exactly like `providerInstances`, so a step list never partial-
+// merges (arrays are replaced by `deepMerge`; record keys merge, which only
+// ever leaves a stale entry for a genuinely removed project/instance).
+
+export const BoardConcurrencySettingsPatch = Schema.Struct({
+  perInstance: Schema.optionalKey(Schema.Record(ProviderInstanceId, PositiveInt)),
+  globalMaxConcurrent: Schema.optionalKey(PositiveInt),
+});
+export type BoardConcurrencySettingsPatch = typeof BoardConcurrencySettingsPatch.Type;
+
+export const BoardLifecycleSettingsPatch = Schema.Struct({
+  archiveAfterDays: Schema.optionalKey(PositiveInt),
+  worktreeRetention: Schema.optionalKey(BoardWorktreeRetention),
+});
+export type BoardLifecycleSettingsPatch = typeof BoardLifecycleSettingsPatch.Type;
+
+export const BoardSettingsPatch = Schema.Struct({
+  projects: Schema.optionalKey(BoardProjectSettingsMap),
+  pipeline: Schema.optionalKey(BoardPipeline),
+  concurrency: Schema.optionalKey(BoardConcurrencySettingsPatch),
+  lifecycle: Schema.optionalKey(BoardLifecycleSettingsPatch),
+});
+export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
+
+// ── Board settings resolution (pure; D10) ──────────────────────────────
+
+/**
+ * The resolved recipe for a stage — what the stage-entry reactor (t3o-10)
+ * snapshots onto a card and the Building automation (t3o-12) executes. Pure so
+ * it is callable from the server (at stage entry), the client (to compute
+ * divergence), and tests alike.
+ */
+export function resolveBoardRecipeForStage(
+  board: BoardSettings,
+  stage: BoardStage,
+): BoardResolvedRecipe {
+  return { stage, steps: board.pipeline[stage] ?? [] };
+}
+
+/** The per-project key prefix, falling back to the compiled-in default when a
+    project has no configured prefix (D14). The card-create dispatch reads this
+    and passes it as the command's `keyPrefix`. */
+export function resolveBoardKeyPrefix(board: BoardSettings, projectId: ProjectId): string {
+  return board.projects[projectId]?.keyPrefix ?? DEFAULT_BOARD_KEY_PREFIX;
+}
+
+/** The per-project accent colour, or null when unset. */
+export function resolveBoardProjectAccent(
+  board: BoardSettings,
+  projectId: ProjectId,
+): string | null {
+  return board.projects[projectId]?.accentColor ?? null;
+}
+
+function boardStepsEqual(a: BoardStep, b: BoardStep): boolean {
+  return (
+    a.id === b.id &&
+    a.label === b.label &&
+    a.promptTemplate === b.promptTemplate &&
+    a.providerInstanceId === b.providerInstanceId &&
+    a.model === b.model &&
+    a.timeoutMs === b.timeoutMs &&
+    a.maxAttempts === b.maxAttempts
+  );
+}
+
+/**
+ * Whether a card's captured recipe snapshot has diverged from what current
+ * settings would resolve for the same stage (D10). A null snapshot has not
+ * diverged — the card is not running a recipe. This is the "this card is on an
+ * older recipe than settings" signal the card UI surfaces once t3o-10 stamps
+ * snapshots; editing settings mid-stage changes what `resolveBoardRecipeForStage`
+ * returns but never the stored snapshot, so the divergence is exactly the
+ * visible consequence of the snapshot-on-entry rule.
+ */
+export function boardRecipeSnapshotDiffersFromCurrent(
+  snapshot: BoardCardRecipeSnapshot | null,
+  current: BoardResolvedRecipe,
+): boolean {
+  if (snapshot === null) return false;
+  if (snapshot.stage !== current.stage) return true;
+  if (snapshot.steps.length !== current.steps.length) return true;
+  return snapshot.steps.some((step, index) => !boardStepsEqual(step, current.steps[index]!));
+}

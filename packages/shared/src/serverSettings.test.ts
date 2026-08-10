@@ -1,5 +1,7 @@
 import {
+  DEFAULT_BOARD_BUILD_STEP,
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -511,5 +513,47 @@ describe("serverSettings helpers", () => {
     });
 
     expect(resolved.pauseWhenOnBattery).toBe(false);
+  });
+});
+
+describe("applyServerSettingsPatch board settings (T3o, D10)", () => {
+  const project = ProjectId.make("project-board-patch");
+  const stepA = { ...DEFAULT_BOARD_BUILD_STEP, id: "a", model: "model-a" };
+  const stepB = { ...DEFAULT_BOARD_BUILD_STEP, id: "b", model: "model-b" };
+  const stepC = { ...DEFAULT_BOARD_BUILD_STEP, id: "c", model: "model-c" };
+
+  it("carries default board settings through an empty patch", () => {
+    expect(applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {}).board).toEqual(
+      DEFAULT_SERVER_SETTINGS.board,
+    );
+  });
+
+  it("replaces a stage's step list wholesale — never a half-merged recipe", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      board: {
+        pipeline: { building: [stepA, stepB] },
+        projects: { [project]: { keyPrefix: "T3", accentColor: null } },
+      },
+    });
+    expect(current.board.pipeline.building).toEqual([stepA, stepB]);
+
+    const next = applyServerSettingsPatch(current, {
+      board: { pipeline: { building: [stepC] } },
+    });
+    // The two-step list is replaced by the one-step list, not index-merged
+    // into a stale [stepC, stepB].
+    expect(next.board.pipeline.building).toEqual([stepC]);
+    // Sibling board fields the patch did not mention are untouched.
+    expect(next.board.projects[project]?.keyPrefix).toBe("T3");
+    expect(next.board.lifecycle).toEqual(DEFAULT_SERVER_SETTINGS.board.lifecycle);
+  });
+
+  it("leaves board settings untouched when a non-board field is patched", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      board: { projects: { [project]: { keyPrefix: "T3", accentColor: "#39d" } } },
+    });
+    const next = applyServerSettingsPatch(current, { enableProviderUpdateChecks: false });
+    expect(next.enableProviderUpdateChecks).toBe(false);
+    expect(next.board).toEqual(current.board);
   });
 });
