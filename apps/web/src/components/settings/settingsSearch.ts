@@ -1,3 +1,6 @@
+// T3o: import the board settings search registry (spread into SETTINGS_SEARCH_ITEMS below).
+import { BOARD_SETTINGS_SEARCH_ITEMS } from "../../board/boardSettingsSearch";
+
 export type SettingsPath =
   | "/settings/general"
   | "/settings/appearance"
@@ -5,6 +8,8 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/source-control"
   | "/settings/connections"
+  // T3o: Board settings page (D1 — the board is a single settings page).
+  | "/settings/board"
   | "/settings/archived";
 
 export interface SettingsSearchItem {
@@ -25,6 +30,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
+  // T3o: Board settings nav label (SETTINGS_NAV_ITEMS derives order from this record).
+  "/settings/board": "Board",
   "/settings/archived": "Archive",
 };
 
@@ -194,6 +201,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Archived threads",
     to: "/settings/archived",
   },
+  // T3o: board settings are indexed by a board-owned registry (t3o-02a spread), not enumerated here.
+  ...BOARD_SETTINGS_SEARCH_ITEMS,
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];

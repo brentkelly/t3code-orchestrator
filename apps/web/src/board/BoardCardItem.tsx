@@ -30,12 +30,15 @@ export function BoardCardContent({
   card,
   queueSlot,
   selected,
+  accentName,
 }: {
   readonly card: BoardCardShell;
   readonly queueSlot: BoardCardQueueSlot | undefined;
   readonly selected: boolean;
+  /** Configured project accent (t3o-07); falls back to the hash colour. */
+  readonly accentName?: string | null | undefined;
 }) {
-  const accent = projectAccent(card.projectId);
+  const accent = projectAccent(card.projectId, accentName);
   return (
     <article
       className={cn(
@@ -103,11 +106,13 @@ export function SortableBoardCard({
   queueSlot,
   selected,
   onSelect,
+  accentName,
 }: {
   readonly card: BoardCardShell;
   readonly queueSlot: BoardCardQueueSlot | undefined;
   readonly selected: boolean;
   readonly onSelect: (card: BoardCardShell) => void;
+  readonly accentName?: string | null | undefined;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.cardId,
@@ -122,7 +127,12 @@ export function SortableBoardCard({
       {...attributes}
       {...listeners}
     >
-      <BoardCardContent card={card} queueSlot={queueSlot} selected={selected} />
+      <BoardCardContent
+        card={card}
+        queueSlot={queueSlot}
+        selected={selected}
+        accentName={accentName}
+      />
     </div>
   );
 }

@@ -1,7 +1,12 @@
 import {
+  DEFAULT_BOARD_BUILD_STEP,
+  DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveBoardKeyPrefix,
+  resolveBoardProjectAccent,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -511,5 +516,76 @@ describe("serverSettings helpers", () => {
     });
 
     expect(resolved.pauseWhenOnBattery).toBe(false);
+  });
+});
+
+describe("applyServerSettingsPatch board settings (T3o, D10)", () => {
+  const project = ProjectId.make("project-board-patch");
+  const stepA = { ...DEFAULT_BOARD_BUILD_STEP, id: "a", model: "model-a" };
+  const stepB = { ...DEFAULT_BOARD_BUILD_STEP, id: "b", model: "model-b" };
+  const stepC = { ...DEFAULT_BOARD_BUILD_STEP, id: "c", model: "model-c" };
+
+  it("carries default board settings through an empty patch", () => {
+    expect(applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {}).board).toEqual(
+      DEFAULT_SERVER_SETTINGS.board,
+    );
+  });
+
+  it("replaces a stage's step list wholesale — never a half-merged recipe", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      board: {
+        pipeline: { building: [stepA, stepB] },
+        projects: { [project]: { keyPrefix: "T3", accentColor: null } },
+      },
+    });
+    expect(current.board.pipeline.building).toEqual([stepA, stepB]);
+
+    const next = applyServerSettingsPatch(current, {
+      board: { pipeline: { building: [stepC] } },
+    });
+    // The two-step list is replaced by the one-step list, not index-merged
+    // into a stale [stepC, stepB].
+    expect(next.board.pipeline.building).toEqual([stepC]);
+    // Sibling board fields the patch did not mention are untouched.
+    expect(next.board.projects[project]?.keyPrefix).toBe("T3");
+    expect(next.board.lifecycle).toEqual(DEFAULT_SERVER_SETTINGS.board.lifecycle);
+  });
+
+  it("leaves board settings untouched when a non-board field is patched", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      board: { projects: { [project]: { keyPrefix: "T3", accentColor: "#39d" } } },
+    });
+    const next = applyServerSettingsPatch(current, { enableProviderUpdateChecks: false });
+    expect(next.enableProviderUpdateChecks).toBe(false);
+    expect(next.board).toEqual(current.board);
+  });
+
+  it("persists clearing a project override through deepMerge (null entry, not a deleted key)", () => {
+    const configured = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      board: { projects: { [project]: { keyPrefix: "T3", accentColor: "violet" } } },
+    });
+    expect(configured.board.projects[project]).toEqual({ keyPrefix: "T3", accentColor: "violet" });
+
+    // The panel clears an override by sending a null-valued entry (never by
+    // omitting the key — deepMerge would then keep the old override). deepMerge
+    // overwrites the stored override with nulls, which resolve to the defaults.
+    const cleared = applyServerSettingsPatch(configured, {
+      board: { projects: { [project]: { keyPrefix: null, accentColor: null } } },
+    });
+    expect(cleared.board.projects[project]).toEqual({ keyPrefix: null, accentColor: null });
+    expect(resolveBoardKeyPrefix(cleared.board, project)).toBe(DEFAULT_BOARD_KEY_PREFIX);
+    expect(resolveBoardProjectAccent(cleared.board, project)).toBe(null);
+  });
+
+  it("persists clearing a per-instance concurrency cap as null", () => {
+    const instance = ProviderInstanceId.make("codex");
+    const configured = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      board: { concurrency: { perInstance: { [instance]: 2 } } },
+    });
+    expect(configured.board.concurrency.perInstance[instance]).toBe(2);
+    const cleared = applyServerSettingsPatch(configured, {
+      board: { concurrency: { perInstance: { [instance]: null } } },
+    });
+    expect(cleared.board.concurrency.perInstance[instance]).toBe(null);
   });
 });

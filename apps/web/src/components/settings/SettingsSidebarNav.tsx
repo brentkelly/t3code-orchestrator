@@ -13,6 +13,8 @@ import {
   BotIcon,
   GitBranchIcon,
   KeyboardIcon,
+  // T3o: Board settings nav icon.
+  LayoutGridIcon,
   Link2Icon,
   PaletteIcon,
   SearchIcon,
@@ -51,6 +53,8 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/providers": BotIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
+  // T3o: Board settings page icon (nav order derives from SETTINGS_SECTION_LABELS).
+  "/settings/board": LayoutGridIcon,
   "/settings/archived": ArchiveIcon,
 };
 
