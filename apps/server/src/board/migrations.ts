@@ -14,6 +14,9 @@ import Migration0903 from "../persistence/Migrations/903_BoardCardsColumns.ts";
 import Migration0904 from "../persistence/Migrations/904_BoardLabels.ts";
 import Migration0905 from "../persistence/Migrations/905_BoardCardLabels.ts";
 import Migration0906 from "../persistence/Migrations/906_BoardCardLabelSeed.ts";
+import Migration0907 from "../persistence/Migrations/907_BoardCardActivity.ts";
+import Migration0908 from "../persistence/Migrations/908_BoardCardSteps.ts";
+import Migration0909 from "../persistence/Migrations/909_BoardPlans.ts";
 
 export const BOARD_MIGRATIONS = [
   [900, "BoardCards", Migration0900],
@@ -23,4 +26,7 @@ export const BOARD_MIGRATIONS = [
   [904, "BoardLabels", Migration0904],
   [905, "BoardCardLabels", Migration0905],
   [906, "BoardCardLabelSeed", Migration0906],
+  [907, "BoardCardActivity", Migration0907],
+  [908, "BoardCardSteps", Migration0908],
+  [909, "BoardPlans", Migration0909],
 ] as const;
