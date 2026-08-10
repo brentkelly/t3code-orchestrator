@@ -297,6 +297,11 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/web/src/components/settings/settingsSearch.ts`                   | `t3o-07`  | Board search items join `SETTINGS_SEARCH_ITEMS`                           | registry spread (`BOARD_SETTINGS_SEARCH_ITEMS`)                          |
 | `apps/web/src/components/settings/SettingsSidebarNav.tsx`              | `t3o-07`  | `LayoutGridIcon` import for the board nav icon                            | one-line append (import)                                                 |
 | `apps/web/src/components/settings/SettingsSidebarNav.tsx`              | `t3o-07`  | Board icon in `SETTINGS_SECTION_ICONS`                                    | one-line record entry (frozen)                                           |
+| `apps/server/src/mcp/McpInvocationContext.ts`                          | `t3o-08`  | `McpCapability` gains `"board"` (D3)                                      | one-line edit (frozen)                                                   |
+| `apps/server/src/mcp/McpInvocationContext.ts`                          | `t3o-08`  | `requireMcpCapability` stays preview-scoped after the widening            | one-line edit (frozen)                                                   |
+| `apps/server/src/mcp/McpSessionRegistry.ts`                            | `t3o-08`  | Granted capability set gains `"board"` (D3)                               | one-line edit (frozen)                                                   |
+| `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`  | Import `BoardToolkitRegistrationLive`                                     | one-line append (import)                                                 |
+| `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`  | Board toolkit joins the MCP server layer merge (D3)                       | spread of a board-owned registration layer                               |
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
 (5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the
@@ -362,6 +367,26 @@ top-level catalogue array on the snapshot cannot be board-owned. It is the exact
 the `cards` field `t3o-02` added (one-line optional append, frozen), so it is inventoried as such
 rather than absorbed. The `card-`/`label-` shell-delta prefix rule was widened in the board-owned
 predicate (see [The `board.` prefix rule](#the-board-prefix-rule)), which is zero core lines.
+
+`t3o-08` opened the **MCP toolkit seam layer** (the D3 agent write path) and added **5 marker lines
+across 3 upstream files** (marker count now **61**), exactly the three the spec named plus one
+collateral of the capability widening. `McpInvocationContext.ts` gains `"board"` on the
+`McpCapability` union (frozen edit) and — because that widening would otherwise break the
+preview-specific `requireMcpCapability`, whose error type is `Schema.Literal("preview")` — that
+helper's parameter is pinned to `"preview"` (board authorization is in the tool handlers, D3, not in
+capability gating, so nothing board reaches this gate). `McpSessionRegistry.ts` grants `"board"`
+alongside `"preview"` on every issued credential (frozen edit). `McpHttpServer.ts` imports the
+board-owned `BoardToolkitRegistrationLive` and adds it to the `Layer.mergeAll` of registered
+toolkits — a spread of a board-owned registration layer, the same shape as every other generalised
+seam, so the entire toolkit (tools, handlers, five new board commands/events/projectors, three
+`9xx` migrations, the thread↔card authorization) grows in board-owned files
+(`apps/server/src/mcp/toolkits/board/*`, `board.ts`, `apps/server/src/board/*`) with zero further
+upstream lines. The new agent-write commands ride the **existing** `...BOARD_CLIENT_COMMANDS` /
+`...BOARD_EVENT_TYPES` / `makeBoardOrchestrationEvents` spreads (they are `board.` commands like every
+other board write), which is why a whole new command family — progress, human-input, the completion
+contract, and plan propose/write — touched no `orchestration.ts` seam. The core-only diff audit
+yields exactly these three MCP files (the board toolkit directory is already covered by the
+`*/board/*` exclude).
 
 Marker-less upstream churn that rides along with `t3o-02`:
 

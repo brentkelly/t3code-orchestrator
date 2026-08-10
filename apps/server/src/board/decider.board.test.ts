@@ -8,14 +8,17 @@
 import {
   BOARD_SEED_LABEL_IDS,
   BOARD_SEED_LABELS,
+  BoardActivityId,
   BoardCardId,
   BoardLabelId,
+  boardPlanId,
   CommandId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
   type BoardLabel,
+  type BoardPlan,
   type BoardState,
   type OrchestrationReadModel,
   type OrchestrationThread,
@@ -841,11 +844,24 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         createdAt: NOW,
         updatedAt: NOW,
       };
+      // A plan on card-ready so board.plan.write has something to write.
+      const readyPlan: BoardPlan = {
+        planId: boardPlanId(BoardCardId.make("card-ready"), "p1"),
+        cardId: BoardCardId.make("card-ready"),
+        title: "Plan 1",
+        summary: "First",
+        dependsOn: [],
+        ordinal: 0,
+        locked: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      };
       const readModel = makeReadModel({
         threads: [makeThread({ id: "thread-1" }), makeThread({ id: "thread-2" })],
         board: {
           cards: [readyCard, archivedCard, linkedCard],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
+          plans: [readyPlan],
           nextCardNumberByProject: {},
         },
       });
@@ -920,6 +936,52 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.label.undelete",
           commandId: CommandId.make("cmd-label-undelete"),
           labelId: BoardLabelId.make("label-archived"),
+          createdAt: NOW,
+        },
+        // Agent write-path commands (t3o-08) all aggregate on the card and
+        // never emit a move.
+        "board.card.report-progress": {
+          type: "board.card.report-progress",
+          commandId: CommandId.make("cmd-progress"),
+          cardId: BoardCardId.make("card-ready"),
+          activityId: BoardActivityId.make("act-progress"),
+          note: "Working on it",
+          threadId: null,
+          createdAt: NOW,
+        },
+        "board.card.request-input": {
+          type: "board.card.request-input",
+          commandId: CommandId.make("cmd-input"),
+          cardId: BoardCardId.make("card-ready"),
+          activityId: BoardActivityId.make("act-input"),
+          question: "Which database?",
+          threadId: null,
+          createdAt: NOW,
+        },
+        "board.card.complete-step": {
+          type: "board.card.complete-step",
+          commandId: CommandId.make("cmd-step"),
+          cardId: BoardCardId.make("card-ready"),
+          stepId: "build",
+          outcome: "succeeded",
+          summary: "Built",
+          payload: null,
+          threadId: null,
+          createdAt: NOW,
+        },
+        "board.plans.propose": {
+          type: "board.plans.propose",
+          commandId: CommandId.make("cmd-propose"),
+          cardId: BoardCardId.make("card-ready"),
+          plans: [{ key: "p1", title: "Plan 1", summary: "First", dependsOn: [], body: "body" }],
+          createdAt: NOW,
+        },
+        "board.plan.write": {
+          type: "board.plan.write",
+          commandId: CommandId.make("cmd-write"),
+          cardId: BoardCardId.make("card-ready"),
+          planId: boardPlanId(BoardCardId.make("card-ready"), "p1"),
+          body: "new body",
           createdAt: NOW,
         },
       };
@@ -1256,5 +1318,217 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       );
       assert.include(String(undelCollide), "already exists");
     }),
+  );
+
+  // ── Agent write path (t3o-08) ────────────────────────────────────────
+
+  const cardReadModel = (overrides?: Partial<BoardState>) =>
+    makeReadModel({
+      board: {
+        cards: [makeCard({ id: "card-1", stage: "building" })],
+        nextCardNumberByProject: {},
+        ...overrides,
+      },
+    });
+
+  const completeStep = (input: {
+    readonly stepId: string;
+    readonly outcome: "succeeded" | "blocked" | "failed";
+    readonly summary: string;
+  }): BoardCommand =>
+    ({
+      type: "board.card.complete-step",
+      commandId: CommandId.make(`cmd-step-${input.stepId}-${input.outcome}`),
+      cardId: BoardCardId.make("card-1"),
+      stepId: input.stepId,
+      outcome: input.outcome,
+      summary: input.summary,
+      payload: null,
+      threadId: null,
+      createdAt: NOW,
+    }) as const;
+
+  const proposePlans = (
+    plans: ReadonlyArray<{
+      readonly key: string;
+      readonly title?: string;
+      readonly summary?: string;
+      readonly dependsOn?: ReadonlyArray<string>;
+      readonly body?: string;
+    }>,
+  ): BoardCommand =>
+    ({
+      type: "board.plans.propose",
+      commandId: CommandId.make("cmd-propose"),
+      cardId: BoardCardId.make("card-1"),
+      plans: plans.map((plan) => ({
+        key: plan.key,
+        title: plan.title ?? plan.key,
+        summary: plan.summary ?? "summary",
+        dependsOn: plan.dependsOn ?? [],
+        body: plan.body ?? "body",
+      })),
+      createdAt: NOW,
+    }) as const;
+
+  it.effect("records a progress note and a human-input request as card activity", () =>
+    Effect.gen(function* () {
+      const progress = yield* decide(
+        {
+          type: "board.card.report-progress",
+          commandId: CommandId.make("cmd-progress"),
+          cardId: BoardCardId.make("card-1"),
+          activityId: BoardActivityId.make("act-1"),
+          note: "Halfway there",
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
+        cardReadModel(),
+      );
+      assert.strictEqual(progress.type, "board.card-progress-reported");
+      if (progress.type === "board.card-progress-reported") {
+        assert.strictEqual(progress.payload.entry.kind, "progress");
+        assert.strictEqual(progress.payload.entry.body, "Halfway there");
+      }
+      const input = yield* decide(
+        {
+          type: "board.card.request-input",
+          commandId: CommandId.make("cmd-input"),
+          cardId: BoardCardId.make("card-1"),
+          activityId: BoardActivityId.make("act-2"),
+          question: "Postgres or SQLite?",
+          threadId: null,
+          createdAt: NOW,
+        },
+        cardReadModel(),
+      );
+      assert.strictEqual(input.type, "board.card-input-requested");
+      if (input.type === "board.card-input-requested") {
+        assert.strictEqual(input.payload.entry.kind, "input-requested");
+      }
+    }),
+  );
+
+  it.effect("board_complete_step is idempotent — a second call re-emits the first outcome", () =>
+    Effect.gen(function* () {
+      const first = yield* decide(
+        completeStep({ stepId: "build", outcome: "succeeded", summary: "Built it" }),
+        cardReadModel(),
+      );
+      assert.strictEqual(first.type, "board.card-step-completed");
+      if (first.type !== "board.card-step-completed") return;
+      // The first completion is now in the read model.
+      const second = yield* decide(
+        completeStep({ stepId: "build", outcome: "failed", summary: "A different story" }),
+        cardReadModel({ stepCompletions: [first.payload.completion] }),
+      );
+      assert.strictEqual(second.type, "board.card-step-completed");
+      if (second.type !== "board.card-step-completed") return;
+      // The retry re-emits the FIRST outcome verbatim — never a second, and
+      // never a contradictory transition.
+      assert.strictEqual(second.payload.completion.outcome, "succeeded");
+      assert.strictEqual(second.payload.completion.summary, "Built it");
+      assert.deepStrictEqual(second.payload.completion, first.payload.completion);
+    }),
+  );
+
+  it.effect("board_propose_plans rejects a cycle, naming the offending edge", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        proposePlans([
+          { key: "a", dependsOn: ["b"] },
+          { key: "b", dependsOn: ["a"] },
+        ]),
+        cardReadModel(),
+      );
+      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.include(String(failure), "cycle");
+      // The edge that closes the cycle is named.
+      assert.include(String(failure), "->");
+    }),
+  );
+
+  it.effect("board_propose_plans rejects an unknown dependency and a duplicate key", () =>
+    Effect.gen(function* () {
+      const unknown = yield* decideFail(
+        proposePlans([{ key: "a", dependsOn: ["ghost"] }]),
+        cardReadModel(),
+      );
+      assert.include(String(unknown), "unknown plan 'ghost'");
+      const duplicate = yield* decideFail(
+        proposePlans([{ key: "a" }, { key: "a" }]),
+        cardReadModel(),
+      );
+      assert.include(String(duplicate), "Duplicate plan key 'a'");
+    }),
+  );
+
+  it.effect("board_propose_plans accepts a valid DAG and resolves plan ids and order", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        proposePlans([{ key: "base" }, { key: "leaf", dependsOn: ["base"] }]),
+        cardReadModel(),
+      );
+      assert.strictEqual(event.type, "board.plans-proposed");
+      if (event.type !== "board.plans-proposed") return;
+      assert.deepStrictEqual(
+        event.payload.plans.map((plan) => plan.planId),
+        [
+          boardPlanId(BoardCardId.make("card-1"), "base"),
+          boardPlanId(BoardCardId.make("card-1"), "leaf"),
+        ],
+      );
+      assert.deepStrictEqual(
+        event.payload.plans.map((plan) => plan.ordinal),
+        [0, 1],
+      );
+      assert.deepStrictEqual(event.payload.plans[1]?.dependsOn, [
+        boardPlanId(BoardCardId.make("card-1"), "base"),
+      ]);
+      assert.strictEqual(event.payload.plans[0]?.locked, false);
+    }),
+  );
+
+  it.effect(
+    "board_write_plan rejects a missing plan and a locked plan, and writes an unlocked one",
+    () =>
+      Effect.gen(function* () {
+        const planId = boardPlanId(BoardCardId.make("card-1"), "p1");
+        const basePlan: BoardPlan = {
+          planId,
+          cardId: BoardCardId.make("card-1"),
+          title: "P1",
+          summary: "s",
+          dependsOn: [],
+          ordinal: 0,
+          locked: false,
+          createdAt: NOW,
+          updatedAt: NOW,
+        };
+        const write = (): BoardCommand =>
+          ({
+            type: "board.plan.write",
+            commandId: CommandId.make("cmd-write"),
+            cardId: BoardCardId.make("card-1"),
+            planId,
+            body: "new body",
+            createdAt: NOW,
+          }) as const;
+
+        const missing = yield* decideFail(write(), cardReadModel());
+        assert.include(String(missing), "does not exist");
+
+        const locked = yield* decideFail(
+          write(),
+          cardReadModel({ plans: [{ ...basePlan, locked: true }] }),
+        );
+        assert.include(String(locked), "locked");
+
+        const ok = yield* decide(write(), cardReadModel({ plans: [basePlan] }));
+        assert.strictEqual(ok.type, "board.plan-written");
+        if (ok.type === "board.plan-written") {
+          assert.strictEqual(ok.payload.body, "new body");
+        }
+      }),
   );
 });
