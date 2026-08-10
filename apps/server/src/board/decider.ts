@@ -25,7 +25,10 @@ import {
   BOARD_CARD_BRIEF_BODY_KIND,
   BOARD_CARD_LABELS_MAX,
   BOARD_CREATABLE_STAGES,
+  boardCardPlans,
+  boardCardStepCompletions,
   boardLabelCatalogue,
+  boardPlanId,
   boardStageIndex,
   DEFAULT_BOARD_KEY_PREFIX,
   deriveBoardCardBlocked,
@@ -38,10 +41,14 @@ import {
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
+  type BoardCardActivityEntry,
   type BoardCardId,
   type BoardLabel,
   type BoardLabelId,
+  type BoardPlan,
+  type BoardPlanWithBody,
   type BoardState,
+  type BoardStepCompletion,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -155,6 +162,45 @@ function findDependencyCycle(input: {
     const path = pathTo(dependency, input.cardId, new Set());
     if (path !== null) {
       return { edgeFrom: input.cardId, edgeTo: dependency, path: [input.cardId, ...path] };
+    }
+  }
+  return null;
+}
+
+/**
+ * First dependency edge within a plan proposal (keyed by plan `key`) whose
+ * addition closes a cycle, with the closing path for the rejection message.
+ * The proposal is self-contained — every edge references a key in the same
+ * array — so the graph is exactly the proposed `dependsOn` sets. Mirrors
+ * `findDependencyCycle` for cards; kept separate because plans are keyed by
+ * their proposal-local slug, not a `BoardCardId`.
+ */
+function findProposedPlanCycle(
+  plans: ReadonlyArray<{ readonly key: string; readonly dependsOn: ReadonlyArray<string> }>,
+): { readonly from: string; readonly to: string; readonly path: ReadonlyArray<string> } | null {
+  const dependsByKey = new Map<string, ReadonlyArray<string>>(
+    plans.map((plan) => [plan.key, plan.dependsOn]),
+  );
+  const pathTo = (
+    from: string,
+    target: string,
+    seen: Set<string>,
+  ): ReadonlyArray<string> | null => {
+    if (from === target) return [from];
+    if (seen.has(from)) return null;
+    seen.add(from);
+    for (const next of dependsByKey.get(from) ?? []) {
+      const rest = pathTo(next, target, seen);
+      if (rest !== null) return [from, ...rest];
+    }
+    return null;
+  };
+  for (const plan of plans) {
+    for (const dependency of plan.dependsOn) {
+      const path = pathTo(dependency, plan.key, new Set());
+      if (path !== null) {
+        return { from: plan.key, to: dependency, path: [plan.key, ...path] };
+      }
     }
   }
   return null;
@@ -813,6 +859,185 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         })),
         type: "board.label-undeleted",
         payload: { labelId: command.labelId, label: nextLabel },
+      };
+    }
+
+    case "board.card.report-progress": {
+      // Existence + not-archived gate; the note itself needs no other state.
+      yield* requireActiveBoardCard({ board, command });
+      const entry: BoardCardActivityEntry = {
+        activityId: command.activityId,
+        cardId: command.cardId,
+        kind: "progress",
+        body: command.note,
+        threadId: command.threadId,
+        createdAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-progress-reported",
+        payload: { cardId: command.cardId, entry },
+      };
+    }
+
+    case "board.card.request-input": {
+      yield* requireActiveBoardCard({ board, command });
+      const entry: BoardCardActivityEntry = {
+        activityId: command.activityId,
+        cardId: command.cardId,
+        kind: "input-requested",
+        body: command.question,
+        threadId: command.threadId,
+        createdAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-input-requested",
+        payload: { cardId: command.cardId, entry },
+      };
+    }
+
+    case "board.card.complete-step": {
+      yield* requireActiveBoardCard({ board, command });
+      // Idempotency (D4): a retried completion re-emits the FIRST recorded
+      // outcome, so the projection is a no-op upsert and no second transition
+      // can fire. The first call for a (cardId, stepId) wins; a later call's
+      // outcome/summary/payload are deliberately ignored, exactly as a raced
+      // duplicate reorder re-emits the same order key.
+      const existing = boardCardStepCompletions(board, command.cardId).find(
+        (completion) => completion.stepId === command.stepId,
+      );
+      const completion: BoardStepCompletion = existing ?? {
+        cardId: command.cardId,
+        stepId: command.stepId,
+        outcome: command.outcome,
+        summary: command.summary,
+        payload: command.payload,
+        threadId: command.threadId,
+        completedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-completed",
+        payload: { cardId: command.cardId, completion },
+      };
+    }
+
+    case "board.plans.propose": {
+      yield* requireActiveBoardCard({ board, command });
+      // A locked plan means the card's plans are materialised to .plans/ at
+      // Building entry (t3o-12); re-proposing over them would silently drop the
+      // handover, so it is refused as a whole (edit the files).
+      if (boardCardPlans(board, command.cardId).some((plan) => plan.locked)) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has locked (materialised) plans; edit the .plans/ files instead of re-proposing.`,
+        );
+      }
+      // Validate the proposal is self-consistent BEFORE writing anything:
+      // unique keys, every dependency references a plan in the proposal, and
+      // no cycles — the offending edge is named (strictly better than
+      // frontmatter, which only breaks later).
+      const keys = command.plans.map((plan) => plan.key);
+      const duplicateKey = keys.find((key, index) => keys.indexOf(key) !== index);
+      if (duplicateKey !== undefined) {
+        return yield* invariant(command, `Duplicate plan key '${duplicateKey}' in the proposal.`);
+      }
+      const keySet = new Set(keys);
+      for (const plan of command.plans) {
+        for (const dependency of plan.dependsOn) {
+          if (!keySet.has(dependency)) {
+            return yield* invariant(
+              command,
+              `Plan '${plan.key}' depends on unknown plan '${dependency}'.`,
+            );
+          }
+        }
+      }
+      const cycle = findProposedPlanCycle(command.plans);
+      if (cycle !== null) {
+        return yield* invariant(
+          command,
+          `Plan dependency edge '${cycle.from} -> ${cycle.to}' would create a cycle: ${cycle.path.join(" -> ")}.`,
+        );
+      }
+      // Preserve createdAt for a plan key that already exists (a re-proposal
+      // edits in place); a genuinely new plan starts now.
+      const existingById = new Map(
+        boardCardPlans(board, command.cardId).map((plan) => [plan.planId, plan]),
+      );
+      const plans: ReadonlyArray<BoardPlanWithBody> = command.plans.map((plan, index) => {
+        const planId = boardPlanId(command.cardId, plan.key);
+        const prior = existingById.get(planId);
+        return {
+          planId,
+          cardId: command.cardId,
+          title: plan.title,
+          summary: plan.summary,
+          dependsOn: plan.dependsOn.map((dependency) => boardPlanId(command.cardId, dependency)),
+          ordinal: index,
+          locked: false,
+          createdAt: prior?.createdAt ?? command.createdAt,
+          updatedAt: command.createdAt,
+          body: plan.body,
+        };
+      });
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.plans-proposed",
+        payload: { cardId: command.cardId, plans },
+      };
+    }
+
+    case "board.plan.write": {
+      yield* requireActiveBoardCard({ board, command });
+      const plan = boardCardPlans(board, command.cardId).find(
+        (candidate) => candidate.planId === command.planId,
+      );
+      if (plan === undefined) {
+        return yield* invariant(
+          command,
+          `Plan '${command.planId}' does not exist on card '${command.cardId}'.`,
+        );
+      }
+      // One source of truth at any moment (D12 handover): a locked plan lives
+      // in .plans/, so the write is refused with a pointer to the file.
+      if (plan.locked) {
+        return yield* invariant(
+          command,
+          `Plan '${command.planId}' is locked (materialised to .plans/); edit the file instead.`,
+        );
+      }
+      const nextPlan: BoardPlan = { ...plan, updatedAt: command.createdAt };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.plan-written",
+        payload: {
+          cardId: command.cardId,
+          planId: command.planId,
+          body: command.body,
+          plan: nextPlan,
+        },
       };
     }
 

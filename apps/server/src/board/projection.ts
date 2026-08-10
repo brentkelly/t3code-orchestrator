@@ -22,6 +22,7 @@ import {
   activeBoardCardThreadId,
   BOARD_CARD_BRIEF_BODY_KIND,
   BoardCard,
+  BoardCardActivityEntry,
   BoardCardExternalRef,
   BoardCardId,
   BoardCardRecipeSnapshot,
@@ -29,6 +30,9 @@ import {
   BoardLabel,
   BoardLabelId,
   boardLabelsAreSeedOnly,
+  BoardPlan,
+  BoardPlanId,
+  BoardStepCompletion,
   compareBoardLabels,
   isBoardEvent,
   makeBoardCardShell,
@@ -48,7 +52,12 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { boardCardFromCreatedPayload, compareBoardCards } from "./projector.ts";
+import {
+  boardCardFromCreatedPayload,
+  compareBoardCards,
+  compareBoardPlans,
+  compareBoardStepCompletions,
+} from "./projector.ts";
 
 export const BOARD_CARDS_PROJECTOR_NAME = "projection.board-cards" as const;
 
@@ -118,6 +127,44 @@ const NextCardNumberDbRow = Schema.Struct({
   projectId: ProjectId,
   maxCardNumber: Schema.Int,
 });
+
+// Agent write-path rows (t3o-08). Activity is table-only (D8); step and plan
+// rows rehydrate the read-model slices `BoardState.stepCompletions` / `plans`.
+const BoardCardActivityDbRow = Schema.Struct({
+  activityId: BoardCardActivityEntry.fields.activityId,
+  cardId: BoardCardId,
+  kind: BoardCardActivityEntry.fields.kind,
+  body: BoardCardActivityEntry.fields.body,
+  threadId: BoardCardActivityEntry.fields.threadId,
+  createdAt: BoardCardActivityEntry.fields.createdAt,
+});
+type BoardCardActivityDbRow = typeof BoardCardActivityDbRow.Type;
+
+const BoardCardStepDbRow = Schema.Struct({
+  cardId: BoardCardId,
+  stepId: BoardStepCompletion.fields.stepId,
+  outcome: BoardStepCompletion.fields.outcome,
+  summary: BoardStepCompletion.fields.summary,
+  payload: BoardStepCompletion.fields.payload,
+  threadId: BoardStepCompletion.fields.threadId,
+  completedAt: BoardStepCompletion.fields.completedAt,
+});
+type BoardCardStepDbRow = typeof BoardCardStepDbRow.Type;
+
+// `dependsOn` JSON-encodes; `locked` travels as 0/1 (SQLite has no boolean).
+const BoardPlanDbRow = Schema.Struct({
+  planId: BoardPlan.fields.planId,
+  cardId: BoardCardId,
+  title: BoardPlan.fields.title,
+  summary: BoardPlan.fields.summary,
+  dependsOn: Schema.fromJsonString(Schema.Array(BoardPlanId)),
+  ordinal: Schema.Int,
+  locked: Schema.Int,
+  body: Schema.String,
+  createdAt: BoardPlan.fields.createdAt,
+  updatedAt: BoardPlan.fields.updatedAt,
+});
+type BoardPlanDbRow = typeof BoardPlanDbRow.Type;
 
 /**
  * The narrow row behind `BoardCardShell` (t3o-04): exactly the columns the
@@ -563,6 +610,154 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // ── Agent write path (t3o-08) ────────────────────────────────────────
+
+  // Append-only; `ON CONFLICT DO NOTHING` makes re-applying the same event
+  // (replay) a no-op, since `activity_id` is the event's own id.
+  const insertBoardCardActivityRow = SqlSchema.void({
+    Request: BoardCardActivityDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_card_activity (activity_id, card_id, kind, body, thread_id, created_at)
+      VALUES (${row.activityId}, ${row.cardId}, ${row.kind}, ${row.body}, ${row.threadId}, ${row.createdAt})
+      ON CONFLICT (activity_id) DO NOTHING
+    `,
+  });
+
+  const listBoardCardActivityRowsForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardActivityDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        activity_id AS "activityId",
+        card_id AS "cardId",
+        kind,
+        body,
+        thread_id AS "threadId",
+        created_at AS "createdAt"
+      FROM board_card_activity
+      WHERE card_id = ${cardId}
+      ORDER BY created_at ASC, activity_id ASC
+    `,
+  });
+
+  const upsertBoardCardStepRow = SqlSchema.void({
+    Request: BoardCardStepDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_card_steps (card_id, step_id, outcome, summary, payload, thread_id, completed_at)
+      VALUES (${row.cardId}, ${row.stepId}, ${row.outcome}, ${row.summary}, ${row.payload}, ${row.threadId}, ${row.completedAt})
+      ON CONFLICT (card_id, step_id)
+      DO UPDATE SET
+        outcome = excluded.outcome,
+        summary = excluded.summary,
+        payload = excluded.payload,
+        thread_id = excluded.thread_id,
+        completed_at = excluded.completed_at
+    `,
+  });
+
+  const listBoardCardStepRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardCardStepDbRow,
+    execute: () => sql`
+      SELECT
+        card_id AS "cardId",
+        step_id AS "stepId",
+        outcome,
+        summary,
+        payload,
+        thread_id AS "threadId",
+        completed_at AS "completedAt"
+      FROM board_card_steps
+    `,
+  });
+
+  // Wholesale rewrite of a card's plan rows from the proposal: idempotent, and
+  // structurally incapable of drifting from the read model.
+  const deleteBoardPlansForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_plans
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  const insertBoardPlanRow = SqlSchema.void({
+    Request: BoardPlanDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_plans (
+        plan_id, card_id, title, summary, depends_on, ordinal, locked, body, created_at, updated_at
+      )
+      VALUES (
+        ${row.planId}, ${row.cardId}, ${row.title}, ${row.summary}, ${row.dependsOn},
+        ${row.ordinal}, ${row.locked}, ${row.body}, ${row.createdAt}, ${row.updatedAt}
+      )
+      ON CONFLICT (plan_id)
+      DO UPDATE SET
+        card_id = excluded.card_id,
+        title = excluded.title,
+        summary = excluded.summary,
+        depends_on = excluded.depends_on,
+        ordinal = excluded.ordinal,
+        locked = excluded.locked,
+        body = excluded.body,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at
+    `,
+  });
+
+  const UpdatePlanBodyRequest = Schema.Struct({
+    planId: BoardPlanId,
+    body: Schema.String,
+    updatedAt: BoardPlan.fields.updatedAt,
+  });
+  const updateBoardPlanBodyRow = SqlSchema.void({
+    Request: UpdatePlanBodyRequest,
+    execute: (request) => sql`
+      UPDATE board_plans
+      SET body = ${request.body}, updated_at = ${request.updatedAt}
+      WHERE plan_id = ${request.planId}
+    `,
+  });
+
+  const listBoardPlanRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardPlanDbRow,
+    execute: () => sql`
+      SELECT
+        plan_id AS "planId",
+        card_id AS "cardId",
+        title,
+        summary,
+        depends_on AS "dependsOn",
+        ordinal,
+        locked,
+        body,
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM board_plans
+    `,
+  });
+
+  const findBoardPlanRow = SqlSchema.findOneOption({
+    Request: BoardPlanId,
+    Result: BoardPlanDbRow,
+    execute: (planId) => sql`
+      SELECT
+        plan_id AS "planId",
+        card_id AS "cardId",
+        title,
+        summary,
+        depends_on AS "dependsOn",
+        ordinal,
+        locked,
+        body,
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM board_plans
+      WHERE plan_id = ${planId}
+    `,
+  });
+
   return {
     upsertBoardCardRow,
     listBoardCardRows,
@@ -583,6 +778,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     insertBoardCardLabelRow,
     listBoardCardLabelRows,
     listBoardCardLabelRowsForCard,
+    insertBoardCardActivityRow,
+    listBoardCardActivityRowsForCard,
+    upsertBoardCardStepRow,
+    listBoardCardStepRows,
+    deleteBoardPlansForCard,
+    insertBoardPlanRow,
+    updateBoardPlanBodyRow,
+    listBoardPlanRows,
+    findBoardPlanRow,
   };
 }
 
@@ -640,6 +844,63 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         updatedAt: label.updatedAt,
       })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.label:query")));
+
+  // ── Agent write path (t3o-08) ────────────────────────────────────────
+
+  const insertActivity = (entry: BoardCardActivityEntry) =>
+    queries
+      .insertBoardCardActivityRow({
+        activityId: entry.activityId,
+        cardId: entry.cardId,
+        kind: entry.kind,
+        body: entry.body,
+        threadId: entry.threadId,
+        createdAt: entry.createdAt,
+      })
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.activity:query")));
+
+  const upsertStep = (completion: BoardStepCompletion) =>
+    queries
+      .upsertBoardCardStepRow({
+        cardId: completion.cardId,
+        stepId: completion.stepId,
+        outcome: completion.outcome,
+        summary: completion.summary,
+        payload: completion.payload,
+        threadId: completion.threadId,
+        completedAt: completion.completedAt,
+      })
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.step:query")));
+
+  // Wholesale rewrite of a card's plan rows from the proposal (bodies live
+  // here, D8): idempotent, and structurally incapable of drifting from the
+  // read-model plan metadata.
+  const replacePlans = (
+    cardId: BoardCardId,
+    plans: ReadonlyArray<BoardPlan & { readonly body: string }>,
+  ) =>
+    Effect.gen(function* () {
+      yield* queries.deleteBoardPlansForCard(cardId);
+      for (const plan of plans) {
+        yield* queries.insertBoardPlanRow({
+          planId: plan.planId,
+          cardId: plan.cardId,
+          title: plan.title,
+          summary: plan.summary,
+          dependsOn: plan.dependsOn,
+          ordinal: plan.ordinal,
+          locked: plan.locked ? 1 : 0,
+          body: plan.body,
+          createdAt: plan.createdAt,
+          updatedAt: plan.updatedAt,
+        });
+      }
+    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
+
+  const writePlanBody = (planId: BoardPlanId, body: string, updatedAt: string) =>
+    queries
+      .updateBoardPlanBodyRow({ planId, body, updatedAt })
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.planBody:query")));
 
   const applyBoardCardsProjection = Effect.fn("applyBoardCardsProjection")(function* (
     event: OrchestrationEvent,
@@ -711,6 +972,27 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         yield* syncThreadLinks(event.payload.card);
         return;
 
+      case "board.card-progress-reported":
+      case "board.card-input-requested":
+        yield* insertActivity(event.payload.entry);
+        return;
+
+      case "board.card-step-completed":
+        yield* upsertStep(event.payload.completion);
+        return;
+
+      case "board.plans-proposed":
+        yield* replacePlans(event.payload.cardId, event.payload.plans);
+        return;
+
+      case "board.plan-written":
+        yield* writePlanBody(
+          event.payload.planId,
+          event.payload.body,
+          event.payload.plan.updatedAt,
+        );
+        return;
+
       default: {
         event satisfies never;
         return;
@@ -745,55 +1027,90 @@ export function loadBoardState(
     queries.listNextCardNumberRows(),
     queries.listBoardLabelRows(),
     queries.listBoardCardLabelRows(),
+    queries.listBoardCardStepRows(),
+    queries.listBoardPlanRows(),
   ]).pipe(
-    Effect.map(([cardRows, linkRows, counterRows, labelRows, cardLabelRows]) => {
-      // Canonical ordering comes from the shared JS comparators — the same
-      // ones the replay path uses — never from SQL collation.
-      const labels = labelRows
-        .map((row) => ({
-          labelId: row.labelId,
-          name: row.name,
-          colour: row.colour,
-          deletedAt: row.deletedAt,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-        }))
-        .sort(compareBoardLabels);
-      // A migrated-but-unused board (no cards, catalogue still the compiled
-      // seeds) reports the board slice as ABSENT — the decider falls back to
-      // EMPTY_BOARD_STATE (same seeds), so this equals a from-empty replay
-      // where no board event ever fired. The moment a card or a label change
-      // exists, the slice materialises.
-      if (cardRows.length === 0 && boardLabelsAreSeedOnly(labels)) return null;
+    Effect.map(
+      ([cardRows, linkRows, counterRows, labelRows, cardLabelRows, stepRows, planRows]) => {
+        // Canonical ordering comes from the shared JS comparators — the same
+        // ones the replay path uses — never from SQL collation.
+        const labels = labelRows
+          .map((row) => ({
+            labelId: row.labelId,
+            name: row.name,
+            colour: row.colour,
+            deletedAt: row.deletedAt,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+          }))
+          .sort(compareBoardLabels);
+        // A migrated-but-unused board (no cards, catalogue still the compiled
+        // seeds) reports the board slice as ABSENT — the decider falls back to
+        // EMPTY_BOARD_STATE (same seeds), so this equals a from-empty replay
+        // where no board event ever fired. The moment a card or a label change
+        // exists, the slice materialises.
+        if (cardRows.length === 0 && boardLabelsAreSeedOnly(labels)) return null;
 
-      const linksByCard = new Map<BoardCardId, BoardCardThreadLink[]>();
-      for (const row of linkRows) {
-        const links = linksByCard.get(row.cardId) ?? [];
-        links.push({
-          threadId: row.threadId,
-          role: row.role,
-          linkedAt: row.linkedAt,
-          tombstonedAt: row.tombstonedAt,
-        });
-        linksByCard.set(row.cardId, links);
-      }
-      const labelsByCard = groupCardLabels(cardLabelRows);
-      return {
-        cards: cardRows
-          .map((row) =>
-            rowToBoardCard(
-              row,
-              sortBoardCardThreadLinks(linksByCard.get(row.cardId) ?? []),
-              labelsByCard.get(row.cardId) ?? [],
-            ),
-          )
-          .sort(compareBoardCards),
-        labels,
-        nextCardNumberByProject: Object.fromEntries(
-          counterRows.map((row) => [row.projectId, row.maxCardNumber + 1]),
-        ),
-      };
-    }),
+        const linksByCard = new Map<BoardCardId, BoardCardThreadLink[]>();
+        for (const row of linkRows) {
+          const links = linksByCard.get(row.cardId) ?? [];
+          links.push({
+            threadId: row.threadId,
+            role: row.role,
+            linkedAt: row.linkedAt,
+            tombstonedAt: row.tombstonedAt,
+          });
+          linksByCard.set(row.cardId, links);
+        }
+        const labelsByCard = groupCardLabels(cardLabelRows);
+        // Agent write-path slices (t3o-08): rehydrated with the same shared JS
+        // comparators the replay path uses. Omitted (not empty) when no event
+        // has produced them, so a table rehydration equals a from-empty replay
+        // where no step/plan event ever fired — the same absent-vs-empty rule
+        // the board slice itself follows.
+        const stepCompletions = stepRows
+          .map((row) => ({
+            cardId: row.cardId,
+            stepId: row.stepId,
+            outcome: row.outcome,
+            summary: row.summary,
+            payload: row.payload,
+            threadId: row.threadId,
+            completedAt: row.completedAt,
+          }))
+          .sort(compareBoardStepCompletions);
+        const plans = planRows
+          .map((row) => ({
+            planId: row.planId,
+            cardId: row.cardId,
+            title: row.title,
+            summary: row.summary,
+            dependsOn: row.dependsOn,
+            ordinal: row.ordinal,
+            locked: row.locked !== 0,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+          }))
+          .sort(compareBoardPlans);
+        return {
+          cards: cardRows
+            .map((row) =>
+              rowToBoardCard(
+                row,
+                sortBoardCardThreadLinks(linksByCard.get(row.cardId) ?? []),
+                labelsByCard.get(row.cardId) ?? [],
+              ),
+            )
+            .sort(compareBoardCards),
+          labels,
+          ...(stepCompletions.length > 0 ? { stepCompletions } : {}),
+          ...(plans.length > 0 ? { plans } : {}),
+          nextCardNumberByProject: Object.fromEntries(
+            counterRows.map((row) => [row.projectId, row.maxCardNumber + 1]),
+          ),
+        };
+      },
+    ),
     Effect.mapError(toPersistenceSqlError("BoardCardsProjection.list:query")),
   );
 }
@@ -960,6 +1277,51 @@ export function makeBoardCardDetailLoader(
 }
 
 /**
+ * A card's activity log for `board_get_card_context` (t3o-08), in chronological
+ * order. Table-only data (D8): the read model never holds activity bodies.
+ */
+export function makeBoardCardActivityLoader(
+  queries: BoardCardQueries,
+): (
+  cardId: BoardCardId,
+) => Effect.Effect<ReadonlyArray<BoardCardActivityEntry>, ProjectionRepositoryError> {
+  return (cardId) =>
+    queries.listBoardCardActivityRowsForCard(cardId).pipe(
+      Effect.map((rows) =>
+        rows.map((row) => ({
+          activityId: row.activityId,
+          cardId: row.cardId,
+          kind: row.kind,
+          body: row.body,
+          threadId: row.threadId,
+          createdAt: row.createdAt,
+        })),
+      ),
+      Effect.mapError(toPersistenceSqlError("BoardCardsProjection.activityList:query")),
+    );
+}
+
+/**
+ * One plan's body from `board_plans` for `board_get_plan` / `board_write_plan`
+ * (t3o-08); null when the plan does not exist. The body lives only in the
+ * table (D8); the plan metadata rides the read model.
+ */
+export function makeBoardPlanBodyLoader(
+  queries: BoardCardQueries,
+): (planId: BoardPlanId) => Effect.Effect<string | null, ProjectionRepositoryError> {
+  return (planId) =>
+    queries.findBoardPlanRow(planId).pipe(
+      Effect.map(
+        Option.match({
+          onNone: () => null,
+          onSome: (row) => row.body,
+        }),
+      ),
+      Effect.mapError(toPersistenceSqlError("BoardCardsProjection.planBody:query")),
+    );
+}
+
+/**
  * Board-only methods riding the `ProjectionSnapshotQuery` record (t3o-04).
  *
  * The upstream service's declared shape erases these keys, so consumers
@@ -978,18 +1340,33 @@ export interface BoardSnapshotQueryMethods {
   readonly boardCardDetail: (
     cardId: BoardCardId,
   ) => Effect.Effect<BoardCardDetail | null, ProjectionRepositoryError>;
+  /** A card's activity log for `board_get_card_context` (t3o-08). */
+  readonly boardCardActivity: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<ReadonlyArray<BoardCardActivityEntry>, ProjectionRepositoryError>;
+  /** One plan's body for `board_get_plan` (t3o-08); null when absent. */
+  readonly boardPlanBody: (
+    planId: BoardPlanId,
+  ) => Effect.Effect<string | null, ProjectionRepositoryError>;
 }
 
 /**
  * Recover the board-only methods from a `ProjectionSnapshotQuery` service
  * instance. Null when the instance was built without the board factory —
  * e.g. upstream tests that mock the service — so callers degrade to a typed
- * error instead of a crash.
+ * error instead of a crash. The `boardCardDetail` presence check gates the
+ * whole board method set (they are added together by the one factory).
  */
 export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQueryMethods | null {
   const candidate = service as Partial<BoardSnapshotQueryMethods>;
-  return typeof candidate.boardCardDetail === "function"
-    ? { boardCardDetail: candidate.boardCardDetail }
+  return typeof candidate.boardCardDetail === "function" &&
+    typeof candidate.boardCardActivity === "function" &&
+    typeof candidate.boardPlanBody === "function"
+    ? {
+        boardCardDetail: candidate.boardCardDetail,
+        boardCardActivity: candidate.boardCardActivity,
+        boardPlanBody: candidate.boardPlanBody,
+      }
     : null;
 }
 
@@ -1021,5 +1398,8 @@ export function boardSnapshotQueryMethods(
       withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
     // Board-only detail reader for board.subscribeCard (t3o-04).
     boardCardDetail: makeBoardCardDetailLoader(queries),
+    // Board-only readers for the MCP context / plan tools (t3o-08).
+    boardCardActivity: makeBoardCardActivityLoader(queries),
+    boardPlanBody: makeBoardPlanBodyLoader(queries),
   };
 }

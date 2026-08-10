@@ -18,8 +18,11 @@ import {
   boardCardCreatedDependsOn,
   boardCardCreatedLabels,
   BoardCardCreatedPayload,
+  BoardCardInputRequestedPayload,
   BoardCardMovedPayload,
+  BoardCardProgressReportedPayload,
   BoardCardReorderedPayload,
+  BoardCardStepCompletedPayload,
   BoardCardThreadLinkedPayload,
   BoardCardThreadUnlinkedPayload,
   BoardCardUnarchivedPayload,
@@ -30,11 +33,15 @@ import {
   BoardLabelDeletedPayload,
   BoardLabelUndeletedPayload,
   BoardLabelUpdatedPayload,
+  BoardPlansProposedPayload,
+  BoardPlanWrittenPayload,
   compareBoardLabels,
   EMPTY_BOARD_STATE,
   isBoardEvent,
   type BoardCard,
   type BoardLabel,
+  type BoardPlan,
+  type BoardStepCompletion,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationShellStreamEvent,
@@ -67,6 +74,17 @@ const decodeBoardLabelCreatedPayload = Schema.decodeUnknownEffect(BoardLabelCrea
 const decodeBoardLabelUpdatedPayload = Schema.decodeUnknownEffect(BoardLabelUpdatedPayload);
 const decodeBoardLabelDeletedPayload = Schema.decodeUnknownEffect(BoardLabelDeletedPayload);
 const decodeBoardLabelUndeletedPayload = Schema.decodeUnknownEffect(BoardLabelUndeletedPayload);
+const decodeBoardCardProgressReportedPayload = Schema.decodeUnknownEffect(
+  BoardCardProgressReportedPayload,
+);
+const decodeBoardCardInputRequestedPayload = Schema.decodeUnknownEffect(
+  BoardCardInputRequestedPayload,
+);
+const decodeBoardCardStepCompletedPayload = Schema.decodeUnknownEffect(
+  BoardCardStepCompletedPayload,
+);
+const decodeBoardPlansProposedPayload = Schema.decodeUnknownEffect(BoardPlansProposedPayload);
+const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWrittenPayload);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -162,6 +180,81 @@ function bumpNextCardNumber(
   };
 }
 
+/** Canonical step-completion order (t3o-08): (completedAt, cardId, stepId) by
+    code units. Applied on BOTH sides of the replay-equals-rehydration
+    invariant — here on the read model, and by `loadBoardState` on rows read
+    from `board_card_steps` — so replay and rehydration cannot diverge. */
+export function compareBoardStepCompletions(
+  left: BoardStepCompletion,
+  right: BoardStepCompletion,
+): number {
+  return (
+    compareStrings(left.completedAt, right.completedAt) ||
+    compareStrings(left.cardId, right.cardId) ||
+    compareStrings(left.stepId, right.stepId)
+  );
+}
+
+/** Canonical plan order (t3o-08): (cardId, ordinal, planId). The flat array
+    spans cards, so it groups by card first, then the card's proposal order.
+    Applied on both sides of replay-equals-rehydration, like the card and
+    step comparators. */
+export function compareBoardPlans(left: BoardPlan, right: BoardPlan): number {
+  return (
+    compareStrings(left.cardId, right.cardId) ||
+    left.ordinal - right.ordinal ||
+    compareStrings(left.planId, right.planId)
+  );
+}
+
+/** Upsert a step completion by (cardId, stepId). Idempotent: a re-emitted
+    completion (D4 retry) replaces the identical row, a no-op. */
+function upsertStepCompletion(
+  model: OrchestrationReadModel,
+  completion: BoardStepCompletion,
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const current = board.stepCompletions ?? [];
+  const exists = current.some(
+    (existing) => existing.cardId === completion.cardId && existing.stepId === completion.stepId,
+  );
+  const stepCompletions = (
+    exists
+      ? current.map((existing) =>
+          existing.cardId === completion.cardId && existing.stepId === completion.stepId
+            ? completion
+            : existing,
+        )
+      : [...current, completion]
+  ).toSorted(compareBoardStepCompletions);
+  return { ...model, board: { ...board, stepCompletions } };
+}
+
+/** Replace a card's whole plan set (board_propose_plans is a wholesale
+    replace). Bodies are stripped — they live only in `board_plans`. */
+function replaceCardPlans(
+  model: OrchestrationReadModel,
+  cardId: BoardPlan["cardId"],
+  plans: ReadonlyArray<BoardPlan>,
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const others = (board.plans ?? []).filter((plan) => plan.cardId !== cardId);
+  const next = [...others, ...plans].toSorted(compareBoardPlans);
+  return { ...model, board: { ...board, plans: next } };
+}
+
+/** Upsert one plan's metadata (board_write_plan bumps `updatedAt`). */
+function upsertPlan(model: OrchestrationReadModel, plan: BoardPlan): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const current = board.plans ?? [];
+  const plans = (
+    current.some((existing) => existing.planId === plan.planId)
+      ? current.map((existing) => (existing.planId === plan.planId ? plan : existing))
+      : [...current, plan]
+  ).toSorted(compareBoardPlans);
+  return { ...model, board: { ...board, plans } };
+}
+
 export function projectBoardEvent(
   model: OrchestrationReadModel,
   event: BoardEvent,
@@ -243,6 +336,46 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertLabel(model, payload.label)),
       );
 
+    case "board.card-progress-reported":
+      // Activity bodies never enter the read model (D8) — the SQL projector
+      // writes them to `board_card_activity`; the read model is unchanged. The
+      // payload is still decoded to fail loudly on a malformed event.
+      return decodeBoardCardProgressReportedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.as(model),
+      );
+
+    case "board.card-input-requested":
+      return decodeBoardCardInputRequestedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.as(model),
+      );
+
+    case "board.card-step-completed":
+      return decodeBoardCardStepCompletedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepCompletion(model, payload.completion)),
+      );
+
+    case "board.plans-proposed":
+      return decodeBoardPlansProposedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) =>
+          replaceCardPlans(
+            model,
+            payload.cardId,
+            // Strip the body — read model holds metadata only (D8).
+            payload.plans.map(({ body: _body, ...plan }) => plan),
+          ),
+        ),
+      );
+
+    case "board.plan-written":
+      return decodeBoardPlanWrittenPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertPlan(model, payload.plan)),
+      );
+
     default: {
       event satisfies never;
       // Runtime backstop for an undecoded event: leave the model unchanged.
@@ -302,6 +435,17 @@ export function boardShellStreamEvent(
         sequence: event.sequence,
         label: event.payload.label,
       });
+
+    case "board.card-progress-reported":
+    case "board.card-input-requested":
+    case "board.card-step-completed":
+    case "board.plans-proposed":
+    case "board.plan-written":
+      // Agent write-path events are card DETAIL, not column-card shell fields
+      // (D7): an agent's progress note, step completion or plan set changes
+      // nothing a column card renders, so they emit no shell delta. They reach
+      // a client through board.subscribeCard / the MCP context tool.
+      return Option.none();
 
     default: {
       event satisfies never;

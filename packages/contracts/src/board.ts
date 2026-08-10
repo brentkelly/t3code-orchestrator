@@ -497,6 +497,116 @@ export function deriveBoardCardBlocked(input: {
   return unmetBoardCardDependencies(input).length > 0;
 }
 
+// ── Agent write-path value types (t3o-08) ──────────────────────────────
+// The records the agent-write-path events carry and `BoardState` holds. Their
+// commands and event payloads are further down (with the other commands /
+// payloads); these are up here because `BoardState` references them.
+
+export const BoardActivityId = TrimmedNonEmptyString.pipe(Schema.brand("BoardActivityId"));
+export type BoardActivityId = typeof BoardActivityId.Type;
+
+/**
+ * Progress notes and human-input requests share one card activity log: both
+ * are human-readable, card-scoped, append-only facts an agent emits. `kind`
+ * discriminates them. `input-requested` is the explicit gate hand-off (D13);
+ * its thread-pending + APNs-notification wiring is the reactor's job (t3o-10),
+ * so t3o-08 records it as a first-class, auditable board fact and the reactor
+ * later reacts to `board.card-input-requested`. Activity bodies never enter
+ * the read model (D8: nothing branches on them) — they live only in
+ * `board_card_activity` and are read on demand by `board_get_card_context`.
+ */
+export const BOARD_CARD_ACTIVITY_KINDS = ["progress", "input-requested"] as const;
+export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
+export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
+
+export const BoardCardActivityEntry = Schema.Struct({
+  activityId: BoardActivityId,
+  cardId: BoardCardId,
+  kind: BoardCardActivityKind,
+  /** The progress note, or the question handed to the human. */
+  body: TrimmedNonEmptyString,
+  /** The thread that emitted it (the agent's), or null for a human/system
+      note — kept so context can attribute activity to a step's thread. */
+  threadId: Schema.NullOr(ThreadId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardActivityEntry = typeof BoardCardActivityEntry.Type;
+
+/** A step's terminal outcome (D4 completion contract). */
+export const BOARD_STEP_OUTCOMES = ["succeeded", "blocked", "failed"] as const;
+export const BoardStepOutcome = Schema.Literals(BOARD_STEP_OUTCOMES);
+export type BoardStepOutcome = typeof BoardStepOutcome.Type;
+
+/**
+ * A recorded step completion (D4). A step is complete ONLY when the agent
+ * calls `board_complete_step`; this is the durable record of that call. It
+ * lives in the read model because a stage transition branches on it (D8: the
+ * Building → Review advance the reactor makes, t3o-10 / t3o-12, keys on the
+ * build step's success) and because the decider itself branches on it to stay
+ * idempotent — a retried completion re-emits the first outcome rather than
+ * recording a second, so a double call is never a double transition.
+ */
+export const BoardStepCompletion = Schema.Struct({
+  cardId: BoardCardId,
+  /** Stable step id from the recipe (`BoardStep.id`), supplied by the agent's
+      envelope. The (cardId, stepId) pair keys idempotency. */
+  stepId: TrimmedNonEmptyString,
+  outcome: BoardStepOutcome,
+  summary: TrimmedNonEmptyString,
+  /** Optional structured payload, carried verbatim as a JSON string so the
+      replay-equals-rehydration invariant is a trivial string round-trip with
+      no re-serialisation to drift. Null when the agent sent none. */
+  payload: Schema.NullOr(Schema.String),
+  threadId: Schema.NullOr(ThreadId),
+  completedAt: IsoDateTime,
+});
+export type BoardStepCompletion = typeof BoardStepCompletion.Type;
+
+export const BoardPlanId = TrimmedNonEmptyString.pipe(Schema.brand("BoardPlanId"));
+export type BoardPlanId = typeof BoardPlanId.Type;
+
+/**
+ * Plan metadata in the read model (D8: plan status, `dependsOn`, `locked` and
+ * order gate approval / blocking / parent auto-advance, so they live here; the
+ * plan body — markdown — lives only in `board_plans`). `locked` is set when a
+ * plan is materialised to `.plans/` at Building entry (t3o-12); nothing locks a
+ * plan in t3o-08, but `board_write_plan`'s decider already refuses a locked
+ * plan, so the one-source-of-truth handover exists the moment locking does.
+ */
+export const BoardPlan = Schema.Struct({
+  planId: BoardPlanId,
+  cardId: BoardCardId,
+  title: TrimmedNonEmptyString,
+  summary: TrimmedNonEmptyString,
+  /** Other plans of the same card this one depends on. Validated acyclic on
+      ingest (`board_propose_plans`). */
+  dependsOn: Schema.Array(BoardPlanId),
+  /** Position within the card's ordered plan set. */
+  ordinal: NonNegativeInt,
+  /** True once materialised to `.plans/` at Building entry (t3o-12); a locked
+      plan rejects `board_write_plan`, pointing the agent at the file. */
+  locked: Schema.Boolean,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type BoardPlan = typeof BoardPlan.Type;
+
+/** A plan plus its body — the event-carried and table-stored shape. The read
+    model keeps only the `BoardPlan` metadata; the body rides `board_plans`. */
+export const BoardPlanWithBody = Schema.Struct({
+  ...BoardPlan.fields,
+  body: Schema.String,
+});
+export type BoardPlanWithBody = typeof BoardPlanWithBody.Type;
+
+/** The plan id for a card's plan key: deterministic (`cardId::key`) so a
+    re-proposal is a clean replace and `dependsOn` references resolve without
+    a round trip. The `::` separator never appears in a `BoardCardId` (a
+    trimmed non-empty string with no such delimiter convention). */
+export function boardPlanId(cardId: BoardCardId, key: string): BoardPlanId {
+  return BoardPlanId.make(`${cardId}::${key}`);
+}
+
 /**
  * Board slice of the in-memory orchestration read model (D8: everything a
  * transition branches on lives here). Archived cards STAY in `cards` with
@@ -518,12 +628,57 @@ export const BoardState = Schema.Struct({
       label still resolves feature/bug/chore, and a persisted pre-label read
       model decodes unchanged. */
   labels: Schema.optional(Schema.Array(BoardLabel)),
+  /** Recorded step completions (t3o-08, D4/D8). In the read model because the
+      decider branches on them to stay idempotent and the reactor branches on
+      them to advance Building → Review (t3o-10/12). Optional and absent until
+      the first `board_complete_step` — a board with no completions decodes
+      unchanged; rebuilt from `board_card_steps` on rehydration. */
+  stepCompletions: Schema.optional(Schema.Array(BoardStepCompletion)),
+  /** Proposed plan metadata (t3o-08, D8): status, `dependsOn`, `locked`, order.
+      In the read model because `board_write_plan`'s decider branches on
+      `locked` and the approve gate / parent auto-advance branch on the graph.
+      Bodies live only in `board_plans`. Optional and absent until the first
+      `board_propose_plans`; rebuilt from `board_plans` on rehydration. */
+  plans: Schema.optional(Schema.Array(BoardPlan)),
   /** Next key number per project (D14). Lives in the read model so
       allocation is exact and race-free under the engine's total command
       ordering; rebuilt from `MAX(card_number)` on rehydration. */
   nextCardNumberByProject: Schema.Record(ProjectId, PositiveInt),
 });
 export type BoardState = typeof BoardState.Type;
+
+/** A card's recorded step completions (t3o-08), in completion order. Absent
+    slice means none. */
+export function boardCardStepCompletions(
+  board: BoardState,
+  cardId: BoardCardId,
+): ReadonlyArray<BoardStepCompletion> {
+  return (board.stepCompletions ?? []).filter((completion) => completion.cardId === cardId);
+}
+
+/** A card's proposed plans (t3o-08), in `ordinal` order. Absent slice means
+    none. */
+export function boardCardPlans(board: BoardState, cardId: BoardCardId): ReadonlyArray<BoardPlan> {
+  return (board.plans ?? [])
+    .filter((plan) => plan.cardId === cardId)
+    .toSorted((left, right) => left.ordinal - right.ordinal);
+}
+
+/**
+ * The card a live (non-tombstoned) thread link owns, or null when the thread
+ * is unlinked (D9: one thread, one card). The card-resolution primitive the
+ * MCP board toolkit authorizes card-scoped tools against — an agent never
+ * supplies its own card id; the server resolves it from the calling
+ * `threadId`. Archived cards resolve too: an agent finishing work on a card
+ * that was just archived still gets an actionable answer.
+ */
+export function resolveBoardCardForThread(board: BoardState, threadId: ThreadId): BoardCard | null {
+  return (
+    board.cards.find((card) =>
+      card.threadLinks.some((link) => link.threadId === threadId && link.tombstonedAt === null),
+    ) ?? null
+  );
+}
 
 export const EMPTY_BOARD_STATE: BoardState = {
   cards: [],
@@ -559,6 +714,27 @@ export const DEFAULT_BOARD_KEY_PREFIX = "CARD";
 export const LEGACY_BOARD_CARD_NUMBER = 0;
 export const LEGACY_BOARD_CARD_KEY = `${DEFAULT_BOARD_KEY_PREFIX}-${LEGACY_BOARD_CARD_NUMBER}`;
 export const LEGACY_BOARD_CARD_ORDER_KEY = "m";
+
+/**
+ * Order key for a card appended at the bottom of a stage column, computed
+ * server-side (t3o-08). The web client places cards with its fractional pin-
+ * order helper (`pinOrderKeyBetween`), but that lives in `client-runtime` and
+ * the MCP toolkit is server-side, so an agent-created card gets a bottom key
+ * from this self-contained scheme: append a mid digit (`m`) to the column's
+ * current max so the new card sorts strictly after every existing one, and
+ * `"m"` for an empty column (matching `LEGACY_BOARD_CARD_ORDER_KEY`). Keys are
+ * opaque comparable strings; the client's drag reorder rewrites a column whose
+ * keys it cannot bisect, so a non-fractional key here is at worst one extra
+ * reorder, never a wrong order. `existingOrderKeys` is the target column's
+ * keys, in any order.
+ */
+export function boardAppendOrderKey(existingOrderKeys: ReadonlyArray<string>): string {
+  let max: string | null = null;
+  for (const key of existingOrderKeys) {
+    if (max === null || key > max) max = key;
+  }
+  return max === null ? LEGACY_BOARD_CARD_ORDER_KEY : `${max}m`;
+}
 
 // ── Commands ───────────────────────────────────────────────────────────
 // Card-shape fields on commands/payloads are named `cardType` (not `type`)
@@ -730,6 +906,93 @@ export const BoardLabelUndeleteCommand = Schema.Struct({
 });
 export type BoardLabelUndeleteCommand = typeof BoardLabelUndeleteCommand.Type;
 
+// ── Agent write path (t3o-08) ──────────────────────────────────────────
+// The MCP board toolkit (apps/server/src/mcp/toolkits/board/) is the agent
+// write path (D3). These commands are dispatched by the tool handlers after
+// they authorize the calling thread against its card; they land events and
+// project to tables like every other board write (D8). The reactor that
+// spawns the threads and reacts to these events is t3o-10 — out of scope
+// here; t3o-08 builds the toolkit and its command / authorization /
+// persistence path only. Being board (`board.` prefix) commands, they route
+// through the same generalised seams (t3o-02a) as every other board write,
+// so adding them grows the board-owned registries at the bottom of this file
+// and touches zero upstream-owned files. The value types these commands and
+// events carry (`BoardCardActivityEntry`, `BoardStepCompletion`, `BoardPlan`)
+// are defined up with the other card pieces, since `BoardState` references
+// them.
+
+export const BoardCardReportProgressCommand = Schema.Struct({
+  type: Schema.Literal("board.card.report-progress"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  /** Client-generated (like `cardId`), so the append is idempotent under the
+      engine's command-receipt dedup on retry. */
+  activityId: BoardActivityId,
+  note: TrimmedNonEmptyString,
+  threadId: Schema.NullOr(ThreadId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardReportProgressCommand = typeof BoardCardReportProgressCommand.Type;
+
+export const BoardCardRequestInputCommand = Schema.Struct({
+  type: Schema.Literal("board.card.request-input"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  activityId: BoardActivityId,
+  question: TrimmedNonEmptyString,
+  threadId: Schema.NullOr(ThreadId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardRequestInputCommand = typeof BoardCardRequestInputCommand.Type;
+
+export const BoardCardCompleteStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.complete-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  outcome: BoardStepOutcome,
+  summary: TrimmedNonEmptyString,
+  /** Structured payload as a JSON string; the tool handler serialises the
+      agent's object into it. Null when absent. */
+  payload: Schema.NullOr(Schema.String),
+  threadId: Schema.NullOr(ThreadId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardCompleteStepCommand = typeof BoardCardCompleteStepCommand.Type;
+
+/** One proposed plan on `board_propose_plans`. `key` is an agent-chosen slug,
+    unique within the proposal, that `dependsOn` entries reference — validated
+    for existence and acyclicity on ingest (the offending edge is named on
+    rejection). */
+export const BoardProposedPlanInput = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  summary: TrimmedNonEmptyString,
+  dependsOn: Schema.Array(TrimmedNonEmptyString),
+  body: Schema.String,
+});
+export type BoardProposedPlanInput = typeof BoardProposedPlanInput.Type;
+
+export const BoardPlansProposeCommand = Schema.Struct({
+  type: Schema.Literal("board.plans.propose"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  /** Ordered; replaces the card's whole plan set. An empty array clears it. */
+  plans: Schema.Array(BoardProposedPlanInput),
+  createdAt: IsoDateTime,
+});
+export type BoardPlansProposeCommand = typeof BoardPlansProposeCommand.Type;
+
+export const BoardPlanWriteCommand = Schema.Struct({
+  type: Schema.Literal("board.plan.write"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  planId: BoardPlanId,
+  body: Schema.String,
+  createdAt: IsoDateTime,
+});
+export type BoardPlanWriteCommand = typeof BoardPlanWriteCommand.Type;
+
 // ── Event payloads ─────────────────────────────────────────────────────
 
 /**
@@ -890,6 +1153,49 @@ export const BoardLabelUndeletedPayload = Schema.Struct({
   label: BoardLabel,
 });
 export type BoardLabelUndeletedPayload = typeof BoardLabelUndeletedPayload.Type;
+
+// ── Agent write-path event payloads (t3o-08) ───────────────────────────
+// Each carries the full post-change record its projector writes verbatim
+// (activity entry / step completion / plan set), so replay and rehydration
+// stay identical and the shell mapping needs no projection re-read. None of
+// these changes the bounded card shell, so their shell-delta mapping is
+// `Option.none()` — an agent's progress note or step completion is card
+// DETAIL (board.subscribeCard / the MCP context tool), never a column-card
+// field (D7 payload discipline).
+
+export const BoardCardProgressReportedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  entry: BoardCardActivityEntry,
+});
+export type BoardCardProgressReportedPayload = typeof BoardCardProgressReportedPayload.Type;
+
+export const BoardCardInputRequestedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  entry: BoardCardActivityEntry,
+});
+export type BoardCardInputRequestedPayload = typeof BoardCardInputRequestedPayload.Type;
+
+export const BoardCardStepCompletedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  completion: BoardStepCompletion,
+});
+export type BoardCardStepCompletedPayload = typeof BoardCardStepCompletedPayload.Type;
+
+export const BoardPlansProposedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  /** The resolved plan set (metadata + body) — replaces the card's plans. */
+  plans: Schema.Array(BoardPlanWithBody),
+});
+export type BoardPlansProposedPayload = typeof BoardPlansProposedPayload.Type;
+
+export const BoardPlanWrittenPayload = Schema.Struct({
+  cardId: BoardCardId,
+  planId: BoardPlanId,
+  body: Schema.String,
+  /** The post-write plan metadata (only `updatedAt` moves). */
+  plan: BoardPlan,
+});
+export type BoardPlanWrittenPayload = typeof BoardPlanWrittenPayload.Type;
 
 // ── Card shell (t3o-04, D7) ────────────────────────────────────────────
 
@@ -1230,6 +1536,11 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardLabelUpdateCommand,
   BoardLabelDeleteCommand,
   BoardLabelUndeleteCommand,
+  BoardCardReportProgressCommand,
+  BoardCardRequestInputCommand,
+  BoardCardCompleteStepCommand,
+  BoardPlansProposeCommand,
+  BoardPlanWriteCommand,
 ] as const;
 
 export const BOARD_EVENT_TYPES = [
@@ -1245,6 +1556,11 @@ export const BOARD_EVENT_TYPES = [
   "board.label-updated",
   "board.label-deleted",
   "board.label-undeleted",
+  "board.card-progress-reported",
+  "board.card-input-requested",
+  "board.card-step-completed",
+  "board.plans-proposed",
+  "board.plan-written",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
@@ -1321,6 +1637,31 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.label-undeleted"),
       payload: BoardLabelUndeletedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-progress-reported"),
+      payload: BoardCardProgressReportedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-input-requested"),
+      payload: BoardCardInputRequestedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-completed"),
+      payload: BoardCardStepCompletedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.plans-proposed"),
+      payload: BoardPlansProposedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.plan-written"),
+      payload: BoardPlanWrittenPayload,
     }),
   ] as const;
 }
