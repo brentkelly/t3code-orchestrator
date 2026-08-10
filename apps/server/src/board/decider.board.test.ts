@@ -1077,4 +1077,128 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       }
     }),
   );
+
+  // A seeded catalogue with the bug label tombstoned, for the deleted-label
+  // rejection branches.
+  const boardWithDeletedBug = (): BoardState => ({
+    cards: [],
+    labels: BOARD_SEED_LABELS.map((label) =>
+      label.labelId === BOARD_SEED_LABEL_IDS.bug ? { ...label, deletedAt: NOW } : label,
+    ),
+    nextCardNumberByProject: {},
+  });
+
+  it.effect("rejects the label decider's invalid branches", () =>
+    Effect.gen(function* () {
+      // create: duplicate id.
+      const dupId = yield* decideFail(
+        labelCreateCommand({ labelId: BOARD_SEED_LABEL_IDS.feature, name: "fresh" }),
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.include(String(dupId), "already exists");
+
+      // update: unknown label.
+      const updUnknown = yield* decideFail(
+        {
+          type: "board.label.update",
+          commandId: CommandId.make("cmd-u1"),
+          labelId: BoardLabelId.make("label-nope"),
+          name: "x",
+          createdAt: NOW,
+        },
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.include(String(updUnknown), "does not exist");
+
+      // update: no changes.
+      const updNoop = yield* decideFail(
+        {
+          type: "board.label.update",
+          commandId: CommandId.make("cmd-u2"),
+          labelId: BOARD_SEED_LABEL_IDS.feature,
+          createdAt: NOW,
+        },
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.include(String(updNoop), "carries no changes");
+
+      // update: rename collides with another live label.
+      const updCollide = yield* decideFail(
+        {
+          type: "board.label.update",
+          commandId: CommandId.make("cmd-u3"),
+          labelId: BOARD_SEED_LABEL_IDS.feature,
+          name: "BUG",
+          createdAt: NOW,
+        },
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.include(String(updCollide), "already exists");
+
+      // update: a tombstoned label is inert until restored.
+      const updDeleted = yield* decideFail(
+        {
+          type: "board.label.update",
+          commandId: CommandId.make("cmd-u4"),
+          labelId: BOARD_SEED_LABEL_IDS.bug,
+          colour: "#123456",
+          createdAt: NOW,
+        },
+        makeReadModel({ board: boardWithDeletedBug() }),
+      );
+      assert.include(String(updDeleted), "restore it before editing");
+
+      // delete: already deleted.
+      const delTwice = yield* decideFail(
+        {
+          type: "board.label.delete",
+          commandId: CommandId.make("cmd-d1"),
+          labelId: BOARD_SEED_LABEL_IDS.bug,
+          createdAt: NOW,
+        },
+        makeReadModel({ board: boardWithDeletedBug() }),
+      );
+      assert.include(String(delTwice), "already deleted");
+
+      // undelete: not deleted.
+      const undelLive = yield* decideFail(
+        {
+          type: "board.label.undelete",
+          commandId: CommandId.make("cmd-x1"),
+          labelId: BOARD_SEED_LABEL_IDS.feature,
+          createdAt: NOW,
+        },
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.include(String(undelLive), "is not deleted");
+
+      // undelete: name now collides with a live label.
+      const undelCollide = yield* decideFail(
+        {
+          type: "board.label.undelete",
+          commandId: CommandId.make("cmd-x2"),
+          labelId: BoardLabelId.make("label-dupe"),
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: {
+            cards: [],
+            labels: [
+              ...BOARD_SEED_LABELS,
+              {
+                labelId: BoardLabelId.make("label-dupe"),
+                name: "feature",
+                colour: "#000000",
+                deletedAt: NOW,
+                createdAt: NOW,
+                updatedAt: NOW,
+              },
+            ],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      assert.include(String(undelCollide), "already exists");
+    }),
+  );
 });

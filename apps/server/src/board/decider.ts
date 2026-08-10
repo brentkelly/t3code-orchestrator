@@ -693,6 +693,17 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       if (label === undefined) {
         return yield* invariant(command, `Label '${command.labelId}' does not exist.`);
       }
+      // A tombstoned label is inert: it is out of the picker and cards render
+      // it muted, so renaming or recolouring it is meaningless. Restore it
+      // first (board.label.undelete), then edit — one clear path, and it keeps
+      // undelete's name-collision gate the single guard on a name re-entering
+      // the live set.
+      if (label.deletedAt !== null) {
+        return yield* invariant(
+          command,
+          `Label '${command.labelId}' is deleted; restore it before editing.`,
+        );
+      }
       if (command.name === undefined && command.colour === undefined) {
         return yield* invariant(
           command,
