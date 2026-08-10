@@ -326,7 +326,8 @@ paid off, not before.
 | 03 | `t3o-03-board-domain-model.md` | 1 | 02a |
 | 04 | `t3o-04-board-rpc-and-client-state.md` | 1 | 03 |
 | 05 | `t3o-05-board-shell-and-navigation.md` | 1 | 04 |
-| 06 | `t3o-06-card-ui-and-detail.md` | 1 | 05 |
+| 06a | `t3o-06a-card-labels.md` | 1 | 05 |
+| 06 | `t3o-06-card-ui-and-detail.md` | 1 | 06a |
 | 07 | `t3o-07-settings-board-tab.md` | 1 | 03 |
 | 08 | `t3o-08-mcp-board-toolkit.md` | 2 | 03 |
 | 09 | `t3o-09-worktree-branch-lifecycle.md` | 2 | 03 |
@@ -337,10 +338,10 @@ paid off, not before.
 Waves, once prerequisites are honoured:
 
 ```
-01 → 02 → 02a → 03 ─┬─→ 04 → 05 → 06 ─┐
-                    ├─→ 07 ────────────┤
-                    ├─→ 08 ─┐          │
-                    └─→ 09 ─┴→ 10 → 11 ┴→ 12
+01 → 02 → 02a → 03 ─┬─→ 04 → 05 → 06a → 06 ─┐
+                    ├─→ 07 ──────────────────┤
+                    ├─→ 08 ─┐                │
+                    └─→ 09 ─┴→ 10 → 11 ──────┴→ 12
 ```
 
 **02 is deliberately first and deliberately thin.** It lands every seam end-to-end with a trivial

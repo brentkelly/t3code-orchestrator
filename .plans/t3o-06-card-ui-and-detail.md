@@ -2,7 +2,7 @@
 id: t3o-06
 title: Card UI — stage-specific summaries, detail pane, thread adoption
 phase: 1
-prerequisites: [t3o-05]
+prerequisites: [t3o-06a]
 ---
 
 # Card UI and detail
@@ -23,7 +23,7 @@ Every variant renders only from `BoardCardShell` fields.
 
 | Stage | Card shows |
 | --- | --- |
-| Backlog / Sprint | key pill (project colour), type badge, title |
+| Backlog / Sprint | key pill (project colour), label chips, title |
 | Planning | + planning-thread activity indicator |
 | Ready | + blocked flag with dependency count, attachment count |
 | Building | + plan progress pips and `2/6 plans` when a parent; queued flag and queue position; thread state |
@@ -41,13 +41,18 @@ States that apply anywhere:
 The severity triple needs a tooltip spelling out `N critical · N improvements · N nitpicks`; three
 bare numbers are meaningless to anyone who has not read this spec.
 
+A card carries 0..n labels rather than one type badge (`t3o-06a`). Every variant's chip row must lay
+out for the label cap — first two chips plus a `+N` overflow — so a heavily-labelled card cannot
+push the rest of its summary out of the card.
+
 ## Detail pane
 
 Opened from a card; subscribes via `board.subscribeCard`.
 
 Sections, ordered by stage relevance:
 
-- **Header** — key, type, stage picker, project, branch, primary stage action.
+- **Header** — key, labels (mounting `t3o-06a`'s picker), stage picker, project, branch, primary
+  stage action.
 - **Brief** — inline rich-text editing, autosaved as `board.card.update`.
 - **Dependencies** — list with each dependency's stage, a search-and-add picker, cycle rejection
   surfaced inline at the edge that caused it.
@@ -65,9 +70,14 @@ may require repo access.
 
 ## Card creation
 
-A create dialog with title, brief, type, project, target stage and initial dependencies. Reachable
+A create dialog with title, brief, labels, project, target stage and initial dependencies. Reachable
 from the column add buttons and from the top bar. The key is allocated server-side on create; the
 UI never invents one.
+
+**Target stage offers Backlog, Sprint and Planning only** (`t3o-06a`). Later stages describe work the
+board has already started shepherding, so a card cannot appear mid-pipeline — it reaches them by
+being moved, under D18's human gate. The column add button is likewise absent from the other five
+columns.
 
 ## Out of scope
 
