@@ -289,6 +289,17 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         existing: [],
       });
 
+      // Initial dependencies (t3o-06): dedupe and require each to exist. A
+      // cycle is impossible at create — a brand-new card has no dependents, so
+      // no existing edge can reach it — which is why create needs only the
+      // existence check while `board.card.update` also gates cycles.
+      const dependsOn = command.dependsOn === undefined ? [] : [...new Set(command.dependsOn)];
+      for (const dependencyId of dependsOn) {
+        if (!board.cards.some((existing) => existing.id === dependencyId)) {
+          return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
+        }
+      }
+
       const cardNumber = board.nextCardNumberByProject[command.projectId] ?? 1;
       const keyPrefix = command.keyPrefix ?? DEFAULT_BOARD_KEY_PREFIX;
       return {
@@ -305,6 +316,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           key: `${keyPrefix}-${cardNumber}`,
           cardNumber,
           labels,
+          // Body lives in `board_card_bodies` (D8); omit the key when no brief
+          // was given, matching the payload's key-optional shape.
+          ...(command.brief === undefined ? {} : { brief: command.brief }),
+          dependsOn,
           stage,
           orderKey: command.orderKey,
           createdAt: command.createdAt,
