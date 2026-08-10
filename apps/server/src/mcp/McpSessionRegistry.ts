@@ -128,7 +128,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(["preview"]),
+        // T3o: grant the board capability alongside preview (t3o-08, D3).
+        capabilities: new Set(["preview", "board"]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
