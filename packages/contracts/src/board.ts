@@ -925,8 +925,13 @@ export const BoardCardReportProgressCommand = Schema.Struct({
   type: Schema.Literal("board.card.report-progress"),
   commandId: CommandId,
   cardId: BoardCardId,
-  /** Client-generated (like `cardId`), so the append is idempotent under the
-      engine's command-receipt dedup on retry. */
+  /** A fresh unique id per entry (the tool handler mints one per call). It is
+      NOT a retry-idempotency key — an MCP tool call carries no client-supplied
+      one, so a retried `board_report_progress` appends a second note. That is
+      acceptable for an append-only activity log (progress notes are cheap and
+      called often); the one call whose retries must NOT double-count — the
+      completion contract — is made idempotent in the decider (re-emit the
+      first outcome by (cardId, stepId)), not by receipt dedup. */
   activityId: BoardActivityId,
   note: TrimmedNonEmptyString,
   threadId: Schema.NullOr(ThreadId),
