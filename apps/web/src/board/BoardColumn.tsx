@@ -16,20 +16,11 @@ import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback } from "react";
 
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../components/ui/select";
 import { cn } from "../lib/utils";
 import { BOARD_STAGE_LABELS } from "./boardStages";
-import { projectAccent } from "./projectAccent";
 import { SortableBoardCard, type BoardCardQueueSlot } from "./BoardCardItem";
 
 export const boardColumnDroppableId = (stage: BoardStage) => `board-column:${stage}`;
@@ -46,14 +37,15 @@ export interface BoardColumnProps {
   readonly collapsed: boolean;
   readonly queueSlots: ReadonlyMap<string, BoardCardQueueSlot>;
   readonly selectedCardId: string | null;
-  /** Projects new cards may be created in; empty disables the inline add. The
-      add button also only shows on creation stages (t3o-06a). */
+  /** Projects new cards may be created in; empty hides the add button, which
+      also only shows on creation stages (t3o-06a). */
   readonly addProjects: ReadonlyArray<BoardAddProject>;
   /** Resolves a project's configured accent name (t3o-07); hash fallback when null. */
   readonly accentNameFor: (projectId: ProjectId) => string | null;
   readonly onSetCollapsed: (stage: BoardStage, collapsed: boolean) => void;
   readonly onSelectCard: (card: BoardCardShell) => void;
-  readonly onAddCard: (stage: BoardStage, title: string, projectId: ProjectId) => void;
+  /** Opens the create dialog onto this column's stage (t3o-06). */
+  readonly onRequestCreate: (stage: BoardStage) => void;
   readonly listRef?: (stage: BoardStage, list: LegendListRef | null) => void;
 }
 
@@ -98,14 +90,13 @@ function ExpandedColumn({
   accentNameFor,
   onSetCollapsed,
   onSelectCard,
-  onAddCard,
+  onRequestCreate,
   listRef,
 }: BoardColumnProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: boardColumnDroppableId(stage),
     data: { type: "column", stage },
   });
-  const [adding, setAdding] = useState(false);
   // Cards may be created only into Backlog, Sprint or Planning (t3o-06a); the
   // add affordance is absent from the other five columns entirely.
   const canAdd = addProjects.length > 0 && isBoardCreatableStage(stage);
@@ -148,7 +139,7 @@ function ExpandedColumn({
         <span className="text-[11px] font-medium text-muted-foreground">{cards.length}</span>
         {canAdd ? (
           <Button
-            onClick={() => setAdding(true)}
+            onClick={() => onRequestCreate(stage)}
             size="icon-xs"
             title="New card here"
             variant="ghost"
@@ -157,17 +148,6 @@ function ExpandedColumn({
           </Button>
         ) : null}
       </div>
-      {adding && canAdd ? (
-        <InlineAddForm
-          accentNameFor={accentNameFor}
-          onCancel={() => setAdding(false)}
-          onSubmit={(title, projectId) => {
-            onAddCard(stage, title, projectId);
-            setAdding(false);
-          }}
-          projects={addProjects}
-        />
-      ) : null}
       <div ref={setNodeRef} className="min-h-0 flex-1">
         <SortableContext
           items={cards.map((card) => card.cardId)}
@@ -190,74 +170,5 @@ function ExpandedColumn({
         </SortableContext>
       </div>
     </div>
-  );
-}
-
-function InlineAddForm({
-  projects,
-  accentNameFor,
-  onSubmit,
-  onCancel,
-}: {
-  readonly projects: ReadonlyArray<BoardAddProject>;
-  readonly accentNameFor: (projectId: ProjectId) => string | null;
-  readonly onSubmit: (title: string, projectId: ProjectId) => void;
-  readonly onCancel: () => void;
-}) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const [projectId, setProjectId] = useState<ProjectId>(projects[0]!.id);
-  return (
-    <form
-      className="flex shrink-0 flex-col gap-1 pb-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const title = inputRef.current?.value.trim() ?? "";
-        if (title.length === 0) return;
-        onSubmit(title, projectId);
-      }}
-    >
-      <div className="flex items-center gap-1">
-        <Input
-          ref={inputRef}
-          autoFocus
-          className="h-7 flex-1 text-sm"
-          onKeyDown={(event) => {
-            if (event.key === "Escape") onCancel();
-          }}
-          placeholder="Card title"
-        />
-        <Button size="xs" type="submit" variant="secondary">
-          Add
-        </Button>
-      </div>
-      {projects.length > 1 ? (
-        <Select
-          items={projects.map((project) => ({ value: project.id as string, label: project.title }))}
-          modal={false}
-          onValueChange={(value: string | null) => {
-            const next = projects.find((project) => project.id === value);
-            if (next !== undefined) setProjectId(next.id);
-          }}
-          value={projectId}
-        >
-          <SelectTrigger aria-label="Project" className="w-fit" size="xs" variant="ghost">
-            <span
-              className={cn(
-                "size-2 rounded-full",
-                projectAccent(projectId, accentNameFor(projectId)).dot,
-              )}
-            />
-            <SelectValue />
-          </SelectTrigger>
-          <SelectPopup>
-            {projects.map((project) => (
-              <SelectItem key={project.id} value={project.id}>
-                {project.title}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-      ) : null}
-    </form>
   );
 }
