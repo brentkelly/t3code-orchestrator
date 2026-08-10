@@ -294,6 +294,22 @@ export const boardHandlers = {
       const board = yield* readBoardState(deps);
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
       const stage = input.stage ?? ("backlog" as BoardStage);
+      // `brief` and `dependsOn` ride a follow-up update (the create command
+      // carries neither). Validate the ONE follow-up field that can be
+      // rejected — a dependency that does not exist — BEFORE creating the
+      // card, so a bad dependency never leaves a half-built card behind (and
+      // a retry never mints a duplicate). A brand-new card has no dependents,
+      // so its own dependencies can never close a cycle; existence is the
+      // only check the follow-up update would fail on.
+      const dependsOn = input.dependsOn ?? [];
+      for (const dependencyId of dependsOn) {
+        if (!board.cards.some((card) => card.id === dependencyId)) {
+          return yield* new BoardToolError({
+            code: "invalid-input",
+            message: `Dependency '${dependencyId}' does not exist; create it (or drop it) before adding it as a dependency.`,
+          });
+        }
+      }
       // Bottom of the target column, computed from the read model.
       const orderKey = boardAppendOrderKey(
         board.cards
@@ -315,13 +331,13 @@ export const boardHandlers = {
       yield* dispatch(deps.engine, create);
       // brief and dependsOn are set through a follow-up update — the create
       // command carries neither.
-      if (input.brief !== undefined || (input.dependsOn && input.dependsOn.length > 0)) {
+      if (input.brief !== undefined || dependsOn.length > 0) {
         const update: BoardCardUpdateCommand = {
           type: "board.card.update",
           commandId: yield* mintCommandId,
           cardId,
           brief: input.brief,
-          dependsOn: input.dependsOn && input.dependsOn.length > 0 ? input.dependsOn : undefined,
+          dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
           createdAt: yield* nowIso,
         };
         yield* dispatch(deps.engine, update);
@@ -338,14 +354,20 @@ export const boardHandlers = {
       const board = yield* readBoardState(deps);
       const card = board.cards.find((candidate) => candidate.id === input.cardId);
       // A bottom key in the target column, so a cross-stage move lands last.
-      const orderKey = boardAppendOrderKey(
-        board.cards
-          .filter(
-            (candidate) =>
-              candidate.projectId === card?.projectId && candidate.stage === input.toStage,
-          )
-          .map((candidate) => candidate.orderKey),
-      );
+      // When the card does not exist the move carries no order key and the
+      // decider rejects it with an actionable "does not exist" message —
+      // never a key computed against a phantom project.
+      const orderKey =
+        card === undefined
+          ? undefined
+          : boardAppendOrderKey(
+              board.cards
+                .filter(
+                  (candidate) =>
+                    candidate.projectId === card.projectId && candidate.stage === input.toStage,
+                )
+                .map((candidate) => candidate.orderKey),
+            );
       const command: BoardCardMoveCommand = {
         type: "board.card.move",
         commandId: yield* mintCommandId,
