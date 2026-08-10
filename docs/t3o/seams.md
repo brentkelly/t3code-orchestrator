@@ -122,8 +122,13 @@ The predicates that make generic seams possible key on naming:
 - Every board command `type` starts with **`board.`** —
   `BoardCommand = Extract<OrchestrationCommand, { type: `board.${string}` }>`.
 - Every board event `type` starts with **`board.`**.
-- Every board shell-stream delta `kind` starts with **`card-`** (revisit if non-card board deltas
-  ever appear).
+- Every board shell-stream delta `kind` starts with **`card-`** or **`label-`**. Originally
+  `card-` only; **`t3o-06a` added the label catalogue delta (`label-upserted`)** — the non-card
+  board delta the original rule flagged ("revisit if non-card board deltas ever appear"). The delta
+  is *about a label, not a card*, so it takes the honest `label-` prefix, and
+  `isBoardShellStreamEvent` was widened to `startsWith("card-") || startsWith("label-")`. A future
+  board delta about neither adds its own prefix here and to that predicate — both are board-owned
+  (`board.ts`), so this stays a zero-core-line change.
 
 `isBoardCommand` / `isBoardEvent` / `isBoardShellStreamEvent` are type guards exported from
 `packages/contracts/src/board.ts` (server and clients both need them), implemented as
@@ -230,6 +235,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02`  | `BoardCardId` type import                                               | one-line append, import (frozen, D9)                                     |
 | `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02a` | Import board aggregate-ref builder + predicate                          | one-line append (import)                                                 |
 | `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02`  | Widen `commandToAggregateRef` return type with `"card"` / `BoardCardId` | two-line edit, type annotation (frozen)                                  |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts` | `t3o-06a` | Widen `commandToAggregateRef` return type with `"label"` / `BoardLabelId` | two-line edit, type annotation (frozen, D9-class) |
 | `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02a` | Board commands aggregate on the card                                    | predicate delegation in `default`                                        |
 | `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02`  | Import board projection module                                          | one-line append (import)                                                 |
 | `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02a` | Board projector names join `ORCHESTRATION_PROJECTOR_NAMES`              | registry spread                                                          |
@@ -242,11 +248,14 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/orchestration/projector.ts`                           | `t3o-02a` | Board events are projected in the board module                          | predicate delegation in `default`                                        |
 | `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`  | `BoardCardId` import                                                    | one-line append, import (frozen, D9)                                     |
 | `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`  | Widen append-request `streamId` union                                   | one-line edit (frozen, D9)                                               |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts` | `t3o-06a` | Widen append-request `streamId` union with `BoardLabelId` | one-line edit (frozen, D9-class) |
 | `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`  | Widen persisted-row `aggregateId` union                                 | one-line edit (frozen, D9)                                               |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts` | `t3o-06a` | Widen persisted-row `aggregateId` union with `BoardLabelId` | one-line edit (frozen, D9-class) |
 | `apps/server/src/persistence/Migrations.ts`                            | `t3o-02a` | Import board migration registry                                         | one-line append (import)                                                 |
 | `apps/server/src/persistence/Migrations.ts`                            | `t3o-02a` | Board migrations join `migrationEntries`                                | registry spread                                                          |
 | `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02`  | `BoardCardId` import                                                    | one-line append, import (frozen, D9)                                     |
 | `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02`  | Widen receipt `aggregateId` union                                       | one-line edit (frozen, D9)                                               |
+| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-06a` | Widen receipt `aggregateId` union with `BoardLabelId` | one-line edit (frozen, D9-class) |
 | `apps/server/src/ws.ts`                                                | `t3o-02`  | Import board shell-delta mapper + predicate                             | one-line append (import)                                                 |
 | `apps/server/src/ws.ts`                                                | `t3o-02a` | Board events become card shell deltas in `toShellStreamEvent`           | predicate delegation in `default`, before the thread-aggregate check     |
 | `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`  | Import `BoardModeTabs`                                                  | one-line append (import)                                                 |
@@ -260,12 +269,15 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | Import board schema + registries                                        | one-line append (import)                                                 |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `board` field on `OrchestrationReadModel` (optional)                    | one-line append (frozen)                                                 |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `cards` field on `OrchestrationShellSnapshot` (optional)                | one-line append (frozen)                                                 |
+| `packages/contracts/src/orchestration.ts` | `t3o-06a` | `boardLabels` field on `OrchestrationShellSnapshot` (catalogue once) | one-line append (frozen) |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Card shell deltas in `OrchestrationShellStreamEvent` union              | registry spread (`BOARD_SHELL_STREAM_EVENTS`)                            |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board commands in `DispatchableClientOrchestrationCommand`              | registry spread (`BOARD_CLIENT_COMMANDS`)                                |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board commands in `ClientOrchestrationCommand`                          | registry spread (`BOARD_CLIENT_COMMANDS`)                                |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board event types in `OrchestrationEventType`                           | registry spread (`BOARD_EVENT_TYPES`)                                    |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `"card"` in `OrchestrationAggregateKind` (D9)                           | one-line edit (frozen)                                                   |
+| `packages/contracts/src/orchestration.ts` | `t3o-06a` | `"label"` in `OrchestrationAggregateKind` (2nd board aggregate) | one-line edit (frozen, D9-class) |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `BoardCardId` in event-base `aggregateId` union (D9)                    | one-line edit (frozen)                                                   |
+| `packages/contracts/src/orchestration.ts` | `t3o-06a` | `BoardLabelId` in event-base `aggregateId` union (label aggregate) | one-line edit (frozen, D9-class) |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board event members in the `OrchestrationEvent` union                   | injected factory call (`makeBoardOrchestrationEvents(EventBaseFields)`)  |
 | `packages/contracts/src/rpc.ts`                                        | `t3o-04`  | Import board RPC registries                                             | one-line append (import)                                                 |
 | `packages/contracts/src/rpc.ts`                                        | `t3o-04`  | Board methods join `WS_METHODS`                                         | registry spread (`BOARD_WS_METHODS`)                                     |
@@ -332,6 +344,24 @@ needs no seam — three frozen web entries, not four. New files (the `settings.b
 `BoardSettingsPanel*` components) are ours and never conflict. Adding a second board settings page would
 mean generalising the three frozen web entries to spreads of one board-owned nav registry, not appending
 a second entry to each.
+
+`t3o-06a` introduced the **second board aggregate kind (`"label"`)** and with it the same once-only
+D9-class widenings the fork blessed for `BoardCardId` — now for `BoardLabelId` — across the four
+narrowly-typed aggregate-id unions (`OrchestrationEngine` return type, `OrchestrationEventStore` ×2,
+`OrchestrationCommandReceipts`) plus `"label"` in `OrchestrationAggregateKind` and `BoardLabelId` in
+the event-base `aggregateId` union (`orchestration.ts`). **7 new marker lines, all frozen widenings
+that never grow again per feature.** Everything else labels needed — four commands, four events, a
+catalogue shell delta, label tables/queries, the picker and chips — landed in board-owned files with
+**zero** further upstream lines, exactly as the seam grammar promises for a new aggregate's
+commands/events/projectors.
+
+One seam the plan's own cost paragraph under-counted: the label **catalogue rides the shell snapshot
+once** as `OrchestrationShellSnapshot.boardLabels`, a genuine (frozen, optional) new field on an
+upstream-owned schema — the plan said "every other part of this spec adds zero core lines," but a
+top-level catalogue array on the snapshot cannot be board-owned. It is the exact same shape/class as
+the `cards` field `t3o-02` added (one-line optional append, frozen), so it is inventoried as such
+rather than absorbed. The `card-`/`label-` shell-delta prefix rule was widened in the board-owned
+predicate (see [The `board.` prefix rule](#the-board-prefix-rule)), which is zero core lines.
 
 Marker-less upstream churn that rides along with `t3o-02`:
 

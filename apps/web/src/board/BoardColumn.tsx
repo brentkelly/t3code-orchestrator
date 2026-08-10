@@ -4,7 +4,14 @@
  * must not render every card), and a collapsed rail form that stays a drop
  * target.
  */
-import type { BoardCardShell, BoardStage, ProjectId } from "@t3tools/contracts";
+import {
+  isBoardCreatableStage,
+  type BoardCardShell,
+  type BoardLabel,
+  type BoardLabelId,
+  type BoardStage,
+  type ProjectId,
+} from "@t3tools/contracts";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -35,10 +42,12 @@ export interface BoardAddProject {
 export interface BoardColumnProps {
   readonly stage: BoardStage;
   readonly cards: ReadonlyArray<BoardCardShell>;
+  readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly collapsed: boolean;
   readonly queueSlots: ReadonlyMap<string, BoardCardQueueSlot>;
   readonly selectedCardId: string | null;
-  /** Projects new cards may be created in; empty disables the inline add. */
+  /** Projects new cards may be created in; empty disables the inline add. The
+      add button also only shows on creation stages (t3o-06a). */
   readonly addProjects: ReadonlyArray<BoardAddProject>;
   /** Resolves a project's configured accent name (t3o-07); hash fallback when null. */
   readonly accentNameFor: (projectId: ProjectId) => string | null;
@@ -82,6 +91,7 @@ function CollapsedColumn({ stage, cards, onSetCollapsed }: BoardColumnProps) {
 function ExpandedColumn({
   stage,
   cards,
+  labelsById,
   queueSlots,
   selectedCardId,
   addProjects,
@@ -96,18 +106,22 @@ function ExpandedColumn({
     data: { type: "column", stage },
   });
   const [adding, setAdding] = useState(false);
+  // Cards may be created only into Backlog, Sprint or Planning (t3o-06a); the
+  // add affordance is absent from the other five columns entirely.
+  const canAdd = addProjects.length > 0 && isBoardCreatableStage(stage);
 
   const renderItem = useCallback(
     ({ item }: { item: BoardCardShell }) => (
       <SortableBoardCard
         card={item}
+        labelsById={labelsById}
         queueSlot={queueSlots.get(item.cardId)}
         selected={item.cardId === selectedCardId}
         onSelect={onSelectCard}
         accentName={accentNameFor(item.projectId)}
       />
     ),
-    [accentNameFor, onSelectCard, queueSlots, selectedCardId],
+    [accentNameFor, labelsById, onSelectCard, queueSlots, selectedCardId],
   );
 
   return (
@@ -132,7 +146,7 @@ function ExpandedColumn({
         </span>
         <span className="flex-1" />
         <span className="text-[11px] font-medium text-muted-foreground">{cards.length}</span>
-        {addProjects.length > 0 ? (
+        {canAdd ? (
           <Button
             onClick={() => setAdding(true)}
             size="icon-xs"
@@ -143,7 +157,7 @@ function ExpandedColumn({
           </Button>
         ) : null}
       </div>
-      {adding && addProjects.length > 0 ? (
+      {adding && canAdd ? (
         <InlineAddForm
           accentNameFor={accentNameFor}
           onCancel={() => setAdding(false)}
