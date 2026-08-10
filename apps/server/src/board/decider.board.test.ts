@@ -362,6 +362,86 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  it.effect("rejects moving a card with unmet dependencies past Ready, naming them (t3o-05)", () =>
+    Effect.gen(function* () {
+      const dependency = makeCard({
+        id: "card-dep",
+        key: "CARD-7",
+        title: "Ship the decider",
+        stage: "building",
+      });
+      const card = makeCard({
+        id: "card-1",
+        key: "CARD-9",
+        stage: "ready",
+        blocked: true,
+        dependsOn: [BoardCardId.make("card-dep")],
+      });
+      const board: BoardState = { cards: [dependency, card], nextCardNumberByProject: {} };
+
+      const failure = yield* decideFail(
+        moveCommand({ cardId: "card-1", toStage: "building" }),
+        makeReadModel({ board }),
+      );
+      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.include(String(failure), 'CARD-7 "Ship the decider"');
+
+      // A drag's override forces adjacency, never the dependency gate.
+      const overridden = yield* decideFail(
+        moveCommand({ cardId: "card-1", toStage: "review", override: true }),
+        makeReadModel({ board }),
+      );
+      assert.strictEqual(overridden._tag, "OrchestrationCommandInvariantError");
+
+      // An unknown dependency id counts as unmet and is still named.
+      const orphanBoard: BoardState = {
+        cards: [{ ...card, dependsOn: [BoardCardId.make("card-gone")] }],
+        nextCardNumberByProject: {},
+      };
+      const orphan = yield* decideFail(
+        moveCommand({ cardId: "card-1", toStage: "building" }),
+        makeReadModel({ board: orphanBoard }),
+      );
+      assert.include(String(orphan), "card-gone");
+
+      // With the dependency done, the same move lands.
+      const doneBoard: BoardState = {
+        cards: [{ ...dependency, stage: "done" }, card],
+        nextCardNumberByProject: {},
+      };
+      const allowed = yield* decide(
+        moveCommand({ cardId: "card-1", toStage: "building" }),
+        makeReadModel({ board: doneBoard }),
+      );
+      assert.strictEqual(allowed.type, "board.card-moved");
+
+      // Moving backwards out of the gated zone stays open regardless.
+      const backward = yield* decide(
+        moveCommand({ cardId: "card-1", toStage: "planning" }),
+        makeReadModel({ board }),
+      );
+      assert.strictEqual(backward.type, "board.card-moved");
+
+      // The gate guards the Ready crossing only: a card already past Ready
+      // whose dependencies became unmet mid-flight (edited, or a dependency
+      // reopened) still moves freely WITHIN the past-Ready zone — e.g.
+      // dragged backwards from review to building.
+      const inFlightBoard: BoardState = {
+        cards: [dependency, { ...card, stage: "review" }],
+        nextCardNumberByProject: {},
+      };
+      const withinZone = yield* decide(
+        moveCommand({ cardId: "card-1", toStage: "building" }),
+        makeReadModel({ board: inFlightBoard }),
+      );
+      assert.strictEqual(withinZone.type, "board.card-moved");
+      if (withinZone.type === "board.card-moved") {
+        // Still blocked — the flag keeps reporting the unmet dependency.
+        assert.strictEqual(withinZone.payload.card.blocked, true);
+      }
+    }),
+  );
+
   // ── Dependency cycles ────────────────────────────────────────────────
 
   it.effect("rejects a self-edge naming the offending edge", () =>

@@ -3,6 +3,8 @@ import { SidebarInset } from "./ui/sidebar";
 import { isElectron } from "../env";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+// T3o: Threads/Board mode tabs live in the board module.
+import { BoardModeTabs } from "../board/BoardModeTabs";
 
 export function NoActiveThreadState() {
   return (
@@ -15,6 +17,8 @@ export function NoActiveThreadState() {
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
+          {/* T3o: Threads/Board mode tabs — the Board entry must survive the no-thread state. */}
+          <BoardModeTabs className="mr-2" mode="threads" />
           {isElectron ? (
             <span className="text-xs text-muted-foreground/50 wco:pr-[var(--workspace-native-controls-inset)]">
               No active thread
