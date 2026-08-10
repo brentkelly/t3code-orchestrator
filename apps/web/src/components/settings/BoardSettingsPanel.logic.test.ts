@@ -73,14 +73,17 @@ describe("project settings map", () => {
     expect(withAccent[project]).toEqual({ keyPrefix: "T3", accentColor: "violet" });
   });
 
-  it("drops an entry that reverts to all-defaults, so removal survives deepMerge", () => {
+  it("keeps a null-valued entry when an override reverts to defaults (deepMerge cannot delete keys)", () => {
     const configured: Record<string, BoardProjectSettings> = {
       [project]: { keyPrefix: "T3", accentColor: "violet" },
     };
     const clearedAccent = setBoardProjectSetting(configured, project, { accentColor: null });
     expect(clearedAccent[project]).toEqual({ keyPrefix: "T3", accentColor: null });
-    const clearedPrefix = setBoardProjectSetting(clearedAccent, project, { keyPrefix: null });
-    expect(project in clearedPrefix).toBe(false);
+    const clearedBoth = setBoardProjectSetting(clearedAccent, project, { keyPrefix: null });
+    // Retained with null fields, NOT deleted: an omitted key would silently
+    // keep the old override through deepMerge; a null entry resolves to the
+    // defaults and actually persists the clear.
+    expect(clearedBoth[project]).toEqual({ keyPrefix: null, accentColor: null });
   });
 
   it("normalizes a blank prefix input to null", () => {
@@ -92,10 +95,11 @@ describe("project settings map", () => {
 describe("per-instance concurrency map", () => {
   const instance = ProviderInstanceId.make("codex");
 
-  it("sets and clears a ceiling", () => {
+  it("sets a ceiling, and stores null (not a deleted key) when cleared", () => {
     const set = setBoardInstanceConcurrency({}, instance, 2);
     expect(set[instance]).toBe(2);
-    expect(instance in setBoardInstanceConcurrency(set, instance, null)).toBe(false);
-    expect(instance in setBoardInstanceConcurrency(set, instance, 0)).toBe(false);
+    // Cleared caps persist as null, since deepMerge cannot delete map keys.
+    expect(setBoardInstanceConcurrency(set, instance, null)[instance]).toBe(null);
+    expect(setBoardInstanceConcurrency(set, instance, 0)[instance]).toBe(null);
   });
 });

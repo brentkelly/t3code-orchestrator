@@ -27,6 +27,7 @@ import {
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon, Trash2Icon } from "lucide-react";
+import { useMemo } from "react";
 import * as Option from "effect/Option";
 
 import {
@@ -67,13 +68,17 @@ const WORKTREE_RETENTION_LABELS: Record<BoardWorktreeRetention, string> = {
   keep: "Keep worktrees until removed manually",
 };
 
-/** Built-in driver ids plus any configured instances — the recipe step and
-    concurrency selects offer these. Free text would risk an invalid slug that
-    fails the whole-settings decode on save. */
+/** Built-in driver ids (the canonical set is `ServerSettings.providers`, so
+    this never drifts from contracts) plus any configured custom instances — the
+    recipe step and concurrency selects offer these. Free text would risk an
+    invalid slug that fails the whole-settings decode on save. */
 function useProviderInstanceIds(): ReadonlyArray<string> {
-  const configured = usePrimarySettings((settings) => Object.keys(settings.providerInstances));
-  const builtIn = ["codex", "claudeAgent", "cursor", "grok", "opencode"];
-  return [...new Set([...builtIn, ...configured])];
+  const providers = usePrimarySettings((settings) => settings.providers);
+  const providerInstances = usePrimarySettings((settings) => settings.providerInstances);
+  return useMemo(
+    () => [...new Set([...Object.keys(providers), ...Object.keys(providerInstances)])],
+    [providers, providerInstances],
+  );
 }
 
 export function BoardSettingsPanel() {

@@ -1006,9 +1006,12 @@ export const BoardPipeline = Schema.Record(Schema.String, Schema.Array(BoardStep
 export type BoardPipeline = typeof BoardPipeline.Type;
 
 /** Concurrency governance (D11, consumed by t3o-11): a ceiling per provider
-    instance plus a global ceiling. */
+    instance plus a global ceiling. A per-instance value of `null` means "no
+    cap for this instance, use the global limit" — clearing a cap is stored as
+    null rather than by deleting the key, because settings patches merge through
+    the stock `deepMerge`, which cannot delete a map key (see `BoardSettingsPatch`). */
 export const BoardConcurrencySettings = Schema.Struct({
-  perInstance: Schema.Record(ProviderInstanceId, PositiveInt),
+  perInstance: Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt)),
   globalMaxConcurrent: PositiveInt,
 });
 export type BoardConcurrencySettings = typeof BoardConcurrencySettings.Type;
@@ -1084,14 +1087,22 @@ export type BoardSettings = typeof BoardSettings.Type;
 /** Compiled-in defaults so zero configuration works (the empty-file case). */
 export const DEFAULT_BOARD_SETTINGS: BoardSettings = Schema.decodeSync(BoardSettings)({});
 
-// Patch mirrors `ServerSettingsPatch`'s optional-key style. `projects` and
-// `pipeline` are whole-map fields: the web panel sends a fully-formed map
-// every edit, exactly like `providerInstances`, so a step list never partial-
-// merges (arrays are replaced by `deepMerge`; record keys merge, which only
-// ever leaves a stale entry for a genuinely removed project/instance).
+// Patch mirrors `ServerSettingsPatch`'s optional-key style and is merged by the
+// stock `applyServerSettingsPatch` `deepMerge` — no board-specific merge logic
+// enters that upstream function. Two consequences drive the shapes here:
+//
+//   1. `deepMerge` replaces arrays wholesale, so a stage's step list is never
+//      half-merged — editing or removing a step is a full-array replacement.
+//   2. `deepMerge` key-unions objects and CANNOT delete a map key. So "revert a
+//      project or instance to the default" is never expressed by omitting its
+//      key (that would silently keep the old value); it is expressed by a
+//      retained entry whose fields are null — `{ keyPrefix: null, accentColor:
+//      null }` for a project, `null` for a per-instance cap. The resolvers treat
+//      those nulls as "use the default", so a null entry and an absent key are
+//      observationally identical, and clearing an override actually persists.
 
 export const BoardConcurrencySettingsPatch = Schema.Struct({
-  perInstance: Schema.optionalKey(Schema.Record(ProviderInstanceId, PositiveInt)),
+  perInstance: Schema.optionalKey(Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt))),
   globalMaxConcurrent: Schema.optionalKey(PositiveInt),
 });
 export type BoardConcurrencySettingsPatch = typeof BoardConcurrencySettingsPatch.Type;

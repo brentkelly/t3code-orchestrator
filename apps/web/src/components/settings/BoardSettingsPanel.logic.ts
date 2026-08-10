@@ -74,11 +74,13 @@ export function appendBoardStep(
 }
 
 /**
- * Apply a project-settings change and return the next whole `projects` map. An
- * entry that ends up with no override at all (default prefix and default
- * accent) is dropped, so the map only ever holds meaningful overrides — and
- * because a `deepMerge` patch can never *delete* a key, the panel always sends
- * this full map, not a single entry.
+ * Apply a project-settings change and return the next `projects` map. An entry
+ * that reverts to all-defaults is KEPT with null fields rather than deleted:
+ * settings patches merge through the stock `deepMerge`, which key-unions maps
+ * and cannot delete a key, so omitting the entry would silently retain the old
+ * override. A `{ keyPrefix: null, accentColor: null }` entry resolves to the
+ * defaults (see `resolveBoardKeyPrefix` / `resolveBoardProjectAccent`), so a
+ * null entry and an absent key look identical — and clearing actually persists.
  */
 export function setBoardProjectSetting(
   projects: Readonly<Record<string, BoardProjectSettings>>,
@@ -89,14 +91,7 @@ export function setBoardProjectSetting(
     keyPrefix: null,
     accentColor: null,
   };
-  const next: BoardProjectSettings = { ...current, ...patch };
-  const result: Record<string, BoardProjectSettings> = { ...projects };
-  if (next.keyPrefix === null && next.accentColor === null) {
-    delete result[projectId];
-  } else {
-    result[projectId] = next;
-  }
-  return result;
+  return { ...projects, [projectId]: { ...current, ...patch } };
 }
 
 /** Trim a text prefix to a stored value: empty becomes null (use the default). */
@@ -105,17 +100,15 @@ export function normalizeKeyPrefixInput(value: string): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-/** Set the concurrency ceiling for one instance, dropping it when cleared. */
+/**
+ * Set the concurrency ceiling for one instance. Clearing it stores `null`
+ * (meaning "use the global limit"), never a deleted key — `deepMerge` cannot
+ * delete keys, so a null entry is how a cleared cap persists.
+ */
 export function setBoardInstanceConcurrency(
-  perInstance: Readonly<Record<string, number>>,
+  perInstance: Readonly<Record<string, number | null>>,
   instanceId: ProviderInstanceId,
   value: number | null,
-): Record<string, number> {
-  const result: Record<string, number> = { ...perInstance };
-  if (value === null || value <= 0) {
-    delete result[instanceId];
-  } else {
-    result[instanceId] = value;
-  }
-  return result;
+): Record<string, number | null> {
+  return { ...perInstance, [instanceId]: value !== null && value > 0 ? value : null };
 }
