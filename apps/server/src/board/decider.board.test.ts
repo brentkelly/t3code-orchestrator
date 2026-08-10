@@ -6,12 +6,16 @@
  * explicit user-originated `board.card.move`.
  */
 import {
+  BOARD_SEED_LABEL_IDS,
+  BOARD_SEED_LABELS,
   BoardCardId,
+  BoardLabelId,
   CommandId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
+  type BoardLabel,
   type BoardState,
   type OrchestrationReadModel,
   type OrchestrationThread,
@@ -31,7 +35,7 @@ function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: str
     key: "CARD-1",
     cardNumber: 1,
     projectId,
-    type: "feature",
+    labels: [],
     stage: "backlog",
     orderKey: "m",
     title: "Card",
@@ -126,6 +130,8 @@ const createCommand = (input: {
   readonly cardId: string;
   readonly projectId?: typeof projectId;
   readonly keyPrefix?: string;
+  readonly stage?: BoardCard["stage"];
+  readonly labels?: ReadonlyArray<string>;
 }) =>
   ({
     type: "board.card.create",
@@ -133,11 +139,36 @@ const createCommand = (input: {
     cardId: BoardCardId.make(input.cardId),
     projectId: input.projectId ?? projectId,
     title: `Card ${input.cardId}`,
-    cardType: "feature",
     orderKey: "m",
     ...(input.keyPrefix === undefined ? {} : { keyPrefix: input.keyPrefix }),
+    ...(input.stage === undefined ? {} : { stage: input.stage }),
+    ...(input.labels === undefined
+      ? {}
+      : { labels: input.labels.map((id) => BoardLabelId.make(id)) }),
     createdAt: NOW,
   }) as const;
+
+const labelCreateCommand = (input: {
+  readonly labelId: string;
+  readonly name: string;
+  readonly colour?: string;
+}) =>
+  ({
+    type: "board.label.create",
+    commandId: CommandId.make(`cmd-label-create-${input.labelId}`),
+    labelId: BoardLabelId.make(input.labelId),
+    name: input.name,
+    ...(input.colour === undefined ? {} : { colour: input.colour }),
+    createdAt: NOW,
+  }) as const;
+
+/** A read model whose catalogue is exactly the compiled seeds (labels absent
+    on the board slice resolves to them), so label collisions and colour
+    assignment are tested against a known catalogue. */
+const seededBoard = (cards: ReadonlyArray<BoardCard> = []): BoardState => ({
+  cards,
+  nextCardNumberByProject: {},
+});
 
 const moveCommand = (input: {
   readonly cardId: string;
@@ -794,10 +825,21 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           },
         ],
       });
+      // A tombstoned label so board.label.undelete has something to restore;
+      // the seeds remain live for create/update/delete.
+      const tombstonedLabel: BoardLabel = {
+        labelId: BoardLabelId.make("label-archived"),
+        name: "archived",
+        colour: "#111111",
+        deletedAt: NOW,
+        createdAt: NOW,
+        updatedAt: NOW,
+      };
       const readModel = makeReadModel({
         threads: [makeThread({ id: "thread-1" }), makeThread({ id: "thread-2" })],
         board: {
           cards: [readyCard, archivedCard, linkedCard],
+          labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           nextCardNumberByProject: {},
         },
       });
@@ -847,6 +889,33 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           cardId: BoardCardId.make("card-archived"),
           createdAt: NOW,
         },
+        // Label commands aggregate on the label and never move a card.
+        "board.label.create": {
+          type: "board.label.create",
+          commandId: CommandId.make("cmd-label-create"),
+          labelId: BoardLabelId.make("label-urgent"),
+          name: "urgent",
+          createdAt: NOW,
+        },
+        "board.label.update": {
+          type: "board.label.update",
+          commandId: CommandId.make("cmd-label-update"),
+          labelId: BOARD_SEED_LABEL_IDS.feature,
+          colour: "#123456",
+          createdAt: NOW,
+        },
+        "board.label.delete": {
+          type: "board.label.delete",
+          commandId: CommandId.make("cmd-label-delete"),
+          labelId: BOARD_SEED_LABEL_IDS.chore,
+          createdAt: NOW,
+        },
+        "board.label.undelete": {
+          type: "board.label.undelete",
+          commandId: CommandId.make("cmd-label-undelete"),
+          labelId: BoardLabelId.make("label-archived"),
+          createdAt: NOW,
+        },
       };
 
       for (const [commandType, command] of Object.entries(catalog)) {
@@ -861,6 +930,150 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           expect(event.type).not.toBe("board.card-moved");
           expect(movesIntoBuilding).toBe(false);
         }
+      }
+    }),
+  );
+
+  // ── Creation stages (t3o-06a) ────────────────────────────────────────
+
+  it.effect("rejects a create into any stage but Backlog, Sprint or Planning", () =>
+    Effect.gen(function* () {
+      for (const stage of ["ready", "building", "review", "merge", "done"] as const) {
+        const failure = yield* decideFail(
+          createCommand({ cardId: `card-${stage}`, stage }),
+          makeReadModel({ board: seededBoard() }),
+        );
+        assert.include(String(failure), "is not a creation stage");
+      }
+    }),
+  );
+
+  it.effect("accepts a create into each of Backlog, Sprint and Planning", () =>
+    Effect.gen(function* () {
+      for (const stage of ["backlog", "sprint", "planning"] as const) {
+        const event = yield* decide(
+          createCommand({ cardId: `card-${stage}`, stage }),
+          makeReadModel({ board: seededBoard() }),
+        );
+        assert.strictEqual(event.type, "board.card-created");
+        if (event.type === "board.card-created") assert.strictEqual(event.payload.stage, stage);
+      }
+    }),
+  );
+
+  // ── Labels (t3o-06a) ─────────────────────────────────────────────────
+
+  it.effect("creates a card with valid labels and rejects an unknown label", () =>
+    Effect.gen(function* () {
+      const ok = yield* decide(
+        createCommand({ cardId: "card-labelled", labels: [BOARD_SEED_LABEL_IDS.feature] }),
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.strictEqual(ok.type, "board.card-created");
+      if (ok.type === "board.card-created") {
+        assert.deepStrictEqual(ok.payload.labels, [BOARD_SEED_LABEL_IDS.feature]);
+      }
+      const failure = yield* decideFail(
+        createCommand({ cardId: "card-bad", labels: ["label-nope"] }),
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.include(String(failure), "does not exist");
+    }),
+  );
+
+  it.effect("rejects a card carrying more than the label cap", () =>
+    Effect.gen(function* () {
+      const labels = ["label-1", "label-2", "label-3", "label-4", "label-5", "label-6"];
+      const catalogue: BoardLabel[] = labels.map((id) => ({
+        labelId: BoardLabelId.make(id),
+        name: id,
+        colour: "#3b82f6",
+        deletedAt: null,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }));
+      const failure = yield* decideFail(
+        createCommand({ cardId: "card-many", labels }),
+        makeReadModel({ board: { cards: [], labels: catalogue, nextCardNumberByProject: {} } }),
+      );
+      assert.include(String(failure), "at most");
+    }),
+  );
+
+  it.effect("rejects a label name colliding case-insensitively with a live label", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        labelCreateCommand({ labelId: "label-new", name: "FeAtUrE" }),
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.include(String(failure), "already exists");
+    }),
+  );
+
+  it.effect("assigns different swatch colours to two labels created back to back", () =>
+    Effect.gen(function* () {
+      const first = yield* decide(
+        labelCreateCommand({ labelId: "label-a", name: "alpha" }),
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.strictEqual(first.type, "board.label-created");
+      if (first.type !== "board.label-created") return;
+      const firstColour = first.payload.label.colour;
+      // Second create sees the first label already in the catalogue (the
+      // engine's total ordering), so the decider's swatch walk skips its
+      // colour.
+      const withFirst: BoardLabel = first.payload.label;
+      const second = yield* decide(
+        labelCreateCommand({ labelId: "label-b", name: "beta" }),
+        makeReadModel({
+          board: {
+            cards: [],
+            labels: [...BOARD_SEED_LABELS, withFirst],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      assert.strictEqual(second.type, "board.label-created");
+      if (second.type !== "board.label-created") return;
+      assert.notStrictEqual(second.payload.label.colour, firstColour);
+    }),
+  );
+
+  it.effect("tombstones a label on delete and restores it on undelete", () =>
+    Effect.gen(function* () {
+      const deleted = yield* decide(
+        {
+          type: "board.label.delete",
+          commandId: CommandId.make("cmd-del"),
+          labelId: BOARD_SEED_LABEL_IDS.bug,
+          createdAt: NOW,
+        },
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.strictEqual(deleted.type, "board.label-deleted");
+      if (deleted.type !== "board.label-deleted") return;
+      assert.strictEqual(deleted.payload.label.deletedAt, NOW);
+
+      const restored = yield* decide(
+        {
+          type: "board.label.undelete",
+          commandId: CommandId.make("cmd-undel"),
+          labelId: BOARD_SEED_LABEL_IDS.bug,
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: {
+            cards: [],
+            labels: BOARD_SEED_LABELS.map((label) =>
+              label.labelId === BOARD_SEED_LABEL_IDS.bug ? { ...label, deletedAt: NOW } : label,
+            ),
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      assert.strictEqual(restored.type, "board.label-undeleted");
+      if (restored.type === "board.label-undeleted") {
+        assert.strictEqual(restored.payload.label.deletedAt, null);
       }
     }),
   );

@@ -29,6 +29,8 @@ import {
   BOARD_SHELL_STREAM_EVENTS,
   BoardCardId,
   BoardCardShell,
+  BoardLabel,
+  BoardLabelId,
   BoardState,
   makeBoardOrchestrationEvents,
 } from "./board.ts";
@@ -487,6 +489,9 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   threads: Schema.Array(OrchestrationThreadShell),
   // T3o: bounded card shells ride the shell snapshot (D2/D7); optional for interop.
   cards: Schema.optional(Schema.Array(BoardCardShell)),
+  // T3o: the label catalogue rides the shell ONCE (t3o-06a) — N labels for the
+  // whole board, never denormalised per card. Optional for interop. Frozen.
+  boardLabels: Schema.optional(Schema.Array(BoardLabel)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
@@ -1073,8 +1078,9 @@ export const OrchestrationEventType = Schema.Literals([
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-// T3o: cards are a new aggregate (D9) — "card" appended to the literals.
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "card"]);
+// T3o: cards are a new aggregate (D9) — "card" appended to the literals;
+// "label" appended for the second board aggregate (t3o-06a). Frozen widening.
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "card", "label"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -1314,8 +1320,9 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  // T3o: BoardCardId appended for card-aggregate events (D9).
-  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId]),
+  // T3o: BoardCardId appended for card-aggregate events (D9); BoardLabelId for
+  // the label aggregate (t3o-06a). Frozen widening.
+  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),

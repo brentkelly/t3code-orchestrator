@@ -47,6 +47,10 @@ export type LinkBoardCardThreadInput = CommandInput<"board.card.link-thread">;
 export type UnlinkBoardCardThreadInput = CommandInput<"board.card.unlink-thread">;
 export type ArchiveBoardCardInput = CommandInput<"board.card.archive">;
 export type UnarchiveBoardCardInput = CommandInput<"board.card.unarchive">;
+export type CreateBoardLabelInput = CommandInput<"board.label.create">;
+export type UpdateBoardLabelInput = CommandInput<"board.label.update">;
+export type DeleteBoardLabelInput = CommandInput<"board.label.delete">;
+export type UndeleteBoardLabelInput = CommandInput<"board.label.undelete">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -163,6 +167,54 @@ export const unarchiveBoardCard: (input: UnarchiveBoardCardInput) => CommandEffe
   return yield* dispatch({
     ...input,
     type: "board.card.unarchive",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const createBoardLabel: (input: CreateBoardLabelInput) => CommandEffect = Effect.fn(
+  "BoardCommands.createBoardLabel",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.label.create",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const updateBoardLabel: (input: UpdateBoardLabelInput) => CommandEffect = Effect.fn(
+  "BoardCommands.updateBoardLabel",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.label.update",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const deleteBoardLabel: (input: DeleteBoardLabelInput) => CommandEffect = Effect.fn(
+  "BoardCommands.deleteBoardLabel",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.label.delete",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const undeleteBoardLabel: (input: UndeleteBoardLabelInput) => CommandEffect = Effect.fn(
+  "BoardCommands.undeleteBoardLabel",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.label.undelete",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

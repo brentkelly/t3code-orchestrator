@@ -6,11 +6,13 @@
 import {
   BoardCardId,
   boardCardShellFromCard,
+  BoardLabelId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
   type BoardCardShell,
+  type BoardLabel,
   type BoardStage,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
@@ -38,7 +40,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   key: "CARD-1",
   cardNumber: 1,
   projectId,
-  type: "feature",
+  labels: [],
   stage: "backlog",
   orderKey: "m",
   title: `Card ${id}`,
@@ -156,6 +158,49 @@ describe("board shell reducer", () => {
     );
     expect(next.cards?.[0]?.threadState).toBe("none");
     expect(next.cards?.[0]?.awaitingInput).toBe(false);
+  });
+});
+
+const label = (id: string, overrides?: Partial<BoardLabel>): BoardLabel => ({
+  labelId: BoardLabelId.make(id),
+  name: id,
+  colour: "#3b82f6",
+  deletedAt: null,
+  createdAt: NOW,
+  updatedAt: NOW,
+  ...overrides,
+});
+
+describe("board label catalogue reducer (t3o-06a)", () => {
+  it("appends a label to a snapshot with no catalogue yet", () => {
+    const next = applyShellStreamEvent(snapshot(), {
+      kind: "label-upserted",
+      sequence: 2,
+      label: label("label-1"),
+    });
+    expect(next.boardLabels).toEqual([label("label-1")]);
+    expect(next.snapshotSequence).toBe(2);
+  });
+
+  it("recolours an existing label in place — repainting cards without a card delta", () => {
+    const cards = [cardShell("card-1", { labels: [BoardLabelId.make("label-1")] })];
+    const next = applyShellStreamEvent(
+      snapshot({ cards, boardLabels: [label("label-1"), label("label-2")] }),
+      { kind: "label-upserted", sequence: 3, label: label("label-1", { colour: "#ef4444" }) },
+    );
+    // The catalogue changed; the card list is untouched (chips read colour by
+    // id from the catalogue, so no per-card write is needed).
+    expect(next.boardLabels).toEqual([label("label-1", { colour: "#ef4444" }), label("label-2")]);
+    expect(next.cards).toBe(cards);
+  });
+
+  it("keeps a tombstoned label in the catalogue on delete", () => {
+    const next = applyShellStreamEvent(snapshot({ boardLabels: [label("label-1")] }), {
+      kind: "label-upserted",
+      sequence: 4,
+      label: label("label-1", { deletedAt: NOW }),
+    });
+    expect(next.boardLabels).toEqual([label("label-1", { deletedAt: NOW })]);
   });
 });
 

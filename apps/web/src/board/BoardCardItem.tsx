@@ -1,5 +1,5 @@
 /**
- * T3o board column card (t3o-05): the minimal shell — key pill, type chip,
+ * T3o board column card (t3o-05): the minimal shell — key pill, label chips,
  * state badges, title. The rich summary content (plans, review rounds,
  * attachments) is t3o-06's.
  *
@@ -7,19 +7,14 @@
  * animations (upstream AGENTS.md: loops peg the GPU on high-refresh
  * displays) — a running thread is a solid dot, not a spinner.
  */
-import type { BoardCardShell } from "@t3tools/contracts";
+import type { BoardCardShell, BoardLabel, BoardLabelId } from "@t3tools/contracts";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CircleAlertIcon, LockIcon } from "lucide-react";
 
 import { cn } from "../lib/utils";
+import { BoardLabelChips } from "./BoardLabelChips";
 import { projectAccent } from "./projectAccent";
-
-const TYPE_CHIP_CLASSES: Record<BoardCardShell["type"], string> = {
-  feature: "bg-violet-500/12 text-violet-700 dark:text-violet-300",
-  bug: "bg-red-500/12 text-red-700 dark:text-red-300",
-  chore: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
-};
 
 export interface BoardCardQueueSlot {
   readonly position: number;
@@ -28,11 +23,13 @@ export interface BoardCardQueueSlot {
 
 export function BoardCardContent({
   card,
+  labelsById,
   queueSlot,
   selected,
   accentName,
 }: {
   readonly card: BoardCardShell;
+  readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly queueSlot: BoardCardQueueSlot | undefined;
   readonly selected: boolean;
   /** Configured project accent (t3o-07); falls back to the hash colour. */
@@ -56,14 +53,7 @@ export function BoardCardContent({
         >
           {card.key}
         </span>
-        <span
-          className={cn(
-            "inline-flex h-4 shrink-0 items-center rounded px-1.5 text-[10px] font-medium uppercase tracking-wide",
-            TYPE_CHIP_CLASSES[card.type],
-          )}
-        >
-          {card.type}
-        </span>
+        <BoardLabelChips labelIds={card.labelIds} labelsById={labelsById} />
         {card.threadState === "working" ? (
           <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="Thread running" />
         ) : null}
@@ -103,12 +93,14 @@ export function BoardCardContent({
 
 export function SortableBoardCard({
   card,
+  labelsById,
   queueSlot,
   selected,
   onSelect,
   accentName,
 }: {
   readonly card: BoardCardShell;
+  readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly queueSlot: BoardCardQueueSlot | undefined;
   readonly selected: boolean;
   readonly onSelect: (card: BoardCardShell) => void;
@@ -129,6 +121,7 @@ export function SortableBoardCard({
     >
       <BoardCardContent
         card={card}
+        labelsById={labelsById}
         queueSlot={queueSlot}
         selected={selected}
         accentName={accentName}

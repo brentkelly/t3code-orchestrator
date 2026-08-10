@@ -9,10 +9,12 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BOARD_CARD_LABELS_MAX,
   BOARD_CARD_SHELL_TITLE_MAX_BYTES,
   BoardCardId,
   boardCardShellFromCard,
   BoardCardShell,
+  BoardLabelId,
   deriveBoardCardThreadState,
   makeBoardCardShell,
   type BoardCard,
@@ -30,20 +32,28 @@ const utf8Bytes = (value: unknown): number =>
 /**
  * Measured at 860 bytes on implementation (2026-08-10) for a worst-case
  * shell — review stage with every optional field populated, UUID-length
- * ids, and the title cap fully saturated — then rounded up modestly. Not a
- * guess: if a change pushes past this, it added real bytes to every card
- * on every reconnect, and the right fix is almost never raising the
- * number.
+ * ids, and the title cap fully saturated. t3o-06a added `labelIds` (a bounded
+ * array of at most `BOARD_CARD_LABELS_MAX` UUID-length ids), which is ~200
+ * bytes at the cap, so the budget rose to 1280 — still a hard ceiling, still
+ * scalar-plus-one-small-array, and still linear in card count. If a change
+ * pushes past this, it added real bytes to every card on every reconnect,
+ * and the right fix is almost never raising the number.
  */
-const BOARD_CARD_SHELL_BYTE_BUDGET = 1024;
+const BOARD_CARD_SHELL_BYTE_BUDGET = 1280;
 
-/** Worst case: every optional populated (review stage), long ids, and the
-    title at exactly `BOARD_CARD_SHELL_TITLE_MAX_BYTES`. */
+/** Five UUID-length label ids: a card at exactly `BOARD_CARD_LABELS_MAX`,
+    the worst case the shell must lay out for. */
+const labelIdsAtCap = Array.from({ length: BOARD_CARD_LABELS_MAX }, (_, index) =>
+  BoardLabelId.make(`label-${String(index)}b8a2c3d-4e5f-6789-abcd-ef0123456789`),
+);
+
+/** Worst case: every optional populated (review stage), long ids, labels at
+    the cap, and the title at exactly `BOARD_CARD_SHELL_TITLE_MAX_BYTES`. */
 const fullyPopulatedShell = {
   cardId: BoardCardId.make("0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
   key: "T3O-1234",
   projectId: ProjectId.make("project-0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
-  type: "feature",
+  labelIds: labelIdsAtCap,
   stage: "review",
   orderKey: "mmmmzz",
   title: "t".repeat(BOARD_CARD_SHELL_TITLE_MAX_BYTES),
@@ -76,7 +86,9 @@ const typicalCard = (index: number): BoardCard => ({
   key: `T3O-${index}`,
   cardNumber: index,
   projectId: ProjectId.make("project-0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
-  type: "feature",
+  // Labels at the cap on every card, so the linear-growth assertion measures
+  // the shell's worst per-card case (t3o-06a).
+  labels: labelIdsAtCap,
   stage: "building",
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
@@ -115,11 +127,20 @@ describe("BoardCardShell payload discipline", () => {
     expect(bytes).toBeLessThanOrEqual(BOARD_CARD_SHELL_BYTE_BUDGET);
   });
 
-  it("serializes to scalars only — no arrays, no nested objects", () => {
+  it("serializes to scalars plus the one bounded labelIds array — nothing else", () => {
     // The structural form of the D7 promise: nothing unbounded can hide in
-    // a field whose every value is a primitive or null.
+    // a field whose every value is a primitive or null. t3o-06a adds exactly
+    // one array — `labelIds` — and it is bounded at `BOARD_CARD_LABELS_MAX`
+    // and holds only strings; everything else stays scalar.
     const encoded = encodeShell(fullyPopulatedShell) as Record<string, unknown>;
     for (const [field, value] of Object.entries(encoded)) {
+      if (field === "labelIds") {
+        expect(Array.isArray(value)).toBe(true);
+        const ids = value as unknown[];
+        expect(ids.length).toBeLessThanOrEqual(BOARD_CARD_LABELS_MAX);
+        for (const id of ids) expect(typeof id).toBe("string");
+        continue;
+      }
       expect(
         value === null || ["string", "number", "boolean"].includes(typeof value),
         `field ${field} must be a scalar`,
@@ -145,6 +166,7 @@ describe("board card shell derivation", () => {
     const card = typicalCard(7);
     const shell = decodeShell(encodeShell(boardCardShellFromCard(card)));
     expect(shell.cardId).toBe(card.id);
+    expect(shell.labelIds).toEqual(card.labels);
     expect(shell.dependencyCount).toBe(0);
     expect(shell.hasBrief).toBe(true);
     expect(shell.activeThreadId).toBe(card.threadLinks[0]?.threadId);
@@ -255,7 +277,7 @@ describe("board card shell derivation", () => {
       cardId: BoardCardId.make("card-1"),
       key: "T3O-1",
       projectId: ProjectId.make("project-1"),
-      type: "feature",
+      labelIds: [],
       stage: "backlog",
       orderKey: "m",
       title: "Card",

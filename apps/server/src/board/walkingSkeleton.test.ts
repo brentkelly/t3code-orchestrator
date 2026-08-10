@@ -6,6 +6,8 @@
  * rehydrates from the projection tables.
  */
 import {
+  BOARD_SEED_LABEL_IDS,
+  BOARD_SEED_LABELS,
   BoardCardId,
   CommandId,
   ProjectId,
@@ -73,7 +75,6 @@ const createCardCommand = {
   cardId,
   projectId,
   title: "First card",
-  cardType: "feature",
   orderKey: "m",
   createdAt,
 } as const;
@@ -83,7 +84,7 @@ const expectedCard = {
   key: "CARD-1",
   cardNumber: 1,
   projectId,
-  type: "feature",
+  labels: [],
   stage: "backlog",
   orderKey: "m",
   title: "First card",
@@ -106,7 +107,7 @@ const expectedCardShell = {
   cardId,
   key: "CARD-1",
   projectId,
-  type: "feature",
+  labelIds: [],
   stage: "backlog",
   orderKey: "m",
   title: "First card",
@@ -139,6 +140,9 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         const rehydrated = yield* snapshotQuery.getCommandReadModel();
         assert.deepStrictEqual(rehydrated.board, {
           cards: [expectedCard],
+          // The 906 migration seeds the catalogue on every board; a card
+          // created without labels carries none, but the seeds are present.
+          labels: BOARD_SEED_LABELS,
           nextCardNumberByProject: { [projectId]: 2 },
         });
 
@@ -169,6 +173,44 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
       }),
   );
 
+  // Labels round-trip through the join table and the shell, and a from-empty
+  // replay reproduces them identically (t3o-06a). The decider sees the seeded
+  // catalogue (the migration seeds it), so a create tagged with the feature
+  // seed label validates.
+  it.effect("persists card labels through the join and replays them identically", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-card-create-labelled"),
+        cardId: BoardCardId.make("card-labelled"),
+        projectId,
+        title: "Labelled card",
+        labels: [BOARD_SEED_LABEL_IDS.feature],
+        orderKey: "z",
+        createdAt,
+      });
+
+      const rehydrated = yield* snapshotQuery.getCommandReadModel();
+      const rehydratedCard = rehydrated.board?.cards.find((card) => card.id === "card-labelled");
+      assert.deepStrictEqual(rehydratedCard?.labels, [BOARD_SEED_LABEL_IDS.feature]);
+
+      const shell = yield* snapshotQuery.getShellSnapshot();
+      const shellCard = shell.cards?.find((card) => card.cardId === "card-labelled");
+      assert.deepStrictEqual(shellCard?.labelIds, [BOARD_SEED_LABEL_IDS.feature]);
+      // The catalogue rides the shell once, as a top-level array.
+      assert.isTrue((shell.boardLabels?.length ?? 0) >= 3);
+
+      const events: OrchestrationEvent[] = Array.from(
+        yield* Stream.runCollect(engine.readEvents(0)),
+      );
+      let replayed = createEmptyReadModel(createdAt);
+      for (const event of events) replayed = yield* projectEvent(replayed, event);
+      assert.deepStrictEqual(replayed.board, rehydrated.board);
+    }),
+  );
+
   // Runs against the same store as the test above: project-board and card-1
   // already exist here by design.
   it.effect("rejects a duplicate card id", () =>
@@ -195,7 +237,6 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
           cardId: BoardCardId.make("card-orphan"),
           projectId: ProjectId.make("project-missing"),
           title: "Orphan card",
-          cardType: "feature",
           orderKey: "m",
           createdAt,
         }),
@@ -226,7 +267,6 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-order-test-"))(
           cardId: BoardCardId.make("card-late"),
           projectId,
           title: "Later card",
-          cardType: "feature",
           orderKey: "m",
           createdAt: "2026-01-02T00:00:00.000Z",
         });
@@ -238,7 +278,6 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-order-test-"))(
           cardId: BoardCardId.make("card-early"),
           projectId,
           title: "Earlier card",
-          cardType: "feature",
           orderKey: "t",
           createdAt: "2026-01-01T00:00:00.000Z",
         });

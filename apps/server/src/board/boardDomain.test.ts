@@ -85,7 +85,6 @@ const createCard = (input: {
     cardId: input.cardId,
     projectId: input.projectId,
     title: `Card ${input.n}`,
-    cardType: "feature",
     orderKey: input.orderKey,
     createdAt: t0,
   }) as const;

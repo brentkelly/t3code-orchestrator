@@ -26,6 +26,10 @@ import {
   BoardCardId,
   BoardCardRecipeSnapshot,
   BoardCardThreadLink,
+  BoardLabel,
+  BoardLabelId,
+  boardLabelsAreSeedOnly,
+  compareBoardLabels,
   isBoardEvent,
   makeBoardCardShell,
   sortBoardCardThreadLinks,
@@ -66,7 +70,6 @@ const BoardCardDbRow = Schema.Struct({
   key: BoardCard.fields.key,
   cardNumber: BoardCard.fields.cardNumber,
   projectId: BoardCard.fields.projectId,
-  cardType: BoardCard.fields.type,
   stage: BoardCard.fields.stage,
   orderKey: BoardCard.fields.orderKey,
   title: BoardCard.fields.title,
@@ -91,6 +94,26 @@ const BoardCardThreadLinkDbRow = Schema.Struct({
 });
 type BoardCardThreadLinkDbRow = typeof BoardCardThreadLinkDbRow.Type;
 
+// Label catalogue row (904_BoardLabels). `deletedAt` NULL means live.
+const BoardLabelDbRow = Schema.Struct({
+  labelId: BoardLabel.fields.labelId,
+  name: BoardLabel.fields.name,
+  colour: BoardLabel.fields.colour,
+  deletedAt: BoardLabel.fields.deletedAt,
+  createdAt: BoardLabel.fields.createdAt,
+  updatedAt: BoardLabel.fields.updatedAt,
+});
+type BoardLabelDbRow = typeof BoardLabelDbRow.Type;
+
+// Card↔label join row (905_BoardCardLabels). `ordinal` preserves the card's
+// label order so rehydration reproduces the array the decider computed.
+const BoardCardLabelDbRow = Schema.Struct({
+  cardId: BoardCardId,
+  labelId: BoardLabelId,
+  ordinal: Schema.Int,
+});
+type BoardCardLabelDbRow = typeof BoardCardLabelDbRow.Type;
+
 const NextCardNumberDbRow = Schema.Struct({
   projectId: ProjectId,
   maxCardNumber: Schema.Int,
@@ -108,7 +131,6 @@ const BoardCardShellDbRow = Schema.Struct({
   cardId: BoardCard.fields.id,
   key: BoardCard.fields.key,
   projectId: BoardCard.fields.projectId,
-  cardType: BoardCard.fields.type,
   stage: BoardCard.fields.stage,
   orderKey: BoardCard.fields.orderKey,
   title: BoardCard.fields.title,
@@ -124,7 +146,6 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     key: card.key,
     cardNumber: card.cardNumber,
     projectId: card.projectId,
-    cardType: card.type,
     stage: card.stage,
     orderKey: card.orderKey,
     title: card.title,
@@ -143,13 +164,14 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
 function rowToBoardCard(
   row: BoardCardDbRow,
   threadLinks: ReadonlyArray<BoardCardThreadLink>,
+  labels: ReadonlyArray<BoardLabelId>,
 ): BoardCard {
   return {
     id: row.cardId,
     key: row.key,
     cardNumber: row.cardNumber,
     projectId: row.projectId,
-    type: row.cardType,
+    labels,
     stage: row.stage,
     orderKey: row.orderKey,
     title: row.title,
@@ -166,6 +188,30 @@ function rowToBoardCard(
   };
 }
 
+/** Card ids in `ordinal` order from raw join rows, grouped per card — the
+    shared shape both the shell path and rehydration read the join into. */
+function groupCardLabels(
+  rows: ReadonlyArray<BoardCardLabelDbRow>,
+): Map<BoardCardId, BoardLabelId[]> {
+  const byCard = new Map<
+    BoardCardId,
+    Array<{ readonly labelId: BoardLabelId; readonly ordinal: number }>
+  >();
+  for (const row of rows) {
+    const list = byCard.get(row.cardId) ?? [];
+    list.push({ labelId: row.labelId, ordinal: row.ordinal });
+    byCard.set(row.cardId, list);
+  }
+  const ordered = new Map<BoardCardId, BoardLabelId[]>();
+  for (const [cardId, list] of byCard) {
+    ordered.set(
+      cardId,
+      [...list].sort((left, right) => left.ordinal - right.ordinal).map((entry) => entry.labelId),
+    );
+  }
+  return ordered;
+}
+
 function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   const upsertBoardCardRow = SqlSchema.void({
     Request: BoardCardDbRow,
@@ -175,7 +221,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         key,
         card_number,
         project_id,
-        card_type,
         stage,
         order_key,
         title,
@@ -194,7 +239,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.key},
         ${row.cardNumber},
         ${row.projectId},
-        ${row.cardType},
         ${row.stage},
         ${row.orderKey},
         ${row.title},
@@ -213,7 +257,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         key = excluded.key,
         card_number = excluded.card_number,
         project_id = excluded.project_id,
-        card_type = excluded.card_type,
         stage = excluded.stage,
         order_key = excluded.order_key,
         title = excluded.title,
@@ -242,7 +285,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         key,
         card_number AS "cardNumber",
         project_id AS "projectId",
-        card_type AS "cardType",
         stage,
         order_key AS "orderKey",
         title,
@@ -305,7 +347,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id AS "cardId",
         key,
         project_id AS "projectId",
-        card_type AS "cardType",
         stage,
         order_key AS "orderKey",
         title,
@@ -327,7 +368,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         key,
         card_number AS "cardNumber",
         project_id AS "projectId",
-        card_type AS "cardType",
         stage,
         order_key AS "orderKey",
         title,
@@ -447,6 +487,82 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // ── Labels (t3o-06a) ─────────────────────────────────────────────────
+
+  const upsertBoardLabelRow = SqlSchema.void({
+    Request: BoardLabelDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_labels (label_id, name, colour, deleted_at, created_at, updated_at)
+      VALUES (${row.labelId}, ${row.name}, ${row.colour}, ${row.deletedAt}, ${row.createdAt}, ${row.updatedAt})
+      ON CONFLICT (label_id)
+      DO UPDATE SET
+        name = excluded.name,
+        colour = excluded.colour,
+        deleted_at = excluded.deleted_at,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at
+    `,
+  });
+
+  // Read order is advisory only: `loadBoardState` re-sorts with
+  // `compareBoardLabels`, so SQL collation can never make rehydration order
+  // diverge from replay order.
+  const listBoardLabelRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardLabelDbRow,
+    execute: () => sql`
+      SELECT
+        label_id AS "labelId",
+        name,
+        colour,
+        deleted_at AS "deletedAt",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM board_labels
+    `,
+  });
+
+  // Wholesale rewrite of a card's label rows from the card's authoritative
+  // ordered label list: idempotent, and structurally incapable of drifting
+  // from the read model (mirrors the thread-link sync).
+  const deleteBoardCardLabelsForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_card_labels
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  const insertBoardCardLabelRow = SqlSchema.void({
+    Request: BoardCardLabelDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_card_labels (card_id, label_id, ordinal)
+      VALUES (${row.cardId}, ${row.labelId}, ${row.ordinal})
+      ON CONFLICT (card_id, label_id)
+      DO UPDATE SET ordinal = excluded.ordinal
+    `,
+  });
+
+  const listBoardCardLabelRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardCardLabelDbRow,
+    execute: () => sql`
+      SELECT card_id AS "cardId", label_id AS "labelId", ordinal
+      FROM board_card_labels
+    `,
+  });
+
+  const listBoardCardLabelRowsForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardLabelDbRow,
+    execute: (cardId) => sql`
+      SELECT card_id AS "cardId", label_id AS "labelId", ordinal
+      FROM board_card_labels
+      WHERE card_id = ${cardId}
+      ORDER BY ordinal ASC
+    `,
+  });
+
   return {
     upsertBoardCardRow,
     listBoardCardRows,
@@ -461,6 +577,12 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     insertBoardCardThreadLinkRow,
     upsertBoardCardBodyRow,
     deleteBoardCardBodyRow,
+    upsertBoardLabelRow,
+    listBoardLabelRows,
+    deleteBoardCardLabelsForCard,
+    insertBoardCardLabelRow,
+    listBoardCardLabelRows,
+    listBoardCardLabelRowsForCard,
   };
 }
 
@@ -491,14 +613,45 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       }
     }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadLinks:query")));
 
+  // Same wholesale-rewrite discipline for the card↔label join (t3o-06a): the
+  // card's ordered label list is authoritative, and `ordinal` preserves its
+  // order for rehydration. Synced only where labels can change (create /
+  // update), mirroring the thread-link sync's link/unlink scope.
+  const syncCardLabels = (card: BoardCard) =>
+    Effect.gen(function* () {
+      yield* queries.deleteBoardCardLabelsForCard(card.id);
+      for (let ordinal = 0; ordinal < card.labels.length; ordinal += 1) {
+        yield* queries.insertBoardCardLabelRow({
+          cardId: card.id,
+          labelId: card.labels[ordinal]!,
+          ordinal,
+        });
+      }
+    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardLabels:query")));
+
+  const upsertLabel = (label: BoardLabel) =>
+    queries
+      .upsertBoardLabelRow({
+        labelId: label.labelId,
+        name: label.name,
+        colour: label.colour,
+        deletedAt: label.deletedAt,
+        createdAt: label.createdAt,
+        updatedAt: label.updatedAt,
+      })
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.label:query")));
+
   const applyBoardCardsProjection = Effect.fn("applyBoardCardsProjection")(function* (
     event: OrchestrationEvent,
   ) {
     if (!isBoardEvent(event)) return;
     switch (event.type) {
-      case "board.card-created":
-        yield* upsertCard(boardCardFromCreatedPayload(event.payload));
+      case "board.card-created": {
+        const card = boardCardFromCreatedPayload(event.payload);
+        yield* upsertCard(card);
+        yield* syncCardLabels(card);
         return;
+      }
 
       case "board.card-moved":
       case "board.card-reordered":
@@ -507,8 +660,17 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         yield* upsertCard(event.payload.card);
         return;
 
+      case "board.label-created":
+      case "board.label-updated":
+      case "board.label-deleted":
+      case "board.label-undeleted":
+        // Catalogue rows (904); delete/undelete are tombstone upserts.
+        yield* upsertLabel(event.payload.label);
+        return;
+
       case "board.card-updated": {
         yield* upsertCard(event.payload.card);
+        yield* syncCardLabels(event.payload.card);
         // Bodies live only in this table (D8); absent means unchanged.
         if (event.payload.brief === null) {
           yield* queries
@@ -568,9 +730,29 @@ export function loadBoardState(
     queries.listBoardCardRows(),
     queries.listBoardCardThreadLinkRows(),
     queries.listNextCardNumberRows(),
+    queries.listBoardLabelRows(),
+    queries.listBoardCardLabelRows(),
   ]).pipe(
-    Effect.map(([cardRows, linkRows, counterRows]) => {
-      if (cardRows.length === 0) return null;
+    Effect.map(([cardRows, linkRows, counterRows, labelRows, cardLabelRows]) => {
+      // Canonical ordering comes from the shared JS comparators — the same
+      // ones the replay path uses — never from SQL collation.
+      const labels = labelRows
+        .map((row) => ({
+          labelId: row.labelId,
+          name: row.name,
+          colour: row.colour,
+          deletedAt: row.deletedAt,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        }))
+        .sort(compareBoardLabels);
+      // A migrated-but-unused board (no cards, catalogue still the compiled
+      // seeds) reports the board slice as ABSENT — the decider falls back to
+      // EMPTY_BOARD_STATE (same seeds), so this equals a from-empty replay
+      // where no board event ever fired. The moment a card or a label change
+      // exists, the slice materialises.
+      if (cardRows.length === 0 && boardLabelsAreSeedOnly(labels)) return null;
+
       const linksByCard = new Map<BoardCardId, BoardCardThreadLink[]>();
       for (const row of linkRows) {
         const links = linksByCard.get(row.cardId) ?? [];
@@ -582,14 +764,18 @@ export function loadBoardState(
         });
         linksByCard.set(row.cardId, links);
       }
-      // Canonical ordering comes from the shared JS comparators — the same
-      // ones the replay path uses — never from SQL collation.
+      const labelsByCard = groupCardLabels(cardLabelRows);
       return {
         cards: cardRows
           .map((row) =>
-            rowToBoardCard(row, sortBoardCardThreadLinks(linksByCard.get(row.cardId) ?? [])),
+            rowToBoardCard(
+              row,
+              sortBoardCardThreadLinks(linksByCard.get(row.cardId) ?? []),
+              labelsByCard.get(row.cardId) ?? [],
+            ),
           )
           .sort(compareBoardCards),
+        labels,
         nextCardNumberByProject: Object.fromEntries(
           counterRows.map((row) => [row.projectId, row.maxCardNumber + 1]),
         ),
@@ -642,9 +828,10 @@ export function withBoardShellCards(
   const shellRows = Effect.all([
     queries.listBoardCardShellRows(),
     queries.listLiveBoardCardThreadLinkRows(),
+    queries.listBoardCardLabelRows(),
   ]).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shell:query")));
   return Effect.all([snapshot, shellRows]).pipe(
-    Effect.map(([shell, [cardRows, linkRows]]) => {
+    Effect.map(([shell, [cardRows, linkRows, cardLabelRows]]) => {
       if (cardRows.length === 0) return shell;
       const linksByCard = new Map<BoardCardId, BoardCardThreadLink[]>();
       for (const row of linkRows) {
@@ -657,6 +844,7 @@ export function withBoardShellCards(
         });
         linksByCard.set(row.cardId, links);
       }
+      const labelsByCard = groupCardLabels(cardLabelRows);
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
         const activeThreadId = activeBoardCardThreadId(linksByCard.get(row.cardId) ?? []);
@@ -664,7 +852,7 @@ export function withBoardShellCards(
           cardId: row.cardId,
           key: row.key,
           projectId: row.projectId,
-          type: row.cardType,
+          labelIds: labelsByCard.get(row.cardId) ?? [],
           stage: row.stage,
           orderKey: row.orderKey,
           title: row.title,
@@ -676,6 +864,39 @@ export function withBoardShellCards(
         });
       });
       return { ...shell, cards };
+    }),
+  );
+}
+
+/**
+ * The label catalogue rides the shell snapshot ONCE (t3o-06a): N labels for
+ * the whole board, never denormalised per card. Includes tombstoned labels so
+ * a client can render a retired-label chip muted; the picker filters them.
+ * Sorted canonically for a stable picker order. Attached whenever the
+ * catalogue has any rows — post-migration it always has the seeds — so even an
+ * empty board's shell carries the vocabulary the picker needs.
+ */
+export function withBoardShellLabels(
+  queries: BoardCardQueries,
+  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
+): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
+  const labelRows = queries
+    .listBoardLabelRows()
+    .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellLabels:query")));
+  return Effect.all([snapshot, labelRows]).pipe(
+    Effect.map(([shell, rows]) => {
+      if (rows.length === 0) return shell;
+      const boardLabels = rows
+        .map((row) => ({
+          labelId: row.labelId,
+          name: row.name,
+          colour: row.colour,
+          deletedAt: row.deletedAt,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        }))
+        .sort(compareBoardLabels);
+      return { ...shell, boardLabels };
     }),
   );
 }
@@ -698,8 +919,9 @@ export function makeBoardCardDetailLoader(
       queries.findBoardCardRow(cardId),
       queries.listBoardCardThreadLinkRowsForCard(cardId),
       queries.findBoardCardBodyRow({ cardId, kind: BOARD_CARD_BRIEF_BODY_KIND }),
+      queries.listBoardCardLabelRowsForCard(cardId),
     ]).pipe(
-      Effect.map(([cardRow, linkRows, bodyRow]) => {
+      Effect.map(([cardRow, linkRows, bodyRow, labelRows]) => {
         if (Option.isNone(cardRow)) return null;
         const links = sortBoardCardThreadLinks(
           linkRows.map((row) => ({
@@ -709,8 +931,11 @@ export function makeBoardCardDetailLoader(
             tombstonedAt: row.tombstonedAt,
           })),
         );
+        const labels = [...labelRows]
+          .sort((left, right) => left.ordinal - right.ordinal)
+          .map((row) => row.labelId);
         return {
-          card: rowToBoardCard(cardRow.value, links),
+          card: rowToBoardCard(cardRow.value, links, labels),
           brief: Option.match(bodyRow, {
             onNone: () => null,
             onSome: (row) => row.body,
@@ -777,8 +1002,10 @@ export function boardSnapshotQueryMethods(
   return {
     // Board cards join the engine's command read model (D8).
     getCommandReadModel: () => withBoardReadModel(queries, base.getCommandReadModel()),
-    // Bounded card shells ride the shell snapshot (D2/D7).
-    getShellSnapshot: () => withBoardShellCards(queries, base.getShellSnapshot()),
+    // Bounded card shells + the label catalogue ride the shell snapshot
+    // (D2/D7; catalogue once, t3o-06a).
+    getShellSnapshot: () =>
+      withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
     // Board-only detail reader for board.subscribeCard (t3o-04).
     boardCardDetail: makeBoardCardDetailLoader(queries),
   };
