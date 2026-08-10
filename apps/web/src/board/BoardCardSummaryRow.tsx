@@ -13,12 +13,12 @@ import { GitPullRequestIcon, PaperclipIcon } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { BoardCardSummaryItem } from "./boardCardSummary";
 
-/** Bounded round pips: one dot per round, filled up to `current`. Capped so a
-    pathological round count cannot blow out the card width. */
-const MAX_ROUND_PIPS = 6;
+/** Max pips rendered for either the review-round or plan-progress rows, so a
+    pathological count cannot blow out the card width. */
+const MAX_SUMMARY_PIPS = 6;
 
 function RoundPips({ current, max }: { readonly current: number; readonly max: number }) {
-  const shown = Math.min(max, MAX_ROUND_PIPS);
+  const shown = Math.min(max, MAX_SUMMARY_PIPS);
   return (
     <span
       className="inline-flex items-center gap-0.5"
@@ -44,7 +44,7 @@ function RoundPips({ current, max }: { readonly current: number; readonly max: n
 }
 
 function PlanPips({ done, total }: { readonly done: number; readonly total: number }) {
-  const shown = Math.min(total, MAX_ROUND_PIPS);
+  const shown = Math.min(total, MAX_SUMMARY_PIPS);
   return (
     <span
       className="inline-flex items-center gap-0.5"

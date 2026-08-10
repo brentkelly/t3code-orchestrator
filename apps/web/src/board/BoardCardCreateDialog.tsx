@@ -23,7 +23,7 @@ import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import {
@@ -98,18 +98,24 @@ export function BoardCardCreateDialog({
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  // Reset the form each time the dialog opens, honouring the caller's
-  // prefilled stage/project (the column button opens onto its own stage).
+  // Reset the form ONLY on the closed→open transition, honouring the caller's
+  // prefilled stage/project (the column button opens onto its own stage). A
+  // plain `open`-guarded effect would re-run — and wipe in-progress input —
+  // every time a background shell delta gives `projects` a new identity while
+  // the dialog is open; the ref pins the reset to the actual open edge.
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
-    setStage(defaultStage);
-    setTitle("");
-    setBrief("");
-    setLabelIds([]);
-    setDependsOn([]);
-    setFeedback(null);
-    setSubmitting(false);
+    if (open && !wasOpen.current) {
+      setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
+      setStage(defaultStage);
+      setTitle("");
+      setBrief("");
+      setLabelIds([]);
+      setDependsOn([]);
+      setFeedback(null);
+      setSubmitting(false);
+    }
+    wasOpen.current = open;
   }, [open, defaultProjectId, defaultStage, projects]);
 
   const dependencyOptions = useMemo(

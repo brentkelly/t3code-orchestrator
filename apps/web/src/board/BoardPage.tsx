@@ -551,6 +551,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           <BoardCardDetail
             cardId={BoardCardId.make(selectedCardId)}
             environmentId={environmentId}
+            key={selectedCardId}
             onClose={handleCloseDetail}
           />
         ) : null}
