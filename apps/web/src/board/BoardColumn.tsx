@@ -40,6 +40,8 @@ export interface BoardColumnProps {
   readonly selectedCardId: string | null;
   /** Projects new cards may be created in; empty disables the inline add. */
   readonly addProjects: ReadonlyArray<BoardAddProject>;
+  /** Resolves a project's configured accent name (t3o-07); hash fallback when null. */
+  readonly accentNameFor: (projectId: ProjectId) => string | null;
   readonly onSetCollapsed: (stage: BoardStage, collapsed: boolean) => void;
   readonly onSelectCard: (card: BoardCardShell) => void;
   readonly onAddCard: (stage: BoardStage, title: string, projectId: ProjectId) => void;
@@ -83,6 +85,7 @@ function ExpandedColumn({
   queueSlots,
   selectedCardId,
   addProjects,
+  accentNameFor,
   onSetCollapsed,
   onSelectCard,
   onAddCard,
@@ -101,9 +104,10 @@ function ExpandedColumn({
         queueSlot={queueSlots.get(item.cardId)}
         selected={item.cardId === selectedCardId}
         onSelect={onSelectCard}
+        accentName={accentNameFor(item.projectId)}
       />
     ),
-    [onSelectCard, queueSlots, selectedCardId],
+    [accentNameFor, onSelectCard, queueSlots, selectedCardId],
   );
 
   return (
@@ -141,6 +145,7 @@ function ExpandedColumn({
       </div>
       {adding && addProjects.length > 0 ? (
         <InlineAddForm
+          accentNameFor={accentNameFor}
           onCancel={() => setAdding(false)}
           onSubmit={(title, projectId) => {
             onAddCard(stage, title, projectId);
@@ -176,10 +181,12 @@ function ExpandedColumn({
 
 function InlineAddForm({
   projects,
+  accentNameFor,
   onSubmit,
   onCancel,
 }: {
   readonly projects: ReadonlyArray<BoardAddProject>;
+  readonly accentNameFor: (projectId: ProjectId) => string | null;
   readonly onSubmit: (title: string, projectId: ProjectId) => void;
   readonly onCancel: () => void;
 }) {
@@ -220,7 +227,12 @@ function InlineAddForm({
           value={projectId}
         >
           <SelectTrigger aria-label="Project" className="w-fit" size="xs" variant="ghost">
-            <span className={cn("size-2 rounded-full", projectAccent(projectId).dot)} />
+            <span
+              className={cn(
+                "size-2 rounded-full",
+                projectAccent(projectId, accentNameFor(projectId)).dot,
+              )}
+            />
             <SelectValue />
           </SelectTrigger>
           <SelectPopup>

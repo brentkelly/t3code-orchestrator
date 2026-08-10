@@ -10,6 +10,8 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+// T3o: board settings schema (recipe/projects/concurrency/lifecycle); shape lives in board.ts, never at this seam.
+import { BoardSettings, BoardSettingsPatch } from "./board.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -609,6 +611,8 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // T3o: board pipeline recipe, per-project keys, concurrency and lifecycle (D10). Single field whose shape grows inside BoardSettings, like providerInstances.
+  board: BoardSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -749,6 +753,8 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  // T3o: board settings patch — whole-map recipe/projects replacement (D10); merged by the stock deepMerge, no board logic at this seam.
+  board: Schema.optionalKey(BoardSettingsPatch),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
