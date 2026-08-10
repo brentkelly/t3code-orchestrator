@@ -570,6 +570,17 @@ export const BoardCardCreateCommand = Schema.Struct({
   cardId: BoardCardId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  /** Brief body captured at creation (t3o-06). Stored in `board_card_bodies`,
+      never the read model (D8); absent creates no body. The create dialog's
+      brief field wires here, so a card lands with its write-up in one atomic
+      event rather than a create-then-update flash. */
+  brief: Schema.optional(TrimmedNonEmptyString),
+  /** Initial dependencies (t3o-06). Validated for existence by the decider;
+      cycles are impossible at create (a brand-new card has no dependents), so
+      the cycle gate stays a `board.card.update` concern. A creation-stage card
+      is always before Ready, so these never block it until it crosses the
+      Ready gate (D18). Absent is an empty set. */
+  dependsOn: Schema.optional(Schema.Array(BoardCardId)),
   /** Labels to tag the new card with (t3o-06a). Absent is an empty set. The
       decider rejects the create when it exceeds `BOARD_CARD_LABELS_MAX` or
       references an unknown / tombstoned label. */
@@ -746,6 +757,16 @@ export const BoardCardCreatedPayload = Schema.Struct({
   /** New events (t3o-06a): the card's labels at creation. Absent on legacy
       events, where the projector derives a one-element set from `cardType`. */
   labels: Schema.optionalKey(Schema.Array(BoardLabelId)),
+  /** Brief body captured at creation (t3o-06). Absent on legacy events and
+      whenever the card was created without one; when present the projector
+      writes it to `board_card_bodies` and sets `briefRef`. Mirrors the
+      `board.card-updated` brief-set path. */
+  brief: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Initial dependencies (t3o-06). Key-optional, resolved through
+      `boardCardCreatedDependsOn` — absent (legacy events, deps-free creates)
+      means the empty set, matching migration 903's `depends_on DEFAULT '[]'`,
+      so a from-empty replay of a pre-t3o-06 log equals table rehydration. */
+  dependsOn: Schema.optionalKey(Schema.Array(BoardCardId)),
   stage: BoardStage.pipe(Schema.withDecodingDefault(Effect.succeed("backlog" as const))),
   orderKey: TrimmedNonEmptyString.pipe(
     Schema.withDecodingDefault(Effect.succeed(LEGACY_BOARD_CARD_ORDER_KEY)),
@@ -765,6 +786,20 @@ export function boardCardCreatedLabels(
   payload: BoardCardCreatedPayload,
 ): ReadonlyArray<BoardLabelId> {
   return payload.labels ?? [legacyBoardCardTypeLabelId(payload.cardType ?? "feature")];
+}
+
+/**
+ * The card's dependencies as of a `card-created` event: the key-optional
+ * `dependsOn` field, or the empty set when absent (legacy events and
+ * deps-free creates). The single reader both projectors go through, so
+ * "absent" and "no dependencies" are always the same set — the
+ * migration-903-default-in-replay that keeps a from-empty replay equal to
+ * table rehydration.
+ */
+export function boardCardCreatedDependsOn(
+  payload: BoardCardCreatedPayload,
+): ReadonlyArray<BoardCardId> {
+  return payload.dependsOn ?? [];
 }
 
 export const BoardCardMovedPayload = Schema.Struct({

@@ -13,7 +13,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { CircleAlertIcon, LockIcon } from "lucide-react";
 
 import { cn } from "../lib/utils";
+import { boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
+import { BoardCardSummaryRow } from "./BoardCardSummaryRow";
 import { projectAccent } from "./projectAccent";
 
 export interface BoardCardQueueSlot {
@@ -36,13 +38,17 @@ export function BoardCardContent({
   readonly accentName?: string | null | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
+  const summary = boardCardSummary(card);
   return (
     <article
       className={cn(
         "flex cursor-pointer flex-col gap-1.5 rounded-lg border border-border bg-card p-3 shadow-xs/5 transition-colors hover:border-foreground/18",
         selected && "ring-2 ring-ring",
+        // Done recedes: finished work is muted and lower-contrast (D15 stage).
+        summary.muted && "bg-card/60 opacity-70",
       )}
       data-board-card={card.cardId}
+      data-board-card-stage={card.stage}
     >
       <div className="flex items-center gap-1.5">
         <span
@@ -86,7 +92,15 @@ export function BoardCardContent({
           </span>
         ) : null}
       </div>
-      <div className="text-[13px]/[1.35] font-medium text-pretty text-foreground">{card.title}</div>
+      <div
+        className={cn(
+          "text-[13px]/[1.35] font-medium text-pretty",
+          summary.muted ? "text-muted-foreground" : "text-foreground",
+        )}
+      >
+        {card.title}
+      </div>
+      <BoardCardSummaryRow items={summary.items} />
     </article>
   );
 }

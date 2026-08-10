@@ -650,6 +650,19 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         const card = boardCardFromCreatedPayload(event.payload);
         yield* upsertCard(card);
         yield* syncCardLabels(card);
+        // A brief captured at creation (t3o-06) writes its body here — the
+        // one table bodies ever live in (D8) — mirroring the update path.
+        // `upsertCard` already wrote `depends_on` and `brief_ref` from `card`.
+        if (event.payload.brief !== undefined) {
+          yield* queries
+            .upsertBoardCardBodyRow({
+              cardId: event.payload.cardId,
+              kind: BOARD_CARD_BRIEF_BODY_KIND,
+              body: event.payload.brief,
+              updatedAt: event.payload.updatedAt,
+            })
+            .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.body:query")));
+        }
         return;
       }
 

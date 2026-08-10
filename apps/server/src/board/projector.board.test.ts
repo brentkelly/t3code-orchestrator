@@ -95,6 +95,10 @@ describe("board projector", () => {
       assert.strictEqual(card?.cardNumber, LEGACY_BOARD_CARD_NUMBER);
       // A legacy payload with no cardType/labels maps to the feature seed label.
       assert.deepStrictEqual(card?.labels, [BOARD_SEED_LABEL_IDS.feature]);
+      // No dependsOn/brief on a pre-t3o-06 event: empty deps, no brief ref —
+      // matching migration 903's `depends_on DEFAULT '[]'` and null brief_ref.
+      assert.deepStrictEqual(card?.dependsOn, []);
+      assert.strictEqual(card?.briefRef, null);
       assert.strictEqual(card?.stage, "backlog");
       assert.strictEqual(card?.orderKey, LEGACY_BOARD_CARD_ORDER_KEY);
       // Legacy card 0 still reserves number 1 for the next create, matching
@@ -123,6 +127,45 @@ describe("board projector", () => {
       } as unknown as BoardEvent;
       const model = yield* projectBoardEvent(emptyModel(), event);
       assert.deepStrictEqual(model.board?.nextCardNumberByProject, { [projectId]: 6 });
+    }),
+  );
+
+  it.effect("projects a create-time brief and dependencies (t3o-06)", () =>
+    Effect.gen(function* () {
+      const dependencyId = BoardCardId.make("card-dep");
+      const event = {
+        ...eventBase,
+        type: "board.card-created",
+        payload: {
+          cardId,
+          projectId,
+          title: "Card with brief",
+          key: "CARD-1",
+          cardNumber: 1,
+          labels: [BOARD_SEED_LABEL_IDS.feature],
+          brief: "The write-up",
+          dependsOn: [dependencyId],
+          stage: "backlog",
+          orderKey: "m",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      } as unknown as BoardEvent;
+      const model = yield* projectBoardEvent(emptyModel(), event);
+      const card = model.board?.cards[0];
+      assert.isDefined(card);
+      // briefRef is the sentinel kind (D8: the body never enters the read model).
+      assert.strictEqual(card?.briefRef, "brief");
+      assert.deepStrictEqual(card?.dependsOn, [dependencyId]);
+      // A creation-stage card is before Ready, so it is never blocked at birth.
+      assert.strictEqual(card?.blocked, false);
+      // The shell delta reflects the brief and dependency count.
+      const delta = Option.getOrNull(boardShellStreamEvent(event));
+      assert.strictEqual(delta?.kind, "card-upserted");
+      if (delta?.kind === "card-upserted") {
+        assert.strictEqual(delta.card.hasBrief, true);
+        assert.strictEqual(delta.card.dependencyCount, 1);
+      }
     }),
   );
 

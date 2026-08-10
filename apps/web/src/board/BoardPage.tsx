@@ -12,7 +12,6 @@ import {
   BoardCardId,
   BOARD_STAGES,
   areBoardStagesAdjacent,
-  resolveBoardKeyPrefix,
   resolveBoardProjectAccent,
   type BoardCardShell,
   type BoardStage,
@@ -22,7 +21,6 @@ import {
 import {
   applyBoardCardPlacements,
   boardBuildingQueueInfo,
-  boardColumnAppendOrderKey,
   isBoardCardPlacementSettled,
   mergeBoardStageColumns,
   planBoardCardReorder,
@@ -48,9 +46,11 @@ import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 import { getRouteApi } from "@tanstack/react-router";
+import { PlusIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { Button } from "../components/ui/button";
 import {
   Select,
   SelectItem,
@@ -61,7 +61,7 @@ import {
 import { SidebarInset } from "../components/ui/sidebar";
 import { toastManager } from "../components/ui/toast";
 import { isElectron } from "../env";
-import { cn, randomUUID } from "../lib/utils";
+import { cn } from "../lib/utils";
 import { environmentShell } from "../state/shell";
 import { boardEnvironment } from "../state/board";
 import { usePrimaryEnvironmentId } from "../state/environments";
@@ -69,6 +69,8 @@ import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { BoardCardContent } from "./BoardCardItem";
+import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
+import { BoardCardDetail } from "./BoardCardDetail";
 import { BoardColumn } from "./BoardColumn";
 import { indexBoardLabels } from "./labelColour";
 import { BoardModeTabs } from "./BoardModeTabs";
@@ -145,7 +147,6 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
   const labelCatalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const labelsById = useMemo(() => indexBoardLabels(labelCatalogue), [labelCatalogue]);
-  const createCard = useAtomCommand(boardEnvironment.createCard);
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
   const reorderCard = useAtomCommand(boardEnvironment.reorderCard);
 
@@ -370,6 +371,14 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     },
     [navigate],
   );
+  const handleCloseDetail = useCallback(() => {
+    void navigate({
+      search: (previous) => {
+        const { card: _card, ...rest } = previous;
+        return rest;
+      },
+    });
+  }, [navigate]);
 
   const listRefs = useRef<Partial<Record<BoardStage, LegendListRef | null>>>({});
   const registerListRef = useCallback((stage: BoardStage, list: LegendListRef | null) => {
@@ -403,37 +412,13 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     });
   }, [collapsedByStage, columns, search.card, setColumnCollapsed]);
 
-  // ── Inline add ──────────────────────────────────────────────────────
-  const handleAddCard = useCallback(
-    (stage: BoardStage, title: string, projectId: ProjectId) => {
-      const cardId = BoardCardId.make(randomUUID());
-      // Creation is restricted to Backlog, Sprint and Planning (t3o-06a), and
-      // the add button only appears on those columns — so the card is created
-      // directly into the target stage, no follow-up move.
-      void createCard({
-        environmentId,
-        input: {
-          cardId,
-          projectId,
-          title,
-          stage,
-          // The per-project key prefix from settings (t3o-07); the decider
-          // falls back to the default when unset, so this is always safe.
-          keyPrefix: resolveBoardKeyPrefix(boardSettings, projectId),
-          orderKey: boardColumnAppendOrderKey(columns[stage]),
-        },
-      }).then((created) => {
-        if (created._tag === "Failure" && !isAtomCommandInterrupted(created)) {
-          toastManager.add({
-            type: "error",
-            title: "Card not created",
-            description: commandFailureDescription(created),
-          });
-        }
-      });
-    },
-    [boardSettings, columns, createCard, environmentId],
-  );
+  // ── Create dialog ───────────────────────────────────────────────────
+  // Both the column add buttons and the top-bar button open the same dialog
+  // (t3o-06). The dialog owns creation (title, brief, labels, project, stage
+  // and initial dependencies land in one atomic create); this only tracks
+  // which stage to prefill. Absent means closed.
+  const [createStage, setCreateStage] = useState<BoardStage | null>(null);
+  const openCreate = useCallback((stage: BoardStage) => setCreateStage(stage), []);
 
   const addProjects = useMemo(
     () =>
@@ -513,47 +498,74 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
             ))}
           </div>
         ) : null}
+        <span className="flex-1" />
+        {projects.length > 0 ? (
+          <Button onClick={() => openCreate("backlog")} size="xs" variant="secondary">
+            <PlusIcon />
+            New card
+          </Button>
+        ) : null}
       </div>
-      <DndContext
-        collisionDetection={closestCorners}
-        onDragCancel={handleDragCancel}
-        onDragEnd={handleDragEnd}
-        onDragStart={handleDragStart}
-        sensors={sensors}
-      >
-        <div className="flex min-h-0 flex-1 gap-2.5 overflow-x-auto px-3 pb-3 sm:px-5">
-          {BOARD_STAGES.map((stage) => (
-            <BoardColumn
-              accentNameFor={accentNameFor}
-              addProjects={addProjects}
-              cards={columns[stage]}
-              labelsById={labelsById}
-              collapsed={isBoardColumnCollapsed(collapsedByStage, stage)}
-              key={stage}
-              listRef={registerListRef}
-              onAddCard={handleAddCard}
-              onSelectCard={handleSelectCard}
-              onSetCollapsed={setColumnCollapsed}
-              queueSlots={queueSlots}
-              selectedCardId={selectedCardId}
-              stage={stage}
-            />
-          ))}
-        </div>
-        <DragOverlay>
-          {activeCard !== null ? (
-            <div className="w-68">
-              <BoardCardContent
-                card={activeCard.card}
+      <div className="flex min-h-0 flex-1">
+        <DndContext
+          collisionDetection={closestCorners}
+          onDragCancel={handleDragCancel}
+          onDragEnd={handleDragEnd}
+          onDragStart={handleDragStart}
+          sensors={sensors}
+        >
+          <div className="flex min-h-0 flex-1 gap-2.5 overflow-x-auto px-3 pb-3 sm:px-5">
+            {BOARD_STAGES.map((stage) => (
+              <BoardColumn
+                accentNameFor={accentNameFor}
+                addProjects={addProjects}
+                cards={columns[stage]}
                 labelsById={labelsById}
-                queueSlot={undefined}
-                selected={false}
-                accentName={accentNameFor(activeCard.card.projectId)}
+                collapsed={isBoardColumnCollapsed(collapsedByStage, stage)}
+                key={stage}
+                listRef={registerListRef}
+                onRequestCreate={openCreate}
+                onSelectCard={handleSelectCard}
+                onSetCollapsed={setColumnCollapsed}
+                queueSlots={queueSlots}
+                selectedCardId={selectedCardId}
+                stage={stage}
               />
-            </div>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+            ))}
+          </div>
+          <DragOverlay>
+            {activeCard !== null ? (
+              <div className="w-68">
+                <BoardCardContent
+                  card={activeCard.card}
+                  labelsById={labelsById}
+                  queueSlot={undefined}
+                  selected={false}
+                  accentName={accentNameFor(activeCard.card.projectId)}
+                />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+        {selectedCardId !== null ? (
+          <BoardCardDetail
+            cardId={BoardCardId.make(selectedCardId)}
+            environmentId={environmentId}
+            key={selectedCardId}
+            onClose={handleCloseDetail}
+          />
+        ) : null}
+      </div>
+      <BoardCardCreateDialog
+        defaultProjectId={scopeProjectId}
+        defaultStage={createStage ?? "backlog"}
+        environmentId={environmentId}
+        onOpenChange={(open) => {
+          if (!open) setCreateStage(null);
+        }}
+        open={createStage !== null}
+        projects={addProjects}
+      />
     </div>
   );
 }
