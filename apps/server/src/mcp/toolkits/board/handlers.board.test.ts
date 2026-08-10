@@ -253,6 +253,26 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_create_card rejects an unknown dependency before creating anything", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const before = yield* boardHandlers.board_list_cards({}).pipe(withScope(orphanThread));
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_create_card({
+            projectId,
+            title: "Depends on a ghost",
+            dependsOn: [BoardCardId.make("card-ghost")],
+          })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      // No half-built card was left behind by the rejected create.
+      const after = yield* boardHandlers.board_list_cards({}).pipe(withScope(orphanThread));
+      assert.strictEqual(after.cards.length, before.cards.length);
+    }),
+  );
+
   it.effect("board_create_card cannot create into Building (D18)", () =>
     Effect.gen(function* () {
       yield* seed();
