@@ -2,7 +2,7 @@
 id: t3o-08
 title: MCP board toolkit — the agent write path
 phase: 2
-prerequisites: [t3o-03]
+prerequisites: [t3o-03, t3o-06a]
 ---
 
 # MCP board toolkit
@@ -55,11 +55,17 @@ Capability is granted broadly; **the handlers authorize**. Every tool resolves t
 ### Board-scoped (require an explicit target)
 
 - `board_list_cards` — filter by project, stage, key, text.
-- `board_create_card` — title, brief, type, project, target stage, dependencies. Returns the
-  allocated key.
+- `board_create_card` — title, brief, labels, project, target stage, dependencies. Returns the
+  allocated key. **Target stage is Backlog, Sprint or Planning only** (`t3o-06a`) — an agent gets no
+  privileged path to inject work mid-pipeline.
 - `board_move_card` — move a card between stages, subject to the same decider invariants a drag is
   subject to. No privileged path: an agent cannot move a blocked card past Ready either.
-- `board_update_card` — title, brief, type, dependencies, `externalRef`.
+- `board_update_card` — title, brief, labels, dependencies, `externalRef`.
+
+Labels are the user-managed vocabulary from `t3o-06a`, not a closed enum. An agent naming a label
+that does not exist gets an actionable rejection listing the live catalogue; it does **not** create
+labels as a side effect of tagging. Whether agents may create labels at all is a `t3o-06a` follow-up,
+deliberately not decided here.
 
 `board_create_card` and `board_move_card` exist so an agent can populate and drive a board
 conversationally — "create cards for each of these features and put them in Sprint". Once Phase 1

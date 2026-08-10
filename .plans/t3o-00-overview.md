@@ -329,7 +329,7 @@ paid off, not before.
 | 06a | `t3o-06a-card-labels.md` | 1 | 05 |
 | 06 | `t3o-06-card-ui-and-detail.md` | 1 | 06a |
 | 07 | `t3o-07-settings-board-tab.md` | 1 | 03 |
-| 08 | `t3o-08-mcp-board-toolkit.md` | 2 | 03 |
+| 08 | `t3o-08-mcp-board-toolkit.md` | 2 | 03, 06a |
 | 09 | `t3o-09-worktree-branch-lifecycle.md` | 2 | 03 |
 | 10 | `t3o-10-supervisor-reactor.md` | 2 | 08, 09 |
 | 11 | `t3o-11-concurrency-governor.md` | 2 | 10 |
