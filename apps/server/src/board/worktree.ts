@@ -74,6 +74,44 @@ export interface BoardCardWorktreeProvisionResult {
  * step: dispatch `provision-worktree` first, run this, then `record-worktree`
  * on success or `fail-worktree` on error.
  */
+/**
+ * The worktree path already checked out for `branch`, parsed from
+ * `git worktree list --porcelain`, or null if the branch has no worktree.
+ * Pure so it is unit-tested without a repo. Porcelain output is blank-line
+ * separated blocks; a block's `branch refs/heads/<name>` line names the ref,
+ * and `worktree <path>` its checkout.
+ */
+export function parseWorktreePathForBranch(porcelain: string, branch: string): string | null {
+  const wanted = `branch refs/heads/${branch}`;
+  let currentPath: string | null = null;
+  for (const line of porcelain.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length).trim();
+    } else if (line.trim() === wanted && currentPath !== null) {
+      return currentPath;
+    } else if (line.trim() === "") {
+      currentPath = null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Create the card's branch and worktree from `baseRefName` (D6). One
+ * `git worktree add -b <branch> <path> <baseRefName>`, exactly as the thread
+ * bootstrap does — the branch is created as part of the worktree add, and
+ * `baseRefName` records the merge base. Slow and fallible by nature (it
+ * triggers `runOnWorktreeCreate`), so the caller wraps it as the "provisioning"
+ * step: dispatch `provision-worktree` first, run this, then `record-worktree`
+ * on success or `fail-worktree` on error.
+ *
+ * Retry-safe (D6 — "a failed step with a retry, not a wedged card"): a prior
+ * attempt may already have created the branch, or the whole worktree, before
+ * failing (e.g. the setup script died). Recover by reusing that state rather
+ * than failing on "already exists", and never delete work to do so — a
+ * worktree already on the branch is returned as-is; a branch that exists
+ * without a worktree gets one attached; only a clean slate cuts a new branch.
+ */
 export const provisionBoardCardWorktree = Effect.fn("provisionBoardCardWorktree")(
   function* (input: {
     readonly projectCwd: string;
@@ -81,10 +119,30 @@ export const provisionBoardCardWorktree = Effect.fn("provisionBoardCardWorktree"
     readonly baseRefName: string;
   }) {
     const git = yield* GitVcsDriver.GitVcsDriver;
+
+    const worktrees = yield* git.execute({
+      operation: "boardCardWorktree.list",
+      cwd: input.projectCwd,
+      args: ["worktree", "list", "--porcelain"],
+      timeoutMs: 10_000,
+    });
+    const existingPath = parseWorktreePathForBranch(worktrees.stdout, input.branch);
+    if (existingPath !== null) {
+      // A prior attempt already checked the branch out — reuse it, don't fail.
+      return {
+        path: existingPath,
+        branch: input.branch,
+        baseRefName: input.baseRefName,
+      } satisfies BoardCardWorktreeProvisionResult;
+    }
+
+    // The branch may exist from a partial attempt with no worktree; attach one
+    // to it rather than trying (and failing) to re-create it with `-b`.
+    const branchExists = (yield* git.listLocalBranchNames(input.projectCwd)).includes(input.branch);
     const created = yield* git.createWorktree({
       cwd: input.projectCwd,
-      refName: input.baseRefName,
-      newRefName: input.branch,
+      refName: branchExists ? input.branch : input.baseRefName,
+      ...(branchExists ? {} : { newRefName: input.branch }),
       baseRefName: input.baseRefName,
       path: null,
     });

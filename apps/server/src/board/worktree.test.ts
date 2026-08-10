@@ -23,6 +23,7 @@ import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
   boardCardWorktreeReclaimDecision,
+  parseWorktreePathForBranch,
   provisionBoardCardWorktree,
   reclaimBoardCardWorktree,
   resolveBoardCardBaseRef,
@@ -186,6 +187,34 @@ it.effect("reclaim decision: unpushed commits are refused with a count", () =>
   }),
 );
 
+// ── Worktree-list parsing (retry recovery) ─────────────────────────────
+
+const PORCELAIN = [
+  "worktree /repo",
+  "HEAD 1111111111111111111111111111111111111111",
+  "branch refs/heads/main",
+  "",
+  "worktree /repo/.worktrees/board-card-1",
+  "HEAD 2222222222222222222222222222222222222222",
+  "branch refs/heads/board/card-1",
+  "",
+].join("\n");
+
+it.effect("finds an existing worktree path for a branch", () =>
+  Effect.sync(() => {
+    assert.strictEqual(
+      parseWorktreePathForBranch(PORCELAIN, "board/card-1"),
+      "/repo/.worktrees/board-card-1",
+    );
+  }),
+);
+
+it.effect("returns null when no worktree holds the branch", () =>
+  Effect.sync(() => {
+    assert.strictEqual(parseWorktreePathForBranch(PORCELAIN, "board/absent"), null);
+  }),
+);
+
 // ── Serialisation guard ────────────────────────────────────────────────
 
 it.effect("permits zero or one writer on a card worktree", () =>
@@ -232,6 +261,31 @@ it.effect("entering Building creates the card's branch and worktree", () =>
       assert.isTrue(yield* fileSystem.exists(result.path), "worktree directory exists on disk");
       const branches = yield* git(cwd, ["branch", "--list", "board/card-1"]);
       assert.match(branches, /board\/card-1/);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("re-provisioning after a partial attempt reuses the existing worktree, not a wedge", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+
+      const first = yield* provisionBoardCardWorktree({
+        projectCwd: cwd,
+        branch: "board/card-1",
+        baseRefName: initialBranch,
+      });
+      // A retry (the decider allows re-provisioning a `failed` worktree) must
+      // recover rather than fail on "branch already exists".
+      const retry = yield* provisionBoardCardWorktree({
+        projectCwd: cwd,
+        branch: "board/card-1",
+        baseRefName: initialBranch,
+      });
+
+      assert.strictEqual(retry.path, first.path);
+      assert.strictEqual(retry.branch, "board/card-1");
     }),
   ).pipe(Effect.provide(TestLayer)),
 );
