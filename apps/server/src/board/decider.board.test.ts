@@ -132,6 +132,8 @@ const createCommand = (input: {
   readonly keyPrefix?: string;
   readonly stage?: BoardCard["stage"];
   readonly labels?: ReadonlyArray<string>;
+  readonly brief?: string;
+  readonly dependsOn?: ReadonlyArray<string>;
 }) =>
   ({
     type: "board.card.create",
@@ -145,6 +147,10 @@ const createCommand = (input: {
     ...(input.labels === undefined
       ? {}
       : { labels: input.labels.map((id) => BoardLabelId.make(id)) }),
+    ...(input.brief === undefined ? {} : { brief: input.brief }),
+    ...(input.dependsOn === undefined
+      ? {}
+      : { dependsOn: input.dependsOn.map((id) => BoardCardId.make(id)) }),
     createdAt: NOW,
   }) as const;
 
@@ -997,6 +1003,56 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         makeReadModel({ board: { cards: [], labels: catalogue, nextCardNumberByProject: {} } }),
       );
       assert.include(String(failure), "at most");
+    }),
+  );
+
+  // ── Brief and dependencies at creation (t3o-06) ──────────────────────
+
+  it.effect("carries a brief through the created payload; body is not in the read model", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        createCommand({ cardId: "card-brief", brief: "Ship the thing" }),
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.strictEqual(event.type, "board.card-created");
+      if (event.type === "board.card-created") {
+        // The body text rides the event (the projector writes it to
+        // board_card_bodies); the read-model card only ever holds briefRef.
+        assert.strictEqual(event.payload.brief, "Ship the thing");
+      }
+    }),
+  );
+
+  it.effect("carries initial dependencies and rejects one that does not exist", () =>
+    Effect.gen(function* () {
+      const dependency = makeCard({ id: "card-dep", stage: "backlog" });
+      const ok = yield* decide(
+        createCommand({ cardId: "card-with-deps", dependsOn: ["card-dep"] }),
+        makeReadModel({ board: seededBoard([dependency]) }),
+      );
+      assert.strictEqual(ok.type, "board.card-created");
+      if (ok.type === "board.card-created") {
+        assert.deepStrictEqual(ok.payload.dependsOn, [BoardCardId.make("card-dep")]);
+      }
+      const failure = yield* decideFail(
+        createCommand({ cardId: "card-ghost-dep", dependsOn: ["card-gone"] }),
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.include(String(failure), "does not exist");
+    }),
+  );
+
+  it.effect("a deps-free create omits the brief key and carries an empty dependsOn", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        createCommand({ cardId: "card-plain" }),
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.strictEqual(event.type, "board.card-created");
+      if (event.type === "board.card-created") {
+        assert.isUndefined(event.payload.brief);
+        assert.deepStrictEqual(event.payload.dependsOn, []);
+      }
     }),
   );
 

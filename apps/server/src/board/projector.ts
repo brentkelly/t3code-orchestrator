@@ -13,7 +13,9 @@
  * restore the card on a from-empty replay.
  */
 import {
+  BOARD_CARD_BRIEF_BODY_KIND,
   BoardCardArchivedPayload,
+  boardCardCreatedDependsOn,
   boardCardCreatedLabels,
   BoardCardCreatedPayload,
   BoardCardMovedPayload,
@@ -96,8 +98,12 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     stage: payload.stage,
     orderKey: payload.orderKey,
     title: payload.title,
-    briefRef: null,
-    dependsOn: [],
+    // A brief captured at creation (t3o-06) sets the sentinel ref; the body
+    // itself lives only in `board_card_bodies` (D8), written by the SQL
+    // projector. `dependsOn` rides the payload; a creation-stage card is
+    // always before Ready, so it is never blocked at birth (D18).
+    briefRef: payload.brief === undefined ? null : BOARD_CARD_BRIEF_BODY_KIND,
+    dependsOn: boardCardCreatedDependsOn(payload),
     parentCardId: null,
     threadLinks: [],
     externalRef: null,
