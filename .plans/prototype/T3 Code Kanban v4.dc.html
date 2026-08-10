@@ -460,9 +460,11 @@ a:hover{text-decoration:underline}
                       </div>
                       <div style="flex:1"></div>
                       <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ col.count }}</span>
-                      <button type="button" onClick="{{ col.add }}" title="New task here" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
-                      </button>
+                      <sc-if value="{{ col.canAdd }}" hint-placeholder-val="{{ true }}">
+                        <button type="button" onClick="{{ col.add }}" title="New task here" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+                        </button>
+                      </sc-if>
                     </div>
                     <div style="display:flex;flex-direction:column;gap:8px">
                       <sc-for list="{{ col.items }}" as="c" hint-placeholder-count="2">
@@ -557,8 +559,11 @@ a:hover{text-decoration:underline}
                         </article>
                         </sc-if>
                       </sc-for>
-                      <sc-if value="{{ col.empty }}" hint-placeholder-val="{{ false }}">
+                      <sc-if value="{{ col.emptyAdd }}" hint-placeholder-val="{{ false }}">
                         <button type="button" onClick="{{ col.add }}" style="border:1px dashed var(--border);border-radius:10px;background:transparent;color:var(--muted-fg);font:400 12px var(--font-sans);padding:14px 10px;cursor:pointer" style-hover="border-color:var(--input);color:var(--fg)">Drop a task here</button>
+                      </sc-if>
+                      <sc-if value="{{ col.emptyPlain }}" hint-placeholder-val="{{ false }}">
+                        <div style="border:1px dashed var(--border);border-radius:10px;color:var(--muted-fg);font:400 12px var(--font-sans);padding:14px 10px;text-align:center">Drop a task here</div>
                       </sc-if>
                     </div>
                   </div>
@@ -1090,6 +1095,45 @@ a:hover{text-decoration:underline}
 
             <div style="{{ groupMetaStyle }}">
             <div style="{{ sideStageStyle }}">
+            <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Label</div>
+            <div style="display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;scrollbar-width:thin;padding-bottom:2px">
+              <sc-for list="{{ cardLabelPicker.chips }}" as="t" hint-placeholder-count="3">
+                <button type="button" onClick="{{ t.select }}" style="{{ t.style }}">{{ t.name }}</button>
+              </sc-for>
+            </div>
+            <div style="position:relative;margin-top:6px">
+              <input type="text" value="{{ cardLabelPicker.query }}" onInput="{{ cardLabelPicker.onQuery }}" onFocus="{{ cardLabelPicker.onFocus }}" onBlur="{{ cardLabelPicker.onBlur }}" onKeyDown="{{ cardLabelPicker.onKey }}" placeholder="{{ cardLabelPicker.placeholder }}" style="width:100%;height:30px;padding:0 10px;border:1px solid var(--input);border-radius:8px;background:var(--bg);color:var(--fg);font:400 12.5px var(--font-sans);outline:none;box-sizing:border-box">
+              <sc-if value="{{ cardLabelPicker.open }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:8;max-height:230px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;background:var(--popover);box-shadow:var(--shadow-pop);padding:4px;display:flex;flex-direction:column;gap:1px">
+                  <sc-for list="{{ cardLabelPicker.matches }}" as="o" hint-placeholder-count="3">
+                    <div>
+                      <div onMouseDown="{{ o.pick }}" style="{{ o.style }}">
+                        <span style="width:10px;height:10px;flex:none;border-radius:3px;background:{{ o.color }}"></span>
+                        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left">{{ o.name }}</span>
+                        <span onMouseDown="{{ o.toggleEdit }}" title="Change colour" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:none;border-radius:5px;color:var(--muted-fg)" style-hover="background:var(--accent);color:var(--fg)">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+                        </span>
+                      </div>
+                      <sc-if value="{{ o.editing }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex;flex-wrap:wrap;gap:5px;padding:6px 6px 8px 24px">
+                          <sc-for list="{{ o.swatches }}" as="w" hint-placeholder-count="8">
+                            <div onMouseDown="{{ w.select }}" style="{{ w.style }}"></div>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                  <sc-if value="{{ cardLabelPicker.canCreate }}" hint-placeholder-val="{{ false }}">
+                    <div onMouseDown="{{ cardLabelPicker.create }}" style="display:flex;align-items:center;gap:8px;height:28px;padding:0 6px;border-radius:7px;cursor:pointer;font:500 12.5px var(--font-sans);color:var(--fg)" style-hover="background:var(--accent)">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+                      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left">Create "{{ cardLabelPicker.createName }}"</span>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+            </div>
+            </div>
+            <div style="{{ sideStageStyle }}">
             <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Stage</div>
             <div style="display:flex;flex-direction:column;gap:1px">
               <sc-for list="{{ activeCard.stages }}" as="s" hint-placeholder-count="8">
@@ -1141,6 +1185,45 @@ a:hover{text-decoration:underline}
                   <span style="font-family:var(--font-sans);font-size:12px">{{ p.name }}</span>
                 </button>
               </sc-for>
+            </div>
+          </div>
+          <div>
+            <label style="display:block;font:500 12px var(--font-sans);color:var(--fg);margin-bottom:6px">Label</label>
+            <div style="display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;scrollbar-width:thin;padding-bottom:2px">
+              <sc-for list="{{ createLabelPicker.chips }}" as="t" hint-placeholder-count="3">
+                <button type="button" onClick="{{ t.select }}" style="{{ t.style }}">{{ t.name }}</button>
+              </sc-for>
+            </div>
+            <div style="position:relative;margin-top:6px">
+              <input type="text" value="{{ createLabelPicker.query }}" onInput="{{ createLabelPicker.onQuery }}" onFocus="{{ createLabelPicker.onFocus }}" onBlur="{{ createLabelPicker.onBlur }}" onKeyDown="{{ createLabelPicker.onKey }}" placeholder="{{ createLabelPicker.placeholder }}" style="width:100%;height:34px;padding:0 10px;border:1px solid var(--input);border-radius:8px;background:var(--bg);color:var(--fg);font:400 12.5px var(--font-sans);outline:none;box-sizing:border-box">
+              <sc-if value="{{ createLabelPicker.open }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:8;max-height:230px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;background:var(--popover);box-shadow:var(--shadow-pop);padding:4px;display:flex;flex-direction:column;gap:1px">
+                  <sc-for list="{{ createLabelPicker.matches }}" as="o" hint-placeholder-count="3">
+                    <div>
+                      <div onMouseDown="{{ o.pick }}" style="{{ o.style }}">
+                        <span style="width:10px;height:10px;flex:none;border-radius:3px;background:{{ o.color }}"></span>
+                        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left">{{ o.name }}</span>
+                        <span onMouseDown="{{ o.toggleEdit }}" title="Change colour" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:none;border-radius:5px;color:var(--muted-fg)" style-hover="background:var(--accent);color:var(--fg)">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+                        </span>
+                      </div>
+                      <sc-if value="{{ o.editing }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex;flex-wrap:wrap;gap:5px;padding:6px 6px 8px 24px">
+                          <sc-for list="{{ o.swatches }}" as="w" hint-placeholder-count="8">
+                            <div onMouseDown="{{ w.select }}" style="{{ w.style }}"></div>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                  <sc-if value="{{ createLabelPicker.canCreate }}" hint-placeholder-val="{{ false }}">
+                    <div onMouseDown="{{ createLabelPicker.create }}" style="display:flex;align-items:center;gap:8px;height:28px;padding:0 6px;border-radius:7px;cursor:pointer;font:500 12.5px var(--font-sans);color:var(--fg)" style-hover="background:var(--accent)">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+                      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left">Create "{{ createLabelPicker.createName }}"</span>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
             </div>
           </div>
           <div>
@@ -1205,11 +1288,17 @@ const STAGES = [
   { id: "done", name: "Done", dot: "#a1a1aa", action: null },
 ];
 const PRIMARY_ACTIONS = { backlog: true, sprint: true, ready: true, merge: true };
-const TYPE_COLORS = {
-  feature: ["--info", "--info-fg"],
-  bug: ["--destructive", "--destructive-fg"],
-  chore: ["--warning", "--warning-fg"],
-};
+const LABEL_SWATCHES = [
+  "#ef4444","#f97316","#f59e0b","#eab308","#84cc16","#22c55e",
+  "#10b981","#14b8a6","#06b6d4","#0ea5e9","#3b82f6","#6366f1",
+  "#8b5cf6","#a855f7","#d946ef","#ec4899","#f43f5e","#78716c",
+  "#a1a1aa","#64748b","#0f766e","#7c2d12","#1e40af","#4c1d95",
+];
+const SEED_LABELS = [
+  { name: "feature", color: "#3b82f6" },
+  { name: "bug", color: "#ef4444" },
+  { name: "chore", color: "#f59e0b" },
+];
 const PROJECTS = [
   { id: "advisor", name: "core.agent.advisor", branch: "main", dot: "#8b8bf5" },
   { id: "web", name: "mesh.web", branch: "feat/board", dot: "#38bdf8" },
@@ -1226,8 +1315,8 @@ const SEED = [
   { key: "T3-195", p: "advisor", type: "feature", status: "sprint", title: "Persist composer drafts per worktree", brief: "Drafts are keyed by thread today; switching worktrees loses the in-progress prompt." },
   { key: "T3-193", p: "advisor", type: "chore", status: "planning", t: "working", title: "Group worktrees by environment in the branch picker", brief: "The picker lists 40+ worktrees flat. Group by environment with a sticky header per group." },
   { key: "T3-188", p: "advisor", type: "feature", status: "building", title: "Kanban board mode in the workspace shell", brief: "Add a top-level mode switch: threads or board. Board is per project, with drag between stages.", deps: ["T3-195"], plan: PLAN("Kanban board mode", ["Add workspaceMode atom persisted in client storage", "Mount BoardView beside ChatView under AppSidebarLayout", "Cards are server-authoritative events, same store as threads", "Dependencies are edges on the task record, validated on progress"], ["apps/web/src/components/BoardView.tsx", "apps/web/src/state/board.ts", "packages/contracts/src/task.ts"]) },
-  { key: "T3-186", p: "advisor", type: "feature", status: "building", t: "working", title: "Server-authoritative event sourcing cleanup", brief: "Collapse the duplicate client reducer so the server event log is the single source of truth.", plan: PLAN("Event sourcing cleanup", ["Delete the client-side mirror reducer", "Replay from the server log on reconnect", "Add a determinism test over recorded fixtures"], ["apps/server/src/events/log.ts", "packages/client-runtime/src/replay.ts"]) },
-  { key: "T3-182", p: "advisor", type: "feature", status: "review", t: "waiting", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
+  { key: "T3-186", p: "advisor", type: "feature", status: "building", t: "waiting", title: "Server-authoritative event sourcing cleanup", brief: "Collapse the duplicate client reducer so the server event log is the single source of truth.", plan: PLAN("Event sourcing cleanup", ["Delete the client-side mirror reducer", "Replay from the server log on reconnect", "Add a determinism test over recorded fixtures"], ["apps/server/src/events/log.ts", "packages/client-runtime/src/replay.ts"]) },
+  { key: "T3-182", p: "advisor", type: "feature", status: "review", t: "working", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
   { key: "T3-179", p: "advisor", type: "chore", status: "merge", title: "Pre-commit format and lint gate", brief: "Formatting drift keeps landing on main. Gate commits with the same checks CI runs.", plan: PLAN("Pre-commit gate", ["Wire lefthook with a staged-file filter", "Run oxlint + prettier on staged files only", "Document the escape hatch in CONTRIBUTING"], ["lefthook.yml", "CONTRIBUTING.md"]), pr: { n: 284, title: "chore: pre-commit format and lint", add: 96, del: 12, files: ["lefthook.yml", "package.json", "CONTRIBUTING.md"], state: "Approved" } },
   { key: "T3-171", p: "advisor", type: "chore", status: "done", title: "Diff panel scroll fade", brief: "Rows now fade under the sticky header instead of cutting hard.", plan: PLAN("Diff panel scroll fade", ["Reuse the chat timeline mask", "Respect the scrollbar gutter"], ["apps/web/src/components/DiffPanel.tsx"]), pr: { n: 276, title: "fix(diff): scroll fade under header", add: 41, del: 9, files: ["apps/web/src/components/DiffPanel.tsx", "apps/web/src/index.css"], state: "Merged" } },
   { key: "T3-168", p: "advisor", type: "bug", status: "done", title: "Fix knowledge capture skill lookup", brief: "Skill ids were resolved case-sensitively, so captures silently no-oped.", plan: PLAN("Skill lookup fix", ["Normalize ids at the registry boundary", "Add a regression test"], ["packages/shared/src/skills.ts"]), pr: { n: 268, title: "fix: normalize skill ids", add: 28, del: 6, files: ["packages/shared/src/skills.ts"], state: "Merged" } },
@@ -1436,6 +1525,9 @@ class Component extends DCLogic {
       activeId: null,
       createOpen: false,
       createStatus: "backlog",
+      createType: "feature",
+      labels: SEED_LABELS.slice(),
+      lp: { open: false, target: null, query: "", edit: null },
       createProject: "advisor",
       draftTitle: "",
       draftBrief: "",
@@ -1991,9 +2083,124 @@ class Component extends DCLogic {
       fg
     );
   }
+  labelColor(name) {
+    const l = (this.state.labels || SEED_LABELS).find((x) => x.name === name);
+    return l ? l.color : "#a1a1aa";
+  }
   typeStyle(type) {
-    const [bg, fg] = TYPE_COLORS[type] || TYPE_COLORS.chore;
-    return `display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;background:color-mix(in srgb,var(${bg}) 10%,transparent);color:var(${fg})`;
+    const c = this.labelColor(type);
+    return `display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;background:color-mix(in srgb,${c} 14%,transparent);color:color-mix(in srgb,${c} 78%,var(--fg))`;
+  }
+  typeChipOn(type) {
+    const c = this.labelColor(type);
+    return `border:1px solid color-mix(in srgb,${c} 50%,transparent);background:color-mix(in srgb,${c} 14%,var(--popover));color:color-mix(in srgb,${c} 78%,var(--fg))`;
+  }
+  labelPickerVm(target) {
+    const st = this.state;
+    const lp = st.lp || {};
+    const open = !!lp.open && lp.target === target;
+    const raw = open ? lp.query : "";
+    const q = raw.trim().toLowerCase();
+    const current =
+      target === "create"
+        ? st.createType || "feature"
+        : (st.cards.find((c) => c.id === st.activeId) || {}).type;
+    const apply = (name) => {
+      if (target === "create") this.setState({ createType: name });
+      else
+        this.setState((s2) => ({
+          cards: s2.cards.map((c) =>
+            c.id === s2.activeId ? { ...c, type: name } : c,
+          ),
+        }));
+    };
+    const close = () =>
+      this.setState({ lp: { open: false, target: null, query: "", edit: null } });
+    const chipStyle = (name, on, h) =>
+      "display:inline-flex;flex:none;white-space:nowrap;align-items:center;gap:6px;height:" + h + "px;padding:0 10px;border-radius:8px;cursor:pointer;font:500 12px var(--font-sans);text-transform:capitalize;" +
+      (on
+        ? this.typeChipOn(name)
+        : "border:1px solid var(--input);background:var(--popover);color:var(--muted-fg)");
+    return {
+      chips: (st.labels || []).map((l) => ({
+        name: l.name,
+        select: () => apply(l.name),
+        style: chipStyle(l.name, l.name === current, target === "create" ? 30 : 26),
+      })),
+      query: raw,
+      open,
+      placeholder: "Search or create a label",
+      onQuery: (e) =>
+        this.setState({ lp: { open: true, target, query: e.target.value, edit: null } }),
+      onFocus: () =>
+        this.setState((s2) => ({
+          lp: { open: true, target, query: (s2.lp && s2.lp.target === target && s2.lp.query) || "", edit: null },
+        })),
+      onBlur: () => setTimeout(close, 140),
+      onKey: (e) => {
+        if (e.key === "Escape") close();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const hit = (st.labels || []).filter(
+            (l) => !q || l.name.toLowerCase().includes(q),
+          )[0];
+          if (hit) { apply(hit.name); close(); }
+          else if (q) this.addLabel(raw.trim(), apply, close);
+        }
+      },
+      matches: (st.labels || [])
+        .filter((l) => !q || l.name.toLowerCase().includes(q))
+        .map((l) => ({
+          name: l.name,
+          color: l.color,
+          current: l.name === current,
+          editing: lp.edit === l.name,
+          pick: (e) => { e.preventDefault(); apply(l.name); close(); },
+          toggleEdit: (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.setState((s2) => ({
+              lp: { ...s2.lp, open: true, target, edit: s2.lp.edit === l.name ? null : l.name },
+            }));
+          },
+          swatches: LABEL_SWATCHES.map((c) => ({
+            select: (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              this.setState((s2) => ({
+                labels: s2.labels.map((x) => (x.name === l.name ? { ...x, color: c } : x)),
+              }));
+            },
+            style:
+              "width:20px;height:20px;flex:none;border-radius:5px;cursor:pointer;background:" + c +
+              ";border:2px solid " + (l.color === c ? "var(--fg)" : "transparent"),
+          })),
+          style:
+            "display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 6px;border:none;border-radius:7px;cursor:pointer;font:" +
+            (l.name === current ? "500" : "400") +
+            " 12.5px var(--font-sans);text-transform:capitalize;color:var(--fg);background:" +
+            (l.name === current ? "var(--accent)" : "transparent"),
+        })),
+      canCreate: !!q && !(st.labels || []).some((l) => l.name.toLowerCase() === q),
+      createName: raw.trim(),
+      create: (e) => { e.preventDefault(); this.addLabel(raw.trim(), apply, close); },
+    };
+  }
+  addLabel(name, apply, close) {
+    if (!name) return;
+    this.setState((s2) => {
+      if (s2.labels.some((l) => l.name.toLowerCase() === name.toLowerCase())) return null;
+      const used = s2.labels.map((l) => l.color);
+      const stride = 7; // coprime with the palette length: each pick lands ~105° away
+      let color = LABEL_SWATCHES[(s2.labels.length * stride) % LABEL_SWATCHES.length];
+      for (let i = 0; i < LABEL_SWATCHES.length; i++) {
+        const c = LABEL_SWATCHES[(s2.labels.length * stride + i) % LABEL_SWATCHES.length];
+        if (!used.includes(c)) { color = c; break; }
+      }
+      return { labels: s2.labels.concat({ name, color }) };
+    });
+    apply(name);
+    close();
   }
   startDrag(e, card, colKey, index) {
     const el = e.currentTarget;
@@ -2348,8 +2555,12 @@ class Component extends DCLogic {
           const isOver = !!st.dragId && st.overCol === colKey && !sameSpot;
           if (isOver) items.splice(at, 0, placeholderVm());
           const isCollapsed = !!st.colCollapsed[colKey];
+          const canAdd = ["backlog", "sprint", "planning"].includes(stage.id);
           return {
             items,
+            canAdd,
+            emptyAdd: items.length === 0 && canAdd,
+            emptyPlain: items.length === 0 && !canAdd,
             isOver,
             name: stage.name,
             dot: stage.dot,
@@ -2377,6 +2588,7 @@ class Component extends DCLogic {
               this.setState({
                 createOpen: true,
                 createStatus: stage.id,
+                createType: "feature",
                 createProject: isAll ? "advisor" : p.id,
                 draftTitle: "",
                 draftBrief: "",
@@ -3470,6 +3682,7 @@ class Component extends DCLogic {
         this.setState({
           createOpen: true,
           createStatus: "backlog",
+          createType: "feature",
           createProject: st.scope === "all" ? "advisor" : st.scope,
           draftTitle: "",
           draftBrief: "",
@@ -3506,6 +3719,8 @@ class Component extends DCLogic {
         };
         reader.readAsDataURL(file);
       },
+      createLabelPicker: this.labelPickerVm("create"),
+      cardLabelPicker: this.labelPickerVm("card"),
       createProjects: PROJECTS.map((p) => {
         const on = st.createProject === p.id;
         return {
@@ -3617,7 +3832,7 @@ class Component extends DCLogic {
           id: "c" + Date.now(),
           key: prefix + nextNum,
           project: this.state.createProject,
-          type: "feature",
+          type: this.state.createType || "feature",
           status: this.state.createStatus,
           title,
           brief: html || '<p style="margin:0;color:var(--muted-fg)">No brief yet.</p>',
