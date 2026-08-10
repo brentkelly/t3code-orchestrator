@@ -11,10 +11,12 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   BOARD_CARD_LABELS_MAX,
   BOARD_CARD_SHELL_TITLE_MAX_BYTES,
+  BOARD_LABEL_NAME_MAX_LENGTH,
   BoardCardId,
   boardCardShellFromCard,
   BoardCardShell,
   BoardLabelId,
+  BoardLabelName,
   deriveBoardCardThreadState,
   makeBoardCardShell,
   type BoardCard,
@@ -158,6 +160,19 @@ describe("BoardCardShell payload discipline", () => {
     // key-length jitter of larger indices — i.e. growth is linear, not
     // super-linear.
     expect(bytesAt1000).toBeLessThanOrEqual((bytesAt10 / 10) * 1000 * 1.05);
+  });
+});
+
+describe("label name payload discipline (t3o-06a)", () => {
+  const decodeName = Schema.decodeUnknownSync(BoardLabelName);
+
+  it("accepts a name at the length cap and rejects one past it", () => {
+    expect(decodeName("x".repeat(BOARD_LABEL_NAME_MAX_LENGTH))).toHaveLength(
+      BOARD_LABEL_NAME_MAX_LENGTH,
+    );
+    // The catalogue rides every shell snapshot; an unbounded name would bloat
+    // it, so an over-long name is rejected at decode.
+    expect(() => decodeName("x".repeat(BOARD_LABEL_NAME_MAX_LENGTH + 1))).toThrow();
   });
 });
 

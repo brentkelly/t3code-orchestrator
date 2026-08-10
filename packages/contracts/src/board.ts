@@ -73,6 +73,20 @@ export const BoardLabelColour = TrimmedNonEmptyString.check(
 export type BoardLabelColour = typeof BoardLabelColour.Type;
 
 /**
+ * Label names are length-bounded (D7 payload discipline): the catalogue rides
+ * every shell snapshot, so an unbounded name would let one label bloat the
+ * payload every client pulls on reconnect — the same discipline the card
+ * title's byte cap enforces. Validated on the command (rejected at decode) and
+ * on the stored `BoardLabel`, so no path introduces an over-long name. 64 is
+ * generous for a chip label; the prototype's are single words.
+ */
+export const BOARD_LABEL_NAME_MAX_LENGTH = 64;
+export const BoardLabelName = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(BOARD_LABEL_NAME_MAX_LENGTH),
+);
+export type BoardLabelName = typeof BoardLabelName.Type;
+
+/**
  * The prototype's 24-entry swatch (`LABEL_SWATCHES`): the default colour
  * path for a new label. Free hex is still allowed, but the swatch is what
  * `pickNextBoardLabelColour` walks so back-to-back creations do not collide.
@@ -133,7 +147,7 @@ export function pickNextBoardLabelColour(usedColours: ReadonlyArray<string>): Bo
  */
 export const BoardLabel = Schema.Struct({
   labelId: BoardLabelId,
-  name: TrimmedNonEmptyString,
+  name: BoardLabelName,
   colour: BoardLabelColour,
   deletedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
@@ -663,7 +677,7 @@ export const BoardLabelCreateCommand = Schema.Struct({
   type: Schema.Literal("board.label.create"),
   commandId: CommandId,
   labelId: BoardLabelId,
-  name: TrimmedNonEmptyString,
+  name: BoardLabelName,
   /** Absent: the decider assigns a swatch colour via `pickNextBoardLabelColour`
       (guaranteeing back-to-back creates differ). Present: an explicit hex,
       validated against `BOARD_LABEL_COLOUR_PATTERN`. */
@@ -679,7 +693,7 @@ export const BoardLabelUpdateCommand = Schema.Struct({
   type: Schema.Literal("board.label.update"),
   commandId: CommandId,
   labelId: BoardLabelId,
-  name: Schema.optional(TrimmedNonEmptyString),
+  name: Schema.optional(BoardLabelName),
   colour: Schema.optional(BoardLabelColour),
   createdAt: IsoDateTime,
 });
