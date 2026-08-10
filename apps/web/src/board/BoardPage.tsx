@@ -12,6 +12,8 @@ import {
   BoardCardId,
   BOARD_STAGES,
   areBoardStagesAdjacent,
+  resolveBoardKeyPrefix,
+  resolveBoardProjectAccent,
   type BoardCardShell,
   type BoardStage,
   type EnvironmentId,
@@ -63,6 +65,7 @@ import { cn, randomUUID } from "../lib/utils";
 import { environmentShell } from "../state/shell";
 import { boardEnvironment } from "../state/board";
 import { usePrimaryEnvironmentId } from "../state/environments";
+import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { BoardCardContent } from "./BoardCardItem";
@@ -145,6 +148,15 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
 
   const collapsedByStage = useBoardUiStore((state) => state.collapsedByStage);
   const setColumnCollapsed = useBoardUiStore((state) => state.setColumnCollapsed);
+
+  // Board settings (t3o-07): the per-project key prefix used when creating a
+  // card, and the configured accent used to colour a project's cards. Read
+  // once here and threaded down, rather than subscribed per card.
+  const boardSettings = usePrimarySettings((settings) => settings.board);
+  const accentNameFor = useCallback(
+    (projectId: ProjectId) => resolveBoardProjectAccent(boardSettings, projectId),
+    [boardSettings],
+  );
 
   const projects = useMemo(
     () => Option.getOrNull(shellState.snapshot)?.projects ?? [],
@@ -400,6 +412,9 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           projectId,
           title,
           cardType: "feature",
+          // The per-project key prefix from settings (t3o-07); the decider
+          // falls back to the default when unset, so this is always safe.
+          keyPrefix: resolveBoardKeyPrefix(boardSettings, projectId),
           // The domain creates into Backlog; landing in another column is a
           // follow-up move with a key appended to that column.
           orderKey:
@@ -436,7 +451,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
         });
       });
     },
-    [columns, createCard, environmentId, moveCard],
+    [boardSettings, columns, createCard, environmentId, moveCard],
   );
 
   const addProjects = useMemo(
@@ -476,7 +491,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
                 "size-2 rounded-full",
                 scopeProjectId === null
                   ? "bg-muted-foreground/40"
-                  : projectAccent(scopeProjectId).dot,
+                  : projectAccent(scopeProjectId, accentNameFor(scopeProjectId)).dot,
               )}
             />
             <SelectValue />
@@ -486,7 +501,12 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
             {projects.map((project) => (
               <SelectItem key={project.id} value={project.id}>
                 <span className="inline-flex items-center gap-1.5">
-                  <span className={cn("size-2 rounded-full", projectAccent(project.id).dot)} />
+                  <span
+                    className={cn(
+                      "size-2 rounded-full",
+                      projectAccent(project.id, accentNameFor(project.id)).dot,
+                    )}
+                  />
                   {project.title}
                 </span>
               </SelectItem>
@@ -501,7 +521,12 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
                 className="inline-flex shrink-0 items-center gap-1.5 text-[11.5px] font-medium text-muted-foreground"
                 key={project.id}
               >
-                <span className={cn("size-2 rounded-full", projectAccent(project.id).dot)} />
+                <span
+                  className={cn(
+                    "size-2 rounded-full",
+                    projectAccent(project.id, accentNameFor(project.id)).dot,
+                  )}
+                />
                 {project.title}
               </span>
             ))}
@@ -518,6 +543,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
         <div className="flex min-h-0 flex-1 gap-2.5 overflow-x-auto px-3 pb-3 sm:px-5">
           {BOARD_STAGES.map((stage) => (
             <BoardColumn
+              accentNameFor={accentNameFor}
               addProjects={addProjects}
               cards={columns[stage]}
               collapsed={isBoardColumnCollapsed(collapsedByStage, stage)}
@@ -535,7 +561,12 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
         <DragOverlay>
           {activeCard !== null ? (
             <div className="w-68">
-              <BoardCardContent card={activeCard.card} queueSlot={undefined} selected={false} />
+              <BoardCardContent
+                card={activeCard.card}
+                queueSlot={undefined}
+                selected={false}
+                accentName={accentNameFor(activeCard.card.projectId)}
+              />
             </div>
           ) : null}
         </DragOverlay>
