@@ -6036,8 +6036,10 @@ function ChatViewContent(props: ChatViewProps) {
           )}
         >
           {!rightPanelOpen ? panelLayoutControls : null}
-          {/* T3o: Threads/Board mode tabs, before the breadcrumb (D1 shell tab). */}
-          <BoardModeTabs mode="threads" />
+          {/* T3o: Threads/Board mode tabs, before the breadcrumb (D1 shell tab).
+              `mr-2` keeps the breadcrumb off the control, matching the
+              no-active-thread header. */}
+          <BoardModeTabs className="mr-2" mode="threads" />
           <ChatHeader
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}

@@ -13,7 +13,12 @@ import type { ProjectId } from "@t3tools/contracts";
 export interface ProjectAccent {
   /** Solid legend/status dot. */
   readonly dot: string;
-  /** Tinted key pill (background + readable text in both appearances). */
+  /**
+   * Key pill: a SOLID, saturated fill with white text, so the card's identity
+   * reads as a badge and stays distinct from the soft label chips beside it.
+   * The `-600` step is deliberate — white on the `-500` step falls to roughly
+   * 2:1 on the lighter hues (amber, cyan), which is unreadable at pill size.
+   */
   readonly pill: string;
 }
 
@@ -31,17 +36,14 @@ export const PROJECT_ACCENT_NAMES = [
 export type ProjectAccentName = (typeof PROJECT_ACCENT_NAMES)[number];
 
 export const PROJECT_ACCENTS_BY_NAME: Readonly<Record<ProjectAccentName, ProjectAccent>> = {
-  blue: { dot: "bg-blue-500", pill: "bg-blue-500/15 text-blue-700 dark:text-blue-300" },
-  emerald: {
-    dot: "bg-emerald-500",
-    pill: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  },
-  violet: { dot: "bg-violet-500", pill: "bg-violet-500/15 text-violet-700 dark:text-violet-300" },
-  amber: { dot: "bg-amber-500", pill: "bg-amber-500/15 text-amber-700 dark:text-amber-300" },
-  rose: { dot: "bg-rose-500", pill: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
-  cyan: { dot: "bg-cyan-500", pill: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300" },
-  orange: { dot: "bg-orange-500", pill: "bg-orange-500/15 text-orange-700 dark:text-orange-300" },
-  teal: { dot: "bg-teal-500", pill: "bg-teal-500/15 text-teal-700 dark:text-teal-300" },
+  blue: { dot: "bg-blue-500", pill: "bg-blue-600 text-white" },
+  emerald: { dot: "bg-emerald-500", pill: "bg-emerald-600 text-white" },
+  violet: { dot: "bg-violet-500", pill: "bg-violet-600 text-white" },
+  amber: { dot: "bg-amber-500", pill: "bg-amber-600 text-white" },
+  rose: { dot: "bg-rose-500", pill: "bg-rose-600 text-white" },
+  cyan: { dot: "bg-cyan-500", pill: "bg-cyan-600 text-white" },
+  orange: { dot: "bg-orange-500", pill: "bg-orange-600 text-white" },
+  teal: { dot: "bg-teal-500", pill: "bg-teal-600 text-white" },
 };
 
 const PROJECT_ACCENTS: ReadonlyArray<ProjectAccent> = PROJECT_ACCENT_NAMES.map(

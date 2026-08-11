@@ -17,8 +17,11 @@ import {
   MIN_PROMPT_FONT_SIZE,
 } from "@t3tools/contracts";
 
+// "DM Sans Variable" is bundled (`@fontsource-variable/dm-sans`, imported in
+// main.tsx), so it leads the stack; the platform faces stay behind it for
+// glyph coverage. Mirrors `--font-sans` in index.css — keep the two in step.
 export const DEFAULT_SANS_FONT_STACK =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+  '"DM Sans Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
 
 // Concrete names first: some engines alias `ui-monospace` to the
 // proportional system UI font, which would break every code surface.

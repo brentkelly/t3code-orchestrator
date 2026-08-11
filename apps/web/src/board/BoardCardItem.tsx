@@ -41,7 +41,10 @@ export function BoardCardContent({
   return (
     <article
       className={cn(
-        "flex cursor-pointer flex-col gap-1.5 rounded-[10px] border border-border bg-card px-[11px] py-2.5 shadow-xs/5 transition-colors hover:border-foreground/18",
+        // `transition-colors` alone could not animate the lift — box-shadow is
+        // not a colour property, so the hover shadow snapped in. Transition
+        // both, and use the prototype's lifted shadow.
+        "flex cursor-pointer flex-col gap-1.5 rounded-[10px] border border-border bg-card px-[11px] py-2.5 shadow-xs/5 transition-[color,background-color,border-color,box-shadow] duration-[120ms] ease-[ease] hover:border-foreground/18 hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]",
         selected && "ring-2 ring-ring",
         // Done recedes: finished work is muted and lower-contrast (D15 stage).
         summary.muted && "bg-card/60 opacity-70",

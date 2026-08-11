@@ -95,7 +95,7 @@ function CollapsedColumn({
       title="Expand column"
       type="button"
     >
-      <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+      <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
       <span className="text-[11px] font-medium text-muted-foreground">{cards.length}</span>
       <span className="text-sm font-semibold text-muted-foreground [writing-mode:vertical-rl]">
         {BOARD_STAGE_LABELS[stage]}
@@ -153,14 +153,21 @@ function ExpandedColumn({
       )}
     >
       <div className="group/column-header flex shrink-0 items-center gap-1 px-1 pb-2">
+        {/* `hidden` until hover, not `opacity-0`: an invisible button still
+            occupies its slot, which left every header permanently indented.
+            Taking it out of flow lets the title sit flush and indent only
+            while the header is hovered. */}
         <Button
-          className="-ml-1 opacity-0 group-hover/column-header:opacity-100"
+          className="-ml-1 hidden group-hover/column-header:inline-flex"
           onClick={() => onSetCollapsed(stage, true)}
           size="icon-xs"
           title="Collapse column"
           variant="ghost"
         >
-          <ChevronLeftIcon />
+          {/* Colour on the icon, not the button: the ghost variant pipes svg
+              fill through --control-icon-color, so a class on the button is
+              ignored. Lighter than the muted token, which read too heavy. */}
+          <ChevronLeftIcon className="text-muted-foreground/70" />
         </Button>
         <span className="truncate text-sm font-semibold text-muted-foreground">
           {BOARD_STAGE_LABELS[stage]}
