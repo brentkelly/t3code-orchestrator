@@ -30,6 +30,17 @@ import { DraggableBoardCard, type BoardCardQueueSlot } from "./BoardCardItem";
     the drop-index math can subtract the placeholder it inserts. */
 export const BOARD_CARD_GAP = 8;
 
+/**
+ * The dark-mode column fill, opaque rather than a foreground tint.
+ *
+ * The board stacks three surfaces — page, column, card — and dark mode needs
+ * them strictly increasing in lightness. A translucent tint composites over
+ * whatever sits behind it, so the column tint landed ABOVE `--card` and the
+ * cards came out darker than the board they sit on. Opaque values fix the
+ * order by construction. Light mode keeps the tint, where it reads correctly.
+ */
+export const BOARD_COLUMN_DARK_SURFACE = "dark:bg-[#131316]";
+
 export interface BoardAddProject {
   readonly id: ProjectId;
   readonly title: string;
@@ -89,7 +100,8 @@ function CollapsedColumn({
         // `self-stretch` against the row's `items-start`: a collapsed rail is a
         // full-height target, while expanded columns size to their cards.
         "flex w-11 shrink-0 cursor-pointer flex-col items-center gap-2.5 self-stretch rounded-xl border border-transparent bg-foreground/5 py-2.5 transition-colors hover:bg-foreground/10",
-        isOver && "border-ring bg-foreground/10",
+        BOARD_COLUMN_DARK_SURFACE,
+        isOver && "border-ring bg-foreground/10 dark:bg-[#1e1e22]",
       )}
       onClick={() => onSetCollapsed(stage, false)}
       onDragOver={(event) => onColumnDragOver(stage, event)}
@@ -154,7 +166,8 @@ function ExpandedColumn({
       // scrolls when a column outgrows it.
       className={cn(
         "flex min-h-[104px] w-[268px] shrink-0 flex-col rounded-xl border border-transparent bg-foreground/5 p-2.5 transition-colors",
-        isOver && "border-ring/60 bg-foreground/10",
+        BOARD_COLUMN_DARK_SURFACE,
+        isOver && "border-ring/60 bg-foreground/10 dark:bg-[#1e1e22]",
       )}
     >
       <div className="group/column-header flex shrink-0 items-center gap-1 px-1 pb-2">

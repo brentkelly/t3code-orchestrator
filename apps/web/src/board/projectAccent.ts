@@ -52,8 +52,8 @@ export type ProjectAccentName = (typeof PROJECT_ACCENT_NAMES)[number];
  * hand-written mismatch cannot survive.
  */
 export const PROJECT_ACCENTS_BY_NAME: Readonly<Record<ProjectAccentName, ProjectAccent>> = {
-  // The prototype's three, in its order.
-  violet: { hex: "#8b8bf5", dot: "bg-[#8b8bf5]", pill: "bg-[#8b8bf5] text-white" },
+  // First project's accent, then the prototype's remaining two in its order.
+  violet: { hex: "#9400ff", dot: "bg-[#9400ff]", pill: "bg-[#9400ff] text-white" },
   blue: { hex: "#38bdf8", dot: "bg-[#38bdf8]", pill: "bg-[#38bdf8] text-white" },
   amber: { hex: "#f59e0b", dot: "bg-[#f59e0b]", pill: "bg-[#f59e0b] text-white" },
   // Same register — soft, mid-tone, none of them fully saturated.

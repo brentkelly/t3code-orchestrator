@@ -35,11 +35,11 @@ describe("project accent palette", () => {
     }
   });
 
-  it("leads with the prototype's own project colours, in its order", () => {
+  it("leads with the first project's accent, then the prototype's, in order", () => {
     expect(PROJECT_ACCENT_NAMES.slice(0, 3)).toEqual(["violet", "blue", "amber"]);
     expect(
       ["violet", "blue", "amber"].map((n) => PROJECT_ACCENTS_BY_NAME[n as ProjectAccentName].hex),
-    ).toEqual(["#8b8bf5", "#38bdf8", "#f59e0b"]);
+    ).toEqual(["#9400ff", "#38bdf8", "#f59e0b"]);
   });
 
   it("honours a configured accent name and otherwise hashes deterministically", () => {
