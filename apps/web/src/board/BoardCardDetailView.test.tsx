@@ -1,9 +1,11 @@
 /**
- * T3o card detail pane view (t3o-06). Renders to static markup — no atoms, no
- * live subscription — proving the pane is a pure function of the
- * `board.subscribeCard` detail plus resolved lookups. Covers the archived,
- * no-project-on-disk case (nothing here reads the repo) and the tombstoned
- * thread link (struck through, role preserved, no dead deep-link).
+ * T3o card detail view (t3o-06). Renders the modal's contents to static markup
+ * — no atoms, no live subscription — proving the panel is a pure function of
+ * the `board.subscribeCard` detail plus resolved lookups. (The dialog frame
+ * around it portals, and a portal renders nothing on the server, so the panel
+ * is what these assertions mount.) Covers the archived, no-project-on-disk
+ * case (nothing here reads the repo) and the tombstoned thread link (struck
+ * through, role preserved, no dead deep-link).
  */
 import {
   BoardCardId,
@@ -25,7 +27,8 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-const { BoardCardDetailView } = await import("./BoardCardDetailView");
+const { BoardCardDetailPanel } = await import("./BoardCardDetailView");
+const { BOARD_STAGE_LABELS } = await import("./boardStages");
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const environmentId = "env-1" as never;
@@ -63,12 +66,14 @@ const baseProps = {
   environmentId,
   catalogue: [] as ReadonlyArray<BoardLabel>,
   labelsById: new Map<BoardLabelId, BoardLabel>(),
-  accentName: null,
+  branch: null,
   dependencies: [],
   dependencyOptions: [],
   threadLinks: [],
   adoptableThreads: [],
   feedback: null,
+  maximised: false,
+  onToggleMaximised: noop,
   onClose: noop,
   onSetLabels: noop,
   onCreateLabel: noop,
@@ -84,10 +89,10 @@ const baseProps = {
   onUnlinkThread: noop,
 } as const;
 
-describe("BoardCardDetailView", () => {
+describe("BoardCardDetailPanel", () => {
   it("renders an archived card whose project is not on disk, with a Restore action", () => {
     const html = renderToStaticMarkup(
-      <BoardCardDetailView
+      <BoardCardDetailPanel
         {...baseProps}
         detail={detail({ archivedAt: NOW })}
         projectName={null}
@@ -97,16 +102,30 @@ describe("BoardCardDetailView", () => {
     expect(html).toContain("Wire the widget");
     expect(html).toContain("Project not on disk");
     expect(html).toContain("Archived");
-    expect(html).toContain("Restore");
+    // Archive — and its reverse, Restore — moved into the header's kebab,
+    // which portals: static markup carries the trigger, not the closed menu.
+    expect(html).toContain("More actions");
   });
 
   it("renders dependencies, marking an unresolved id as an unknown card", () => {
     const html = renderToStaticMarkup(
-      <BoardCardDetailView
+      <BoardCardDetailPanel
         {...baseProps}
         dependencies={[
-          { cardId: BoardCardId.make("dep-known"), key: "T3-2", stage: "building", known: true },
-          { cardId: BoardCardId.make("dep-gone"), key: "dep-gone", stage: "backlog", known: false },
+          {
+            cardId: BoardCardId.make("dep-known"),
+            key: "T3-2",
+            title: "Land the widget",
+            stage: "building",
+            known: true,
+          },
+          {
+            cardId: BoardCardId.make("dep-gone"),
+            key: "dep-gone",
+            title: null,
+            stage: "backlog",
+            known: false,
+          },
         ]}
         detail={detail()}
         projectName="Project One"
@@ -117,11 +136,12 @@ describe("BoardCardDetailView", () => {
     expect(html).toContain("unknown card");
   });
 
+  // Before Planning the card has no thread pane, so its links are a list.
   it("renders a tombstoned thread link struck through with its role preserved", () => {
     const html = renderToStaticMarkup(
-      <BoardCardDetailView
+      <BoardCardDetailPanel
         {...baseProps}
-        detail={detail()}
+        detail={detail({ stage: "sprint" })}
         projectName="Project One"
         threadLinks={[
           {
@@ -155,11 +175,11 @@ describe("BoardCardDetailView", () => {
 
   it("shows the primary stage action for a live card but not an archived one", () => {
     const live = renderToStaticMarkup(
-      <BoardCardDetailView {...baseProps} detail={detail({ stage: "ready" })} projectName="P" />,
+      <BoardCardDetailPanel {...baseProps} detail={detail({ stage: "ready" })} projectName="P" />,
     );
     expect(live).toContain("Begin build");
     const archived = renderToStaticMarkup(
-      <BoardCardDetailView
+      <BoardCardDetailPanel
         {...baseProps}
         detail={detail({ stage: "ready", archivedAt: NOW })}
         projectName="P"
@@ -170,8 +190,78 @@ describe("BoardCardDetailView", () => {
 
   it("renders the brief body when present", () => {
     const html = renderToStaticMarkup(
-      <BoardCardDetailView {...baseProps} detail={detail({}, "Ship the thing")} projectName="P" />,
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: "sprint" }, "Ship the thing")}
+        projectName="P"
+      />,
     );
     expect(html).toContain("Ship the thing");
+  });
+
+  // The prototype's two forms, at its stage boundary: the card is something
+  // you read until Planning, and something you work in from Planning on.
+  it("opens onto the thread pane from Planning, and onto the brief before it", () => {
+    const sprint = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: "sprint" }, "Ship the thing")}
+        projectName="P"
+      />,
+    );
+    expect(sprint).toContain("Ship the thing");
+    // No pane switch, because there is only one pane.
+    expect(sprint).not.toContain(">Thread</button>");
+
+    const planning = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: "planning" }, "Ship the thing")}
+        projectName="P"
+      />,
+    );
+    // The brief is one tab away rather than on screen.
+    expect(planning).not.toContain("Ship the thing");
+    expect(planning).toContain(">Thread</button>");
+    expect(planning).toContain(">Brief</button>");
+  });
+
+  it("renders the whole stage ladder with the card's stage marked current", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel {...baseProps} detail={detail({ stage: "review" })} projectName="P" />,
+    );
+    for (const label of Object.values(BOARD_STAGE_LABELS)) expect(html).toContain(label);
+    // Exactly one rung is the current one.
+    expect(html.match(/aria-current="true"/g)).toHaveLength(1);
+  });
+
+  it("names the unmet dependencies on a blocked card and disables the forward gate", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        dependencies={[
+          {
+            cardId: BoardCardId.make("dep-done"),
+            key: "T3-1",
+            title: "Finished work",
+            stage: "done",
+            known: true,
+          },
+          {
+            cardId: BoardCardId.make("dep-open"),
+            key: "T3-2",
+            title: "Outstanding work",
+            stage: "building",
+            known: true,
+          },
+        ]}
+        detail={detail({ stage: "ready", blocked: true })}
+        projectName="P"
+      />,
+    );
+    // The met dependency is not part of the reason.
+    expect(html).toContain("Blocked by T3-2");
+    expect(html).not.toContain("Blocked by T3-1");
+    expect(html).toContain("disabled");
   });
 });

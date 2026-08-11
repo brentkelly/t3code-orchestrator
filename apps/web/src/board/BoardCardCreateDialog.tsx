@@ -34,7 +34,6 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import {
   Select,
   SelectItem,
@@ -48,12 +47,10 @@ import { boardEnvironment } from "../state/board";
 import { environmentShell } from "../state/shell";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
-import { BoardLabelChips } from "./BoardLabelChips";
-import { BoardLabelPicker } from "./BoardLabelPicker";
+import { BoardLabelField } from "./BoardLabelField";
 import { BoardSearchAddPicker } from "./BoardSearchAddPicker";
 import { BOARD_STAGE_LABELS } from "./boardStages";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
-import { indexBoardLabels } from "./labelColour";
 
 export interface BoardCreateProject {
   readonly id: ProjectId;
@@ -85,7 +82,6 @@ export function BoardCardCreateDialog({
   const undeleteLabel = useAtomCommand(boardEnvironment.undeleteLabel);
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
-  const labelsById = useMemo(() => indexBoardLabels(catalogue), [catalogue]);
   const allCards = snapshot?.cards ?? [];
 
   const initialProjectId = defaultProjectId ?? projects[0]?.id ?? null;
@@ -239,41 +235,29 @@ export function BoardCardCreateDialog({
             </Select>
           </div>
 
-          {/* Labels */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            {labelIds.length === 0 ? (
-              <span className="text-[12.5px] text-muted-foreground">No labels</span>
-            ) : (
-              <BoardLabelChips labelIds={labelIds} labelsById={labelsById} />
-            )}
-            <Popover>
-              <PopoverTrigger render={<Button size="xs" variant="ghost" />}>Labels</PopoverTrigger>
-              <PopoverPopup className="p-0">
-                <BoardLabelPicker
-                  catalogue={catalogue}
-                  onCreate={(name) => {
-                    const labelId = BoardLabelId.make(randomUUID());
-                    void createLabel({ environmentId, input: { labelId, name } });
-                    setLabelIds((prev) => [...prev, labelId]);
-                  }}
-                  onDelete={(labelId) => void deleteLabel({ environmentId, input: { labelId } })}
-                  onRecolour={(labelId, colour) =>
-                    void updateLabel({ environmentId, input: { labelId, colour } })
-                  }
-                  onToggle={(labelId) =>
-                    setLabelIds((prev) =>
-                      prev.includes(labelId)
-                        ? prev.filter((id) => id !== labelId)
-                        : [...prev, labelId],
-                    )
-                  }
-                  onUndelete={(labelId) =>
-                    void undeleteLabel({ environmentId, input: { labelId } })
-                  }
-                  selectedLabelIds={labelIds}
-                />
-              </PopoverPopup>
-            </Popover>
+          {/* Labels — pills for what is chosen, one autocomplete to change it. */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[12px] font-medium text-foreground">Label</label>
+            <BoardLabelField
+              catalogue={catalogue}
+              onCreate={(name) => {
+                const labelId = BoardLabelId.make(randomUUID());
+                void createLabel({ environmentId, input: { labelId, name } });
+                setLabelIds((prev) => [...prev, labelId]);
+              }}
+              onDelete={(labelId) => void deleteLabel({ environmentId, input: { labelId } })}
+              onRecolour={(labelId, colour) =>
+                void updateLabel({ environmentId, input: { labelId, colour } })
+              }
+              onToggle={(labelId) =>
+                setLabelIds((prev) =>
+                  prev.includes(labelId) ? prev.filter((id) => id !== labelId) : [...prev, labelId],
+                )
+              }
+              onUndelete={(labelId) => void undeleteLabel({ environmentId, input: { labelId } })}
+              selectedLabelIds={labelIds}
+              size="field"
+            />
           </div>
 
           {/* Initial dependencies */}

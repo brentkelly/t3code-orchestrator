@@ -609,15 +609,17 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
             />
           ))}
         </div>
-        {selectedCardId !== null ? (
-          <BoardCardDetail
-            cardId={BoardCardId.make(selectedCardId)}
-            environmentId={environmentId}
-            key={selectedCardId}
-            onClose={handleCloseDetail}
-          />
-        ) : null}
       </div>
+      {/* The card opens as a centred modal over the board (t3o-06), not a
+          rail beside it — so it never squeezes the columns. */}
+      {selectedCardId !== null ? (
+        <BoardCardDetail
+          cardId={BoardCardId.make(selectedCardId)}
+          environmentId={environmentId}
+          key={selectedCardId}
+          onClose={handleCloseDetail}
+        />
+      ) : null}
       <BoardCardCreateDialog
         defaultProjectId={scopeProjectId}
         defaultStage={createStage ?? "backlog"}
