@@ -86,7 +86,9 @@ function CollapsedColumn({
   return (
     <button
       className={cn(
-        "flex h-full w-11 shrink-0 cursor-pointer flex-col items-center gap-2.5 rounded-xl border border-transparent bg-foreground/5 py-2.5 transition-colors hover:bg-foreground/10",
+        // `self-stretch` against the row's `items-start`: a collapsed rail is a
+        // full-height target, while expanded columns size to their cards.
+        "flex w-11 shrink-0 cursor-pointer flex-col items-center gap-2.5 self-stretch rounded-xl border border-transparent bg-foreground/5 py-2.5 transition-colors hover:bg-foreground/10",
         isOver && "border-ring bg-foreground/10",
       )}
       onClick={() => onSetCollapsed(stage, false)}
@@ -147,8 +149,11 @@ function ExpandedColumn({
       // The column panel is a tint of the FOREGROUND, not `--muted`: `--muted`
       // is zinc-50, so a muted wash over a near-white page was invisible and
       // the columns read as one undivided sheet.
+      // Height follows the cards (with a floor so an empty column is still a
+      // visible target), rather than stretching to the viewport. The board row
+      // scrolls when a column outgrows it.
       className={cn(
-        "flex h-full w-[268px] shrink-0 flex-col rounded-xl border border-transparent bg-foreground/5 p-2.5 transition-colors",
+        "flex min-h-[104px] w-[268px] shrink-0 flex-col rounded-xl border border-transparent bg-foreground/5 p-2.5 transition-colors",
         isOver && "border-ring/60 bg-foreground/10",
       )}
     >
@@ -185,13 +190,16 @@ function ExpandedColumn({
           </Button>
         ) : null}
       </div>
+      {/* `flex-1` would stretch the list to the column and reintroduce the
+          full-height look; the list is exactly as tall as its cards. It still
+          fills the empty-column floor so the whole panel stays a drop target. */}
       <div
-        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto"
+        className="flex flex-1 flex-col gap-2"
         onDragOver={(event) => onColumnDragOver(stage, event)}
         onDrop={(event) => onColumnDrop(stage, event)}
       >
         {cards.length === 0 && !showPlaceholder ? (
-          <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border/60 text-xs text-muted-foreground">
+          <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border/60 text-xs text-muted-foreground">
             No cards
           </div>
         ) : (

@@ -577,7 +577,10 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
         ) : null}
       </div>
       <div className="flex min-h-0 flex-1">
-        <div className="flex min-h-0 flex-1 gap-2.5 overflow-x-auto px-3 pb-3 sm:px-5">
+        {/* `items-start` lets each column size to its cards; a collapsed rail
+            opts back into full height with `self-stretch`. The row scrolls in
+            both axes, so a column taller than the viewport is reachable. */}
+        <div className="flex min-h-0 flex-1 items-start gap-2.5 overflow-auto px-3 pb-3 sm:px-5">
           {BOARD_STAGES.map((stage) => (
             <BoardColumn
               accentNameFor={accentNameFor}

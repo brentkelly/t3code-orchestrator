@@ -100,7 +100,10 @@ function ModeTab({
     <button
       aria-current={active ? "page" : undefined}
       className={cn(
-        "inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-lg px-2.5 font-medium text-[12.5px] transition-colors [&_svg]:size-3.5 [&_svg]:shrink-0",
+        // Explicit 8px: `rounded-lg` maps to --radius (10px) in this theme,
+        // which matched the 10px track behind the tabs instead of nesting
+        // inside it.
+        "inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-[8px] px-2.5 font-medium text-[12.5px] transition-colors [&_svg]:size-3.5 [&_svg]:shrink-0",
         active
           ? "bg-card text-foreground shadow-xs"
           : "bg-transparent text-muted-foreground hover:text-foreground",
