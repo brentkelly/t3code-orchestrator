@@ -34,6 +34,22 @@ export function boardLabelForeground(hex: string): string {
   return luminance > 0.45 ? "#26262b" : "#ffffff";
 }
 
+/**
+ * A card label chip's fill and text. Unlike the key pill — a SOLID swatch that
+ * needs the black/white luminance split above — a chip is a soft tint of the
+ * label colour, so it reads as a tag rather than a badge and several chips on
+ * one card stay quiet. Contrast is still computed rather than chosen: the text
+ * is the label colour carried most of the way toward the surface foreground,
+ * which stays legible over the 14% fill in either theme. (The prototype's
+ * `typeStyle`.)
+ */
+export function boardLabelChipStyle(hex: string): { background: string; color: string } {
+  return {
+    background: `color-mix(in srgb, ${hex} 14%, transparent)`,
+    color: `color-mix(in srgb, ${hex} 78%, var(--foreground))`,
+  };
+}
+
 /** Index the catalogue by id for O(1) chip resolution. */
 export function indexBoardLabels(
   labels: ReadonlyArray<BoardLabel>,

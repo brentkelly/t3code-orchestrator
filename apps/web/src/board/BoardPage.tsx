@@ -31,24 +31,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
-  closestCorners,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from "@dnd-kit/core";
-import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 import { getRouteApi } from "@tanstack/react-router";
 import { PlusIcon } from "lucide-react";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 import { Button } from "../components/ui/button";
 import {
@@ -68,10 +55,9 @@ import { usePrimaryEnvironmentId } from "../state/environments";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
-import { BoardCardContent } from "./BoardCardItem";
 import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
 import { BoardCardDetail } from "./BoardCardDetail";
-import { BoardColumn } from "./BoardColumn";
+import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
 import { indexBoardLabels } from "./labelColour";
 import { BoardModeTabs } from "./BoardModeTabs";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
@@ -95,6 +81,43 @@ function findBoardCard(columns: BoardStageColumns, cardId: string | null): Found
     if (card !== undefined) return { stage, card };
   }
   return null;
+}
+
+interface BoardDrag {
+  readonly cardId: string;
+  readonly height: number;
+}
+
+interface BoardDragOver {
+  readonly stage: BoardStage;
+  readonly index: number;
+}
+
+/**
+ * The insertion index a pointer at `y` maps to within a column element,
+ * measured in the cards' "unshifted" coordinates: any card sitting below the
+ * inserted placeholder is offset by its height, so we subtract that before
+ * comparing midpoints — otherwise inserting the placeholder shifts the cards
+ * and the next dragover computes a different index, flickering. (Ported from
+ * the prototype's `dropIndexIn`.)
+ */
+function boardDropIndexIn(columnEl: Element, y: number): number {
+  const placeholder = columnEl.querySelector("[data-board-ph]");
+  const cards = columnEl.querySelectorAll("[data-board-card]");
+  if (cards.length === 0) return 0;
+  let shift = 0;
+  let placeholderTop: number | null = null;
+  if (placeholder !== null) {
+    const rect = placeholder.getBoundingClientRect();
+    shift = rect.height + BOARD_CARD_GAP;
+    placeholderTop = rect.top;
+  }
+  for (let index = 0; index < cards.length; index++) {
+    const rect = cards[index]!.getBoundingClientRect();
+    const offset = placeholderTop !== null && rect.top > placeholderTop ? shift : 0;
+    if (y < rect.top + rect.height / 2 - offset) return index;
+  }
+  return cards.length;
 }
 
 /** The invariant `detail` when the failure carries one (the decider's
@@ -200,68 +223,38 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
 
   const queueSlots = useMemo(() => boardBuildingQueueInfo(columns.building), [columns.building]);
 
-  // ── Drag ────────────────────────────────────────────────────────────
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-  const [activeCardId, setActiveCardId] = useState<string | null>(null);
-  const activeCard = useMemo(() => findBoardCard(columns, activeCardId), [columns, activeCardId]);
-  const suppressClickRef = useRef(false);
+  // ── Drag (native HTML5, the prototype's model) ──────────────────────
+  // dnd-kit's sortable transforms were incompatible with the virtualised
+  // list — cards vanished mid-drag and no gap opened. Native drag carries a
+  // tilted ghost clone; each column measures the drop index and opens a
+  // placeholder gap; the drop reuses the command layer below.
+  const [drag, setDrag] = useState<BoardDrag | null>(null);
+  const [dragOver, setDragOver] = useState<BoardDragOver | null>(null);
+  const ghostRef = useRef<HTMLElement | null>(null);
+  const dragRef = useRef<BoardDrag | null>(null);
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    setActiveCardId(String(event.active.id));
+  const clearGhost = useCallback(() => {
+    if (ghostRef.current !== null) {
+      ghostRef.current.remove();
+      ghostRef.current = null;
+    }
   }, []);
 
-  const handleDragCancel = useCallback(() => {
-    setActiveCardId(null);
-  }, []);
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      setActiveCardId(null);
-      // A completed drag still fires a click on the dragged card; swallow it
-      // so a drop does not also toggle selection.
-      suppressClickRef.current = true;
-      setTimeout(() => {
-        suppressClickRef.current = false;
-      }, 0);
-
-      const over = event.over;
-      if (over === null) return;
-      const cardId = String(event.active.id);
-      const source = findBoardCard(columns, cardId);
-      if (source === null) return;
-
-      const overData = over.data.current as
-        | { readonly type?: string; readonly stage?: BoardStage }
-        | undefined;
-      let targetStage: BoardStage;
-      const overId = String(over.id);
-      let orderedIds: string[];
-      if (overData?.type === "column" && overData.stage !== undefined) {
-        targetStage = overData.stage;
-        orderedIds = columns[targetStage]
-          .map((card) => card.cardId as string)
-          .filter((id) => id !== cardId);
-        orderedIds.push(cardId);
-      } else {
-        const overCard = findBoardCard(columns, overId);
-        if (overCard === null) return;
-        targetStage = overCard.stage;
-        const ids = columns[targetStage].map((card) => card.cardId as string);
-        if (targetStage === source.stage) {
-          orderedIds = arrayMove(ids, ids.indexOf(cardId), ids.indexOf(overId));
-        } else {
-          orderedIds = [...ids];
-          orderedIds.splice(orderedIds.indexOf(overId), 0, cardId);
-        }
-      }
-
+  // Prices and dispatches a settled order for one column: the optimistic
+  // placement lands first, then the move/reorder commands, with rejection
+  // rollback and the Building queue toast. Shared by drop and (future) keyboard.
+  const dispatchDrop = useCallback(
+    (targetStage: BoardStage, orderedIds: ReadonlyArray<string>, source: FoundCard) => {
+      const cardId = source.card.cardId as string;
       const isMove = targetStage !== source.stage;
       if (!isMove) {
         const currentIds = columns[targetStage].map((card) => card.cardId as string);
-        if (orderedIds.every((id, index) => id === currentIds[index])) return;
+        if (
+          orderedIds.length === currentIds.length &&
+          orderedIds.every((id, index) => id === currentIds[index])
+        ) {
+          return;
+        }
       }
 
       const keysByCardId = new Map<string, string>(
@@ -269,7 +262,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
       );
       keysByCardId.set(cardId, source.card.orderKey);
       const assignments = planBoardCardReorder({
-        orderedCardIds: orderedIds,
+        orderedCardIds: [...orderedIds],
         keysByCardId,
         movedCardId: cardId,
       });
@@ -357,11 +350,97 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     [columns, environmentId, liveColumns, moveCard, reorderCard],
   );
 
+  // Turns a target stage + raw insertion index into the settled card order.
+  // The index is in "full column" coordinates (the dragged card still counts);
+  // convert it to a slot in the list without that card, matching the prototype.
+  const commitDrop = useCallback(
+    (targetStage: BoardStage, insertIndex: number, cardId: string) => {
+      const source = findBoardCard(columns, cardId);
+      if (source === null) return;
+      const ids = columns[targetStage].map((card) => card.cardId as string);
+      const own = ids.indexOf(cardId);
+      const list = ids.filter((id) => id !== cardId);
+      let index = Math.max(0, Math.min(ids.length, insertIndex));
+      if (own >= 0 && index > own) index -= 1;
+      list.splice(index, 0, cardId);
+      dispatchDrop(targetStage, list, source);
+    },
+    [columns, dispatchDrop],
+  );
+
+  const handleCardDragStart = useCallback(
+    (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => {
+      const element = event.currentTarget;
+      const rect = element.getBoundingClientRect();
+      event.dataTransfer.effectAllowed = "move";
+      try {
+        event.dataTransfer.setData("text/plain", card.cardId);
+      } catch {
+        // Some browsers disallow setData here; the drag still works without it.
+      }
+      // A tilted, shadowed clone is the drag image (the prototype's ghost). It
+      // sits off-screen just long enough for the browser to snapshot it.
+      const ghost = element.cloneNode(true) as HTMLElement;
+      ghost.classList.remove("opacity-40");
+      ghost.style.cssText +=
+        `;position:fixed;top:-1000px;left:-1000px;pointer-events:none;opacity:1;width:${rect.width}px;` +
+        "transform:rotate(4deg);box-shadow:0 18px 34px -14px rgb(0 0 0 / 55%)";
+      document.body.appendChild(ghost);
+      ghostRef.current = ghost;
+      event.dataTransfer.setDragImage(ghost, event.clientX - rect.left, event.clientY - rect.top);
+      setTimeout(clearGhost, 0);
+
+      const source = findBoardCard(columns, card.cardId);
+      const startIndex =
+        source === null ? 0 : columns[source.stage].findIndex((c) => c.cardId === card.cardId);
+      const next: BoardDrag = { cardId: card.cardId, height: Math.round(rect.height) };
+      dragRef.current = next;
+      setDrag(next);
+      setDragOver(source === null ? null : { stage: source.stage, index: startIndex });
+    },
+    [clearGhost, columns],
+  );
+
+  const handleCardDragEnd = useCallback(() => {
+    clearGhost();
+    dragRef.current = null;
+    setDrag(null);
+    setDragOver(null);
+  }, [clearGhost]);
+
+  const handleColumnDragOver = useCallback((stage: BoardStage, event: DragEvent<HTMLElement>) => {
+    if (dragRef.current === null) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const index = boardDropIndexIn(event.currentTarget, event.clientY);
+    setDragOver((current) =>
+      current !== null && current.stage === stage && current.index === index
+        ? current
+        : { stage, index },
+    );
+  }, []);
+
+  const handleColumnDrop = useCallback(
+    (stage: BoardStage, event: DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      const active = dragRef.current;
+      if (active === null) {
+        handleCardDragEnd();
+        return;
+      }
+      const index = boardDropIndexIn(event.currentTarget, event.clientY);
+      commitDrop(stage, index, active.cardId);
+      handleCardDragEnd();
+    },
+    [commitDrop, handleCardDragEnd],
+  );
+
   // ── Selection and deep link (?card=…) ───────────────────────────────
   const selectedCardId = search.card ?? null;
   const handleSelectCard = useCallback(
     (card: BoardCardShell) => {
-      if (suppressClickRef.current) return;
+      // Native drag doesn't fire a click on the source after a drop, so no
+      // click-suppression is needed here.
       void navigate({
         search: (previous) => {
           const { card: selected, ...rest } = previous;
@@ -380,11 +459,6 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     });
   }, [navigate]);
 
-  const listRefs = useRef<Partial<Record<BoardStage, LegendListRef | null>>>({});
-  const registerListRef = useCallback((stage: BoardStage, list: LegendListRef | null) => {
-    listRefs.current[stage] = list;
-  }, []);
-
   // Opening a card URL selects the card and brings it into view: expand its
   // column if collapsed, scroll the row into place. The detail pane that
   // opens from this selection is t3o-06's.
@@ -401,10 +475,6 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     // Two frames: the first lets a just-expanded column mount its list.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const index = columns[found.stage].findIndex((card) => card.cardId === cardId);
-        if (index >= 0) {
-          listRefs.current[found.stage]?.scrollToIndex({ index, animated: true });
-        }
         document
           .querySelector(`[data-board-card="${window.CSS.escape(cardId)}"]`)
           ?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -507,46 +577,35 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
         ) : null}
       </div>
       <div className="flex min-h-0 flex-1">
-        <DndContext
-          collisionDetection={closestCorners}
-          onDragCancel={handleDragCancel}
-          onDragEnd={handleDragEnd}
-          onDragStart={handleDragStart}
-          sensors={sensors}
-        >
-          <div className="flex min-h-0 flex-1 gap-2.5 overflow-x-auto px-3 pb-3 sm:px-5">
-            {BOARD_STAGES.map((stage) => (
-              <BoardColumn
-                accentNameFor={accentNameFor}
-                addProjects={addProjects}
-                cards={columns[stage]}
-                labelsById={labelsById}
-                collapsed={isBoardColumnCollapsed(collapsedByStage, stage)}
-                key={stage}
-                listRef={registerListRef}
-                onRequestCreate={openCreate}
-                onSelectCard={handleSelectCard}
-                onSetCollapsed={setColumnCollapsed}
-                queueSlots={queueSlots}
-                selectedCardId={selectedCardId}
-                stage={stage}
-              />
-            ))}
-          </div>
-          <DragOverlay>
-            {activeCard !== null ? (
-              <div className="w-68">
-                <BoardCardContent
-                  card={activeCard.card}
-                  labelsById={labelsById}
-                  queueSlot={undefined}
-                  selected={false}
-                  accentName={accentNameFor(activeCard.card.projectId)}
-                />
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+        <div className="flex min-h-0 flex-1 gap-2.5 overflow-x-auto px-3 pb-3 sm:px-5">
+          {BOARD_STAGES.map((stage) => (
+            <BoardColumn
+              accentNameFor={accentNameFor}
+              addProjects={addProjects}
+              cards={columns[stage]}
+              labelsById={labelsById}
+              collapsed={isBoardColumnCollapsed(collapsedByStage, stage)}
+              draggedCardId={drag?.cardId ?? null}
+              dragHeight={drag?.height ?? 0}
+              dragOverIndex={
+                drag !== null && dragOver !== null && dragOver.stage === stage
+                  ? dragOver.index
+                  : null
+              }
+              key={stage}
+              onCardDragEnd={handleCardDragEnd}
+              onCardDragStart={handleCardDragStart}
+              onColumnDragOver={handleColumnDragOver}
+              onColumnDrop={handleColumnDrop}
+              onRequestCreate={openCreate}
+              onSelectCard={handleSelectCard}
+              onSetCollapsed={setColumnCollapsed}
+              queueSlots={queueSlots}
+              selectedCardId={selectedCardId}
+              stage={stage}
+            />
+          ))}
+        </div>
         {selectedCardId !== null ? (
           <BoardCardDetail
             cardId={BoardCardId.make(selectedCardId)}

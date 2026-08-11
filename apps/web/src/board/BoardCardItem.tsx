@@ -8,9 +8,8 @@
  * displays) — a running thread is a solid dot, not a spinner.
  */
 import type { BoardCardShell, BoardLabel, BoardLabelId } from "@t3tools/contracts";
-import { useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { CircleAlertIcon, LockIcon } from "lucide-react";
+import type { DragEvent } from "react";
 
 import { cn } from "../lib/utils";
 import { boardCardSummary } from "./boardCardSummary";
@@ -42,7 +41,7 @@ export function BoardCardContent({
   return (
     <article
       className={cn(
-        "flex cursor-pointer flex-col gap-1.5 rounded-lg border border-border bg-card p-3 shadow-xs/5 transition-colors hover:border-foreground/18",
+        "flex cursor-pointer flex-col gap-1.5 rounded-[10px] border border-border bg-card px-[11px] py-2.5 shadow-xs/5 transition-colors hover:border-foreground/18",
         selected && "ring-2 ring-ring",
         // Done recedes: finished work is muted and lower-contrast (D15 stage).
         summary.muted && "bg-card/60 opacity-70",
@@ -59,7 +58,6 @@ export function BoardCardContent({
         >
           {card.key}
         </span>
-        <BoardLabelChips labelIds={card.labelIds} labelsById={labelsById} />
         {card.threadState === "working" ? (
           <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="Thread running" />
         ) : null}
@@ -92,6 +90,13 @@ export function BoardCardContent({
           </span>
         ) : null}
       </div>
+      {/* Labels sit on their own row beneath the key, so a multi-label card
+          reads as a stack of tags and never crowds the status badges. */}
+      {card.labelIds.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <BoardLabelChips labelIds={card.labelIds} labelsById={labelsById} />
+        </div>
+      ) : null}
       <div
         className={cn(
           "text-[13px]/[1.35] font-medium text-pretty",
@@ -105,33 +110,42 @@ export function BoardCardContent({
   );
 }
 
-export function SortableBoardCard({
+/**
+ * A board card wired for native HTML5 drag-and-drop (the prototype's model).
+ * dnd-kit's sortable transforms fought `@legendapp/list`'s absolute
+ * positioning — cards vanished mid-drag and no gap opened — so ordering uses
+ * the platform drag with a rotated ghost clone (built by the page) and a
+ * measured placeholder gap. `dragging` dims the source in place while its
+ * clone is what the cursor carries.
+ */
+export function DraggableBoardCard({
   card,
   labelsById,
   queueSlot,
   selected,
+  dragging,
   onSelect,
+  onDragStart,
+  onDragEnd,
   accentName,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly queueSlot: BoardCardQueueSlot | undefined;
   readonly selected: boolean;
+  readonly dragging: boolean;
   readonly onSelect: (card: BoardCardShell) => void;
+  readonly onDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
+  readonly onDragEnd: () => void;
   readonly accentName?: string | null | undefined;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: card.cardId,
-    data: { type: "card", stage: card.stage },
-  });
   return (
     <div
-      ref={setNodeRef}
-      className={cn("pb-2", isDragging && "opacity-40")}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
+      draggable
+      className={cn("cursor-grab", dragging && "opacity-40")}
       onClick={() => onSelect(card)}
-      {...attributes}
-      {...listeners}
+      onDragStart={(event) => onDragStart(card, event)}
+      onDragEnd={onDragEnd}
     >
       <BoardCardContent
         card={card}

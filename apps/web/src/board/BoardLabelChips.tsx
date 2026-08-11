@@ -9,9 +9,13 @@
 import type { BoardLabel, BoardLabelId } from "@t3tools/contracts";
 
 import { cn } from "../lib/utils";
-import { boardLabelForeground, resolveBoardLabels } from "./labelColour";
+import { boardLabelChipStyle, resolveBoardLabels } from "./labelColour";
 
 const VISIBLE_CHIPS = 2;
+
+/** The prototype's card chip: small, uppercase, letter-spaced. */
+const CHIP_CLASS =
+  "inline-flex h-4 max-w-24 shrink-0 items-center truncate rounded-[5px] px-1.5 text-[10px] font-medium tracking-[0.03em] uppercase";
 
 export function BoardLabelChips({
   labelIds,
@@ -31,7 +35,7 @@ export function BoardLabelChips({
           <span
             key={label.labelId}
             className={cn(
-              "inline-flex h-4 max-w-24 shrink-0 items-center truncate rounded px-1.5 text-[10px] font-medium capitalize",
+              CHIP_CLASS,
               "border border-dashed border-border bg-muted/60 text-muted-foreground",
             )}
             title={label.missing ? "Unknown label" : `${label.name} (deleted)`}
@@ -41,11 +45,8 @@ export function BoardLabelChips({
         ) : (
           <span
             key={label.labelId}
-            className={cn(
-              "inline-flex h-4 max-w-24 shrink-0 items-center truncate rounded px-1.5 text-[10px] font-medium capitalize",
-              label.deleted && "opacity-55",
-            )}
-            style={{ backgroundColor: label.colour, color: boardLabelForeground(label.colour) }}
+            className={cn(CHIP_CLASS, label.deleted && "opacity-55")}
+            style={boardLabelChipStyle(label.colour)}
             title={label.deleted ? `${label.name} (deleted)` : label.name}
           >
             {label.name}
@@ -54,7 +55,7 @@ export function BoardLabelChips({
       )}
       {overflow > 0 ? (
         <span
-          className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+          className={cn(CHIP_CLASS, "bg-muted text-muted-foreground")}
           title={resolved
             .slice(VISIBLE_CHIPS)
             .map((label) => label.name)
