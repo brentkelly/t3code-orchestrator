@@ -118,12 +118,16 @@ export function BoardCardCreateDialog({
     wasOpen.current = open;
   }, [open, defaultProjectId, defaultStage, projects]);
 
+  // Dependencies stay inside one project, so the picker only offers cards from
+  // the project this card is being created in.
   const dependencyOptions = useMemo(
     () =>
       allCards
-        .filter((card) => !dependsOn.includes(card.cardId as BoardCardId))
+        .filter(
+          (card) => card.projectId === projectId && !dependsOn.includes(card.cardId as BoardCardId),
+        )
         .map((card) => ({ id: card.cardId, key: card.key, title: card.title })),
-    [allCards, dependsOn],
+    [allCards, dependsOn, projectId],
   );
 
   const dependencyChips = dependsOn.map((id) => {
@@ -198,7 +202,12 @@ export function BoardCardCreateDialog({
               }))}
               modal={false}
               onValueChange={(value: string | null) => {
-                if (value !== null) setProjectId(value as ProjectId);
+                if (value === null || value === projectId) return;
+                setProjectId(value as ProjectId);
+                // Chosen dependencies belong to the old project, so they can no
+                // longer be depended on — drop them rather than submit an
+                // out-of-project edge.
+                setDependsOn([]);
               }}
               value={projectId ?? ""}
             >

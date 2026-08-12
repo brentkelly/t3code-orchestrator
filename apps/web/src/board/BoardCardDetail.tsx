@@ -115,11 +115,15 @@ export function BoardCardDetail({
     });
   }, [card, snapshot]);
 
+  // A dependency only ever names a card in the same project — the picker never
+  // offers one from another project.
   const dependencyOptions = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
     const existing = new Set<string>([card.id, ...card.dependsOn]);
     return (snapshot?.cards ?? [])
-      .filter((candidate) => !existing.has(candidate.cardId))
+      .filter(
+        (candidate) => candidate.projectId === card.projectId && !existing.has(candidate.cardId),
+      )
       .map((candidate) => ({ id: candidate.cardId, key: candidate.key, title: candidate.title }));
   }, [card, snapshot]);
 
