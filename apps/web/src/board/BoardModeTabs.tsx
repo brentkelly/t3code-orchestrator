@@ -9,12 +9,41 @@
  * where you were, not to that mode's root.
  */
 import { useRouter, useRouterState } from "@tanstack/react-router";
-import { LayoutDashboardIcon, MessageSquareIcon } from "lucide-react";
+import { Columns3Icon, MessageSquareIcon } from "lucide-react";
 import { useCallback, useEffect } from "react";
 
-import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
-import { useBoardUiStore, type WorkspaceMode } from "./boardUiStore";
+import { modeForHref, useBoardUiStore, type WorkspaceMode } from "./boardUiStore";
+
+/**
+ * Switch the workspace to `target` mode, returning to that mode's last-seen
+ * location (or its root when there is none, or when the stored location does
+ * not actually belong to the target mode).
+ *
+ * Two things this must get right, both learned from real bugs:
+ *  - Navigate through `router.navigate`, never `router.history.push`: a raw
+ *    history push does not re-run route matching in this TanStack version, so
+ *    the tab click silently did nothing.
+ *  - Only honour a stored location that belongs to `target`. A store poisoned
+ *    with a thread href under `board` would otherwise send a Board click to
+ *    that thread. `modeForHref` is the guard; the store sanitises too, but
+ *    this keeps navigation correct even before the store re-hydrates.
+ *
+ * Extracted from the component so it can be regression tested against a real
+ * router without a DOM. See BoardModeTabs.test.ts.
+ */
+export function navigateToMode(
+  router: { readonly navigate: (options: { readonly href: string }) => unknown },
+  current: WorkspaceMode,
+  target: WorkspaceMode,
+  lastLocationByMode: Partial<Record<WorkspaceMode, string>>,
+): void {
+  if (target === current) return;
+  const fallback = target === "board" ? "/board" : "/";
+  const stored = lastLocationByMode[target];
+  const href = stored !== undefined && modeForHref(stored) === target ? stored : fallback;
+  void router.navigate({ href });
+}
 
 export function BoardModeTabs({
   mode,
@@ -33,11 +62,7 @@ export function BoardModeTabs({
   }, [locationHref, mode, recordModeLocation]);
 
   const switchTo = useCallback(
-    (target: WorkspaceMode) => {
-      if (target === mode) return;
-      const fallback = target === "board" ? "/board" : "/";
-      router.history.push(lastLocationByMode[target] ?? fallback);
-    },
+    (target: WorkspaceMode) => navigateToMode(router, mode, target, lastLocationByMode),
     [lastLocationByMode, mode, router],
   );
 
@@ -45,7 +70,7 @@ export function BoardModeTabs({
     <div
       aria-label="Workspace mode"
       className={cn(
-        "flex shrink-0 items-center gap-0.5 rounded-[calc(var(--control-radius)+2px)] bg-muted/70 p-0.5",
+        "flex shrink-0 items-center gap-[3px] rounded-[10px] bg-accent p-0.5",
         className,
       )}
       role="group"
@@ -54,7 +79,7 @@ export function BoardModeTabs({
         <MessageSquareIcon />
       </ModeTab>
       <ModeTab active={mode === "board"} label="Board" onSelect={() => switchTo("board")}>
-        <LayoutDashboardIcon />
+        <Columns3Icon />
       </ModeTab>
     </div>
   );
@@ -72,15 +97,22 @@ function ModeTab({
   readonly children: React.ReactNode;
 }) {
   return (
-    <Button
+    <button
       aria-current={active ? "page" : undefined}
-      className={active ? undefined : "text-muted-foreground"}
+      className={cn(
+        // Explicit 8px: `rounded-lg` maps to --radius (10px) in this theme,
+        // which matched the 10px track behind the tabs instead of nesting
+        // inside it.
+        "inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-[8px] px-2.5 font-medium text-[12.5px] transition-colors [&_svg]:size-3.5 [&_svg]:shrink-0",
+        active
+          ? "bg-card text-foreground shadow-xs"
+          : "bg-transparent text-muted-foreground hover:text-foreground",
+      )}
       onClick={onSelect}
-      size="xs"
-      variant={active ? "outline" : "ghost"}
+      type="button"
     >
       {children}
       <span className="max-sm:sr-only">{label}</span>
-    </Button>
+    </button>
   );
 }

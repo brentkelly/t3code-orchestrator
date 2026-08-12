@@ -475,7 +475,6 @@ a:hover{text-decoration:underline}
                         <article data-card="1" draggable="true" onDragStart="{{ c.onDragStart }}" onDragEnd="{{ c.onDragEnd }}" onClick="{{ c.open }}" title="{{ c.tip }}" style="{{ c.style }}" style-hover="border-color:color-mix(in srgb,var(--fg) 18%,transparent);box-shadow:0 4px 14px -8px rgb(0 0 0 / 35%)">
                           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
                             <span title="{{ c.projectName }}" style="{{ c.keyStyle }}">{{ c.key }}</span>
-                            <span style="{{ c.typeStyle }}">{{ c.type }}</span>
                             <sc-if value="{{ c.working }}" hint-placeholder-val="{{ false }}">
                               <span title="Thread running" style="width:11px;height:11px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
                             </sc-if>
@@ -493,6 +492,13 @@ a:hover{text-decoration:underline}
                               </span>
                             </sc-if>
                           </div>
+                          <sc-if value="{{ c.hasTags }}" hint-placeholder-val="{{ true }}">
+                            <div style="display:flex;flex-wrap:nowrap;gap:4px;margin-bottom:6px;overflow:hidden">
+                              <sc-for list="{{ c.tags }}" as="tg" hint-placeholder-count="1">
+                                <span title="{{ tg.name }}" style="{{ tg.style }}">{{ tg.name }}</span>
+                              </sc-for>
+                            </div>
+                          </sc-if>
                           <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ c.title }}</div>
                           <sc-if value="{{ c.review }}" hint-placeholder-val="{{ false }}">
                             <div style="display:flex;flex-direction:column;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
@@ -604,7 +610,9 @@ a:hover{text-decoration:underline}
       <div onClick="{{ stop }}" style="{{ cardModalStyle }}">
         <div style="display:flex;align-items:center;gap:9px;padding:16px 16px 0">
           <span style="font:500 11.5px var(--font-sans);color:var(--muted-fg)">{{ activeCard.key }}</span>
-          <span style="{{ activeCard.typeStyle }}">{{ activeCard.type }}</span>
+          <sc-for list="{{ activeCard.tags }}" as="tg" hint-placeholder-count="1">
+            <span style="{{ tg.style }}">{{ tg.name }}</span>
+          </sc-for>
           <span style="{{ activeCard.statusStyle }}">{{ activeCard.statusName }}</span>
           <sc-if value="{{ activeCard.threadWorking }}" hint-placeholder-val="{{ false }}">
             <span style="display:inline-flex;align-items:center;gap:6px;height:18px;padding:0 8px 0 6px;border-radius:6px;font:500 11px var(--font-sans);background:var(--accent);color:var(--muted-fg)">
@@ -649,7 +657,21 @@ a:hover{text-decoration:underline}
             </button>
           </div>
           </sc-if>
-          <button type="button" onClick="{{ closeCard }}" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent)">
+          <div style="position:relative;flex:none">
+            <button type="button" onClick="{{ toggleCardMenu }}" title="More actions" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+            </button>
+            <sc-if value="{{ cardMenuOpen }}" hint-placeholder-val="{{ false }}">
+              <div onClick="{{ closeCardMenu }}" style="position:fixed;inset:0;z-index:55"></div>
+              <div style="position:absolute;top:32px;right:0;z-index:60;min-width:168px;padding:5px;border:1px solid var(--border);border-radius:11px;background:var(--popover);box-shadow:0 18px 34px -20px rgb(0 0 0 / 55%);display:flex;flex-direction:column;gap:1px">
+                <button type="button" onClick="{{ archiveCard }}" style="display:inline-flex;align-items:center;gap:9px;height:30px;padding:0 9px;border:none;border-radius:8px;background:transparent;color:var(--fg);font:500 12.5px var(--font-sans);text-align:left;cursor:pointer" style-hover="background:var(--accent)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="4" x="3" y="4" rx="1"></rect><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"></path><path d="M10 12h4"></path></svg>
+                  <span style="flex:1">Archive card</span>
+                </button>
+              </div>
+            </sc-if>
+          </div>
+          <button type="button" onClick="{{ closeCard }}" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent)">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
           </button>
         </div>
@@ -1096,11 +1118,13 @@ a:hover{text-decoration:underline}
             <div style="{{ groupMetaStyle }}">
             <div style="{{ sideStageStyle }}">
             <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Label</div>
-            <div style="display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;scrollbar-width:thin;padding-bottom:2px">
-              <sc-for list="{{ cardLabelPicker.chips }}" as="t" hint-placeholder-count="3">
-                <button type="button" onClick="{{ t.select }}" style="{{ t.style }}">{{ t.name }}</button>
-              </sc-for>
-            </div>
+            <sc-if value="{{ cardLabelPicker.hasSelected }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-wrap:wrap;gap:5px">
+                <sc-for list="{{ cardLabelPicker.pills }}" as="t" hint-placeholder-count="2">
+                  <span style="{{ t.style }}">{{ t.name }}</span>
+                </sc-for>
+              </div>
+            </sc-if>
             <div style="position:relative;margin-top:6px">
               <input type="text" value="{{ cardLabelPicker.query }}" onInput="{{ cardLabelPicker.onQuery }}" onFocus="{{ cardLabelPicker.onFocus }}" onBlur="{{ cardLabelPicker.onBlur }}" onKeyDown="{{ cardLabelPicker.onKey }}" placeholder="{{ cardLabelPicker.placeholder }}" style="width:100%;height:30px;padding:0 10px;border:1px solid var(--input);border-radius:8px;background:var(--bg);color:var(--fg);font:400 12.5px var(--font-sans);outline:none;box-sizing:border-box">
               <sc-if value="{{ cardLabelPicker.open }}" hint-placeholder-val="{{ false }}">
@@ -1110,6 +1134,9 @@ a:hover{text-decoration:underline}
                       <div onMouseDown="{{ o.pick }}" style="{{ o.style }}">
                         <span style="width:10px;height:10px;flex:none;border-radius:3px;background:{{ o.color }}"></span>
                         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left">{{ o.name }}</span>
+                        <sc-if value="{{ o.current }}" hint-placeholder-val="{{ false }}">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--muted-fg)"><path d="M20 6 9 17l-5-5"></path></svg>
+                        </sc-if>
                         <span onMouseDown="{{ o.toggleEdit }}" title="Change colour" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:none;border-radius:5px;color:var(--muted-fg)" style-hover="background:var(--accent);color:var(--fg)">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
                         </span>
@@ -1189,12 +1216,14 @@ a:hover{text-decoration:underline}
           </div>
           <div>
             <label style="display:block;font:500 12px var(--font-sans);color:var(--fg);margin-bottom:6px">Label</label>
-            <div style="display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;scrollbar-width:thin;padding-bottom:2px">
-              <sc-for list="{{ createLabelPicker.chips }}" as="t" hint-placeholder-count="3">
-                <button type="button" onClick="{{ t.select }}" style="{{ t.style }}">{{ t.name }}</button>
-              </sc-for>
-            </div>
-            <div style="position:relative;margin-top:6px">
+            <sc-if value="{{ createLabelPicker.hasSelected }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">
+                <sc-for list="{{ createLabelPicker.pills }}" as="t" hint-placeholder-count="2">
+                  <span style="{{ t.style }}">{{ t.name }}</span>
+                </sc-for>
+              </div>
+            </sc-if>
+            <div style="position:relative">
               <input type="text" value="{{ createLabelPicker.query }}" onInput="{{ createLabelPicker.onQuery }}" onFocus="{{ createLabelPicker.onFocus }}" onBlur="{{ createLabelPicker.onBlur }}" onKeyDown="{{ createLabelPicker.onKey }}" placeholder="{{ createLabelPicker.placeholder }}" style="width:100%;height:34px;padding:0 10px;border:1px solid var(--input);border-radius:8px;background:var(--bg);color:var(--fg);font:400 12.5px var(--font-sans);outline:none;box-sizing:border-box">
               <sc-if value="{{ createLabelPicker.open }}" hint-placeholder-val="{{ false }}">
                 <div style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:8;max-height:230px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;background:var(--popover);box-shadow:var(--shadow-pop);padding:4px;display:flex;flex-direction:column;gap:1px">
@@ -1203,6 +1232,9 @@ a:hover{text-decoration:underline}
                       <div onMouseDown="{{ o.pick }}" style="{{ o.style }}">
                         <span style="width:10px;height:10px;flex:none;border-radius:3px;background:{{ o.color }}"></span>
                         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left">{{ o.name }}</span>
+                        <sc-if value="{{ o.current }}" hint-placeholder-val="{{ false }}">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--muted-fg)"><path d="M20 6 9 17l-5-5"></path></svg>
+                        </sc-if>
                         <span onMouseDown="{{ o.toggleEdit }}" title="Change colour" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:none;border-radius:5px;color:var(--muted-fg)" style-hover="background:var(--accent);color:var(--fg)">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
                         </span>
@@ -1295,9 +1327,9 @@ const LABEL_SWATCHES = [
   "#a1a1aa","#64748b","#0f766e","#7c2d12","#1e40af","#4c1d95",
 ];
 const SEED_LABELS = [
-  { name: "feature", color: "#3b82f6" },
-  { name: "bug", color: "#ef4444" },
-  { name: "chore", color: "#f59e0b" },
+  { name: "Feature", color: "#3b82f6" },
+  { name: "Bug", color: "#ef4444" },
+  { name: "Chore", color: "#f59e0b" },
 ];
 const PROJECTS = [
   { id: "advisor", name: "core.agent.advisor", branch: "main", dot: "#8b8bf5" },
@@ -1310,21 +1342,21 @@ const PLAN = (title, bullets, files) =>
     .join("\n")}\n\n## Verification\n- pnpm test --filter web\n- Manual pass in desktop shell (light + dark)\n`;
 
 const SEED = [
-  { key: "T3-201", p: "advisor", type: "feature", status: "backlog", title: "Stream tool-call deltas into the timeline", brief: "Tool calls currently land as one block when the turn settles. Stream them so long-running edits show progress inline." },
+  { key: "T3-201", p: "advisor", type: "Feature", status: "backlog", title: "Stream tool-call deltas into the timeline", brief: "Tool calls currently land as one block when the turn settles. Stream them so long-running edits show progress inline." },
   { key: "T3-198", p: "advisor", type: "bug", status: "backlog", title: "Context window pill shows a stale token count", brief: "After a compaction the pill keeps the pre-compaction number until the next turn." },
-  { key: "T3-195", p: "advisor", type: "feature", status: "sprint", title: "Persist composer drafts per worktree", brief: "Drafts are keyed by thread today; switching worktrees loses the in-progress prompt." },
+  { key: "T3-195", p: "advisor", type: "Feature", status: "sprint", title: "Persist composer drafts per worktree", brief: "Drafts are keyed by thread today; switching worktrees loses the in-progress prompt." },
   { key: "T3-193", p: "advisor", type: "chore", status: "planning", t: "working", title: "Group worktrees by environment in the branch picker", brief: "The picker lists 40+ worktrees flat. Group by environment with a sticky header per group." },
-  { key: "T3-188", p: "advisor", type: "feature", status: "building", title: "Kanban board mode in the workspace shell", brief: "Add a top-level mode switch: threads or board. Board is per project, with drag between stages.", deps: ["T3-195"], plan: PLAN("Kanban board mode", ["Add workspaceMode atom persisted in client storage", "Mount BoardView beside ChatView under AppSidebarLayout", "Cards are server-authoritative events, same store as threads", "Dependencies are edges on the task record, validated on progress"], ["apps/web/src/components/BoardView.tsx", "apps/web/src/state/board.ts", "packages/contracts/src/task.ts"]) },
-  { key: "T3-186", p: "advisor", type: "feature", status: "building", t: "waiting", title: "Server-authoritative event sourcing cleanup", brief: "Collapse the duplicate client reducer so the server event log is the single source of truth.", plan: PLAN("Event sourcing cleanup", ["Delete the client-side mirror reducer", "Replay from the server log on reconnect", "Add a determinism test over recorded fixtures"], ["apps/server/src/events/log.ts", "packages/client-runtime/src/replay.ts"]) },
-  { key: "T3-182", p: "advisor", type: "feature", status: "review", t: "working", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
+  { key: "T3-188", p: "advisor", type: "Feature", status: "building", title: "Kanban board mode in the workspace shell", brief: "Add a top-level mode switch: threads or board. Board is per project, with drag between stages.", deps: ["T3-195"], plan: PLAN("Kanban board mode", ["Add workspaceMode atom persisted in client storage", "Mount BoardView beside ChatView under AppSidebarLayout", "Cards are server-authoritative events, same store as threads", "Dependencies are edges on the task record, validated on progress"], ["apps/web/src/components/BoardView.tsx", "apps/web/src/state/board.ts", "packages/contracts/src/task.ts"]) },
+  { key: "T3-186", p: "advisor", type: "Feature", status: "building", t: "waiting", title: "Server-authoritative event sourcing cleanup", brief: "Collapse the duplicate client reducer so the server event log is the single source of truth.", plan: PLAN("Event sourcing cleanup", ["Delete the client-side mirror reducer", "Replay from the server log on reconnect", "Add a determinism test over recorded fixtures"], ["apps/server/src/events/log.ts", "packages/client-runtime/src/replay.ts"]) },
+  { key: "T3-182", p: "advisor", type: "Feature", status: "review", t: "working", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
   { key: "T3-179", p: "advisor", type: "chore", status: "merge", title: "Pre-commit format and lint gate", brief: "Formatting drift keeps landing on main. Gate commits with the same checks CI runs.", plan: PLAN("Pre-commit gate", ["Wire lefthook with a staged-file filter", "Run oxlint + prettier on staged files only", "Document the escape hatch in CONTRIBUTING"], ["lefthook.yml", "CONTRIBUTING.md"]), pr: { n: 284, title: "chore: pre-commit format and lint", add: 96, del: 12, files: ["lefthook.yml", "package.json", "CONTRIBUTING.md"], state: "Approved" } },
   { key: "T3-171", p: "advisor", type: "chore", status: "done", title: "Diff panel scroll fade", brief: "Rows now fade under the sticky header instead of cutting hard.", plan: PLAN("Diff panel scroll fade", ["Reuse the chat timeline mask", "Respect the scrollbar gutter"], ["apps/web/src/components/DiffPanel.tsx"]), pr: { n: 276, title: "fix(diff): scroll fade under header", add: 41, del: 9, files: ["apps/web/src/components/DiffPanel.tsx", "apps/web/src/index.css"], state: "Merged" } },
   { key: "T3-168", p: "advisor", type: "bug", status: "done", title: "Fix knowledge capture skill lookup", brief: "Skill ids were resolved case-sensitively, so captures silently no-oped.", plan: PLAN("Skill lookup fix", ["Normalize ids at the registry boundary", "Add a regression test"], ["packages/shared/src/skills.ts"]), pr: { n: 268, title: "fix: normalize skill ids", add: 28, del: 6, files: ["packages/shared/src/skills.ts"], state: "Merged" } },
-  { key: "MW-42", p: "web", type: "feature", status: "backlog", title: "Marketing site: pricing comparison table", brief: "Three tiers, sticky header row on scroll." },
-  { key: "MW-39", p: "web", type: "feature", status: "sprint", title: "Docs search with keyboard nav", brief: "Cmd-K over the docs index, arrow keys to move, enter to open." },
+  { key: "MW-42", p: "web", type: "Feature", status: "backlog", title: "Marketing site: pricing comparison table", brief: "Three tiers, sticky header row on scroll." },
+  { key: "MW-39", p: "web", type: "Feature", status: "sprint", title: "Docs search with keyboard nav", brief: "Cmd-K over the docs index, arrow keys to move, enter to open." },
   { key: "MW-33", p: "web", type: "bug", status: "building", t: "stopped", title: "Nav overlaps hero on iPad portrait", brief: "The sticky nav collides with the hero headline between 768 and 834px.", plan: PLAN("Nav overlap", ["Move the breakpoint to a container query", "Reserve nav height as a layout offset"], ["apps/marketing/src/components/Nav.tsx"]) },
   { key: "RL-18", p: "relay", type: "chore", status: "ready", title: "Rotate relay signing keys without downtime", brief: "Support two active keys during a rollover window.", plan: PLAN("Key rotation", ["Accept N active keys in the verifier", "Publish both in the JWKS", "Retire the old key after the TTL"], ["infra/relay/src/keys.ts"]) },
-  { key: "RL-14", p: "relay", type: "feature", status: "review", t: "waiting", title: "Backpressure on session fan-out", brief: "Slow consumers currently stall the whole fan-out loop.", deps: ["RL-18"], plan: PLAN("Fan-out backpressure", ["Bounded queue per subscriber", "Drop-oldest with a metric"], ["infra/relay/src/fanout.ts"]), pr: { n: 88, title: "feat(relay): bounded fan-out queues", add: 214, del: 63, files: ["infra/relay/src/fanout.ts", "infra/relay/test/fanout.test.ts"], state: "In review" } },
+  { key: "RL-14", p: "relay", type: "Feature", status: "review", t: "waiting", title: "Backpressure on session fan-out", brief: "Slow consumers currently stall the whole fan-out loop.", deps: ["RL-18"], plan: PLAN("Fan-out backpressure", ["Bounded queue per subscriber", "Drop-oldest with a metric"], ["infra/relay/src/fanout.ts"]), pr: { n: 88, title: "feat(relay): bounded fan-out queues", add: 214, del: 63, files: ["infra/relay/src/fanout.ts", "infra/relay/test/fanout.test.ts"], state: "In review" } },
 ];
 
 // Plans discovered during planning. Each plan is a real card that runs the full
@@ -1463,7 +1495,7 @@ class Component extends DCLogic {
       id: "c" + i,
       key: c.key,
       project: c.p,
-      type: c.type,
+      tags: c.tags || (c.type ? [c.type[0].toUpperCase() + c.type.slice(1)] : []),
       status: c.status,
       tstate: c.t || "stopped",
       title: c.title,
@@ -1487,7 +1519,7 @@ class Component extends DCLogic {
           parentKey: pk,
           planN: p.n,
           project: parent.project,
-          type: parent.type,
+          tags: (parent.tags || []).slice(),
           status: p.status,
           tstate: p.t || "stopped",
           title: p.title,
@@ -1525,7 +1557,7 @@ class Component extends DCLogic {
       activeId: null,
       createOpen: false,
       createStatus: "backlog",
-      createType: "feature",
+      createTags: ["Feature"],
       labels: SEED_LABELS.slice(),
       lp: { open: false, target: null, query: "", edit: null },
       createProject: "advisor",
@@ -1964,7 +1996,7 @@ class Component extends DCLogic {
 
   planCardsFor(key) {
     return this.state.cards
-      .filter((c) => c.parentKey === key)
+      .filter((c) => c.parentKey === key && !c.archived)
       .sort((a, b) => a.planN - b.planN);
   }
   // Dependency waves: wave 0 has no unmet plan deps, wave n depends on n-1.
@@ -2087,6 +2119,26 @@ class Component extends DCLogic {
     const l = (this.state.labels || SEED_LABELS).find((x) => x.name === name);
     return l ? l.color : "#a1a1aa";
   }
+  cardTagPills(tags) {
+    // one line only: fit by character budget, spill the rest into a +N pill
+    const BUDGET = 26;
+    const out = [];
+    let used = 0;
+    tags.forEach((t) => {
+      if (out.length && used + t.length > BUDGET) return;
+      used += t.length + 2;
+      out.push(t);
+    });
+    const rest = tags.length - out.length;
+    const pills = out.map((t) => ({ name: t, style: this.typeStyle(t) }));
+    if (rest > 0)
+      pills.push({
+        name: "+" + rest,
+        style:
+          "display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;background:color-mix(in srgb,var(--fg) 7%,transparent);color:var(--muted-fg)",
+      });
+    return pills;
+  }
   typeStyle(type) {
     const c = this.labelColor(type);
     return `display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;background:color-mix(in srgb,${c} 14%,transparent);color:color-mix(in srgb,${c} 78%,var(--fg))`;
@@ -2101,31 +2153,46 @@ class Component extends DCLogic {
     const open = !!lp.open && lp.target === target;
     const raw = open ? lp.query : "";
     const q = raw.trim().toLowerCase();
-    const current =
+    const selected =
       target === "create"
-        ? st.createType || "feature"
-        : (st.cards.find((c) => c.id === st.activeId) || {}).type;
-    const apply = (name) => {
-      if (target === "create") this.setState({ createType: name });
+        ? st.createTags || []
+        : ((st.cards.find((c) => c.id === st.activeId) || {}).tags || []);
+    const toggle = (name) => {
+      const flip = (list) =>
+        list.includes(name) ? list.filter((x) => x !== name) : list.concat(name);
+      if (target === "create")
+        this.setState((s2) => ({ createTags: flip(s2.createTags || []) }));
       else
         this.setState((s2) => ({
           cards: s2.cards.map((c) =>
-            c.id === s2.activeId ? { ...c, type: name } : c,
+            c.id === s2.activeId ? { ...c, tags: flip(c.tags || []) } : c,
+          ),
+        }));
+    };
+    const add = (name) => {
+      if (target === "create")
+        this.setState((s2) => ({
+          createTags: (s2.createTags || []).concat(name),
+        }));
+      else
+        this.setState((s2) => ({
+          cards: s2.cards.map((c) =>
+            c.id === s2.activeId ? { ...c, tags: (c.tags || []).concat(name) } : c,
           ),
         }));
     };
     const close = () =>
       this.setState({ lp: { open: false, target: null, query: "", edit: null } });
     const chipStyle = (name, on, h) =>
-      "display:inline-flex;flex:none;white-space:nowrap;align-items:center;gap:6px;height:" + h + "px;padding:0 10px;border-radius:8px;cursor:pointer;font:500 12px var(--font-sans);text-transform:capitalize;" +
+      "display:inline-flex;flex:none;white-space:nowrap;align-items:center;gap:6px;height:" + h + "px;padding:0 10px;border-radius:8px;cursor:pointer;font:500 12px var(--font-sans);" +
       (on
         ? this.typeChipOn(name)
         : "border:1px solid var(--input);background:var(--popover);color:var(--muted-fg)");
     return {
-      chips: (st.labels || []).map((l) => ({
-        name: l.name,
-        select: () => apply(l.name),
-        style: chipStyle(l.name, l.name === current, target === "create" ? 30 : 26),
+      hasSelected: selected.length > 0,
+      pills: selected.map((name) => ({
+        name,
+        style: this.typeStyle(name).replace("height:16px", "height:18px"),
       })),
       query: raw,
       open,
@@ -2144,8 +2211,9 @@ class Component extends DCLogic {
           const hit = (st.labels || []).filter(
             (l) => !q || l.name.toLowerCase().includes(q),
           )[0];
-          if (hit) { apply(hit.name); close(); }
-          else if (q) this.addLabel(raw.trim(), apply, close);
+          if (hit) { toggle(hit.name); }
+          else if (q) this.addLabel(raw.trim(), add);
+          this.setState((s2) => ({ lp: { ...s2.lp, query: "" } }));
         }
       },
       matches: (st.labels || [])
@@ -2153,9 +2221,9 @@ class Component extends DCLogic {
         .map((l) => ({
           name: l.name,
           color: l.color,
-          current: l.name === current,
+          current: selected.includes(l.name),
           editing: lp.edit === l.name,
-          pick: (e) => { e.preventDefault(); apply(l.name); close(); },
+          pick: (e) => { e.preventDefault(); toggle(l.name); },
           toggleEdit: (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -2177,16 +2245,20 @@ class Component extends DCLogic {
           })),
           style:
             "display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 6px;border:none;border-radius:7px;cursor:pointer;font:" +
-            (l.name === current ? "500" : "400") +
-            " 12.5px var(--font-sans);text-transform:capitalize;color:var(--fg);background:" +
-            (l.name === current ? "var(--accent)" : "transparent"),
+            (selected.includes(l.name) ? "500" : "400") +
+            " 12.5px var(--font-sans);color:var(--fg);background:" +
+            (selected.includes(l.name) ? "var(--accent)" : "transparent"),
         })),
       canCreate: !!q && !(st.labels || []).some((l) => l.name.toLowerCase() === q),
       createName: raw.trim(),
-      create: (e) => { e.preventDefault(); this.addLabel(raw.trim(), apply, close); },
+      create: (e) => {
+        e.preventDefault();
+        this.addLabel(raw.trim(), add);
+        this.setState((s2) => ({ lp: { ...s2.lp, query: "" } }));
+      },
     };
   }
-  addLabel(name, apply, close) {
+  addLabel(name, apply) {
     if (!name) return;
     this.setState((s2) => {
       if (s2.labels.some((l) => l.name.toLowerCase() === name.toLowerCase())) return null;
@@ -2200,7 +2272,6 @@ class Component extends DCLogic {
       return { labels: s2.labels.concat({ name, color }) };
     });
     apply(name);
-    close();
   }
   startDrag(e, card, colKey, index) {
     const el = e.currentTarget;
@@ -2376,7 +2447,8 @@ class Component extends DCLogic {
         isCard: true,
         isPlaceholder: false,
         key: showKeys ? c.key : "",
-        type: c.type,
+        tags: this.cardTagPills(c.tags || []),
+        hasTags: (c.tags || []).length > 0,
         title: c.title,
         blocked,
         hasDeps,
@@ -2407,7 +2479,6 @@ class Component extends DCLogic {
         tip: awaiting ? "Awaiting input" : working ? "Thread running" : "",
         projectName: projName(c.project),
         keyStyle: showKeys ? this.keyPillStyle(projColor(c.project)) : "display:none",
-        typeStyle: this.typeStyle(c.type),
         style:
           "border:1px solid " +
           (awaiting
@@ -2451,7 +2522,7 @@ class Component extends DCLogic {
       const ids = projs.map((p) => p.id);
       const bkey = opts.key || (isAll ? "all" : projs[0].id);
       const pool =
-        opts.cards || st.cards.filter((c) => !c.parentKey);
+        opts.cards || st.cards.filter((c) => !c.parentKey && !c.archived);
       const mine = pool.filter(
         (c) =>
           ids.indexOf(c.project) !== -1 &&
@@ -2588,7 +2659,7 @@ class Component extends DCLogic {
               this.setState({
                 createOpen: true,
                 createStatus: stage.id,
-                createType: "feature",
+                createTags: ["Feature"],
                 createProject: isAll ? "advisor" : p.id,
                 draftTitle: "",
                 draftBrief: "",
@@ -2647,8 +2718,7 @@ class Component extends DCLogic {
       });
       activeCard = {
         key: active.key,
-        type: active.type,
-        typeStyle: this.typeStyle(active.type),
+        tags: (active.tags || []).map((t) => ({ name: t, style: this.typeStyle(t) })),
         statusName: stage.name,
         statusStyle:
           "display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 7px;border-radius:6px;font:500 11px var(--font-sans);background:color-mix(in srgb," +
@@ -3634,8 +3704,17 @@ class Component extends DCLogic {
           });
         }
       },
+      cardMenuOpen: !!st.cardMenuOpen,
+      toggleCardMenu: () => this.setState((s) => ({ cardMenuOpen: !s.cardMenuOpen })),
+      closeCardMenu: () => this.setState({ cardMenuOpen: false }),
+      archiveCard: () => {
+        if (!active) return;
+        this.patchCard(active.id, { archived: true });
+        this.setState({ cardMenuOpen: false, activeId: null, back: null, cardMaxed: false });
+      },
       closeCard: () =>
         this.setState({
+          cardMenuOpen: false,
           activeId: null,
           back: null,
           cardMaxed: false,
@@ -3682,7 +3761,7 @@ class Component extends DCLogic {
         this.setState({
           createOpen: true,
           createStatus: "backlog",
-          createType: "feature",
+          createTags: ["Feature"],
           createProject: st.scope === "all" ? "advisor" : st.scope,
           draftTitle: "",
           draftBrief: "",
@@ -3832,7 +3911,7 @@ class Component extends DCLogic {
           id: "c" + Date.now(),
           key: prefix + nextNum,
           project: this.state.createProject,
-          type: this.state.createType || "feature",
+          tags: (this.state.createTags || []).slice(),
           status: this.state.createStatus,
           title,
           brief: html || '<p style="margin:0;color:var(--muted-fg)">No brief yet.</p>',

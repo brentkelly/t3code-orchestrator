@@ -19,6 +19,21 @@ export const BOARD_UI_STATE_STORAGE_KEY = "t3code:board-ui:v1";
 
 export type WorkspaceMode = "threads" | "board";
 
+/**
+ * Which workspace mode an href belongs to. The board surface lives under
+ * `/board` (optionally with `?project`/`?card`); every other location —
+ * threads, drafts, the root — is a threads-surface location.
+ *
+ * This is the single source of truth for classifying a location, used both to
+ * guard `recordModeLocation` against cross-mode writes and to sanitise
+ * persisted state. Keeping it in one place stops the two from drifting.
+ */
+export function modeForHref(href: string): WorkspaceMode {
+  return href === "/board" || href.startsWith("/board?") || href.startsWith("/board/")
+    ? "board"
+    : "threads";
+}
+
 interface BoardUiState {
   /** The mode the client was last in. */
   mode: WorkspaceMode;
@@ -53,7 +68,11 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
   const lastLocationByMode: BoardUiState["lastLocationByMode"] = {};
   for (const mode of ["threads", "board"] as const) {
     const href = candidate.lastLocationByMode?.[mode];
-    if (typeof href === "string" && href.startsWith("/")) {
+    // Must be an in-app path AND belong to the mode it is filed under. The
+    // second check repairs stores poisoned by the pre-guard bug where a
+    // board→thread transition recorded a thread href under `board`, which
+    // then sent every Board click back to that thread.
+    if (typeof href === "string" && href.startsWith("/") && modeForHref(href) === mode) {
       lastLocationByMode[mode] = href;
     }
   }
@@ -79,11 +98,18 @@ export const useBoardUiStore = create<BoardUiStore>()(
       lastLocationByMode: {},
       collapsedByStage: {},
       recordModeLocation: (mode, href) =>
-        set((state) =>
-          state.mode === mode && state.lastLocationByMode[mode] === href
+        set((state) => {
+          // The mounting surface fixes `mode`, but the router location updates
+          // the instant a navigation starts — before the old surface unmounts.
+          // Without this guard the still-mounted Board tab records the incoming
+          // thread href under `board` during a board→thread transition, and
+          // every later Board click jumps back to that thread. Only file a
+          // location under the mode it actually belongs to.
+          if (modeForHref(href) !== mode) return state;
+          return state.mode === mode && state.lastLocationByMode[mode] === href
             ? state
-            : { mode, lastLocationByMode: { ...state.lastLocationByMode, [mode]: href } },
-        ),
+            : { mode, lastLocationByMode: { ...state.lastLocationByMode, [mode]: href } };
+        }),
       setColumnCollapsed: (stage, collapsed) =>
         set((state) =>
           isBoardColumnCollapsed(state.collapsedByStage, stage) === collapsed

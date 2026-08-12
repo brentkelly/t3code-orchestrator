@@ -5,6 +5,11 @@ import { passkeys } from "@clerk/electron/passkeys";
 import { ClerkProvider as ElectronClerkProvider } from "@clerk/electron/react";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
+// Self-hosted so the interface font is identical offline and in Electron,
+// where a webfont CDN is not reachable. Must precede the stylesheet that
+// names "DM Sans Variable" in `--font-sans`.
+import "@fontsource-variable/dm-sans";
+
 import "./index.css";
 
 import { isElectron } from "./env";

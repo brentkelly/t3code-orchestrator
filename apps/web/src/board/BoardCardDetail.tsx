@@ -1,5 +1,5 @@
 /**
- * T3o card detail pane — connected (t3o-06). Opens `board.subscribeCard` for
+ * T3o card detail modal — connected (t3o-06). Opens `board.subscribeCard` for
  * the one selected card (D7: the heavy detail streams here, never on the shell
  * that every column card renders from), reads the label catalogue and the
  * shell snapshot for dependency/thread resolution, and wires the board
@@ -11,9 +11,9 @@
 import {
   BoardCardId,
   BoardLabelId,
+  activeBoardCardThreadId,
   areBoardStagesAdjacent,
   deriveBoardCardThreadState,
-  resolveBoardProjectAccent,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
@@ -22,34 +22,38 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { useCallback, useMemo, useState } from "react";
 
+import { Dialog } from "../components/ui/dialog";
 import { randomUUID } from "../lib/utils";
 import { boardEnvironment } from "../state/board";
 import { environmentShell } from "../state/shell";
-import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 import { indexBoardLabels } from "./labelColour";
 import {
+  BoardCardDetailPopup,
   BoardCardDetailView,
+  boardCardHasThreadPane,
   type BoardDetailDependency,
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 
-function LoadingPane({ onClose }: { readonly onClose: () => void }) {
+/** The modal frame, empty, while `board.subscribeCard` opens — same sheet, so
+    nothing jumps when the detail lands. */
+function LoadingModal({ onClose, wide }: { readonly onClose: () => void; readonly wide: boolean }) {
   return (
-    <aside className="flex h-full w-[22rem] shrink-0 flex-col border-l border-border bg-background">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
-        <span className="text-sm text-muted-foreground">Loading card…</span>
-        <button
-          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={onClose}
-          type="button"
-        >
-          Close
-        </button>
-      </div>
-    </aside>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <BoardCardDetailPopup cardId={null} wide={wide}>
+        <div className="flex items-center gap-2 px-4 py-16">
+          <span className="flex-1 text-center text-sm text-muted-foreground">Loading card…</span>
+        </div>
+      </BoardCardDetailPopup>
+    </Dialog>
   );
 }
 
@@ -65,7 +69,6 @@ export function BoardCardDetail({
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
-  const boardSettings = usePrimarySettings((settings) => settings.board);
 
   const updateCard = useAtomCommand(boardEnvironment.updateCard);
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
@@ -109,6 +112,7 @@ export function BoardCardDetail({
       return {
         cardId: dependencyId,
         key: shell?.key ?? dependencyId,
+        title: shell?.title ?? null,
         stage: shell?.stage ?? "backlog",
         known: shell !== undefined,
       };
@@ -160,16 +164,30 @@ export function BoardCardDetail({
   }, [card, snapshot]);
 
   if (detail === null || card === null) {
-    return <LoadingPane onClose={onClose} />;
+    // The shell already knows the stage, so the empty frame opens at the width
+    // the detail will need — no jump from sheet to working surface.
+    const shell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+    return (
+      <LoadingModal
+        onClose={onClose}
+        wide={shell !== undefined && boardCardHasThreadPane(shell.stage)}
+      />
+    );
   }
 
   const projectName = snapshot?.projects.find((project) => project.id === card.projectId)?.title;
-  const accentName = resolveBoardProjectAccent(boardSettings, card.projectId);
+  // The card owns no branch — its active thread does. Shown when there is one,
+  // absent otherwise (never a guessed default).
+  const activeThreadId = activeBoardCardThreadId(card.threadLinks);
+  const branch =
+    activeThreadId === null
+      ? null
+      : (snapshot?.threads.find((thread) => thread.id === activeThreadId)?.branch ?? null);
 
   return (
     <BoardCardDetailView
-      accentName={accentName}
       adoptableThreads={adoptableThreads}
+      branch={branch}
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}

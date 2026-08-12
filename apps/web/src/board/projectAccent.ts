@@ -11,18 +11,32 @@
 import type { ProjectId } from "@t3tools/contracts";
 
 export interface ProjectAccent {
+  /** The accent's fill, as authored. Exposed so the pill's computed
+      foreground can be asserted against it (see projectAccent.test.ts). */
+  readonly hex: string;
   /** Solid legend/status dot. */
   readonly dot: string;
-  /** Tinted key pill (background + readable text in both appearances). */
+  /**
+   * Key pill: a SOLID fill of the accent, so the card's identity reads as a
+   * badge and stays distinct from the soft label chips beside it. The
+   * foreground follows the prototype's luminance split (`boardLabelForeground`)
+   * rather than being white everywhere — these are deliberately desaturated
+   * fills, and white on the lighter ones would be unreadable.
+   */
   readonly pill: string;
 }
 
-/** The palette names, in menu order — the accent-picker options in Settings. */
+/**
+ * The palette names, in menu order — the accent-picker options in Settings.
+ * The first three are the prototype's own project colours, in its order, so a
+ * fresh board looks like the mockup. The names are unchanged from the original
+ * set so an already-configured `BoardSettings.accentColor` never orphans.
+ */
 export const PROJECT_ACCENT_NAMES = [
-  "blue",
-  "emerald",
   "violet",
+  "blue",
   "amber",
+  "emerald",
   "rose",
   "cyan",
   "orange",
@@ -30,18 +44,24 @@ export const PROJECT_ACCENT_NAMES = [
 ] as const;
 export type ProjectAccentName = (typeof PROJECT_ACCENT_NAMES)[number];
 
+/**
+ * Fills are literal arbitrary values, never interpolated: Tailwind generates
+ * utilities by scanning source text, so a `bg-[${hex}]` built at runtime would
+ * emit no CSS at all. Foregrounds are the luminance split applied to the fill
+ * beside them — the test asserts each one against `boardLabelForeground`, so a
+ * hand-written mismatch cannot survive.
+ */
 export const PROJECT_ACCENTS_BY_NAME: Readonly<Record<ProjectAccentName, ProjectAccent>> = {
-  blue: { dot: "bg-blue-500", pill: "bg-blue-500/15 text-blue-700 dark:text-blue-300" },
-  emerald: {
-    dot: "bg-emerald-500",
-    pill: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  },
-  violet: { dot: "bg-violet-500", pill: "bg-violet-500/15 text-violet-700 dark:text-violet-300" },
-  amber: { dot: "bg-amber-500", pill: "bg-amber-500/15 text-amber-700 dark:text-amber-300" },
-  rose: { dot: "bg-rose-500", pill: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
-  cyan: { dot: "bg-cyan-500", pill: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300" },
-  orange: { dot: "bg-orange-500", pill: "bg-orange-500/15 text-orange-700 dark:text-orange-300" },
-  teal: { dot: "bg-teal-500", pill: "bg-teal-500/15 text-teal-700 dark:text-teal-300" },
+  // First project's accent, then the prototype's remaining two in its order.
+  violet: { hex: "#9400ff", dot: "bg-[#9400ff]", pill: "bg-[#9400ff] text-white" },
+  blue: { hex: "#38bdf8", dot: "bg-[#38bdf8]", pill: "bg-[#38bdf8] text-white" },
+  amber: { hex: "#f59e0b", dot: "bg-[#f59e0b]", pill: "bg-[#f59e0b] text-white" },
+  // Same register — soft, mid-tone, none of them fully saturated.
+  emerald: { hex: "#34d399", dot: "bg-[#34d399]", pill: "bg-[#34d399] text-[#26262b]" },
+  rose: { hex: "#fb7185", dot: "bg-[#fb7185]", pill: "bg-[#fb7185] text-white" },
+  cyan: { hex: "#22d3ee", dot: "bg-[#22d3ee]", pill: "bg-[#22d3ee] text-[#26262b]" },
+  orange: { hex: "#fb923c", dot: "bg-[#fb923c]", pill: "bg-[#fb923c] text-white" },
+  teal: { hex: "#2dd4bf", dot: "bg-[#2dd4bf]", pill: "bg-[#2dd4bf] text-[#26262b]" },
 };
 
 const PROJECT_ACCENTS: ReadonlyArray<ProjectAccent> = PROJECT_ACCENT_NAMES.map(

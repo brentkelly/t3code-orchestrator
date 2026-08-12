@@ -14,23 +14,36 @@ describe("boardStagePrimaryAction", () => {
     expect(boardStagePrimaryAction("backlog")).toEqual({
       label: "Add to sprint",
       toStage: "sprint",
+      emphasised: true,
     });
     expect(boardStagePrimaryAction("sprint")).toEqual({
       label: "Begin planning",
       toStage: "planning",
+      emphasised: true,
     });
+    // An approval is a quiet button, not the loud one.
     expect(boardStagePrimaryAction("planning")).toEqual({
       label: "Approve plan",
       toStage: "ready",
+      emphasised: false,
     });
     // The Ready gate — "Begin build" — is the crossing that must never be
     // automatic; it is a human click here, nothing more.
-    expect(boardStagePrimaryAction("ready")).toEqual({ label: "Begin build", toStage: "building" });
+    expect(boardStagePrimaryAction("ready")).toEqual({
+      label: "Begin build",
+      toStage: "building",
+      emphasised: true,
+    });
     expect(boardStagePrimaryAction("review")).toEqual({
       label: "Approve review",
       toStage: "merge",
+      emphasised: false,
     });
-    expect(boardStagePrimaryAction("merge")).toEqual({ label: "Merge", toStage: "done" });
+    expect(boardStagePrimaryAction("merge")).toEqual({
+      label: "Merge",
+      toStage: "done",
+      emphasised: true,
+    });
   });
 
   it("offers NO forward button from Building or Done (board-driven / terminal)", () => {
