@@ -9,7 +9,20 @@
  * D18 violation. Done has none either (its only exit is archive, a reverse
  * state handled separately).
  */
-import type { BoardStage } from "@t3tools/contracts";
+import { boardStageIndex, type BoardStage } from "@t3tools/contracts";
+
+/**
+ * Stages a human may drop a card into directly, from the detail modal's stage
+ * ladder: Backlog, Sprint and Planning — the same three a card can be created
+ * into (t3o-06a). Everything from Ready on describes work the board has
+ * started shepherding, so it is *granted* rather than chosen: by the forward
+ * gate button, a build result, a review verdict. The ladder still shows those
+ * stages — the pipeline is the board's spine and reads as a whole — it just
+ * does not offer them as a click.
+ */
+export function isBoardStageManuallySelectable(stage: BoardStage): boolean {
+  return boardStageIndex(stage) <= boardStageIndex("planning");
+}
 
 export interface BoardStagePrimaryAction {
   readonly label: string;

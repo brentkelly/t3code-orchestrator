@@ -64,7 +64,7 @@ import { BoardLabelChips } from "./BoardLabelChips";
 import { BoardLabelField } from "./BoardLabelField";
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
 import { BOARD_STAGE_LABELS } from "./boardStages";
-import { boardStagePrimaryAction } from "./boardStageActions";
+import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
 
 /** One id, so the dialog can label itself from the title the panel renders
     (the panel is mounted outside the dialog context by its tests). */
@@ -367,24 +367,34 @@ function StageLadder({
     <div className="flex flex-col gap-px">
       {BOARD_STAGES.map((candidate) => {
         const current = candidate === stage;
-        return (
-          <button
-            aria-current={current ? "true" : undefined}
-            className={cn(
-              "flex h-[26px] items-center gap-2 rounded-[7px] px-2 text-[12.5px]",
-              current
-                ? "bg-accent font-medium text-foreground"
-                : "text-muted-foreground hover:bg-accent/50",
-            )}
-            key={candidate}
-            onClick={() => {
-              if (!current) onMoveStage(candidate);
-            }}
-            type="button"
-          >
+        const rung = (
+          <>
             <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/45" />
             <span className="flex-1 text-left">{BOARD_STAGE_LABELS[candidate]}</span>
             {current ? <CheckIcon className="size-3.5 shrink-0" /> : null}
+          </>
+        );
+        const className = cn(
+          "flex h-[26px] items-center gap-2 rounded-[7px] px-2 text-[12.5px]",
+          current ? "bg-accent font-medium text-foreground" : "text-muted-foreground",
+        );
+        // Ready onward is granted by the pipeline, not chosen — those rungs
+        // render as plain rows so the ladder still reads whole.
+        if (current || !isBoardStageManuallySelectable(candidate)) {
+          return (
+            <div aria-current={current ? "true" : undefined} className={className} key={candidate}>
+              {rung}
+            </div>
+          );
+        }
+        return (
+          <button
+            className={cn(className, "hover:bg-accent/50")}
+            key={candidate}
+            onClick={() => onMoveStage(candidate)}
+            type="button"
+          >
+            {rung}
           </button>
         );
       })}

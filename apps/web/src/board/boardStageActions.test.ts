@@ -7,7 +7,7 @@
 import { BOARD_STAGES } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardStagePrimaryAction } from "./boardStageActions";
+import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
 
 describe("boardStagePrimaryAction", () => {
   it("offers each human-gated forward transition from D18", () => {
@@ -58,5 +58,16 @@ describe("boardStagePrimaryAction", () => {
       const action = boardStagePrimaryAction(stage);
       if (action?.toStage === "building") expect(stage).toBe("ready");
     }
+  });
+
+  it("lets a human choose only the three planning stages", () => {
+    // Backlog, Sprint and Planning are a person's to set; Ready onward is
+    // granted by the forward gate, a build result or a review verdict, so the
+    // ladder must not offer them as a click.
+    expect(BOARD_STAGES.filter(isBoardStageManuallySelectable)).toEqual([
+      "backlog",
+      "sprint",
+      "planning",
+    ]);
   });
 });
