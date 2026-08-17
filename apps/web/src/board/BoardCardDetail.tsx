@@ -266,6 +266,9 @@ export function BoardCardDetail({
       onSaveBrief={(brief) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, brief } }))
       }
+      onSaveTitle={(title) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, title } }))
+      }
       onSetLabels={(labels) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, labels } }))
       }

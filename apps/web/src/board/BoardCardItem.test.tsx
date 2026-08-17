@@ -72,6 +72,31 @@ describe("BoardCardContent (D7)", () => {
     expect(html).toContain("1 critical · 2 improvements · 3 nitpicks");
   });
 
+  it("counts dependencies before the gate, and names the gate once it bites", () => {
+    const early = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("backlog", { dependencyCount: 2 })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    // Backlog is before the D18 gate: a count, not the word "Blocked".
+    expect(early).toContain("Depends on 2 cards");
+    expect(early).not.toContain("Blocked");
+
+    const gated = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("ready", { blocked: true, dependencyCount: 2 })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    expect(gated).toContain("Blocked");
+    expect(gated).toContain("Blocked by 2 dependencies");
+  });
+
   it("mutes a Done card", () => {
     const html = renderToStaticMarkup(
       <BoardCardContent

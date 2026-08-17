@@ -302,7 +302,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/mcp/McpSessionRegistry.ts`                            | `t3o-08`  | Granted capability set gains `"board"` (D3)                               | one-line edit (frozen)                                                   |
 | `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`  | Import `BoardToolkitRegistrationLive`                                     | one-line append (import)                                                 |
 | `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`  | Board toolkit joins the MCP server layer merge (D3)                       | spread of a board-owned registration layer                               |
-| `packages/contracts/src/orchestration.ts`                             | `t3o-09` | Server-internal board commands in `InternalOrchestrationCommand`         | registry spread (`BOARD_INTERNAL_COMMANDS`)                             |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-09`  | Server-internal board commands in `InternalOrchestrationCommand`          | registry spread (`BOARD_INTERNAL_COMMANDS`)                              |
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
 (5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the

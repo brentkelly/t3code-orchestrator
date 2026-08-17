@@ -31,8 +31,6 @@ export interface BoardLabelFieldProps {
   readonly onRecolour: (labelId: BoardLabelId, colour: string) => void;
   readonly onDelete: (labelId: BoardLabelId) => void;
   readonly onUndelete: (labelId: BoardLabelId) => void;
-  /** `field` is the create dialog's taller input; `rail` the card modal's. */
-  readonly size?: "field" | "rail";
 }
 
 export function BoardLabelField(props: BoardLabelFieldProps) {
@@ -90,7 +88,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
 
       <div className="relative">
         <Input
-          className={cn("text-[12.5px]", props.size === "field" ? "h-[34px]" : "h-[30px]")}
+          className="h-[30px] text-[12.5px]"
           onBlur={close}
           onChange={(event) => {
             setQuery(event.target.value);

@@ -62,6 +62,11 @@ import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardLabelChips } from "./BoardLabelChips";
 import { BoardLabelField } from "./BoardLabelField";
+import {
+  BoardDependencySection,
+  BoardSectionHeading as SectionHeading,
+  type BoardDependencyEntry,
+} from "./BoardCardFields";
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
 import { BOARD_STAGE_LABELS } from "./boardStages";
 import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
@@ -88,15 +93,9 @@ export function boardCardHasThreadPane(stage: BoardStage): boolean {
   return boardStageIndex(stage) >= boardStageIndex("planning");
 }
 
-export interface BoardDetailDependency {
-  readonly cardId: BoardCardId;
-  readonly key: string;
-  readonly title: string | null;
-  readonly stage: BoardStage;
-  /** False when the dependency id resolves to no live card (deleted, or
-      another environment) — rendered as an unknown reference, never hidden. */
-  readonly known: boolean;
-}
+/** Named for the modal that first rendered it; the shape is shared with the
+    create dialog, so it lives in `BoardCardFields`. */
+export type BoardDetailDependency = BoardDependencyEntry;
 
 export interface BoardDetailThreadLink {
   readonly threadId: ThreadId;
@@ -129,6 +128,7 @@ export interface BoardCardDetailViewProps {
   readonly onRecolourLabel: (labelId: BoardLabelId, colour: string) => void;
   readonly onDeleteLabel: (labelId: BoardLabelId) => void;
   readonly onUndeleteLabel: (labelId: BoardLabelId) => void;
+  readonly onSaveTitle: (title: string) => void;
   readonly onSaveBrief: (brief: string | null) => void;
   readonly onAddDependency: (cardId: BoardCardId) => void;
   readonly onRemoveDependency: (cardId: BoardCardId) => void;
@@ -145,32 +145,82 @@ export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
   readonly onToggleMaximised: () => void;
 }
 
-/** The prototype's section label: 11px, uppercase, widely tracked. */
-function SectionHeading({
-  children,
-  className,
-}: {
-  readonly children: React.ReactNode;
-  readonly className?: string;
-}) {
-  return (
-    <h3
-      className={cn(
-        "text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground",
-        className,
-      )}
-    >
-      {children}
-    </h3>
-  );
-}
-
 const THREAD_STATE_LABEL: Record<BoardCardThreadState, string> = {
   working: "Working",
   waiting: "Waiting",
   stopped: "Stopped",
   none: "Idle",
 };
+
+/**
+ * The card's title, click-to-edit in place — the prototype's affordance, the
+ * same one `BriefBody` has. The heading keeps `CARD_TITLE_ID` in both states so
+ * the dialog stays labelled while the title is being typed.
+ *
+ * A blank title is a cancel, not a clear: `board.card.update` takes a non-empty
+ * title, and a card with no title is nothing anyone can find again.
+ */
+function TitleBody({
+  title,
+  onSave,
+}: {
+  readonly title: string;
+  readonly onSave: (title: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const commit = () => {
+    const trimmed = draft.replace(/\s+/g, " ").trim();
+    if (trimmed.length > 0 && trimmed !== title) onSave(trimmed);
+    setEditing(false);
+  };
+  const frame =
+    "mx-2.5 mt-2 shrink-0 rounded-[7px] px-1.5 text-[21px]/[1.25] font-semibold tracking-[-0.015em] text-pretty text-foreground";
+  if (editing) {
+    return (
+      <h2
+        className={cn(frame, "flex bg-muted shadow-[0_0_0_1px_var(--primary)]")}
+        id={CARD_TITLE_ID}
+      >
+        {/* A textarea, not an input: long titles wrap here exactly as they do
+            at rest, so committing never reflows the sheet. */}
+        <textarea
+          autoFocus
+          className="field-sizing-content w-full resize-none bg-transparent text-inherit outline-none"
+          onBlur={commit}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setDraft(title);
+              setEditing(false);
+            }
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              commit();
+            }
+          }}
+          rows={1}
+          value={draft}
+        />
+      </h2>
+    );
+  }
+  return (
+    <h2 className={cn(frame, "cursor-text hover:bg-accent")} id={CARD_TITLE_ID}>
+      <button
+        className="block w-full cursor-text text-left"
+        onClick={() => {
+          setDraft(title);
+          setEditing(true);
+        }}
+        title="Click to edit"
+        type="button"
+      >
+        {title}
+      </button>
+    </h2>
+  );
+}
 
 function BriefBody({
   brief,
@@ -229,55 +279,12 @@ function BriefBody({
 
 function DependenciesSection(props: BoardCardDetailViewProps) {
   return (
-    <>
-      <div className="mb-[7px] flex items-center gap-1.5">
-        <SectionHeading>Dependencies</SectionHeading>
-        <BoardSearchAddPicker
-          label="Add"
-          onPick={(id) => props.onAddDependency(id as BoardCardId)}
-          options={props.dependencyOptions}
-          placeholder="Search cards…"
-        />
-      </div>
-      {props.dependencies.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">No dependencies.</p>
-      ) : (
-        <ul className="flex flex-col gap-1.5">
-          {props.dependencies.map((dependency) => (
-            <li
-              className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
-              key={dependency.cardId}
-            >
-              <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/45" />
-              <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
-                {dependency.key}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
-                {dependency.title ?? "Unknown task"}
-              </span>
-              <span
-                className={cn(
-                  "shrink-0 text-[11px]",
-                  dependency.known && dependency.stage === "done"
-                    ? "text-success-foreground"
-                    : "text-muted-foreground",
-                )}
-              >
-                {dependency.known ? BOARD_STAGE_LABELS[dependency.stage] : "unknown card"}
-              </span>
-              <Button
-                onClick={() => props.onRemoveDependency(dependency.cardId)}
-                size="icon-xs"
-                title="Remove dependency"
-                variant="ghost"
-              >
-                <XIcon />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
+    <BoardDependencySection
+      dependencies={props.dependencies}
+      onAdd={props.onAddDependency}
+      onRemove={props.onRemoveDependency}
+      options={props.dependencyOptions}
+    />
   );
 }
 
@@ -598,12 +605,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         </button>
       </div>
 
-      <h2
-        className="mx-2.5 mt-2 shrink-0 px-1.5 text-[21px]/[1.25] font-semibold tracking-[-0.015em] text-pretty text-foreground"
-        id={CARD_TITLE_ID}
-      >
-        {card.title}
-      </h2>
+      <TitleBody onSave={props.onSaveTitle} title={card.title} />
 
       {wide ? (
         <div className="mt-3 grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_336px] border-t border-border">

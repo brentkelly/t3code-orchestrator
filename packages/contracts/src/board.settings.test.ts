@@ -10,8 +10,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ProjectId } from "./baseSchemas.ts";
 import {
+  assignBoardKeyPrefix,
   BoardCardRecipeSnapshot,
   BoardSettings,
+  boardProjectAcronym,
   boardRecipeSnapshotDiffersFromCurrent,
   DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_BUILD_STEP,
@@ -94,6 +96,51 @@ describe("resolveBoard* helpers", () => {
     });
     expect(resolveBoardKeyPrefix(configured, PROJECT)).toBe("T3");
     expect(resolveBoardProjectAccent(configured, PROJECT)).toBe("#39d");
+  });
+});
+
+describe("project key acronyms (D14)", () => {
+  it("reads a name as words — separators and camelCase humps both split", () => {
+    expect(boardProjectAcronym("core.agent.advisor")).toBe("CAA");
+    expect(boardProjectAcronym("mesh.web")).toBe("MW");
+    expect(boardProjectAcronym("mesh-relay")).toBe("MR");
+    expect(boardProjectAcronym("meshRelay")).toBe("MR");
+    expect(boardProjectAcronym("t3o-test")).toBe("TT");
+    // One word gives its opening letters, digits included.
+    expect(boardProjectAcronym("backend")).toBe("BAC");
+    expect(boardProjectAcronym("t3o")).toBe("T3O");
+    // Nothing to read: the compiled-in default, never an empty prefix.
+    expect(boardProjectAcronym("···")).toBe(DEFAULT_BOARD_KEY_PREFIX);
+  });
+
+  it("never hands two projects the same prefix", () => {
+    expect(boardProjectAcronym("mesh.web", ["MW"])).toBe("MES");
+    expect(boardProjectAcronym("mesh.web", ["MW", "MES"])).toBe("MW2");
+    // Case never smuggles a collision through.
+    expect(boardProjectAcronym("mesh.web", ["mw"])).toBe("MES");
+  });
+
+  it("assigns an acronym once, then leaves the stored prefix alone", () => {
+    const first = assignBoardKeyPrefix({
+      board: DEFAULT_BOARD_SETTINGS,
+      projectId: PROJECT,
+      projectTitle: "mesh.web",
+    });
+    expect(first).toEqual({ prefix: "MW", assigned: true });
+
+    // Persisted — a later card (even after a rename) keeps the same keys.
+    const stored = decodeSettings({
+      projects: { [PROJECT]: { keyPrefix: "MW", accentColor: null } },
+    });
+    expect(
+      assignBoardKeyPrefix({ board: stored, projectId: PROJECT, projectTitle: "mesh.gateway" }),
+    ).toEqual({ prefix: "MW", assigned: false });
+
+    // A second project with the same initials gets its own namespace.
+    const other = ProjectId.make("project-2");
+    expect(
+      assignBoardKeyPrefix({ board: stored, projectId: other, projectTitle: "mesh-worker" }),
+    ).toEqual({ prefix: "MES", assigned: true });
   });
 });
 

@@ -550,7 +550,12 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
             {scopeIsStale ? <SelectItem value={scopeProjectId}>Unknown project</SelectItem> : null}
           </SelectPopup>
         </Select>
-        {scopeProjectId === null && projects.length > 1 ? (
+        {/* The legend: which colour is which project, for as long as the board
+            is showing more than one project's cards. The prototype's swatch is
+            a short bar, not the scope picker's dot — the two never read as the
+            same control. Shown for a single project too: its colour is on every
+            card, so the board still owes you the key to it. */}
+        {scopeProjectId === null && projects.length > 0 ? (
           <div className="flex min-w-0 items-center gap-3 overflow-hidden">
             {projects.map((project) => (
               <span
@@ -559,7 +564,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
               >
                 <span
                   className={cn(
-                    "size-2 rounded-full",
+                    "h-[3px] w-[9px] shrink-0 rounded-[2px]",
                     projectAccent(project.id, accentNameFor(project.id)).dot,
                   )}
                 />
