@@ -16,18 +16,27 @@
  * top-level `type`, so the response failed validation and every thread lost
  * the whole `t3-code` server.
  *
- * Both toolkits are asserted together because that is how they are served:
+ * Every toolkit is asserted together because that is how they are served:
  * `McpHttpServer.layer` merges them onto one MCP server, so a malformed board
  * tool takes preview down with it and vice versa.
+ *
+ * The asserted set is pinned to exactly what `McpHttpServer.layer` registers —
+ * `PreviewStandardToolkit` + `PreviewSnapshotToolkit` (registered separately
+ * from the standard toolkit) + `BoardToolkit` — NOT the `PreviewToolkit`
+ * aggregate, which is only used to build the handler layer and is never the
+ * object served on the MCP endpoint. If a fourth toolkit joins the server, add
+ * it here too: a tool that poisons `tools/list` from an unlisted toolkit would
+ * otherwise recur undetected — the exact defect class this test guards.
  */
 import { expect, it } from "@effect/vitest";
 import { Tool } from "effect/unstable/ai";
 
-import { PreviewToolkit } from "../preview/tools.ts";
+import { PreviewSnapshotToolkit, PreviewStandardToolkit } from "../preview/tools.ts";
 import { BoardToolkit } from "./tools.ts";
 
 const advertisedTools = [
-  ...Object.values(PreviewToolkit.tools),
+  ...Object.values(PreviewStandardToolkit.tools),
+  ...Object.values(PreviewSnapshotToolkit.tools),
   ...Object.values(BoardToolkit.tools),
 ] as ReadonlyArray<{ readonly name: string }>;
 
