@@ -94,6 +94,7 @@ const expectedCard = {
   threadLinks: [],
   externalRef: null,
   recipeSnapshot: null,
+  worktree: null,
   blocked: false,
   archivedAt: null,
   createdAt,

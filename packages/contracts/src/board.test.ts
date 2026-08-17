@@ -107,6 +107,7 @@ const typicalCard = (index: number): BoardCard => ({
   ],
   externalRef: null,
   recipeSnapshot: null,
+  worktree: null,
   blocked: false,
   archivedAt: null,
   createdAt: "2026-01-01T00:00:00.000Z",

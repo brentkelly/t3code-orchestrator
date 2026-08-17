@@ -48,6 +48,7 @@ function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: str
     threadLinks: [],
     externalRef: null,
     recipeSnapshot: null,
+    worktree: null,
     blocked: false,
     archivedAt: null,
     createdAt: NOW,
@@ -856,10 +857,47 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         createdAt: NOW,
         updatedAt: NOW,
       };
+      // Worktree lifecycle fixtures (t3o-09): each succeeds and none emits a
+      // move — worktree provisioning is gated on Building but never advances a
+      // stage (D18).
+      const buildingCard = makeCard({ id: "card-building", stage: "building" });
+      const provisioningCard = makeCard({
+        id: "card-provisioning",
+        stage: "building",
+        worktree: {
+          branch: "board/card-provisioning",
+          baseRefName: "main",
+          path: null,
+          status: "provisioning",
+          attempts: 1,
+          lastError: null,
+          reclaimBlockedReason: null,
+        },
+      });
+      const worktreeCard = makeCard({
+        id: "card-worktree",
+        stage: "building",
+        worktree: {
+          branch: "board/card-worktree",
+          baseRefName: "main",
+          path: "/tmp/worktrees/card-worktree",
+          status: "ready",
+          attempts: 1,
+          lastError: null,
+          reclaimBlockedReason: null,
+        },
+      });
       const readModel = makeReadModel({
         threads: [makeThread({ id: "thread-1" }), makeThread({ id: "thread-2" })],
         board: {
-          cards: [readyCard, archivedCard, linkedCard],
+          cards: [
+            readyCard,
+            archivedCard,
+            linkedCard,
+            buildingCard,
+            provisioningCard,
+            worktreeCard,
+          ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           plans: [readyPlan],
           nextCardNumberByProject: {},
@@ -982,6 +1020,35 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           cardId: BoardCardId.make("card-ready"),
           planId: boardPlanId(BoardCardId.make("card-ready"), "p1"),
           body: "new body",
+          createdAt: NOW,
+        },
+        "board.card.provision-worktree": {
+          type: "board.card.provision-worktree",
+          commandId: CommandId.make("cmd-provision"),
+          cardId: BoardCardId.make("card-building"),
+          branch: "board/card-building",
+          baseRefName: "main",
+          createdAt: NOW,
+        },
+        "board.card.record-worktree": {
+          type: "board.card.record-worktree",
+          commandId: CommandId.make("cmd-record"),
+          cardId: BoardCardId.make("card-provisioning"),
+          path: "/tmp/worktrees/card-provisioning",
+          createdAt: NOW,
+        },
+        "board.card.fail-worktree": {
+          type: "board.card.fail-worktree",
+          commandId: CommandId.make("cmd-fail"),
+          cardId: BoardCardId.make("card-provisioning"),
+          error: "boom",
+          createdAt: NOW,
+        },
+        "board.card.reclaim-worktree": {
+          type: "board.card.reclaim-worktree",
+          commandId: CommandId.make("cmd-reclaim"),
+          cardId: BoardCardId.make("card-worktree"),
+          outcome: "removed",
           createdAt: NOW,
         },
       };

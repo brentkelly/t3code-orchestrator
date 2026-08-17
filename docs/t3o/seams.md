@@ -302,6 +302,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/mcp/McpSessionRegistry.ts`                            | `t3o-08`  | Granted capability set gains `"board"` (D3)                               | one-line edit (frozen)                                                   |
 | `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`  | Import `BoardToolkitRegistrationLive`                                     | one-line append (import)                                                 |
 | `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`  | Board toolkit joins the MCP server layer merge (D3)                       | spread of a board-owned registration layer                               |
+| `packages/contracts/src/orchestration.ts`                             | `t3o-09` | Server-internal board commands in `InternalOrchestrationCommand`         | registry spread (`BOARD_INTERNAL_COMMANDS`)                             |
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
 (5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the
@@ -387,6 +388,19 @@ other board write), which is why a whole new command family — progress, human-
 contract, and plan propose/write — touched no `orchestration.ts` seam. The core-only diff audit
 yields exactly these three MCP files (the board toolkit directory is already covered by the
 `*/board/*` exclude).
+
+`t3o-09` opened the **internal-command seam** — one marker line (marker count now **62**;
+`...BOARD_INTERNAL_COMMANDS,` in
+`orchestration.ts`'s `InternalOrchestrationCommand` union). `t3o-02a` generalised the _client_
+command union (`BOARD_CLIENT_COMMANDS`) but not the internal one, because no board spec before
+`t3o-09` needed a server-only command; the worktree lifecycle commands are the first (a client must
+never be able to record a worktree it cannot create on disk, and provisioning sits downstream of the
+human "Begin build" gate). This mirrors how `t3o-04` opened the RPC seam layer. The registry lives
+in `packages/contracts/src/board.ts`; adding another internal board command grows it and the board
+decider only — zero further upstream edits. `t3o-09` also added its `worktree` column to
+`board_cards` through a new board-owned migration (`910_BoardCardsWorktree`, registered in
+`BOARD_MIGRATIONS`) and grew `BoardCard` plus the board command/event registries — all board-owned,
+no upstream file beyond the one spread above.
 
 Marker-less upstream churn that rides along with `t3o-02`:
 

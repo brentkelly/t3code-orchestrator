@@ -50,6 +50,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   threadLinks: [],
   externalRef: null,
   recipeSnapshot: null,
+  worktree: null,
   blocked: false,
   archivedAt: null,
   createdAt: NOW,

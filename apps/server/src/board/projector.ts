@@ -26,6 +26,10 @@ import {
   BoardCardThreadLinkedPayload,
   BoardCardThreadUnlinkedPayload,
   BoardCardUnarchivedPayload,
+  BoardCardWorktreeFailedPayload,
+  BoardCardWorktreeProvisioningPayload,
+  BoardCardWorktreeReadyPayload,
+  BoardCardWorktreeReclaimedPayload,
   BoardCardUpdatedPayload,
   boardCardShellFromCard,
   boardLabelCatalogue,
@@ -85,6 +89,18 @@ const decodeBoardCardStepCompletedPayload = Schema.decodeUnknownEffect(
 );
 const decodeBoardPlansProposedPayload = Schema.decodeUnknownEffect(BoardPlansProposedPayload);
 const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWrittenPayload);
+const decodeBoardCardWorktreeProvisioningPayload = Schema.decodeUnknownEffect(
+  BoardCardWorktreeProvisioningPayload,
+);
+const decodeBoardCardWorktreeReadyPayload = Schema.decodeUnknownEffect(
+  BoardCardWorktreeReadyPayload,
+);
+const decodeBoardCardWorktreeFailedPayload = Schema.decodeUnknownEffect(
+  BoardCardWorktreeFailedPayload,
+);
+const decodeBoardCardWorktreeReclaimedPayload = Schema.decodeUnknownEffect(
+  BoardCardWorktreeReclaimedPayload,
+);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -126,6 +142,9 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     threadLinks: [],
     externalRef: null,
     recipeSnapshot: null,
+    // A created card never has a worktree: it is provisioned lazily on entry
+    // to Building (D6, t3o-09), never at birth.
+    worktree: null,
     blocked: false,
     archivedAt: null,
     createdAt: payload.createdAt,
@@ -376,6 +395,30 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertPlan(model, payload.plan)),
       );
 
+    case "board.card-worktree-provisioning":
+      return decodeBoardCardWorktreeProvisioningPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-worktree-ready":
+      return decodeBoardCardWorktreeReadyPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-worktree-failed":
+      return decodeBoardCardWorktreeFailedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-worktree-reclaimed":
+      return decodeBoardCardWorktreeReclaimedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     default: {
       event satisfies never;
       // Runtime backstop for an undecoded event: leave the model unchanged.
@@ -408,6 +451,14 @@ export function boardShellStreamEvent(
     case "board.card-thread-linked":
     case "board.card-thread-unlinked":
     case "board.card-unarchived":
+    // Worktree lifecycle (t3o-09) is not itself on the bounded shell — the
+    // full worktree state rides board.subscribeCard detail (D7) — but the
+    // card still re-upserts so any shell field that did change (e.g. a move
+    // into building landing alongside provisioning) stays consistent.
+    case "board.card-worktree-provisioning":
+    case "board.card-worktree-ready":
+    case "board.card-worktree-failed":
+    case "board.card-worktree-reclaimed":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
