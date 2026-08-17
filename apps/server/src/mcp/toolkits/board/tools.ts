@@ -100,10 +100,25 @@ const BoardCardListItem = Schema.Struct({
 
 // ── Card-scoped tools ──────────────────────────────────────────────────
 
+/**
+ * The parameter schema for a tool that takes no input.
+ *
+ * MCP requires every advertised tool's `inputSchema` to be a JSON Schema with
+ * `"type": "object"`, and clients enforce it: Claude Code validates the whole
+ * `tools/list` response and drops **every** tool on the server — preview
+ * included — when one entry fails. `Schema.Struct({})` cannot be used here
+ * because Effect serializes an empty struct as
+ * `{"anyOf":[{"type":"object"},{"type":"array"}]}` (an empty struct admits
+ * arrays too), which has no top-level `type`. A record with no admissible
+ * values encodes the same "object with no properties" contract and serializes
+ * to `{"type":"object","additionalProperties":false}`.
+ */
+const NoParameters = Schema.Record(Schema.String, Schema.Never);
+
 export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
   description:
     "Pull everything you need to work on your card: its title, brief, stage, dependency states, prior steps and their outcomes, proposed plans, and outstanding progress/input activity. Call this first when you start a step, and again whenever you need to re-orient. Your card is resolved from your thread — you never pass a card id. Fails if your thread is not linked to a card.",
-  parameters: Schema.Struct({}),
+  parameters: NoParameters,
   success: BoardCardContext,
   failure: BoardToolError,
   dependencies,
