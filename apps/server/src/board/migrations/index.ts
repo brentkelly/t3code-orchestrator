@@ -55,46 +55,80 @@ const boardLoader = Migrator.fromRecord(
 const run = Migrator.make({});
 
 /**
- * Reconcile databases provisioned under the old shared-ledger scheme.
+ * Reconcile a database provisioned under the old shared-ledger scheme, in which
+ * board migrations were numbered 900+ and recorded in upstream's
+ * `effect_sql_migrations`.
  *
- * Idempotent: safe to run on every boot. A no-op on a fresh database or one
- * already migrated to the split scheme.
+ * MUST run BEFORE upstream `runMigrations()`: while the legacy rows are present
+ * they pin upstream's high-water mark to the top board id (e.g. 910), so on that
+ * first boot upstream would skip every pending migration numbered below it — the
+ * exact "no such column" crash this split fixes.
+ *
+ * Maps each recorded legacy board id back to its new id and marks it applied in
+ * `t3o_sql_migrations`, then evicts the legacy rows. Seeding the already-applied
+ * ids (rather than letting the board Migrator re-run the whole lineage) is
+ * deliberate: migration 007 is a one-time DATA backfill, and replaying it would
+ * resurrect seed labels a user has since removed. Seeding ONLY the ids the legacy
+ * ledger actually recorded keeps a PARTIALLY-migrated database correct too — its
+ * not-yet-run migrations stay unseeded, so the board Migrator runs them normally.
+ *
+ * Idempotent: a no-op on a fresh database (no `effect_sql_migrations` yet) or one
+ * already migrated to the split scheme (no legacy rows left).
  */
-const reconcileLegacyLedger = Effect.gen(function* () {
+export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger")(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Board migrations were once numbered 900+ and recorded in upstream's
-  // `effect_sql_migrations` ledger, which pins upstream's high-water mark above
-  // every later (lower-numbered) upstream migration. Evict those rows so upstream
-  // migrations resume; the board lineage is tracked in `t3o_sql_migrations` from
-  // here on, and its own Migrator (below) creates that table.
-  //
-  // No ledger backfill is needed. Every board migration is idempotent (CREATE
-  // TABLE/INDEX IF NOT EXISTS, PRAGMA-guarded ADD COLUMN, INSERT OR IGNORE), so
-  // the board Migrator simply re-runs the lineage against the fresh ledger: a
-  // no-op wherever the schema already exists, and — crucially — it completes a
-  // PARTIALLY-migrated legacy database the rest of the way. (Backfilling the
-  // ledger instead would mark a partial database's not-yet-run migrations as
-  // applied and skip them, reintroducing the "no such column" crash.)
-  const legacyRows = yield* sql<{ readonly migration_id: number }>`
-    SELECT migration_id FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}
+  const upstreamLedger = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
   `;
-  if (legacyRows.length > 0) {
-    yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}`;
-    yield* Effect.log("Evicted legacy board rows from the upstream migration ledger").pipe(
-      Effect.annotateLogs({ evicted: legacyRows.length, floor: LEGACY_BOARD_ID_FLOOR }),
-    );
+  if (upstreamLedger.length === 0) return; // fresh database — nothing to reconcile
+
+  const legacyRows = yield* sql<{ readonly migration_id: number }>`
+    SELECT migration_id FROM effect_sql_migrations
+    WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR} ORDER BY migration_id
+  `;
+  if (legacyRows.length === 0) return; // already reconciled / never used the 900 scheme
+
+  // Create the board ledger now so we can seed it before the board Migrator reads
+  // its high-water mark (that Migrator would also CREATE IF NOT EXISTS).
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS ${sql(BOARD_MIGRATION_TABLE)} (
+      migration_id integer PRIMARY KEY NOT NULL,
+      created_at datetime NOT NULL DEFAULT current_timestamp,
+      name VARCHAR(255) NOT NULL
+    )
+  `;
+
+  const seeded = yield* sql<{ readonly count: number }>`
+    SELECT COUNT(*) AS count FROM ${sql(BOARD_MIGRATION_TABLE)}
+  `;
+  if ((seeded[0]?.count ?? 0) === 0) {
+    // Legacy id 900+k maps to new id k+1. Mark exactly those recorded ids applied
+    // (and no more), so a partially-migrated database leaves its pending
+    // migrations for the board Migrator to run.
+    const nameById = new Map<number, string>(BOARD_MIGRATIONS.map(([id, name]) => [id, name]));
+    const seedRows = legacyRows
+      .map((row) => row.migration_id - (LEGACY_BOARD_ID_FLOOR - 1))
+      .filter((id): id is number => nameById.has(id))
+      .map((id) => ({ migration_id: id, name: nameById.get(id) as string }));
+    if (seedRows.length > 0) {
+      yield* sql`INSERT INTO ${sql(BOARD_MIGRATION_TABLE)} ${sql.insert(seedRows)}`;
+    }
   }
+
+  yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}`;
+  yield* Effect.log("Reconciled legacy board migration ledger").pipe(
+    Effect.annotateLogs({ evicted: legacyRows.length, table: BOARD_MIGRATION_TABLE }),
+  );
 });
 
 /**
  * Run pending board migrations against the `t3o_sql_migrations` ledger.
  *
- * Must run AFTER upstream `runMigrations()` so upstream tables (and the
- * `effect_sql_migrations` ledger the reconciliation reads) already exist.
+ * Run AFTER upstream `runMigrations()` (upstream tables exist first) and AFTER
+ * `reconcileLegacyBoardLedger()` (which seeds already-applied board ids).
  */
 export const runBoardMigrations = Effect.fn("runBoardMigrations")(function* () {
-  yield* reconcileLegacyLedger;
   const executedMigrations = yield* run({ loader: boardLoader, table: BOARD_MIGRATION_TABLE });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0

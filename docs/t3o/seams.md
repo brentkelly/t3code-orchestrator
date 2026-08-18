@@ -116,13 +116,17 @@ A core seam may contain **only** one of these four shapes:
 > table and skips any id `<=` it, so once a `900` migration ran, every later upstream migration
 > (all `< 900`) was silently skipped. Board migrations now live in their own directory
 > (`apps/server/src/board/migrations/`, ids restart at **1**) and run against their own ledger
-> table `t3o_sql_migrations` via `runBoardMigrations()`, wired in `persistence/Layers/Sqlite.ts`
-> after upstream `runMigrations()`. The two lineages have independent high-water marks, so
-> `Migrations.ts` is now pure upstream and no longer conflicts when upstream appends a migration.
-> `runBoardMigrations()` reconciles pre-existing databases by evicting legacy `900+` rows from
-> `effect_sql_migrations`, then re-running the (idempotent) board lineage against the new ledger —
-> a no-op where the board schema already exists, and completing any partially-migrated database.
-> To add a board migration: drop `NNN_Name.ts` in `board/migrations/` and append it to
+> table `t3o_sql_migrations` via `runBoardMigrations()`. The two lineages have independent
+> high-water marks, so `Migrations.ts` is now pure upstream and no longer conflicts when upstream
+> appends a migration. `persistence/Layers/Sqlite.ts` boots them in order:
+> `reconcileLegacyBoardLedger()` → `runMigrations()` (upstream) → `runBoardMigrations()` (board).
+> Reconciliation runs **before** upstream migrations — otherwise a database still pinned at the
+> legacy `910` high-water mark would skip pending upstream migrations on its first boot. It maps
+> each recorded legacy `900+` id back to its new id, seeds exactly those into `t3o_sql_migrations`
+> as already-applied, then evicts the legacy rows: seeding only what actually ran leaves a
+> partially-migrated database's pending migrations for the board Migrator, and not replaying
+> applied migrations protects the one-time data backfill (007) from resurrecting user-removed seed
+> labels. To add a board migration: drop `NNN_Name.ts` in `board/migrations/` and append it to
 > `BOARD_MIGRATIONS` in that dir's `index.ts`.
 
 Plus the frozen once-only edits recorded in the inventory (D9 aggregate-id union widenings, the two

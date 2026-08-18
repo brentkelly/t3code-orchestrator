@@ -3,11 +3,15 @@
  * `effect_sql_migrations` ledger into its own `t3o_sql_migrations` table (board
  * ids restart at 1). Databases provisioned under the old "number from 900"
  * scheme carry board rows 900+ in the upstream ledger, which pins upstream's
- * high-water mark above every future upstream migration. `runBoardMigrations`
- * reconciles those databases on boot by evicting the legacy rows and re-running
- * the idempotent board lineage against the new ledger. This verifies it heals a
- * fully-migrated legacy database, completes a PARTIALLY-migrated one, is
- * idempotent, and runs cleanly on a fresh database.
+ * high-water mark above every future upstream migration.
+ *
+ * `reconcileLegacyBoardLedger` (run before upstream migrations) evicts those rows
+ * and seeds the already-applied board ids into the new ledger; `runBoardMigrations`
+ * then runs whatever remains. These tests exercise the real boot sequence
+ * (reconcile → runMigrations → runBoardMigrations) and verify it: heals a
+ * fully-migrated legacy database WITHOUT replaying the one-time data backfill
+ * (007), completes a PARTIALLY-migrated one, is idempotent, and runs cleanly on a
+ * fresh database.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -15,11 +19,23 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
-import { BOARD_MIGRATION_TABLE, BOARD_MIGRATIONS, runBoardMigrations } from "./index.ts";
+import {
+  BOARD_MIGRATION_TABLE,
+  BOARD_MIGRATIONS,
+  reconcileLegacyBoardLedger,
+  runBoardMigrations,
+} from "./index.ts";
 
 const LEGACY_FLOOR = 900;
 const expectedBoardIds = BOARD_MIGRATIONS.map(([id]) => id);
 const legacyBoardIds = BOARD_MIGRATIONS.map(([id]) => LEGACY_FLOOR - 1 + id);
+
+/** The exact server boot sequence (persistence/Layers/Sqlite.ts). */
+const boot = Effect.gen(function* () {
+  yield* reconcileLegacyBoardLedger();
+  yield* runMigrations();
+  yield* runBoardMigrations();
+});
 
 /**
  * Reproduce a database as the old shared-ledger scheme left it, having applied
@@ -43,7 +59,7 @@ const seedLegacyDatabase = (throughCount: number = BOARD_MIGRATIONS.length) =>
   });
 
 describe("board migration reconciliation", () => {
-  it.effect("heals a fully-migrated legacy 900+ database", () =>
+  it.effect("heals a fully-migrated legacy 900+ database without replaying data backfills", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* seedLegacyDatabase();
@@ -53,6 +69,10 @@ describe("board migration reconciliation", () => {
         INSERT INTO board_cards (card_id, project_id, title, created_at, updated_at)
         VALUES ('card-legacy', 'proj', 'Legacy card', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
       `;
+      // A user later removed a seed label (the projector hard-deletes the row).
+      // Replaying migration 007 (INSERT OR IGNORE) would resurrect it — the split
+      // must NOT re-run applied migrations, only evict + seed the ledger.
+      yield* sql`DELETE FROM board_labels WHERE label_id = 'label-chore'`;
 
       // Precondition: legacy board rows sit in the upstream ledger; no board ledger yet.
       const legacyBefore = yield* sql<{ readonly migration_id: number }>`
@@ -67,9 +87,7 @@ describe("board migration reconciliation", () => {
       `;
       assert.strictEqual(boardTableBefore.length, 0);
 
-      // Reconcile. Every board migration is idempotent, so re-running the full
-      // lineage over the already-applied schema completes without error.
-      yield* runBoardMigrations();
+      yield* boot;
 
       // Legacy rows evicted from the upstream ledger → upstream migrations resume.
       const legacyAfter = yield* sql`
@@ -95,8 +113,12 @@ describe("board migration reconciliation", () => {
         ["card-legacy"],
       );
 
+      // 007 was NOT replayed: the user-removed seed label stays removed.
+      const chore = yield* sql`SELECT label_id FROM board_labels WHERE label_id = 'label-chore'`;
+      assert.strictEqual(chore.length, 0);
+
       // Idempotent: a second boot changes nothing and does not error.
-      yield* runBoardMigrations();
+      yield* boot;
       const boardLedgerAgain = yield* sql<{ readonly migration_id: number }>`
         SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE)} ORDER BY migration_id
       `;
@@ -104,6 +126,9 @@ describe("board migration reconciliation", () => {
         boardLedgerAgain.map((r) => r.migration_id),
         expectedBoardIds,
       );
+      const choreAgain =
+        yield* sql`SELECT label_id FROM board_labels WHERE label_id = 'label-chore'`;
+      assert.strictEqual(choreAgain.length, 0);
     }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
   );
 
@@ -122,11 +147,11 @@ describe("board migration reconciliation", () => {
       `;
       assert.strictEqual(missingBefore.length, 0);
 
-      yield* runBoardMigrations();
+      yield* boot;
 
-      // The board Migrator re-ran the whole lineage: ids 1..6 were no-ops, 7..11
-      // did real work. The ledger records the full lineage and the missing tables
-      // now exist — no "no such column"/"no such table" left behind.
+      // Reconcile seeded only the 6 applied ids; the board Migrator then ran 7..11.
+      // The ledger records the full lineage and the missing tables now exist — no
+      // "no such column"/"no such table" left behind.
       const boardLedger = yield* sql<{ readonly migration_id: number }>`
         SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE)} ORDER BY migration_id
       `;
@@ -157,8 +182,8 @@ describe("board migration reconciliation", () => {
   it.effect("runs the board lineage from 1 on a fresh database", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations();
-      yield* runBoardMigrations();
+      // reconcile runs before effect_sql_migrations exists — it must no-op cleanly.
+      yield* boot;
 
       const boardLedger = yield* sql<{ readonly migration_id: number }>`
         SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE)} ORDER BY migration_id
