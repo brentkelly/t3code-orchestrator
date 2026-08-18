@@ -243,10 +243,30 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
 
   it("applies the three rules as one total order (stage → started → drag)", () => {
     const ordered = orderBoardQueue([
-      candidate({ cardId: BoardCardId.make("b-unstarted-late"), stage: "building", started: false, orderKey: "z" }),
-      candidate({ cardId: BoardCardId.make("b-started"), stage: "building", started: true, orderKey: "m" }),
-      candidate({ cardId: BoardCardId.make("b-unstarted-early"), stage: "building", started: false, orderKey: "a" }),
-      candidate({ cardId: BoardCardId.make("review"), stage: "review", started: false, orderKey: "z" }),
+      candidate({
+        cardId: BoardCardId.make("b-unstarted-late"),
+        stage: "building",
+        started: false,
+        orderKey: "z",
+      }),
+      candidate({
+        cardId: BoardCardId.make("b-started"),
+        stage: "building",
+        started: true,
+        orderKey: "m",
+      }),
+      candidate({
+        cardId: BoardCardId.make("b-unstarted-early"),
+        stage: "building",
+        started: false,
+        orderKey: "a",
+      }),
+      candidate({
+        cardId: BoardCardId.make("review"),
+        stage: "review",
+        started: false,
+        orderKey: "z",
+      }),
     ]);
     assert.deepStrictEqual(keys(ordered), [
       "review", // later stage first
@@ -258,7 +278,9 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
 });
 
 describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
-  const concurrency = (overrides: Partial<BoardConcurrencySettings> = {}): BoardConcurrencySettings => ({
+  const concurrency = (
+    overrides: Partial<BoardConcurrencySettings> = {},
+  ): BoardConcurrencySettings => ({
     perInstance: {},
     globalMaxConcurrent: 3,
     ...overrides,

@@ -2,7 +2,11 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { BoardStepSlots, BoardStepSlotsLive, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
+import {
+  BoardStepSlots,
+  BoardStepSlotsLive,
+  type BoardConcurrencyLimit,
+} from "./BoardStepSlots.ts";
 
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claude");
@@ -104,10 +108,7 @@ it.effect("restore re-takes a slot unconditionally, ignoring the caps (boot reco
     assert.strictEqual(yield* slots.heldFor(codex), 2);
     // With two already restored against a global of 2, the governor admits no
     // more until one drains.
-    assert.strictEqual(
-      yield* slots.acquire(claude, { perInstance: null, global: 2 }),
-      false,
-    );
+    assert.strictEqual(yield* slots.acquire(claude, { perInstance: null, global: 2 }), false);
     yield* slots.release(codex);
     yield* slots.release(codex);
     assert.strictEqual(yield* slots.heldTotal, 0);

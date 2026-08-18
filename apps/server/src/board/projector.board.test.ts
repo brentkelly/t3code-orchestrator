@@ -316,7 +316,7 @@ describe("board projector", () => {
   );
 
   it.effect("admission that queues the step raises the queued badge (t3o-11)", () =>
-    Effect.gen(function* () {
+    Effect.sync(() => {
       const queuedState = {
         cardId,
         stepId: "build",

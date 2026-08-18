@@ -353,9 +353,9 @@ describe("board card shell derivation", () => {
     expect(utf8Bytes(encodeShell(fullyPopulatedShell))).toBeLessThanOrEqual(
       BOARD_CARD_SHELL_BYTE_BUDGET,
     );
-    expect(
-      utf8Bytes(encodeShell({ ...fullyPopulatedShell, queued: false })),
-    ).toBeLessThanOrEqual(BOARD_CARD_SHELL_BYTE_BUDGET);
+    expect(utf8Bytes(encodeShell({ ...fullyPopulatedShell, queued: false }))).toBeLessThanOrEqual(
+      BOARD_CARD_SHELL_BYTE_BUDGET,
+    );
   });
 });
 

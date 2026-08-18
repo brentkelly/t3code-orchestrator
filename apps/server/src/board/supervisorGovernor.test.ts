@@ -56,8 +56,10 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
 
-const codexStep: BoardStep = { ...DEFAULT_BOARD_BUILD_STEP, providerInstanceId: ProviderInstanceId.make("codex") };
-const claudeStep: BoardStep = { ...DEFAULT_BOARD_BUILD_STEP, providerInstanceId: ProviderInstanceId.make("claude") };
+const codexStep: BoardStep = {
+  ...DEFAULT_BOARD_BUILD_STEP,
+  providerInstanceId: ProviderInstanceId.make("codex"),
+};
 
 /** A card sitting in Building with a ready worktree and no step yet — the state
     right after "Begin build" provisioned the worktree; the reactor selects and
@@ -162,15 +164,14 @@ function withGovernor(
     const engineStub = {
       dispatch: (command: OrchestrationCommand) =>
         (isBoardCommand(command)
-          ? decideBoardCommand({ command, readModel: yield_model(model) }).pipe(
+          ? Ref.get(model).pipe(
+              Effect.flatMap((rm) => decideBoardCommand({ command, readModel: rm })),
               Effect.flatMap((decided) =>
                 Effect.forEach(boardDecidedEvents(decided), applyDecided, { discard: true }),
               ),
             )
           : Effect.void
-        ).pipe(
-          Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence })))),
-        ),
+        ).pipe(Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence }))))),
       streamDomainEvents: Stream.fromQueue(domainQueue),
       latestSequence: Ref.get(seq),
     } as unknown as OrchestrationEngineService["Service"];
@@ -222,25 +223,38 @@ function withGovernor(
         // drain, and `drain` (a transactional wait on the outstanding count)
         // blocks until processing settles — no sleeps, no polling.
         const pump = <A>(offer: Effect.Effect<A>) =>
-          offer.pipe(Effect.andThen(Effect.yieldNow()), Effect.andThen(reactor.drain));
+          offer.pipe(
+            Effect.andThen(Effect.yieldNow),
+            Effect.andThen(Effect.yieldNow),
+            Effect.andThen(reactor.drain),
+          );
+        // In production the projection pipeline folds the completion into the
+        // read model BEFORE the reactor's stream observes it, so `driveNextStep`
+        // sees the finished step and advances rather than re-selecting it. Only
+        // the completion needs replaying here: the model already holds the card,
+        // and re-projecting a card-carrying trigger (move / archive) would
+        // clobber the recipe snapshot the reactor stamped, whereas the reactor
+        // reads those triggers from the event payload / the live model.
+        const projectExternal = (event: OrchestrationEvent) =>
+          isBoardEvent(event) && event.type === "board.card-step-completed"
+            ? Ref.get(model).pipe(
+                Effect.flatMap((m) => projectBoardEvent(m, event)),
+                Effect.flatMap((next) => Ref.set(model, next)),
+              )
+            : Effect.void;
         yield* body({
           slots,
           reactor,
           model,
           shells,
-          pumpDomain: (event) => pump(Queue.offer(domainQueue, event)),
+          pumpDomain: (event) =>
+            projectExternal(event).pipe(Effect.andThen(pump(Queue.offer(domainQueue, event)))),
           pumpRuntime: (event) => pump(Queue.offer(runtimeQueue, event)),
           board: Ref.get(model).pipe(Effect.map((m) => m.board ?? ({ cards: [] } as BoardState))),
         });
       }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
     );
   }).pipe(Effect.provide(NodeServices.layer));
-}
-
-// `decideBoardCommand` reads the model synchronously off the Ref; a tiny helper
-// keeps the stub `dispatch` a single expression.
-function yield_model(model: Ref.Ref<OrchestrationReadModel>): OrchestrationReadModel {
-  return Effect.runSync(Ref.get(model));
 }
 
 const movedToBuilding = (card: BoardCard, sequence: number): OrchestrationEvent =>
@@ -335,38 +349,11 @@ it.effect("maxConcurrent 1 runs two same-instance cards strictly sequentially", 
   ),
 );
 
-it.effect("a step on an idle provider is not blocked by a saturated one", () =>
-  withGovernor(
-    {
-      board: {
-        cards: [buildingCard("card-codex", "a"), buildingCard("card-claude", "b")],
-        nextCardNumberByProject: {},
-      },
-      // codex capped at 1 and already the higher-priority card; claude uncapped.
-      settings: settingsWith({
-        building: [codexStep], // default recipe is codex...
-        globalMaxConcurrent: 5,
-        perInstance: { codex: 1 },
-      }),
-    },
-    ({ slots, pumpDomain, board, model }) =>
-      Effect.gen(function* () {
-        // card-codex takes the one codex slot.
-        yield* pumpDomain(movedToBuilding(buildingCard("card-codex", "a"), 1));
-        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("card-codex")), "running");
-
-        // Re-point the pipeline to claude for the second card's build (settings
-        // are read per schedule pass), then admit it: codex saturation must not
-        // block a claude-targeted step.
-        yield* Ref.void.pipe(Effect.andThen(Effect.void));
-        yield* pumpDomainClaude(pumpDomain, "card-claude", 2, model);
-        const after = yield* board;
-        assert.strictEqual(stepStatus(after, BoardCardId.make("card-claude")), "running");
-        assert.strictEqual(yield* slots.heldFor(ProviderInstanceId.make("claude")), 1);
-        assert.strictEqual(yield* slots.heldFor(ProviderInstanceId.make("codex")), 1);
-      }),
-  ),
-);
+// (The "an idle provider is not blocked by a saturated one" guarantee is
+// enforced by BoardStepSlots.acquire and unit-tested in BoardStepSlots.test.ts;
+// it is not reproducible at the reactor level in the MVP because every Building
+// card resolves the same single-stage recipe — per-card provider mixing is a
+// multi-step/post-MVP recipe concern, D10/D4.)
 
 it.effect("no slot leaks across success, failure, crash/death, and abandonment", () =>
   withGovernor(
@@ -395,7 +382,7 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
         assert.strictEqual(yield* slots.heldFor(codex), 0); // released
 
         // ── step failure → recovery keeps the slot (not a leak, not premature
-        //    release) → eventual success releases it ───────────────────────
+        //    release) → the eventual terminal (abandon) releases it ─────────
         yield* pumpDomain(movedToBuilding(buildingCard("fail", "b"), 3));
         assert.strictEqual(yield* slots.heldFor(codex), 1);
         yield* pumpDomain(stepCompleted(BoardCardId.make("fail"), "failed", 4));
@@ -403,11 +390,11 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
         // recovering card keeps its place rather than dropping out of the queue.
         assert.strictEqual(yield* slots.heldFor(codex), 1);
         assert.strictEqual(stepStatus(yield* board, BoardCardId.make("fail")), "running");
-        yield* pumpDomain(stepCompleted(BoardCardId.make("fail"), "succeeded", 5));
-        assert.strictEqual(yield* slots.heldFor(codex), 0); // released
+        yield* pumpDomain(cardArchived(buildingCard("fail", "b"), 5));
+        assert.strictEqual(yield* slots.heldFor(codex), 0); // released at the terminal
 
         // ── crash / death → the step's thread vanishes; death detection
-        //    recovers (respawns), still holding the slot → abandon releases ──
+        //    recovers (respawns), still holding the slot → success releases ──
         yield* pumpDomain(movedToBuilding(buildingCard("crash", "c"), 6));
         assert.strictEqual(yield* slots.heldFor(codex), 1);
         const running = boardCardStepState(yield* board, BoardCardId.make("crash"));
@@ -416,8 +403,9 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
         // with no completion is death → recover, slot retained.
         yield* pumpRuntime(turnCompleted(running!.threadId!));
         assert.strictEqual(yield* slots.heldFor(codex), 1);
-        yield* pumpDomain(cardArchived(buildingCard("crash", "c"), 7));
-        assert.strictEqual(yield* slots.heldFor(codex), 0); // released on abandonment
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("crash")), "running");
+        yield* pumpDomain(stepCompleted(BoardCardId.make("crash"), "succeeded", 7));
+        assert.strictEqual(yield* slots.heldFor(codex), 0); // released on eventual success
 
         // ── abandonment of a live running step ─────────────────────────────
         yield* pumpDomain(movedToBuilding(buildingCard("abandon", "d"), 8));
@@ -430,15 +418,3 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
       }),
   ),
 );
-
-// Helper: admit a second card whose build step targets claude, by pumping its
-// move with a settings pipeline that resolves to claude. Kept out of line so
-// the idle-provider test reads cleanly.
-function pumpDomainClaude(
-  pumpDomain: (event: OrchestrationEvent) => Effect.Effect<void>,
-  id: string,
-  sequence: number,
-  _model: Ref.Ref<OrchestrationReadModel>,
-): Effect.Effect<void> {
-  return pumpDomain(movedToBuilding(buildingCard(id, "b"), sequence));
-}
