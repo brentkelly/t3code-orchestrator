@@ -1,5 +1,6 @@
-// T3o: board card projection table. T3o migrations are numbered from 900_
-// upward so they can never collide with an upstream migration number.
+// T3o: board card projection table. Board migrations are a separate lineage
+// tracked in `t3o_sql_migrations` (see ../migrations/index.ts), so they never
+// share a high-water mark with upstream migrations.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 

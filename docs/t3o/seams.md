@@ -103,11 +103,25 @@ A core seam may contain **only** one of these four shapes:
 1. **A predicate delegation** — `if (isBoardCommand(command)) return decideBoardCommand(...)`,
    placed inside upstream's existing `default` branch _before_ its `satisfies never` (so upstream's
    exhaustiveness checks keep firing on upstream additions) or before its permissive fallback.
-2. **A spread of a board-owned registry** — `...BOARD_CLIENT_COMMANDS,`, `...BOARD_MIGRATIONS,`,
-   `...BOARD_PROJECTOR_NAMES,` etc., appended at a list/record tail.
+2. **A spread of a board-owned registry** — `...BOARD_CLIENT_COMMANDS,`,
+   `...BOARD_PROJECTOR_NAMES,` etc., appended at a list/record tail. (Database migrations are the
+   exception — see the note below; they are no longer a seam in `Migrations.ts`.)
 3. **A single injected factory call** — `...makeBoardOrchestrationEvents(EventBaseFields),` (the
    base fields are injected because `board.ts` importing them back would be a module cycle).
 4. **A re-export** — `export * from "./board.ts"`.
+
+> **Database migrations are a separate lineage, not a seam.** Board migrations were originally
+> spread (`...BOARD_MIGRATIONS`) into upstream's `migrationEntries` and numbered from 900 to dodge
+> id collisions. That is a trap: effect's `Migrator` advances a single high-water mark per ledger
+> table and skips any id `<=` it, so once a `900` migration ran, every later upstream migration
+> (all `< 900`) was silently skipped. Board migrations now live in their own directory
+> (`apps/server/src/board/migrations/`, ids restart at **1**) and run against their own ledger
+> table `t3o_sql_migrations` via `runBoardMigrations()`, wired in `persistence/Layers/Sqlite.ts`
+> after upstream `runMigrations()`. The two lineages have independent high-water marks, so
+> `Migrations.ts` is now pure upstream and no longer conflicts when upstream appends a migration.
+> `runBoardMigrations()` reconciles pre-existing databases (evicts legacy `900+` rows from
+> `effect_sql_migrations`, backfills `t3o_sql_migrations`). To add a board migration: drop
+> `NNN_Name.ts` in `board/migrations/` and append it to `BOARD_MIGRATIONS` in that dir's `index.ts`.
 
 Plus the frozen once-only edits recorded in the inventory (D9 aggregate-id union widenings, the two
 optional snapshot fields). Everything else — registries, factories, type guards, reducers, SQL —
@@ -137,9 +151,10 @@ prefix falls outside the `Extract`, reaches upstream's `satisfies never`, and fa
 
 ### Rules that ride alongside
 
-- **Migrations are numbered from `900_` upward.** Colliding with an upstream migration number
-  corrupts the applied-migration ledger on every machine that has already run it. That is data loss,
-  not a merge conflict.
+- **Board migrations are a separate lineage in `board/migrations/`, numbered from `1`.** They run
+  against their own ledger table `t3o_sql_migrations`, never sharing upstream's `effect_sql_migrations`
+  high-water mark. See the migration note under [Seam grammar](#seam-grammar-since-t3o-02a) — sharing
+  one ledger (the old `900_` scheme) silently skipped every lower-numbered upstream migration.
 - **Workspace packages keep their `@t3tools/*` names.** They are `private: true` and resolved through
   `workspace:*`, so nothing is fetched from NPM and renaming would touch every import for zero gain.
 - **Branding is a single seam.** `apps/web/src/branding.ts` (`APP_BASE_NAME`, `APP_DISPLAY_NAME`,
@@ -302,7 +317,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/mcp/McpSessionRegistry.ts`                            | `t3o-08`  | Granted capability set gains `"board"` (D3)                               | one-line edit (frozen)                                                   |
 | `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`  | Import `BoardToolkitRegistrationLive`                                     | one-line append (import)                                                 |
 | `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`  | Board toolkit joins the MCP server layer merge (D3)                       | spread of a board-owned registration layer                               |
-| `packages/contracts/src/orchestration.ts`                             | `t3o-09` | Server-internal board commands in `InternalOrchestrationCommand`         | registry spread (`BOARD_INTERNAL_COMMANDS`)                             |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-09`  | Server-internal board commands in `InternalOrchestrationCommand`          | registry spread (`BOARD_INTERNAL_COMMANDS`)                              |
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
 (5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the

@@ -6,6 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 
 import { runMigrations } from "../Migrations.ts";
+import { runBoardMigrations } from "../../board/migrations/index.ts";
 import { ServerConfig } from "../../config.ts";
 
 type RuntimeSqliteLayerConfig = {
@@ -36,6 +37,9 @@ const setup = Layer.effectDiscard(
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
     yield* runMigrations();
+    // T3o: board migrations are a separate lineage (own ledger table), run after
+    // upstream so upstream tables exist first. See board/migrations/index.ts.
+    yield* runBoardMigrations();
   }),
 );
 
