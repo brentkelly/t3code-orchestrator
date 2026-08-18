@@ -214,6 +214,58 @@ describe("board projector", () => {
     }),
   );
 
+  // The `blocked` re-flag an archive emits for its dependents (t3o-13, D5)
+  // rides the ordinary card-updated event, so it must reach every client the
+  // same way any other card change does — via a shell delta, with no reload.
+  it.effect("emits a shell upsert for a dependent re-flagged by an archive", () =>
+    Effect.gen(function* () {
+      const dependentId = BoardCardId.make("card-dependent");
+      const unblocked = makeCard({
+        id: dependentId,
+        key: "CARD-2",
+        cardNumber: 2,
+        stage: "ready",
+        blocked: false,
+        dependsOn: [cardId],
+      });
+      const event: BoardEvent = {
+        ...eventBase,
+        sequence: 2,
+        aggregateId: dependentId,
+        type: "board.card-updated",
+        payload: { cardId: dependentId, card: unblocked },
+      };
+
+      const model = yield* projectBoardEvent(
+        {
+          ...emptyModel(),
+          board: {
+            cards: [makeCard({ archivedAt: NOW }), makeCard({ id: dependentId, blocked: true })],
+            labels: [],
+            nextCardNumberByProject: { [projectId]: 3 },
+          },
+        },
+        event,
+      );
+      assert.strictEqual(
+        model.board?.cards.find((card) => card.id === dependentId)?.blocked,
+        false,
+      );
+
+      const delta = Option.getOrNull(boardShellStreamEvent(event));
+      assert.deepStrictEqual(delta, {
+        kind: "card-upserted",
+        sequence: 2,
+        card: boardCardShellFromCard(unblocked),
+      });
+      assert.strictEqual(
+        delta?.kind === "card-upserted" ? delta.card.blocked : null,
+        false,
+        "the client learns the card is unblocked from the delta alone",
+      );
+    }),
+  );
+
   it.effect("projects a tombstoned link as retained, not removed", () =>
     Effect.gen(function* () {
       const tombstonedCard = makeCard({

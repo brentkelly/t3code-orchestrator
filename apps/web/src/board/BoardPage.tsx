@@ -27,10 +27,7 @@ import {
   type BoardCardPlacement,
   type BoardStageColumns,
 } from "@t3tools/client-runtime/state/shell";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { getRouteApi } from "@tanstack/react-router";
 import { ArchiveIcon, PlusIcon } from "lucide-react";
@@ -120,23 +117,6 @@ function boardDropIndexIn(columnEl: Element, y: number): number {
     if (y < rect.top + rect.height / 2 - offset) return index;
   }
   return cards.length;
-}
-
-/** The invariant `detail` when the failure carries one (the decider's
-    rejection messages name the unmet dependency), else the error message. */
-function commandFailureDescription(result: unknown): string {
-  const error: unknown = squashAtomCommandFailure(
-    result as Parameters<typeof squashAtomCommandFailure>[0],
-  );
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "detail" in error &&
-    typeof error.detail === "string"
-  ) {
-    return error.detail;
-  }
-  return error instanceof Error ? error.message : "The server rejected the command.";
 }
 
 export function BoardPage() {
@@ -320,7 +300,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           toastManager.add({
             type: "error",
             title: isMove ? "Move rejected" : "Reorder rejected",
-            description: commandFailureDescription(rejected[0]!.result),
+            description: describeBoardCommandFailure(rejected[0]!.result),
           });
           return;
         }
