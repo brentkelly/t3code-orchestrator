@@ -152,8 +152,7 @@ export function recoveryDecision(input: {
 export type BoardReconcileDecision =
   | { readonly kind: "resume-watch" }
   | { readonly kind: "recover" }
-  | { readonly kind: "advance" }
-  | { readonly kind: "settle-abandoned" };
+  | { readonly kind: "advance" };
 
 /**
  * What boot reconciliation does with a card found mid-step after a restart.

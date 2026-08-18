@@ -264,6 +264,74 @@ const make = Effect.gen(function* () {
     return provisioned.value.path;
   });
 
+  // Create a fresh thread for a step and link it to the card, returning the new
+  // thread id. Shared by the initial spawn and by recovery when the step's
+  // thread has vanished (reaped/deleted). The card↔thread link is what lets the
+  // agent's board_* tools resolve their card (the MCP write path keys on it, D3).
+  const spawnStepThread = Effect.fn("board-supervisor-spawnStepThread")(function* (input: {
+    readonly card: BoardCard;
+    readonly step: BoardStep;
+    readonly worktreePath: string;
+    readonly text: string;
+  }) {
+    const { card, step } = input;
+    const threadId = yield* freshThreadId;
+    const createdAt = yield* nowIso;
+    yield* dispatch({
+      type: "thread.turn.start",
+      commandId: yield* commandId("spawn-turn"),
+      threadId,
+      message: {
+        messageId: yield* freshMessageId,
+        role: "user",
+        text: input.text,
+        attachments: [],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      bootstrap: {
+        createThread: {
+          projectId: card.projectId,
+          title: `${card.key} · ${step.label}`,
+          modelSelection: { instanceId: step.providerInstanceId, model: step.model },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: card.worktree?.branch ?? null,
+          worktreePath: input.worktreePath,
+          createdAt,
+        },
+      },
+      createdAt,
+    });
+    yield* dispatch({
+      type: "board.card.link-thread",
+      commandId: yield* commandId("link-thread"),
+      cardId: card.id,
+      threadId,
+      role: step.id,
+      createdAt: yield* nowIso,
+    });
+    // Run the worktree setup script for the worktree, in the build thread's
+    // terminal (t3o-09). Best-effort — a setup failure surfaces in the thread,
+    // not as a lost card.
+    yield* runBoardCardWorktreeSetup({
+      threadId,
+      projectId: card.projectId,
+      worktreePath: input.worktreePath,
+    }).pipe(
+      Effect.provideService(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupRunner),
+      Effect.catchCause(() => Effect.void),
+    );
+    return threadId;
+  });
+
+  // Whether a step's thread is gone (deleted or never present) — recovery must
+  // respawn rather than nudge a thread that no longer exists.
+  const threadGone = (threadId: ThreadId | null) =>
+    threadId === null
+      ? Effect.succeed(true)
+      : snapshotQuery.getThreadShellById(threadId).pipe(Effect.map(Option.isNone));
+
   // Acquire a slot and spawn the step's thread, or queue it (D11). Enforces the
   // one-writer-per-worktree invariant (t3o-09) before spawning a writer.
   const admitAndSpawn = Effect.fn("board-supervisor-admitAndSpawn")(function* (input: {
@@ -311,44 +379,11 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const threadId = yield* freshThreadId;
-    const createdAt = yield* nowIso;
-    const prompt = composeStepPrompt({ card, step, attempt: input.attempt });
-    yield* dispatch({
-      type: "thread.turn.start",
-      commandId: yield* commandId("spawn-turn"),
-      threadId,
-      message: {
-        messageId: yield* freshMessageId,
-        role: "user",
-        text: prompt,
-        attachments: [],
-      },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      bootstrap: {
-        createThread: {
-          projectId: card.projectId,
-          title: `${card.key} · ${step.label}`,
-          modelSelection: { instanceId: step.providerInstanceId, model: step.model },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: card.worktree?.branch ?? null,
-          worktreePath: input.worktreePath,
-          createdAt,
-        },
-      },
-      createdAt,
-    });
-    // Link the thread to the card so the agent's board_* tools resolve their
-    // card (the MCP write path keys on the card↔thread link, D3).
-    yield* dispatch({
-      type: "board.card.link-thread",
-      commandId: yield* commandId("link-thread"),
-      cardId: card.id,
-      threadId,
-      role: step.id,
-      createdAt: yield* nowIso,
+    const threadId = yield* spawnStepThread({
+      card,
+      step,
+      worktreePath: input.worktreePath,
+      text: composeStepPrompt({ card, step, attempt: input.attempt }),
     });
     yield* dispatch({
       type: "board.card.admit-step",
@@ -359,17 +394,6 @@ const make = Effect.gen(function* () {
       threadId,
       createdAt: yield* nowIso,
     });
-    // Run the worktree setup script for the freshly created worktree, in the
-    // build thread's terminal (t3o-09). Best-effort — a setup failure surfaces
-    // in the thread, not as a lost card.
-    yield* runBoardCardWorktreeSetup({
-      threadId,
-      projectId: card.projectId,
-      worktreePath: input.worktreePath,
-    }).pipe(
-      Effect.provideService(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupRunner),
-      Effect.catchCause(() => Effect.void),
-    );
   });
 
   // A card entered Building (the human "Begin build" gate, D18): snapshot the
@@ -391,21 +415,27 @@ const make = Effect.gen(function* () {
       recipe,
       createdAt: yield* nowIso,
     });
-    yield* driveNextStep(card.id);
+    // Fresh Building entry never auto-advances: a card dragged back for rework
+    // whose steps all already succeeded must NOT bounce straight to review
+    // (advanceWhenDone: false). Only a genuine completion advances the stage.
+    yield* driveNextStep(card.id, false);
   });
 
-  // Resolve the card's next step from its snapshot and drive it to running (or
-  // advance the stage when every step has succeeded). Shared by build start and
-  // step completion (multi-step recipes).
+  // Resolve the card's next step from its snapshot and drive it to running.
+  // `advanceWhenDone` gates the board-driven stage advance: it fires only when
+  // a real step just completed (the success path / a reconciled success), never
+  // on a fresh Building entry where "no step left" means the card was re-entered
+  // for rework, not that it just finished.
   const driveNextStep = Effect.fn("board-supervisor-driveNextStep")(function* (
     cardId: BoardCard["id"],
+    advanceWhenDone: boolean,
   ) {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === cardId);
     if (card === undefined || card.recipeSnapshot === null) return;
     const step = selectNextStep(card.recipeSnapshot, boardCardStepCompletions(board, cardId));
     if (step === null) {
-      yield* advanceStage(card);
+      if (advanceWhenDone) yield* advanceStage(card);
       return;
     }
     yield* dispatch({
@@ -473,34 +503,45 @@ const make = Effect.gen(function* () {
         ? providerQuestionMechanism(provider.providerInstanceId)
         : "your runtime's user-input request";
     const decision = recoveryDecision({ stepState: input.state, questionMechanism });
-    // Both paths reuse the step's existing thread when it survives; recovery
-    // never releases the held slot (a retry keeps its place, D13).
-    if (input.state.threadId !== null) {
-      yield* sendTurn({
-        threadId: input.state.threadId,
-        text: decision.kind === "escalate" ? decision.question : decision.nudge,
+    const text = decision.kind === "escalate" ? decision.question : decision.nudge;
+    // Recovery never releases the held slot (a retry keeps its place, D13). If
+    // the step's thread survives, nudge it in place; if it has vanished
+    // (reaped/deleted) — a routine path, not an error — respawn a fresh thread
+    // and continue there, so the recovery message is never sent into the void.
+    const gone = yield* threadGone(input.state.threadId);
+    let threadId = input.state.threadId;
+    if (gone && provider !== null && input.card.worktree?.path != null) {
+      threadId = yield* spawnStepThread({
+        card: input.card,
+        step: provider,
+        worktreePath: input.card.worktree.path,
+        text,
       });
+    } else if (!gone && input.state.threadId !== null) {
+      yield* sendTurn({ threadId: input.state.threadId, text });
     }
     yield* dispatch({
       type: "board.card.recover-step",
       commandId: yield* commandId("recover-step"),
       cardId: input.card.id,
       stepId: input.state.stepId,
-      threadId: input.state.threadId,
+      threadId,
       escalateToHuman: decision.kind === "escalate",
       createdAt: yield* nowIso,
     });
   });
 
   // A step thread's turn ended (runtime `turn.completed`): the death/stall test
-  // (D4). If the step is still running with no completion and the thread is not
-  // holding a pending question, it settled without completing → recover.
+  // (D4). A step that is running OR awaiting a human answer, with no completion
+  // and no pending question left on the thread, settled without completing —
+  // recover. A still-pending question is the legitimate gate (D13), not death.
   const handleTurnCompleted = Effect.fn("board-supervisor-handleTurnCompleted")(function* (
     threadId: ThreadId,
   ) {
     const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
-    if (found === null || found.state.status !== "running") return;
+    if (found === null) return;
+    if (found.state.status !== "running" && found.state.status !== "awaiting-input") return;
     const completed = boardCardStepCompletions(board, found.card.id).some(
       (entry) => entry.stepId === found.state.stepId,
     );
@@ -510,16 +551,22 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
     if (shell !== undefined && shell.hasPendingUserInput) {
       // A proper structured question — "Input needed", not a failure, no retry
-      // consumed (D13). Move the step to the human gate.
-      yield* dispatch({
-        type: "board.card.await-step-input",
-        commandId: yield* commandId("await-input"),
-        cardId: found.card.id,
-        stepId: found.state.stepId,
-        createdAt: yield* nowIso,
-      });
+      // consumed (D13). Move (or keep) the step on the human gate. A no-op when
+      // it is already awaiting-input.
+      if (found.state.status === "running") {
+        yield* dispatch({
+          type: "board.card.await-step-input",
+          commandId: yield* commandId("await-input"),
+          cardId: found.card.id,
+          stepId: found.state.stepId,
+          createdAt: yield* nowIso,
+        });
+      }
       return;
     }
+    // Running with no question → died mid-work. Awaiting-input with no pending
+    // question → the human answered and the agent ran another turn without
+    // completing (or died); either way death detection is re-armed. Recover.
     yield* recoverStep(found);
   });
 
@@ -535,7 +582,7 @@ const make = Effect.gen(function* () {
     switch (completion.outcome) {
       case "succeeded":
         yield* settleStep({ card, state, outcome: "succeeded" });
-        yield* driveNextStep(card.id);
+        yield* driveNextStep(card.id, true);
         return;
       case "failed":
         // A clean failure report still enters recovery (D4): retry or escalate.
@@ -595,25 +642,25 @@ const make = Effect.gen(function* () {
               .pipe(Effect.map(Option.getOrUndefined));
       const threadAlive = shell !== undefined && threadIsAlive(shell);
       const decision = reconcileStepDecision({ status: state.status, threadAlive, hasSucceeded });
+      // The in-memory slot Ref is empty after a restart, so any step that still
+      // holds a slot must re-acquire it here — whether we go on to watch it
+      // (resume-watch) or recover it (recover keeps the slot, D13) — otherwise
+      // its eventual release would floor at zero and under-count throughput.
+      if (state.slotHeld && decision.kind !== "advance") {
+        const provider = stepProvider(card, state.stepId);
+        if (provider !== null) yield* slots.acquire(provider.providerInstanceId);
+      }
       switch (decision.kind) {
         case "advance":
           yield* settleStep({ card, state, outcome: "succeeded" });
-          yield* driveNextStep(card.id);
+          yield* driveNextStep(card.id, true);
           break;
         case "recover":
           yield* recoverStep({ card, state });
           break;
-        case "settle-abandoned":
-          yield* settleStep({ card, state, outcome: "abandoned" });
-          break;
         case "resume-watch":
-          // Still running: restore the in-memory slot count (the Ref is empty
-          // after a restart) so throughput accounting stays honest, then let
+          // Still running with a live thread — the slot was restored above; let
           // the live turn-completion path catch its settlement.
-          if (state.slotHeld) {
-            const provider = stepProvider(card, state.stepId);
-            if (provider !== null) yield* slots.acquire(provider.providerInstanceId);
-          }
           break;
       }
     }

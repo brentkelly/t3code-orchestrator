@@ -25,8 +25,10 @@ export interface BoardStepSlotsShape {
    * never lying about its state. The MVP always admits and counts.
    */
   readonly acquire: (providerInstanceId: ProviderInstanceId) => Effect.Effect<boolean>;
-  /** Release a held slot. Idempotent-safe callers pass `slotHeld` so a
-      double-release (crash + settle racing) never drops the count below zero. */
+  /** Release a held slot. Floors the count at zero, so a double-release (a
+      crash and a settle racing to release the same step) never drives the
+      count negative — callers gate on `BoardCardStepState.slotHeld` and this is
+      the belt-and-braces backstop. */
   readonly release: (providerInstanceId: ProviderInstanceId) => Effect.Effect<void>;
   /** Currently held slots for an instance — for leak assertions and the future
       governor. */

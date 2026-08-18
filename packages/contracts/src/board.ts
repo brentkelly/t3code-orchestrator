@@ -645,12 +645,16 @@ export type BoardStepCompletion = typeof BoardStepCompletion.Type;
  * branch on it (D8: transitions branch on it, so it lives in the read model,
  * rebuilt from `board_card_step_state` on rehydration).
  *
- * `completing` is the transient the reactor holds between receiving a
- * successful `board_complete_step` and emitting the board-driven stage advance
- * (D18); a card found in it on boot is advanced by reconciliation. Every way
- * in has a way out: `queued` → `running` on admission, `awaiting-input` →
- * `running` on the answer, and the three terminals (`succeeded`, `failed`,
- * `abandoned`) are the reverse states a running step owes.
+ * `completing` is a reserved status from the plan's step vocabulary for the
+ * window between a successful `board_complete_step` and the board-driven stage
+ * advance (D18). The MVP reactor collapses that window into a single turn
+ * (settle → advance), so it is not yet emitted; it is kept in the union so a
+ * future reactor that persists it needs no migration, and boot reconciliation
+ * already treats any non-`running`/`awaiting-input` non-terminal status as a
+ * re-drive. Every way in has a way out: `queued` → `running` on admission,
+ * `awaiting-input` → `running` on the answer, and the three terminals
+ * (`succeeded`, `failed`, `abandoned`) are the reverse states a running step
+ * owes.
  */
 export const BOARD_STEP_STATUSES = [
   "pending",
