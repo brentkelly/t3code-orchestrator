@@ -535,20 +535,27 @@ export const BoardCard = Schema.Struct({
 export type BoardCard = typeof BoardCard.Type;
 
 /**
- * The unmet subset of a card's dependencies. A dependency is met only when
- * its card is in `done`; an unknown id counts as unmet (nothing can prove it
- * finished). The single definition of "unmet" — `deriveBoardCardBlocked`
- * and the decider's past-Ready move gate both build on it, so the blocked
- * flag and the rejection message can never disagree about which
- * dependencies are outstanding.
+ * The unmet subset of a card's dependencies. A dependency is met when its
+ * card is in `done`, and it stops gating entirely once its card is archived
+ * (t3o-13, D1): archiving means the work is not happening, so a gate waiting
+ * on it is a deadlock, not a gate. An unknown id still counts as unmet —
+ * nothing can prove it finished. The single definition of "unmet" —
+ * `deriveBoardCardBlocked` and the decider's past-Ready move gate both build
+ * on it, so the blocked flag and the rejection message can never disagree
+ * about which dependencies are outstanding.
+ *
+ * The edge itself survives archiving, so unarchiving the dependency puts the
+ * gate straight back with no restoration bookkeeping.
  */
 export function unmetBoardCardDependencies(input: {
   readonly dependsOn: ReadonlyArray<BoardCardId>;
-  readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "stage">>;
+  readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "stage" | "archivedAt">>;
 }): ReadonlyArray<BoardCardId> {
   return input.dependsOn.filter((dependencyId) => {
     const dependency = input.cards.find((card) => card.id === dependencyId);
-    return dependency === undefined || dependency.stage !== "done";
+    if (dependency === undefined) return true;
+    if (dependency.archivedAt !== null) return false;
+    return dependency.stage !== "done";
   });
 }
 
@@ -560,7 +567,7 @@ export function unmetBoardCardDependencies(input: {
 export function deriveBoardCardBlocked(input: {
   readonly stage: BoardStage;
   readonly dependsOn: ReadonlyArray<BoardCardId>;
-  readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "stage">>;
+  readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "stage" | "archivedAt">>;
 }): boolean {
   if (!isBoardStageReadyOrBeyond(input.stage)) return false;
   return unmetBoardCardDependencies(input).length > 0;
@@ -1412,6 +1419,11 @@ export const BoardCardShell = Schema.Struct({
       concept that owns `planTotal`/`planDone` below — a `hasPlan` derived
       from briefs would collide with it the day real plans land. */
   hasBrief: Schema.Boolean,
+  /** Null on every shell riding the live snapshot and the delta stream —
+      archived cards leave both (D15). Populated only on the archive-page
+      snapshot (t3o-13, D7), which reuses this same bounded shell so the
+      archive view needs no second card type. */
+  archivedAt: Schema.NullOr(IsoDateTime),
   /** Always false until t3o-11 wires PR detection. */
   hasPr: Schema.Boolean,
   /** Always 0 until t3o-11 wires attachments. */
@@ -1552,6 +1564,9 @@ export function makeBoardCardShell(input: {
   readonly blocked: boolean;
   readonly dependencyCount: number;
   readonly hasBrief: boolean;
+  /** Omitted by every live producer — the archive page is the only caller
+      that has an archived card to describe (t3o-13, D7). */
+  readonly archivedAt?: IsoDateTime | null | undefined;
   readonly activeThreadId: ThreadId | null;
   readonly thread?: BoardThreadStateSource | null | undefined;
 }): BoardCardShell {
@@ -1567,6 +1582,7 @@ export function makeBoardCardShell(input: {
     blocked: input.blocked,
     dependencyCount: input.dependencyCount,
     hasBrief: input.hasBrief,
+    archivedAt: input.archivedAt ?? null,
     hasPr: false, // t3o-11
     attachmentCount: 0, // t3o-11
     queued: false, // t3o-11
@@ -1603,6 +1619,7 @@ export function boardCardShellFromCard(
     blocked: card.blocked,
     dependencyCount: card.dependsOn.length,
     hasBrief: card.briefRef !== null,
+    archivedAt: card.archivedAt,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
   });
@@ -1920,12 +1937,63 @@ export type BoardSubscribeCardInput = typeof BoardSubscribeCardInput.Type;
  * - review issue ledger — post-MVP review pipeline
  * - activity log — t3o-08 (`board_report_progress`)
  */
+/**
+ * One end of a dependency edge, resolved (t3o-13, D4). The shell snapshot
+ * drops archived cards (D15) and carries only `dependencyCount`, never the
+ * ids, so a client holding it can resolve neither an archived dependency's
+ * title nor the set of cards depending on the open one. Both ride the
+ * per-card detail instead, where the projection table — which keeps archived
+ * rows — can resolve them.
+ */
+export const BoardCardDependencyRef = Schema.Struct({
+  cardId: BoardCardId,
+  key: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  stage: BoardStage,
+  archivedAt: Schema.NullOr(IsoDateTime),
+});
+export type BoardCardDependencyRef = typeof BoardCardDependencyRef.Type;
+
 export const BoardCardDetail = Schema.Struct({
   card: BoardCard,
   /** Brief body text, or null when the card has no brief. */
   brief: Schema.NullOr(TrimmedNonEmptyString),
+  /** `card.dependsOn` resolved, in `dependsOn` order. Archived dependencies
+      are included — they no longer gate, but they are still real cards and
+      must read as such rather than as a dangling id. An id with no row left
+      is simply absent. */
+  dependencies: Schema.Array(BoardCardDependencyRef),
+  /** Cards whose `dependsOn` names this one, archived included. Feeds the
+      archive confirmation (t3o-13, D3), which counts only the live ones. */
+  dependents: Schema.Array(BoardCardDependencyRef),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
+
+/**
+ * The live dependents of a card — the ones an archive would affect (D3).
+ * Archived dependents are invisible on the board and unaffected by the
+ * archive, so they never justify a warning.
+ */
+export function liveBoardCardDependents(
+  dependents: ReadonlyArray<BoardCardDependencyRef>,
+): ReadonlyArray<BoardCardDependencyRef> {
+  return dependents.filter((dependent) => dependent.archivedAt === null);
+}
+
+/**
+ * Whether archiving this card warrants a confirmation (t3o-13, D3): only a
+ * card that is not done and that live cards still depend on. Archiving a
+ * done card cannot affect a dependent — done satisfies the gate before the
+ * archive and the archive satisfies it after — and a card nothing depends on
+ * has nothing to warn about.
+ */
+export function boardCardArchiveNeedsConfirmation(input: {
+  readonly stage: BoardStage;
+  readonly dependents: ReadonlyArray<BoardCardDependencyRef>;
+}): boolean {
+  if (input.stage === "done") return false;
+  return liveBoardCardDependents(input.dependents).length > 0;
+}
 
 /**
  * `board.subscribeCard` stream items. A single re-emitting frame: the

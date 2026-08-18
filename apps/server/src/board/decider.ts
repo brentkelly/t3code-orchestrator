@@ -83,6 +83,23 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
 type PlannedOrchestrationEvent = DistributiveOmit<OrchestrationEvent, "sequence">;
 
 /**
+ * What one board command decides. Almost every command decides a single
+ * event; archive and unarchive decide a list, because releasing or re-arming
+ * a dependency gate re-flags the cards on the other end of the edge (t3o-13,
+ * D5). The engine accepts either.
+ */
+export type BoardDecision = PlannedOrchestrationEvent | ReadonlyArray<PlannedOrchestrationEvent>;
+
+/** A decision as the list the engine appends — the single-event case is a
+    list of one. Discriminated on `type`, which every event has and no array
+    does: `Array.isArray` narrows to `any[]` and leaks `any` into the result. */
+export function boardDecidedEvents(
+  decided: BoardDecision,
+): ReadonlyArray<PlannedOrchestrationEvent> {
+  return "type" in decided ? [decided] : decided;
+}
+
+/**
  * Aggregate ref for a board command — every board command aggregates on its
  * card (D9). Called from `commandToAggregateRef` in the upstream engine
  * behind the `isBoardCommand` predicate.
@@ -225,6 +242,64 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
   };
 });
 
+/**
+ * The `board.card-updated` events that keep dependents' stored `blocked`
+ * honest when `changed` is archived or restored (t3o-13, D5).
+ *
+ * `blocked` is a column, re-derived at each move / dependency edit; archiving
+ * now changes what a dependency means (D1), so the flag on every dependent
+ * would otherwise go stale — a card wearing a blocked badge the decider will
+ * happily move. Deriving against the card set with `changed` substituted in
+ * gives the post-event answer, and only a card whose flag actually flips
+ * emits, so a no-op archive stays a one-event command.
+ *
+ * One level deep is complete: the gate reads only a card's own `dependsOn`,
+ * so blocking never propagates past the direct dependents.
+ */
+const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(function* (input: {
+  readonly board: BoardState;
+  readonly command: BoardCardCommand;
+  readonly changed: BoardCard;
+}): Effect.fn.Return<
+  ReadonlyArray<PlannedOrchestrationEvent>,
+  PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  const cards = input.board.cards.map((card) =>
+    card.id === input.changed.id ? input.changed : card,
+  );
+  const events: PlannedOrchestrationEvent[] = [];
+  for (const dependent of cards) {
+    if (dependent.id === input.changed.id) continue;
+    if (dependent.archivedAt !== null) continue;
+    if (!dependent.dependsOn.includes(input.changed.id)) continue;
+    const blocked = deriveBoardCardBlocked({
+      stage: dependent.stage,
+      dependsOn: dependent.dependsOn,
+      cards,
+    });
+    if (blocked === dependent.blocked) continue;
+    const nextCard: BoardCard = {
+      ...dependent,
+      blocked,
+      updatedAt: input.command.createdAt,
+    };
+    events.push({
+      ...(yield* makeBoardEventBase({
+        cardId: dependent.id,
+        occurredAt: input.command.createdAt,
+        commandId: input.command.commandId,
+      })),
+      type: "board.card-updated",
+      payload: {
+        cardId: dependent.id,
+        card: nextCard,
+      },
+    });
+  }
+  return events;
+});
+
 /** Event base for label events (t3o-06a): aggregates on the label. Separate
     from `makeBoardEventBase` rather than parametrised so the card call sites
     stay untouched. */
@@ -300,7 +375,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
   readonly command: BoardCommand;
   readonly readModel: OrchestrationReadModel;
 }): Effect.fn.Return<
-  PlannedOrchestrationEvent,
+  // Archive and unarchive decide several events at once — the card's own,
+  // plus a `blocked` re-flag per affected dependent (t3o-13, D5). The engine
+  // already appends an array inside one transaction, and each event carries
+  // its own `aggregateId`, so a command may touch more than one card.
+  BoardDecision,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,
   Crypto.Crypto
 > {
@@ -416,7 +495,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           const names = unmet.map((dependencyId) => {
             const dependency = board.cards.find((existing) => existing.id === dependencyId);
             return dependency === undefined
-              ? `an archived or deleted card ('${dependencyId}')`
+              ? `a card that no longer exists ('${dependencyId}')`
               : `${dependency.key} "${dependency.title}"`;
           });
           return yield* invariant(
@@ -669,7 +748,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         archivedAt: command.createdAt,
         updatedAt: command.createdAt,
       };
-      return {
+      // Dependencies survive the archive (D1) — nothing rewrites `dependsOn`
+      // — but they stop gating, so dependents that were waiting on this card
+      // unblock in the same commit.
+      const archived: PlannedOrchestrationEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -682,6 +764,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           card: nextCard,
         },
       };
+      return [
+        archived,
+        ...(yield* boardDependentBlockedEvents({ board, command, changed: nextCard })),
+      ];
     }
 
     case "board.card.unarchive": {
@@ -701,7 +787,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         }),
         updatedAt: command.createdAt,
       };
-      return {
+      // Restoring re-arms the gate the archive released (D1/D5): dependents
+      // that this card blocks again are re-flagged alongside it.
+      const unarchived: PlannedOrchestrationEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -713,6 +801,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           card: nextCard,
         },
       };
+      return [
+        unarchived,
+        ...(yield* boardDependentBlockedEvents({ board, command, changed: nextCard })),
+      ];
     }
 
     case "board.label.create": {

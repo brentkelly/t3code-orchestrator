@@ -186,7 +186,19 @@ const BoardCardShellDbRow = Schema.Struct({
   blocked: Schema.Int,
   dependencyCount: Schema.Int,
   hasBrief: Schema.Int,
+  archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
+});
+
+/** The four columns a resolved dependency edge shows (t3o-13, D4) — enough
+    to render a chip or name a card in the archive confirmation, and nothing
+    more. */
+const BoardCardDependencyRefDbRow = Schema.Struct({
+  cardId: BoardCard.fields.id,
+  key: BoardCard.fields.key,
+  title: BoardCard.fields.title,
+  stage: BoardCard.fields.stage,
+  archivedAt: BoardCard.fields.archivedAt,
 });
 
 function boardCardToRow(card: BoardCard): BoardCardDbRow {
@@ -408,9 +420,72 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         blocked,
         json_array_length(depends_on) AS "dependencyCount",
         CASE WHEN brief_ref IS NULL THEN 0 ELSE 1 END AS "hasBrief",
+        archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
       WHERE archived_at IS NULL
+    `,
+  });
+
+  // The archive page's mirror of the shell query (t3o-13, D7): same bounded
+  // columns, opposite filter. Archived cards are read on demand by whoever
+  // opens the archive, never streamed to every client.
+  const listArchivedBoardCardShellRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardCardShellDbRow,
+    execute: () => sql`
+      SELECT
+        card_id AS "cardId",
+        key,
+        project_id AS "projectId",
+        stage,
+        order_key AS "orderKey",
+        title,
+        blocked,
+        json_array_length(depends_on) AS "dependencyCount",
+        CASE WHEN brief_ref IS NULL THEN 0 ELSE 1 END AS "hasBrief",
+        archived_at AS "archivedAt",
+        created_at AS "createdAt"
+      FROM board_cards
+      WHERE archived_at IS NOT NULL
+    `,
+  });
+
+  // Both ends of this card's dependency edges (t3o-13, D4). Archived rows are
+  // deliberately included: an archived dependency must read as the card it is,
+  // and an archived dependent is still worth showing on the card it points at.
+  const listBoardCardDependencyRefRows = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardDependencyRefDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        card_id AS "cardId",
+        key,
+        title,
+        stage,
+        archived_at AS "archivedAt"
+      FROM board_cards
+      WHERE card_id IN (
+        SELECT value FROM json_each((SELECT depends_on FROM board_cards WHERE card_id = ${cardId}))
+      )
+    `,
+  });
+
+  const listBoardCardDependentRefRows = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardDependencyRefDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        card_id AS "cardId",
+        key,
+        title,
+        stage,
+        archived_at AS "archivedAt"
+      FROM board_cards
+      WHERE EXISTS (
+        SELECT 1 FROM json_each(board_cards.depends_on) WHERE value = ${cardId}
+      )
+      ORDER BY card_number
     `,
   });
 
@@ -773,6 +848,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardThreadLinkRows,
     listLiveBoardCardThreadLinkRows,
     listBoardCardShellRows,
+    listArchivedBoardCardShellRows,
+    listBoardCardDependencyRefRows,
+    listBoardCardDependentRefRows,
     findBoardCardRow,
     listBoardCardThreadLinkRowsForCard,
     findBoardCardBodyRow,
@@ -1205,10 +1283,61 @@ export function withBoardShellCards(
           blocked: row.blocked !== 0,
           dependencyCount: row.dependencyCount,
           hasBrief: row.hasBrief !== 0,
+          archivedAt: row.archivedAt,
           activeThreadId,
           thread: activeThreadId === null ? null : (threadsById.get(activeThreadId) ?? null),
         });
       });
+      return { ...shell, cards };
+    }),
+  );
+}
+
+/**
+ * The archive page's card list (t3o-13, D7), riding the same
+ * `getArchivedShellSnapshot` the archived-threads panel already reads — the
+ * archive is a page you open, not state every client carries, so it stays off
+ * the live snapshot and the delta stream exactly as D15 requires.
+ *
+ * Newest archive first: the card you just archived by mistake is the one you
+ * came to restore. Thread state is left at its resting value — an archived
+ * card's threads are not what the archive list is for, and asking for them
+ * would cost a query per page open.
+ */
+export function withBoardArchivedShellCards(
+  queries: BoardCardQueries,
+  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
+): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
+  const shellRows = Effect.all([
+    queries.listArchivedBoardCardShellRows(),
+    queries.listBoardCardLabelRows(),
+  ]).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.archivedShell:query")));
+  return Effect.all([snapshot, shellRows]).pipe(
+    Effect.map(([shell, [cardRows, cardLabelRows]]) => {
+      if (cardRows.length === 0) return shell;
+      const labelsByCard = groupCardLabels(cardLabelRows);
+      const cards = [...cardRows]
+        .sort(
+          (left, right) =>
+            (right.archivedAt ?? "").localeCompare(left.archivedAt ?? "") ||
+            compareBoardCardShellRows(left, right),
+        )
+        .map((row) =>
+          makeBoardCardShell({
+            cardId: row.cardId,
+            key: row.key,
+            projectId: row.projectId,
+            labelIds: labelsByCard.get(row.cardId) ?? [],
+            stage: row.stage,
+            orderKey: row.orderKey,
+            title: row.title,
+            blocked: row.blocked !== 0,
+            dependencyCount: row.dependencyCount,
+            hasBrief: row.hasBrief !== 0,
+            archivedAt: row.archivedAt,
+            activeThreadId: null,
+          }),
+        );
       return { ...shell, cards };
     }),
   );
@@ -1266,8 +1395,10 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardThreadLinkRowsForCard(cardId),
       queries.findBoardCardBodyRow({ cardId, kind: BOARD_CARD_BRIEF_BODY_KIND }),
       queries.listBoardCardLabelRowsForCard(cardId),
+      queries.listBoardCardDependencyRefRows(cardId),
+      queries.listBoardCardDependentRefRows(cardId),
     ]).pipe(
-      Effect.map(([cardRow, linkRows, bodyRow, labelRows]) => {
+      Effect.map(([cardRow, linkRows, bodyRow, labelRows, dependencyRows, dependentRows]) => {
         if (Option.isNone(cardRow)) return null;
         const links = sortBoardCardThreadLinks(
           linkRows.map((row) => ({
@@ -1280,12 +1411,23 @@ export function makeBoardCardDetailLoader(
         const labels = [...labelRows]
           .sort((left, right) => left.ordinal - right.ordinal)
           .map((row) => row.labelId);
+        const card = rowToBoardCard(cardRow.value, links, labels);
+        // `dependsOn` order is the card's order — the SQL returns a set, so
+        // the sequence is restored here rather than trusted from the rows.
+        // An id whose row is gone is simply dropped: the chip has nothing to
+        // show, and the gate already treats it as unmet.
+        const dependencyRefsById = new Map(dependencyRows.map((row) => [row.cardId, row]));
         return {
-          card: rowToBoardCard(cardRow.value, links, labels),
+          card,
           brief: Option.match(bodyRow, {
             onNone: () => null,
             onSome: (row) => row.body,
           }),
+          dependencies: card.dependsOn.flatMap((dependencyId) => {
+            const row = dependencyRefsById.get(dependencyId);
+            return row === undefined ? [] : [row];
+          }),
+          dependents: dependentRows,
         };
       }),
       Effect.mapError(toPersistenceSqlError("BoardCardsProjection.detail:query")),
@@ -1397,7 +1539,10 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
  */
 export function boardSnapshotQueryMethods(
   sql: SqlClient.SqlClient,
-  base: Pick<ProjectionSnapshotQueryShape, "getCommandReadModel" | "getShellSnapshot">,
+  base: Pick<
+    ProjectionSnapshotQueryShape,
+    "getCommandReadModel" | "getShellSnapshot" | "getArchivedShellSnapshot"
+  >,
   // Typed Partial deliberately: the spread in the upstream object literal sits
   // after the base methods, and TS rejects a spread that *definitely* rewrites
   // an earlier key (TS2783). Optional keys express "board may override any
@@ -1412,6 +1557,13 @@ export function boardSnapshotQueryMethods(
     // (D2/D7; catalogue once, t3o-06a).
     getShellSnapshot: () =>
       withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+    // Archived cards ride the archive page's snapshot (t3o-13, D7), with the
+    // catalogue so their label chips render like any other card's.
+    getArchivedShellSnapshot: () =>
+      withBoardShellLabels(
+        queries,
+        withBoardArchivedShellCards(queries, base.getArchivedShellSnapshot()),
+      ),
     // Board-only detail reader for board.subscribeCard (t3o-04).
     boardCardDetail: makeBoardCardDetailLoader(queries),
     // Board-only readers for the MCP context / plan tools (t3o-08).

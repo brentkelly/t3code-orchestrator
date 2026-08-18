@@ -27,7 +27,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { decideBoardCommand, type BoardCommand } from "./decider.ts";
+import { boardDecidedEvents, decideBoardCommand, type BoardCommand } from "./decider.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -124,8 +124,16 @@ function makeReadModel(input: {
   };
 }
 
+/** Every event a command decides. Archive and unarchive decide several —
+    the card's own, plus a `blocked` re-flag per affected dependent (t3o-13,
+    D5) — while every other command decides exactly one. */
+const decideEvents = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+  decideBoardCommand({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
+
+/** The first (and, for every command but archive/unarchive, only) decided
+    event. */
 const decide = (command: BoardCommand, readModel: OrchestrationReadModel) =>
-  decideBoardCommand({ command, readModel });
+  decideEvents(command, readModel).pipe(Effect.map((events) => events[0]!));
 
 const decideFail = (command: BoardCommand, readModel: OrchestrationReadModel) =>
   Effect.flip(decide(command, readModel));
@@ -795,6 +803,150 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         makeReadModel({ board: { cards: [live], nextCardNumberByProject: {} } }),
       );
       assert.include(String(notArchived), "not archived");
+    }),
+  );
+
+  it.effect("unblocks the cards depending on a card as it is archived (t3o-13, D5)", () =>
+    Effect.gen(function* () {
+      // The dependency is unfinished, so `waiting` is legitimately blocked in
+      // Ready — until the thing it waits for is archived, at which point it is
+      // waiting for work that is not happening.
+      const dependency = makeCard({ id: "card-dep", stage: "building" });
+      const waiting = makeCard({
+        id: "card-waiting",
+        stage: "ready",
+        blocked: true,
+        dependsOn: [BoardCardId.make("card-dep")],
+      });
+      // Depends on the same card but sits before Ready, so it was never
+      // blocked and must not be re-flagged for nothing.
+      const early = makeCard({
+        id: "card-early",
+        stage: "backlog",
+        dependsOn: [BoardCardId.make("card-dep")],
+      });
+
+      const events = yield* decideEvents(
+        {
+          type: "board.card.archive",
+          commandId: CommandId.make("cmd-archive-dep"),
+          cardId: BoardCardId.make("card-dep"),
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: { cards: [dependency, waiting, early], nextCardNumberByProject: {} },
+        }),
+      );
+
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["board.card-archived", "board.card-updated"],
+      );
+      const reflag = events[1]!;
+      assert.strictEqual(reflag.aggregateId, BoardCardId.make("card-waiting"));
+      if (reflag.type !== "board.card-updated") return;
+      assert.strictEqual(reflag.payload.card.blocked, false);
+      // The edge survives the archive — that is what makes unarchive a true
+      // inverse (D1).
+      assert.deepStrictEqual(reflag.payload.card.dependsOn, [BoardCardId.make("card-dep")]);
+    }),
+  );
+
+  it.effect("re-blocks the cards depending on a card as it is restored (t3o-13, D5)", () =>
+    Effect.gen(function* () {
+      const dependency = makeCard({ id: "card-dep", stage: "building", archivedAt: NOW });
+      const waiting = makeCard({
+        id: "card-waiting",
+        stage: "ready",
+        blocked: false,
+        dependsOn: [BoardCardId.make("card-dep")],
+      });
+
+      const events = yield* decideEvents(
+        {
+          type: "board.card.unarchive",
+          commandId: CommandId.make("cmd-unarchive-dep"),
+          cardId: BoardCardId.make("card-dep"),
+          createdAt: NOW,
+        },
+        makeReadModel({ board: { cards: [dependency, waiting], nextCardNumberByProject: {} } }),
+      );
+
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["board.card-unarchived", "board.card-updated"],
+      );
+      const reflag = events[1]!;
+      if (reflag.type !== "board.card-updated") return;
+      assert.strictEqual(reflag.payload.card.blocked, true);
+    }),
+  );
+
+  it.effect("re-flags nothing when no dependent's blocked state actually changes", () =>
+    Effect.gen(function* () {
+      // Archiving a FINISHED card changes nothing for its dependents: done
+      // satisfied the gate before, and archived satisfies it after.
+      const dependency = makeCard({ id: "card-dep", stage: "done" });
+      const waiting = makeCard({
+        id: "card-waiting",
+        stage: "ready",
+        blocked: false,
+        dependsOn: [BoardCardId.make("card-dep")],
+      });
+      // An archived dependent is invisible and unaffected, so it never emits.
+      const archivedDependent = makeCard({
+        id: "card-archived-dependent",
+        stage: "ready",
+        blocked: true,
+        archivedAt: NOW,
+        dependsOn: [BoardCardId.make("card-dep")],
+      });
+
+      const events = yield* decideEvents(
+        {
+          type: "board.card.archive",
+          commandId: CommandId.make("cmd-archive-done"),
+          cardId: BoardCardId.make("card-dep"),
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: {
+            cards: [dependency, waiting, archivedDependent],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["board.card-archived"],
+      );
+    }),
+  );
+
+  it.effect("lets a card past Ready when its only unmet dependency is archived", () =>
+    Effect.gen(function* () {
+      const dependency = makeCard({ id: "card-dep", stage: "building", archivedAt: NOW });
+      const waiting = makeCard({
+        id: "card-waiting",
+        stage: "ready",
+        dependsOn: [BoardCardId.make("card-dep")],
+      });
+
+      const event = yield* decide(
+        {
+          type: "board.card.move",
+          commandId: CommandId.make("cmd-move-past-archived"),
+          cardId: BoardCardId.make("card-waiting"),
+          toStage: "building",
+          createdAt: NOW,
+        },
+        makeReadModel({ board: { cards: [dependency, waiting], nextCardNumberByProject: {} } }),
+      );
+
+      assert.strictEqual(event.type, "board.card-moved");
+      if (event.type !== "board.card-moved") return;
+      assert.strictEqual(event.payload.card.blocked, false);
     }),
   );
 

@@ -104,20 +104,25 @@ export function BoardCardDetail({
 
   const card = detail?.card ?? null;
 
+  // Resolved server-side (t3o-13, D4): the shell snapshot drops archived
+  // cards, so resolving here would render every archived dependency as an
+  // unknown id. `detail.dependencies` is already in `dependsOn` order and
+  // omits only ids with no card left at all.
   const dependencies = useMemo<ReadonlyArray<BoardDetailDependency>>(() => {
-    if (card === null) return [];
-    const cards = snapshot?.cards ?? [];
+    if (detail === null || card === null) return [];
+    const resolvedById = new Map(detail.dependencies.map((entry) => [entry.cardId, entry]));
     return card.dependsOn.map((dependencyId) => {
-      const shell = cards.find((candidate) => candidate.cardId === dependencyId);
+      const resolved = resolvedById.get(dependencyId);
       return {
         cardId: dependencyId,
-        key: shell?.key ?? dependencyId,
-        title: shell?.title ?? null,
-        stage: shell?.stage ?? "backlog",
-        known: shell !== undefined,
+        key: resolved?.key ?? dependencyId,
+        title: resolved?.title ?? null,
+        stage: resolved?.stage ?? "backlog",
+        known: resolved !== undefined,
+        archived: resolved !== undefined && resolved.archivedAt !== null,
       };
     });
-  }, [card, snapshot]);
+  }, [card, detail]);
 
   // A dependency only ever names a card in the same project — the picker never
   // offers one from another project.

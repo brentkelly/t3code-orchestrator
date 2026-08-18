@@ -27,7 +27,9 @@
 import {
   BOARD_STAGES,
   activeBoardCardThreadId,
+  boardCardArchiveNeedsConfirmation,
   boardStageIndex,
+  liveBoardCardDependents,
   type BoardCardDetail,
   type BoardCardId,
   type BoardCardThreadState,
@@ -60,6 +62,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../components/ui/menu";
 import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
 import { BoardLabelChips } from "./BoardLabelChips";
 import { BoardLabelField } from "./BoardLabelField";
 import {
@@ -550,11 +553,21 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
   const wide = boardCardHasThreadPane(card.stage);
-  // A dependency is met only when its card is done; an unknown id counts as
-  // unmet (nothing can prove it finished) — the contracts' definition.
+  // The contracts' definition of unmet, mirrored: an unknown id counts as
+  // unmet (nothing can prove it finished), an archived dependency does not
+  // count at all (t3o-13, D1), and everything else must be done.
   const unmet = props.dependencies.filter(
-    (dependency) => !dependency.known || dependency.stage !== "done",
+    (dependency) => !dependency.known || (!dependency.archived && dependency.stage !== "done"),
   );
+
+  // Archiving a not-done card that live cards depend on asks first (D3); every
+  // other archive, and every restore, is a single click.
+  const liveDependents = liveBoardCardDependents(props.detail.dependents);
+  const archiveNeedsConfirmation = boardCardArchiveNeedsConfirmation({
+    stage: card.stage,
+    dependents: props.detail.dependents,
+  });
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
 
   const [pane, setPane] = useState<"thread" | "brief">("thread");
   // Which tab the thread pane is on. Absent means "the card's active thread",
@@ -589,12 +602,27 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <EllipsisVerticalIcon className="size-[15px]" />
           </MenuTrigger>
           <MenuPopup align="end" className="min-w-42">
-            <MenuItem onClick={props.onArchiveToggle}>
+            <MenuItem
+              onClick={() => {
+                if (!archived && archiveNeedsConfirmation) {
+                  setArchiveConfirmOpen(true);
+                  return;
+                }
+                props.onArchiveToggle();
+              }}
+            >
               {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
               {archived ? "Restore card" : "Archive card"}
             </MenuItem>
           </MenuPopup>
         </Menu>
+        <BoardArchiveConfirmDialog
+          cardKey={card.key}
+          dependents={liveDependents}
+          onConfirm={props.onArchiveToggle}
+          onOpenChange={setArchiveConfirmOpen}
+          open={archiveConfirmOpen}
+        />
         <button
           className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
           onClick={props.onClose}

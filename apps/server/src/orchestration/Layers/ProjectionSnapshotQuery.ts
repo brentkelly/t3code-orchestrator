@@ -2669,7 +2669,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadDetailById,
     getThreadDetailSnapshot,
     // T3o: board snapshot enrichment (D2/D8) — board module wraps what it needs.
-    ...boardSnapshotQueryMethods(sql, { getCommandReadModel, getShellSnapshot }),
+    ...boardSnapshotQueryMethods(sql, {
+      getCommandReadModel,
+      getShellSnapshot,
+      getArchivedShellSnapshot,
+    }),
   } satisfies ProjectionSnapshotQueryShape;
 });
 

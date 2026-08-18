@@ -143,6 +143,9 @@ export function BoardCardCreateDialog({
       title: card?.title ?? null,
       stage: card?.stage ?? "backlog",
       known: card !== undefined,
+      // The picker only ever offers live cards, so a dependency chosen here
+      // cannot be archived.
+      archived: false,
     };
   });
 
