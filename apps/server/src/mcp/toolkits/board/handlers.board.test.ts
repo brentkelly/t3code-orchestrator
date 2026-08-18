@@ -37,6 +37,7 @@ import { OrchestrationEngineService } from "../../../orchestration/Services/Orch
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { createEmptyReadModel, projectEvent } from "../../../orchestration/projector.ts";
 import { ServerConfig } from "../../../config.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import { boardHandlers } from "./handlers.ts";
@@ -48,6 +49,9 @@ const makeLayer = (prefix: string) =>
       Layer.provide(OrchestrationProjectionPipelineLive),
     ),
     OrchestrationProjectionSnapshotQueryLive,
+    // The create tool reads (and may assign) the project's key prefix from
+    // board settings (D14) — an in-memory settings runtime is enough.
+    ServerSettings.layerTest(),
   ).pipe(
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
@@ -235,7 +239,10 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
           labels: ["feature"],
         })
         .pipe(withScope(orphanThread));
-      assert.strictEqual(created.key, "CARD-2");
+      // The key carries the project's acronym, not the compiled-in default:
+      // "Project A" -> PA, the same prefix the client would assign, so agent-
+      // and human-created cards share one key namespace (D14).
+      assert.strictEqual(created.key, "PA-2");
       const listed = yield* boardHandlers
         .board_list_cards({ stage: "sprint" })
         .pipe(withScope(orphanThread));

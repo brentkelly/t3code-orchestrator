@@ -33,6 +33,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 
 /**
  * The single failure a board tool returns. `message` is the agent-facing,
@@ -54,13 +55,16 @@ export class BoardToolError extends Schema.TaggedErrorClass<BoardToolError>()("B
 }) {}
 
 // The board tools all resolve the same services: the calling scope, the engine
-// (to dispatch), the board-wrapped snapshot query (to read), and crypto (to
-// mint command/entity ids). Declared uniformly, mirroring the preview toolkit.
+// (to dispatch), the board-wrapped snapshot query (to read), crypto (to mint
+// command/entity ids) and board settings (the per-project key prefix, D14 —
+// an agent-created card must land in the same key namespace as a human's).
+// Declared uniformly, mirroring the preview toolkit.
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   OrchestrationEngineService,
   ProjectionSnapshotQuery,
   Crypto.Crypto,
+  ServerSettings.ServerSettingsService,
 ];
 
 // ── Read shapes ────────────────────────────────────────────────────────

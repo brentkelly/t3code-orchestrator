@@ -10,6 +10,7 @@
  * projector → table, in one transaction — and never writes a table directly.
  */
 import {
+  assignBoardKeyPrefix,
   boardAppendOrderKey,
   boardCardPlans,
   boardCardStepCompletions,
@@ -34,6 +35,7 @@ import {
   type BoardState,
   type OrchestrationCommand,
   type OrchestrationReadModel,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -52,6 +54,7 @@ import {
   boardSnapshotQueryMethodsOf,
   type BoardSnapshotQueryMethods,
 } from "../../../board/projection.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import { BoardToolError, BoardToolkit } from "./tools.ts";
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
@@ -98,6 +101,51 @@ const readBoardState = (deps: BoardToolDeps): Effect.Effect<BoardState, BoardToo
     Effect.map((model: OrchestrationReadModel) => model.board ?? EMPTY_BOARD_STATE),
     Effect.mapError(internalError),
   );
+
+/**
+ * The key prefix a new card should carry (D14). Board settings are the single
+ * source: a project with a stored prefix keeps it, and a project with none is
+ * assigned an acronym from its name and that choice is PERSISTED here — so an
+ * agent-created card and a human-created card land in one key namespace, and
+ * neither path can re-derive a different prefix after a rename.
+ *
+ * Reads the project title from the same read model the tools already query; an
+ * unknown project (never registered, or removed) derives from an empty name,
+ * which the contracts helper answers with the compiled-in default.
+ */
+const resolveCardKeyPrefix = (
+  deps: BoardToolDeps,
+  projectId: ProjectId,
+): Effect.Effect<string, BoardToolError, ServerSettings.ServerSettingsService> =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const current = yield* settings.getSettings.pipe(Effect.mapError(internalError));
+    const model = yield* deps.snapshotQuery
+      .getCommandReadModel()
+      .pipe(Effect.mapError(internalError));
+    const projectTitle = model.projects.find((project) => project.id === projectId)?.title ?? "";
+    const { prefix, assigned } = assignBoardKeyPrefix({
+      board: current.board,
+      projectId,
+      projectTitle,
+    });
+    if (assigned) {
+      yield* settings
+        .updateSettings({
+          board: {
+            projects: {
+              ...current.board.projects,
+              [projectId]: {
+                keyPrefix: prefix,
+                accentColor: current.board.projects[projectId]?.accentColor ?? null,
+              },
+            },
+          },
+        })
+        .pipe(Effect.mapError(internalError));
+    }
+    return prefix;
+  });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -326,6 +374,7 @@ export const boardHandlers = {
         labels,
         stage,
         orderKey,
+        keyPrefix: yield* resolveCardKeyPrefix(deps, input.projectId),
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps.engine, create);
