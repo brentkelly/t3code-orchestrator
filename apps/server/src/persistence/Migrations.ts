@@ -51,8 +51,6 @@ import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts
 import Migration0036 from "./Migrations/036_ProjectionThreadsPinned.ts";
 import Migration0037 from "./Migrations/037_ProjectionTurnsKeysetIndex.ts";
 import Migration0038 from "./Migrations/038_ProjectionThreadsPinOrderKey.ts";
-// T3o: board migrations (ids 900+) are registered in the board module.
-import { BOARD_MIGRATIONS } from "../board/migrations.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -103,8 +101,6 @@ export const migrationEntries = [
   [36, "ProjectionThreadsPinned", Migration0036],
   [37, "ProjectionTurnsKeysetIndex", Migration0037],
   [38, "ProjectionThreadsPinOrderKey", Migration0038],
-  // T3o: board migrations join the registry (grow in the board module).
-  ...BOARD_MIGRATIONS,
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
