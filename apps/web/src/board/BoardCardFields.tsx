@@ -40,9 +40,14 @@ export interface BoardDependencyEntry {
   readonly key: string;
   readonly title: string | null;
   readonly stage: BoardStage;
-  /** False when the dependency id resolves to no live card (deleted, or
-      another environment) — rendered as an unknown reference, never hidden. */
+  /** False only when the id resolves to no card at all — rendered as an
+      unknown reference, never hidden. An ARCHIVED dependency is known: it is
+      a real card, resolved from the detail (t3o-13, D4), and reads as
+      archived rather than as a dangling id. */
   readonly known: boolean;
+  /** Archived dependencies no longer gate the dependent card (t3o-13, D1),
+      so they are shown as archived rather than by stage. */
+  readonly archived: boolean;
 }
 
 /** Heading, add-picker and the chosen dependencies as rows. */
@@ -74,7 +79,12 @@ export function BoardDependencySection({
         <ul className="flex flex-col gap-1.5">
           {dependencies.map((dependency) => (
             <li
-              className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
+              className={cn(
+                "flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]",
+                // An archived dependency is inert — it no longer gates this
+                // card — so it recedes rather than reading like live work.
+                dependency.archived && "opacity-60",
+              )}
               key={dependency.cardId}
             >
               <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/45" />
@@ -87,12 +97,16 @@ export function BoardDependencySection({
               <span
                 className={cn(
                   "shrink-0 text-[11px]",
-                  dependency.known && dependency.stage === "done"
+                  dependency.known && !dependency.archived && dependency.stage === "done"
                     ? "text-success-foreground"
                     : "text-muted-foreground",
                 )}
               >
-                {dependency.known ? BOARD_STAGE_LABELS[dependency.stage] : "unknown card"}
+                {!dependency.known
+                  ? "unknown card"
+                  : dependency.archived
+                    ? "Archived"
+                    : BOARD_STAGE_LABELS[dependency.stage]}
               </span>
               <Button
                 onClick={() => onRemove(dependency.cardId)}

@@ -58,8 +58,17 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
   };
 }
 
-function detail(overrides?: Partial<BoardCard>, brief: string | null = null): BoardCardDetail {
-  return { card: card(overrides), brief };
+function detail(
+  overrides?: Partial<BoardCard>,
+  brief: string | null = null,
+  edges?: Partial<Pick<BoardCardDetail, "dependencies" | "dependents">>,
+): BoardCardDetail {
+  return {
+    card: card(overrides),
+    brief,
+    dependencies: edges?.dependencies ?? [],
+    dependents: edges?.dependents ?? [],
+  };
 }
 
 const noop = () => {};
@@ -109,6 +118,36 @@ describe("BoardCardDetailPanel", () => {
     expect(html).toContain("More actions");
   });
 
+  it("renders an archived dependency as the card it is, not as an unknown id", () => {
+    // The bug (t3o-13): the shell snapshot drops archived cards, so resolving
+    // a dependency from it produced "Unknown task" on "unknown card".
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        dependencies={[
+          {
+            cardId: BoardCardId.make("dep-archived"),
+            key: "T3-9",
+            title: "Work that was called off",
+            stage: "building",
+            known: true,
+            archived: true,
+          },
+        ]}
+        detail={detail({ stage: "ready" })}
+        projectName="Project One"
+      />,
+    );
+    expect(html).toContain("T3-9");
+    expect(html).toContain("Work that was called off");
+    expect(html).toContain("Archived");
+    expect(html).not.toContain("Unknown task");
+    expect(html).not.toContain("unknown card");
+    // An archived dependency no longer gates, so it must not be named as a
+    // reason this card is blocked.
+    expect(html).not.toContain("Blocked by T3-9");
+  });
+
   it("renders dependencies, marking an unresolved id as an unknown card", () => {
     const html = renderToStaticMarkup(
       <BoardCardDetailPanel
@@ -120,6 +159,7 @@ describe("BoardCardDetailPanel", () => {
             title: "Land the widget",
             stage: "building",
             known: true,
+            archived: false,
           },
           {
             cardId: BoardCardId.make("dep-gone"),
@@ -127,6 +167,7 @@ describe("BoardCardDetailPanel", () => {
             title: null,
             stage: "backlog",
             known: false,
+            archived: false,
           },
         ]}
         detail={detail()}
@@ -248,6 +289,7 @@ describe("BoardCardDetailPanel", () => {
             title: "Finished work",
             stage: "done",
             known: true,
+            archived: false,
           },
           {
             cardId: BoardCardId.make("dep-open"),
@@ -255,6 +297,7 @@ describe("BoardCardDetailPanel", () => {
             title: "Outstanding work",
             stage: "building",
             known: true,
+            archived: false,
           },
         ]}
         detail={detail({ stage: "ready", blocked: true })}

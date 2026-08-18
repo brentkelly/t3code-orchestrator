@@ -13,12 +13,16 @@ import {
   BOARD_CARD_SHELL_TITLE_MAX_BYTES,
   BOARD_LABEL_NAME_MAX_LENGTH,
   BoardCardId,
+  boardCardArchiveNeedsConfirmation,
   boardCardShellFromCard,
   BoardCardShell,
   BoardLabelId,
   BoardLabelName,
+  deriveBoardCardBlocked,
   deriveBoardCardThreadState,
+  liveBoardCardDependents,
   makeBoardCardShell,
+  unmetBoardCardDependencies,
   type BoardCard,
 } from "./board.ts";
 import { OrchestrationShellSnapshot } from "./orchestration.ts";
@@ -62,6 +66,10 @@ const fullyPopulatedShell = {
   blocked: true,
   dependencyCount: 12,
   hasBrief: true,
+  // Never populated on the live snapshot (archived cards leave it, D15), but
+  // the archive page reuses this shell — so the budget is measured against a
+  // populated timestamp rather than the null every live card sends.
+  archivedAt: "2026-01-01T00:00:00.000Z",
   hasPr: true,
   attachmentCount: 42,
   queued: true,
@@ -312,5 +320,95 @@ describe("board card shell derivation", () => {
     expect("planDone" in shell).toBe(false);
     expect("prNumber" in shell).toBe(false);
     expect("issuesOpen" in shell).toBe(false);
+  });
+});
+
+describe("dependency gating across the archive (t3o-13)", () => {
+  const dependency = (
+    id: string,
+    stage: BoardCard["stage"],
+    archivedAt: string | null,
+  ): Pick<BoardCard, "id" | "stage" | "archivedAt"> => ({
+    id: BoardCardId.make(id),
+    stage,
+    archivedAt,
+  });
+
+  const cards = [
+    dependency("live-open", "building", null),
+    dependency("live-done", "done", null),
+    dependency("archived-open", "building", "2026-01-01T00:00:00.000Z"),
+    dependency("archived-done", "done", "2026-01-01T00:00:00.000Z"),
+  ];
+
+  const unmetOf = (...ids: ReadonlyArray<string>) =>
+    unmetBoardCardDependencies({
+      dependsOn: ids.map((id) => BoardCardId.make(id)),
+      cards,
+    });
+
+  it("counts a live, unfinished dependency as unmet", () => {
+    expect(unmetOf("live-open")).toEqual([BoardCardId.make("live-open")]);
+  });
+
+  it("counts a finished dependency as met", () => {
+    expect(unmetOf("live-done")).toEqual([]);
+  });
+
+  it("stops gating on an archived dependency, finished or not", () => {
+    // The whole point of t3o-13: archiving unfinished work must not deadlock
+    // everything that was waiting on it.
+    expect(unmetOf("archived-open")).toEqual([]);
+    expect(unmetOf("archived-done")).toEqual([]);
+  });
+
+  it("still counts an id with no card at all as unmet", () => {
+    expect(unmetOf("gone")).toEqual([BoardCardId.make("gone")]);
+  });
+
+  it("blocks only at Ready and beyond, and only on a live unfinished dependency", () => {
+    const blockedAt = (stage: BoardCard["stage"], dependsOn: ReadonlyArray<string>) =>
+      deriveBoardCardBlocked({
+        stage,
+        dependsOn: dependsOn.map((id) => BoardCardId.make(id)),
+        cards,
+      });
+
+    expect(blockedAt("backlog", ["live-open"])).toBe(false);
+    expect(blockedAt("ready", ["live-open"])).toBe(true);
+    expect(blockedAt("ready", ["archived-open"])).toBe(false);
+    expect(blockedAt("building", ["archived-open", "live-open"])).toBe(true);
+  });
+});
+
+describe("archive confirmation (t3o-13, D3)", () => {
+  const dependent = (id: string, archivedAt: string | null) => ({
+    cardId: BoardCardId.make(id),
+    key: `T3O-${id}`,
+    title: `Card ${id}`,
+    stage: "building" as const,
+    archivedAt,
+  });
+
+  const live = dependent("1", null);
+  const archived = dependent("2", "2026-01-01T00:00:00.000Z");
+
+  it("counts only live dependents", () => {
+    expect(liveBoardCardDependents([live, archived])).toEqual([live]);
+  });
+
+  it("asks before archiving an unfinished card that live cards depend on", () => {
+    expect(boardCardArchiveNeedsConfirmation({ stage: "building", dependents: [live] })).toBe(true);
+  });
+
+  it("does not ask when the card is done — done already satisfies the gate", () => {
+    expect(boardCardArchiveNeedsConfirmation({ stage: "done", dependents: [live] })).toBe(false);
+  });
+
+  it("does not ask when nothing live depends on the card", () => {
+    expect(boardCardArchiveNeedsConfirmation({ stage: "building", dependents: [] })).toBe(false);
+    expect(boardCardArchiveNeedsConfirmation({ stage: "building", dependents: [archived] })).toBe(
+      false,
+    );
   });
 });

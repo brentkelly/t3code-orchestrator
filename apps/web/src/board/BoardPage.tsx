@@ -33,7 +33,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { getRouteApi } from "@tanstack/react-router";
-import { PlusIcon } from "lucide-react";
+import { ArchiveIcon, PlusIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
@@ -55,7 +55,9 @@ import { usePrimaryEnvironmentId } from "../state/environments";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
+import { BoardArchivedCardsSheet, refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
 import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
+import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { BoardCardDetail } from "./BoardCardDetail";
 import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
 import { indexBoardLabels } from "./labelColour";
@@ -490,6 +492,29 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   const [createStage, setCreateStage] = useState<BoardStage | null>(null);
   const openCreate = useCallback((stage: BoardStage) => setCreateStage(stage), []);
 
+  // ── Archive (t3o-13, D7) ────────────────────────────────────────────
+  // Archived cards are off the live shell by design, so they need a place to
+  // be seen and restored from — otherwise archiving is a one-way door.
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
+  const handleRestoreCard = useCallback(
+    (cardId: BoardCardId) => {
+      void unarchiveCard({ environmentId, input: { cardId } }).then((result) => {
+        if (result._tag === "Failure") {
+          if (isAtomCommandInterrupted(result)) return;
+          toastManager.add({
+            title: "Could not restore card",
+            description: describeBoardCommandFailure(result),
+          });
+          return;
+        }
+        // The card is back on the live board; drop it from the archive list.
+        refreshBoardArchivedCards(environmentId);
+      });
+    },
+    [environmentId, unarchiveCard],
+  );
+
   const addProjects = useMemo(
     () =>
       (scopeProjectId === null
@@ -574,6 +599,10 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           </div>
         ) : null}
         <span className="flex-1" />
+        <Button onClick={() => setArchiveOpen(true)} size="xs" variant="ghost">
+          <ArchiveIcon />
+          Archived
+        </Button>
         {projects.length > 0 ? (
           <Button onClick={() => openCreate("backlog")} size="xs" variant="secondary">
             <PlusIcon />
@@ -625,6 +654,17 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           onClose={handleCloseDetail}
         />
       ) : null}
+      <BoardArchivedCardsSheet
+        environmentId={environmentId}
+        onOpenChange={setArchiveOpen}
+        onRestore={handleRestoreCard}
+        onSelectCard={(cardId) => {
+          setArchiveOpen(false);
+          void navigate({ search: (previous) => ({ ...previous, card: cardId }) });
+        }}
+        open={archiveOpen}
+        scopeProjectId={scopeProjectId}
+      />
       <BoardCardCreateDialog
         defaultProjectId={scopeProjectId}
         defaultStage={createStage ?? "backlog"}

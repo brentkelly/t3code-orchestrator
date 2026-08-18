@@ -27,6 +27,7 @@ import Migration008 from "./008_BoardCardActivity.ts";
 import Migration009 from "./009_BoardCardSteps.ts";
 import Migration010 from "./010_BoardPlans.ts";
 import Migration011 from "./011_BoardCardsWorktree.ts";
+import Migration012 from "./012_BoardCardsRecomputeBlocked.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -46,6 +47,7 @@ export const BOARD_MIGRATIONS = [
   [9, "BoardCardSteps", Migration009],
   [10, "BoardPlans", Migration010],
   [11, "BoardCardsWorktree", Migration011],
+  [12, "BoardCardsRecomputeBlocked", Migration012],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(

@@ -115,6 +115,8 @@ const expectedCardShell = {
   blocked: false,
   dependencyCount: 0,
   hasBrief: false,
+  // Null on every live shell — archived cards leave the snapshot (D15).
+  archivedAt: null,
   hasPr: false,
   attachmentCount: 0,
   queued: false,
