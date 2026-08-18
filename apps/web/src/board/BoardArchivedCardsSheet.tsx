@@ -10,10 +10,10 @@
  * page you open, never state every client carries, so archived cards stay off
  * the live shell and the delta stream (D15).
  */
-import { BoardCardId, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import { type BoardCardId, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { ArchiveRestoreIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 
@@ -35,10 +35,96 @@ function archivedSnapshotAtom(environmentId: EnvironmentId) {
   return orchestrationEnvironment.archivedShellSnapshot({ environmentId, input: {} });
 }
 
-/** Re-read the archive after a restore, so the card leaves the list the
-    moment it rejoins the board. */
+/** Re-read the archive, so a card that just left it (restore) or just joined
+    it (archive) is reflected on the next render. */
 export function refreshBoardArchivedCards(environmentId: EnvironmentId): void {
   appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
+}
+
+/**
+ * The list itself, mounted ONLY while the sheet is open — that is what makes
+ * the archive a page you open rather than a query every board mount pays for.
+ *
+ * The read is refreshed on open rather than left to the atom's own staleness
+ * rule. `Atom.swr` skips revalidation entirely while the cached value is
+ * younger than its 30s `staleTime`, and "archive a card, then go looking for
+ * it" happens well inside that window — so without this the sheet would open
+ * on a snapshot taken before the archive and show nothing. It also picks up
+ * archives made from another device, which no local invalidation could.
+ */
+function ArchivedCardList({
+  environmentId,
+  onRestore,
+  onSelectCard,
+  scopeProjectId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly onRestore: (cardId: BoardCardId) => void;
+  readonly onSelectCard: (cardId: BoardCardId) => void;
+  readonly scopeProjectId: ProjectId | null;
+}) {
+  useEffect(() => {
+    refreshBoardArchivedCards(environmentId);
+  }, [environmentId]);
+
+  const result = useAtomValue(archivedSnapshotAtom(environmentId));
+  const snapshot = Option.getOrNull(AsyncResult.value(result));
+
+  // Already newest-archived first from the server; scoping is the only thing
+  // left to do, and it is the board's scope, not a second control.
+  const cards = useMemo(
+    () =>
+      (snapshot?.cards ?? []).filter(
+        (card) => scopeProjectId === null || card.projectId === scopeProjectId,
+      ),
+    [snapshot, scopeProjectId],
+  );
+
+  if (result.waiting && snapshot === null) {
+    return <p className="text-[13px] text-muted-foreground">Loading…</p>;
+  }
+  if (cards.length === 0) {
+    return <p className="text-[13px] text-muted-foreground">No archived cards.</p>;
+  }
+  return (
+    <ul className="flex flex-col gap-1.5">
+      {cards.map((card) => (
+        <li
+          className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
+          key={card.cardId}
+        >
+          <button
+            className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
+            onClick={() => onSelectCard(card.cardId)}
+            type="button"
+          >
+            <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+              {card.key}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+              {card.title}
+            </span>
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              {BOARD_STAGE_LABELS[card.stage]}
+            </span>
+            {card.archivedAt === null ? null : (
+              <span className="shrink-0 text-[11px] text-muted-foreground">
+                {formatRelativeTimeLabel(card.archivedAt)}
+              </span>
+            )}
+          </button>
+          <Button
+            onClick={() => onRestore(card.cardId)}
+            size="icon-xs"
+            title="Restore card"
+            variant="ghost"
+          >
+            <ArchiveRestoreIcon />
+          </Button>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function BoardArchivedCardsSheet({
@@ -58,26 +144,6 @@ export function BoardArchivedCardsSheet({
       what you see here matches the board you opened it from. */
   readonly scopeProjectId: ProjectId | null;
 }) {
-  const result = useAtomValue(archivedSnapshotAtom(environmentId));
-  const snapshot = Option.getOrNull(AsyncResult.value(result));
-
-  // Already newest-archived first from the server; scoping is the only thing
-  // left to do, and it is the board's scope, not a second control.
-  const cards = useMemo(
-    () =>
-      (snapshot?.cards ?? []).filter(
-        (card) => scopeProjectId === null || card.projectId === scopeProjectId,
-      ),
-    [snapshot, scopeProjectId],
-  );
-
-  const restore = useCallback(
-    (cardId: BoardCardId) => {
-      onRestore(cardId);
-    },
-    [onRestore],
-  );
-
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetPopup>
@@ -89,49 +155,16 @@ export function BoardArchivedCardsSheet({
           </SheetDescription>
         </SheetHeader>
         <SheetPanel>
-          {result.waiting && snapshot === null ? (
-            <p className="text-[13px] text-muted-foreground">Loading…</p>
-          ) : cards.length === 0 ? (
-            <p className="text-[13px] text-muted-foreground">No archived cards.</p>
-          ) : (
-            <ul className="flex flex-col gap-1.5">
-              {cards.map((card) => (
-                <li
-                  className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
-                  key={card.cardId}
-                >
-                  <button
-                    className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
-                    onClick={() => onSelectCard(card.cardId)}
-                    type="button"
-                  >
-                    <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
-                      {card.key}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
-                      {card.title}
-                    </span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground">
-                      {BOARD_STAGE_LABELS[card.stage]}
-                    </span>
-                    {card.archivedAt === null ? null : (
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {formatRelativeTimeLabel(card.archivedAt)}
-                      </span>
-                    )}
-                  </button>
-                  <Button
-                    onClick={() => restore(BoardCardId.make(card.cardId))}
-                    size="icon-xs"
-                    title="Restore card"
-                    variant="ghost"
-                  >
-                    <ArchiveRestoreIcon />
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
+          {/* Gated on `open`, not just on the portal's own mounting, so the
+              query cannot start before there is a reader for it. */}
+          {open ? (
+            <ArchivedCardList
+              environmentId={environmentId}
+              onRestore={onRestore}
+              onSelectCard={onSelectCard}
+              scopeProjectId={scopeProjectId}
+            />
+          ) : null}
         </SheetPanel>
       </SheetPopup>
     </Sheet>
