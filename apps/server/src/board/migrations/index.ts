@@ -57,46 +57,32 @@ const run = Migrator.make({});
 /**
  * Reconcile databases provisioned under the old shared-ledger scheme.
  *
- * Idempotent: safe to run on every boot. Does nothing on a fresh database or one
+ * Idempotent: safe to run on every boot. A no-op on a fresh database or one
  * already migrated to the split scheme.
  */
 const reconcileLegacyLedger = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Legacy board rows (ids >= 900) were recorded in upstream's ledger, pinning
-  // its high-water mark above every future upstream migration. Evict them so
-  // upstream migrations resume; the board lineage is tracked separately below.
-  yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}`;
-
-  // Create the board ledger up front so we can seed it before the Migrator reads
-  // its high-water mark. Schema matches effect Migrator's own table definition.
-  yield* sql`
-    CREATE TABLE IF NOT EXISTS ${sql(BOARD_MIGRATION_TABLE)} (
-      migration_id integer PRIMARY KEY NOT NULL,
-      created_at datetime NOT NULL DEFAULT current_timestamp,
-      name VARCHAR(255) NOT NULL
-    )
+  // Board migrations were once numbered 900+ and recorded in upstream's
+  // `effect_sql_migrations` ledger, which pins upstream's high-water mark above
+  // every later (lower-numbered) upstream migration. Evict those rows so upstream
+  // migrations resume; the board lineage is tracked in `t3o_sql_migrations` from
+  // here on, and its own Migrator (below) creates that table.
+  //
+  // No ledger backfill is needed. Every board migration is idempotent (CREATE
+  // TABLE/INDEX IF NOT EXISTS, PRAGMA-guarded ADD COLUMN, INSERT OR IGNORE), so
+  // the board Migrator simply re-runs the lineage against the fresh ledger: a
+  // no-op wherever the schema already exists, and — crucially — it completes a
+  // PARTIALLY-migrated legacy database the rest of the way. (Backfilling the
+  // ledger instead would mark a partial database's not-yet-run migrations as
+  // applied and skip them, reintroducing the "no such column" crash.)
+  const legacyRows = yield* sql<{ readonly migration_id: number }>`
+    SELECT migration_id FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}
   `;
-
-  // Databases provisioned under the old 900+ scheme already have every board
-  // table. Seed the new ledger so those migrations are not re-run — 004 adds
-  // columns with an unguarded ALTER TABLE, so a replay throws "duplicate column".
-  // Only seed when the board schema exists but the ledger is empty.
-  const existingBoardTable = yield* sql<{ readonly name: string }>`
-    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'board_cards'
-  `;
-  const ledgerCount = yield* sql<{ readonly count: number }>`
-    SELECT COUNT(*) AS count FROM ${sql(BOARD_MIGRATION_TABLE)}
-  `;
-  const ledgerRows = ledgerCount[0]?.count ?? 0;
-  if (existingBoardTable.length > 0 && ledgerRows === 0) {
-    yield* sql`
-      INSERT INTO ${sql(BOARD_MIGRATION_TABLE)} ${sql.insert(
-        BOARD_MIGRATIONS.map(([migration_id, name]) => ({ migration_id, name })),
-      )}
-    `;
-    yield* Effect.log("Backfilled board migration ledger from legacy 900+ scheme").pipe(
-      Effect.annotateLogs({ seeded: BOARD_MIGRATIONS.length, table: BOARD_MIGRATION_TABLE }),
+  if (legacyRows.length > 0) {
+    yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}`;
+    yield* Effect.log("Evicted legacy board rows from the upstream migration ledger").pipe(
+      Effect.annotateLogs({ evicted: legacyRows.length, floor: LEGACY_BOARD_ID_FLOOR }),
     );
   }
 });

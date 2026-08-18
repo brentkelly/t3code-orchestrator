@@ -119,9 +119,11 @@ A core seam may contain **only** one of these four shapes:
 > table `t3o_sql_migrations` via `runBoardMigrations()`, wired in `persistence/Layers/Sqlite.ts`
 > after upstream `runMigrations()`. The two lineages have independent high-water marks, so
 > `Migrations.ts` is now pure upstream and no longer conflicts when upstream appends a migration.
-> `runBoardMigrations()` reconciles pre-existing databases (evicts legacy `900+` rows from
-> `effect_sql_migrations`, backfills `t3o_sql_migrations`). To add a board migration: drop
-> `NNN_Name.ts` in `board/migrations/` and append it to `BOARD_MIGRATIONS` in that dir's `index.ts`.
+> `runBoardMigrations()` reconciles pre-existing databases by evicting legacy `900+` rows from
+> `effect_sql_migrations`, then re-running the (idempotent) board lineage against the new ledger —
+> a no-op where the board schema already exists, and completing any partially-migrated database.
+> To add a board migration: drop `NNN_Name.ts` in `board/migrations/` and append it to
+> `BOARD_MIGRATIONS` in that dir's `index.ts`.
 
 Plus the frozen once-only edits recorded in the inventory (D9 aggregate-id union widenings, the two
 optional snapshot fields). Everything else — registries, factories, type guards, reducers, SQL —

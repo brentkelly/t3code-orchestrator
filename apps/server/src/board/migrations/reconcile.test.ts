@@ -4,8 +4,10 @@
  * ids restart at 1). Databases provisioned under the old "number from 900"
  * scheme carry board rows 900+ in the upstream ledger, which pins upstream's
  * high-water mark above every future upstream migration. `runBoardMigrations`
- * reconciles those databases on boot; this verifies it heals a legacy database
- * without replaying already-applied board migrations, and is idempotent.
+ * reconciles those databases on boot by evicting the legacy rows and re-running
+ * the idempotent board lineage against the new ledger. This verifies it heals a
+ * fully-migrated legacy database, completes a PARTIALLY-migrated one, is
+ * idempotent, and runs cleanly on a fresh database.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -19,27 +21,32 @@ const LEGACY_FLOOR = 900;
 const expectedBoardIds = BOARD_MIGRATIONS.map(([id]) => id);
 const legacyBoardIds = BOARD_MIGRATIONS.map(([id]) => LEGACY_FLOOR - 1 + id);
 
-/** Reproduce a database as the old shared-ledger scheme left it. */
-const seedLegacyDatabase = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  // Upstream schema + its ledger.
-  yield* runMigrations();
-  // Board tables applied the old way: run each migration effect, then record it
-  // in the UPSTREAM ledger under its old 900+ id.
-  for (const [id, name, migration] of BOARD_MIGRATIONS) {
-    yield* migration;
-    yield* sql`
-      INSERT INTO effect_sql_migrations (migration_id, name)
-      VALUES (${LEGACY_FLOOR - 1 + id}, ${name})
-    `;
-  }
-});
+/**
+ * Reproduce a database as the old shared-ledger scheme left it, having applied
+ * the first `throughCount` board migrations (default: all of them). A count
+ * below the total yields a partially-migrated legacy database.
+ */
+const seedLegacyDatabase = (throughCount: number = BOARD_MIGRATIONS.length) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // Upstream schema + its ledger.
+    yield* runMigrations();
+    // Board tables applied the old way: run each migration effect, then record it
+    // in the UPSTREAM ledger under its old 900+ id.
+    for (const [id, name, migration] of BOARD_MIGRATIONS.slice(0, throughCount)) {
+      yield* migration;
+      yield* sql`
+        INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (${LEGACY_FLOOR - 1 + id}, ${name})
+      `;
+    }
+  });
 
 describe("board migration reconciliation", () => {
-  it.effect("heals a legacy 900+ database without replaying board migrations", () =>
+  it.effect("heals a fully-migrated legacy 900+ database", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* seedLegacyDatabase;
+      yield* seedLegacyDatabase();
 
       // A row of real board data that must survive reconciliation untouched.
       yield* sql`
@@ -60,8 +67,8 @@ describe("board migration reconciliation", () => {
       `;
       assert.strictEqual(boardTableBefore.length, 0);
 
-      // Reconcile. If any board migration were replayed (004 adds a column with an
-      // unguarded ALTER TABLE), this would die — so completing at all is a proof.
+      // Reconcile. Every board migration is idempotent, so re-running the full
+      // lineage over the already-applied schema completes without error.
       yield* runBoardMigrations();
 
       // Legacy rows evicted from the upstream ledger → upstream migrations resume.
@@ -97,6 +104,53 @@ describe("board migration reconciliation", () => {
         boardLedgerAgain.map((r) => r.migration_id),
         expectedBoardIds,
       );
+    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  );
+
+  it.effect("completes a partially-migrated legacy database", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // Legacy database that only ran the first 6 board migrations (old ids
+      // 900..905) — board_card_activity (8), board_card_steps (9), board_plans
+      // (10) and the worktree column (11) do not exist yet.
+      const applied = 6;
+      yield* seedLegacyDatabase(applied);
+
+      const missingBefore = yield* sql`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name IN ('board_card_activity', 'board_card_steps', 'board_plans')
+      `;
+      assert.strictEqual(missingBefore.length, 0);
+
+      yield* runBoardMigrations();
+
+      // The board Migrator re-ran the whole lineage: ids 1..6 were no-ops, 7..11
+      // did real work. The ledger records the full lineage and the missing tables
+      // now exist — no "no such column"/"no such table" left behind.
+      const boardLedger = yield* sql<{ readonly migration_id: number }>`
+        SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE)} ORDER BY migration_id
+      `;
+      assert.deepStrictEqual(
+        boardLedger.map((r) => r.migration_id),
+        expectedBoardIds,
+      );
+      const presentAfter = yield* sql<{ readonly name: string }>`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name IN ('board_card_activity', 'board_card_steps', 'board_plans')
+        ORDER BY name
+      `;
+      assert.deepStrictEqual(
+        presentAfter.map((r) => r.name),
+        ["board_card_activity", "board_card_steps", "board_plans"],
+      );
+      const worktreeColumn = yield* sql<{ readonly name: string }>`PRAGMA table_info(board_cards)`;
+      assert.ok(worktreeColumn.some((c) => c.name === "worktree"));
+
+      // Upstream ledger cleared of legacy board rows.
+      const legacyAfter = yield* sql`
+        SELECT migration_id FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_FLOOR}
+      `;
+      assert.strictEqual(legacyAfter.length, 0);
     }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
   );
 
