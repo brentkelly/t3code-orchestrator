@@ -104,10 +104,13 @@ export function BoardCardThreadPane({
             return (
               <button
                 className={cn(
-                  "inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[12px]",
+                  // The tab strip scrolls, so its overflow clips anything drawn
+                  // outside a pill's border box — an outer ring shadow loses its
+                  // top and bottom edges. The border has to be a real border.
+                  "inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[12px]",
                   active
-                    ? "bg-card font-medium text-foreground shadow-[0_0_0_1px_var(--border)]"
-                    : "text-muted-foreground hover:text-foreground",
+                    ? "border-border bg-card font-medium text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
                   link.tombstoned && "line-through",
                 )}
                 key={link.threadId}
