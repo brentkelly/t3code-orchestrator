@@ -10,12 +10,7 @@
  * page you open, never state every client carries, so archived cards stay off
  * the live shell and the delta stream (D15).
  */
-import {
-  type BoardCardId,
-  type BoardCardShell,
-  type EnvironmentId,
-  type ProjectId,
-} from "@t3tools/contracts";
+import { type BoardCardId, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { ArchiveRestoreIcon } from "lucide-react";
 import { useEffect, useMemo } from "react";
@@ -34,6 +29,7 @@ import {
 import { orchestrationEnvironment } from "../state/orchestration";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import { boardArchivedCardsInScope } from "./boardArchivedCards";
 import { BOARD_STAGE_LABELS } from "./boardStages";
 
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
@@ -44,22 +40,6 @@ function archivedSnapshotAtom(environmentId: EnvironmentId) {
     it (archive) is reflected on the next render. */
 export function refreshBoardArchivedCards(environmentId: EnvironmentId): void {
   appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
-}
-
-/**
- * The archived cards this sheet should show: the board's own project scope
- * applied to the archive snapshot, nothing else. The server already returns
- * them newest-archived first — the card you just archived by mistake is the
- * one you came to restore — so this must not reorder them.
- *
- * Pure and exported so the rule is testable without mounting a portal.
- */
-export function boardArchivedCardsInScope(
-  cards: ReadonlyArray<BoardCardShell>,
-  scopeProjectId: ProjectId | null,
-): ReadonlyArray<BoardCardShell> {
-  if (scopeProjectId === null) return cards;
-  return cards.filter((card) => card.projectId === scopeProjectId);
 }
 
 /**
@@ -98,6 +78,12 @@ function ArchivedCardList({
 
   if (result.waiting && snapshot === null) {
     return <p className="text-[13px] text-muted-foreground">Loading…</p>;
+  }
+  // A failed read must not read as an empty archive: "nothing was archived"
+  // and "we could not find out" are opposite answers to the question the user
+  // came here with, and this open-time read is the only one there is.
+  if (result._tag === "Failure" && snapshot === null) {
+    return <p className="text-[13px] text-muted-foreground">Could not load the archive.</p>;
   }
   if (cards.length === 0) {
     return <p className="text-[13px] text-muted-foreground">No archived cards.</p>;
@@ -170,17 +156,17 @@ export function BoardArchivedCardsSheet({
             are blocked again if it is not done.
           </SheetDescription>
         </SheetHeader>
+        {/* No `open` gate here: the portal renders while `mounted`, which is
+            already false whenever the sheet is closed — so the query still
+            cannot start before there is a reader — and stays true through the
+            exit animation, which an `open` gate would render blank. */}
         <SheetPanel>
-          {/* Gated on `open`, not just on the portal's own mounting, so the
-              query cannot start before there is a reader for it. */}
-          {open ? (
-            <ArchivedCardList
-              environmentId={environmentId}
-              onRestore={onRestore}
-              onSelectCard={onSelectCard}
-              scopeProjectId={scopeProjectId}
-            />
-          ) : null}
+          <ArchivedCardList
+            environmentId={environmentId}
+            onRestore={onRestore}
+            onSelectCard={onSelectCard}
+            scopeProjectId={scopeProjectId}
+          />
         </SheetPanel>
       </SheetPopup>
     </Sheet>

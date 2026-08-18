@@ -1,12 +1,11 @@
 /**
- * The archive sheet's selection rule (t3o-13, D7). The sheet itself portals,
- * so the part worth asserting is the pure one: which archived cards the
+ * The archive sheet's selection rule (t3o-13, D7): which archived cards the
  * board's project scope admits, and in what order.
  */
 import { BoardCardId, ProjectId, makeBoardCardShell } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardArchivedCardsInScope } from "./BoardArchivedCardsSheet";
+import { boardArchivedCardsInScope } from "./boardArchivedCards";
 
 const projectOne = ProjectId.make("project-one");
 const projectTwo = ProjectId.make("project-two");
