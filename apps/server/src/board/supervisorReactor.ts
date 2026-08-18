@@ -463,12 +463,17 @@ const make = Effect.gen(function* () {
         currentStatus: state.status,
         limits: resolveBoardConcurrencyLimit(settings.concurrency, step.providerInstanceId),
       });
+      // "Started" = the card has begun THIS stage's work: a completion for a
+      // step in the current recipe snapshot. Scoped to the snapshot (not all
+      // of the card's history) so an earlier stage's completions never make a
+      // freshly re-entered stage rank as mid-flight (D11 rule 2).
+      const stageStepIds = new Set(card.recipeSnapshot.steps.map((s) => s.id));
       candidates.push({
         cardId: card.id,
         stepId: step.id,
         providerInstanceId: step.providerInstanceId,
         stage: card.stage,
-        started: boardCardStepCompletions(board, card.id).length > 0,
+        started: boardCardStepCompletions(board, card.id).some((c) => stageStepIds.has(c.stepId)),
         orderKey: card.orderKey,
       });
     }
