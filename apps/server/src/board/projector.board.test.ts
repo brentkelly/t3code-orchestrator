@@ -246,4 +246,60 @@ describe("board projector", () => {
       assert.deepStrictEqual(model.board?.cards[0]?.threadLinks, tombstonedCard.threadLinks);
     }),
   );
+
+  it.effect("projects step state as one record per card, overwriting on transition (t3o-10)", () =>
+    Effect.gen(function* () {
+      const running = {
+        cardId,
+        stepId: "build",
+        stepLabel: "Build",
+        attempt: 1,
+        maxAttempts: 3,
+        threadId: ThreadId.make("thread-1"),
+        status: "running" as const,
+        slotHeld: true,
+        startedAt: NOW,
+        updatedAt: NOW,
+      };
+      const selectedEvent: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-selected",
+        payload: {
+          cardId,
+          state: {
+            ...running,
+            status: "pending",
+            threadId: null,
+            slotHeld: false,
+            startedAt: null,
+          },
+        },
+      };
+      const admittedEvent: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-admitted",
+        payload: { cardId, state: running },
+      };
+      const settledEvent: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-settled",
+        payload: { cardId, state: { ...running, status: "succeeded", slotHeld: false } },
+      };
+      const base = {
+        ...emptyModel(),
+        board: { cards: [makeCard({})], labels: [], nextCardNumberByProject: {} },
+      };
+      const afterSelect = yield* projectBoardEvent(base, selectedEvent);
+      assert.strictEqual(afterSelect.board?.stepStates?.length, 1);
+      assert.strictEqual(afterSelect.board?.stepStates?.[0]?.status, "pending");
+      const afterAdmit = yield* projectBoardEvent(afterSelect, admittedEvent);
+      assert.strictEqual(afterAdmit.board?.stepStates?.length, 1); // still one record per card
+      assert.strictEqual(afterAdmit.board?.stepStates?.[0]?.status, "running");
+      const afterSettle = yield* projectBoardEvent(afterAdmit, settledEvent);
+      assert.strictEqual(afterSettle.board?.stepStates?.[0]?.status, "succeeded");
+      assert.strictEqual(afterSettle.board?.stepStates?.[0]?.slotHeld, false);
+      // Step-lifecycle events are card DETAIL, not shell fields (D7).
+      assert.strictEqual(Option.isNone(boardShellStreamEvent(admittedEvent)), true);
+    }),
+  );
 });

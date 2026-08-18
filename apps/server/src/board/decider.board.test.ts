@@ -17,6 +17,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
+  type BoardCardStepState,
   type BoardLabel,
   type BoardPlan,
   type BoardState,
@@ -1039,6 +1040,65 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           reclaimBlockedReason: null,
         },
       });
+      // Step-lifecycle fixtures (t3o-10): each of the reactor's internal
+      // step commands aggregates on the card and records step state — none
+      // emits a move. Every card is in Building with a recipe snapshot; each
+      // carries the step state its command's precondition needs.
+      const stepRecipe = {
+        stage: "building" as const,
+        steps: [
+          {
+            id: "s1",
+            label: "Build",
+            promptTemplate: "do it",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+            timeoutMs: 1000,
+            maxAttempts: 3,
+          },
+        ],
+      };
+      const makeStepState = (
+        cardId: string,
+        status: BoardCardStepState["status"],
+      ): BoardCardStepState => ({
+        cardId: BoardCardId.make(cardId),
+        stepId: "s1",
+        stepLabel: "Build",
+        attempt: 1,
+        maxAttempts: 3,
+        threadId:
+          status === "running" || status === "awaiting-input" ? ThreadId.make("thread-1") : null,
+        status,
+        slotHeld: status === "running" || status === "awaiting-input",
+        startedAt: status === "running" || status === "awaiting-input" ? NOW : null,
+        updatedAt: NOW,
+      });
+      const selectCard = makeCard({
+        id: "card-select",
+        stage: "building",
+        recipeSnapshot: stepRecipe,
+      });
+      const admitCard = makeCard({
+        id: "card-admit",
+        stage: "building",
+        recipeSnapshot: stepRecipe,
+      });
+      const awaitCard = makeCard({
+        id: "card-await",
+        stage: "building",
+        recipeSnapshot: stepRecipe,
+      });
+      const recoverCard = makeCard({
+        id: "card-recover",
+        stage: "building",
+        recipeSnapshot: stepRecipe,
+      });
+      const settleCard = makeCard({
+        id: "card-settle",
+        stage: "building",
+        recipeSnapshot: stepRecipe,
+      });
       const readModel = makeReadModel({
         threads: [makeThread({ id: "thread-1" }), makeThread({ id: "thread-2" })],
         board: {
@@ -1049,9 +1109,20 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             buildingCard,
             provisioningCard,
             worktreeCard,
+            selectCard,
+            admitCard,
+            awaitCard,
+            recoverCard,
+            settleCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           plans: [readyPlan],
+          stepStates: [
+            makeStepState("card-admit", "pending"),
+            makeStepState("card-await", "running"),
+            makeStepState("card-recover", "running"),
+            makeStepState("card-settle", "running"),
+          ],
           nextCardNumberByProject: {},
         },
       });
@@ -1201,6 +1272,58 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           commandId: CommandId.make("cmd-reclaim"),
           cardId: BoardCardId.make("card-worktree"),
           outcome: "removed",
+          createdAt: NOW,
+        },
+        // Step-lifecycle commands (t3o-10) record step state on the card and
+        // never move a stage — the board-driven Building → Review advance
+        // rides board.card.move, gated like every other transition (D18).
+        "board.card.snapshot-recipe": {
+          type: "board.card.snapshot-recipe",
+          commandId: CommandId.make("cmd-snapshot"),
+          cardId: BoardCardId.make("card-building"),
+          recipe: stepRecipe,
+          createdAt: NOW,
+        },
+        "board.card.select-step": {
+          type: "board.card.select-step",
+          commandId: CommandId.make("cmd-select"),
+          cardId: BoardCardId.make("card-select"),
+          stepId: "s1",
+          stepLabel: "Build",
+          maxAttempts: 3,
+          createdAt: NOW,
+        },
+        "board.card.admit-step": {
+          type: "board.card.admit-step",
+          commandId: CommandId.make("cmd-admit"),
+          cardId: BoardCardId.make("card-admit"),
+          stepId: "s1",
+          admitted: true,
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
+        "board.card.await-step-input": {
+          type: "board.card.await-step-input",
+          commandId: CommandId.make("cmd-await"),
+          cardId: BoardCardId.make("card-await"),
+          stepId: "s1",
+          createdAt: NOW,
+        },
+        "board.card.recover-step": {
+          type: "board.card.recover-step",
+          commandId: CommandId.make("cmd-recover"),
+          cardId: BoardCardId.make("card-recover"),
+          stepId: "s1",
+          threadId: ThreadId.make("thread-1"),
+          escalateToHuman: false,
+          createdAt: NOW,
+        },
+        "board.card.settle-step": {
+          type: "board.card.settle-step",
+          commandId: CommandId.make("cmd-settle"),
+          cardId: BoardCardId.make("card-settle"),
+          stepId: "s1",
+          outcome: "succeeded",
           createdAt: NOW,
         },
       };

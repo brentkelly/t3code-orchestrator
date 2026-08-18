@@ -27,6 +27,7 @@ import {
   BOARD_CREATABLE_STAGES,
   boardCardPlans,
   boardCardStepCompletions,
+  boardCardStepState,
   boardLabelCatalogue,
   boardPlanId,
   boardStageIndex,
@@ -37,12 +38,14 @@ import {
   isBoardCommand,
   isBoardCreatableStage,
   isBoardStageBeforeReady,
+  isBoardTerminalStepStatus,
   pickNextBoardLabelColour,
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
   type BoardCardActivityEntry,
   type BoardCardId,
+  type BoardCardStepState,
   type BoardLabel,
   type BoardLabelId,
   type BoardPlan,
@@ -137,6 +140,28 @@ function requireActiveBoardCard(input: {
       () => invariant(input.command, `Card '${input.command.cardId}' is archived.`),
     ),
   );
+}
+
+/**
+ * The card's live step state, required to exist and match the command's
+ * `stepId` (t3o-10). The reactor is the only dispatcher of the step-lifecycle
+ * commands and always acts on the card's one current step, so a mismatch is a
+ * bug (a stale command for a superseded step), rejected rather than applied.
+ */
+function requireLiveStepState(input: {
+  readonly board: BoardState;
+  readonly command: BoardCardCommand;
+  readonly stepId: string;
+}): Effect.Effect<BoardCardStepState, OrchestrationCommandInvariantError> {
+  const state = boardCardStepState(input.board, input.command.cardId);
+  return state === null || state.stepId !== input.stepId
+    ? Effect.fail(
+        invariant(
+          input.command,
+          `Card '${input.command.cardId}' has no live step '${input.stepId}'.`,
+        ),
+      )
+    : Effect.succeed(state);
 }
 
 /**
@@ -1305,6 +1330,219 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             command.outcome === "removed" ? null : (reason ?? "Worktree not clean and pushed."),
           card: nextCard,
         },
+      };
+    }
+
+    // ── Step lifecycle (t3o-10, D4/D8) ───────────────────────────────
+    // Server-internal commands the supervisor reactor dispatches as it drives
+    // a card's step. The decider stays pure (D8): it records the step state
+    // the reactor's observations imply. Human-gating (D18) is untouched — none
+    // of these moves a stage; the board-driven Building → Review advance rides
+    // the ordinary `board.card.move` gate the reactor triggers on a successful
+    // completion, exactly like the human "Begin build" gate before it.
+
+    case "board.card.snapshot-recipe": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      // The snapshot is for the card's current stage — capturing a recipe for a
+      // stage the card is not in would stamp a pipeline that will never run.
+      if (command.recipe.stage !== card.stage) {
+        return yield* invariant(
+          command,
+          `Recipe snapshot is for stage '${command.recipe.stage}' but card '${command.cardId}' is in '${card.stage}'.`,
+        );
+      }
+      const nextCard: BoardCard = {
+        ...card,
+        recipeSnapshot: command.recipe,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-recipe-snapshotted",
+        payload: { cardId: command.cardId, recipe: command.recipe, card: nextCard },
+      };
+    }
+
+    case "board.card.select-step": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (card.recipeSnapshot === null) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has no recipe snapshot; a step cannot be selected before the recipe is stamped.`,
+        );
+      }
+      if (!card.recipeSnapshot.steps.some((step) => step.id === command.stepId)) {
+        return yield* invariant(
+          command,
+          `Step '${command.stepId}' is not in card '${command.cardId}'s recipe snapshot.`,
+        );
+      }
+      // One step at a time (D4): a new step cannot be selected while the card's
+      // current step is still live. A terminal step is done and may be
+      // superseded — that is how the next step in a multi-step recipe starts.
+      const current = boardCardStepState(board, command.cardId);
+      if (current !== null && !isBoardTerminalStepStatus(current.status)) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' already has a live step '${current.stepId}' (${current.status}); settle it before selecting another.`,
+        );
+      }
+      const state: BoardCardStepState = {
+        cardId: command.cardId,
+        stepId: command.stepId,
+        stepLabel: command.stepLabel,
+        attempt: 1,
+        maxAttempts: command.maxAttempts,
+        threadId: null,
+        status: "pending",
+        slotHeld: false,
+        startedAt: null,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-selected",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
+    case "board.card.admit-step": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
+      if (current.status !== "pending" && current.status !== "queued") {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not pending/queued; cannot admit.`,
+        );
+      }
+      if (command.admitted && command.threadId === null) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' step '${command.stepId}' was admitted without a thread.`,
+        );
+      }
+      const state: BoardCardStepState = command.admitted
+        ? {
+            ...current,
+            status: "running",
+            threadId: command.threadId,
+            slotHeld: true,
+            startedAt: command.createdAt,
+            updatedAt: command.createdAt,
+          }
+        : {
+            ...current,
+            status: "queued",
+            threadId: null,
+            slotHeld: false,
+            startedAt: null,
+            updatedAt: command.createdAt,
+          };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-admitted",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
+    case "board.card.await-step-input": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
+      if (current.status !== "running") {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not running; cannot await input.`,
+        );
+      }
+      const state: BoardCardStepState = {
+        ...current,
+        status: "awaiting-input",
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-awaiting-input",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
+    case "board.card.recover-step": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
+      if (isBoardTerminalStepStatus(current.status)) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' step '${command.stepId}' is settled ('${current.status}'); nothing to recover.`,
+        );
+      }
+      // Recovery reuses the held slot — a retry never releases and re-acquires,
+      // which could starve the step behind a queue it was already at the front
+      // of. Escalation to the human gate (D13) parks the step on a question;
+      // an ordinary retry returns it to running.
+      const state: BoardCardStepState = {
+        ...current,
+        attempt: current.attempt + 1,
+        status: command.escalateToHuman ? "awaiting-input" : "running",
+        threadId: command.threadId,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-recovered",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
+    case "board.card.settle-step": {
+      // A card can be settled while archived (an abandonment at archive), so
+      // require the card exists but not that it is active.
+      yield* requireBoardCard({ board, command });
+      const current = boardCardStepState(board, command.cardId);
+      if (current === null || current.stepId !== command.stepId) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has no live step '${command.stepId}' to settle.`,
+        );
+      }
+      // Idempotency (D4 Release): a step already settled re-emits its recorded
+      // terminal state, so a raced double settle releases the slot once and
+      // never double-transitions. The first outcome wins.
+      const state: BoardCardStepState = isBoardTerminalStepStatus(current.status)
+        ? current
+        : {
+            ...current,
+            status: command.outcome,
+            slotHeld: false,
+            updatedAt: command.createdAt,
+          };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-settled",
+        payload: { cardId: command.cardId, state },
       };
     }
 
