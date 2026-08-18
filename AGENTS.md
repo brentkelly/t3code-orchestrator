@@ -42,8 +42,13 @@ The fork's survival depends on keeping the diff into upstream files small, mecha
 - Prefer a one-line delegating call into a T3o-owned module over inline logic. If a seam is growing
   past a few lines, it belongs in our own file.
 - New files never conflict. Reach for a new file before editing an existing one.
-- Database migrations are numbered from **`900_`**. Colliding with an upstream migration number
-  corrupts the applied-migration ledger on every machine — that is data loss, not a merge conflict.
+- Board database migrations live in **`apps/server/src/board/migrations/`**, numbered from `001`,
+  and run against their own ledger table (`t3o_sql_migrations`) via `runBoardMigrations()`. Add
+  `NNN_Name.ts` there and append it to `BOARD_MIGRATIONS`. Never put a board migration in
+  upstream's `persistence/Migrations/`: effect's `Migrator` advances one high-water mark per
+  ledger table, so a board migration sharing upstream's table silently skips every
+  lower-numbered upstream migration — data loss, not a merge conflict. The two lineages are
+  independent by design; see `docs/t3o/seams.md`.
 - Do not rename the `@t3tools/*` workspace packages. They are `private: true` and resolved through
   `workspace:*`, so nothing is fetched from NPM and renaming would touch every import for no gain.
 
