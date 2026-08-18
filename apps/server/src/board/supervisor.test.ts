@@ -1,5 +1,6 @@
 import {
   BoardCardId,
+  PositiveInt,
   ProviderInstanceId,
   type BoardCardStepState,
   type BoardConcurrencySettings,
@@ -288,7 +289,9 @@ describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
 
   it("uses the per-instance cap when set", () => {
     const limit = resolveBoardConcurrencyLimit(
-      concurrency({ perInstance: { codex: 1 } }),
+      concurrency({
+        perInstance: { [ProviderInstanceId.make("codex")]: PositiveInt.make(1) },
+      }),
       ProviderInstanceId.make("codex"),
     );
     assert.deepStrictEqual(limit, { perInstance: 1, global: 3 });
@@ -296,7 +299,9 @@ describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
 
   it("falls back to the global ceiling (null per-instance) for an uncapped instance", () => {
     const limit = resolveBoardConcurrencyLimit(
-      concurrency({ perInstance: { codex: 1 } }),
+      concurrency({
+        perInstance: { [ProviderInstanceId.make("codex")]: PositiveInt.make(1) },
+      }),
       ProviderInstanceId.make("claude"),
     );
     assert.deepStrictEqual(limit, { perInstance: null, global: 3 });
@@ -304,7 +309,9 @@ describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
 
   it("treats an explicit null cap the same as an absent one (clearing an override)", () => {
     const limit = resolveBoardConcurrencyLimit(
-      concurrency({ perInstance: { codex: null } }),
+      concurrency({
+        perInstance: { [ProviderInstanceId.make("codex")]: null },
+      }),
       ProviderInstanceId.make("codex"),
     );
     assert.deepStrictEqual(limit, { perInstance: null, global: 3 });
