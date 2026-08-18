@@ -638,6 +638,70 @@ export const BoardStepCompletion = Schema.Struct({
 });
 export type BoardStepCompletion = typeof BoardStepCompletion.Type;
 
+/**
+ * A card's live step status (t3o-10, D4/D8). One record per card — a card
+ * runs exactly one step at a time (D4: one thread per step) — recording where
+ * that step is in its lifecycle so the supervisor reactor and the decider can
+ * branch on it (D8: transitions branch on it, so it lives in the read model,
+ * rebuilt from `board_card_step_state` on rehydration).
+ *
+ * `completing` is the transient the reactor holds between receiving a
+ * successful `board_complete_step` and emitting the board-driven stage advance
+ * (D18); a card found in it on boot is advanced by reconciliation. Every way
+ * in has a way out: `queued` → `running` on admission, `awaiting-input` →
+ * `running` on the answer, and the three terminals (`succeeded`, `failed`,
+ * `abandoned`) are the reverse states a running step owes.
+ */
+export const BOARD_STEP_STATUSES = [
+  "pending",
+  "queued",
+  "running",
+  "awaiting-input",
+  "completing",
+  "succeeded",
+  "failed",
+  "abandoned",
+] as const;
+export const BoardStepStatus = Schema.Literals(BOARD_STEP_STATUSES);
+export type BoardStepStatus = typeof BoardStepStatus.Type;
+
+/** The terminal step statuses — a settled step, past which no recovery runs.
+    A card whose step is in one of these is not being supervised. */
+export const BOARD_TERMINAL_STEP_STATUSES = ["succeeded", "failed", "abandoned"] as const;
+
+/** Whether a step status is terminal (settled). The single reader boot
+    reconciliation and the reactor both use, so "still supervised" is one
+    definition. */
+export function isBoardTerminalStepStatus(status: BoardStepStatus): boolean {
+  return (BOARD_TERMINAL_STEP_STATUSES as ReadonlyArray<string>).includes(status);
+}
+
+export const BoardCardStepState = Schema.Struct({
+  cardId: BoardCardId,
+  /** Stable step id from the card's `recipeSnapshot` (`BoardStep.id`). */
+  stepId: TrimmedNonEmptyString,
+  /** The step's human label, carried so a card can render "which step" without
+      re-resolving the recipe. */
+  stepLabel: TrimmedNonEmptyString,
+  /** Attempt number, 1-based; recovery increments it. Capped at `maxAttempts`,
+      past which recovery escalates to the human gate (D13). */
+  attempt: PositiveInt,
+  /** `BoardStep.maxAttempts` from the snapshot, carried so the card and the
+      reactor read the escalation ceiling without re-resolving the recipe. */
+  maxAttempts: PositiveInt,
+  /** The step's thread; null before spawn and while `queued`. */
+  threadId: Schema.NullOr(ThreadId),
+  status: BoardStepStatus,
+  /** Whether the step currently holds a concurrency slot (t3o-11). Tracked so
+      release happens exactly once at every terminal outcome, including a crash
+      — a leaked slot silently halves throughput. */
+  slotHeld: Schema.Boolean,
+  /** When the step began running; null while pending/queued. */
+  startedAt: Schema.NullOr(IsoDateTime),
+  updatedAt: IsoDateTime,
+});
+export type BoardCardStepState = typeof BoardCardStepState.Type;
+
 export const BoardPlanId = TrimmedNonEmptyString.pipe(Schema.brand("BoardPlanId"));
 export type BoardPlanId = typeof BoardPlanId.Type;
 
@@ -710,6 +774,13 @@ export const BoardState = Schema.Struct({
       the first `board_complete_step` — a board with no completions decodes
       unchanged; rebuilt from `board_card_steps` on rehydration. */
   stepCompletions: Schema.optional(Schema.Array(BoardStepCompletion)),
+  /** Live per-card step status (t3o-10, D4/D8). In the read model because the
+      supervisor reactor and the decider branch on it — death detection,
+      recovery escalation and boot reconciliation all key on a card's current
+      step status. One entry per card. Optional and absent until the first
+      step selection; rebuilt from `board_card_step_state` on rehydration, so a
+      board with no running steps decodes unchanged. */
+  stepStates: Schema.optional(Schema.Array(BoardCardStepState)),
   /** Proposed plan metadata (t3o-08, D8): status, `dependsOn`, `locked`, order.
       In the read model because `board_write_plan`'s decider branches on
       `locked` and the approve gate / parent auto-advance branch on the graph.
@@ -730,6 +801,22 @@ export function boardCardStepCompletions(
   cardId: BoardCardId,
 ): ReadonlyArray<BoardStepCompletion> {
   return (board.stepCompletions ?? []).filter((completion) => completion.cardId === cardId);
+}
+
+/** A card's live step state (t3o-10), or null when the card has no step
+    running or settled. One record per card (D4: one step at a time). */
+export function boardCardStepState(
+  board: BoardState,
+  cardId: BoardCardId,
+): BoardCardStepState | null {
+  return (board.stepStates ?? []).find((state) => state.cardId === cardId) ?? null;
+}
+
+/** Every card with a non-terminal step (t3o-10): the set boot reconciliation
+    re-reads to ask whether each thread is still alive. Terminal steps are
+    settled and no longer supervised. */
+export function boardNonTerminalStepStates(board: BoardState): ReadonlyArray<BoardCardStepState> {
+  return (board.stepStates ?? []).filter((state) => !isBoardTerminalStepStatus(state.status));
 }
 
 /** A card's proposed plans (t3o-08), in `ordinal` order. Absent slice means
@@ -1128,6 +1215,94 @@ export const BoardCardReclaimWorktreeCommand = Schema.Struct({
 });
 export type BoardCardReclaimWorktreeCommand = typeof BoardCardReclaimWorktreeCommand.Type;
 
+// Server-INTERNAL step-lifecycle commands (t3o-10, BOARD_INTERNAL_COMMANDS):
+// the supervisor reactor dispatches them as it drives a card's step through
+// its lifecycle. They are never client-dispatchable — a step advances only by
+// the reactor's own observation of the world (a slot acquired, a thread
+// spawned, a thread settled, a completion contract fulfilled), never by a
+// client poking the machine. The decider stays pure (D8): each command carries
+// the minimal facts the reactor observed, and the decider builds the recorded
+// `BoardCardStepState` from them.
+
+export const BoardCardSnapshotRecipeCommand = Schema.Struct({
+  type: Schema.Literal("board.card.snapshot-recipe"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  /** The recipe resolved from current settings on stage entry (D10). Captured
+      on the card so editing settings mid-flight cannot corrupt a running
+      pipeline. The reactor resolves it server-side (the pure decider cannot
+      read settings, D8). */
+  recipe: BoardResolvedRecipe,
+  createdAt: IsoDateTime,
+});
+export type BoardCardSnapshotRecipeCommand = typeof BoardCardSnapshotRecipeCommand.Type;
+
+export const BoardCardSelectStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.select-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  /** The step resolved as next from the card's `recipeSnapshot`. */
+  stepId: TrimmedNonEmptyString,
+  stepLabel: TrimmedNonEmptyString,
+  maxAttempts: PositiveInt,
+  createdAt: IsoDateTime,
+});
+export type BoardCardSelectStepCommand = typeof BoardCardSelectStepCommand.Type;
+
+export const BoardCardAdmitStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.admit-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  /** True when a concurrency slot was acquired and the step's thread spawned;
+      false when no slot was available and the step sits `queued` in Building
+      (D11) — visible on the card, never lying about its state. */
+  admitted: Schema.Boolean,
+  /** The spawned step thread; null when `admitted` is false (queued). */
+  threadId: Schema.NullOr(ThreadId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardAdmitStepCommand = typeof BoardCardAdmitStepCommand.Type;
+
+export const BoardCardAwaitStepInputCommand = Schema.Struct({
+  type: Schema.Literal("board.card.await-step-input"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardAwaitStepInputCommand = typeof BoardCardAwaitStepInputCommand.Type;
+
+export const BoardCardRecoverStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.recover-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  /** The thread the reactor resumed or respawned for the recovery attempt; may
+      be the same thread (resume) or a fresh one (respawn). */
+  threadId: Schema.NullOr(ThreadId),
+  /** True when recovery has exhausted `maxAttempts` and escalates to the human
+      gate (D13): the step goes to `awaiting-input` and never loops unbounded.
+      False for an ordinary retry, which returns the step to `running`. */
+  escalateToHuman: Schema.Boolean,
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecoverStepCommand = typeof BoardCardRecoverStepCommand.Type;
+
+export const BoardCardSettleStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.settle-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  /** The step's terminal outcome. `succeeded` follows a successful
+      `board_complete_step`; `failed` a recovery that gave up on a failing
+      step; `abandoned` a preemption or archive that stopped the step. The slot
+      is released at every one of them (D4 Release). */
+  outcome: Schema.Literals(["succeeded", "failed", "abandoned"]),
+  createdAt: IsoDateTime,
+});
+export type BoardCardSettleStepCommand = typeof BoardCardSettleStepCommand.Type;
+
 // ── Event payloads ─────────────────────────────────────────────────────
 
 /**
@@ -1365,6 +1540,49 @@ export const BoardCardWorktreeReclaimedPayload = Schema.Struct({
   card: BoardCard,
 });
 export type BoardCardWorktreeReclaimedPayload = typeof BoardCardWorktreeReclaimedPayload.Type;
+
+// Step-lifecycle event payloads (t3o-10). The recipe-snapshot event carries
+// the full post-change `card` (like every worktree event), so the projector
+// upserts it and the shell delta stays a pure function of the event. The step
+// events carry the whole `BoardCardStepState` the decider computed, so the
+// projector upserts exactly that and replay equals rehydration.
+
+export const BoardCardRecipeSnapshottedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  recipe: BoardResolvedRecipe,
+  card: BoardCard,
+});
+export type BoardCardRecipeSnapshottedPayload = typeof BoardCardRecipeSnapshottedPayload.Type;
+
+export const BoardCardStepSelectedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardCardStepSelectedPayload = typeof BoardCardStepSelectedPayload.Type;
+
+export const BoardCardStepAdmittedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardCardStepAdmittedPayload = typeof BoardCardStepAdmittedPayload.Type;
+
+export const BoardCardStepAwaitingInputPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardCardStepAwaitingInputPayload = typeof BoardCardStepAwaitingInputPayload.Type;
+
+export const BoardCardStepRecoveredPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardCardStepRecoveredPayload = typeof BoardCardStepRecoveredPayload.Type;
+
+export const BoardCardStepSettledPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardCardStepSettledPayload = typeof BoardCardStepSettledPayload.Type;
 
 // ── Card shell (t3o-04, D7) ────────────────────────────────────────────
 
@@ -1737,6 +1955,12 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardRecordWorktreeCommand,
   BoardCardFailWorktreeCommand,
   BoardCardReclaimWorktreeCommand,
+  BoardCardSnapshotRecipeCommand,
+  BoardCardSelectStepCommand,
+  BoardCardAdmitStepCommand,
+  BoardCardAwaitStepInputCommand,
+  BoardCardRecoverStepCommand,
+  BoardCardSettleStepCommand,
 ] as const;
 
 export const BOARD_EVENT_TYPES = [
@@ -1761,6 +1985,12 @@ export const BOARD_EVENT_TYPES = [
   "board.card-worktree-ready",
   "board.card-worktree-failed",
   "board.card-worktree-reclaimed",
+  "board.card-recipe-snapshotted",
+  "board.card-step-selected",
+  "board.card-step-admitted",
+  "board.card-step-awaiting-input",
+  "board.card-step-recovered",
+  "board.card-step-settled",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
@@ -1882,6 +2112,36 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-worktree-reclaimed"),
       payload: BoardCardWorktreeReclaimedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-recipe-snapshotted"),
+      payload: BoardCardRecipeSnapshottedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-selected"),
+      payload: BoardCardStepSelectedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-admitted"),
+      payload: BoardCardStepAdmittedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-awaiting-input"),
+      payload: BoardCardStepAwaitingInputPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-recovered"),
+      payload: BoardCardStepRecoveredPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-settled"),
+      payload: BoardCardStepSettledPayload,
     }),
   ] as const;
 }

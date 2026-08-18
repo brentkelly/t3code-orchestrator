@@ -55,6 +55,9 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
+// T3o: the board supervisor reactor + its concurrency slots (t3o-10).
+import { SupervisorReactorLive } from "./board/supervisorReactor.ts";
+import { BoardStepSlotsLive } from "./board/BoardStepSlots.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
@@ -236,6 +239,8 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
+  // T3o: the board supervisor reactor joins the runtime, provided its slots.
+  Layer.provideMerge(SupervisorReactorLive.pipe(Layer.provide(BoardStepSlotsLive))),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );

@@ -1,0 +1,320 @@
+import {
+  BoardCardId,
+  CommandId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type BoardCard,
+  type BoardCardStepState,
+  type BoardResolvedRecipe,
+  type BoardState,
+  type OrchestrationReadModel,
+} from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+
+import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+
+const NOW = "2026-01-01T00:00:00.000Z";
+const projectId = ProjectId.make("project-1");
+
+const recipe: BoardResolvedRecipe = {
+  stage: "building",
+  steps: [
+    {
+      id: "build",
+      label: "Build",
+      promptTemplate: "do it",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+      timeoutMs: 1000,
+      maxAttempts: 3,
+    },
+  ],
+};
+
+function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: string }): BoardCard {
+  return {
+    key: "T3-1",
+    cardNumber: 1,
+    projectId,
+    labels: [],
+    stage: "building",
+    orderKey: "m",
+    title: "Card",
+    briefRef: null,
+    dependsOn: [],
+    parentCardId: null,
+    threadLinks: [],
+    externalRef: null,
+    recipeSnapshot: recipe,
+    worktree: null,
+    blocked: false,
+    archivedAt: null,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+    id: BoardCardId.make(overrides.id),
+  };
+}
+
+function makeReadModel(board: BoardState): OrchestrationReadModel {
+  return {
+    snapshotSequence: 0,
+    projects: [],
+    threads: [],
+    board,
+    updatedAt: NOW,
+  };
+}
+
+const stepState = (
+  cardId: string,
+  status: BoardCardStepState["status"],
+  overrides: Partial<BoardCardStepState> = {},
+): BoardCardStepState => ({
+  cardId: BoardCardId.make(cardId),
+  stepId: "build",
+  stepLabel: "Build",
+  attempt: 1,
+  maxAttempts: 3,
+  threadId: ThreadId.make("thread-1"),
+  status,
+  slotHeld: true,
+  startedAt: NOW,
+  updatedAt: NOW,
+  ...overrides,
+});
+
+const decide = (
+  command: Parameters<typeof decideBoardCommand>[0]["command"],
+  readModel: OrchestrationReadModel,
+) =>
+  decideBoardCommand({ command, readModel }).pipe(
+    Effect.map(boardDecidedEvents),
+    Effect.map((events) => events[0]!),
+    Effect.provide(NodeServices.layer),
+  );
+
+const decideFail = (
+  command: Parameters<typeof decideBoardCommand>[0]["command"],
+  readModel: OrchestrationReadModel,
+) => Effect.flip(decide(command, readModel));
+
+it.effect("select-step requires a recipe snapshot and records a pending step", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const event = yield* decide(
+      {
+        type: "board.card.select-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        stepLabel: "Build",
+        maxAttempts: 3,
+        createdAt: NOW,
+      },
+      makeReadModel({ cards: [card], nextCardNumberByProject: {} }),
+    );
+    assert.strictEqual(event.type, "board.card-step-selected");
+    if (event.type === "board.card-step-selected") {
+      assert.strictEqual(event.payload.state.status, "pending");
+      assert.strictEqual(event.payload.state.attempt, 1);
+      assert.strictEqual(event.payload.state.slotHeld, false);
+    }
+  }),
+);
+
+it.effect("select-step rejects a card with no recipe snapshot", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1", recipeSnapshot: null });
+    const failure = yield* decideFail(
+      {
+        type: "board.card.select-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        stepLabel: "Build",
+        maxAttempts: 3,
+        createdAt: NOW,
+      },
+      makeReadModel({ cards: [card], nextCardNumberByProject: {} }),
+    );
+    assert.include(String(failure), "no recipe snapshot");
+  }),
+);
+
+it.effect(
+  "select-step refuses a new step while the current one is still live (D4: one at a time)",
+  () =>
+    Effect.gen(function* () {
+      const card = makeCard({ id: "card-1" });
+      const failure = yield* decideFail(
+        {
+          type: "board.card.select-step",
+          commandId: CommandId.make("c1"),
+          cardId: card.id,
+          stepId: "build",
+          stepLabel: "Build",
+          maxAttempts: 3,
+          createdAt: NOW,
+        },
+        makeReadModel({
+          cards: [card],
+          stepStates: [stepState("card-1", "running")],
+          nextCardNumberByProject: {},
+        }),
+      );
+      assert.include(String(failure), "live step");
+    }),
+);
+
+it.effect("admit-step admitted → running with a thread and a held slot; queued → no thread", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [
+        stepState("card-1", "pending", { threadId: null, slotHeld: false, startedAt: null }),
+      ],
+      nextCardNumberByProject: {},
+    });
+    const admitted = yield* decide(
+      {
+        type: "board.card.admit-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        admitted: true,
+        threadId: ThreadId.make("thread-1"),
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(admitted.type, "board.card-step-admitted");
+    if (admitted.type === "board.card-step-admitted") {
+      assert.strictEqual(admitted.payload.state.status, "running");
+      assert.strictEqual(admitted.payload.state.slotHeld, true);
+      assert.strictEqual(admitted.payload.state.threadId, "thread-1");
+    }
+    const queued = yield* decide(
+      {
+        type: "board.card.admit-step",
+        commandId: CommandId.make("c2"),
+        cardId: card.id,
+        stepId: "build",
+        admitted: false,
+        threadId: null,
+        createdAt: NOW,
+      },
+      board,
+    );
+    if (queued.type === "board.card-step-admitted") {
+      assert.strictEqual(queued.payload.state.status, "queued");
+      assert.strictEqual(queued.payload.state.slotHeld, false);
+      assert.strictEqual(queued.payload.state.threadId, null);
+    }
+  }),
+);
+
+it.effect("recover-step increments the attempt and escalates to the human gate when asked", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "running", { attempt: 3 })],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.recover-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        threadId: ThreadId.make("thread-1"),
+        escalateToHuman: true,
+        createdAt: NOW,
+      },
+      board,
+    );
+    if (event.type === "board.card-step-recovered") {
+      assert.strictEqual(event.payload.state.attempt, 4);
+      assert.strictEqual(event.payload.state.status, "awaiting-input");
+    }
+  }),
+);
+
+it.effect("settle-step releases the slot and is idempotent (a double settle advances once)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const running = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "running")],
+      nextCardNumberByProject: {},
+    });
+    const first = yield* decide(
+      {
+        type: "board.card.settle-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        outcome: "succeeded",
+        createdAt: NOW,
+      },
+      running,
+    );
+    assert.strictEqual(first.type, "board.card-step-settled");
+    if (first.type !== "board.card-step-settled") return;
+    assert.strictEqual(first.payload.state.status, "succeeded");
+    assert.strictEqual(first.payload.state.slotHeld, false);
+
+    // A retried settle over the now-terminal state re-emits the SAME terminal
+    // record — no second release, no double transition (D4 Release idempotency).
+    const settled = makeReadModel({
+      cards: [card],
+      stepStates: [first.payload.state],
+      nextCardNumberByProject: {},
+    });
+    const second = yield* decide(
+      {
+        type: "board.card.settle-step",
+        commandId: CommandId.make("c2"),
+        cardId: card.id,
+        stepId: "build",
+        outcome: "failed",
+        createdAt: "2026-01-02T00:00:00.000Z",
+      },
+      settled,
+    );
+    if (second.type === "board.card-step-settled") {
+      assert.strictEqual(second.payload.state.status, "succeeded"); // first outcome wins
+      assert.strictEqual(second.payload.state.slotHeld, false);
+      assert.strictEqual(second.payload.state.updatedAt, NOW); // unchanged: no re-transition
+    }
+  }),
+);
+
+it.effect("await-step-input only fires on a running step (D13: no retry consumed)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const event = yield* decide(
+      {
+        type: "board.card.await-step-input",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        createdAt: NOW,
+      },
+      makeReadModel({
+        cards: [card],
+        stepStates: [stepState("card-1", "running")],
+        nextCardNumberByProject: {},
+      }),
+    );
+    if (event.type === "board.card-step-awaiting-input") {
+      assert.strictEqual(event.payload.state.status, "awaiting-input");
+      assert.strictEqual(event.payload.state.attempt, 1); // unchanged — a question is not a retry
+    }
+  }),
+);

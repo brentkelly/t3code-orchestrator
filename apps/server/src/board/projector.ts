@@ -30,6 +30,12 @@ import {
   BoardCardWorktreeProvisioningPayload,
   BoardCardWorktreeReadyPayload,
   BoardCardWorktreeReclaimedPayload,
+  BoardCardRecipeSnapshottedPayload,
+  BoardCardStepSelectedPayload,
+  BoardCardStepAdmittedPayload,
+  BoardCardStepAwaitingInputPayload,
+  BoardCardStepRecoveredPayload,
+  BoardCardStepSettledPayload,
   BoardCardUpdatedPayload,
   boardCardShellFromCard,
   boardLabelCatalogue,
@@ -43,6 +49,7 @@ import {
   EMPTY_BOARD_STATE,
   isBoardEvent,
   type BoardCard,
+  type BoardCardStepState,
   type BoardLabel,
   type BoardPlan,
   type BoardStepCompletion,
@@ -101,6 +108,18 @@ const decodeBoardCardWorktreeFailedPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardWorktreeReclaimedPayload = Schema.decodeUnknownEffect(
   BoardCardWorktreeReclaimedPayload,
 );
+const decodeBoardCardRecipeSnapshottedPayload = Schema.decodeUnknownEffect(
+  BoardCardRecipeSnapshottedPayload,
+);
+const decodeBoardCardStepSelectedPayload = Schema.decodeUnknownEffect(BoardCardStepSelectedPayload);
+const decodeBoardCardStepAdmittedPayload = Schema.decodeUnknownEffect(BoardCardStepAdmittedPayload);
+const decodeBoardCardStepAwaitingInputPayload = Schema.decodeUnknownEffect(
+  BoardCardStepAwaitingInputPayload,
+);
+const decodeBoardCardStepRecoveredPayload = Schema.decodeUnknownEffect(
+  BoardCardStepRecoveredPayload,
+);
+const decodeBoardCardStepSettledPayload = Schema.decodeUnknownEffect(BoardCardStepSettledPayload);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -247,6 +266,34 @@ function upsertStepCompletion(
       : [...current, completion]
   ).toSorted(compareBoardStepCompletions);
   return { ...model, board: { ...board, stepCompletions } };
+}
+
+/** Canonical step-state order (t3o-10): by cardId, one record per card.
+    Applied on both sides of replay-equals-rehydration, like the other board
+    slices. */
+export function compareBoardStepStates(
+  left: BoardCardStepState,
+  right: BoardCardStepState,
+): number {
+  return compareStrings(left.cardId, right.cardId);
+}
+
+/** Upsert a card's live step state by cardId (t3o-10). One record per card,
+    so a new state for a card replaces its prior one — selecting the next step
+    of a multi-step recipe overwrites the previous step's terminal record. */
+function upsertStepState(
+  model: OrchestrationReadModel,
+  state: BoardCardStepState,
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const current = board.stepStates ?? [];
+  const exists = current.some((existing) => existing.cardId === state.cardId);
+  const stepStates = (
+    exists
+      ? current.map((existing) => (existing.cardId === state.cardId ? state : existing))
+      : [...current, state]
+  ).toSorted(compareBoardStepStates);
+  return { ...model, board: { ...board, stepStates } };
 }
 
 /** Replace a card's whole plan set (board_propose_plans is a wholesale
@@ -419,6 +466,42 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    case "board.card-recipe-snapshotted":
+      return decodeBoardCardRecipeSnapshottedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-step-selected":
+      return decodeBoardCardStepSelectedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
+    case "board.card-step-admitted":
+      return decodeBoardCardStepAdmittedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
+    case "board.card-step-awaiting-input":
+      return decodeBoardCardStepAwaitingInputPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
+    case "board.card-step-recovered":
+      return decodeBoardCardStepRecoveredPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
+    case "board.card-step-settled":
+      return decodeBoardCardStepSettledPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
     default: {
       event satisfies never;
       // Runtime backstop for an undecoded event: leave the model unchanged.
@@ -459,6 +542,10 @@ export function boardShellStreamEvent(
     case "board.card-worktree-ready":
     case "board.card-worktree-failed":
     case "board.card-worktree-reclaimed":
+    // The recipe snapshot is card DETAIL, not a bounded shell field, but the
+    // event carries the whole card so re-upserting keeps any shell field that
+    // did change consistent — the same pattern as the worktree events.
+    case "board.card-recipe-snapshotted":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
@@ -492,6 +579,16 @@ export function boardShellStreamEvent(
     case "board.card-step-completed":
     case "board.plans-proposed":
     case "board.plan-written":
+    // Step-lifecycle events (t3o-10) are card DETAIL — the live step status
+    // rides board.subscribeCard, not a column-card shell field (D7 payload
+    // discipline). The column card's thread-derived indicators already reflect
+    // the step's thread through the existing `threadState`/`awaitingInput`
+    // fields, so a step transition needs no separate shell delta.
+    case "board.card-step-selected":
+    case "board.card-step-admitted":
+    case "board.card-step-awaiting-input":
+    case "board.card-step-recovered":
+    case "board.card-step-settled":
       // Agent write-path events are card DETAIL, not column-card shell fields
       // (D7): an agent's progress note, step completion or plan set changes
       // nothing a column card renders, so they emit no shell delta. They reach

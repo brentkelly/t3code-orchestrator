@@ -34,6 +34,8 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+// T3o: the board supervisor reactor is started alongside the stock reactors.
+import { SupervisorReactor } from "./board/supervisorReactor.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import {
@@ -302,6 +304,8 @@ export const make = (options?: StartupOptions) =>
     const keybindings = yield* Keybindings.Keybindings;
     const orchestrationReactor = yield* OrchestrationReactor.OrchestrationReactor;
     const providerSessionReaper = yield* ProviderSessionReaper.ProviderSessionReaper;
+    // T3o: resolve the board supervisor reactor for the reactors.start phase.
+    const supervisorReactor = yield* SupervisorReactor;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -351,6 +355,9 @@ export const make = (options?: StartupOptions) =>
         Effect.gen(function* () {
           yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
           yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+          // T3o: start the board supervisor (t3o-10) — reconciles step state,
+          // then subscribes to board and thread events.
+          yield* supervisorReactor.start().pipe(Scope.provide(reactorScope));
         }),
       );
 
