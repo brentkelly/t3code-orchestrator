@@ -10,7 +10,12 @@
  * page you open, never state every client carries, so archived cards stay off
  * the live shell and the delta stream (D15).
  */
-import { type BoardCardId, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import {
+  type BoardCardId,
+  type BoardCardShell,
+  type EnvironmentId,
+  type ProjectId,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { ArchiveRestoreIcon } from "lucide-react";
 import { useEffect, useMemo } from "react";
@@ -42,6 +47,22 @@ export function refreshBoardArchivedCards(environmentId: EnvironmentId): void {
 }
 
 /**
+ * The archived cards this sheet should show: the board's own project scope
+ * applied to the archive snapshot, nothing else. The server already returns
+ * them newest-archived first — the card you just archived by mistake is the
+ * one you came to restore — so this must not reorder them.
+ *
+ * Pure and exported so the rule is testable without mounting a portal.
+ */
+export function boardArchivedCardsInScope(
+  cards: ReadonlyArray<BoardCardShell>,
+  scopeProjectId: ProjectId | null,
+): ReadonlyArray<BoardCardShell> {
+  if (scopeProjectId === null) return cards;
+  return cards.filter((card) => card.projectId === scopeProjectId);
+}
+
+/**
  * The list itself, mounted ONLY while the sheet is open — that is what makes
  * the archive a page you open rather than a query every board mount pays for.
  *
@@ -70,13 +91,8 @@ function ArchivedCardList({
   const result = useAtomValue(archivedSnapshotAtom(environmentId));
   const snapshot = Option.getOrNull(AsyncResult.value(result));
 
-  // Already newest-archived first from the server; scoping is the only thing
-  // left to do, and it is the board's scope, not a second control.
   const cards = useMemo(
-    () =>
-      (snapshot?.cards ?? []).filter(
-        (card) => scopeProjectId === null || card.projectId === scopeProjectId,
-      ),
+    () => boardArchivedCardsInScope(snapshot?.cards ?? [], scopeProjectId),
     [snapshot, scopeProjectId],
   );
 
