@@ -341,8 +341,14 @@ const make = Effect.gen(function* () {
     readonly attempt: number;
   }) {
     const { card, step } = input;
-    // One writer at a time per worktree (t3o-09 invariant, enforced here): the
-    // card's current live step thread, if any, is the only permitted writer.
+    // One writer at a time per worktree (t3o-09 invariant, enforced here). The
+    // assertion must count the writer we are ABOUT to spawn, so a sentinel for
+    // it joins the card's existing live-step threads — an existing writer plus
+    // the new one is two distinct writers and the assert fails. On failure we
+    // REFUSE (return before acquiring a slot or spawning), so the invariant
+    // actually blocks rather than being logged-and-ignored. Under today's
+    // one-step-at-a-time decider there is never an existing writer, so this is
+    // defence-in-depth against a future concurrent-step recipe.
     const board = yield* readBoard;
     const liveWriters = (board.stepStates ?? [])
       .filter(
@@ -351,19 +357,20 @@ const make = Effect.gen(function* () {
           !isBoardTerminalStepStatus(state.status) &&
           state.threadId !== null,
       )
-      .map((state) => state.threadId!)
-      .map(String);
-    yield* assertSingleBoardWorktreeWriter({
+      .map((state) => String(state.threadId));
+    const wouldConflict = yield* assertSingleBoardWorktreeWriter({
       cardId: card.id,
-      activeWriterThreadIds: liveWriters,
+      activeWriterThreadIds: [...liveWriters, `board-admit:${step.id}`],
     }).pipe(
+      Effect.as(false),
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: refusing to spawn a second writer", {
           cardId: card.id,
           cause: Cause.pretty(cause),
-        }),
+        }).pipe(Effect.as(true)),
       ),
     );
+    if (wouldConflict) return;
 
     const admitted = yield* slots.acquire(step.providerInstanceId);
     if (!admitted) {
@@ -510,15 +517,33 @@ const make = Effect.gen(function* () {
     // and continue there, so the recovery message is never sent into the void.
     const gone = yield* threadGone(input.state.threadId);
     let threadId = input.state.threadId;
-    if (gone && provider !== null && input.card.worktree?.path != null) {
-      threadId = yield* spawnStepThread({
-        card: input.card,
-        step: provider,
-        worktreePath: input.card.worktree.path,
-        text,
-      });
-    } else if (!gone && input.state.threadId !== null) {
+    let acted = false;
+    if (gone) {
+      if (provider !== null && input.card.worktree?.path != null) {
+        threadId = yield* spawnStepThread({
+          card: input.card,
+          step: provider,
+          worktreePath: input.card.worktree.path,
+          text,
+        });
+        acted = true;
+      }
+    } else if (input.state.threadId !== null) {
       yield* sendTurn({ threadId: input.state.threadId, text });
+      acted = true;
+    }
+    // If we could neither nudge a live thread nor respawn a vanished one (a gone
+    // thread with no worktree/provider to respawn against), do NOT burn an
+    // attempt on a recovery that sent nothing — leave the step as-is and say so.
+    if (!acted) {
+      yield* Effect.logWarning(
+        "board supervisor: cannot recover step — no thread and cannot respawn",
+        {
+          cardId: input.card.id,
+          stepId: input.state.stepId,
+        },
+      );
+      return;
     }
     yield* dispatch({
       type: "board.card.recover-step",
