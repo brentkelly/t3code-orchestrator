@@ -17,6 +17,7 @@
  * server will restart mid-step.
  */
 import {
+  BoardActivityId,
   boardCardStepCompletions,
   boardCardStepState,
   boardNonTerminalStepStates,
@@ -510,26 +511,68 @@ const make = Effect.gen(function* () {
         ? providerQuestionMechanism(provider.providerInstanceId)
         : "your runtime's user-input request";
     const decision = recoveryDecision({ stepState: input.state, questionMechanism });
-    const text = decision.kind === "escalate" ? decision.question : decision.nudge;
-    // Recovery never releases the held slot (a retry keeps its place, D13). If
-    // the step's thread survives, nudge it in place; if it has vanished
-    // (reaped/deleted) — a routine path, not an error — respawn a fresh thread
-    // and continue there, so the recovery message is never sent into the void.
+
+    // Attempt budget exhausted → the D13 human gate: ask the human (retry /
+    // switch provider / take it over) as a visible card activity, and park the
+    // step on awaiting-input. Crucially do NOT drive the agent — escalation is a
+    // human decision, and sending the agent another turn would re-arm death
+    // detection (handleTurnCompleted supervises awaiting-input) and re-escalate
+    // on every turn. Not driving the agent is exactly what makes recovery
+    // "escalate and never loop": it stops here until a human acts.
+    if (decision.kind === "escalate") {
+      yield* dispatch({
+        type: "board.card.request-input",
+        commandId: yield* commandId("escalate-input"),
+        cardId: input.card.id,
+        activityId: BoardActivityId.make(yield* crypto.randomUUIDv4),
+        question: decision.question,
+        threadId: input.state.threadId,
+        createdAt: yield* nowIso,
+      });
+      yield* dispatch({
+        type: "board.card.recover-step",
+        commandId: yield* commandId("recover-step"),
+        cardId: input.card.id,
+        stepId: input.state.stepId,
+        threadId: input.state.threadId,
+        escalateToHuman: true,
+        createdAt: yield* nowIso,
+      });
+      return;
+    }
+
+    // Ordinary retry. Recovery never releases the held slot (a retry keeps its
+    // place, D13). If the step's thread survives, nudge it in place; if it has
+    // vanished (reaped/deleted) — a routine path, not an error — respawn a fresh
+    // thread and continue there, so the nudge is never sent into the void.
     const gone = yield* threadGone(input.state.threadId);
     let threadId = input.state.threadId;
     let acted = false;
     if (gone) {
       if (provider !== null && input.card.worktree?.path != null) {
+        // Tombstone the dead thread's card link before spawning a fresh one, so
+        // links do not accumulate across recoveries (D9). Best-effort — the
+        // dispatch helper swallows a reject (e.g. already tombstoned by the
+        // thread-deletion path).
+        if (input.state.threadId !== null) {
+          yield* dispatch({
+            type: "board.card.unlink-thread",
+            commandId: yield* commandId("unlink-dead"),
+            cardId: input.card.id,
+            threadId: input.state.threadId,
+            createdAt: yield* nowIso,
+          });
+        }
         threadId = yield* spawnStepThread({
           card: input.card,
           step: provider,
           worktreePath: input.card.worktree.path,
-          text,
+          text: decision.nudge,
         });
         acted = true;
       }
     } else if (input.state.threadId !== null) {
-      yield* sendTurn({ threadId: input.state.threadId, text });
+      yield* sendTurn({ threadId: input.state.threadId, text: decision.nudge });
       acted = true;
     }
     // If we could neither nudge a live thread nor respawn a vanished one (a gone
@@ -551,7 +594,7 @@ const make = Effect.gen(function* () {
       cardId: input.card.id,
       stepId: input.state.stepId,
       threadId,
-      escalateToHuman: decision.kind === "escalate",
+      escalateToHuman: false,
       createdAt: yield* nowIso,
     });
   });

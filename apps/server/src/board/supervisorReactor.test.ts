@@ -212,6 +212,33 @@ it.effect("boot: a running step with a live thread is left to resume watching", 
   }),
 );
 
+it.effect("boot: a running step with a gone thread and no worktree does not burn an attempt", () =>
+  Effect.gen(function* () {
+    const worktreelessCard: BoardCard = { ...card, worktree: null };
+    const types = yield* reconcileCommands({
+      board: { cards: [worktreelessCard], stepStates: [runningState], nextCardNumberByProject: {} },
+      // no shell → gone; no worktree → cannot respawn
+    });
+    assert.notInclude(types, "board.card.recover-step");
+    assert.notInclude(types, "thread.turn.start");
+  }),
+);
+
+it.effect("boot: an attempt-exhausted step escalates to the human without driving the agent", () =>
+  Effect.gen(function* () {
+    const exhausted: BoardCardStepState = { ...runningState, attempt: 3, maxAttempts: 3 };
+    const types = yield* reconcileCommands({
+      board: { cards: [card], stepStates: [exhausted], nextCardNumberByProject: {} },
+      // no shell → thread gone, but escalation must not respawn/nudge it
+    });
+    // D13 gate: a human-facing question is recorded, the step is parked...
+    assert.include(types, "board.card.request-input");
+    assert.include(types, "board.card.recover-step");
+    // ...and the agent is NOT driven (no turn), so recovery never loops.
+    assert.notInclude(types, "thread.turn.start");
+  }),
+);
+
 it.effect("boot: a step that completed while the server was down is settled and advanced", () =>
   Effect.gen(function* () {
     const types = yield* reconcileCommands({
