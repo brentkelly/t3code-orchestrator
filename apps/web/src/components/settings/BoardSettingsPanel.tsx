@@ -115,7 +115,7 @@ function ProjectsSection({
     <SettingsSection id="board-projects" title={anchor.title}>
       <SettingsRow
         title="Card keys and colour"
-        description="The prefix for this project's card keys (e.g. T3 → T3-42) and the colour its cards show on the board. Prefixes cannot be derived from the project name, so they are explicit."
+        description="The prefix for this project's card keys (e.g. T3 → T3-42) and the colour its cards show on the board. A project's first card assigns an acronym from its name (mesh.web → MW) and keeps it; set a prefix here to override it before those keys exist."
       >
         {environmentId === null ? (
           <p className="pt-2 text-sm text-muted-foreground">

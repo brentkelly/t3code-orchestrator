@@ -98,6 +98,18 @@ export function BoardCardContent({
             <LockIcon className="size-3" />
             Blocked
           </span>
+        ) : card.dependencyCount > 0 ? (
+          // A card carries dependencies long before they gate it — the gate
+          // itself starts at Ready (D18). Muted, and a count rather than the
+          // word "Blocked", so the badge reads as "this waits on something"
+          // and never gets mistaken for the warning-coloured gate above.
+          <span
+            className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-muted-foreground"
+            title={`Depends on ${card.dependencyCount} ${card.dependencyCount === 1 ? "card" : "cards"} — gates from Ready onward`}
+          >
+            <LockIcon className="size-3" />
+            {card.dependencyCount}
+          </span>
         ) : null}
       </div>
       {/* Labels sit on their own row beneath the key, so a multi-label card

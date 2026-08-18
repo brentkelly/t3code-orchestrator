@@ -1978,10 +1978,13 @@ export const BOARD_RPC_SCOPES = {
 // empty settings file a working pipeline.
 
 /**
- * Per-project card identity (D14). The key prefix cannot be derived from the
- * project name (`core.agent.advisor -> T3` is not computable), so it is
- * explicit; the accent colours the project's cards. Keyed by `ProjectId`
- * because the board never owns project identity — it references T3's registry.
+ * Per-project card identity (D14). The key prefix is stored, not computed at
+ * read time: a project's FIRST card assigns an acronym derived from its name
+ * (`boardProjectAcronym`) and persists it here, so renaming the project later
+ * cannot re-derive a different prefix and split its keys in two. Settings can
+ * override it at any point; the accent colours the project's cards. Keyed by
+ * `ProjectId` because the board never owns project identity — it references
+ * T3's registry.
  */
 export const BoardProjectSettings = Schema.Struct({
   /** Null falls back to `DEFAULT_BOARD_KEY_PREFIX` — so a project entry can
@@ -2138,11 +2141,86 @@ export function resolveBoardRecipeForStage(
   return { stage, steps: board.pipeline[stage] ?? [] };
 }
 
-/** The per-project key prefix, falling back to the compiled-in default when a
-    project has no configured prefix (D14). The card-create dispatch reads this
-    and passes it as the command's `keyPrefix`. */
+/** The per-project key prefix as STORED, falling back to the compiled-in
+    default when a project has no prefix yet (D14). Card-create dispatch goes
+    through `assignBoardKeyPrefix` instead, which derives and persists an
+    acronym rather than settling for the default. */
 export function resolveBoardKeyPrefix(board: BoardSettings, projectId: ProjectId): string {
   return board.projects[projectId]?.keyPrefix ?? DEFAULT_BOARD_KEY_PREFIX;
+}
+
+/** Words a project name breaks into for acronym purposes: separators and
+    camelCase humps both split, so `mesh.web`, `mesh-web` and `meshWeb` all
+    read as two words. */
+function boardProjectNameWords(title: string): ReadonlyArray<string> {
+  return title
+    .split(/[^A-Za-z0-9]+/u)
+    .flatMap((word) => word.split(/(?<=[a-z0-9])(?=[A-Z])/u))
+    .filter((word) => word.length > 0);
+}
+
+/**
+ * A project's card-key acronym, derived from its name — `mesh.web -> MW`,
+ * `core.agent.advisor -> CAA`, `backend -> BAC`. Multi-word names give their
+ * initials (up to three), a single word its opening letters.
+ *
+ * `taken` is the set of prefixes other projects already hold; a collision
+ * falls through to the shorter/longer shapes and finally to a numeric suffix,
+ * so two similarly named projects never share a key namespace. Names with no
+ * letters or digits at all fall back to `DEFAULT_BOARD_KEY_PREFIX`.
+ *
+ * Derivation only ever picks the FIRST prefix a project gets — the choice is
+ * then persisted against the project id (`assignBoardKeyPrefix`), because a
+ * prefix that moved with the project's name would orphan every key already
+ * printed on a card.
+ */
+export function boardProjectAcronym(title: string, taken: ReadonlyArray<string> = []): string {
+  const words = boardProjectNameWords(title);
+  const used = new Set(taken.map((prefix) => prefix.toUpperCase()));
+  const initials = words.map((word) => word[0]!.toUpperCase());
+  const candidates = (
+    words.length >= 2
+      ? [initials.slice(0, 3).join(""), initials.slice(0, 2).join(""), words[0]!.slice(0, 3)]
+      : words.length === 1
+        ? [words[0]!.slice(0, 3), words[0]!.slice(0, 2)]
+        : []
+  )
+    .map((candidate) => candidate.toUpperCase())
+    .filter((candidate) => candidate.length > 0);
+  const preferred = candidates.length > 0 ? candidates : [DEFAULT_BOARD_KEY_PREFIX];
+  const free = preferred.find((candidate) => !used.has(candidate));
+  if (free !== undefined) return free;
+  // Every derived shape is spoken for — number the preferred one.
+  for (let suffix = 2; suffix < 100; suffix += 1) {
+    const candidate = `${preferred[0]!}${suffix}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return DEFAULT_BOARD_KEY_PREFIX;
+}
+
+/**
+ * The prefix a project's next card key should carry, and whether that choice
+ * is new (D14, amended): a project keeps whatever prefix it has been given —
+ * from Settings or from an earlier assignment — and a project with none is
+ * assigned an acronym derived from its name.
+ *
+ * `assigned: true` means the caller must PERSIST `prefix` against the project
+ * before the keys go out, so the acronym survives a rename and never drifts
+ * between cards. Callers that cannot persist should still use the prefix: a
+ * derived key beats `CARD-1`, and the next writer settles it.
+ */
+export function assignBoardKeyPrefix(input: {
+  readonly board: BoardSettings;
+  readonly projectId: ProjectId;
+  readonly projectTitle: string;
+}): { readonly prefix: string; readonly assigned: boolean } {
+  const configured = input.board.projects[input.projectId]?.keyPrefix ?? null;
+  if (configured !== null) return { prefix: configured, assigned: false };
+  const taken = Object.entries(input.board.projects)
+    .filter(([projectId]) => projectId !== input.projectId)
+    .map(([, entry]) => entry.keyPrefix)
+    .filter((prefix): prefix is string => prefix !== null);
+  return { prefix: boardProjectAcronym(input.projectTitle, taken), assigned: true };
 }
 
 /** The per-project accent colour, or null when unset. */

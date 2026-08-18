@@ -82,6 +82,7 @@ const baseProps = {
   onDeleteLabel: noop,
   onUndeleteLabel: noop,
   onSaveBrief: noop,
+  onSaveTitle: noop,
   onAddDependency: noop,
   onRemoveDependency: noop,
   onMoveStage: noop,
