@@ -1650,7 +1650,20 @@ export const BoardCardShell = Schema.Struct({
   hasPr: Schema.Boolean,
   /** Always 0 until t3o-11 wires attachments. */
   attachmentCount: NonNegativeInt,
-  /** Always false until t3o-11 wires the work queue. */
+  /** Whether the card is holding in the Building queue: it has been committed
+      to Building (D18 "Begin build") but the governor has no free slot for its
+      step yet, so the step sits `queued` rather than running (D11). A queued
+      card is visible and reprioritisable — never a lying spinner. The client
+      derives queue *position* from the order of the `queued` cards in the
+      Building column (`boardBuildingQueueInfo`); the shell carries only this
+      one boolean, so the D7 byte budget is unchanged.
+
+      Like `threadState`, this is derived from state that is NOT on the card
+      aggregate (the step-state read-model slice), so it cannot ride a
+      card-carrying delta. The authoritative live source is the snapshot (set
+      from step state) and the dedicated `card-queued` delta; card-carrying
+      deltas rest it at false and the client preserves its last known value
+      (`applyBoardShellStreamEvent`). */
   queued: Schema.Boolean,
   // Thread-derived — joined from `board_card_thread_links` (902) and the
   // linked thread's shell; no new plumbing (t3o-04).
@@ -1790,6 +1803,11 @@ export function makeBoardCardShell(input: {
       that has an archived card to describe (t3o-13, D7). */
   readonly archivedAt?: IsoDateTime | null | undefined;
   readonly activeThreadId: ThreadId | null;
+  /** Whether the card's live step is holding in the queue (t3o-11, D11).
+      The snapshot builder passes the real value (derived from step state);
+      card-carrying delta producers omit it, resting it at false — the client
+      preserves its last known queued value across those deltas. */
+  readonly queued?: boolean | undefined;
   readonly thread?: BoardThreadStateSource | null | undefined;
 }): BoardCardShell {
   const { threadState, awaitingInput } = deriveBoardCardThreadState(input.thread);
@@ -1807,7 +1825,7 @@ export function makeBoardCardShell(input: {
     archivedAt: input.archivedAt ?? null,
     hasPr: false, // t3o-11
     attachmentCount: 0, // t3o-11
-    queued: false, // t3o-11
+    queued: input.queued ?? false, // t3o-11 (D11): real on the snapshot, rests false on card deltas
     threadState,
     awaitingInput,
     activeThreadId: input.activeThreadId,
@@ -1869,6 +1887,27 @@ export const BoardCardRemovedShellEvent = Schema.Struct({
   cardId: BoardCardId,
 });
 export type BoardCardRemovedShellEvent = typeof BoardCardRemovedShellEvent.Type;
+
+/**
+ * Queue-flag delta (t3o-11, D11): the card's `queued` flag flipped as the
+ * governor admitted its step (→ running, `queued=false`) or held it for a slot
+ * (→ `queued=true`). A dedicated one-boolean delta rather than a `card-upserted`
+ * because `queued` is derived from the step-state read-model slice, which a
+ * card-carrying event cannot see (the step events carry `state`, not the card,
+ * and `BoardCard` has no step-state field). This is the exact analogue of how
+ * `threadState` is a resting field on `card-upserted` re-derived by the client:
+ * card-carrying deltas leave `queued` at its false rest value, this delta and
+ * the snapshot are its authoritative source, and the client preserves the last
+ * known value across card upserts. Its `kind` keeps the `card-` prefix, so it
+ * routes through `isBoardShellStreamEvent` with zero core-seam change.
+ */
+export const BoardCardQueuedShellEvent = Schema.Struct({
+  kind: Schema.Literal("card-queued"),
+  sequence: NonNegativeInt,
+  cardId: BoardCardId,
+  queued: Schema.Boolean,
+});
+export type BoardCardQueuedShellEvent = typeof BoardCardQueuedShellEvent.Type;
 
 /**
  * Catalogue delta (t3o-06a): a label created, renamed, recoloured, tombstoned
@@ -2000,6 +2039,7 @@ export const BOARD_EVENT_TYPES = [
 export const BOARD_SHELL_STREAM_EVENTS = [
   BoardCardUpsertedShellEvent,
   BoardCardRemovedShellEvent,
+  BoardCardQueuedShellEvent,
   BoardLabelUpsertedShellEvent,
 ] as const;
 

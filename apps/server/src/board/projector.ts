@@ -574,6 +574,21 @@ export function boardShellStreamEvent(
         label: event.payload.label,
       });
 
+    case "board.card-step-admitted":
+      // The one step transition that IS a column-card shell field (t3o-11,
+      // D11): admission flips the card's `queued` badge — held for a slot
+      // (`state.status === "queued"`) or admitted to running. Only this one
+      // boolean rides the shell; the rest of the step state stays DETAIL on
+      // board.subscribeCard. A dedicated `card-queued` delta rather than a
+      // `card-upserted` because this event carries `state`, not the card, so
+      // the full bounded shell cannot be rebuilt here (D7 keeps it one bit).
+      return Option.some({
+        kind: "card-queued",
+        sequence: event.sequence,
+        cardId: event.payload.cardId,
+        queued: event.payload.state.status === "queued",
+      });
+
     case "board.card-progress-reported":
     case "board.card-input-requested":
     case "board.card-step-completed":
@@ -585,14 +600,15 @@ export function boardShellStreamEvent(
     // the step's thread through the existing `threadState`/`awaitingInput`
     // fields, so a step transition needs no separate shell delta.
     case "board.card-step-selected":
-    case "board.card-step-admitted":
     case "board.card-step-awaiting-input":
     case "board.card-step-recovered":
     case "board.card-step-settled":
       // Agent write-path events are card DETAIL, not column-card shell fields
       // (D7): an agent's progress note, step completion or plan set changes
       // nothing a column card renders, so they emit no shell delta. They reach
-      // a client through board.subscribeCard / the MCP context tool.
+      // a client through board.subscribeCard / the MCP context tool. (A step
+      // leaving `queued` always does so via `card-step-admitted` above, so the
+      // badge clears there — never here.)
       return Option.none();
 
     default: {

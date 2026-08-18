@@ -29,6 +29,7 @@ import {
   isBoardShellStreamEvent,
   type BoardCardDetail,
   type BoardCardId,
+  type BoardCardQueuedShellEvent,
   type BoardCardRemovedShellEvent,
   type BoardCardShell,
   type BoardCardUpsertedShellEvent,
@@ -99,6 +100,7 @@ export type {
 export type BoardShellStreamEvent =
   | BoardCardUpsertedShellEvent
   | BoardCardRemovedShellEvent
+  | BoardCardQueuedShellEvent
   | BoardLabelUpsertedShellEvent;
 
 // Re-exported so the upstream reducer imports predicate + delegate on one line.
@@ -127,12 +129,35 @@ export function applyBoardShellStreamEvent(
   const cards = snapshot.cards ?? [];
   switch (event.kind) {
     case "card-upserted": {
-      const card = withDerivedThreadFields(event.card, (threadId) =>
+      // `queued` is derived from step state the card aggregate does not carry
+      // (t3o-11, D11), so a card-carrying delta rests it at false. Preserve the
+      // last known value from the card we already hold — exactly as
+      // `withDerivedThreadFields` re-derives `threadState` — so reprioritising
+      // the queue (a drag = `card-reordered` → `card-upserted`) never blanks a
+      // card's queued badge. The authoritative changes arrive via `card-queued`
+      // and the snapshot.
+      const existing = cards.find((entry) => entry.cardId === event.card.cardId);
+      const withQueued =
+        existing === undefined || existing.queued === event.card.queued
+          ? event.card
+          : { ...event.card, queued: existing.queued };
+      const card = withDerivedThreadFields(withQueued, (threadId) =>
         snapshot.threads.find((thread) => thread.id === threadId),
       );
-      const nextCards = cards.some((existing) => existing.cardId === card.cardId)
-        ? Arr.map(cards, (existing) => (existing.cardId === card.cardId ? card : existing))
+      const nextCards = cards.some((entry) => entry.cardId === card.cardId)
+        ? Arr.map(cards, (entry) => (entry.cardId === card.cardId ? card : entry))
         : Arr.append(cards, card);
+      return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
+    }
+    case "card-queued": {
+      // The one authoritative live flip of `queued` (t3o-11): the governor
+      // admitted the card's step (→ false) or held it for a slot (→ true). A
+      // no-op for a card we do not hold (archived / not yet arrived).
+      const nextCards = Arr.map(cards, (card) =>
+        card.cardId === event.cardId && card.queued !== event.queued
+          ? { ...card, queued: event.queued }
+          : card,
+      );
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
     }
     case "card-removed":

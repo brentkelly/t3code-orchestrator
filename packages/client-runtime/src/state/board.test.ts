@@ -124,6 +124,55 @@ describe("board shell reducer", () => {
     expect(next.cards).toEqual([cardShell("card-2")]);
   });
 
+  it("card-queued raises then clears the queued badge on a held card (t3o-11)", () => {
+    const held = snapshot({ cards: [cardShell("card-1", { stage: "building" })] });
+    const queued = applyShellStreamEvent(held, {
+      kind: "card-queued",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      queued: true,
+    });
+    expect(queued.cards?.[0]?.queued).toBe(true);
+    expect(queued.snapshotSequence).toBe(2);
+    const cleared = applyShellStreamEvent(queued, {
+      kind: "card-queued",
+      sequence: 3,
+      cardId: BoardCardId.make("card-1"),
+      queued: false,
+    });
+    expect(cleared.cards?.[0]?.queued).toBe(false);
+  });
+
+  it("card-queued is a no-op for a card the client does not hold (t3o-11)", () => {
+    const held = snapshot({ cards: [cardShell("card-1")] });
+    const next = applyShellStreamEvent(held, {
+      kind: "card-queued",
+      sequence: 2,
+      cardId: BoardCardId.make("card-missing"),
+      queued: true,
+    });
+    expect(next.cards).toEqual(held.cards);
+  });
+
+  it("a card-carrying upsert preserves the queued badge — a drag never blanks it (t3o-11)", () => {
+    // `queued` is derived from step state the card aggregate does not carry, so
+    // a card-carrying delta (here a reorder = drag) rests it at false. The
+    // client must keep the last known queued value, like it re-derives
+    // threadState, or reprioritising the queue would flicker the badge off.
+    const queued = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: "building" })] }),
+      { kind: "card-queued", sequence: 2, cardId: BoardCardId.make("card-1"), queued: true },
+    );
+    expect(queued.cards?.[0]?.queued).toBe(true);
+    const reordered = applyShellStreamEvent(queued, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: "building", orderKey: "z" }),
+    });
+    expect(reordered.cards?.[0]?.queued).toBe(true); // preserved
+    expect(reordered.cards?.[0]?.orderKey).toBe("z"); // new position honored
+  });
+
   it("drops stale card events by sequence", () => {
     const current = snapshot({ snapshotSequence: 5, cards: [cardShell("card-1")] });
     const next = applyShellStreamEvent(current, {

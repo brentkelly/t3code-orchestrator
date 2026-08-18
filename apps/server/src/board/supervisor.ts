@@ -18,10 +18,14 @@
  *   answer to "is its thread still alive / did it complete while we were
  *   down", decide resume / recover / advance.
  */
+import { BOARD_STAGES } from "@t3tools/contracts";
 import type {
   BoardCard,
+  BoardCardId,
   BoardCardStepState,
+  BoardConcurrencySettings,
   BoardResolvedRecipe,
+  BoardStage,
   BoardStep,
   BoardStepCompletion,
   ProviderInstanceId,
@@ -152,6 +156,7 @@ export function recoveryDecision(input: {
 export type BoardReconcileDecision =
   | { readonly kind: "resume-watch" }
   | { readonly kind: "recover" }
+  | { readonly kind: "reschedule" }
   | { readonly kind: "advance" };
 
 /**
@@ -165,7 +170,9 @@ export type BoardReconcileDecision =
  * - awaiting a human answer with the thread still present → keep waiting
  *   (resume-watch — the pending question is intact);
  * - its thread is gone and it never completed → recover;
- * - queued/pending with no thread → recover (re-drive admission).
+ * - queued/pending with no thread → reschedule (re-offer to the governor: it
+ *   held no slot and never started, so it is placed, not recovered — D11);
+ * - completing (agent reported done, settle never landed) → recover.
  */
 export function reconcileStepDecision(input: {
   readonly status: BoardCardStepState["status"];
@@ -181,6 +188,76 @@ export function reconcileStepDecision(input: {
   if (input.status === "running") {
     return input.threadAlive ? { kind: "resume-watch" } : { kind: "recover" };
   }
-  // pending / queued / completing: no live thread to watch — re-drive.
+  if (input.status === "pending" || input.status === "queued") {
+    // Never started, holds no slot — not a death to recover but work to place.
+    // A fresh schedule pass re-offers it to the governor (re-admit if a slot is
+    // now free, otherwise re-queue), so a step queued when the server went down
+    // is not mistaken for a stall and never burns a recovery attempt (D11).
+    return { kind: "reschedule" };
+  }
+  // completing: the agent reported done but settle did not land — re-drive.
   return { kind: "recover" };
+}
+
+// ── Concurrency governor (t3o-11, D11) ─────────────────────────────────────
+
+/** One card's step competing for a slot. Everything the ordering branches on
+    is a scalar off the read model (D8) — no thread shells, no SQL. */
+export interface BoardQueueCandidate {
+  readonly cardId: BoardCardId;
+  readonly stepId: string;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly stage: BoardStage;
+  /** The card has already begun this stage's work (has a recorded completion),
+      so it is "mid-stage waiting on a slot", not "not yet started". */
+  readonly started: boolean;
+  readonly orderKey: string;
+}
+
+/**
+ * The governor's ordering (D11), applied as one total order:
+ *
+ *   1. **stage descending** — finishing beats starting; a card one step from
+ *      merge outranks one about to begin, so new work never strangles
+ *      nearly-done work and the board does not stall at 90%.
+ *   2. **started before unstarted** — a card mid-stage waiting for a slot on a
+ *      *different* provider outranks one that has not begun. This is the
+ *      mitigation for the starvation that per-step slot acquisition creates: a
+ *      half-done card is never indefinitely overtaken by fresh work.
+ *   3. **drag order** (`orderKey`) — what dragging within Building is actually
+ *      for: it chooses what starts next.
+ *
+ * Pure and total, so the reactor offers candidates to `acquire` in this order
+ * and greedy allocation (the highest-priority candidate that fits a free slot
+ * wins; a saturated provider is simply skipped, not a blocker) falls straight
+ * out of iterating the result. Preemption is this same order re-evaluated at a
+ * step boundary: a card dragged above another takes the freed slot next, while
+ * nothing in flight is discarded.
+ */
+export function orderBoardQueue(
+  candidates: ReadonlyArray<BoardQueueCandidate>,
+): ReadonlyArray<BoardQueueCandidate> {
+  return [...candidates].sort((a, b) => {
+    const stageDelta = BOARD_STAGES.indexOf(b.stage) - BOARD_STAGES.indexOf(a.stage);
+    if (stageDelta !== 0) return stageDelta;
+    if (a.started !== b.started) return a.started ? -1 : 1;
+    return a.orderKey < b.orderKey ? -1 : a.orderKey > b.orderKey ? 1 : 0;
+  });
+}
+
+/**
+ * Resolve the concurrency caps for a provider instance (D11). A per-instance
+ * value of `null` — or an absent entry, which is observationally identical
+ * (see `BoardConcurrencySettings`) — means "no instance-specific cap": bound
+ * only by the global ceiling, expressed as a null per-instance limit so
+ * `acquire` applies the global one alone.
+ */
+export function resolveBoardConcurrencyLimit(
+  concurrency: BoardConcurrencySettings,
+  providerInstanceId: ProviderInstanceId,
+): { readonly perInstance: number | null; readonly global: number } {
+  return {
+    perInstance: concurrency.perInstance[providerInstanceId] ?? null,
+    global: concurrency.globalMaxConcurrent,
+  };
 }
