@@ -1,6 +1,8 @@
 import {
+  BoardCardId,
   ProviderInstanceId,
   type BoardCardStepState,
+  type BoardConcurrencySettings,
   type BoardResolvedRecipe,
   type BoardStep,
   type BoardStepCompletion,
@@ -9,10 +11,13 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   composeStepPrompt,
+  orderBoardQueue,
   providerQuestionMechanism,
   reconcileStepDecision,
   recoveryDecision,
+  resolveBoardConcurrencyLimit,
   selectNextStep,
+  type BoardQueueCandidate,
 } from "./supervisor.ts";
 
 const step = (overrides: Partial<BoardStep> = {}): BoardStep => ({
@@ -164,13 +169,23 @@ describe("reconcileStepDecision (boot reconciliation)", () => {
     );
   });
 
-  it("re-drives a queued/pending step (no live thread to watch)", () => {
+  it("re-offers a queued/pending step to the governor (t3o-11): reschedule, not recover", () => {
+    // A slotless, never-started step is placed by the governor's schedule pass,
+    // not treated as a stall — recovering it would burn an attempt on work that
+    // never ran (D11).
     assert.deepStrictEqual(
       reconcileStepDecision({ status: "queued", threadAlive: false, hasSucceeded: false }),
-      { kind: "recover" },
+      { kind: "reschedule" },
     );
     assert.deepStrictEqual(
       reconcileStepDecision({ status: "pending", threadAlive: false, hasSucceeded: false }),
+      { kind: "reschedule" },
+    );
+  });
+
+  it("still recovers a completing step whose settle never landed", () => {
+    assert.deepStrictEqual(
+      reconcileStepDecision({ status: "completing", threadAlive: false, hasSucceeded: false }),
       { kind: "recover" },
     );
   });
@@ -182,5 +197,94 @@ describe("providerQuestionMechanism", () => {
       providerQuestionMechanism(ProviderInstanceId.make("some-custom-runtime")),
       "user-input request",
     );
+  });
+});
+
+describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
+  const candidate = (overrides: Partial<BoardQueueCandidate>): BoardQueueCandidate => ({
+    cardId: BoardCardId.make("card"),
+    stepId: "build",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    stage: "building",
+    started: false,
+    orderKey: "m",
+    ...overrides,
+  });
+  const keys = (cs: ReadonlyArray<BoardQueueCandidate>) => cs.map((c) => String(c.cardId));
+
+  it("orders by drag order among peers of the same stage and started-ness", () => {
+    const ordered = orderBoardQueue([
+      candidate({ cardId: BoardCardId.make("c"), orderKey: "t" }),
+      candidate({ cardId: BoardCardId.make("a"), orderKey: "c" }),
+      candidate({ cardId: BoardCardId.make("b"), orderKey: "m" }),
+    ]);
+    assert.deepStrictEqual(keys(ordered), ["a", "b", "c"]);
+  });
+
+  it("puts a later stage first (finishing beats starting)", () => {
+    const ordered = orderBoardQueue([
+      candidate({ cardId: BoardCardId.make("building"), stage: "building", orderKey: "a" }),
+      candidate({ cardId: BoardCardId.make("review"), stage: "review", orderKey: "z" }),
+    ]);
+    // Even with a much larger orderKey, the review-stage card outranks the
+    // building one — a nearly-done card is never starved by new work.
+    assert.deepStrictEqual(keys(ordered), ["review", "building"]);
+  });
+
+  it("ranks a started (mid-stage) card above an unstarted one, over drag order", () => {
+    const ordered = orderBoardQueue([
+      candidate({ cardId: BoardCardId.make("unstarted"), started: false, orderKey: "a" }),
+      candidate({ cardId: BoardCardId.make("started"), started: true, orderKey: "z" }),
+    ]);
+    // Started-before-unstarted (rule 2) dominates drag order (rule 3): the
+    // half-done card is not overtaken by fresh work, the starvation mitigation.
+    assert.deepStrictEqual(keys(ordered), ["started", "unstarted"]);
+  });
+
+  it("applies the three rules as one total order (stage → started → drag)", () => {
+    const ordered = orderBoardQueue([
+      candidate({ cardId: BoardCardId.make("b-unstarted-late"), stage: "building", started: false, orderKey: "z" }),
+      candidate({ cardId: BoardCardId.make("b-started"), stage: "building", started: true, orderKey: "m" }),
+      candidate({ cardId: BoardCardId.make("b-unstarted-early"), stage: "building", started: false, orderKey: "a" }),
+      candidate({ cardId: BoardCardId.make("review"), stage: "review", started: false, orderKey: "z" }),
+    ]);
+    assert.deepStrictEqual(keys(ordered), [
+      "review", // later stage first
+      "b-started", // then started before unstarted
+      "b-unstarted-early", // then drag order among unstarted
+      "b-unstarted-late",
+    ]);
+  });
+});
+
+describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
+  const concurrency = (overrides: Partial<BoardConcurrencySettings> = {}): BoardConcurrencySettings => ({
+    perInstance: {},
+    globalMaxConcurrent: 3,
+    ...overrides,
+  });
+
+  it("uses the per-instance cap when set", () => {
+    const limit = resolveBoardConcurrencyLimit(
+      concurrency({ perInstance: { codex: 1 } }),
+      ProviderInstanceId.make("codex"),
+    );
+    assert.deepStrictEqual(limit, { perInstance: 1, global: 3 });
+  });
+
+  it("falls back to the global ceiling (null per-instance) for an uncapped instance", () => {
+    const limit = resolveBoardConcurrencyLimit(
+      concurrency({ perInstance: { codex: 1 } }),
+      ProviderInstanceId.make("claude"),
+    );
+    assert.deepStrictEqual(limit, { perInstance: null, global: 3 });
+  });
+
+  it("treats an explicit null cap the same as an absent one (clearing an override)", () => {
+    const limit = resolveBoardConcurrencyLimit(
+      concurrency({ perInstance: { codex: null } }),
+      ProviderInstanceId.make("codex"),
+    );
+    assert.deepStrictEqual(limit, { perInstance: null, global: 3 });
   });
 });

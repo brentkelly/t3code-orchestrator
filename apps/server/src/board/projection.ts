@@ -1377,9 +1377,13 @@ export function withBoardShellCards(
     queries.listBoardCardShellRows(),
     queries.listLiveBoardCardThreadLinkRows(),
     queries.listBoardCardLabelRows(),
+    // The one step-state field on the bounded shell (t3o-11, D11): a card is
+    // `queued` when its live step is holding for a slot. One row per card
+    // (D4), so a small map keyed by card id.
+    queries.listBoardCardStepStateRows(),
   ]).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shell:query")));
   return Effect.all([snapshot, shellRows]).pipe(
-    Effect.map(([shell, [cardRows, linkRows, cardLabelRows]]) => {
+    Effect.map(([shell, [cardRows, linkRows, cardLabelRows, stepStateRows]]) => {
       if (cardRows.length === 0) return shell;
       const linksByCard = new Map<BoardCardId, BoardCardThreadLink[]>();
       for (const row of linkRows) {
@@ -1393,6 +1397,10 @@ export function withBoardShellCards(
         linksByCard.set(row.cardId, links);
       }
       const labelsByCard = groupCardLabels(cardLabelRows);
+      const queuedByCard = new Set<BoardCardId>();
+      for (const row of stepStateRows) {
+        if (row.status === "queued") queuedByCard.add(row.cardId);
+      }
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
         const activeThreadId = activeBoardCardThreadId(linksByCard.get(row.cardId) ?? []);
@@ -1409,6 +1417,7 @@ export function withBoardShellCards(
           hasBrief: row.hasBrief !== 0,
           archivedAt: row.archivedAt,
           activeThreadId,
+          queued: queuedByCard.has(row.cardId),
           thread: activeThreadId === null ? null : (threadsById.get(activeThreadId) ?? null),
         });
       });

@@ -55,7 +55,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { BoardStepSlots } from "./BoardStepSlots.ts";
+import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
@@ -65,10 +65,13 @@ import {
 } from "./worktree.ts";
 import {
   composeStepPrompt,
+  orderBoardQueue,
   providerQuestionMechanism,
   reconcileStepDecision,
   recoveryDecision,
+  resolveBoardConcurrencyLimit,
   selectNextStep,
+  type BoardQueueCandidate,
 } from "./supervisor.ts";
 
 export interface SupervisorReactorShape {
@@ -333,23 +336,28 @@ const make = Effect.gen(function* () {
       ? Effect.succeed(true)
       : snapshotQuery.getThreadShellById(threadId).pipe(Effect.map(Option.isNone));
 
-  // Acquire a slot and spawn the step's thread, or queue it (D11). Enforces the
-  // one-writer-per-worktree invariant (t3o-09) before spawning a writer.
-  const admitAndSpawn = Effect.fn("board-supervisor-admitAndSpawn")(function* (input: {
+  // Offer one candidate step to the governor: acquire a slot under the resolved
+  // caps and spawn its thread, or leave it queued (D11). Enforces the
+  // one-writer-per-worktree invariant (t3o-09) BEFORE acquiring, so a refused
+  // spawn never leaks a slot.
+  const admitCandidate = Effect.fn("board-supervisor-admitCandidate")(function* (input: {
     readonly card: BoardCard;
     readonly step: BoardStep;
     readonly worktreePath: string;
     readonly attempt: number;
+    readonly currentStatus: BoardCardStepState["status"];
+    readonly limits: BoardConcurrencyLimit;
   }) {
     const { card, step } = input;
     // One writer at a time per worktree (t3o-09 invariant, enforced here). The
     // assertion must count the writer we are ABOUT to spawn, so a sentinel for
     // it joins the card's existing live-step threads — an existing writer plus
     // the new one is two distinct writers and the assert fails. On failure we
-    // REFUSE (return before acquiring a slot or spawning), so the invariant
-    // actually blocks rather than being logged-and-ignored. Under today's
-    // one-step-at-a-time decider there is never an existing writer, so this is
-    // defence-in-depth against a future concurrent-step recipe.
+    // REFUSE before acquiring a slot or spawning, so the invariant actually
+    // blocks rather than being logged-and-ignored, and no slot is taken and
+    // then stranded. Under today's one-step-at-a-time decider there is never an
+    // existing writer, so this is defence-in-depth against a concurrent-step
+    // recipe.
     const board = yield* readBoard;
     const liveWriters = (board.stepStates ?? [])
       .filter(
@@ -373,17 +381,23 @@ const make = Effect.gen(function* () {
     );
     if (wouldConflict) return;
 
-    const admitted = yield* slots.acquire(step.providerInstanceId);
+    const admitted = yield* slots.acquire(step.providerInstanceId, input.limits);
     if (!admitted) {
-      yield* dispatch({
-        type: "board.card.admit-step",
-        commandId: yield* commandId("admit-step"),
-        cardId: card.id,
-        stepId: step.id,
-        admitted: false,
-        threadId: null,
-        createdAt: yield* nowIso,
-      });
+      // No slot for this instance right now. A fresh (pending) step is recorded
+      // as queued so the card shows its queued badge; a step already queued
+      // stays put — re-emitting queued each schedule pass would be pointless
+      // churn. It will be re-offered at the next step boundary (D11).
+      if (input.currentStatus === "pending") {
+        yield* dispatch({
+          type: "board.card.admit-step",
+          commandId: yield* commandId("admit-step"),
+          cardId: card.id,
+          stepId: step.id,
+          admitted: false,
+          threadId: null,
+          createdAt: yield* nowIso,
+        });
+      }
       return;
     }
 
@@ -402,6 +416,66 @@ const make = Effect.gen(function* () {
       threadId,
       createdAt: yield* nowIso,
     });
+  });
+
+  // The governor's scheduling pass (t3o-11, D11). Gather every card whose live
+  // step is waiting for a slot (`pending` freshly selected, or `queued` holding
+  // from a prior pass) and whose worktree is ready to spawn into, order them by
+  // the priority rule (stage desc → started before unstarted → drag order), and
+  // offer each to `admitCandidate` in that order. The greedy fill falls out:
+  // the highest-priority candidate that fits a free slot starts; a candidate
+  // whose provider is saturated is skipped, so a step targeting an idle vendor
+  // is never blocked by a busy one. Runs after any slot release, so preemption
+  // takes effect at the next step boundary with nothing in flight discarded.
+  const schedule = Effect.fn("board-supervisor-schedule")(function* () {
+    const board = yield* readBoard;
+    const settings = yield* boardSettings;
+    const entries = new Map<
+      string,
+      {
+        readonly card: BoardCard;
+        readonly step: BoardStep;
+        readonly worktreePath: string;
+        readonly attempt: number;
+        readonly currentStatus: BoardCardStepState["status"];
+        readonly limits: BoardConcurrencyLimit;
+      }
+    >();
+    const candidates: BoardQueueCandidate[] = [];
+    for (const state of board.stepStates ?? []) {
+      if (state.status !== "pending" && state.status !== "queued") continue;
+      const card = board.cards.find((candidate) => candidate.id === state.cardId);
+      if (card === undefined || card.archivedAt !== null || card.recipeSnapshot === null) continue;
+      const step = card.recipeSnapshot.steps.find((candidate) => candidate.id === state.stepId);
+      if (step === undefined) continue;
+      // A queued step needs a ready worktree to spawn into. A card that entered
+      // Building but whose worktree is still provisioning or failed is not yet a
+      // candidate — it is re-offered once its worktree lands (a fresh schedule).
+      const worktreePath =
+        card.worktree !== null && card.worktree.status === "ready" ? card.worktree.path : null;
+      if (worktreePath === null) continue;
+      const key = `${String(card.id)}::${step.id}`;
+      entries.set(key, {
+        card,
+        step,
+        worktreePath,
+        attempt: state.attempt,
+        currentStatus: state.status,
+        limits: resolveBoardConcurrencyLimit(settings.concurrency, step.providerInstanceId),
+      });
+      candidates.push({
+        cardId: card.id,
+        stepId: step.id,
+        providerInstanceId: step.providerInstanceId,
+        stage: card.stage,
+        started: boardCardStepCompletions(board, card.id).length > 0,
+        orderKey: card.orderKey,
+      });
+    }
+    for (const candidate of orderBoardQueue(candidates)) {
+      const entry = entries.get(`${String(candidate.cardId)}::${candidate.stepId}`);
+      if (entry !== undefined) yield* admitCandidate(entry);
+    }
   });
 
   // A card entered Building (the human "Begin build" gate, D18): snapshot the
@@ -440,10 +514,19 @@ const make = Effect.gen(function* () {
   ) {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === cardId);
-    if (card === undefined || card.recipeSnapshot === null) return;
+    if (card === undefined || card.recipeSnapshot === null) {
+      // Nothing to select for this card, but a slot may have just freed — let
+      // the queue flow.
+      yield* schedule();
+      return;
+    }
     const step = selectNextStep(card.recipeSnapshot, boardCardStepCompletions(board, cardId));
     if (step === null) {
+      // Every step succeeded: advance (on a real completion) and let the freed
+      // capacity flow to the queue. A fresh Building entry (advanceWhenDone
+      // false) with no step just schedules.
       if (advanceWhenDone) yield* advanceStage(card);
+      yield* schedule();
       return;
     }
     yield* dispatch({
@@ -455,10 +538,15 @@ const make = Effect.gen(function* () {
       maxAttempts: step.maxAttempts,
       createdAt: yield* nowIso,
     });
-    const worktreePath = yield* ensureWorktree(card);
-    if (worktreePath === null) return; // failed worktree is visible + retryable
-    const refreshed = (yield* readBoard).cards.find((candidate) => candidate.id === cardId) ?? card;
-    yield* admitAndSpawn({ card: refreshed, step, worktreePath, attempt: 1 });
+    // Provision this card's worktree (a no-op if already ready). Admission is
+    // the governor's job (`schedule`): the selected step is now `pending`, and
+    // schedule offers it — plus every other waiting card — to `acquire` in
+    // priority order, so it spawns if a slot is free and queues otherwise. A
+    // worktree failure leaves a visible, retryable `failed` worktree; schedule
+    // simply skips a card without a ready worktree, so one card's failure never
+    // blocks the rest of the queue.
+    yield* ensureWorktree(card);
+    yield* schedule();
   });
 
   // Board-driven Building → Code review advance (D18): the one automatic stage
@@ -692,6 +780,8 @@ const make = Effect.gen(function* () {
     const state = boardCardStepState(board, event.payload.cardId);
     if (card === undefined || state === null || isBoardTerminalStepStatus(state.status)) return;
     yield* settleStep({ card, state, outcome: "abandoned" });
+    // The abandoned step released its slot — offer it to whatever is queued.
+    yield* schedule();
   });
 
   const reconcile = Effect.gen(function* () {
@@ -711,12 +801,15 @@ const make = Effect.gen(function* () {
       const threadAlive = shell !== undefined && threadIsAlive(shell);
       const decision = reconcileStepDecision({ status: state.status, threadAlive, hasSucceeded });
       // The in-memory slot Ref is empty after a restart, so any step that still
-      // holds a slot must re-acquire it here — whether we go on to watch it
+      // holds a slot must RESTORE it here — whether we go on to watch it
       // (resume-watch) or recover it (recover keeps the slot, D13) — otherwise
       // its eventual release would floor at zero and under-count throughput.
+      // Restore is unconditional (never rejected by a cap): the step genuinely
+      // holds the slot, and this must run before `schedule` admits anything, so
+      // the restored steps count against the ceiling the governor then honours.
       if (state.slotHeld && decision.kind !== "advance") {
         const provider = stepProvider(card, state.stepId);
-        if (provider !== null) yield* slots.acquire(provider.providerInstanceId);
+        if (provider !== null) yield* slots.restore(provider.providerInstanceId);
       }
       switch (decision.kind) {
         case "advance":
@@ -726,12 +819,20 @@ const make = Effect.gen(function* () {
         case "recover":
           yield* recoverStep({ card, state });
           break;
+        case "reschedule":
+          // Pending/queued and slotless — placed by the final schedule pass
+          // below, once every restored running step is counted (D11).
+          break;
         case "resume-watch":
           // Still running with a live thread — the slot was restored above; let
           // the live turn-completion path catch its settlement.
           break;
       }
     }
+    // With every restored slot counted, offer the queued/pending steps to the
+    // governor: re-admit what now fits, re-queue the rest. Slot accounting
+    // reconciles to zero once all work drains, including after a forced restart.
+    yield* schedule();
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: reconciliation failed", { cause: Cause.pretty(cause) }),
