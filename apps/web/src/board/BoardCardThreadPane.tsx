@@ -9,10 +9,11 @@
  * composer, same model row, so a card thread and a Threads-view thread can
  * never drift apart.
  *
- * Threads arrive here by ADOPTION only (D9, and the single entry point for
- * it). The board spawning its own threads is t3o-10/t3o-12's — until then the
- * empty state says so rather than offering a composer that would silently
- * create one.
+ * Threads arrive here three ways (t3o-14, superseding adoption-only): the
+ * board spawns one by itself when a card enters Planning, the `+` menu starts
+ * one on demand, or you adopt an existing thread. All three end at the same
+ * `board.card.link-thread` (D9) — the link is still the only way a thread joins
+ * a card.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -29,7 +30,8 @@ import ChatView from "../components/ChatView";
 import { cn } from "../lib/utils";
 import { useThreadDetail, useThreadShell, useThreadStatus } from "../state/entities";
 import { resolveThreadSyncPhase } from "../threadSync";
-import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
+import { BoardCardThreadAddMenu } from "./BoardCardThreadAddMenu";
+import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 
 /** The live chat for one linked thread. Split out so the thread-detail
@@ -77,7 +79,10 @@ export function BoardCardThreadPane({
   selectedThreadId,
   onSelectThread,
   adoptableThreads,
+  canRestartPlanning,
   onLinkThread,
+  onRestartPlanning,
+  onCreateBlankThread,
   onUnlinkThread,
   maximised,
   onToggleMaximised,
@@ -88,7 +93,11 @@ export function BoardCardThreadPane({
   readonly selectedThreadId: ThreadId | null;
   readonly onSelectThread: (threadId: ThreadId) => void;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
+  /** True only in Planning, and only while the planning recipe has a step. */
+  readonly canRestartPlanning: boolean;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
+  readonly onRestartPlanning: () => void;
+  readonly onCreateBlankThread: () => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   readonly maximised: boolean;
   readonly onToggleMaximised: () => void;
@@ -147,12 +156,13 @@ export function BoardCardThreadPane({
               </button>
             );
           })}
-          {/* Adoption is the only way a thread joins a card (D9). */}
-          <BoardSearchAddPicker
+          <BoardCardThreadAddMenu
+            adoptableThreads={adoptableThreads}
+            canRestartPlanning={canRestartPlanning}
             label=""
-            onPick={(id) => onLinkThread(id as ThreadId, "linked")}
-            options={adoptableThreads}
-            placeholder="Search threads…"
+            onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
+            onCreateBlankThread={onCreateBlankThread}
+            onRestartPlanning={onRestartPlanning}
           />
         </div>
         <span className="flex-1" />
@@ -186,15 +196,19 @@ export function BoardCardThreadPane({
             </div>
             <div className="text-[12.5px]/[1.6] text-pretty text-muted-foreground">
               {selected?.tombstoned === true
-                ? "The link stays so the card's history reads honestly. Adopt another thread to keep working."
-                : "Adopt an existing thread and it runs here — the brief and dependencies travel with the card. Threads the board starts for itself arrive with the supervisor (t3o-10)."}
+                ? "The link stays so the card's history reads honestly. Start another thread to keep working."
+                : canRestartPlanning
+                  ? "Moving a card into Planning starts one by itself. Start another here, or adopt an existing thread — either way the brief, labels and dependencies travel with the card."
+                  : "Start a thread here, or adopt an existing one — the brief, labels and dependencies travel with the card."}
             </div>
             <div className="pt-0.5">
-              <BoardSearchAddPicker
-                label="Adopt a thread"
-                onPick={(id) => onLinkThread(id as ThreadId, "linked")}
-                options={adoptableThreads}
-                placeholder="Search threads…"
+              <BoardCardThreadAddMenu
+                adoptableThreads={adoptableThreads}
+                canRestartPlanning={canRestartPlanning}
+                label="Add a thread"
+                onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
+                onCreateBlankThread={onCreateBlankThread}
+                onRestartPlanning={onRestartPlanning}
               />
             </div>
           </div>

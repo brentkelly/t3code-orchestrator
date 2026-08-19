@@ -18,9 +18,11 @@ import {
   DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_BUILD_STEP,
   DEFAULT_BOARD_KEY_PREFIX,
+  DEFAULT_BOARD_PLANNING_STEP,
   DEFAULT_BOARD_SETTINGS,
   resolveBoardKeyPrefix,
   resolveBoardProjectAccent,
+  resolveBoardPlanningStep,
   resolveBoardRecipeForStage,
   type BoardResolvedRecipe,
   type BoardStep,
@@ -82,10 +84,21 @@ describe("resolveBoard* helpers", () => {
       stage: "building",
       steps: [DEFAULT_BOARD_BUILD_STEP],
     });
+    // Planning ships a step too (t3o-14) — it is the prompt the planning
+    // thread opens with, editable at Settings → Board → Pipeline.
     expect(resolveBoardRecipeForStage(DEFAULT_BOARD_SETTINGS, "planning")).toEqual({
       stage: "planning",
+      steps: [DEFAULT_BOARD_PLANNING_STEP],
+    });
+    expect(resolveBoardRecipeForStage(DEFAULT_BOARD_SETTINGS, "ready")).toEqual({
+      stage: "ready",
       steps: [],
     });
+  });
+
+  it("resolves the planning step from the first step of the planning recipe", () => {
+    expect(resolveBoardPlanningStep(DEFAULT_BOARD_SETTINGS)).toEqual(DEFAULT_BOARD_PLANNING_STEP);
+    expect(resolveBoardPlanningStep(decodeSettings({ pipeline: { planning: [] } }))).toBe(null);
   });
 
   it("falls back to the default key prefix, or uses the configured one and accent", () => {

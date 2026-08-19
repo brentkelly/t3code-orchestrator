@@ -17,6 +17,7 @@
  * server will restart mid-step.
  */
 import {
+  activeBoardCardThreadId,
   BoardActivityId,
   boardCardStepCompletions,
   boardCardStepState,
@@ -24,8 +25,11 @@ import {
   CommandId,
   DEFAULT_BOARD_SETTINGS,
   EMPTY_BOARD_STATE,
+  boardPlanningThreadTitle,
+  composeBoardPlanningPrompt,
   isBoardTerminalStepStatus,
   MessageId,
+  resolveBoardPlanningStep,
   resolveBoardRecipeForStage,
   ThreadId,
   type BoardCard,
@@ -483,6 +487,106 @@ const make = Effect.gen(function* () {
     }
   });
 
+  // ── Planning (t3o-14) ────────────────────────────────────────────────
+  // Planning is NOT the step machine. A card entering Planning gets exactly one
+  // thread, created and linked, carrying the settings prompt in the planning
+  // envelope — and nothing else: no recipe snapshot, no `stepStates` row, no
+  // governor slot, no worktree, no completion contract, no recovery.
+  //
+  // Every one of those is wrong for an interview. A planning conversation is
+  // human-paced and can run for hours, so it must not hold a `BoardStepSlots`
+  // slot meant for bounding concurrent BUILDS; `schedule()` skips any card
+  // without a ready worktree, so a planning step would force a branch and
+  // worktree onto cards that may never be built; and `threadIsAlive` reads a
+  // turn that ended without `board_complete_step` as death — which is exactly
+  // what an interview does between every question, so the supervisor would nudge
+  // and then escalate a perfectly healthy conversation.
+  //
+  // The card does not leave Planning by itself either: D18 is untouched, and
+  // Building → Code review remains the one board-driven stage crossing.
+  const spawnPlanningThread = Effect.fn("board-supervisor-spawnPlanningThread")(function* (input: {
+    readonly card: BoardCard;
+    readonly step: BoardStep;
+  }) {
+    const { card, step } = input;
+    const threadId = yield* freshThreadId;
+    const createdAt = yield* nowIso;
+    yield* dispatch({
+      type: "thread.turn.start",
+      commandId: yield* commandId("spawn-planning-turn"),
+      threadId,
+      message: {
+        messageId: yield* freshMessageId,
+        role: "user",
+        text: composeBoardPlanningPrompt({ card, step }),
+        attachments: [],
+      },
+      runtimeMode: "full-access",
+      // Plan mode (t3o-14, D4): the thread opens on the project's shared
+      // working tree rather than an isolated worktree, so it reads the codebase
+      // — which the default prompt asks it to do — without editing it.
+      interactionMode: "plan",
+      bootstrap: {
+        createThread: {
+          projectId: card.projectId,
+          title: boardPlanningThreadTitle(card, step),
+          modelSelection: { instanceId: step.providerInstanceId, model: step.model },
+          runtimeMode: "full-access",
+          interactionMode: "plan",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        },
+      },
+      createdAt,
+    });
+    // The link is what lets the agent's board_* tools resolve their card (D3):
+    // `board_get_card_context` takes no card id, it reads the calling thread's.
+    yield* dispatch({
+      type: "board.card.link-thread",
+      commandId: yield* commandId("link-planning-thread"),
+      cardId: card.id,
+      threadId,
+      role: step.id,
+      createdAt: yield* nowIso,
+    });
+    return threadId;
+  });
+
+  /**
+   * Start the planning thread for a card entering Planning. Keyed by card id
+   * rather than the event's card so both entry points (`card-moved` carries a
+   * card, `card-created` is flat) read the same fresh state — the suppression
+   * check has to see the links as they are NOW.
+   *
+   * Suppression (D5): any live (non-tombstoned) link of any role means the card
+   * already has a thread, so nothing is spawned. A card dragged BACK from
+   * Building for re-planning therefore gets nothing new — its build thread is
+   * still linked. The card pane's "+ → New thread — restart planning" is the
+   * escape hatch, and it composes the same prompt client-side rather than
+   * routing a request event through the log.
+   */
+  const beginCardPlanning = Effect.fn("board-supervisor-beginCardPlanning")(function* (
+    cardId: BoardCard["id"],
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || card.archivedAt !== null) return;
+    if (activeBoardCardThreadId(card.threadLinks) !== null) {
+      yield* Effect.logDebug("board supervisor: card already has a live thread", {
+        cardId: card.id,
+      });
+      return;
+    }
+    const settings = yield* boardSettings;
+    const step = resolveBoardPlanningStep(settings);
+    if (step === null) {
+      yield* Effect.logDebug("board supervisor: planning stage has no steps", { cardId: card.id });
+      return;
+    }
+    yield* spawnPlanningThread({ card, step });
+  });
+
   // A card entered Building (the human "Begin build" gate, D18): snapshot the
   // recipe, select the next step, provision the worktree, and admit+spawn.
   const beginCardBuild = Effect.fn("board-supervisor-beginCardBuild")(function* (card: BoardCard) {
@@ -849,6 +953,15 @@ const make = Effect.gen(function* () {
       case "board.card-moved":
         return event.payload.toStage === "building"
           ? beginCardBuild(event.payload.card)
+          : event.payload.toStage === "planning"
+            ? beginCardPlanning(event.payload.cardId)
+            : Effect.void;
+      // Creating straight into Planning is a real path — the create dialog's
+      // stage picker and `board_create_card` both allow it — so it gets the same
+      // thread a drag would produce (t3o-14, D6).
+      case "board.card-created":
+        return event.payload.stage === "planning"
+          ? beginCardPlanning(event.payload.cardId)
           : Effect.void;
       case "board.card-step-completed":
         return handleStepCompleted(event);
@@ -890,6 +1003,7 @@ const make = Effect.gen(function* () {
       Stream.runForEach(engine.streamDomainEvents, (event) => {
         if (
           event.type !== "board.card-moved" &&
+          event.type !== "board.card-created" &&
           event.type !== "board.card-step-completed" &&
           event.type !== "board.card-input-requested" &&
           event.type !== "board.card-archived"

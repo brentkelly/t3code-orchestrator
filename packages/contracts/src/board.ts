@@ -2421,10 +2421,36 @@ export const DEFAULT_BOARD_STEP_MAX_ATTEMPTS = 3;
 export const DEFAULT_BOARD_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
 
 /**
- * The one stage the MVP executes (t3o-12). A compiled-in Building step makes
- * the default pipeline a working pipeline with an empty settings file (the
- * spec's third verification). Provider instance and model mirror the stock
- * text-generation default so the default step is runnable, not a placeholder.
+ * The Planning step (t3o-14). Unlike Building, Planning does NOT run through
+ * the step machine: only `promptTemplate`, `providerInstanceId` and `model`
+ * are honoured (`timeoutMs` / `maxAttempts` / any later step belong to the
+ * governor and the completion contract, which a human-paced interview must
+ * not enter — see the t3o-14 spec, D1). It lives here rather than in a skill
+ * file because a slash-command skill only exists in the repository the thread
+ * opens on: shipped in this fork it would be a no-op for a card on any other
+ * project, and for every non-Claude provider. Settings text works everywhere,
+ * and the user can edit it at Settings → Board → Pipeline.
+ */
+export const DEFAULT_BOARD_PLANNING_STEP: BoardStep = {
+  id: "plan",
+  label: "Plan",
+  promptTemplate: [
+    "Build a plan that allows us to implement the functionality requested on this card. Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.",
+    "Ask the questions one at a time.",
+    "If a question can be answered by exploring the codebase, explore the codebase instead.",
+  ].join("\n\n"),
+  providerInstanceId: DEFAULT_BOARD_PROVIDER_INSTANCE_ID,
+  model: DEFAULT_TEXT_GENERATION_MODEL,
+  timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
+  maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+};
+
+/**
+ * The one stage the MVP executes through the step machine (t3o-12). A
+ * compiled-in Building step makes the default pipeline a working pipeline with
+ * an empty settings file (the spec's third verification). Provider instance
+ * and model mirror the stock text-generation default so the default step is
+ * runnable, not a placeholder.
  */
 export const DEFAULT_BOARD_BUILD_STEP: BoardStep = {
   id: "build",
@@ -2440,7 +2466,12 @@ export const DEFAULT_BOARD_BUILD_STEP: BoardStep = {
 export const BoardSettings = Schema.Struct({
   projects: BoardProjectSettingsMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   pipeline: BoardPipeline.pipe(
-    Schema.withDecodingDefault(Effect.succeed({ building: [DEFAULT_BOARD_BUILD_STEP] })),
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        planning: [DEFAULT_BOARD_PLANNING_STEP],
+        building: [DEFAULT_BOARD_BUILD_STEP],
+      }),
+    ),
   ),
   concurrency: BoardConcurrencySettings.pipe(
     Schema.withDecodingDefault(
@@ -2511,6 +2542,90 @@ export function resolveBoardRecipeForStage(
   stage: BoardStage,
 ): BoardResolvedRecipe {
   return { stage, steps: board.pipeline[stage] ?? [] };
+}
+
+// ── Planning stage (t3o-14) ────────────────────────────────────────────
+// Planning spawns ONE thread and stops — no step state, no governor slot, no
+// worktree, no completion contract, no recovery (spec t3o-14, D1). The prompt
+// composition is pure and lives here, not in the server, because BOTH the
+// supervisor (automatic spawn on stage entry) and the web client (the card
+// thread pane's "restart planning") must produce byte-identical prompts; a
+// second implementation on the client is how those two drift apart.
+
+/**
+ * The provider-specific wording for "ask through your question tool, never in
+ * prose" (D5). The board assigned the work, so it knows which provider it is
+ * talking to — this is the concrete payoff of envelopes over Claude-specific
+ * skills. Unknown instances fall back to neutral phrasing.
+ */
+export function providerQuestionMechanism(providerInstanceId: ProviderInstanceId): string {
+  const key = String(providerInstanceId).toLowerCase();
+  if (key.includes("claude") || key.includes("anthropic")) {
+    return "raise it as a Claude Code question so it surfaces as a real prompt";
+  }
+  if (key.includes("codex") || key.includes("openai")) {
+    return "raise it through Codex's ask-for-input request";
+  }
+  if (key.includes("cursor")) {
+    return "raise it through Cursor's user-input request";
+  }
+  if (key.includes("gemini") || key.includes("google")) {
+    return "raise it through Gemini's user-input request";
+  }
+  if (key.includes("grok")) {
+    return "raise it through Grok's user-input request";
+  }
+  if (key.includes("opencode")) {
+    return "raise it through OpenCode's user-input request";
+  }
+  return "raise it through your runtime's user-input request";
+}
+
+/**
+ * The step the planning spawn runs: the FIRST step of the planning recipe, or
+ * null when the user has cleared the stage's steps in settings. Only the first
+ * is ever used — a multi-step planning recipe would need the step machine,
+ * which D1 declines to enter; the settings UI still lets you write more, and
+ * the extras are stored and ignored.
+ */
+export function resolveBoardPlanningStep(board: BoardSettings): BoardStep | null {
+  return resolveBoardRecipeForStage(board, "planning").steps[0] ?? null;
+}
+
+/** The planning thread's title, in the same `KEY · Label` shape build threads
+    use. Shared so the automatic spawn and the card pane's "restart planning"
+    cannot produce differently-titled threads. */
+export function boardPlanningThreadTitle(
+  card: Pick<BoardCard, "key">,
+  step: Pick<BoardStep, "label">,
+): string {
+  return `${card.key} · ${step.label}`;
+}
+
+/**
+ * The planning prompt: preamble + the settings `promptTemplate` + postamble,
+ * mirroring the build envelope (`composeStepPrompt`) but carrying the PLANNING
+ * contract. The postamble must never mention `board_complete_step`: no step
+ * state exists for a planning thread, so the call would fail on an unknown
+ * `stepId`. The planning output is `board_propose_plans`, and the card does not
+ * leave Planning by itself — D18 still holds, Building → Code review remains
+ * the only board-driven stage crossing.
+ */
+export function composeBoardPlanningPrompt(input: {
+  readonly card: Pick<BoardCard, "key" | "title">;
+  readonly step: BoardStep;
+}): string {
+  const { card, step } = input;
+  const preamble = [
+    `You are planning card ${card.key} — "${card.title}".`,
+    `Stage: planning.`,
+    `Call board_get_card_context for the brief, labels, dependencies and prior activity.`,
+  ].join("\n");
+  const postamble = [
+    `When you and the human have agreed a plan, record it with board_propose_plans — that is the planning output the board reads. A human moves the card to Ready; do not move it yourself.`,
+    `If you need a human decision, ${providerQuestionMechanism(step.providerInstanceId)}; never end a turn with an unanswered question in prose.`,
+  ].join("\n");
+  return `${preamble}\n\n${step.promptTemplate}\n\n${postamble}`;
 }
 
 /** The per-project key prefix as STORED, falling back to the compiled-in

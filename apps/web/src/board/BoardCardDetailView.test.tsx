@@ -98,6 +98,9 @@ const baseProps = {
   onArchiveToggle: noop,
   onLinkThread: noop,
   onUnlinkThread: noop,
+  canRestartPlanning: false,
+  onRestartPlanning: noop,
+  onCreateBlankThread: noop,
 } as const;
 
 describe("BoardCardDetailPanel", () => {
