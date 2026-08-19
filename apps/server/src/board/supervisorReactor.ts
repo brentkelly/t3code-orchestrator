@@ -18,20 +18,27 @@
  */
 import {
   BoardActivityId,
+  boardCardPlans,
   boardCardStepCompletions,
   boardCardStepState,
+  boardNextStageId,
   boardNonTerminalStepStates,
+  boardStageById,
+  boardStageIndex,
+  boardStageWithRole,
   CommandId,
   DEFAULT_BOARD_SETTINGS,
   EMPTY_BOARD_STATE,
   isBoardTerminalStepStatus,
   MessageId,
-  resolveBoardRecipeForStage,
+  resolveBoardStageExecution,
+  resolveBoardStageModelSelection,
   ThreadId,
   type BoardCard,
   type BoardCardStepState,
+  type BoardSettings,
+  type BoardStageExecution,
   type BoardState,
-  type BoardStep,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationThreadShell,
@@ -70,7 +77,6 @@ import {
   reconcileStepDecision,
   recoveryDecision,
   resolveBoardConcurrencyLimit,
-  selectNextStep,
   type BoardQueueCandidate,
 } from "./supervisor.ts";
 
@@ -159,6 +165,42 @@ const make = Effect.gen(function* () {
     const project = board.projects.find((entry) => entry.id === card.projectId);
     return project?.workspaceRoot ?? null;
   };
+
+  /** The build stage's per-card human-in-the-loop default (D6): a card with a
+      plan uses `humanInLoopWithPlan`, one without uses `humanInLoopWithoutPlan`
+      — so writing a plan moves the default with it. */
+  const buildHumanInLoopDefault = (
+    board: BoardState,
+    exec: BoardStageExecution,
+    cardId: BoardCard["id"],
+  ): boolean =>
+    boardCardPlans(board, cardId).length > 0
+      ? exec.humanInLoopWithPlan
+      : exec.humanInLoopWithoutPlan;
+
+  /** The resolved human-in-the-loop stance for a fresh (first-entry) run of a
+      stage (D5/D6). The build role reads the per-card toggle over its two
+      defaults; every other stage uses its own `humanInLoop` setting. A
+      re-entry (D7) forces human-in-the-loop regardless and is handled by the
+      caller. */
+  const resolveHumanInLoop = (
+    board: BoardState,
+    settings: BoardSettings,
+    card: BoardCard,
+    exec: BoardStageExecution,
+  ): boolean => {
+    const stage = boardStageById(board, card.stage);
+    if (stage?.role === "build") {
+      return card.humanInLoop ?? buildHumanInLoopDefault(board, exec, card.id);
+    }
+    return exec.humanInLoop;
+  };
+
+  /** Whether the card already has a live (non-tombstoned) linked thread for a
+      stage's step (D7): auto-kickoff is suppressed so a manually adopted thread
+      is never trampled. The step's role is the stage id. */
+  const hasLiveStageThread = (card: BoardCard, stageId: string): boolean =>
+    card.threadLinks.some((link) => link.role === stageId && link.tombstonedAt === null);
 
   // Send a follow-up turn (recovery nudge or escalation question) to an
   // existing step thread.
@@ -274,8 +316,21 @@ const make = Effect.gen(function* () {
   // agent's board_* tools resolve their card (the MCP write path keys on it, D3).
   const spawnStepThread = Effect.fn("board-supervisor-spawnStepThread")(function* (input: {
     readonly card: BoardCard;
-    readonly step: BoardStep;
+    /** The frozen run-row fields a spawn needs (D12). */
+    readonly step: {
+      readonly stepId: string;
+      readonly stepLabel: string;
+      readonly providerInstanceId: BoardCardStepState["providerInstanceId"];
+      readonly model: string;
+    };
+    /** Where the thread runs: the card's worktree for a `build`-mode step, the
+        project workspace root for a `plan`-mode step (no worktree, D5). */
     readonly worktreePath: string;
+    /** The branch to open the thread on — the worktree's branch for `build`,
+        null for `plan` (read-only, no branch). */
+    readonly branch: string | null;
+    /** Whether to run the worktree setup script — build only. */
+    readonly runSetup: boolean;
     readonly text: string;
   }) {
     const { card, step } = input;
@@ -296,11 +351,11 @@ const make = Effect.gen(function* () {
       bootstrap: {
         createThread: {
           projectId: card.projectId,
-          title: `${card.key} · ${step.label}`,
+          title: `${card.key} · ${step.stepLabel}`,
           modelSelection: { instanceId: step.providerInstanceId, model: step.model },
           runtimeMode: "full-access",
           interactionMode: "default",
-          branch: card.worktree?.branch ?? null,
+          branch: input.branch,
           worktreePath: input.worktreePath,
           createdAt,
         },
@@ -312,20 +367,21 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId("link-thread"),
       cardId: card.id,
       threadId,
-      role: step.id,
+      role: step.stepId,
       createdAt: yield* nowIso,
     });
-    // Run the worktree setup script for the worktree, in the build thread's
-    // terminal (t3o-09). Best-effort — a setup failure surfaces in the thread,
-    // not as a lost card.
-    yield* runBoardCardWorktreeSetup({
-      threadId,
-      projectId: card.projectId,
-      worktreePath: input.worktreePath,
-    }).pipe(
-      Effect.provideService(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupRunner),
-      Effect.catchCause(() => Effect.void),
-    );
+    // Run the worktree setup script in the build thread's terminal (t3o-09).
+    // Build-mode only — a plan-mode step has no worktree. Best-effort.
+    if (input.runSetup) {
+      yield* runBoardCardWorktreeSetup({
+        threadId,
+        projectId: card.projectId,
+        worktreePath: input.worktreePath,
+      }).pipe(
+        Effect.provideService(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupRunner),
+        Effect.catchCause(() => Effect.void),
+      );
+    }
     return threadId;
   });
 
@@ -336,40 +392,47 @@ const make = Effect.gen(function* () {
       ? Effect.succeed(true)
       : snapshotQuery.getThreadShellById(threadId).pipe(Effect.map(Option.isNone));
 
-  // Offer one candidate step to the governor: acquire a slot under the resolved
-  // caps and spawn its thread, or leave it queued (D11). Enforces the
-  // one-writer-per-worktree invariant (t3o-09) BEFORE acquiring, so a refused
-  // spawn never leaks a slot.
-  const admitCandidate = Effect.fn("board-supervisor-admitCandidate")(function* (input: {
+  /** The prompt for a step's run, composed from the frozen run row (D12). */
+  const stepPromptFor = (card: BoardCard, state: BoardCardStepState): string =>
+    composeStepPrompt({
+      card,
+      step: {
+        stepLabel: state.stepLabel,
+        providerInstanceId: state.providerInstanceId,
+        prompt: state.prompt,
+        maxAttempts: state.maxAttempts,
+        humanInLoop: state.humanInLoop,
+      },
+      attempt: state.attempt,
+    });
+
+  // Offer one build-mode step to the governor: acquire a slot under the resolved
+  // caps and spawn its thread on the card's worktree, or leave it queued (D11).
+  // Enforces the one-writer-per-worktree invariant (t3o-09) BEFORE acquiring, so
+  // a refused spawn never leaks a slot.
+  const admitBuildCandidate = Effect.fn("board-supervisor-admitBuildCandidate")(function* (input: {
     readonly card: BoardCard;
-    readonly step: BoardStep;
+    readonly state: BoardCardStepState;
     readonly worktreePath: string;
-    readonly attempt: number;
-    readonly currentStatus: BoardCardStepState["status"];
     readonly limits: BoardConcurrencyLimit;
   }) {
-    const { card, step } = input;
-    // One writer at a time per worktree (t3o-09 invariant, enforced here). The
-    // assertion must count the writer we are ABOUT to spawn, so a sentinel for
-    // it joins the card's existing live-step threads — an existing writer plus
-    // the new one is two distinct writers and the assert fails. On failure we
-    // REFUSE before acquiring a slot or spawning, so the invariant actually
-    // blocks rather than being logged-and-ignored, and no slot is taken and
-    // then stranded. Under today's one-step-at-a-time decider there is never an
-    // existing writer, so this is defence-in-depth against a concurrent-step
-    // recipe.
+    const { card, state } = input;
+    // One writer at a time per worktree (t3o-09 invariant). The assertion counts
+    // the writer we are ABOUT to spawn, so an existing writer plus the new one
+    // fails it; on failure we REFUSE before acquiring a slot, so the invariant
+    // blocks rather than stranding a slot.
     const board = yield* readBoard;
     const liveWriters = (board.stepStates ?? [])
       .filter(
-        (state) =>
-          state.cardId === card.id &&
-          !isBoardTerminalStepStatus(state.status) &&
-          state.threadId !== null,
+        (candidate) =>
+          candidate.cardId === card.id &&
+          !isBoardTerminalStepStatus(candidate.status) &&
+          candidate.threadId !== null,
       )
-      .map((state) => String(state.threadId));
+      .map((candidate) => String(candidate.threadId));
     const wouldConflict = yield* assertSingleBoardWorktreeWriter({
       cardId: card.id,
-      activeWriterThreadIds: [...liveWriters, `board-admit:${step.id}`],
+      activeWriterThreadIds: [...liveWriters, `board-admit:${state.stepId}`],
     }).pipe(
       Effect.as(false),
       Effect.catchCause((cause) =>
@@ -381,18 +444,16 @@ const make = Effect.gen(function* () {
     );
     if (wouldConflict) return;
 
-    const admitted = yield* slots.acquire(step.providerInstanceId, input.limits);
+    const admitted = yield* slots.acquire(state.providerInstanceId, input.limits);
     if (!admitted) {
-      // No slot for this instance right now. A fresh (pending) step is recorded
-      // as queued so the card shows its queued badge; a step already queued
-      // stays put — re-emitting queued each schedule pass would be pointless
-      // churn. It will be re-offered at the next step boundary (D11).
-      if (input.currentStatus === "pending") {
+      // No slot right now. A fresh (pending) step is recorded queued so the card
+      // shows its badge; a queued step stays put and is re-offered next boundary.
+      if (state.status === "pending") {
         yield* dispatch({
           type: "board.card.admit-step",
           commandId: yield* commandId("admit-step"),
           cardId: card.id,
-          stepId: step.id,
+          stepId: state.stepId,
           admitted: false,
           threadId: null,
           createdAt: yield* nowIso,
@@ -403,30 +464,73 @@ const make = Effect.gen(function* () {
 
     const threadId = yield* spawnStepThread({
       card,
-      step,
+      step: {
+        stepId: state.stepId,
+        stepLabel: state.stepLabel,
+        providerInstanceId: state.providerInstanceId,
+        model: state.model,
+      },
       worktreePath: input.worktreePath,
-      text: composeStepPrompt({ card, step, attempt: input.attempt }),
+      branch: card.worktree?.branch ?? null,
+      runSetup: true,
+      text: stepPromptFor(card, state),
     });
     yield* dispatch({
       type: "board.card.admit-step",
       commandId: yield* commandId("admit-step"),
       cardId: card.id,
-      stepId: step.id,
+      stepId: state.stepId,
       admitted: true,
       threadId,
       createdAt: yield* nowIso,
     });
   });
 
-  // The governor's scheduling pass (t3o-11, D11). Gather every card whose live
-  // step is waiting for a slot (`pending` freshly selected, or `queued` holding
-  // from a prior pass) and whose worktree is ready to spawn into, order them by
-  // the priority rule (stage desc → started before unstarted → drag order), and
-  // offer each to `admitCandidate` in that order. The greedy fill falls out:
-  // the highest-priority candidate that fits a free slot starts; a candidate
-  // whose provider is saturated is skipped, so a step targeting an idle vendor
-  // is never blocked by a busy one. Runs after any slot release, so preemption
-  // takes effect at the next step boundary with nothing in flight discarded.
+  // A plan-mode step holds no slot and needs no worktree (D5): spawn it directly
+  // in the project workspace root and mark it admitted. The decider records
+  // `slotHeld: false` for a plan-mode admit, so nothing is charged against the
+  // concurrency ceiling.
+  const admitPlanStep = Effect.fn("board-supervisor-admitPlanStep")(function* (input: {
+    readonly card: BoardCard;
+    readonly state: BoardCardStepState;
+  }) {
+    const { card, state } = input;
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const cwd = projectCwd(model, card);
+    if (cwd === null) {
+      yield* Effect.logWarning("board supervisor: no project cwd for plan-mode step", {
+        cardId: card.id,
+      });
+      return;
+    }
+    const threadId = yield* spawnStepThread({
+      card,
+      step: {
+        stepId: state.stepId,
+        stepLabel: state.stepLabel,
+        providerInstanceId: state.providerInstanceId,
+        model: state.model,
+      },
+      worktreePath: cwd,
+      branch: null,
+      runSetup: false,
+      text: stepPromptFor(card, state),
+    });
+    yield* dispatch({
+      type: "board.card.admit-step",
+      commandId: yield* commandId("admit-step"),
+      cardId: card.id,
+      stepId: state.stepId,
+      admitted: true,
+      threadId,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  // The governor's scheduling pass (t3o-11, D11). Plan-mode steps spawn
+  // immediately (no slot, no worktree, D5). Build-mode steps waiting for a slot,
+  // whose worktree is ready, are ordered by the priority rule (stage desc →
+  // started before unstarted → drag order) and offered to the governor greedily.
   const schedule = Effect.fn("board-supervisor-schedule")(function* () {
     const board = yield* readBoard;
     const settings = yield* boardSettings;
@@ -434,10 +538,8 @@ const make = Effect.gen(function* () {
       string,
       {
         readonly card: BoardCard;
-        readonly step: BoardStep;
+        readonly state: BoardCardStepState;
         readonly worktreePath: string;
-        readonly attempt: number;
-        readonly currentStatus: BoardCardStepState["status"];
         readonly limits: BoardConcurrencyLimit;
       }
     >();
@@ -445,138 +547,124 @@ const make = Effect.gen(function* () {
     for (const state of board.stepStates ?? []) {
       if (state.status !== "pending" && state.status !== "queued") continue;
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
-      if (card === undefined || card.archivedAt !== null || card.recipeSnapshot === null) continue;
-      const step = card.recipeSnapshot.steps.find((candidate) => candidate.id === state.stepId);
-      if (step === undefined) continue;
-      // A queued step needs a ready worktree to spawn into. A card that entered
-      // Building but whose worktree is still provisioning or failed is not yet a
-      // candidate — it is re-offered once its worktree lands (a fresh schedule).
+      if (card === undefined || card.archivedAt !== null) continue;
+      if (state.mode === "plan") {
+        // Plan-mode holds no slot: spawn a freshly selected step now. (Plan
+        // steps are never `queued` — nothing withholds them.)
+        if (state.status === "pending") yield* admitPlanStep({ card, state });
+        continue;
+      }
+      // A build-mode step needs a ready worktree to spawn into; a card whose
+      // worktree is still provisioning is re-offered once it lands.
       const worktreePath =
         card.worktree !== null && card.worktree.status === "ready" ? card.worktree.path : null;
       if (worktreePath === null) continue;
-      const key = `${String(card.id)}::${step.id}`;
+      const key = `${String(card.id)}::${state.stepId}`;
       entries.set(key, {
         card,
-        step,
+        state,
         worktreePath,
-        attempt: state.attempt,
-        currentStatus: state.status,
-        limits: resolveBoardConcurrencyLimit(settings.concurrency, step.providerInstanceId),
+        limits: resolveBoardConcurrencyLimit(settings.concurrency, state.providerInstanceId),
       });
-      // "Started" = the card has begun THIS stage's work: a completion for a
-      // step in the current recipe snapshot. Scoped to the snapshot (not all
-      // of the card's history) so an earlier stage's completions never make a
-      // freshly re-entered stage rank as mid-flight (D11 rule 2).
-      const stageStepIds = new Set(card.recipeSnapshot.steps.map((s) => s.id));
+      // "Started" = the card has begun THIS stage's step (a recorded completion
+      // for it), so a re-entered stage never ranks as mid-flight on a fresh run.
       candidates.push({
         cardId: card.id,
-        stepId: step.id,
-        providerInstanceId: step.providerInstanceId,
-        stage: card.stage,
-        started: boardCardStepCompletions(board, card.id).some((c) => stageStepIds.has(c.stepId)),
+        stepId: state.stepId,
+        providerInstanceId: state.providerInstanceId,
+        stageOrder: boardStageIndex(board, card.stage),
+        started: boardCardStepCompletions(board, card.id).some((c) => c.stepId === state.stepId),
         orderKey: card.orderKey,
       });
     }
     for (const candidate of orderBoardQueue(candidates)) {
       const entry = entries.get(`${String(candidate.cardId)}::${candidate.stepId}`);
-      if (entry !== undefined) yield* admitCandidate(entry);
+      if (entry !== undefined) yield* admitBuildCandidate(entry);
     }
   });
 
-  // A card entered Building (the human "Begin build" gate, D18): snapshot the
-  // recipe, select the next step, provision the worktree, and admit+spawn.
-  const beginCardBuild = Effect.fn("board-supervisor-beginCardBuild")(function* (card: BoardCard) {
-    const settings = yield* boardSettings;
-    const recipe = resolveBoardRecipeForStage(settings, card.stage);
-    if (recipe.steps.length === 0) {
-      yield* Effect.logDebug("board supervisor: stage has no steps", {
-        cardId: card.id,
-        stage: card.stage,
-      });
-      return;
-    }
-    yield* dispatch({
-      type: "board.card.snapshot-recipe",
-      commandId: yield* commandId("snapshot-recipe"),
-      cardId: card.id,
-      recipe,
-      createdAt: yield* nowIso,
-    });
-    // Fresh Building entry never auto-advances: a card dragged back for rework
-    // whose steps all already succeeded must NOT bounce straight to review
-    // (advanceWhenDone: false). Only a genuine completion advances the stage.
-    yield* driveNextStep(card.id, false);
-  });
-
-  // Resolve the card's next step from its snapshot and drive it to running.
-  // `advanceWhenDone` gates the board-driven stage advance: it fires only when
-  // a real step just completed (the success path / a reconciled success), never
-  // on a fresh Building entry where "no step left" means the card was re-entered
-  // for rework, not that it just finished.
-  const driveNextStep = Effect.fn("board-supervisor-driveNextStep")(function* (
-    cardId: BoardCard["id"],
-    advanceWhenDone: boolean,
-  ) {
+  // Generic auto-kickoff (D7): a card entering a stage (drag or create), or an
+  // on-demand thread request, resolves the stage's execution config, freezes it
+  // onto the run row (select-step), and spawns. Auto-kickoff acts only when the
+  // stage auto-executes; on-demand always starts a thread. First entry runs the
+  // stage prompt; a re-entry opens a clean human-in-the-loop thread with no
+  // prompt injected. A stage the card already has a live thread for is skipped.
+  const beginStageRun = Effect.fn("board-supervisor-beginStageRun")(function* (input: {
+    readonly card: BoardCard;
+    readonly onDemand: boolean;
+  }) {
+    const { card, onDemand } = input;
     const board = yield* readBoard;
-    const card = board.cards.find((candidate) => candidate.id === cardId);
-    if (card === undefined || card.recipeSnapshot === null) {
-      // Nothing to select for this card, but a slot may have just freed — let
-      // the queue flow.
-      yield* schedule();
-      return;
-    }
-    const step = selectNextStep(card.recipeSnapshot, boardCardStepCompletions(board, cardId));
-    if (step === null) {
-      // Every step succeeded: advance (on a real completion) and let the freed
-      // capacity flow to the queue. A fresh Building entry (advanceWhenDone
-      // false) with no step just schedules.
-      if (advanceWhenDone) yield* advanceStage(card);
-      yield* schedule();
-      return;
-    }
+    const stage = boardStageById(board, card.stage);
+    if (stage === null) return;
+    // Never trample a manually adopted thread for this stage (D7).
+    if (hasLiveStageThread(card, card.stage)) return;
+    // One step at a time (D4): do not start a run while one is live.
+    const existing = boardCardStepState(board, card.id);
+    if (existing !== null && !isBoardTerminalStepStatus(existing.status)) return;
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(settings, card.stage);
+    // Auto-kickoff fires only for an auto-executing stage; on-demand always runs.
+    if (!onDemand && !exec.autoExecute) return;
+    // First entry vs re-entry (D7): a recorded completion for this stage's step
+    // means the card has been here before, so re-run nothing — open a clean
+    // human-in-the-loop conversation.
+    const firstEntry = !boardCardStepCompletions(board, card.id).some(
+      (completion) => completion.stepId === card.stage,
+    );
+    const model = resolveBoardStageModelSelection(exec.model);
+    const humanInLoop = firstEntry ? resolveHumanInLoop(board, settings, card, exec) : true;
+    const prompt = firstEntry ? exec.prompt : "";
     yield* dispatch({
       type: "board.card.select-step",
       commandId: yield* commandId("select-step"),
       cardId: card.id,
-      stepId: step.id,
-      stepLabel: step.label,
-      maxAttempts: step.maxAttempts,
+      stepId: card.stage,
+      stepLabel: stage.label,
+      prompt,
+      providerInstanceId: model.instanceId,
+      model: model.model,
+      mode: exec.mode,
+      humanInLoop,
+      maxAttempts: exec.maxAttempts,
+      timeoutMs: exec.timeoutMs,
       createdAt: yield* nowIso,
     });
-    // Provision this card's worktree (a no-op if already ready). Admission is
-    // the governor's job (`schedule`): the selected step is now `pending`, and
-    // schedule offers it — plus every other waiting card — to `acquire` in
-    // priority order, so it spawns if a slot is free and queues otherwise. A
-    // worktree failure leaves a visible, retryable `failed` worktree; schedule
-    // simply skips a card without a ready worktree, so one card's failure never
-    // blocks the rest of the queue.
-    yield* ensureWorktree(card);
+    // Build mode provisions a worktree (no-op if ready); plan mode needs none.
+    if (exec.mode === "build") yield* ensureWorktree(card);
     yield* schedule();
   });
 
-  // Board-driven Building → Code review advance (D18): the one automatic stage
-  // crossing this spec makes, and only on a successful build step. It rides the
-  // ordinary move command, gated like every other transition.
-  const advanceStage = Effect.fn("board-supervisor-advanceStage")(function* (card: BoardCard) {
-    if (card.stage !== "building") return;
+  // Auto-advance to the next stage in order (D8): on a successful UNATTENDED
+  // run, if the stage's `autoAdvance` is on, move the card to the next stage —
+  // never the hardcoded "review". Never on a human-in-the-loop run (no
+  // completion stance to advance on), never when the stage is last. Rides the
+  // ordinary move command, gated like every other transition (a crossing into a
+  // blocked build boundary is refused, leaving the card put).
+  const advanceStage = Effect.fn("board-supervisor-advanceStage")(function* (input: {
+    readonly card: BoardCard;
+    readonly state: BoardCardStepState;
+  }) {
+    if (input.state.humanInLoop) return;
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(settings, input.card.stage);
+    if (!exec.autoAdvance) return;
+    const board = yield* readBoard;
+    const next = boardNextStageId(board, input.card.stage);
+    if (next === null) return;
     yield* dispatch({
       type: "board.card.move",
       commandId: yield* commandId("advance"),
-      cardId: card.id,
-      toStage: "review",
+      cardId: input.card.id,
+      toStage: next,
       createdAt: yield* nowIso,
     });
   });
 
-  const releaseSlot = (
-    state: BoardCardStepState,
-    step: { readonly providerInstanceId: BoardStep["providerInstanceId"] } | null,
-  ) => (state.slotHeld && step !== null ? slots.release(step.providerInstanceId) : Effect.void);
-
-  // Look up the provider instance the step is charged against, from the card's
-  // snapshot, so the right slot is released.
-  const stepProvider = (card: BoardCard, stepId: string): BoardStep | null =>
-    card.recipeSnapshot?.steps.find((step) => step.id === stepId) ?? null;
+  // Release the step's slot on settlement — a no-op for a plan-mode step, which
+  // never held one (D5). The provider is read off the frozen run row (D12).
+  const releaseSlot = (state: BoardCardStepState) =>
+    state.slotHeld ? slots.release(state.providerInstanceId) : Effect.void;
 
   const settleStep = Effect.fn("board-supervisor-settleStep")(function* (input: {
     readonly card: BoardCard;
@@ -591,18 +679,14 @@ const make = Effect.gen(function* () {
       outcome: input.outcome,
       createdAt: yield* nowIso,
     });
-    yield* releaseSlot(input.state, stepProvider(input.card, input.state.stepId));
+    yield* releaseSlot(input.state);
   });
 
   const recoverStep = Effect.fn("board-supervisor-recoverStep")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
   }) {
-    const provider = stepProvider(input.card, input.state.stepId);
-    const questionMechanism =
-      provider !== null
-        ? providerQuestionMechanism(provider.providerInstanceId)
-        : "your runtime's user-input request";
+    const questionMechanism = providerQuestionMechanism(input.state.providerInstanceId);
     const decision = recoveryDecision({ stepState: input.state, questionMechanism });
 
     // Attempt budget exhausted → the D13 human gate: ask the human (retry /
@@ -641,8 +725,20 @@ const make = Effect.gen(function* () {
     const gone = yield* threadGone(input.state.threadId);
     let threadId = input.state.threadId;
     let acted = false;
+    // Where a respawn runs: a build-mode step needs its ready worktree; a
+    // plan-mode step respawns in the project workspace root (D5).
+    const respawnTarget = yield* Effect.gen(function* () {
+      if (input.state.mode === "build") {
+        return input.card.worktree?.path != null
+          ? { worktreePath: input.card.worktree.path, branch: input.card.worktree.branch ?? null }
+          : null;
+      }
+      const model = yield* snapshotQuery.getCommandReadModel();
+      const cwd = projectCwd(model, input.card);
+      return cwd === null ? null : { worktreePath: cwd, branch: null as string | null };
+    });
     if (gone) {
-      if (provider !== null && input.card.worktree?.path != null) {
+      if (respawnTarget !== null) {
         // Tombstone the dead thread's card link before spawning a fresh one, so
         // links do not accumulate across recoveries (D9). Best-effort — the
         // dispatch helper swallows a reject (e.g. already tombstoned by the
@@ -658,8 +754,15 @@ const make = Effect.gen(function* () {
         }
         threadId = yield* spawnStepThread({
           card: input.card,
-          step: provider,
-          worktreePath: input.card.worktree.path,
+          step: {
+            stepId: input.state.stepId,
+            stepLabel: input.state.stepLabel,
+            providerInstanceId: input.state.providerInstanceId,
+            model: input.state.model,
+          },
+          worktreePath: respawnTarget.worktreePath,
+          branch: respawnTarget.branch,
+          runSetup: false,
           text: decision.nudge,
         });
         acted = true;
@@ -725,9 +828,14 @@ const make = Effect.gen(function* () {
       }
       return;
     }
-    // Running with no question → died mid-work. Awaiting-input with no pending
-    // question → the human answered and the agent ran another turn without
-    // completing (or died); either way death detection is re-armed. Recover.
+    // A human-in-the-loop run that ends a turn without completing is WAITING on
+    // the human, not dead (D5): no drop monitoring, no recovery, no attempt
+    // consumed. The card stays running until the human acts (or flips it to
+    // unattended, at which point supervision resumes on the same thread).
+    if (found.state.humanInLoop) return;
+    // Unattended, running with no question → died mid-work. Awaiting-input with
+    // no pending question → the human answered and the agent ran another turn
+    // without completing (or died); either way death detection is re-armed.
     yield* recoverStep(found);
   });
 
@@ -743,7 +851,11 @@ const make = Effect.gen(function* () {
     switch (completion.outcome) {
       case "succeeded":
         yield* settleStep({ card, state, outcome: "succeeded" });
-        yield* driveNextStep(card.id, true);
+        // Auto-advance to the next stage in order on a successful unattended run
+        // (D8); the move re-triggers auto-kickoff for the next stage. Then let
+        // the freed slot flow to the queue.
+        yield* advanceStage({ card, state });
+        yield* schedule();
         return;
       case "failed":
         // A clean failure report still enters recovery (D4): retry or escalate.
@@ -777,6 +889,42 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // Mid-run human-in-the-loop toggle (D5/D6): when the per-card Build toggle is
+  // flipped on a card with a live step, send a turn into the LIVE thread — the
+  // `/unattended` stance switching to unattended, the question-friendly stance
+  // switching back — and retune the run row so drop-monitoring and auto-advance
+  // honour the new stance. Slot, worktree and thread are untouched. Only an
+  // EXPLICIT toggle (`card.humanInLoop` non-null and different from the frozen
+  // stance) reacts, so an unrelated card edit never flips a run.
+  const handleCardUpdated = Effect.fn("board-supervisor-handleCardUpdated")(function* (
+    event: Extract<OrchestrationEvent, { type: "board.card-updated" }>,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
+    const state = boardCardStepState(board, event.payload.cardId);
+    if (card === undefined || state === null) return;
+    if (state.status !== "running" && state.status !== "awaiting-input") return;
+    const stage = boardStageById(board, card.stage);
+    const desired =
+      stage?.role === "build" ? (card.humanInLoop ?? state.humanInLoop) : state.humanInLoop;
+    if (desired === state.humanInLoop) return;
+    if (state.threadId !== null) {
+      const questionMechanism = providerQuestionMechanism(state.providerInstanceId);
+      const text = desired
+        ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`
+        : `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${questionMechanism}, and never end a turn with an unanswered question in prose.`;
+      yield* sendTurn({ threadId: state.threadId, text });
+    }
+    yield* dispatch({
+      type: "board.card.retune-step",
+      commandId: yield* commandId("retune-step"),
+      cardId: card.id,
+      stepId: state.stepId,
+      humanInLoop: desired,
+      createdAt: yield* nowIso,
+    });
+  });
+
   const handleArchived = Effect.fn("board-supervisor-handleArchived")(function* (
     event: Extract<OrchestrationEvent, { type: "board.card-archived" }>,
   ) {
@@ -788,6 +936,27 @@ const make = Effect.gen(function* () {
     // The abandoned step released its slot — offer it to whatever is queued.
     yield* schedule();
   });
+
+  // A card was created (D10): if it landed in an auto-executing stage, kick off
+  // exactly as a drag would. The created payload is flat, so re-read the card.
+  const handleCardCreated = Effect.fn("board-supervisor-handleCardCreated")(function* (
+    event: Extract<OrchestrationEvent, { type: "board.card-created" }>,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
+    if (card === undefined) return;
+    yield* beginStageRun({ card, onDemand: false });
+  });
+
+  // On-demand kickoff request (D7): start a thread for the card's current stage.
+  const handleStageThreadRequested = Effect.fn("board-supervisor-handleStageThreadRequested")(
+    function* (event: Extract<OrchestrationEvent, { type: "board.card-stage-thread-requested" }>) {
+      const board = yield* readBoard;
+      const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
+      if (card === undefined) return;
+      yield* beginStageRun({ card, onDemand: true });
+    },
+  );
 
   const reconcile = Effect.gen(function* () {
     const board = yield* readBoard;
@@ -813,13 +982,12 @@ const make = Effect.gen(function* () {
       // holds the slot, and this must run before `schedule` admits anything, so
       // the restored steps count against the ceiling the governor then honours.
       if (state.slotHeld && decision.kind !== "advance") {
-        const provider = stepProvider(card, state.stepId);
-        if (provider !== null) yield* slots.restore(provider.providerInstanceId);
+        yield* slots.restore(state.providerInstanceId);
       }
       switch (decision.kind) {
         case "advance":
           yield* settleStep({ card, state, outcome: "succeeded" });
-          yield* driveNextStep(card.id, true);
+          yield* advanceStage({ card, state });
           break;
         case "recover":
           yield* recoverStep({ card, state });
@@ -847,9 +1015,18 @@ const make = Effect.gen(function* () {
   const processDomainEvent = (event: OrchestrationEvent) => {
     switch (event.type) {
       case "board.card-moved":
-        return event.payload.toStage === "building"
-          ? beginCardBuild(event.payload.card)
-          : Effect.void;
+        // Generic auto-kickoff (D7): a card landing in ANY stage may start a run
+        // — not just Building. The stage's `autoExecute` setting gates it.
+        return beginStageRun({ card: event.payload.card, onDemand: false });
+      case "board.card-created":
+        // Creating a card straight into an auto-executing stage is a real path
+        // now (D10) and must behave identically to a drag.
+        return handleCardCreated(event);
+      case "board.card-stage-thread-requested":
+        // On-demand kickoff (D7), the counterpart of auto-kickoff.
+        return handleStageThreadRequested(event);
+      case "board.card-updated":
+        return handleCardUpdated(event);
       case "board.card-step-completed":
         return handleStepCompleted(event);
       case "board.card-input-requested":
@@ -890,6 +1067,9 @@ const make = Effect.gen(function* () {
       Stream.runForEach(engine.streamDomainEvents, (event) => {
         if (
           event.type !== "board.card-moved" &&
+          event.type !== "board.card-created" &&
+          event.type !== "board.card-stage-thread-requested" &&
+          event.type !== "board.card-updated" &&
           event.type !== "board.card-step-completed" &&
           event.type !== "board.card-input-requested" &&
           event.type !== "board.card-archived"

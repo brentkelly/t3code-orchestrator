@@ -31,7 +31,7 @@ import {
   type BoardLabelId,
   type BoardPlansProposeCommand,
   type BoardPlanWriteCommand,
-  type BoardStage,
+  BOARD_SEED_STAGE_IDS,
   type BoardState,
   type OrchestrationCommand,
   type OrchestrationReadModel,
@@ -325,7 +325,7 @@ export const boardHandlers = {
           cardId: dependencyId,
           key: dependency?.key ?? dependencyId,
           title: dependency?.title ?? dependencyId,
-          stage: dependency?.stage ?? ("backlog" as BoardStage),
+          stage: dependency?.stage ?? BOARD_SEED_STAGE_IDS.backlog,
           met: dependency?.stage === "done",
         };
       });
@@ -463,7 +463,7 @@ export const boardHandlers = {
       const projectTitle = model.projects.find((project) => project.id === projectId)?.title ?? "";
       const board = model.board ?? EMPTY_BOARD_STATE;
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
-      const stage = input.stage ?? ("backlog" as BoardStage);
+      const stage = input.stage ?? BOARD_SEED_STAGE_IDS.backlog;
       // `brief` and `dependsOn` ride a follow-up update (the create command
       // carries neither). Validate the ONE follow-up field that can be
       // rejected — a dependency that does not exist — BEFORE creating the

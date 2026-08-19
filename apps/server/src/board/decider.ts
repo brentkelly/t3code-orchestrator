@@ -24,20 +24,23 @@ import {
   areBoardStagesAdjacent,
   BOARD_CARD_BRIEF_BODY_KIND,
   BOARD_CARD_LABELS_MAX,
-  BOARD_CREATABLE_STAGES,
   boardCardPlans,
   boardCardStepCompletions,
   boardCardStepState,
   boardLabelCatalogue,
   boardPlanId,
+  boardStageById,
   boardStageIndex,
+  boardStages,
+  boardStagesInOrder,
+  boardStageWithRole,
+  compareBoardStages,
   DEFAULT_BOARD_KEY_PREFIX,
   deriveBoardCardBlocked,
   EMPTY_BOARD_STATE,
   EventId,
   isBoardCommand,
-  isBoardCreatableStage,
-  isBoardStageBeforeReady,
+  isBoardStageAtOrAfterBuild,
   isBoardTerminalStepStatus,
   pickNextBoardLabelColour,
   sortBoardCardThreadLinks,
@@ -50,6 +53,8 @@ import {
   type BoardLabelId,
   type BoardPlan,
   type BoardPlanWithBody,
+  type BoardStageDefinition,
+  type BoardStageId,
   type BoardState,
   type BoardStepCompletion,
   type OrchestrationCommand,
@@ -72,9 +77,16 @@ function isBoardLabelCommand(command: BoardCommand): command is BoardLabelComman
   return command.type.startsWith("board.label.");
 }
 
-/** Card-aggregate commands — every board command except the label ones; the
-    only commands that carry a `cardId`. */
-type BoardCardCommand = Exclude<BoardCommand, BoardLabelCommand>;
+/** Stage-aggregate commands (t3o-15) aggregate on the stage — they carry
+    `stageId` instead of `cardId`. Keyed on the `board.stage.` prefix. */
+type BoardStageCommand = Extract<BoardCommand, { type: `board.stage.${string}` }>;
+function isBoardStageCommand(command: BoardCommand): command is BoardStageCommand {
+  return command.type.startsWith("board.stage.");
+}
+
+/** Card-aggregate commands — every board command except the label and stage
+    ones; the only commands that carry a `cardId`. */
+type BoardCardCommand = Exclude<BoardCommand, BoardLabelCommand | BoardStageCommand>;
 
 // Re-exported so upstream seams import predicate + delegate on one line.
 export { isBoardCommand };
@@ -108,11 +120,14 @@ export function boardDecidedEvents(
  * behind the `isBoardCommand` predicate.
  */
 export function boardCommandAggregateRef(command: BoardCommand): {
-  readonly aggregateKind: "card" | "label";
-  readonly aggregateId: BoardCardId | BoardLabelId;
+  readonly aggregateKind: "card" | "label" | "stage";
+  readonly aggregateId: BoardCardId | BoardLabelId | BoardStageId;
 } {
   if (isBoardLabelCommand(command)) {
     return { aggregateKind: "label", aggregateId: command.labelId };
+  }
+  if (isBoardStageCommand(command)) {
+    return { aggregateKind: "stage", aggregateId: command.stageId };
   }
   return { aggregateKind: "card", aggregateId: command.cardId };
 }
@@ -299,6 +314,7 @@ const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(fun
     if (dependent.archivedAt !== null) continue;
     if (!dependent.dependsOn.includes(input.changed.id)) continue;
     const blocked = deriveBoardCardBlocked({
+      board: input.board,
       stage: dependent.stage,
       dependsOn: dependent.dependsOn,
       cards,
@@ -347,10 +363,48 @@ const makeBoardLabelEventBase = Effect.fn("makeBoardLabelEventBase")(function* (
   };
 });
 
+/** Event base for stage events (t3o-15): aggregates on the stage. */
+const makeBoardStageEventBase = Effect.fn("makeBoardStageEventBase")(function* (input: {
+  readonly stageId: BoardStageId;
+  readonly occurredAt: string;
+  readonly commandId: BoardCommand["commandId"];
+}) {
+  const crypto = yield* Crypto.Crypto;
+  const eventId = yield* crypto.randomUUIDv4;
+  return {
+    eventId: EventId.make(eventId),
+    aggregateKind: "stage" as const,
+    aggregateId: input.stageId,
+    occurredAt: input.occurredAt,
+    commandId: input.commandId,
+    causationEventId: null,
+    correlationId: input.commandId,
+    metadata: {},
+  };
+});
+
 /** Live (non-tombstoned) labels — the picker's view, and the set a name
     uniqueness check runs against. */
 function liveBoardLabels(board: BoardState): ReadonlyArray<BoardLabel> {
   return boardLabelCatalogue(board).filter((label) => label.deletedAt === null);
+}
+
+/** Whether a proposed stage ordering keeps the D3 spine invariant: the `build`
+    stage precedes the `review` stage, and the `done` stage is last. Ordinary
+    stages may sit anywhere else. Returned as a human message when violated, or
+    null when the order is valid. */
+function boardStageOrderViolation(stages: ReadonlyArray<BoardStageDefinition>): string | null {
+  const ordered = [...stages].sort(compareBoardStages);
+  const buildIndex = ordered.findIndex((stage) => stage.role === "build");
+  const reviewIndex = ordered.findIndex((stage) => stage.role === "review");
+  const doneIndex = ordered.findIndex((stage) => stage.role === "done");
+  if (buildIndex >= 0 && reviewIndex >= 0 && buildIndex >= reviewIndex) {
+    return "the Build stage must come before the Code review stage";
+  }
+  if (doneIndex >= 0 && doneIndex !== ordered.length - 1) {
+    return "the Done stage must be last";
+  }
+  return null;
 }
 
 /**
@@ -421,15 +475,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         return yield* invariant(command, `Card '${command.cardId}' already exists.`);
       }
 
-      // Cards may be created only into Backlog, Sprint or Planning (t3o-06a):
-      // later stages describe work the board has already started shepherding.
-      // Generalises t3o-03's "no create path may land a card in Building".
-      const stage = command.stage ?? "backlog";
-      if (!isBoardCreatableStage(stage)) {
-        return yield* invariant(
-          command,
-          `Cards can be created only into ${BOARD_CREATABLE_STAGES.join(", ")}; '${stage}' is not a creation stage.`,
-        );
+      // A card may be created into any stage (D10) — `BOARD_CREATABLE_STAGES`
+      // is gone; Mode governs worktree/slot on entry, so creation and dragging
+      // follow an identical path. The target stage must exist.
+      const stage = command.stage ?? boardStagesInOrder(board)[0]!.stageId;
+      if (boardStageById(board, stage) === null) {
+        return yield* invariant(command, `Stage '${stage}' does not exist.`);
       }
 
       const labels = yield* validateCardLabels({
@@ -447,6 +498,19 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       for (const dependencyId of dependsOn) {
         if (!board.cards.some((existing) => existing.id === dependencyId)) {
           return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
+        }
+      }
+
+      // Dependency blocking is unconditional from the `build` role onward (D11):
+      // a card cannot be created directly into a build-or-later stage while it
+      // has unmet dependencies, exactly as it cannot be moved there.
+      if (isBoardStageAtOrAfterBuild(board, stage)) {
+        const unmet = unmetBoardCardDependencies({ board, dependsOn, cards: board.cards });
+        if (unmet.length > 0) {
+          return yield* invariant(
+            command,
+            `Card cannot be created in '${stage}' with unmet dependencies: ${unmet.join(", ")}.`,
+          );
         }
       }
 
@@ -486,33 +550,37 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' is already in stage '${command.toStage}'.`,
         );
       }
-      if (command.override !== true && !areBoardStagesAdjacent(card.stage, command.toStage)) {
+      if (boardStageById(board, command.toStage) === null) {
+        return yield* invariant(command, `Stage '${command.toStage}' does not exist.`);
+      }
+      if (
+        command.override !== true &&
+        !areBoardStagesAdjacent(board, card.stage, command.toStage)
+      ) {
         return yield* invariant(
           command,
           `Stage move '${card.stage}' -> '${command.toStage}' is not adjacent; a drag sends override to force it.`,
         );
       }
-      // Sub-board plan cards (D12) live Ready-onward; no override reopens
-      // the early stages for them.
-      if (card.parentCardId !== null && isBoardStageBeforeReady(command.toStage)) {
+      // Sub-board plan cards (D11) are materialised work, restricted to the
+      // `build` role and beyond; no override reopens the earlier stages.
+      if (card.parentCardId !== null && !isBoardStageAtOrAfterBuild(board, command.toStage)) {
         return yield* invariant(
           command,
           `Card '${command.cardId}' is a sub-board plan card and cannot enter '${command.toStage}'.`,
         );
       }
-      // Unmet dependencies gate the CROSSING of the Ready boundary (D18,
-      // t3o-05): a card may sit blocked in Ready, but never moves from
-      // Ready-or-earlier into the stages beyond it. Moves that stay within
-      // the past-Ready zone — dragging a card backwards from review to
-      // building, say — are not a crossing and stay open, matching the
-      // rule that dependencies gate the hand-off into build, not movement
-      // in general. The message names the unmet dependencies so the client
-      // can say why, not just snap back.
+      // Dependency blocking is unconditional from the `build` role onward (D11):
+      // a card with unmet dependencies cannot enter the build-role stage or
+      // anything after it, whatever the stages are called. A move that stays
+      // before build, or that stays within the build-or-after zone, is not a
+      // crossing and stays open. The message names the unmet dependencies.
       if (
-        boardStageIndex(card.stage) <= boardStageIndex("ready") &&
-        boardStageIndex(command.toStage) > boardStageIndex("ready")
+        !isBoardStageAtOrAfterBuild(board, card.stage) &&
+        isBoardStageAtOrAfterBuild(board, command.toStage)
       ) {
         const unmet = unmetBoardCardDependencies({
+          board,
           dependsOn: card.dependsOn,
           cards: board.cards,
         });
@@ -537,6 +605,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         stage: command.toStage,
         orderKey: command.orderKey ?? card.orderKey,
         blocked: deriveBoardCardBlocked({
+          board,
           stage: command.toStage,
           dependsOn: card.dependsOn,
           cards: board.cards,
@@ -591,7 +660,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.brief === undefined &&
         command.labels === undefined &&
         command.dependsOn === undefined &&
-        command.externalRef === undefined
+        command.externalRef === undefined &&
+        command.humanInLoop === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -644,7 +714,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         blocked:
           proposedDependsOn === undefined
             ? card.blocked
-            : deriveBoardCardBlocked({ stage: card.stage, dependsOn, cards: board.cards }),
+            : deriveBoardCardBlocked({ board, stage: card.stage, dependsOn, cards: board.cards }),
+        humanInLoop: command.humanInLoop === undefined ? card.humanInLoop : command.humanInLoop,
         updatedAt: command.createdAt,
       };
       return {
@@ -806,6 +877,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // Dependencies may have finished while the card sat in the archive;
         // restore with a fresh derivation rather than the stale flag.
         blocked: deriveBoardCardBlocked({
+          board,
           stage: card.stage,
           dependsOn: card.dependsOn,
           cards: board.cards,
@@ -976,6 +1048,143 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         })),
         type: "board.label-undeleted",
         payload: { labelId: command.labelId, label: nextLabel },
+      };
+    }
+
+    // ── Stage aggregate (t3o-15, D2/D3/D9) ───────────────────────────────
+
+    case "board.stage.create": {
+      if (boardStageById(board, command.stageId) !== null) {
+        return yield* invariant(command, `Stage '${command.stageId}' already exists.`);
+      }
+      const stage: BoardStageDefinition = {
+        stageId: command.stageId,
+        label: command.label,
+        role: command.role ?? null,
+        orderKey: command.orderKey,
+        createdAt: command.createdAt,
+        updatedAt: command.createdAt,
+      };
+      // A new role-holder would break "exactly one stage per role"; the three
+      // roles are seeded and never created.
+      if (stage.role !== null && boardStageWithRole(board, stage.role) !== null) {
+        return yield* invariant(
+          command,
+          `A '${stage.role}' stage already exists; roles are unique.`,
+        );
+      }
+      const violation = boardStageOrderViolation([...boardStages(board), stage]);
+      if (violation !== null) {
+        return yield* invariant(command, `Cannot create stage here: ${violation}.`);
+      }
+      return {
+        ...(yield* makeBoardStageEventBase({
+          stageId: command.stageId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.stage-created",
+        payload: { stageId: command.stageId, stage },
+      };
+    }
+
+    case "board.stage.rename": {
+      const stage = boardStageById(board, command.stageId);
+      if (stage === null) {
+        return yield* invariant(command, `Stage '${command.stageId}' does not exist.`);
+      }
+      const nextStage: BoardStageDefinition = {
+        ...stage,
+        label: command.label,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardStageEventBase({
+          stageId: command.stageId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.stage-renamed",
+        payload: { stageId: command.stageId, stage: nextStage },
+      };
+    }
+
+    case "board.stage.reorder": {
+      const stage = boardStageById(board, command.stageId);
+      if (stage === null) {
+        return yield* invariant(command, `Stage '${command.stageId}' does not exist.`);
+      }
+      const nextStage: BoardStageDefinition = {
+        ...stage,
+        orderKey: command.orderKey,
+        updatedAt: command.createdAt,
+      };
+      const nextStages = boardStages(board).map((candidate) =>
+        candidate.stageId === command.stageId ? nextStage : candidate,
+      );
+      const violation = boardStageOrderViolation(nextStages);
+      if (violation !== null) {
+        return yield* invariant(command, `Cannot reorder stage: ${violation}.`);
+      }
+      // Crossing the `build` boundary re-answers "is this card subject to
+      // dependency blocking?" for every card in the stage, and `blocked` is a
+      // stored column — refuse the move rather than leave stale flags (D9).
+      const buildStage = boardStageWithRole(board, "build");
+      if (buildStage !== null && stage.role === null) {
+        const wasAtOrAfter = isBoardStageAtOrAfterBuild(board, stage.stageId);
+        const ordered = [...nextStages].sort(compareBoardStages);
+        const buildIndex = ordered.findIndex((candidate) => candidate.role === "build");
+        const nextIndex = ordered.findIndex((candidate) => candidate.stageId === command.stageId);
+        const willBeAtOrAfter = nextIndex >= 0 && buildIndex >= 0 && nextIndex >= buildIndex;
+        if (wasAtOrAfter !== willBeAtOrAfter) {
+          const held = board.cards.filter((card) => card.stage === command.stageId).length;
+          if (held > 0) {
+            return yield* invariant(
+              command,
+              `Cannot move stage '${stage.label}' across the Build boundary while it holds ${held} card${held === 1 ? "" : "s"}.`,
+            );
+          }
+        }
+      }
+      return {
+        ...(yield* makeBoardStageEventBase({
+          stageId: command.stageId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.stage-reordered",
+        payload: { stageId: command.stageId, stage: nextStage },
+      };
+    }
+
+    case "board.stage.delete": {
+      const stage = boardStageById(board, command.stageId);
+      if (stage === null) {
+        return yield* invariant(command, `Stage '${command.stageId}' does not exist.`);
+      }
+      if (stage.role !== null) {
+        return yield* invariant(
+          command,
+          `Stage '${stage.label}' holds the '${stage.role}' role and cannot be deleted.`,
+        );
+      }
+      // Refused if the stage holds ANY card, archived included (D9). The error
+      // names the count; t3o-13's archive view is how the user clears them.
+      const held = board.cards.filter((card) => card.stage === command.stageId).length;
+      if (held > 0) {
+        return yield* invariant(
+          command,
+          `Stage '${stage.label}' still holds ${held} card${held === 1 ? "" : "s"} (archived included); move them out first.`,
+        );
+      }
+      return {
+        ...(yield* makeBoardStageEventBase({
+          stageId: command.stageId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.stage-deleted",
+        payload: { stageId: command.stageId },
       };
     }
 
@@ -1341,49 +1550,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     // the ordinary `board.card.move` gate the reactor triggers on a successful
     // completion, exactly like the human "Begin build" gate before it.
 
-    case "board.card.snapshot-recipe": {
-      const card = yield* requireActiveBoardCard({ board, command });
-      // The snapshot is for the card's current stage — capturing a recipe for a
-      // stage the card is not in would stamp a pipeline that will never run.
-      if (command.recipe.stage !== card.stage) {
-        return yield* invariant(
-          command,
-          `Recipe snapshot is for stage '${command.recipe.stage}' but card '${command.cardId}' is in '${card.stage}'.`,
-        );
-      }
-      const nextCard: BoardCard = {
-        ...card,
-        recipeSnapshot: command.recipe,
-        updatedAt: command.createdAt,
-      };
-      return {
-        ...(yield* makeBoardEventBase({
-          cardId: command.cardId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "board.card-recipe-snapshotted",
-        payload: { cardId: command.cardId, recipe: command.recipe, card: nextCard },
-      };
-    }
-
     case "board.card.select-step": {
-      const card = yield* requireActiveBoardCard({ board, command });
-      if (card.recipeSnapshot === null) {
-        return yield* invariant(
-          command,
-          `Card '${command.cardId}' has no recipe snapshot; a step cannot be selected before the recipe is stamped.`,
-        );
-      }
-      if (!card.recipeSnapshot.steps.some((step) => step.id === command.stepId)) {
-        return yield* invariant(
-          command,
-          `Step '${command.stepId}' is not in card '${command.cardId}'s recipe snapshot.`,
-        );
-      }
+      yield* requireActiveBoardCard({ board, command });
       // One step at a time (D4): a new step cannot be selected while the card's
       // current step is still live. A terminal step is done and may be
-      // superseded — that is how the next step in a multi-step recipe starts.
+      // superseded — that is how a re-entry starts after the last step settled.
       const current = boardCardStepState(board, command.cardId);
       if (current !== null && !isBoardTerminalStepStatus(current.status)) {
         return yield* invariant(
@@ -1391,12 +1562,20 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' already has a live step '${current.stepId}' (${current.status}); settle it before selecting another.`,
         );
       }
+      // The reactor resolved and froze the stage's execution config (D12); the
+      // decider stamps it onto the run row verbatim.
       const state: BoardCardStepState = {
         cardId: command.cardId,
         stepId: command.stepId,
         stepLabel: command.stepLabel,
         attempt: 1,
+        prompt: command.prompt,
+        providerInstanceId: command.providerInstanceId,
+        model: command.model,
+        mode: command.mode,
+        humanInLoop: command.humanInLoop,
         maxAttempts: command.maxAttempts,
+        timeoutMs: command.timeoutMs,
         threadId: null,
         status: "pending",
         slotHeld: false,
@@ -1411,6 +1590,22 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         })),
         type: "board.card-step-selected",
         payload: { cardId: command.cardId, state },
+      };
+    }
+
+    case "board.card.start-stage-thread": {
+      // On-demand kickoff (D7): validate the card is active and emit the
+      // request event the supervisor reactor reacts to. The reactor decides
+      // first-entry-vs-re-entry and whether the stage auto-executes.
+      const card = yield* requireActiveBoardCard({ board, command });
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-stage-thread-requested",
+        payload: { cardId: command.cardId, stageId: card.stage },
       };
     }
 
@@ -1434,7 +1629,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             ...current,
             status: "running",
             threadId: command.threadId,
-            slotHeld: true,
+            // Only a build-mode step holds a concurrency slot (D5); a plan-mode
+            // step runs read-only with no worktree and no slot.
+            slotHeld: current.mode === "build",
             startedAt: command.createdAt,
             updatedAt: command.createdAt,
           }
@@ -1542,6 +1739,28 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           commandId: command.commandId,
         })),
         type: "board.card-step-settled",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
+    case "board.card.retune-step": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
+      // Slot, worktree and thread are untouched (D5) — only the frozen
+      // human-in-the-loop stance changes, so drop-monitoring and auto-advance
+      // honour the new value.
+      const state: BoardCardStepState = {
+        ...current,
+        humanInLoop: command.humanInLoop,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-retuned",
         payload: { cardId: command.cardId, state },
       };
     }

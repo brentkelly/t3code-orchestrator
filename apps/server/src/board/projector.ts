@@ -30,12 +30,13 @@ import {
   BoardCardWorktreeProvisioningPayload,
   BoardCardWorktreeReadyPayload,
   BoardCardWorktreeReclaimedPayload,
-  BoardCardRecipeSnapshottedPayload,
   BoardCardStepSelectedPayload,
   BoardCardStepAdmittedPayload,
   BoardCardStepAwaitingInputPayload,
   BoardCardStepRecoveredPayload,
   BoardCardStepSettledPayload,
+  BoardCardStepRetunedPayload,
+  BoardCardStageThreadRequestedPayload,
   BoardCardUpdatedPayload,
   boardCardShellFromCard,
   boardLabelCatalogue,
@@ -45,13 +46,20 @@ import {
   BoardLabelUpdatedPayload,
   BoardPlansProposedPayload,
   BoardPlanWrittenPayload,
+  BoardStageCreatedPayload,
+  BoardStageDeletedPayload,
+  BoardStageRenamedPayload,
+  BoardStageReorderedPayload,
+  boardStages,
   compareBoardLabels,
+  compareBoardStages,
   EMPTY_BOARD_STATE,
   isBoardEvent,
   type BoardCard,
   type BoardCardStepState,
   type BoardLabel,
   type BoardPlan,
+  type BoardStageDefinition,
   type BoardStepCompletion,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -108,8 +116,12 @@ const decodeBoardCardWorktreeFailedPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardWorktreeReclaimedPayload = Schema.decodeUnknownEffect(
   BoardCardWorktreeReclaimedPayload,
 );
-const decodeBoardCardRecipeSnapshottedPayload = Schema.decodeUnknownEffect(
-  BoardCardRecipeSnapshottedPayload,
+const decodeBoardStageCreatedPayload = Schema.decodeUnknownEffect(BoardStageCreatedPayload);
+const decodeBoardStageRenamedPayload = Schema.decodeUnknownEffect(BoardStageRenamedPayload);
+const decodeBoardStageReorderedPayload = Schema.decodeUnknownEffect(BoardStageReorderedPayload);
+const decodeBoardStageDeletedPayload = Schema.decodeUnknownEffect(BoardStageDeletedPayload);
+const decodeBoardCardStageThreadRequestedPayload = Schema.decodeUnknownEffect(
+  BoardCardStageThreadRequestedPayload,
 );
 const decodeBoardCardStepSelectedPayload = Schema.decodeUnknownEffect(BoardCardStepSelectedPayload);
 const decodeBoardCardStepAdmittedPayload = Schema.decodeUnknownEffect(BoardCardStepAdmittedPayload);
@@ -120,6 +132,7 @@ const decodeBoardCardStepRecoveredPayload = Schema.decodeUnknownEffect(
   BoardCardStepRecoveredPayload,
 );
 const decodeBoardCardStepSettledPayload = Schema.decodeUnknownEffect(BoardCardStepSettledPayload);
+const decodeBoardCardStepRetunedPayload = Schema.decodeUnknownEffect(BoardCardStepRetunedPayload);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -160,9 +173,10 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     parentCardId: null,
     threadLinks: [],
     externalRef: null,
-    recipeSnapshot: null,
-    // A created card never has a worktree: it is provisioned lazily on entry
-    // to Building (D6, t3o-09), never at birth.
+    // Per-card human-in-the-loop override is untouched at birth (D6).
+    humanInLoop: null,
+    // A created card never has a worktree: it is provisioned lazily on its
+    // first `build`-mode stage entry (D5/D6), never at birth.
     worktree: null,
     blocked: false,
     archivedAt: null,
@@ -195,6 +209,32 @@ function upsertLabel(model: OrchestrationReadModel, label: BoardLabel): Orchestr
       : [...catalogue, label]
   ).toSorted(compareBoardLabels);
   return { ...model, board: { ...board, labels } };
+}
+
+/** Upsert a stage definition into the in-memory model (t3o-15), keeping the
+    slice in canonical `compareBoardStages` order so replay equals rehydration. */
+function upsertStage(
+  model: OrchestrationReadModel,
+  stage: BoardStageDefinition,
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const current = boardStages(board);
+  const stages = (
+    current.some((existing) => existing.stageId === stage.stageId)
+      ? current.map((existing) => (existing.stageId === stage.stageId ? stage : existing))
+      : [...current, stage]
+  ).toSorted(compareBoardStages);
+  return { ...model, board: { ...board, stages } };
+}
+
+/** Remove a stage definition from the in-memory model (t3o-15). */
+function removeStage(
+  model: OrchestrationReadModel,
+  stageId: BoardStageDefinition["stageId"],
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const stages = boardStages(board).filter((stage) => stage.stageId !== stageId);
+  return { ...model, board: { ...board, stages } };
 }
 
 /** Counter bump on create: monotonic max, so replaying a legacy event
@@ -466,10 +506,36 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
-    case "board.card-recipe-snapshotted":
-      return decodeBoardCardRecipeSnapshottedPayload(event.payload).pipe(
+    case "board.stage-created":
+      return decodeBoardStageCreatedPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
-        Effect.map((payload) => upsertCard(model, payload.card)),
+        Effect.map((payload) => upsertStage(model, payload.stage)),
+      );
+
+    case "board.stage-renamed":
+      return decodeBoardStageRenamedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStage(model, payload.stage)),
+      );
+
+    case "board.stage-reordered":
+      return decodeBoardStageReorderedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStage(model, payload.stage)),
+      );
+
+    case "board.stage-deleted":
+      return decodeBoardStageDeletedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => removeStage(model, payload.stageId)),
+      );
+
+    case "board.card-stage-thread-requested":
+      // A request signal only — the reactor reacts; the read model is unchanged.
+      // Decoded to fail loudly on a malformed event.
+      return decodeBoardCardStageThreadRequestedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.as(model),
       );
 
     case "board.card-step-selected":
@@ -498,6 +564,12 @@ export function projectBoardEvent(
 
     case "board.card-step-settled":
       return decodeBoardCardStepSettledPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
+    case "board.card-step-retuned":
+      return decodeBoardCardStepRetunedPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
@@ -542,14 +614,28 @@ export function boardShellStreamEvent(
     case "board.card-worktree-ready":
     case "board.card-worktree-failed":
     case "board.card-worktree-reclaimed":
-    // The recipe snapshot is card DETAIL, not a bounded shell field, but the
-    // event carries the whole card so re-upserting keeps any shell field that
-    // did change consistent — the same pattern as the worktree events.
-    case "board.card-recipe-snapshotted":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
         card: boardCardShellFromCard(event.payload.card),
+      });
+
+    case "board.stage-created":
+    case "board.stage-renamed":
+    case "board.stage-reordered":
+      // Stage aggregate delta (t3o-15): the full post-change stage rides once,
+      // so the board reads column order and labels from the read model (D13).
+      return Option.some({
+        kind: "stage-upserted",
+        sequence: event.sequence,
+        stage: event.payload.stage,
+      });
+
+    case "board.stage-deleted":
+      return Option.some({
+        kind: "stage-removed",
+        sequence: event.sequence,
+        stageId: event.payload.stageId,
       });
 
     case "board.card-archived":
@@ -594,6 +680,7 @@ export function boardShellStreamEvent(
     case "board.card-step-completed":
     case "board.plans-proposed":
     case "board.plan-written":
+    case "board.card-stage-thread-requested":
     // Step-lifecycle events (t3o-10) are card DETAIL — the live step status
     // rides board.subscribeCard, not a column-card shell field (D7 payload
     // discipline). The column card's thread-derived indicators already reflect
@@ -603,6 +690,7 @@ export function boardShellStreamEvent(
     case "board.card-step-awaiting-input":
     case "board.card-step-recovered":
     case "board.card-step-settled":
+    case "board.card-step-retuned":
       // Agent write-path events are card DETAIL, not column-card shell fields
       // (D7): an agent's progress note, step completion or plan set changes
       // nothing a column card renders, so they emit no shell delta. They reach

@@ -7,9 +7,10 @@
  * @module OrchestrationCommandReceiptRepository
  */
 import {
-  // T3o: card + label aggregate ids (D9 / t3o-06a).
+  // T3o: card + label + stage aggregate ids (D9 / t3o-06a / t3o-15).
   BoardCardId,
   BoardLabelId,
+  BoardStageId,
   CommandId,
   IsoDateTime,
   NonNegativeInt,
@@ -29,8 +30,9 @@ export const OrchestrationCommandReceipt = Schema.Struct({
   commandId: CommandId,
   aggregateKind: OrchestrationAggregateKind,
   // T3o: BoardCardId appended for card-aggregate receipts (D9); BoardLabelId
-  // for the label aggregate (t3o-06a). Frozen widening.
-  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId]),
+  // for the label aggregate (t3o-06a); BoardStageId for the stage aggregate
+  // (t3o-15). Frozen widening.
+  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId, BoardStageId]),
   acceptedAt: IsoDateTime,
   resultSequence: NonNegativeInt,
   status: OrchestrationCommandReceiptStatus,

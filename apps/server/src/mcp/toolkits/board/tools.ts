@@ -20,7 +20,7 @@ import {
   BoardCardId,
   BoardPlan,
   BoardProposedPlanInput,
-  BoardStage,
+  BoardStageId,
   BoardStepCompletion,
   BoardStepOutcome,
   ProjectId,
@@ -73,7 +73,7 @@ const BoardCardContextDependency = Schema.Struct({
   cardId: BoardCardId,
   key: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
-  stage: BoardStage,
+  stage: BoardStageId,
   /** True when the dependency is Done (no longer blocking). */
   met: Schema.Boolean,
 });
@@ -98,7 +98,7 @@ const BoardCardListItem = Schema.Struct({
   key: TrimmedNonEmptyString,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
-  stage: BoardStage,
+  stage: BoardStageId,
   blocked: Schema.Boolean,
 });
 
@@ -190,7 +190,7 @@ export const BoardListCardsTool = Tool.make("board_list_cards", {
     "List board cards, optionally filtered by project, stage, key, or a free-text match on the title. Use it to find a card id before creating a dependency or moving a card. Returns bounded summaries — fetch full context for one card with board_get_card_context (yours) or open it in the app.",
   parameters: Schema.Struct({
     projectId: Schema.optional(ProjectId),
-    stage: Schema.optional(BoardStage),
+    stage: Schema.optional(BoardStageId),
     key: Schema.optional(TrimmedNonEmptyString),
     text: Schema.optional(TrimmedNonEmptyString),
   }),
@@ -223,7 +223,7 @@ export const BoardCreateCardTool = Tool.make("board_create_card", {
     brief: Schema.optional(TrimmedNonEmptyString),
     /** Label NAMES against the catalogue; unknown names are rejected. */
     labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
-    stage: Schema.optional(BoardStage),
+    stage: Schema.optional(BoardStageId),
     dependsOn: Schema.optional(Schema.Array(BoardCardId)),
   }),
   success: Schema.Struct({ cardId: BoardCardId, key: TrimmedNonEmptyString }),
@@ -236,10 +236,10 @@ export const BoardMoveCardTool = Tool.make("board_move_card", {
     "Move a card to another stage, subject to the same rules a human drag obeys: a blocked card (unmet dependencies) cannot cross into Building or beyond, and you have no privileged path around that. Set override to move to a non-adjacent stage (e.g. dragging backwards). Note that most forward transitions are human-gated by design; use this for board tidying, not to advance your own work past a gate.",
   parameters: Schema.Struct({
     cardId: BoardCardId,
-    toStage: BoardStage,
+    toStage: BoardStageId,
     override: Schema.optional(Schema.Boolean),
   }),
-  success: Schema.Struct({ cardId: BoardCardId, stage: BoardStage }),
+  success: Schema.Struct({ cardId: BoardCardId, stage: BoardStageId }),
   failure: BoardToolError,
   dependencies,
 }).annotate(Tool.Title, "Move board card");

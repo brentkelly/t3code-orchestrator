@@ -32,6 +32,7 @@ import {
   BoardCardShell,
   BoardLabel,
   BoardLabelId,
+  BoardStageId,
   BoardState,
   makeBoardOrchestrationEvents,
 } from "./board.ts";
@@ -1084,8 +1085,15 @@ export const OrchestrationEventType = Schema.Literals([
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
 // T3o: cards are a new aggregate (D9) — "card" appended to the literals;
-// "label" appended for the second board aggregate (t3o-06a). Frozen widening.
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "card", "label"]);
+// "label" appended for the second board aggregate (t3o-06a); "stage" appended
+// for the user-defined stage aggregate (t3o-15). Frozen widening.
+export const OrchestrationAggregateKind = Schema.Literals([
+  "project",
+  "thread",
+  "card",
+  "label",
+  "stage",
+]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -1326,8 +1334,10 @@ const EventBaseFields = {
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
   // T3o: BoardCardId appended for card-aggregate events (D9); BoardLabelId for
-  // the label aggregate (t3o-06a). Frozen widening.
-  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId]),
+  // the label aggregate (t3o-06a); BoardStageId for the stage aggregate
+  // (t3o-15). Frozen widening — the aggregateId union tracks
+  // `OrchestrationAggregateKind` member-for-member.
+  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId, BoardStageId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
