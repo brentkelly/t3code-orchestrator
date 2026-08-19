@@ -185,6 +185,26 @@ The executor stays pure: it puts both SHAs in the prompt, and the agent runs the
 `round` lives in t3o-15's `runState`, stamped by the executor. Both are bounded and both end at a
 human; conflating them would give 3 attempts × N rounds × 3 phases of ambiguity on the card.
 
+**Round-scoped step ids are what make this work against the existing completion key**, and they are
+the whole answer to the collision this spec was deferred over. `BoardStepCompletion` is keyed
+`(cardId, stepId)` with first-outcome-wins idempotency (`board.ts:1101`): a second completion for
+`(card, "review")` is discarded and the first outcome re-emitted, so round 2 could neither record its
+result nor be seen by the executor reading `completions`.
+
+The executor therefore mints `stepId` as `<phase>@<round>` — `review@1`, `triage@1`, `review@2` — so
+every phase of every round is a distinct key. The decider's idempotency then does exactly the right
+thing at both levels: a single agent double-calling `board_complete_step` within one phase is still
+deduplicated, while two rounds of the same phase are two independent records.
+
+`stepId` is already a free `TrimmedNonEmptyString` on the completion, the run row and the
+`select-step` command, so **this needs no schema change, no new column and no decider edit** — which
+is what keeps D1's "the reactor is unmodified" promise honest. `stepLabel` carries the human form
+(`Review · round 2`).
+
+The alternatives considered and rejected: a `runId` or round column on the completion (a schema and
+decider change, for a distinction the id can already express), and tracking loop state outside the
+completion table (a second source of truth for something the completions already record).
+
 Exhausting the round cap completes the stage with outcome `blocked`: the card stays in Code review,
 does not auto-advance (t3o-15 D8 advances only on success), and its unresolved findings stay visible.
 
@@ -205,19 +225,21 @@ This is the UI half of D6 — with no PR, the board is the only place findings c
 3. A card whose review pass reports no blocking findings completes the stage after **one** agent
    invocation — triage and adjudicate never run.
 4. A card reporting only `nitpick` findings also converges.
-5. A card needing two rounds records **both** rounds' completions, and both are visible on the card —
-   the round-1/round-2 collision does not occur.
-6. Exhausting `rounds` completes the stage `blocked`, leaves the card in Code review, does not
+5. A card needing two rounds records **both** rounds' completions under distinct `<phase>@<round>`
+   step ids, and both are visible on the card — the round-1/round-2 collision does not occur.
+6. Within a single phase, an agent calling `board_complete_step` twice is still deduplicated to the
+   first outcome.
+7. Exhausting `rounds` completes the stage `blocked`, leaves the card in Code review, does not
    auto-advance, and leaves open findings visible.
-7. A phase completing with a malformed or absent payload fails and is retried by the recovery ladder;
+8. A phase completing with a malformed or absent payload fails and is retried by the recovery ladder;
    it is never read as "no findings".
-8. `ReviewLoopExecutor.planNext` is unit-tested purely — a completions array in, a decision out, with
+9. `ReviewLoopExecutor.planNext` is unit-tested purely — a completions array in, a decision out, with
    no reactor, database, git or thread.
-9. `grep` finds no branch on the `review` role outside the executor registry and the settings panel.
-10. The supervisor reactor, decider, projector and MCP toolkit are **unmodified** by this spec.
-11. The loop holds exactly one concurrency slot for its whole run, released once at the terminal
+10. `grep` finds no branch on the `review` role outside the executor registry and the settings panel.
+11. The supervisor reactor, decider, projector and MCP toolkit are **unmodified** by this spec.
+12. The loop holds exactly one concurrency slot for its whole run, released once at the terminal
     outcome, whatever the round count.
-12. Every t3o-15 behaviour is unchanged for non-review stages.
+13. Every t3o-15 behaviour is unchanged for non-review stages.
 
 ### Watched-run items
 
