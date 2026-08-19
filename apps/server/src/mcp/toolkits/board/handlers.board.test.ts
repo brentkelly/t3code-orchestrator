@@ -293,6 +293,80 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_list_projects returns the seeded project's id, title and workspace root", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const { projects } = yield* boardHandlers.board_list_projects().pipe(withScope(orphanThread));
+      const project = projects.find((candidate) => candidate.projectId === projectId);
+      assert.isDefined(project);
+      assert.strictEqual(project?.title, "Project A");
+      assert.strictEqual(project?.workspaceRoot, "/tmp/project-a");
+    }),
+  );
+
+  it.effect("board_create_card with no projectId lands in the calling thread's project", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // linkedThread belongs to project-a; omitting projectId must resolve to
+      // it from the thread, not require the agent to know the id.
+      const created = yield* boardHandlers
+        .board_create_card({ title: "Thread-default card", stage: "sprint" })
+        .pipe(withScope(linkedThread));
+      const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(linkedThread));
+      const card = listed.cards.find((candidate) => candidate.cardId === created.cardId);
+      assert.strictEqual(card?.projectId, projectId);
+    }),
+  );
+
+  it.effect("board_create_card resolves a project by title and by workspace folder name", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // A value copied from the app — the title, or a path whose last segment
+      // is the workspace folder — resolves to the id (orphanThread has no
+      // project of its own, so only the passed value can resolve it).
+      const byTitle = yield* boardHandlers
+        .board_create_card({ projectId: ProjectId.make("Project A"), title: "By title" })
+        .pipe(withScope(orphanThread));
+      const byPath = yield* boardHandlers
+        .board_create_card({
+          projectId: ProjectId.make("/somewhere/else/project-a"),
+          title: "By path",
+        })
+        .pipe(withScope(orphanThread));
+      const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(orphanThread));
+      const titleCard = listed.cards.find((candidate) => candidate.cardId === byTitle.cardId);
+      const pathCard = listed.cards.find((candidate) => candidate.cardId === byPath.cardId);
+      assert.strictEqual(titleCard?.projectId, projectId);
+      assert.strictEqual(pathCard?.projectId, projectId);
+    }),
+  );
+
+  it.effect("board_create_card rejects an unresolvable project with the live project list", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_create_card({ projectId: ProjectId.make("does-not-exist"), title: "Nope" })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      // Handed the id AND title so the agent can retry with the real id.
+      assert.include(failure.message, projectId);
+      assert.include(failure.message, "Project A");
+    }),
+  );
+
+  it.effect("board_create_card with no projectId from an unlinked thread lists the projects", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const failure = yield* Effect.flip(
+        boardHandlers.board_create_card({ title: "Homeless" }).pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, projectId);
+    }),
+  );
+
   it.effect("the agent write path replays identically from an empty read model (D8)", () =>
     Effect.gen(function* () {
       yield* seed();

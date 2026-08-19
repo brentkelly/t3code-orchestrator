@@ -102,6 +102,15 @@ const BoardCardListItem = Schema.Struct({
   blocked: Schema.Boolean,
 });
 
+/** A project as an agent needs to identify it: the id to pass to
+    board_create_card, plus the human-readable title and workspace root it sees
+    in the app so it can map either one to the id. */
+const BoardProjectListItem = Schema.Struct({
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+});
+
 // ── Card-scoped tools ──────────────────────────────────────────────────
 
 /**
@@ -193,11 +202,23 @@ export const BoardListCardsTool = Tool.make("board_list_cards", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Idempotent, true);
 
+export const BoardListProjectsTool = Tool.make("board_list_projects", {
+  description:
+    "List the projects on this server — each project's id, title, and workspace root. Call this to find the projectId to pass to board_create_card: the id is a UUID, NOT the title or folder name shown in the app, so never guess it from a name. Returns every non-deleted project.",
+  parameters: NoParameters,
+  success: Schema.Struct({ projects: Schema.Array(BoardProjectListItem) }),
+  failure: BoardToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "List projects")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Idempotent, true);
+
 export const BoardCreateCardTool = Tool.make("board_create_card", {
   description:
-    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. A card can be created ONLY into Backlog, Sprint, or Planning (omit stage for Backlog); you cannot inject work mid-pipeline — later stages are reached only by moving a card, which a human gates. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created. dependsOn lists card ids this card waits on.",
+    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card can be created ONLY into Backlog, Sprint, or Planning (omit stage for Backlog); you cannot inject work mid-pipeline — later stages are reached only by moving a card, which a human gates. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created. dependsOn lists card ids this card waits on.",
   parameters: Schema.Struct({
-    projectId: ProjectId,
+    projectId: Schema.optional(ProjectId),
     title: TrimmedNonEmptyString,
     brief: Schema.optional(TrimmedNonEmptyString),
     /** Label NAMES against the catalogue; unknown names are rejected. */
@@ -283,6 +304,7 @@ export const BoardToolkit = Toolkit.make(
   BoardReportProgressTool,
   BoardCompleteStepTool,
   BoardRequestInputTool,
+  BoardListProjectsTool,
   BoardListCardsTool,
   BoardCreateCardTool,
   BoardMoveCardTool,
