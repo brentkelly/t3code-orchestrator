@@ -1127,21 +1127,27 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         return yield* invariant(command, `Cannot reorder stage: ${violation}.`);
       }
       // Crossing the `build` boundary re-answers "is this card subject to
-      // dependency blocking?" for every card in the stage, and `blocked` is a
-      // stored column — refuse the move rather than leave stale flags (D9).
+      // dependency blocking?", and `blocked` is a stored column re-derived only
+      // at a card move — refuse the reorder rather than leave stale flags (D9).
+      // Moving an ordinary stage flips its own membership; moving the `build`
+      // stage itself flips every stage that ends up on the other side of it, so
+      // the guard checks EVERY stage whose at-or-after-build status changes, not
+      // just the one being moved.
       const buildStage = boardStageWithRole(board, "build");
-      if (buildStage !== null && stage.role === null) {
-        const wasAtOrAfter = isBoardStageAtOrAfterBuild(board, stage.stageId);
-        const ordered = [...nextStages].sort(compareBoardStages);
-        const buildIndex = ordered.findIndex((candidate) => candidate.role === "build");
-        const nextIndex = ordered.findIndex((candidate) => candidate.stageId === command.stageId);
-        const willBeAtOrAfter = nextIndex >= 0 && buildIndex >= 0 && nextIndex >= buildIndex;
-        if (wasAtOrAfter !== willBeAtOrAfter) {
-          const held = board.cards.filter((card) => card.stage === command.stageId).length;
+      if (buildStage !== null) {
+        const nextBoard: BoardState = { ...board, stages: nextStages };
+        for (const candidate of boardStages(board)) {
+          const wasAtOrAfter = isBoardStageAtOrAfterBuild(board, candidate.stageId);
+          const willBeAtOrAfter = isBoardStageAtOrAfterBuild(nextBoard, candidate.stageId);
+          if (wasAtOrAfter === willBeAtOrAfter) continue;
+          const held = board.cards.filter((card) => card.stage === candidate.stageId).length;
           if (held > 0) {
+            const moved = candidate.stageId === command.stageId;
             return yield* invariant(
               command,
-              `Cannot move stage '${stage.label}' across the Build boundary while it holds ${held} card${held === 1 ? "" : "s"}.`,
+              moved
+                ? `Cannot move stage '${stage.label}' across the Build boundary while it holds ${held} card${held === 1 ? "" : "s"}.`
+                : `Cannot move stage '${stage.label}' across the Build boundary: it would leave ${held} card${held === 1 ? "" : "s"} in '${candidate.label}' with a stale blocked flag.`,
             );
           }
         }

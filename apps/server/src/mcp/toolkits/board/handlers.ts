@@ -32,6 +32,7 @@ import {
   type BoardPlansProposeCommand,
   type BoardPlanWriteCommand,
   BOARD_SEED_STAGE_IDS,
+  boardStageWithRole,
   type BoardState,
   type OrchestrationCommand,
   type OrchestrationReadModel,
@@ -319,6 +320,9 @@ export const boardHandlers = {
       const activity = yield* deps.board
         .boardCardActivity(card.id)
         .pipe(Effect.mapError(internalError));
+      // A dependency is satisfied when it sits in the `done`-role stage — keyed
+      // on the role, not on a stage literally named "done" (D3).
+      const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
       const dependencies = card.dependsOn.map((dependencyId) => {
         const dependency = board.cards.find((candidate) => candidate.id === dependencyId);
         return {
@@ -326,7 +330,7 @@ export const boardHandlers = {
           key: dependency?.key ?? dependencyId,
           title: dependency?.title ?? dependencyId,
           stage: dependency?.stage ?? BOARD_SEED_STAGE_IDS.backlog,
-          met: dependency?.stage === "done",
+          met: doneStageId !== null && dependency?.stage === doneStageId,
         };
       });
       return {

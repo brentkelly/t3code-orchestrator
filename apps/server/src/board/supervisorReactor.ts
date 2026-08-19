@@ -323,6 +323,8 @@ const make = Effect.gen(function* () {
       readonly stepLabel: string;
       readonly providerInstanceId: BoardCardStepState["providerInstanceId"];
       readonly model: string;
+      /** Frozen run-row mode (D5/D12): governs the runtime write posture. */
+      readonly mode: BoardCardStepState["mode"];
     };
     /** Where the thread runs: the card's worktree for a `build`-mode step, the
         project workspace root for a `plan`-mode step (no worktree, D5). */
@@ -337,6 +339,14 @@ const make = Effect.gen(function* () {
     const { card, step } = input;
     const threadId = yield* freshThreadId;
     const createdAt = yield* nowIso;
+    // Mode governs the write posture (D5): a `build` step owns an isolated
+    // worktree and runs full-access; a `plan` step runs in the SHARED project
+    // root with no worktree, so it takes the least-privileged posture — every
+    // edit gated behind approval — to honour the read-only contract and keep a
+    // planning agent from dirtying the shared checkout. Tool access stays
+    // `interactionMode: "default"` either way (the plan prompt needs its MCP
+    // write tools; that is a separate axis from filesystem writes).
+    const runtimeMode = step.mode === "build" ? "full-access" : "approval-required";
     yield* dispatch({
       type: "thread.turn.start",
       commandId: yield* commandId("spawn-turn"),
@@ -347,14 +357,14 @@ const make = Effect.gen(function* () {
         text: input.text,
         attachments: [],
       },
-      runtimeMode: "full-access",
+      runtimeMode,
       interactionMode: "default",
       bootstrap: {
         createThread: {
           projectId: card.projectId,
           title: `${card.key} · ${step.stepLabel}`,
           modelSelection: { instanceId: step.providerInstanceId, model: step.model },
-          runtimeMode: "full-access",
+          runtimeMode,
           interactionMode: "default",
           branch: input.branch,
           worktreePath: input.worktreePath,
@@ -470,6 +480,7 @@ const make = Effect.gen(function* () {
         stepLabel: state.stepLabel,
         providerInstanceId: state.providerInstanceId,
         model: state.model,
+        mode: state.mode,
       },
       worktreePath: input.worktreePath,
       branch: card.worktree?.branch ?? null,
@@ -511,6 +522,7 @@ const make = Effect.gen(function* () {
         stepLabel: state.stepLabel,
         providerInstanceId: state.providerInstanceId,
         model: state.model,
+        mode: state.mode,
       },
       worktreePath: cwd,
       branch: null,
@@ -782,6 +794,7 @@ const make = Effect.gen(function* () {
             stepLabel: input.state.stepLabel,
             providerInstanceId: input.state.providerInstanceId,
             model: input.state.model,
+            mode: input.state.mode,
           },
           worktreePath: respawnTarget.worktreePath,
           branch: respawnTarget.branch,

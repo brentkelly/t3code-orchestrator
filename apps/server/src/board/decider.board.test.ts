@@ -1359,6 +1359,64 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  // ── Stage reorder across the Build boundary (t3o-15, D9) ─────────────
+
+  const reorderStage = (stageId: string, orderKey: string) =>
+    ({
+      type: "board.stage.reorder",
+      commandId: CommandId.make(`cmd-reorder-${stageId}`),
+      stageId: BoardStageId.make(stageId),
+      orderKey,
+      createdAt: NOW,
+    }) as const;
+
+  it.effect(
+    "refuses moving the build-role stage itself when it would strand a card's blocked flag (D9)",
+    () =>
+      Effect.gen(function* () {
+        // Seed stages resolve from BOARD_SEED_STAGES: sprint (d) sits before
+        // building (j). Moving building to "c" puts it before sprint, flipping
+        // sprint from before-build to after-build. A card in sprint would then
+        // carry a stale `blocked` flag, so the reorder is refused — the guard
+        // must cover the build stage moving, not just ordinary stages crossing.
+        const held = makeReadModel({
+          board: {
+            cards: [makeCard({ id: "card-1", stage: "sprint" })],
+            nextCardNumberByProject: {},
+          },
+        });
+        const failure = yield* decideFail(reorderStage("building", "c"), held);
+        assert.include(String(failure), "Build boundary");
+
+        // With sprint empty, the same reorder lands.
+        const empty = makeReadModel({ board: { cards: [], nextCardNumberByProject: {} } });
+        const event = yield* decide(reorderStage("building", "c"), empty);
+        assert.strictEqual(event.type, "board.stage-reordered");
+      }),
+  );
+
+  it.effect(
+    "refuses moving an ordinary stage across the build boundary while it holds cards (D9)",
+    () =>
+      Effect.gen(function* () {
+        // Move sprint (before build) to "k", between building (j) and review (l),
+        // i.e. across the boundary. A card sits in sprint → refused.
+        const held = makeReadModel({
+          board: {
+            cards: [makeCard({ id: "card-1", stage: "sprint" })],
+            nextCardNumberByProject: {},
+          },
+        });
+        const failure = yield* decideFail(reorderStage("sprint", "k"), held);
+        assert.include(String(failure), "Build boundary");
+
+        // Empty sprint crosses freely.
+        const empty = makeReadModel({ board: { cards: [], nextCardNumberByProject: {} } });
+        const event = yield* decide(reorderStage("sprint", "k"), empty);
+        assert.strictEqual(event.type, "board.stage-reordered");
+      }),
+  );
+
   // ── Creation stages (t3o-15, D10) ────────────────────────────────────
 
   it.effect("accepts a create into any stage — BOARD_CREATABLE_STAGES is deleted (D10)", () =>
