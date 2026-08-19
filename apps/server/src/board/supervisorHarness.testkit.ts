@@ -160,6 +160,12 @@ export type Harness = {
   readonly pumpDomain: (event: OrchestrationEvent) => Effect.Effect<void>;
   readonly pumpRuntime: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   readonly board: Effect.Effect<BoardState>;
+  /** Every non-board command the reactor dispatched, in order — `thread.turn.start`
+      and friends. Board commands are observable through `board`; these are not,
+      and the thread bootstrap they carry (worktree, branch, runtime and
+      interaction modes) is exactly what decides what KIND of thread a spawn
+      produces. Without this the reactor's bootstrap is untestable by construction. */
+  readonly threadCommands: Effect.Effect<ReadonlyArray<OrchestrationCommand>>;
 };
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
@@ -171,6 +177,7 @@ export function withGovernor(
     const model = yield* Ref.make(readModel(input.board));
     const shells = yield* Ref.make<ReadonlyMap<string, OrchestrationThreadShell>>(new Map());
     const seq = yield* Ref.make(0);
+    const threadCommandLog = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
     const domainQueue = yield* Queue.unbounded<OrchestrationEvent>();
     const runtimeQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
 
@@ -221,7 +228,9 @@ export function withGovernor(
                 Effect.forEach(boardDecidedEvents(decided), applyDecided, { discard: true }),
               ),
             )
-          : materializeThread(command)
+          : Ref.update(threadCommandLog, (log) => [...log, command]).pipe(
+              Effect.andThen(materializeThread(command)),
+            )
         ).pipe(Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence }))))),
       streamDomainEvents: Stream.fromQueue(domainQueue),
       latestSequence: Ref.get(seq),
@@ -304,6 +313,7 @@ export function withGovernor(
           pumpDomain: (event) =>
             projectExternal(event).pipe(Effect.andThen(pump(Queue.offer(domainQueue, event)))),
           pumpRuntime: (event) => pump(Queue.offer(runtimeQueue, event)),
+          threadCommands: Ref.get(threadCommandLog),
           board: Ref.get(model).pipe(
             Effect.map(
               (m) => m.board ?? ({ cards: [], nextCardNumberByProject: {} } satisfies BoardState),

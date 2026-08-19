@@ -20,7 +20,14 @@
  *   - D6: created-into-Planning spawns exactly like moved-into-Planning.
  *   - D18 still holds: nothing here moves a card across a stage boundary.
  */
-import { BoardCardId, DEFAULT_BOARD_PLANNING_STEP } from "@t3tools/contracts";
+import {
+  BOARD_PLANNING_THREAD_INTERACTION_MODE,
+  BOARD_PLANNING_THREAD_RUNTIME_MODE,
+  BoardCardId,
+  DEFAULT_BOARD_PLANNING_STEP,
+  boardPlanningThreadTitle,
+  composeBoardPlanningPrompt,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -65,6 +72,68 @@ it.effect("a card moved into Planning gets a planning thread, linked with the st
         const links = liveThreadLinks(yield* board, id);
         assert.strictEqual(links.length, 1);
         assert.strictEqual(links[0]!.role, DEFAULT_BOARD_PLANNING_STEP.id);
+      }),
+  ),
+);
+
+// ── The bootstrap: what KIND of thread a spawn produces ─────────────────────
+// The web client's "restart planning" builds the same payload
+// (`apps/web/src/board/boardCardThreadSpawn.ts`, covered by its own test). These
+// two suites are the cross-check: the fields are stated in both places, so both
+// places assert them. The shared pieces — prompt, title, and the two modes —
+// are compared against their contracts composers rather than against literals,
+// so a change there fails on whichever side forgot to follow.
+it.effect("spawns onto the project workspace, read-only, with the shared envelope", () =>
+  withGovernor(
+    {
+      board: { cards: [planningCard("card-1")], nextCardNumberByProject: {} },
+      settings: planningSettings,
+    },
+    ({ pumpDomain, threadCommands }) =>
+      Effect.gen(function* () {
+        const card = planningCard("card-1");
+        yield* pumpDomain(movedToPlanning(card, 1));
+
+        const started = (yield* threadCommands).find(
+          (command) => (command as { readonly type: string }).type === "thread.turn.start",
+        ) as
+          | {
+              readonly message: { readonly text: string };
+              readonly runtimeMode: string;
+              readonly interactionMode: string;
+              readonly bootstrap?: { readonly createThread?: Record<string, unknown> };
+            }
+          | undefined;
+        assert.isDefined(started);
+
+        const created = started!.bootstrap?.createThread;
+        assert.isDefined(created);
+        // No worktree and no branch: planning is a conversation about a card that
+        // may never be built.
+        assert.strictEqual(created!["worktreePath"], null);
+        assert.strictEqual(created!["branch"], null);
+        assert.strictEqual(created!["projectId"], card.projectId);
+        assert.strictEqual(
+          created!["title"],
+          boardPlanningThreadTitle(card, DEFAULT_BOARD_PLANNING_STEP),
+        );
+        assert.deepStrictEqual(created!["modelSelection"], {
+          instanceId: DEFAULT_BOARD_PLANNING_STEP.providerInstanceId,
+          model: DEFAULT_BOARD_PLANNING_STEP.model,
+        });
+        // It runs on the SHARED working tree with nothing human-gating its start,
+        // so it must not be able to write unattended — `full-access` here would be
+        // Codex's danger-full-access sandbox on the user's real checkout.
+        assert.strictEqual(BOARD_PLANNING_THREAD_RUNTIME_MODE, "approval-required");
+        assert.strictEqual(started!.runtimeMode, BOARD_PLANNING_THREAD_RUNTIME_MODE);
+        assert.strictEqual(created!["runtimeMode"], BOARD_PLANNING_THREAD_RUNTIME_MODE);
+        assert.strictEqual(started!.interactionMode, BOARD_PLANNING_THREAD_INTERACTION_MODE);
+        assert.strictEqual(created!["interactionMode"], BOARD_PLANNING_THREAD_INTERACTION_MODE);
+        // The prompt is the shared envelope, not something composed here.
+        assert.strictEqual(
+          started!.message.text,
+          composeBoardPlanningPrompt({ card, step: DEFAULT_BOARD_PLANNING_STEP }),
+        );
       }),
   ),
 );

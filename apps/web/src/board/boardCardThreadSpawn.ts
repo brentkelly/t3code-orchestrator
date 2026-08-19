@@ -7,9 +7,12 @@
  * that decides what KIND of thread you get comes from `@t3tools/contracts` —
  * `composeBoardPlanningPrompt`, `boardPlanningThreadTitle`, and the
  * `BOARD_PLANNING_THREAD_*` modes — so the two entry points cannot drift into
- * spawning differently-configured threads. `planningThreadTurnInput` is covered
- * by `boardCardThreadSpawn.test.ts`; the reactor's copy by
- * `apps/server/src/board/planningStageSpawn.test.ts`.
+ * spawning differently-configured threads. The remaining per-card fields
+ * (`projectId`, `modelSelection`, and the null `branch` / `worktreePath` that
+ * keep planning off a worktree) are stated in both places, so both places assert
+ * them: `boardCardThreadSpawn.test.ts` covers this builder, and
+ * `planningStageSpawn.test.ts` asserts the reactor's dispatched bootstrap
+ * field-for-field against the same contracts composers.
  *
  * The step is always resolved from CURRENT settings (`resolveBoardPlanningStep`
  * over the live `ServerSettings.board`), never from the card's `recipeSnapshot`.

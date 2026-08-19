@@ -190,7 +190,7 @@ otherwise the first restart after this ships would spawn a thread for every one 
 `BoardSearchAddPicker` is currently the whole `+` affordance. It becomes a dropdown:
 
 ```
-Planning:   [ New thread — restart planning ]   → server-side stage spawn (D8)
+Planning:   [ New thread — restart planning ]   → shared contracts builders (D8)
             [ New blank thread              ]   → empty thread, linked, composer focused
             [ Adopt an existing thread…     ]   → today's search picker
 
