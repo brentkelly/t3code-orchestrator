@@ -92,8 +92,7 @@ export default Effect.gen(function* () {
     updated_at: seed.at,
   }));
   yield* sql`
-    INSERT INTO board_stages (stage_id, label, role, order_key, created_at, updated_at)
-    ${sql.insert(seedRows)}
+    INSERT INTO board_stages ${sql.insert(seedRows)}
     ON CONFLICT (stage_id) DO NOTHING
   `;
 

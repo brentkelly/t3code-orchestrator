@@ -79,6 +79,7 @@ import {
   resolveBoardConcurrencyLimit,
   type BoardQueueCandidate,
 } from "./supervisor.ts";
+import { stageExecutorForRole } from "./stageExecutor.ts";
 
 export interface SupervisorReactorShape {
   /** Reconcile persisted step state, then subscribe to board and thread
@@ -606,28 +607,50 @@ const make = Effect.gen(function* () {
     const exec = resolveBoardStageExecution(settings, card.stage);
     // Auto-kickoff fires only for an auto-executing stage; on-demand always runs.
     if (!onDemand && !exec.autoExecute) return;
+    const completions = boardCardStepCompletions(board, card.id);
     // First entry vs re-entry (D7): a recorded completion for this stage's step
     // means the card has been here before, so re-run nothing — open a clean
-    // human-in-the-loop conversation.
-    const firstEntry = !boardCardStepCompletions(board, card.id).some(
-      (completion) => completion.stepId === card.stage,
-    );
+    // human-in-the-loop conversation. This is reactor policy, orthogonal to the
+    // executor's "what runs next".
+    const firstEntry = !completions.some((completion) => completion.stepId === card.stage);
     const model = resolveBoardStageModelSelection(exec.model);
+    // Ask the stage executor what runs next (D15): the reactor delegates the
+    // "what to execute" decision rather than computing it inline. A card
+    // entering its stage has no completed step for this run, so a simple stage
+    // yields its single seeded step; the `complete`/`escalate` arms are the seam
+    // t3o-16's review executor returns through and are not reached at entry.
+    const plan = stageExecutorForRole(stage.role).planNext({
+      card,
+      config: {
+        stepId: card.stage,
+        label: stage.label,
+        prompt: exec.prompt,
+        model,
+        timeoutMs: exec.timeoutMs,
+        maxAttempts: exec.maxAttempts,
+      },
+      completions,
+      runState: { round: 1, completedStepIds: [] },
+    });
+    if (plan.kind !== "run") return;
+    // Mode (D5) and human-in-the-loop (D5/D6/D7) are reactor policy layered onto
+    // the executor's step: a re-entry forces a clean human-in-the-loop thread
+    // with no prompt injected.
     const humanInLoop = firstEntry ? resolveHumanInLoop(board, settings, card, exec) : true;
-    const prompt = firstEntry ? exec.prompt : "";
+    const prompt = firstEntry ? plan.prompt : "";
     yield* dispatch({
       type: "board.card.select-step",
       commandId: yield* commandId("select-step"),
       cardId: card.id,
-      stepId: card.stage,
-      stepLabel: stage.label,
+      stepId: plan.stepId,
+      stepLabel: plan.label,
       prompt,
-      providerInstanceId: model.instanceId,
-      model: model.model,
+      providerInstanceId: plan.model.instanceId,
+      model: plan.model.model,
       mode: exec.mode,
       humanInLoop,
-      maxAttempts: exec.maxAttempts,
-      timeoutMs: exec.timeoutMs,
+      maxAttempts: plan.maxAttempts,
+      timeoutMs: plan.timeoutMs,
       createdAt: yield* nowIso,
     });
     // Build mode provisions a worktree (no-op if ready); plan mode needs none.

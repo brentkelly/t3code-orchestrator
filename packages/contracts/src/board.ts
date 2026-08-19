@@ -2783,8 +2783,20 @@ export const DEFAULT_BOARD_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex
  *   build role's two per-card defaults (D6); `autoAdvance` moves the card to the
  *   next stage in order on a successful unattended run (D8).
  * - `timeoutMs` / `maxAttempts` are enforced only on an unattended run (D5).
+ *
+ * `kind` is the discriminant of a **discriminated union** (D4/D15): every stage
+ * this spec ships is `{ kind: "simple", … }`, and t3o-16 widens this to
+ * `Schema.Union(simple, review)` with `{ kind: "review", … }`. Because the
+ * reactor never branches on `kind` — the executor registry (keyed by stage
+ * role) is the single place that resolves an implementation — adding the review
+ * member touches neither the reactor, decider, projector nor MCP. The literal
+ * carries a decoding default so a partial `{ autoExecute, prompt }` entry still
+ * decodes to a complete `simple` config.
  */
 export const BoardStageExecution = Schema.Struct({
+  kind: Schema.Literal("simple").pipe(
+    Schema.withDecodingDefault(Effect.succeed("simple" as const)),
+  ),
   autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -2841,6 +2853,7 @@ When we have agreed a plan, record it with board_propose_plans. Do not move the 
  */
 export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
   [BOARD_SEED_STAGE_IDS.building]: {
+    kind: "simple",
     autoExecute: true,
     prompt: DEFAULT_BOARD_BUILD_PROMPT,
     model: null,
@@ -2853,6 +2866,7 @@ export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
     maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
   },
   [BOARD_SEED_STAGE_IDS.planning]: {
+    kind: "simple",
     autoExecute: true,
     prompt: DEFAULT_BOARD_PLANNING_PROMPT,
     model: null,

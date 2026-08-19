@@ -147,6 +147,7 @@ export const readModel = (board: BoardState): OrchestrationReadModel => ({
     building-automation suites drive. Human-in-the-loop is off (both defaults
     false), so a plan-less card runs unattended and the completion advances it. */
 const buildingStageExecution = (step: TestBuildStep): BoardStageExecution => ({
+  kind: "simple",
   autoExecute: true,
   prompt: step.prompt,
   model: { instanceId: step.providerInstanceId, model: DEFAULT_TEXT_GENERATION_MODEL },
