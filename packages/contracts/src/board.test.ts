@@ -12,6 +12,7 @@ import {
   BOARD_CARD_LABELS_MAX,
   BOARD_CARD_SHELL_TITLE_MAX_BYTES,
   BOARD_LABEL_NAME_MAX_LENGTH,
+  BOARD_SEED_STAGE_IDS,
   BoardCardId,
   boardCardArchiveNeedsConfirmation,
   boardCardShellFromCard,
@@ -20,6 +21,7 @@ import {
   BoardLabelName,
   deriveBoardCardBlocked,
   deriveBoardCardThreadState,
+  EMPTY_BOARD_STATE,
   liveBoardCardDependents,
   makeBoardCardShell,
   unmetBoardCardDependencies,
@@ -60,7 +62,7 @@ const fullyPopulatedShell = {
   key: "T3O-1234",
   projectId: ProjectId.make("project-0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
   labelIds: labelIdsAtCap,
-  stage: "review",
+  stage: BOARD_SEED_STAGE_IDS.review,
   orderKey: "mmmmzz",
   title: "t".repeat(BOARD_CARD_SHELL_TITLE_MAX_BYTES),
   blocked: true,
@@ -99,7 +101,7 @@ const typicalCard = (index: number): BoardCard => ({
   // Labels at the cap on every card, so the linear-growth assertion measures
   // the shell's worst per-card case (t3o-06a).
   labels: labelIdsAtCap,
-  stage: "building",
+  stage: BOARD_SEED_STAGE_IDS.building,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",
@@ -114,9 +116,9 @@ const typicalCard = (index: number): BoardCard => ({
     },
   ],
   externalRef: null,
-  recipeSnapshot: null,
   worktree: null,
   blocked: false,
+  humanInLoop: null,
   archivedAt: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -302,7 +304,7 @@ describe("board card shell derivation", () => {
       key: "T3O-1",
       projectId: ProjectId.make("project-1"),
       labelIds: [],
-      stage: "backlog",
+      stage: BOARD_SEED_STAGE_IDS.backlog,
       orderKey: "m",
       title: "Card",
       blocked: false,
@@ -332,7 +334,7 @@ describe("board card shell derivation", () => {
       key: "T3O-1",
       projectId: ProjectId.make("project-1"),
       labelIds: [],
-      stage: "building",
+      stage: BOARD_SEED_STAGE_IDS.building,
       orderKey: "m",
       title: "Card",
       blocked: false,
@@ -371,14 +373,15 @@ describe("dependency gating across the archive (t3o-13)", () => {
   });
 
   const cards = [
-    dependency("live-open", "building", null),
-    dependency("live-done", "done", null),
-    dependency("archived-open", "building", "2026-01-01T00:00:00.000Z"),
-    dependency("archived-done", "done", "2026-01-01T00:00:00.000Z"),
+    dependency("live-open", BOARD_SEED_STAGE_IDS.building, null),
+    dependency("live-done", BOARD_SEED_STAGE_IDS.done, null),
+    dependency("archived-open", BOARD_SEED_STAGE_IDS.building, "2026-01-01T00:00:00.000Z"),
+    dependency("archived-done", BOARD_SEED_STAGE_IDS.done, "2026-01-01T00:00:00.000Z"),
   ];
 
   const unmetOf = (...ids: ReadonlyArray<string>) =>
     unmetBoardCardDependencies({
+      board: EMPTY_BOARD_STATE,
       dependsOn: ids.map((id) => BoardCardId.make(id)),
       cards,
     });
@@ -402,18 +405,23 @@ describe("dependency gating across the archive (t3o-13)", () => {
     expect(unmetOf("gone")).toEqual([BoardCardId.make("gone")]);
   });
 
-  it("blocks only at Ready and beyond, and only on a live unfinished dependency", () => {
+  it("blocks only at the build role and beyond, and only on a live unfinished dependency", () => {
     const blockedAt = (stage: BoardCard["stage"], dependsOn: ReadonlyArray<string>) =>
       deriveBoardCardBlocked({
+        board: EMPTY_BOARD_STATE,
         stage,
         dependsOn: dependsOn.map((id) => BoardCardId.make(id)),
         cards,
       });
 
-    expect(blockedAt("backlog", ["live-open"])).toBe(false);
-    expect(blockedAt("ready", ["live-open"])).toBe(true);
-    expect(blockedAt("ready", ["archived-open"])).toBe(false);
-    expect(blockedAt("building", ["archived-open", "live-open"])).toBe(true);
+    // Before the build role nothing blocks; ready sits before `building`.
+    expect(blockedAt(BOARD_SEED_STAGE_IDS.backlog, ["live-open"])).toBe(false);
+    expect(blockedAt(BOARD_SEED_STAGE_IDS.ready, ["live-open"])).toBe(false);
+    // At the build role and beyond, a live unfinished dependency blocks; an
+    // archived one never does.
+    expect(blockedAt(BOARD_SEED_STAGE_IDS.building, ["live-open"])).toBe(true);
+    expect(blockedAt(BOARD_SEED_STAGE_IDS.building, ["archived-open"])).toBe(false);
+    expect(blockedAt(BOARD_SEED_STAGE_IDS.review, ["archived-open", "live-open"])).toBe(true);
   });
 });
 
@@ -422,7 +430,7 @@ describe("archive confirmation (t3o-13, D3)", () => {
     cardId: BoardCardId.make(id),
     key: `T3O-${id}`,
     title: `Card ${id}`,
-    stage: "building" as const,
+    stage: BOARD_SEED_STAGE_IDS.building,
     archivedAt,
   });
 
@@ -434,17 +442,26 @@ describe("archive confirmation (t3o-13, D3)", () => {
   });
 
   it("asks before archiving an unfinished card that live cards depend on", () => {
-    expect(boardCardArchiveNeedsConfirmation({ stage: "building", dependents: [live] })).toBe(true);
+    expect(
+      boardCardArchiveNeedsConfirmation({ stage: BOARD_SEED_STAGE_IDS.building, dependents: [live] }),
+    ).toBe(true);
   });
 
   it("does not ask when the card is done — done already satisfies the gate", () => {
-    expect(boardCardArchiveNeedsConfirmation({ stage: "done", dependents: [live] })).toBe(false);
+    expect(
+      boardCardArchiveNeedsConfirmation({ stage: BOARD_SEED_STAGE_IDS.done, dependents: [live] }),
+    ).toBe(false);
   });
 
   it("does not ask when nothing live depends on the card", () => {
-    expect(boardCardArchiveNeedsConfirmation({ stage: "building", dependents: [] })).toBe(false);
-    expect(boardCardArchiveNeedsConfirmation({ stage: "building", dependents: [archived] })).toBe(
-      false,
-    );
+    expect(
+      boardCardArchiveNeedsConfirmation({ stage: BOARD_SEED_STAGE_IDS.building, dependents: [] }),
+    ).toBe(false);
+    expect(
+      boardCardArchiveNeedsConfirmation({
+        stage: BOARD_SEED_STAGE_IDS.building,
+        dependents: [archived],
+      }),
+    ).toBe(false);
   });
 });

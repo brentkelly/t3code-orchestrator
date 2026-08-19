@@ -1,28 +1,19 @@
-import { ProviderInstanceId, type BoardProjectSettings, type BoardStep } from "@t3tools/contracts";
+import {
+  DEFAULT_BOARD_STAGE_EXECUTION,
+  ProviderInstanceId,
+  type BoardProjectSettings,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  appendBoardStep,
-  makeNewBoardStep,
   minutesToMs,
   msToMinutes,
   normalizeKeyPrefixInput,
   parsePositiveIntInput,
-  removeBoardStep,
   setBoardInstanceConcurrency,
   setBoardProjectSetting,
-  setBoardStepField,
+  setBoardStageExecution,
 } from "./BoardSettingsPanel.logic";
-
-const step = (id: string): BoardStep => ({
-  id,
-  label: id,
-  promptTemplate: "",
-  providerInstanceId: ProviderInstanceId.make("codex"),
-  model: "m",
-  timeoutMs: 60_000,
-  maxAttempts: 1,
-});
 
 describe("number parsing", () => {
   it("parses positive ints and falls back on invalid input", () => {
@@ -41,25 +32,25 @@ describe("number parsing", () => {
   });
 });
 
-describe("step mutations", () => {
-  it("assigns a unique id to a new step", () => {
-    const existing = [step("step-1")];
-    const next = makeNewBoardStep(existing);
-    expect(existing.some((s) => s.id === next.id)).toBe(false);
-    expect(next.model.length).toBeGreaterThan(0);
+describe("stage execution mutations", () => {
+  it("materialises a full entry from defaults when editing a never-configured stage", () => {
+    // Editing one field of a stage absent from the map starts from the
+    // all-defaults config and produces a complete entry (t3o-15).
+    const next = setBoardStageExecution({}, "building", { autoExecute: true });
+    expect(next.building).toEqual({ ...DEFAULT_BOARD_STAGE_EXECUTION, autoExecute: true });
   });
 
-  it("edits, appends and removes without mutating the input", () => {
-    const steps = [step("a"), step("b")];
-    const edited = setBoardStepField(steps, 1, { label: "renamed" });
-    expect(edited[1]!.label).toBe("renamed");
-    expect(steps[1]!.label).toBe("b"); // original untouched
+  it("patches one field without mutating the input, keyed by stage id", () => {
+    const pipeline = { building: { ...DEFAULT_BOARD_STAGE_EXECUTION, prompt: "old" } };
+    const edited = setBoardStageExecution(pipeline, "building", { prompt: "new" });
+    expect(edited.building!.prompt).toBe("new");
+    expect(pipeline.building.prompt).toBe("old"); // original untouched
 
-    const appended = appendBoardStep(steps, step("c"));
-    expect(appended.map((s) => s.id)).toEqual(["a", "b", "c"]);
-
-    const removed = removeBoardStep(steps, 0);
-    expect(removed.map((s) => s.id)).toEqual(["b"]);
+    // A different stage id gets its own entry; existing ones are preserved, so
+    // a rename (a new key) never orphans another stage's config.
+    const withReview = setBoardStageExecution(edited, "review", { maxAttempts: 3 });
+    expect(withReview.review!.maxAttempts).toBe(3);
+    expect(withReview.building!.prompt).toBe("new");
   });
 });
 

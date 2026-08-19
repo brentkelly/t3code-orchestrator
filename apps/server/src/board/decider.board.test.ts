@@ -10,6 +10,7 @@ import {
   BOARD_SEED_LABELS,
   BoardActivityId,
   BoardCardId,
+  BoardStageId,
   BoardLabelId,
   boardPlanId,
   CommandId,
@@ -34,13 +35,18 @@ const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
 const otherProjectId = ProjectId.make("project-2");
 
-function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: string }): BoardCard {
+function makeCard(
+  overrides: Omit<Partial<BoardCard>, "id" | "stage"> & {
+    readonly id: string;
+    readonly stage?: string;
+  },
+): BoardCard {
+  const { id, stage, ...rest } = overrides;
   return {
     key: "CARD-1",
     cardNumber: 1,
     projectId,
     labels: [],
-    stage: "backlog",
     orderKey: "m",
     title: "Card",
     briefRef: null,
@@ -48,14 +54,15 @@ function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: str
     parentCardId: null,
     threadLinks: [],
     externalRef: null,
-    recipeSnapshot: null,
+    humanInLoop: null,
     worktree: null,
     blocked: false,
     archivedAt: null,
     createdAt: NOW,
     updatedAt: NOW,
-    ...overrides,
-    id: BoardCardId.make(overrides.id),
+    ...rest,
+    stage: BoardStageId.make(stage ?? "backlog"),
+    id: BoardCardId.make(id),
   };
 }
 
@@ -143,7 +150,7 @@ const createCommand = (input: {
   readonly cardId: string;
   readonly projectId?: typeof projectId;
   readonly keyPrefix?: string;
-  readonly stage?: BoardCard["stage"];
+  readonly stage?: string;
   readonly labels?: ReadonlyArray<string>;
   readonly brief?: string;
   readonly dependsOn?: ReadonlyArray<string>;
@@ -156,7 +163,7 @@ const createCommand = (input: {
     title: `Card ${input.cardId}`,
     orderKey: "m",
     ...(input.keyPrefix === undefined ? {} : { keyPrefix: input.keyPrefix }),
-    ...(input.stage === undefined ? {} : { stage: input.stage }),
+    ...(input.stage === undefined ? {} : { stage: BoardStageId.make(input.stage) }),
     ...(input.labels === undefined
       ? {}
       : { labels: input.labels.map((id) => BoardLabelId.make(id)) }),
@@ -191,14 +198,14 @@ const seededBoard = (cards: ReadonlyArray<BoardCard> = []): BoardState => ({
 
 const moveCommand = (input: {
   readonly cardId: string;
-  readonly toStage: BoardCard["stage"];
+  readonly toStage: string;
   readonly override?: boolean;
 }) =>
   ({
     type: "board.card.move",
     commandId: CommandId.make(`cmd-move-${input.cardId}`),
     cardId: BoardCardId.make(input.cardId),
-    toStage: input.toStage,
+    toStage: BoardStageId.make(input.toStage),
     ...(input.override === undefined ? {} : { override: input.override }),
     createdAt: NOW,
   }) as const;
@@ -360,9 +367,9 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
-  // ── Blocked derivation at the Ready boundary ─────────────────────────
+  // ── Blocked derivation is build-role-keyed, not Ready-keyed (D11) ─────
 
-  it.effect("derives blocked from unmet dependencies exactly at Ready, not before", () =>
+  it.effect("does not block on unmet dependencies before the build role (D11)", () =>
     Effect.gen(function* () {
       const dependency = makeCard({ id: "card-dep", stage: "building" });
       const card = makeCard({
@@ -372,7 +379,9 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       });
       const board: BoardState = { cards: [dependency, card], nextCardNumberByProject: {} };
 
-      // sprint -> planning: before Ready, unmet dependencies do not block.
+      // sprint -> planning: before the build role, unmet dependencies do not
+      // block. Ready is now an ordinary pre-build stage (D3/D11), so the block
+      // boundary is the `build`-role stage, not the "Ready" anchor.
       const early = yield* decide(
         moveCommand({ cardId: "card-1", toStage: "planning" }),
         makeReadModel({ board }),
@@ -381,9 +390,9 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         assert.strictEqual(early.payload.card.blocked, false);
       }
 
-      // planning -> ready crosses the boundary: blocked appears.
+      // planning -> ready: still before the build role, so still not blocked.
       const planningBoard: BoardState = {
-        cards: [dependency, { ...card, stage: "planning" }],
+        cards: [dependency, { ...card, stage: BoardStageId.make("planning") }],
         nextCardNumberByProject: {},
       };
       const atReady = yield* decide(
@@ -391,24 +400,11 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         makeReadModel({ board: planningBoard }),
       );
       if (atReady.type === "board.card-moved") {
-        assert.strictEqual(atReady.payload.card.blocked, true);
+        assert.strictEqual(atReady.payload.card.blocked, false);
       }
-
-      // Same move with the dependency done: not blocked.
-      const doneBoard: BoardState = {
-        cards: [
-          { ...dependency, stage: "done" },
-          { ...card, stage: "planning" },
-        ],
-        nextCardNumberByProject: {},
-      };
-      const unblocked = yield* decide(
-        moveCommand({ cardId: "card-1", toStage: "ready" }),
-        makeReadModel({ board: doneBoard }),
-      );
-      if (unblocked.type === "board.card-moved") {
-        assert.strictEqual(unblocked.payload.card.blocked, false);
-      }
+      // Entry into the build role itself with an unmet dependency is refused
+      // outright (D11) — covered by the "rejects moving a card ... past Ready"
+      // test below.
     }),
   );
 
@@ -456,7 +452,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
 
       // With the dependency done, the same move lands.
       const doneBoard: BoardState = {
-        cards: [{ ...dependency, stage: "done" }, card],
+        cards: [{ ...dependency, stage: BoardStageId.make("done") }, card],
         nextCardNumberByProject: {},
       };
       const allowed = yield* decide(
@@ -477,7 +473,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       // reopened) still moves freely WITHIN the past-Ready zone — e.g.
       // dragged backwards from review to building.
       const inFlightBoard: BoardState = {
-        cards: [dependency, { ...card, stage: "review" }],
+        cards: [dependency, { ...card, stage: BoardStageId.make("review") }],
         nextCardNumberByProject: {},
       };
       const withinZone = yield* decide(
@@ -558,12 +554,12 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
-  it.effect("re-derives blocked when a dependency edit lands on a Ready-or-beyond card", () =>
+  it.effect("re-derives blocked when a dependency edit lands on a build-or-beyond card (D11)", () =>
     Effect.gen(function* () {
       const board: BoardState = {
         cards: [
           makeCard({ id: "card-dep", stage: "sprint" }),
-          makeCard({ id: "card-a", stage: "ready" }),
+          makeCard({ id: "card-a", stage: "building" }),
         ],
         nextCardNumberByProject: {},
       };
@@ -858,7 +854,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       const dependency = makeCard({ id: "card-dep", stage: "building", archivedAt: NOW });
       const waiting = makeCard({
         id: "card-waiting",
-        stage: "ready",
+        stage: "building",
         blocked: false,
         dependsOn: [BoardCardId.make("card-dep")],
       });
@@ -939,7 +935,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.card.move",
           commandId: CommandId.make("cmd-move-past-archived"),
           cardId: BoardCardId.make("card-waiting"),
-          toStage: "building",
+          toStage: BoardStageId.make("building"),
           createdAt: NOW,
         },
         makeReadModel({ board: { cards: [dependency, waiting], nextCardNumberByProject: {} } }),
@@ -1042,21 +1038,17 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       });
       // Step-lifecycle fixtures (t3o-10): each of the reactor's internal
       // step commands aggregates on the card and records step state — none
-      // emits a move. Every card is in Building with a recipe snapshot; each
-      // carries the step state its command's precondition needs.
-      const stepRecipe = {
-        stage: "building" as const,
-        steps: [
-          {
-            id: "s1",
-            label: "Build",
-            promptTemplate: "do it",
-            providerInstanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5.4",
-            timeoutMs: 1000,
-            maxAttempts: 3,
-          },
-        ],
+      // emits a move. Every card is in Building; each carries the step state
+      // its command's precondition needs, with the frozen execution config the
+      // run row holds since D12 (D1 retired the card-level recipe snapshot).
+      const frozenConfig = {
+        prompt: "do it",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        mode: "build" as const,
+        humanInLoop: false,
+        maxAttempts: 3,
+        timeoutMs: 1000,
       };
       const makeStepState = (
         cardId: string,
@@ -1066,7 +1058,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         stepId: "s1",
         stepLabel: "Build",
         attempt: 1,
-        maxAttempts: 3,
+        ...frozenConfig,
         threadId:
           status === "running" || status === "awaiting-input" ? ThreadId.make("thread-1") : null,
         status,
@@ -1074,31 +1066,11 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         startedAt: status === "running" || status === "awaiting-input" ? NOW : null,
         updatedAt: NOW,
       });
-      const selectCard = makeCard({
-        id: "card-select",
-        stage: "building",
-        recipeSnapshot: stepRecipe,
-      });
-      const admitCard = makeCard({
-        id: "card-admit",
-        stage: "building",
-        recipeSnapshot: stepRecipe,
-      });
-      const awaitCard = makeCard({
-        id: "card-await",
-        stage: "building",
-        recipeSnapshot: stepRecipe,
-      });
-      const recoverCard = makeCard({
-        id: "card-recover",
-        stage: "building",
-        recipeSnapshot: stepRecipe,
-      });
-      const settleCard = makeCard({
-        id: "card-settle",
-        stage: "building",
-        recipeSnapshot: stepRecipe,
-      });
+      const selectCard = makeCard({ id: "card-select", stage: "building" });
+      const admitCard = makeCard({ id: "card-admit", stage: "building" });
+      const awaitCard = makeCard({ id: "card-await", stage: "building" });
+      const recoverCard = makeCard({ id: "card-recover", stage: "building" });
+      const settleCard = makeCard({ id: "card-settle", stage: "building" });
       const readModel = makeReadModel({
         threads: [makeThread({ id: "thread-1" }), makeThread({ id: "thread-2" })],
         board: {
@@ -1277,20 +1249,13 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         // Step-lifecycle commands (t3o-10) record step state on the card and
         // never move a stage — the board-driven Building → Review advance
         // rides board.card.move, gated like every other transition (D18).
-        "board.card.snapshot-recipe": {
-          type: "board.card.snapshot-recipe",
-          commandId: CommandId.make("cmd-snapshot"),
-          cardId: BoardCardId.make("card-building"),
-          recipe: stepRecipe,
-          createdAt: NOW,
-        },
         "board.card.select-step": {
           type: "board.card.select-step",
           commandId: CommandId.make("cmd-select"),
           cardId: BoardCardId.make("card-select"),
           stepId: "s1",
           stepLabel: "Build",
-          maxAttempts: 3,
+          ...frozenConfig,
           createdAt: NOW,
         },
         "board.card.admit-step": {
@@ -1326,6 +1291,56 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           outcome: "succeeded",
           createdAt: NOW,
         },
+        // Mid-run human-in-the-loop retune (D5/D6): retunes a live step's
+        // stance, emits board.card-step-retuned — never a move.
+        "board.card.retune-step": {
+          type: "board.card.retune-step",
+          commandId: CommandId.make("cmd-retune"),
+          cardId: BoardCardId.make("card-settle"),
+          stepId: "s1",
+          humanInLoop: true,
+          createdAt: NOW,
+        },
+        // On-demand kickoff (D7): emits board.card-stage-thread-requested for
+        // the card's CURRENT stage — never a move.
+        "board.card.start-stage-thread": {
+          type: "board.card.start-stage-thread",
+          commandId: CommandId.make("cmd-start-stage-thread"),
+          cardId: BoardCardId.make("card-ready"),
+          createdAt: NOW,
+        },
+        // Stage-aggregate commands (D2/D9): they mutate the stage list, never a
+        // card, so they cannot emit a card move. Every fixture targets an empty,
+        // non-role seed stage so its invariant is satisfied.
+        "board.stage.create": {
+          type: "board.stage.create",
+          commandId: CommandId.make("cmd-stage-create"),
+          stageId: BoardStageId.make("triage"),
+          label: "Triage",
+          orderKey: "c",
+          role: null,
+          createdAt: NOW,
+        },
+        "board.stage.rename": {
+          type: "board.stage.rename",
+          commandId: CommandId.make("cmd-stage-rename"),
+          stageId: BoardStageId.make("sprint"),
+          label: "Sprint 2",
+          createdAt: NOW,
+        },
+        "board.stage.reorder": {
+          type: "board.stage.reorder",
+          commandId: CommandId.make("cmd-stage-reorder"),
+          stageId: BoardStageId.make("sprint"),
+          orderKey: "a",
+          createdAt: NOW,
+        },
+        "board.stage.delete": {
+          type: "board.stage.delete",
+          commandId: CommandId.make("cmd-stage-delete"),
+          stageId: BoardStageId.make("merge"),
+          createdAt: NOW,
+        },
       };
 
       for (const [commandType, command] of Object.entries(catalog)) {
@@ -1344,29 +1359,89 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
-  // ── Creation stages (t3o-06a) ────────────────────────────────────────
+  // ── Stage reorder across the Build boundary (t3o-15, D9) ─────────────
 
-  it.effect("rejects a create into any stage but Backlog, Sprint or Planning", () =>
-    Effect.gen(function* () {
-      for (const stage of ["ready", "building", "review", "merge", "done"] as const) {
-        const failure = yield* decideFail(
-          createCommand({ cardId: `card-${stage}`, stage }),
-          makeReadModel({ board: seededBoard() }),
-        );
-        assert.include(String(failure), "is not a creation stage");
-      }
-    }),
+  const reorderStage = (stageId: string, orderKey: string) =>
+    ({
+      type: "board.stage.reorder",
+      commandId: CommandId.make(`cmd-reorder-${stageId}`),
+      stageId: BoardStageId.make(stageId),
+      orderKey,
+      createdAt: NOW,
+    }) as const;
+
+  it.effect(
+    "refuses moving the build-role stage itself when it would strand a card's blocked flag (D9)",
+    () =>
+      Effect.gen(function* () {
+        // Seed stages resolve from BOARD_SEED_STAGES: sprint (d) sits before
+        // building (j). Moving building to "c" puts it before sprint, flipping
+        // sprint from before-build to after-build. A card in sprint would then
+        // carry a stale `blocked` flag, so the reorder is refused — the guard
+        // must cover the build stage moving, not just ordinary stages crossing.
+        const held = makeReadModel({
+          board: {
+            cards: [makeCard({ id: "card-1", stage: "sprint" })],
+            nextCardNumberByProject: {},
+          },
+        });
+        const failure = yield* decideFail(reorderStage("building", "c"), held);
+        assert.include(String(failure), "Build boundary");
+
+        // With sprint empty, the same reorder lands.
+        const empty = makeReadModel({ board: { cards: [], nextCardNumberByProject: {} } });
+        const event = yield* decide(reorderStage("building", "c"), empty);
+        assert.strictEqual(event.type, "board.stage-reordered");
+      }),
   );
 
-  it.effect("accepts a create into each of Backlog, Sprint and Planning", () =>
+  it.effect(
+    "refuses moving an ordinary stage across the build boundary while it holds cards (D9)",
+    () =>
+      Effect.gen(function* () {
+        // Move sprint (before build) to "k", between building (j) and review (l),
+        // i.e. across the boundary. A card sits in sprint → refused.
+        const held = makeReadModel({
+          board: {
+            cards: [makeCard({ id: "card-1", stage: "sprint" })],
+            nextCardNumberByProject: {},
+          },
+        });
+        const failure = yield* decideFail(reorderStage("sprint", "k"), held);
+        assert.include(String(failure), "Build boundary");
+
+        // Empty sprint crosses freely.
+        const empty = makeReadModel({ board: { cards: [], nextCardNumberByProject: {} } });
+        const event = yield* decide(reorderStage("sprint", "k"), empty);
+        assert.strictEqual(event.type, "board.stage-reordered");
+      }),
+  );
+
+  // ── Creation stages (t3o-15, D10) ────────────────────────────────────
+
+  it.effect("accepts a create into any stage — BOARD_CREATABLE_STAGES is deleted (D10)", () =>
     Effect.gen(function* () {
-      for (const stage of ["backlog", "sprint", "planning"] as const) {
+      // A card (with no unmet dependencies) may be created directly into any
+      // stage, Building and Done included — Mode, not a creation allow-list,
+      // governs what entry does. The auto-execute warning is a create-dialog
+      // concern (AC16), not a decider refusal.
+      for (const stage of [
+        "backlog",
+        "sprint",
+        "planning",
+        "ready",
+        "building",
+        "review",
+        "merge",
+        "done",
+      ] as const) {
         const event = yield* decide(
           createCommand({ cardId: `card-${stage}`, stage }),
           makeReadModel({ board: seededBoard() }),
         );
         assert.strictEqual(event.type, "board.card-created");
-        if (event.type === "board.card-created") assert.strictEqual(event.payload.stage, stage);
+        if (event.type === "board.card-created")
+          assert.strictEqual(event.payload.stage, BoardStageId.make(stage));
       }
     }),
   );

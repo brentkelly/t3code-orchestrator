@@ -51,6 +51,11 @@ export type CreateBoardLabelInput = CommandInput<"board.label.create">;
 export type UpdateBoardLabelInput = CommandInput<"board.label.update">;
 export type DeleteBoardLabelInput = CommandInput<"board.label.delete">;
 export type UndeleteBoardLabelInput = CommandInput<"board.label.undelete">;
+export type CreateBoardStageInput = CommandInput<"board.stage.create">;
+export type RenameBoardStageInput = CommandInput<"board.stage.rename">;
+export type ReorderBoardStageInput = CommandInput<"board.stage.reorder">;
+export type DeleteBoardStageInput = CommandInput<"board.stage.delete">;
+export type StartBoardStageThreadInput = CommandInput<"board.card.start-stage-thread">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -219,3 +224,62 @@ export const undeleteBoardLabel: (input: UndeleteBoardLabelInput) => CommandEffe
     createdAt: metadata.createdAt,
   });
 });
+
+export const createBoardStage: (input: CreateBoardStageInput) => CommandEffect = Effect.fn(
+  "BoardCommands.createBoardStage",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.stage.create",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const renameBoardStage: (input: RenameBoardStageInput) => CommandEffect = Effect.fn(
+  "BoardCommands.renameBoardStage",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.stage.rename",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const reorderBoardStage: (input: ReorderBoardStageInput) => CommandEffect = Effect.fn(
+  "BoardCommands.reorderBoardStage",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.stage.reorder",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const deleteBoardStage: (input: DeleteBoardStageInput) => CommandEffect = Effect.fn(
+  "BoardCommands.deleteBoardStage",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.stage.delete",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const startBoardStageThread: (input: StartBoardStageThreadInput) => CommandEffect =
+  Effect.fn("BoardCommands.startBoardStageThread")(function* (input) {
+    const metadata = yield* commandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "board.card.start-stage-thread",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });

@@ -5,11 +5,9 @@
  * unit-tested directly.
  */
 import {
-  DEFAULT_BOARD_BUILD_STEP,
-  DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
-  DEFAULT_BOARD_STEP_TIMEOUT_MS,
+  DEFAULT_BOARD_STAGE_EXECUTION,
   type BoardProjectSettings,
-  type BoardStep,
+  type BoardStageExecution,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 
@@ -34,43 +32,19 @@ export function parsePositiveIntInput(value: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-/** A blank new step for a stage, with a unique-within-stage id. */
-export function makeNewBoardStep(existing: ReadonlyArray<BoardStep>): BoardStep {
-  const used = new Set(existing.map((step) => step.id));
-  let index = existing.length + 1;
-  let id = `step-${index}`;
-  while (used.has(id)) {
-    index += 1;
-    id = `step-${index}`;
-  }
-  return {
-    id,
-    label: `Step ${index}`,
-    promptTemplate: "",
-    providerInstanceId: DEFAULT_BOARD_BUILD_STEP.providerInstanceId,
-    model: DEFAULT_BOARD_BUILD_STEP.model,
-    timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
-    maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
-  };
-}
-
-export function setBoardStepField(
-  steps: ReadonlyArray<BoardStep>,
-  index: number,
-  patch: Partial<BoardStep>,
-): Array<BoardStep> {
-  return steps.map((step, i) => (i === index ? { ...step, ...patch } : step));
-}
-
-export function removeBoardStep(steps: ReadonlyArray<BoardStep>, index: number): Array<BoardStep> {
-  return steps.filter((_, i) => i !== index);
-}
-
-export function appendBoardStep(
-  steps: ReadonlyArray<BoardStep>,
-  step: BoardStep,
-): Array<BoardStep> {
-  return [...steps, step];
+/**
+ * Apply a stage-execution change and return the next `pipeline` map (t3o-15).
+ * A stage absent from the map starts from the all-defaults config, so editing
+ * one field of a never-configured stage materialises a complete entry. The map
+ * is keyed by stage id, so a rename never orphans it (D4).
+ */
+export function setBoardStageExecution(
+  pipeline: Readonly<Record<string, BoardStageExecution>>,
+  stageId: string,
+  patch: Partial<BoardStageExecution>,
+): Record<string, BoardStageExecution> {
+  const current = pipeline[stageId] ?? DEFAULT_BOARD_STAGE_EXECUTION;
+  return { ...pipeline, [stageId]: { ...current, ...patch } };
 }
 
 /**

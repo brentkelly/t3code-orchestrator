@@ -6,10 +6,10 @@
  */
 import {
   BoardCardId,
+  BoardStageId,
   ProjectId,
   makeBoardCardShell,
   type BoardCardShell,
-  type BoardStage,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -18,14 +18,14 @@ import { boardCardSummary } from "./boardCardSummary";
 /** A shell as `makeBoardCardShell` produces it: every not-yet-sourced review /
     plan field ABSENT, exactly what rides the wire today. Overrides let a test
     simulate the day a later spec populates one. */
-function shell(stage: BoardStage, overrides?: Partial<BoardCardShell>): BoardCardShell {
+function shell(stage: string, overrides?: Partial<BoardCardShell>): BoardCardShell {
   return {
     ...makeBoardCardShell({
       cardId: BoardCardId.make("card-1"),
       key: "T3-1",
       projectId: ProjectId.make("project-1"),
       labelIds: [],
-      stage,
+      stage: BoardStageId.make(stage),
       orderKey: "m",
       title: "A card",
       blocked: false,

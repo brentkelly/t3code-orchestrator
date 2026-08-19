@@ -12,6 +12,7 @@
 import {
   BoardCardId,
   boardPlanId,
+  BoardStageId,
   CommandId,
   EnvironmentId,
   ProjectId,
@@ -235,7 +236,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
           projectId,
           title: "Agent-made card",
           brief: "Do the thing",
-          stage: "sprint",
+          stage: BoardStageId.make("sprint"),
           labels: ["feature"],
         })
         .pipe(withScope(orphanThread));
@@ -244,7 +245,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       // and human-created cards share one key namespace (D14).
       assert.strictEqual(created.key, "PA-2");
       const listed = yield* boardHandlers
-        .board_list_cards({ stage: "sprint" })
+        .board_list_cards({ stage: BoardStageId.make("sprint") })
         .pipe(withScope(orphanThread));
       assert.deepStrictEqual(
         listed.cards.map((card) => card.cardId),
@@ -280,16 +281,23 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  it.effect("board_create_card cannot create into Building (D18)", () =>
+  it.effect("board_create_card can create directly into any stage, Building included (D10)", () =>
     Effect.gen(function* () {
       yield* seed();
-      const failure = yield* Effect.flip(
-        boardHandlers
-          .board_create_card({ projectId, title: "Sneaky", stage: "building" })
-          .pipe(withScope(orphanThread)),
-      );
-      assert.strictEqual(failure.code, "rejected");
-      assert.include(failure.message, "creation stage");
+      // BOARD_CREATABLE_STAGES is deleted (D10): a card may be created into any
+      // stage, so a create straight into Building succeeds. The auto-execute
+      // warning is a create-dialog concern (AC16), not a handler-level refusal.
+      const created = yield* boardHandlers
+        .board_create_card({
+          projectId,
+          title: "Straight to build",
+          stage: BoardStageId.make("building"),
+        })
+        .pipe(withScope(orphanThread));
+      assert.isDefined(created.cardId);
+      const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(orphanThread));
+      const card = listed.cards.find((candidate) => candidate.cardId === created.cardId);
+      assert.strictEqual(card?.stage, "building");
     }),
   );
 
@@ -310,7 +318,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       // linkedThread belongs to project-a; omitting projectId must resolve to
       // it from the thread, not require the agent to know the id.
       const created = yield* boardHandlers
-        .board_create_card({ title: "Thread-default card", stage: "sprint" })
+        .board_create_card({ title: "Thread-default card", stage: BoardStageId.make("sprint") })
         .pipe(withScope(linkedThread));
       const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(linkedThread));
       const card = listed.cards.find((candidate) => candidate.cardId === created.cardId);

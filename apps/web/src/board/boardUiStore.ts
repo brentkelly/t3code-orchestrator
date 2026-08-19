@@ -9,7 +9,7 @@
  * key) so it participates in client-settings restore rather than being raw
  * `localStorage`.
  */
-import type { BoardStage } from "@t3tools/contracts";
+import type { BoardStageId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -40,23 +40,26 @@ interface BoardUiState {
   /** Last location (href) seen in each mode, so toggling modes returns to
       where you were instead of that mode's root. */
   lastLocationByMode: Partial<Record<WorkspaceMode, string>>;
-  /** Explicit collapse overrides; stages without an entry fall back to
-      `isBoardColumnCollapsed`'s default (Backlog collapsed). */
-  collapsedByStage: Partial<Record<BoardStage, boolean>>;
+  /** Explicit collapse overrides, keyed by stage id (t3o-15); stages without an
+      entry fall back to `isBoardColumnCollapsed`'s default (the first column
+      collapsed). */
+  collapsedByStage: Partial<Record<string, boolean>>;
 }
 
 interface BoardUiStore extends BoardUiState {
   recordModeLocation: (mode: WorkspaceMode, href: string) => void;
-  setColumnCollapsed: (stage: BoardStage, collapsed: boolean) => void;
+  setColumnCollapsed: (stage: BoardStageId, collapsed: boolean) => void;
 }
 
-/** Backlog starts collapsed to a rail: it is the one column that grows
-    without bound and it is not where attention belongs. */
+/** The first column starts collapsed to a rail (D13): it is the one column that
+    grows without bound (the intake/backlog) and it is not where attention
+    belongs. `isFirstStage` comes from the read-model stage order. */
 export function isBoardColumnCollapsed(
-  collapsedByStage: Partial<Record<BoardStage, boolean>>,
-  stage: BoardStage,
+  collapsedByStage: Partial<Record<string, boolean>>,
+  stageId: BoardStageId,
+  isFirstStage: boolean,
 ): boolean {
-  return collapsedByStage[stage] ?? stage === "backlog";
+  return collapsedByStage[stageId] ?? isFirstStage;
 }
 
 export function migratePersistedBoardUiState(persistedState: unknown): BoardUiState {
@@ -80,7 +83,7 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
   if (candidate.collapsedByStage && typeof candidate.collapsedByStage === "object") {
     for (const [stage, collapsed] of Object.entries(candidate.collapsedByStage)) {
       if (typeof collapsed === "boolean") {
-        collapsedByStage[stage as BoardStage] = collapsed;
+        collapsedByStage[stage] = collapsed;
       }
     }
   }
@@ -112,7 +115,11 @@ export const useBoardUiStore = create<BoardUiStore>()(
         }),
       setColumnCollapsed: (stage, collapsed) =>
         set((state) =>
-          isBoardColumnCollapsed(state.collapsedByStage, stage) === collapsed
+          // Skip only when the EXPLICIT stored value already matches — the
+          // read-model default (first-column collapsed) lives in
+          // `isBoardColumnCollapsed`, which needs the stage list this store
+          // does not hold.
+          state.collapsedByStage[stage] === collapsed
             ? state
             : { collapsedByStage: { ...state.collapsedByStage, [stage]: collapsed } },
         ),

@@ -1,12 +1,14 @@
 import {
-  DEFAULT_BOARD_BUILD_STEP,
+  BOARD_SEED_STAGE_IDS,
   DEFAULT_BOARD_KEY_PREFIX,
+  DEFAULT_BOARD_STAGE_EXECUTION,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveBoardKeyPrefix,
   resolveBoardProjectAccent,
+  type BoardStageExecution,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -519,11 +521,14 @@ describe("serverSettings helpers", () => {
   });
 });
 
-describe("applyServerSettingsPatch board settings (T3o, D10)", () => {
+describe("applyServerSettingsPatch board settings (T3o, D4)", () => {
   const project = ProjectId.make("project-board-patch");
-  const stepA = { ...DEFAULT_BOARD_BUILD_STEP, id: "a", model: "model-a" };
-  const stepB = { ...DEFAULT_BOARD_BUILD_STEP, id: "b", model: "model-b" };
-  const stepC = { ...DEFAULT_BOARD_BUILD_STEP, id: "c", model: "model-c" };
+  const buildingWith = (model: string): BoardStageExecution => ({
+    ...DEFAULT_BOARD_STAGE_EXECUTION,
+    autoExecute: true,
+    mode: "build",
+    model: { instanceId: ProviderInstanceId.make("codex"), model },
+  });
 
   it("carries default board settings through an empty patch", () => {
     expect(applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {}).board).toEqual(
@@ -531,21 +536,26 @@ describe("applyServerSettingsPatch board settings (T3o, D10)", () => {
     );
   });
 
-  it("replaces a stage's step list wholesale — never a half-merged recipe", () => {
+  it("patches a stage's execution config, leaving sibling board fields untouched", () => {
     const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       board: {
-        pipeline: { building: [stepA, stepB] },
+        pipeline: { [BOARD_SEED_STAGE_IDS.building]: buildingWith("model-a") },
         projects: { [project]: { keyPrefix: "T3", accentColor: null } },
       },
     });
-    expect(current.board.pipeline.building).toEqual([stepA, stepB]);
+    expect(current.board.pipeline[BOARD_SEED_STAGE_IDS.building]?.model).toEqual({
+      instanceId: "codex",
+      model: "model-a",
+    });
 
     const next = applyServerSettingsPatch(current, {
-      board: { pipeline: { building: [stepC] } },
+      board: { pipeline: { [BOARD_SEED_STAGE_IDS.building]: buildingWith("model-c") } },
     });
-    // The two-step list is replaced by the one-step list, not index-merged
-    // into a stale [stepC, stepB].
-    expect(next.board.pipeline.building).toEqual([stepC]);
+    // The stage's model is carried to the new value, not left stale.
+    expect(next.board.pipeline[BOARD_SEED_STAGE_IDS.building]?.model).toEqual({
+      instanceId: "codex",
+      model: "model-c",
+    });
     // Sibling board fields the patch did not mention are untouched.
     expect(next.board.projects[project]?.keyPrefix).toBe("T3");
     expect(next.board.lifecycle).toEqual(DEFAULT_SERVER_SETTINGS.board.lifecycle);

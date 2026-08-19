@@ -17,7 +17,12 @@
 import {
   BoardCardId,
   boardCardStepState,
-  DEFAULT_BOARD_BUILD_STEP,
+  BOARD_SEED_STAGE_IDS,
+  BoardStageId,
+  DEFAULT_BOARD_BUILD_PROMPT,
+  DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+  DEFAULT_BOARD_STEP_TIMEOUT_MS,
+  DEFAULT_TEXT_GENERATION_MODEL,
   isBoardCommand,
   isBoardEvent,
   ProjectId,
@@ -26,9 +31,8 @@ import {
   type BoardCard,
   type BoardCardWorktree,
   type BoardSettings,
-  type BoardStage,
+  type BoardStageExecution,
   type BoardState,
-  type BoardStep,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -57,9 +61,18 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 export const NOW = "2026-01-01T00:00:00.000Z";
 export const projectId = ProjectId.make("project-1");
 
-export const codexStep: BoardStep = {
-  ...DEFAULT_BOARD_BUILD_STEP,
+/** The single build step a stage runs, in the t3o-15 stage-owned model: the
+    provider instance the frozen run row spawns on, and the prompt the stage
+    injects on first entry. `settingsWith` folds it into a Building stage's
+    `BoardStageExecution`. */
+export interface TestBuildStep {
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly prompt: string;
+}
+
+export const codexStep: TestBuildStep = {
   providerInstanceId: ProviderInstanceId.make("codex"),
+  prompt: DEFAULT_BOARD_BUILD_PROMPT,
 };
 
 /** A ready worktree — the state right after "Begin build" provisioned it. */
@@ -78,7 +91,7 @@ export const readyWorktree = (id: string): BoardCardWorktree => ({
     already provisioned. */
 export const makeBoardCard = (input: {
   readonly id: string;
-  readonly stage: BoardStage;
+  readonly stage: string;
   readonly orderKey: string;
   readonly worktree?: BoardCardWorktree | null;
 }): BoardCard => ({
@@ -87,7 +100,7 @@ export const makeBoardCard = (input: {
   cardNumber: 1,
   projectId,
   labels: [],
-  stage: input.stage,
+  stage: BoardStageId.make(input.stage),
   orderKey: input.orderKey,
   title: `Card ${input.id}`,
   briefRef: null,
@@ -95,7 +108,7 @@ export const makeBoardCard = (input: {
   parentCardId: null,
   threadLinks: [],
   externalRef: null,
-  recipeSnapshot: null,
+  humanInLoop: null,
   worktree: input.worktree ?? null,
   blocked: false,
   archivedAt: null,
@@ -128,13 +141,38 @@ export const readModel = (board: BoardState): OrchestrationReadModel => ({
   updatedAt: NOW,
 });
 
+/** Build a `BoardStageExecution` for the Building stage from a single test
+    build step (t3o-15): Building auto-executes unattended in `build` mode and
+    auto-advances to the next stage on success — the behaviour the governor /
+    building-automation suites drive. Human-in-the-loop is off (both defaults
+    false), so a plan-less card runs unattended and the completion advances it. */
+const buildingStageExecution = (step: TestBuildStep): BoardStageExecution => ({
+  kind: "simple",
+  autoExecute: true,
+  prompt: step.prompt,
+  model: { instanceId: step.providerInstanceId, model: DEFAULT_TEXT_GENERATION_MODEL },
+  mode: "build",
+  humanInLoop: false,
+  humanInLoopWithPlan: false,
+  humanInLoopWithoutPlan: false,
+  autoAdvance: true,
+  timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
+  maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+});
+
+/** `building` is the single build step the Building stage runs (a one-element
+    array in every caller, mirroring the retired single-step recipe). It is
+    folded into the Building stage's execution config keyed by the Building stage
+    id, so the reactor resolves and freezes it exactly as in production. */
 export const settingsWith = (input: {
-  readonly building: ReadonlyArray<BoardStep>;
+  readonly building: ReadonlyArray<TestBuildStep>;
   readonly globalMaxConcurrent: number;
   readonly perInstance?: Record<string, number | null>;
 }): BoardSettings => ({
   projects: {},
-  pipeline: { building: [...input.building] },
+  pipeline: {
+    [BOARD_SEED_STAGE_IDS.building]: buildingStageExecution(input.building[0]!),
+  },
   concurrency: {
     perInstance: input.perInstance ?? {},
     globalMaxConcurrent: input.globalMaxConcurrent,
@@ -283,14 +321,19 @@ export function withGovernor(
     every human gate (approve → ready, begin build → building) is delivered. */
 export const cardMoved = (
   card: BoardCard,
-  fromStage: BoardStage,
-  toStage: BoardStage,
+  fromStage: string,
+  toStage: string,
   sequence: number,
 ): OrchestrationEvent =>
   ({
     type: "board.card-moved",
     sequence,
-    payload: { cardId: card.id, fromStage, toStage, card },
+    payload: {
+      cardId: card.id,
+      fromStage: BoardStageId.make(fromStage),
+      toStage: BoardStageId.make(toStage),
+      card,
+    },
   }) as unknown as OrchestrationEvent;
 
 /** The "Begin build" gate (D18): Ready → Building carrying the provisioned card. */
@@ -309,7 +352,7 @@ export const stepCompleted = (
       cardId,
       completion: {
         cardId,
-        stepId: "build",
+        stepId: String(BOARD_SEED_STAGE_IDS.building),
         outcome,
         summary: `report ${outcome}`,
         payload: null,
@@ -333,5 +376,5 @@ export const stepStatus = (board: BoardState, cardId: BoardCardId) =>
   boardCardStepState(board, cardId)?.status ?? null;
 
 /** The stage a card currently sits in, per the live read model. */
-export const cardStage = (board: BoardState, cardId: BoardCardId): BoardStage | null =>
+export const cardStage = (board: BoardState, cardId: BoardCardId): BoardStageId | null =>
   board.cards.find((candidate) => candidate.id === cardId)?.stage ?? null;

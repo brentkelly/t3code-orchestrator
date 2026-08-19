@@ -10,6 +10,7 @@
  */
 import {
   BoardCardId,
+  BoardStageId,
   CommandId,
   ProjectId,
   type BoardCard,
@@ -26,13 +27,18 @@ import { boardDecidedEvents, decideBoardCommand, type BoardCommand } from "./dec
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
 
-function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: string }): BoardCard {
+function makeCard(
+  overrides: Omit<Partial<BoardCard>, "id" | "stage"> & {
+    readonly id: string;
+    readonly stage?: string;
+  },
+): BoardCard {
+  const { id, stage, ...rest } = overrides;
   return {
     key: "CARD-1",
     cardNumber: 1,
     projectId,
     labels: [],
-    stage: "building",
     orderKey: "m",
     title: "Card",
     briefRef: null,
@@ -40,14 +46,15 @@ function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: str
     parentCardId: null,
     threadLinks: [],
     externalRef: null,
-    recipeSnapshot: null,
+    humanInLoop: null,
     worktree: null,
     blocked: false,
     archivedAt: null,
     createdAt: NOW,
     updatedAt: NOW,
-    ...overrides,
-    id: BoardCardId.make(overrides.id),
+    ...rest,
+    stage: BoardStageId.make(stage ?? "building"),
+    id: BoardCardId.make(id),
   };
 }
 
@@ -141,7 +148,7 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
         type: "board.card.move",
         commandId: CommandId.make("cmd-move-card-1"),
         cardId: BoardCardId.make("card-1"),
-        toStage: "building",
+        toStage: BoardStageId.make("building"),
         createdAt: NOW,
       } as const satisfies BoardCommand;
       const event = yield* decide(move, makeReadModel(boardWith([card])));

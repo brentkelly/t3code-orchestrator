@@ -1,62 +1,72 @@
 /**
- * T3o primary stage action (t3o-06, D18). The detail pane's primary button is
- * the human gate that advances a card one stage — the SAME gate a drag or a
- * thread answer resolves. Pure and total over `BoardStage`.
+ * T3o primary stage action (t3o-06, D18/D13). The detail pane's primary button
+ * is the human gate that advances a card one stage — the SAME gate a drag or a
+ * thread answer resolves. Now derived generically from the user-defined stage
+ * list (t3o-15): the exhaustive per-stage switch is gone, replaced by "move to
+ * the next stage in order".
  *
- * Only the human-gated forward transitions from D18 appear here. Building has
- * NO forward button: Building -> Code review is board-driven (the build step
- * reports success), never a human click — encoding it as a button would be a
- * D18 violation. Done has none either (its only exit is archive, a reverse
- * state handled separately).
+ * The `build`-role stage has NO forward button: its onward crossing is
+ * board-driven (a successful unattended run auto-advances, D8), never a human
+ * click. The last stage (Done) has none either — its only exit is archive.
  */
-import { boardStageIndex, type BoardStage } from "@t3tools/contracts";
+import {
+  boardStageIndex,
+  boardNextStageId,
+  boardStageWithRole,
+  type BoardStageDefinition,
+  type BoardStageId,
+  type BoardState,
+} from "@t3tools/contracts";
+
+/** A view of the stage list as a `BoardState` slice, so the read-model helpers
+    (`boardStageIndex`, `boardNextStageId`, …) apply to a bare stage array. */
+function stateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
+  return { cards: [], stages, nextCardNumberByProject: {} };
+}
 
 /**
- * Stages a human may drop a card into directly, from the detail modal's stage
- * ladder: Backlog, Sprint and Planning — the same three a card can be created
- * into (t3o-06a). Everything from Ready on describes work the board has
- * started shepherding, so it is *granted* rather than chosen: by the forward
- * gate button, a build result, a review verdict. The ladder still shows those
- * stages — the pipeline is the board's spine and reads as a whole — it just
- * does not offer them as a click.
+ * Stages a human may drop a card into directly from the detail modal's stage
+ * ladder: everything before the `build` role. From the build role onward, a
+ * stage describes work the board has started shepherding (a worktree, a run),
+ * so it is *granted* by a gate, a run result or a review verdict rather than
+ * chosen. The ladder still shows those stages; it just does not offer them as a
+ * click.
  */
-export function isBoardStageManuallySelectable(stage: BoardStage): boolean {
-  return boardStageIndex(stage) <= boardStageIndex("planning");
+export function isBoardStageManuallySelectable(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stageId: BoardStageId,
+): boolean {
+  const board = stateOf(stages);
+  const build = boardStageWithRole(board, "build");
+  if (build === null) return true;
+  const index = boardStageIndex(board, stageId);
+  const buildIndex = boardStageIndex(board, build.stageId);
+  return index >= 0 && buildIndex >= 0 && index < buildIndex;
 }
 
 export interface BoardStagePrimaryAction {
   readonly label: string;
-  readonly toStage: BoardStage;
-  /**
-   * Whether the button is the filled, accented one. The prototype fills the
-   * gates that *commit* work — sprint intake, planning kickoff, the build
-   * crossing and the merge — and leaves the approvals (a plan, a review) as
-   * quiet outline buttons, so the loud button is never the one you click
-   * without reading.
-   */
+  readonly toStage: BoardStageId;
+  /** Whether the button is the filled, accented one — the build crossing is the
+      one gate loud enough to read before clicking. */
   readonly emphasised: boolean;
 }
 
-export function boardStagePrimaryAction(stage: BoardStage): BoardStagePrimaryAction | null {
-  switch (stage) {
-    case "backlog":
-      return { label: "Add to sprint", toStage: "sprint", emphasised: true };
-    case "sprint":
-      return { label: "Begin planning", toStage: "planning", emphasised: true };
-    case "planning":
-      return { label: "Approve plan", toStage: "ready", emphasised: false };
-    case "ready":
-      // "Begin build" commits the card to the build queue (D11); never
-      // automatic (D18) — this click is the crossing.
-      return { label: "Begin build", toStage: "building", emphasised: true };
-    case "building":
-      // Board-driven onward (build success) — no human forward gate.
-      return null;
-    case "review":
-      return { label: "Approve review", toStage: "merge", emphasised: false };
-    case "merge":
-      return { label: "Merge", toStage: "done", emphasised: true };
-    case "done":
-      return null;
+export function boardStagePrimaryAction(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stageId: BoardStageId,
+): BoardStagePrimaryAction | null {
+  const board = stateOf(stages);
+  const current = stages.find((stage) => stage.stageId === stageId) ?? null;
+  // The build role advances board-driven (D8) — no human forward gate.
+  if (current?.role === "build") return null;
+  const next = boardNextStageId(board, stageId);
+  if (next === null) return null;
+  const nextStage = stages.find((stage) => stage.stageId === next);
+  if (nextStage === undefined) return null;
+  // Crossing into the build role is the "Begin build" human gate (D11).
+  if (nextStage.role === "build") {
+    return { label: "Begin build", toStage: next, emphasised: true };
   }
+  return { label: `Move to ${nextStage.label}`, toStage: next, emphasised: false };
 }

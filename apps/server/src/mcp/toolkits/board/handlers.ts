@@ -31,7 +31,8 @@ import {
   type BoardLabelId,
   type BoardPlansProposeCommand,
   type BoardPlanWriteCommand,
-  type BoardStage,
+  BOARD_SEED_STAGE_IDS,
+  boardStageWithRole,
   type BoardState,
   type OrchestrationCommand,
   type OrchestrationReadModel,
@@ -319,14 +320,17 @@ export const boardHandlers = {
       const activity = yield* deps.board
         .boardCardActivity(card.id)
         .pipe(Effect.mapError(internalError));
+      // A dependency is satisfied when it sits in the `done`-role stage — keyed
+      // on the role, not on a stage literally named "done" (D3).
+      const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
       const dependencies = card.dependsOn.map((dependencyId) => {
         const dependency = board.cards.find((candidate) => candidate.id === dependencyId);
         return {
           cardId: dependencyId,
           key: dependency?.key ?? dependencyId,
           title: dependency?.title ?? dependencyId,
-          stage: dependency?.stage ?? ("backlog" as BoardStage),
-          met: dependency?.stage === "done",
+          stage: dependency?.stage ?? BOARD_SEED_STAGE_IDS.backlog,
+          met: doneStageId !== null && dependency?.stage === doneStageId,
         };
       });
       return {
@@ -463,7 +467,7 @@ export const boardHandlers = {
       const projectTitle = model.projects.find((project) => project.id === projectId)?.title ?? "";
       const board = model.board ?? EMPTY_BOARD_STATE;
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
-      const stage = input.stage ?? ("backlog" as BoardStage);
+      const stage = input.stage ?? BOARD_SEED_STAGE_IDS.backlog;
       // `brief` and `dependsOn` ride a follow-up update (the create command
       // carries neither). Validate the ONE follow-up field that can be
       // rejected — a dependency that does not exist — BEFORE creating the

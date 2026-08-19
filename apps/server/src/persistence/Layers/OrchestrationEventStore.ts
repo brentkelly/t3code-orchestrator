@@ -1,7 +1,8 @@
 import {
-  // T3o: card + label aggregate ids (D9 / t3o-06a).
+  // T3o: card + label + stage aggregate ids (D9 / t3o-06a / t3o-15).
   BoardCardId,
   BoardLabelId,
+  BoardStageId,
   CommandId,
   EventId,
   IsoDateTime,
@@ -40,7 +41,7 @@ const AppendEventRequestSchema = Schema.Struct({
   aggregateKind: OrchestrationAggregateKind,
   // T3o: BoardCardId appended for card-aggregate event streams (D9);
   // BoardLabelId for the label aggregate (t3o-06a). Frozen widening.
-  streamId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId]),
+  streamId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId, BoardStageId]),
   type: OrchestrationEventType,
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
@@ -58,7 +59,7 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   aggregateKind: OrchestrationAggregateKind,
   // T3o: BoardCardId appended for card-aggregate event rows (D9); BoardLabelId
   // for the label aggregate (t3o-06a). Frozen widening.
-  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId, BoardStageId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
