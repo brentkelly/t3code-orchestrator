@@ -11,9 +11,13 @@
 import {
   BoardCardId,
   BoardLabelId,
+  BOARD_SEED_STAGE_IDS,
   activeBoardCardThreadId,
   areBoardStagesAdjacent,
+  boardStageWithRole,
   deriveBoardCardThreadState,
+  resolveBoardStageExecution,
+  type BoardState,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
@@ -26,6 +30,7 @@ import { Dialog } from "../components/ui/dialog";
 import { randomUUID } from "../lib/utils";
 import { boardEnvironment } from "../state/board";
 import { environmentShell } from "../state/shell";
+import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 import { indexBoardLabels } from "./labelColour";
 import {
@@ -68,6 +73,7 @@ export function BoardCardDetail({
 }) {
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
+  const stages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
 
   const updateCard = useAtomCommand(boardEnvironment.updateCard);
@@ -89,6 +95,11 @@ export function BoardCardDetail({
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
   const labelsById = useMemo(() => indexBoardLabels(catalogue), [catalogue]);
+  const stageState = useMemo<BoardState>(
+    () => ({ cards: [], stages, nextCardNumberByProject: {} }),
+    [stages],
+  );
+  const boardSettings = usePrimarySettings((settings) => settings.board);
 
   /** Report a rejected command inline (the decider names cycles, missing
       dependencies, the label cap); clear it once the next command succeeds. */
@@ -117,7 +128,7 @@ export function BoardCardDetail({
         cardId: dependencyId,
         key: resolved?.key ?? dependencyId,
         title: resolved?.title ?? null,
-        stage: resolved?.stage ?? "backlog",
+        stage: resolved?.stage ?? BOARD_SEED_STAGE_IDS.backlog,
         known: resolved !== undefined,
         archived: resolved !== undefined && resolved.archivedAt !== null,
       };
@@ -175,7 +186,7 @@ export function BoardCardDetail({
     return (
       <LoadingModal
         onClose={onClose}
-        wide={shell !== undefined && boardCardHasThreadPane(shell.stage)}
+        wide={shell !== undefined && boardCardHasThreadPane(stages, shell.stage)}
       />
     );
   }
@@ -189,10 +200,28 @@ export function BoardCardDetail({
       ? null
       : (snapshot?.threads.find((thread) => thread.id === activeThreadId)?.branch ?? null);
 
+  // Per-card human-in-the-loop stance on the Build role (D6): shown only when
+  // the card is on the build stage. The default flips on whether the card has a
+  // plan; an explicit override wins over it.
+  const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
+  const humanInLoop =
+    buildStageId !== null && card.stage === buildStageId
+      ? (() => {
+          const exec = resolveBoardStageExecution(boardSettings, buildStageId);
+          const fallback = detail.hasPlan ? exec.humanInLoopWithPlan : exec.humanInLoopWithoutPlan;
+          return { value: card.humanInLoop ?? fallback, explicit: card.humanInLoop !== null };
+        })()
+      : null;
+
   return (
     <BoardCardDetailView
       adoptableThreads={adoptableThreads}
       branch={branch}
+      humanInLoop={humanInLoop}
+      onSetHumanInLoop={(value) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, humanInLoop: value } }))
+      }
+      stages={stages}
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}
@@ -249,7 +278,9 @@ export function BoardCardDetail({
               cardId: card.id,
               toStage,
               orderKey: boardColumnAppendOrderKey(targetColumn),
-              ...(areBoardStagesAdjacent(card.stage, toStage) ? {} : { override: true }),
+              ...(areBoardStagesAdjacent(stageState, card.stage, toStage)
+                ? {}
+                : { override: true }),
             },
           }),
         );

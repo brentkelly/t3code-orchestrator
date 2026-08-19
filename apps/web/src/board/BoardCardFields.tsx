@@ -7,13 +7,13 @@
  *
  * Pure presentation — entries in, a pick or a removal out.
  */
-import type { BoardCardId, BoardStage } from "@t3tools/contracts";
+import type { BoardCardId, BoardStageDefinition, BoardStageId } from "@t3tools/contracts";
 import { XIcon } from "lucide-react";
 
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
-import { BOARD_STAGE_LABELS } from "./boardStages";
+import { boardStageLabel } from "./boardStages";
 
 /** The prototype's section label: 11px, uppercase, widely tracked. */
 export function BoardSectionHeading({
@@ -39,7 +39,7 @@ export interface BoardDependencyEntry {
   readonly cardId: BoardCardId;
   readonly key: string;
   readonly title: string | null;
-  readonly stage: BoardStage;
+  readonly stage: BoardStageId;
   /** False only when the id resolves to no card at all — rendered as an
       unknown reference, never hidden. An ARCHIVED dependency is known: it is
       a real card, resolved from the detail (t3o-13, D4), and reads as
@@ -54,11 +54,14 @@ export interface BoardDependencyEntry {
 export function BoardDependencySection({
   dependencies,
   options,
+  stages,
   onAdd,
   onRemove,
 }: {
   readonly dependencies: ReadonlyArray<BoardDependencyEntry>;
   readonly options: ReadonlyArray<BoardPickerOption>;
+  /** The read-model stage list, for resolving a dependency's stage label (D13). */
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly onAdd: (cardId: BoardCardId) => void;
   readonly onRemove: (cardId: BoardCardId) => void;
 }) {
@@ -106,7 +109,7 @@ export function BoardDependencySection({
                   ? "unknown card"
                   : dependency.archived
                     ? "Archived"
-                    : BOARD_STAGE_LABELS[dependency.stage]}
+                    : boardStageLabel(stages, dependency.stage)}
               </span>
               <Button
                 onClick={() => onRemove(dependency.cardId)}

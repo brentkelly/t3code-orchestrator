@@ -969,6 +969,16 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // Whether a card has any proposed plan (t3o-15, D6) — one bounded scalar for
+  // the Build stage's human-in-the-loop default, not the plan bodies.
+  const countBoardPlansForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: Schema.Struct({ count: Schema.Int }),
+    execute: (cardId) => sql`
+      SELECT COUNT(*) AS "count" FROM board_plans WHERE card_id = ${cardId}
+    `,
+  });
+
   const findBoardPlanRow = SqlSchema.findOneOption({
     Request: BoardPlanId,
     Result: BoardPlanDbRow,
@@ -1025,6 +1035,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
     listBoardPlanRows,
+    countBoardPlansForCard,
     findBoardPlanRow,
   };
 }
@@ -1657,6 +1668,36 @@ export function withBoardShellLabels(
   );
 }
 
+/** Enrich the shell snapshot with the user-defined stage list (t3o-15) so the
+    board reads column order and labels from it (D13). Always present (stages
+    are seeded), so — unlike labels — this is not conditional on non-empty. */
+export function withBoardShellStages(
+  queries: BoardCardQueries,
+  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
+): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
+  const stageRows = queries
+    .listBoardStageRows()
+    .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellStages:query")));
+  return Effect.all([snapshot, stageRows]).pipe(
+    Effect.map(([shell, rows]) => {
+      if (rows.length === 0) return shell;
+      const boardStages = rows
+        .map(
+          (row): BoardStageDefinition => ({
+            stageId: row.stageId,
+            label: row.label,
+            role: row.role,
+            orderKey: row.orderKey,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+          }),
+        )
+        .sort(compareBoardStages);
+      return { ...shell, boardStages };
+    }),
+  );
+}
+
 /**
  * Full detail for one open card (`board.subscribeCard`, t3o-04): the whole
  * aggregate (thread links incl. tombstones from 902) plus the brief body
@@ -1678,39 +1719,43 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardLabelRowsForCard(cardId),
       queries.listBoardCardDependencyRefRows(cardId),
       queries.listBoardCardDependentRefRows(cardId),
+      queries.countBoardPlansForCard(cardId),
     ]).pipe(
-      Effect.map(([cardRow, linkRows, bodyRow, labelRows, dependencyRows, dependentRows]) => {
-        if (Option.isNone(cardRow)) return null;
-        const links = sortBoardCardThreadLinks(
-          linkRows.map((row) => ({
-            threadId: row.threadId,
-            role: row.role,
-            linkedAt: row.linkedAt,
-            tombstonedAt: row.tombstonedAt,
-          })),
-        );
-        const labels = [...labelRows]
-          .sort((left, right) => left.ordinal - right.ordinal)
-          .map((row) => row.labelId);
-        const card = rowToBoardCard(cardRow.value, links, labels);
-        // `dependsOn` order is the card's order — the SQL returns a set, so
-        // the sequence is restored here rather than trusted from the rows.
-        // An id whose row is gone is simply dropped: the chip has nothing to
-        // show, and the gate already treats it as unmet.
-        const dependencyRefsById = new Map(dependencyRows.map((row) => [row.cardId, row]));
-        return {
-          card,
-          brief: Option.match(bodyRow, {
-            onNone: () => null,
-            onSome: (row) => row.body,
-          }),
-          dependencies: card.dependsOn.flatMap((dependencyId) => {
-            const row = dependencyRefsById.get(dependencyId);
-            return row === undefined ? [] : [row];
-          }),
-          dependents: dependentRows,
-        };
-      }),
+      Effect.map(
+        ([cardRow, linkRows, bodyRow, labelRows, dependencyRows, dependentRows, planCountRows]) => {
+          if (Option.isNone(cardRow)) return null;
+          const links = sortBoardCardThreadLinks(
+            linkRows.map((row) => ({
+              threadId: row.threadId,
+              role: row.role,
+              linkedAt: row.linkedAt,
+              tombstonedAt: row.tombstonedAt,
+            })),
+          );
+          const labels = [...labelRows]
+            .sort((left, right) => left.ordinal - right.ordinal)
+            .map((row) => row.labelId);
+          const card = rowToBoardCard(cardRow.value, links, labels);
+          // `dependsOn` order is the card's order — the SQL returns a set, so
+          // the sequence is restored here rather than trusted from the rows.
+          // An id whose row is gone is simply dropped: the chip has nothing to
+          // show, and the gate already treats it as unmet.
+          const dependencyRefsById = new Map(dependencyRows.map((row) => [row.cardId, row]));
+          return {
+            card,
+            brief: Option.match(bodyRow, {
+              onNone: () => null,
+              onSome: (row) => row.body,
+            }),
+            dependencies: card.dependsOn.flatMap((dependencyId) => {
+              const row = dependencyRefsById.get(dependencyId);
+              return row === undefined ? [] : [row];
+            }),
+            dependents: dependentRows,
+            hasPlan: (planCountRows[0]?.count ?? 0) > 0,
+          };
+        },
+      ),
       Effect.mapError(toPersistenceSqlError("BoardCardsProjection.detail:query")),
     );
 }
@@ -1837,13 +1882,19 @@ export function boardSnapshotQueryMethods(
     // Bounded card shells + the label catalogue ride the shell snapshot
     // (D2/D7; catalogue once, t3o-06a).
     getShellSnapshot: () =>
-      withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+      withBoardShellStages(
+        queries,
+        withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+      ),
     // Archived cards ride the archive page's snapshot (t3o-13, D7), with the
     // catalogue so their label chips render like any other card's.
     getArchivedShellSnapshot: () =>
-      withBoardShellLabels(
+      withBoardShellStages(
         queries,
-        withBoardArchivedShellCards(queries, base.getArchivedShellSnapshot()),
+        withBoardShellLabels(
+          queries,
+          withBoardArchivedShellCards(queries, base.getArchivedShellSnapshot()),
+        ),
       ),
     // Board-only detail reader for board.subscribeCard (t3o-04).
     boardCardDetail: makeBoardCardDetailLoader(queries),

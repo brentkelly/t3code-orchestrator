@@ -32,6 +32,7 @@ import {
   BoardCardShell,
   BoardLabel,
   BoardLabelId,
+  BoardStageDefinition,
   BoardStageId,
   BoardState,
   makeBoardOrchestrationEvents,
@@ -494,6 +495,9 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   // T3o: the label catalogue rides the shell ONCE (t3o-06a) — N labels for the
   // whole board, never denormalised per card. Optional for interop. Frozen.
   boardLabels: Schema.optional(Schema.Array(BoardLabel)),
+  // T3o: the user-defined stage list rides the shell ONCE (t3o-15) so the board
+  // reads column order and labels from it (D13). Optional for interop. Frozen.
+  boardStages: Schema.optional(Schema.Array(BoardStageDefinition)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;

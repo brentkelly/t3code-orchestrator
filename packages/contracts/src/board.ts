@@ -2617,6 +2617,11 @@ export const BoardCardDetail = Schema.Struct({
   card: BoardCard,
   /** Brief body text, or null when the card has no brief. */
   brief: Schema.NullOr(TrimmedNonEmptyString),
+  /** Whether the card has any proposed plan (t3o-15, D6): the Build stage's
+      per-card human-in-the-loop default flips on this — a card with a plan
+      defaults to `humanInLoopWithPlan`, one without to `humanInLoopWithoutPlan`.
+      Decodes to false on legacy detail payloads. */
+  hasPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** `card.dependsOn` resolved, in `dependsOn` order. Archived dependencies
       are included — they no longer gate, but they are still real cards and
       must read as such rather than as a dangling id. An id with no row left
@@ -2805,6 +2810,13 @@ export type BoardStageExecution = typeof BoardStageExecution.Type;
  */
 export const BoardPipeline = Schema.Record(Schema.String, BoardStageExecution);
 export type BoardPipeline = typeof BoardPipeline.Type;
+
+/** The all-defaults stage execution config (auto-execute off) — what a stage
+    absent from the pipeline map resolves to, and the base a settings edit
+    patches from. */
+export const DEFAULT_BOARD_STAGE_EXECUTION: BoardStageExecution = Schema.decodeSync(
+  BoardStageExecution,
+)({});
 
 /** The Building prompt carried today by `DEFAULT_BOARD_BUILD_STEP` (D4). */
 export const DEFAULT_BOARD_BUILD_PROMPT =

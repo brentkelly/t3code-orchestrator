@@ -11,22 +11,27 @@
  * effect on the next stage entry.
  */
 import {
-  BOARD_STAGES,
+  BOARD_SEED_STAGES,
+  BoardStageId,
   DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT,
   DEFAULT_BOARD_KEY_PREFIX,
   ProviderInstanceId,
+  boardStagesInOrder,
   resolveBoardProjectAccent,
+  resolveBoardStageExecution,
   type BoardSettings,
-  type BoardStage,
-  type BoardStep,
+  type BoardStageDefinition,
+  type BoardStageExecution,
+  type BoardState,
   type BoardWorktreeRetention,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { useAtomValue } from "@effect/atom-react";
-import { PlusIcon, Trash2Icon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useMemo } from "react";
 import * as Option from "effect/Option";
 
@@ -36,26 +41,36 @@ import {
   projectAccent,
   type ProjectAccentName,
 } from "../../board/projectAccent";
-import { BOARD_STAGE_LABELS } from "../../board/boardStages";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { boardEnvironment } from "../../state/board";
 import { environmentShell } from "../../state/shell";
-import { cn } from "../../lib/utils";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { primaryServerProvidersAtom } from "../../state/server";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+} from "../../providerInstances";
+import {
+  getCustomModelOptionsByInstance,
+  resolveAppModelSelectionState,
+} from "../../modelSelection";
+import { cn, randomUUID } from "../../lib/utils";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import {
-  appendBoardStep,
-  makeNewBoardStep,
   minutesToMs,
   msToMinutes,
   normalizeKeyPrefixInput,
   parsePositiveIntInput,
-  removeBoardStep,
   setBoardInstanceConcurrency,
   setBoardProjectSetting,
-  setBoardStepField,
+  setBoardStageExecution,
 } from "./BoardSettingsPanel.logic";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -90,7 +105,7 @@ export function BoardSettingsPanel() {
   return (
     <SettingsPageContainer>
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
-      <PipelineSection board={board} instanceIds={instanceIds} update={update} />
+      <PipelineSection board={board} update={update} />
       <ConcurrencySection board={board} instanceIds={instanceIds} update={update} />
       <LifecycleSection board={board} update={update} />
     </SettingsPageContainer>
@@ -220,186 +235,391 @@ function ProjectRows({
   );
 }
 
-// ── Pipeline recipe ──────────────────────────────────────────────────────
+// ── Pipeline (stage execution) ─────────────────────────────────────────────
 
-function PipelineSection({
-  board,
-  instanceIds,
-  update,
-}: {
-  board: BoardSettings;
-  instanceIds: ReadonlyArray<string>;
-  update: UpdateFn;
-}) {
+const STAGE_ROLE_LABELS: Record<"build" | "review" | "done", string> = {
+  build: "build",
+  review: "review",
+  done: "done",
+};
+
+/** A `BoardState` shell so `boardStagesInOrder` / `resolveBoardStageExecution`
+    can order the stage list the same way the board does. */
+function stageBoardState(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
+  return { cards: [], stages, nextCardNumberByProject: {} };
+}
+
+function PipelineSection({ board, update }: { board: BoardSettings; update: UpdateFn }) {
   const anchor = searchableSetting("board-pipeline");
-  const setStages = (stage: BoardStage, steps: ReadonlyArray<BoardStep>) => {
-    update({ board: { pipeline: { [stage]: steps } } });
+  const environmentId = usePrimaryEnvironmentId();
+  const stageList = useAtomValue(
+    boardEnvironment.stageListAtom(environmentId ?? ("" as EnvironmentId)),
+  );
+  const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
+  const ordered = boardStagesInOrder(stageBoardState(stages));
+
+  const createStage = useAtomCommand(boardEnvironment.createStage);
+  const renameStage = useAtomCommand(boardEnvironment.renameStage);
+  const reorderStage = useAtomCommand(boardEnvironment.reorderStage);
+  const deleteStage = useAtomCommand(boardEnvironment.deleteStage);
+
+  // ProviderModelPicker context (shared across every stage card).
+  const settings = usePrimarySettings();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const globalDefault = resolveAppModelSelectionState(settings, serverProviders);
+  const instanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+  );
+
+  const crudEnabled = environmentId !== null;
+
+  const updateStage = (stageId: string, patch: Partial<BoardStageExecution>) => {
+    update({ board: { pipeline: setBoardStageExecution(board.pipeline, stageId, patch) } });
   };
+
+  const onRename = (stage: BoardStageDefinition, label: string) => {
+    if (environmentId === null || label.length === 0 || label === stage.label) return;
+    void renameStage({ environmentId, input: { stageId: stage.stageId, label } });
+  };
+
+  const onReorder = (stage: BoardStageDefinition, index: number, direction: -1 | 1) => {
+    if (environmentId === null) return;
+    // Recompute the moved stage's key so it lands between its new neighbours.
+    const orderKey =
+      direction === -1
+        ? pinOrderKeyBetween(
+            ordered[index - 2]?.orderKey ?? null,
+            ordered[index - 1]?.orderKey ?? null,
+          )
+        : pinOrderKeyBetween(
+            ordered[index + 1]?.orderKey ?? null,
+            ordered[index + 2]?.orderKey ?? null,
+          );
+    if (orderKey === null) return;
+    void reorderStage({ environmentId, input: { stageId: stage.stageId, orderKey } });
+  };
+
+  const onDelete = (stage: BoardStageDefinition) => {
+    if (environmentId === null) return;
+    void deleteStage({ environmentId, input: { stageId: stage.stageId } });
+  };
+
+  const onAddStage = () => {
+    if (environmentId === null) return;
+    const last = ordered[ordered.length - 1];
+    const orderKey = pinOrderKeyBetween(last?.orderKey ?? null, null);
+    if (orderKey === null) return;
+    void createStage({
+      environmentId,
+      input: { stageId: BoardStageId.make(randomUUID()), label: "New stage", orderKey },
+    });
+  };
+
   return (
     <SettingsSection id="board-pipeline" title={anchor.title}>
       <p className="px-3 text-[13px] leading-[1.45] text-muted-foreground/80 sm:px-4">
-        Each stage runs an ordered list of steps — one short-lived agent thread per step. A card
-        snapshots its stage's recipe on entry, so edits here take effect the next time a card enters
-        the stage, never mid-flight. In this release only <strong>Building</strong> is executed; the
-        rest are stored for when later stages automate.
+        Each stage runs a single agent step. A card freezes its stage's execution config onto its
+        card the moment it enters the stage, so edits here take effect the next time a card enters
+        the stage, never mid-flight. Two stages — <strong>Building</strong> and{" "}
+        <strong>Planning</strong> — ship auto-executing.
       </p>
+      {!crudEnabled ? (
+        <p className="px-3 text-xs text-muted-foreground/70 sm:px-4">
+          Connect an environment to add, rename, reorder, or delete stages.
+        </p>
+      ) : null}
       <div className="flex flex-col gap-4 pt-1">
-        {BOARD_STAGES.map((stage) => {
-          const steps = board.pipeline[stage] ?? [];
+        {ordered.map((stage, index) => {
+          const exec = resolveBoardStageExecution(board, stage.stageId);
+          const active = exec.model ?? {
+            instanceId: globalDefault.instanceId,
+            model: globalDefault.model,
+          };
+          const modelOptionsByInstance = getCustomModelOptionsByInstance(
+            settings,
+            serverProviders,
+            active.instanceId,
+            active.model,
+          );
           return (
-            <div key={stage} className="rounded-xl border border-border/60 px-3 py-3 sm:px-4">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-sm font-semibold text-foreground">
-                  {BOARD_STAGE_LABELS[stage]}
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">
-                    {steps.length === 0
-                      ? "No steps"
-                      : `${steps.length} step${steps.length === 1 ? "" : "s"}`}
-                  </span>
-                </h3>
-                <Button
-                  size="xs"
-                  variant="secondary"
-                  onClick={() => setStages(stage, appendBoardStep(steps, makeNewBoardStep(steps)))}
-                >
-                  <PlusIcon className="size-3.5" />
-                  Add step
-                </Button>
-              </div>
-              {steps.length > 0 ? (
-                <div className="mt-3 flex flex-col gap-3">
-                  {steps.map((step, index) => (
-                    <StepEditor
-                      key={step.id}
-                      step={step}
-                      instanceIds={instanceIds}
-                      onChange={(patch) => setStages(stage, setBoardStepField(steps, index, patch))}
-                      onRemove={() => setStages(stage, removeBoardStep(steps, index))}
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            <StageCard
+              key={stage.stageId}
+              stage={stage}
+              index={index}
+              stageCount={ordered.length}
+              exec={exec}
+              crudEnabled={crudEnabled}
+              activeModel={active}
+              globalDefault={globalDefault}
+              instanceEntries={instanceEntries}
+              modelOptionsByInstance={modelOptionsByInstance}
+              updateStage={updateStage}
+              onRename={(label) => onRename(stage, label)}
+              onReorder={(direction) => onReorder(stage, index, direction)}
+              onDelete={() => onDelete(stage)}
+            />
           );
         })}
+      </div>
+      <div className="px-3 pt-1 sm:px-4">
+        <Button size="xs" variant="secondary" disabled={!crudEnabled} onClick={onAddStage}>
+          <PlusIcon className="size-3.5" />
+          Add stage
+        </Button>
       </div>
     </SettingsSection>
   );
 }
 
-function StepEditor({
-  step,
-  instanceIds,
-  onChange,
-  onRemove,
+type ModelSelectionState = ReturnType<typeof resolveAppModelSelectionState>;
+type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
+type ModelOptionsByInstance = ReturnType<typeof getCustomModelOptionsByInstance>;
+type ActiveModel = { instanceId: ProviderInstanceId; model: string };
+
+function StageCard({
+  stage,
+  index,
+  stageCount,
+  exec,
+  crudEnabled,
+  activeModel,
+  globalDefault,
+  instanceEntries,
+  modelOptionsByInstance,
+  updateStage,
+  onRename,
+  onReorder,
+  onDelete,
 }: {
-  step: BoardStep;
-  instanceIds: ReadonlyArray<string>;
-  onChange: (patch: Partial<BoardStep>) => void;
-  onRemove: () => void;
+  stage: BoardStageDefinition;
+  index: number;
+  stageCount: number;
+  exec: BoardStageExecution;
+  crudEnabled: boolean;
+  activeModel: ActiveModel;
+  globalDefault: ModelSelectionState;
+  instanceEntries: InstanceEntries;
+  modelOptionsByInstance: ModelOptionsByInstance;
+  updateStage: (stageId: string, patch: Partial<BoardStageExecution>) => void;
+  onRename: (label: string) => void;
+  onReorder: (direction: -1 | 1) => void;
+  onDelete: () => void;
 }) {
-  const instanceOptions = [...new Set([...instanceIds, step.providerInstanceId as string])];
+  const set = (patch: Partial<BoardStageExecution>) => updateStage(stage.stageId, patch);
+
+  const usesModel = exec.model !== null;
+  const active = activeModel;
+
+  const isBuildRole = stage.role === "build";
+  // "Unattended" stages run without a human gate, so they expose auto-advance
+  // and the timeout / attempt ceilings; the build stage always exposes them.
+  const unattended = isBuildRole || !exec.humanInLoop;
+  const promptMissing = exec.autoExecute && exec.prompt.trim().length === 0;
+
   return (
-    <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+    <div className="rounded-xl border border-border/60 px-3 py-3 sm:px-4">
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          key={`label:${step.id}:${step.label}`}
-          defaultValue={step.label}
-          aria-label="Step label"
-          className="h-7 w-40 text-sm"
-          onBlur={(event) => {
-            const label = event.target.value.trim();
-            if (label.length > 0 && label !== step.label) onChange({ label });
-          }}
+          key={`name:${stage.stageId}:${stage.label}`}
+          defaultValue={stage.label}
+          aria-label="Stage name"
+          disabled={!crudEnabled}
+          className="h-7 w-44 text-sm font-medium"
+          onBlur={(event) => onRename(event.target.value.trim())}
         />
+        {stage.role !== null ? (
+          <span className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+            {STAGE_ROLE_LABELS[stage.role]}
+          </span>
+        ) : null}
         <span className="flex-1" />
-        <Button size="icon-xs" variant="ghost" aria-label="Remove step" onClick={onRemove}>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Move stage up"
+          disabled={!crudEnabled || index === 0}
+          onClick={() => onReorder(-1)}
+        >
+          <ChevronUpIcon className="size-3.5" />
+        </Button>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Move stage down"
+          disabled={!crudEnabled || index === stageCount - 1}
+          onClick={() => onReorder(1)}
+        >
+          <ChevronDownIcon className="size-3.5" />
+        </Button>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Delete stage"
+          disabled={!crudEnabled || stage.role !== null}
+          onClick={onDelete}
+        >
           <Trash2Icon className="size-3.5" />
         </Button>
       </div>
-      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="w-16 shrink-0">Provider</span>
-          <Select
-            value={step.providerInstanceId}
-            onValueChange={(value) => {
-              if (value) onChange({ providerInstanceId: ProviderInstanceId.make(value) });
-            }}
-          >
-            <SelectTrigger aria-label="Provider instance" size="xs" className="w-full">
-              <SelectValue>{step.providerInstanceId}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup>
-              {instanceOptions.map((id) => (
-                <SelectItem key={id} value={id}>
-                  {id}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        </label>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="w-16 shrink-0">Model</span>
-          <Input
-            key={`model:${step.id}:${step.model}`}
-            defaultValue={step.model}
-            aria-label="Model"
-            className="h-7 flex-1 text-sm"
-            onBlur={(event) => {
-              const model = event.target.value.trim();
-              if (model.length > 0 && model !== step.model) onChange({ model });
-            }}
-          />
-        </label>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="w-16 shrink-0">Timeout</span>
-          <Input
-            key={`timeout:${step.id}:${step.timeoutMs}`}
-            type="number"
-            min={1}
-            defaultValue={msToMinutes(step.timeoutMs)}
-            aria-label="Timeout in minutes"
-            className="h-7 w-24 text-sm"
-            onBlur={(event) => {
-              const minutes = parsePositiveIntInput(
-                event.target.value,
-                msToMinutes(step.timeoutMs),
-              );
-              const timeoutMs = minutesToMs(minutes);
-              if (timeoutMs !== step.timeoutMs) onChange({ timeoutMs });
-            }}
-          />
-          <span>min</span>
-        </label>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="w-16 shrink-0">Attempts</span>
-          <Input
-            key={`attempts:${step.id}:${step.maxAttempts}`}
-            type="number"
-            min={1}
-            defaultValue={step.maxAttempts}
-            aria-label="Max attempts"
-            className="h-7 w-24 text-sm"
-            onBlur={(event) => {
-              const maxAttempts = parsePositiveIntInput(event.target.value, step.maxAttempts);
-              if (maxAttempts !== step.maxAttempts) onChange({ maxAttempts });
-            }}
-          />
-        </label>
-      </div>
-      <Textarea
-        key={`prompt:${step.id}`}
-        defaultValue={step.promptTemplate}
-        aria-label="Prompt template"
-        rows={3}
-        placeholder="Prompt for this step. Wrapped by the completion/question envelope at run time."
-        className="mt-2"
-        onBlur={(event) => {
-          if (event.target.value !== step.promptTemplate) {
-            onChange({ promptTemplate: event.target.value });
-          }
-        }}
-      />
+
+      <label className="mt-3 flex items-center justify-between gap-2 text-sm text-foreground">
+        <span>Auto execute</span>
+        <Switch
+          checked={exec.autoExecute}
+          onCheckedChange={(checked) => set({ autoExecute: Boolean(checked) })}
+          aria-label="Auto execute this stage"
+        />
+      </label>
+
+      {exec.autoExecute ? (
+        <div className="mt-3 flex flex-col gap-3">
+          <div>
+            <Textarea
+              key={`prompt:${stage.stageId}`}
+              defaultValue={exec.prompt}
+              aria-label="Stage prompt"
+              rows={3}
+              placeholder="Prompt for this stage's agent step. Wrapped by the completion/question envelope at run time."
+              onBlur={(event) => {
+                if (event.target.value !== exec.prompt) set({ prompt: event.target.value });
+              }}
+            />
+            {promptMissing ? (
+              <p className="mt-1 text-xs text-destructive">A prompt is required to auto-execute.</p>
+            ) : null}
+          </div>
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm text-foreground">Use a specific model</span>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {usesModel ? (
+                <ProviderModelPicker
+                  activeInstanceId={active.instanceId}
+                  model={active.model}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  triggerVariant="outline"
+                  triggerAriaLabel="Stage model"
+                  onInstanceModelChange={(instanceId, model) =>
+                    set({ model: { instanceId, model } })
+                  }
+                />
+              ) : null}
+              <Switch
+                checked={usesModel}
+                onCheckedChange={(checked) =>
+                  set({
+                    model: checked
+                      ? { instanceId: globalDefault.instanceId, model: globalDefault.model }
+                      : null,
+                  })
+                }
+                aria-label="Use a specific model for this stage"
+              />
+            </div>
+          </div>
+
+          <label className="flex items-center justify-between gap-2 text-sm text-foreground">
+            <span>Mode</span>
+            <Select
+              value={exec.mode}
+              onValueChange={(value) => {
+                if (value) set({ mode: value as "plan" | "build" });
+              }}
+            >
+              <SelectTrigger aria-label="Stage mode" size="xs" className="w-32">
+                <SelectValue>{exec.mode === "plan" ? "Plan" : "Build"}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="plan">Plan</SelectItem>
+                <SelectItem value="build">Build</SelectItem>
+              </SelectPopup>
+            </Select>
+          </label>
+
+          {isBuildRole ? (
+            <>
+              <label className="flex items-center justify-between gap-2 text-sm text-foreground">
+                <span>Pause for a human when a plan exists</span>
+                <Switch
+                  checked={exec.humanInLoopWithPlan}
+                  onCheckedChange={(checked) => set({ humanInLoopWithPlan: Boolean(checked) })}
+                  aria-label="Human in the loop when a plan exists"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-2 text-sm text-foreground">
+                <span>Pause for a human when no plan exists</span>
+                <Switch
+                  checked={exec.humanInLoopWithoutPlan}
+                  onCheckedChange={(checked) => set({ humanInLoopWithoutPlan: Boolean(checked) })}
+                  aria-label="Human in the loop when no plan exists"
+                />
+              </label>
+            </>
+          ) : (
+            <label className="flex items-center justify-between gap-2 text-sm text-foreground">
+              <span>Pause for a human</span>
+              <Switch
+                checked={exec.humanInLoop}
+                onCheckedChange={(checked) => set({ humanInLoop: Boolean(checked) })}
+                aria-label="Human in the loop"
+              />
+            </label>
+          )}
+
+          {unattended ? (
+            <label className="flex items-center justify-between gap-2 text-sm text-foreground">
+              <span>Auto advance to the next stage</span>
+              <Switch
+                checked={exec.autoAdvance}
+                onCheckedChange={(checked) => set({ autoAdvance: Boolean(checked) })}
+                aria-label="Auto advance to the next stage"
+              />
+            </label>
+          ) : null}
+
+          {unattended ? (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="w-16 shrink-0">Timeout</span>
+                <Input
+                  key={`timeout:${stage.stageId}:${exec.timeoutMs}`}
+                  type="number"
+                  min={1}
+                  defaultValue={msToMinutes(exec.timeoutMs)}
+                  aria-label="Timeout in minutes"
+                  className="h-7 w-24 text-sm"
+                  onBlur={(event) => {
+                    const minutes = parsePositiveIntInput(
+                      event.target.value,
+                      msToMinutes(exec.timeoutMs),
+                    );
+                    const timeoutMs = minutesToMs(minutes);
+                    if (timeoutMs !== exec.timeoutMs) set({ timeoutMs });
+                  }}
+                />
+                <span>min</span>
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="w-16 shrink-0">Attempts</span>
+                <Input
+                  key={`attempts:${stage.stageId}:${exec.maxAttempts}`}
+                  type="number"
+                  min={1}
+                  defaultValue={exec.maxAttempts}
+                  aria-label="Max attempts"
+                  className="h-7 w-24 text-sm"
+                  onBlur={(event) => {
+                    const maxAttempts = parsePositiveIntInput(event.target.value, exec.maxAttempts);
+                    if (maxAttempts !== exec.maxAttempts) set({ maxAttempts });
+                  }}
+                />
+              </label>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
