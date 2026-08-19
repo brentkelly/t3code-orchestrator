@@ -187,16 +187,29 @@ hidden when the planning recipe has no steps.
 the card through `board_get_card_context` once the human types. Client-side: `threadEnvironment.create`
 then the existing `boardEnvironment.linkThread` (`state/board.ts:482`), role `"linked"`.
 
-### D8 — On-demand spawn is a server command, not client-composed
+### D8 — On-demand spawn shares a pure composer, not a new command
 
-"Restart planning" cannot be composed in the browser: the prompt and the envelope live on the
-server, and duplicating `composePlanningPrompt` client-side guarantees drift. Add a board
-command + RPC (`board.card.start-stage-thread` / `boardEnvironment.startStageThread`) that the
-supervisor reactor handles through the **same** function the automatic trigger calls.
+*Revised during implementation.* The first draft added a board command + RPC
+(`board.card.start-stage-thread`) so the server owned prompt composition. That would have meant
+a new entry in the command union, the decider, the projector and the event log — for a
+*request* that changes no state. The cheaper answer with the same drift guarantee: put the
+composition in `packages/contracts` as pure functions and let both callers use them, exactly as
+`resolveBoardRecipeForStage` is already documented to be "callable from the server, the client,
+and tests alike".
 
-The difference between the two entry points is only the suppression check: the automatic
-trigger applies D5, the explicit command does not (you asked for it — that is the point of the
-escape hatch on a card that already has a build thread).
+So `composeBoardPlanningPrompt`, `boardPlanningThreadTitle` and `resolveBoardPlanningStep` live
+in contracts (`providerQuestionMechanism` moved there from `supervisor.ts` for the same reason),
+and the client dispatches the same `thread.turn.start` + `board.card.link-thread` pair the
+reactor does. No new command, no new event type. The only thing stated twice is the six-field
+bootstrap literal, cross-referenced in both files.
+
+The difference between the two entry points is the suppression check: the automatic trigger
+applies D5, the explicit "restart planning" does not — starting a second planning pass on a card
+that already carries a build thread is the entire point of the escape hatch.
+
+**Both read live settings.** Planning snapshots no recipe (D1), so neither path can consult
+`card.recipeSnapshot`; each resolves the step from `ServerSettings.board` as it stands at the
+moment of the spawn. Editing the prompt and restarting always uses the new text.
 
 ### D9 — Failure and edge behaviour
 
@@ -242,11 +255,13 @@ escape hatch on a card that already has a build thread).
 
 | File | Change |
 | --- | --- |
-| `packages/contracts/src/board.ts` | `DEFAULT_BOARD_PLANNING_STEP`; add `planning` to the default pipeline; `board.card.start-stage-thread` command |
-| `apps/server/src/board/supervisor.ts` | `composePlanningPrompt` (pure, unit-tested) |
-| `apps/server/src/board/supervisorReactor.ts` | planning spawn path; `board.card-created` in the event filter; handle the new command |
-| `apps/server/src/board/decider.ts` / `projector.ts` | accept + project the new command |
-| `apps/server/src/board/rpc.ts` | `startStageThread` RPC |
-| `packages/client-runtime/src/state/board.ts` | `startStageThread` environment command |
-| `apps/web/src/board/BoardCardThreadPane.tsx` | the `+` dropdown; rewrite the stale empty-state copy |
+| `packages/contracts/src/board.ts` | `DEFAULT_BOARD_PLANNING_STEP`; `planning` in the default pipeline; `resolveBoardPlanningStep` / `composeBoardPlanningPrompt` / `boardPlanningThreadTitle`; `providerQuestionMechanism` moved here |
+| `apps/server/src/board/supervisor.ts` | re-exports `providerQuestionMechanism` from contracts |
+| `apps/server/src/board/supervisorReactor.ts` | `beginCardPlanning` + `spawnPlanningThread`; `board.card-created` in the event filter |
+| `apps/server/src/board/supervisorHarness.testkit.ts` | `planning` recipes, seeded thread links, `movedToPlanning` / `cardCreated` / `liveThreadLinks`; the engine double now materialises bootstrapped threads so `link-thread` is decided as in production |
+| `apps/server/src/board/planningStageSpawn.test.ts` | new — the D1/D5/D6/D18 acceptance suite |
+| `apps/web/src/board/BoardCardThreadAddMenu.tsx` | new — the `+` menu |
+| `apps/web/src/board/boardCardThreadSpawn.ts` | new — pure spawn-input builders |
+| `apps/web/src/board/BoardSearchAddPicker.tsx` | extract `BoardPickerSearchBody` so adopt reuses the same search |
+| `apps/web/src/board/BoardCardThreadPane.tsx` | the `+` menu; rewrite the stale adoption-only empty state |
 | `apps/web/src/board/BoardCardDetail.tsx` | wire the two new actions |

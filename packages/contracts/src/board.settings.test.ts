@@ -9,8 +9,11 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ProjectId } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   assignBoardKeyPrefix,
+  boardPlanningThreadTitle,
+  composeBoardPlanningPrompt,
   BoardCardRecipeSnapshot,
   BoardSettings,
   boardProjectAcronym,
@@ -191,5 +194,44 @@ describe("recipe snapshot divergence (D10)", () => {
     expect(boardRecipeSnapshotDiffersFromCurrent({ stage: "review", steps: [step] }, current)).toBe(
       true,
     );
+  });
+});
+
+describe("planning prompt envelope (t3o-14)", () => {
+  const card = { key: "MW-12", title: "Auto-spawn planning threads" };
+
+  it("wraps the settings prompt with the card identity and the planning contract", () => {
+    const prompt = composeBoardPlanningPrompt({ card, step: DEFAULT_BOARD_PLANNING_STEP });
+
+    // The preamble is what makes "the agent knows its own card" true: it never
+    // passes a card id, the MCP toolkit resolves it from the calling thread.
+    expect(prompt).toContain('You are planning card MW-12 — "Auto-spawn planning threads".');
+    expect(prompt).toContain("Call board_get_card_context");
+    // The editable body rides between the two halves, verbatim.
+    expect(prompt).toContain(DEFAULT_BOARD_PLANNING_STEP.promptTemplate);
+    // The planning output is a proposal, and the human still gates the stage.
+    expect(prompt).toContain("board_propose_plans");
+    expect(prompt).toContain("do not move it yourself");
+    // NEVER the build contract: no step state exists for a planning thread, so
+    // board_complete_step would fail on an unknown stepId.
+    expect(prompt).not.toContain("board_complete_step");
+  });
+
+  it("words the question rule for the step's own provider", () => {
+    const claude = composeBoardPlanningPrompt({
+      card,
+      step: {
+        ...DEFAULT_BOARD_PLANNING_STEP,
+        providerInstanceId: ProviderInstanceId.make("claude"),
+      },
+    });
+    expect(claude).toContain("raise it as a Claude Code question");
+    expect(composeBoardPlanningPrompt({ card, step: DEFAULT_BOARD_PLANNING_STEP })).toContain(
+      "raise it through Codex's ask-for-input request",
+    );
+  });
+
+  it("titles the thread the way build threads are titled", () => {
+    expect(boardPlanningThreadTitle(card, DEFAULT_BOARD_PLANNING_STEP)).toBe("MW-12 · Plan");
   });
 });

@@ -24,6 +24,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
+  type BoardCardThreadLink,
   type BoardCardWorktree,
   type BoardSettings,
   type BoardStage,
@@ -81,6 +82,9 @@ export const makeBoardCard = (input: {
   readonly stage: BoardStage;
   readonly orderKey: string;
   readonly worktree?: BoardCardWorktree | null;
+  /** Pre-existing links, for the t3o-14 suppression cases (a card that already
+      carries a thread must not be given another). */
+  readonly threadLinks?: ReadonlyArray<BoardCardThreadLink>;
 }): BoardCard => ({
   id: BoardCardId.make(input.id),
   key: input.id.toUpperCase(),
@@ -93,7 +97,7 @@ export const makeBoardCard = (input: {
   briefRef: null,
   dependsOn: [],
   parentCardId: null,
-  threadLinks: [],
+  threadLinks: input.threadLinks ?? [],
   externalRef: null,
   recipeSnapshot: null,
   worktree: input.worktree ?? null,
@@ -132,9 +136,15 @@ export const settingsWith = (input: {
   readonly building: ReadonlyArray<BoardStep>;
   readonly globalMaxConcurrent: number;
   readonly perInstance?: Record<string, number | null>;
+  /** The planning recipe (t3o-14). Absent means the stage has no steps, which
+      is the "planning is switched off" case — nothing spawns. */
+  readonly planning?: ReadonlyArray<BoardStep>;
 }): BoardSettings => ({
   projects: {},
-  pipeline: { building: [...input.building] },
+  pipeline: {
+    building: [...input.building],
+    ...(input.planning === undefined ? {} : { planning: [...input.planning] }),
+  },
   concurrency: {
     perInstance: input.perInstance ?? {},
     globalMaxConcurrent: input.globalMaxConcurrent,
@@ -176,6 +186,32 @@ export function withGovernor(
         }
       });
 
+    // A thread the reactor just asked for. `board.card.link-thread` is rejected
+    // by the decider unless the thread already EXISTS in the read model, and in
+    // production it does: `thread.turn.start` carries a `createThread` bootstrap
+    // that runs first. The double has to honour that ordering or every spawned
+    // thread would fail to link here while linking fine in production.
+    const materializeThread = (command: OrchestrationCommand) => {
+      const record = command as unknown as {
+        readonly type: string;
+        readonly threadId?: string;
+        readonly bootstrap?: { readonly createThread?: unknown };
+      };
+      const creates =
+        record.type === "thread.create" ||
+        (record.type === "thread.turn.start" && record.bootstrap?.createThread !== undefined);
+      if (!creates || record.threadId === undefined) return Effect.void;
+      // Only `id` and `deletedAt` are read (by the link-thread decider), so the
+      // stub row stays minimal rather than restating the full thread read model.
+      return Ref.update(model, (rm) => ({
+        ...rm,
+        threads: [
+          ...rm.threads,
+          { id: ThreadId.make(record.threadId!), deletedAt: null },
+        ] as unknown as OrchestrationReadModel["threads"],
+      }));
+    };
+
     const engineStub = {
       dispatch: (command: OrchestrationCommand) =>
         (isBoardCommand(command)
@@ -185,7 +221,7 @@ export function withGovernor(
                 Effect.forEach(boardDecidedEvents(decided), applyDecided, { discard: true }),
               ),
             )
-          : Effect.void
+          : materializeThread(command)
         ).pipe(Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence }))))),
       streamDomainEvents: Stream.fromQueue(domainQueue),
       latestSequence: Ref.get(seq),
@@ -319,6 +355,35 @@ export const stepCompleted = (
     },
   }) as unknown as OrchestrationEvent;
 
+/** Entering Planning by a drag — the trigger t3o-14's auto-spawn keys on. */
+export const movedToPlanning = (
+  card: BoardCard,
+  sequence: number,
+  fromStage: BoardStage = "sprint",
+): OrchestrationEvent => cardMoved(card, fromStage, "planning", sequence);
+
+/** A card created directly into a stage (the create dialog's stage picker and
+    `board_create_card` both allow Backlog / Sprint / Planning). The payload is
+    flat — `board.card-created` carries no `card` — and the reactor reads the
+    card from the live model, so the card must already be in the seeded board. */
+export const cardCreated = (card: BoardCard, sequence: number): OrchestrationEvent =>
+  ({
+    type: "board.card-created",
+    sequence,
+    payload: {
+      cardId: card.id,
+      projectId: card.projectId,
+      title: card.title,
+      key: card.key,
+      cardNumber: card.cardNumber,
+      labels: [],
+      dependsOn: [],
+      stage: card.stage,
+      orderKey: card.orderKey,
+      createdAt: NOW,
+    },
+  }) as unknown as OrchestrationEvent;
+
 export const cardArchived = (card: BoardCard, sequence: number): OrchestrationEvent =>
   ({
     type: "board.card-archived",
@@ -331,6 +396,17 @@ export const turnCompleted = (threadId: ThreadId): ProviderRuntimeEvent =>
 
 export const stepStatus = (board: BoardState, cardId: BoardCardId) =>
   boardCardStepState(board, cardId)?.status ?? null;
+
+/** A card's live (non-tombstoned) thread links, in canonical order — the
+    observable for t3o-14: the planning spawn is only visible here, because the
+    engine double applies board commands and `thread.turn.start` is not one. */
+export const liveThreadLinks = (
+  board: BoardState,
+  cardId: BoardCardId,
+): ReadonlyArray<BoardCardThreadLink> =>
+  (board.cards.find((candidate) => candidate.id === cardId)?.threadLinks ?? []).filter(
+    (link) => link.tombstonedAt === null,
+  );
 
 /** The stage a card currently sits in, per the live read model. */
 export const cardStage = (board: BoardState, cardId: BoardCardId): BoardStage | null =>
