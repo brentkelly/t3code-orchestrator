@@ -10,6 +10,12 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Bound memory use: each worker boots a t3 server instance (~250-470 MB).
+    // 4 workers x ~470 MB worst case + ~1.3 GB baseline ~= 3.2 GB, well inside
+    // 8 GB RAM. Paired with `--concurrency-limit 1` in the root `test` script,
+    // which stops per-package pools multiplying (vp defaults to 4 at once).
+    pool: "forks",
+    maxWorkers: 4,
     exclude: [
       "**/.repos/**",
       "**/node_modules/**",
