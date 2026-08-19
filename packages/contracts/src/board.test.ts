@@ -310,9 +310,11 @@ describe("board card shell derivation", () => {
       hasBrief: false,
       activeThreadId: null,
     });
-    // t3o-11 fields
+    // Still-unsourced t3o-11 fields.
     expect(shell.hasPr).toBe(false);
     expect(shell.attachmentCount).toBe(0);
+    // `queued` is now sourced (t3o-11) but rests at false when a producer omits
+    // it — the card-carrying delta path, where step state is not in hand.
     expect(shell.queued).toBe(false);
     // post-MVP sub-boards and review pipeline: key-optional and absent, so
     // an unsourced field costs zero wire bytes per card.
@@ -320,6 +322,40 @@ describe("board card shell derivation", () => {
     expect("planDone" in shell).toBe(false);
     expect("prNumber" in shell).toBe(false);
     expect("issuesOpen" in shell).toBe(false);
+  });
+
+  it("threads a real queued flag through makeBoardCardShell (t3o-11, D11)", () => {
+    // The snapshot builder passes the value derived from step state; a queued
+    // card renders its badge from this one boolean.
+    const queued = makeBoardCardShell({
+      cardId: BoardCardId.make("card-1"),
+      key: "T3O-1",
+      projectId: ProjectId.make("project-1"),
+      labelIds: [],
+      stage: "building",
+      orderKey: "m",
+      title: "Card",
+      blocked: false,
+      dependencyCount: 0,
+      hasBrief: false,
+      activeThreadId: null,
+      queued: true,
+    });
+    expect(queued.queued).toBe(true);
+  });
+
+  it("the queued flag keeps the shell within the fixed budget (t3o-11, D11)", () => {
+    // The worst-case shell already carries `queued: true` (a single boolean),
+    // so wiring the work queue keeps the shell scalar-plus-one-array and within
+    // the byte budget — queue *position* is derived client-side, never on the
+    // wire. Both truth values stay comfortably under the ceiling.
+    expect(fullyPopulatedShell.queued).toBe(true);
+    expect(utf8Bytes(encodeShell(fullyPopulatedShell))).toBeLessThanOrEqual(
+      BOARD_CARD_SHELL_BYTE_BUDGET,
+    );
+    expect(utf8Bytes(encodeShell({ ...fullyPopulatedShell, queued: false }))).toBeLessThanOrEqual(
+      BOARD_CARD_SHELL_BYTE_BUDGET,
+    );
   });
 });
 

@@ -33,6 +33,7 @@ import {
   BoardPlan,
   BoardPlanId,
   BoardStepCompletion,
+  BoardCardStepState,
   compareBoardLabels,
   BoardCardWorktree,
   isBoardEvent,
@@ -58,6 +59,7 @@ import {
   compareBoardCards,
   compareBoardPlans,
   compareBoardStepCompletions,
+  compareBoardStepStates,
 } from "./projector.ts";
 
 export const BOARD_CARDS_PROJECTOR_NAME = "projection.board-cards" as const;
@@ -152,6 +154,23 @@ const BoardCardStepDbRow = Schema.Struct({
   completedAt: BoardStepCompletion.fields.completedAt,
 });
 type BoardCardStepDbRow = typeof BoardCardStepDbRow.Type;
+
+// Live per-card step state (t3o-10). One row per card. `slotHeld` travels as
+// 0/1 (SQLite has no boolean), like `locked` below. Rehydrates the read-model
+// slice `BoardState.stepStates`.
+const BoardCardStepStateDbRow = Schema.Struct({
+  cardId: BoardCardStepState.fields.cardId,
+  stepId: BoardCardStepState.fields.stepId,
+  stepLabel: BoardCardStepState.fields.stepLabel,
+  attempt: BoardCardStepState.fields.attempt,
+  maxAttempts: BoardCardStepState.fields.maxAttempts,
+  threadId: BoardCardStepState.fields.threadId,
+  status: BoardCardStepState.fields.status,
+  slotHeld: Schema.Int,
+  startedAt: BoardCardStepState.fields.startedAt,
+  updatedAt: BoardCardStepState.fields.updatedAt,
+});
+type BoardCardStepStateDbRow = typeof BoardCardStepStateDbRow.Type;
 
 // `dependsOn` JSON-encodes; `locked` travels as 0/1 (SQLite has no boolean).
 const BoardPlanDbRow = Schema.Struct({
@@ -755,6 +774,51 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // One row per card (t3o-10): the card's live step state. Upsert on card_id
+  // so a step transition or the next step of a recipe replaces the prior row.
+  const upsertBoardCardStepStateRow = SqlSchema.void({
+    Request: BoardCardStepStateDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_card_step_state (
+        card_id, step_id, step_label, attempt, max_attempts, thread_id, status, slot_held, started_at, updated_at
+      )
+      VALUES (
+        ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.attempt}, ${row.maxAttempts},
+        ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.startedAt}, ${row.updatedAt}
+      )
+      ON CONFLICT (card_id)
+      DO UPDATE SET
+        step_id = excluded.step_id,
+        step_label = excluded.step_label,
+        attempt = excluded.attempt,
+        max_attempts = excluded.max_attempts,
+        thread_id = excluded.thread_id,
+        status = excluded.status,
+        slot_held = excluded.slot_held,
+        started_at = excluded.started_at,
+        updated_at = excluded.updated_at
+    `,
+  });
+
+  const listBoardCardStepStateRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardCardStepStateDbRow,
+    execute: () => sql`
+      SELECT
+        card_id AS "cardId",
+        step_id AS "stepId",
+        step_label AS "stepLabel",
+        attempt,
+        max_attempts AS "maxAttempts",
+        thread_id AS "threadId",
+        status,
+        slot_held AS "slotHeld",
+        started_at AS "startedAt",
+        updated_at AS "updatedAt"
+      FROM board_card_step_state
+    `,
+  });
+
   // Wholesale rewrite of a card's plan rows from the proposal: idempotent, and
   // structurally incapable of drifting from the read model.
   const deleteBoardPlansForCard = SqlSchema.void({
@@ -869,6 +933,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardActivityRowsForCard,
     upsertBoardCardStepRow,
     listBoardCardStepRows,
+    upsertBoardCardStepStateRow,
+    listBoardCardStepStateRows,
     deleteBoardPlansForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
@@ -959,6 +1025,22 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.step:query")));
 
+  const upsertStepState = (state: BoardCardStepState) =>
+    queries
+      .upsertBoardCardStepStateRow({
+        cardId: state.cardId,
+        stepId: state.stepId,
+        stepLabel: state.stepLabel,
+        attempt: state.attempt,
+        maxAttempts: state.maxAttempts,
+        threadId: state.threadId,
+        status: state.status,
+        slotHeld: state.slotHeld ? 1 : 0,
+        startedAt: state.startedAt,
+        updatedAt: state.updatedAt,
+      })
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.stepState:query")));
+
   // Wholesale rewrite of a card's plan rows from the proposal (bodies live
   // here, D8): idempotent, and structurally incapable of drifting from the
   // read-model plan metadata.
@@ -1025,6 +1107,10 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       case "board.card-worktree-ready":
       case "board.card-worktree-failed":
       case "board.card-worktree-reclaimed":
+      // Recipe snapshot (t3o-10): the payload carries the whole card, so the
+      // persisted projection is the same idempotent upsert — the snapshot rides
+      // `board_cards.recipe_snapshot` with the rest of the aggregate.
+      case "board.card-recipe-snapshotted":
         yield* upsertCard(event.payload.card);
         return;
 
@@ -1075,6 +1161,17 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         yield* upsertStep(event.payload.completion);
         return;
 
+      case "board.card-step-selected":
+      case "board.card-step-admitted":
+      case "board.card-step-awaiting-input":
+      case "board.card-step-recovered":
+      case "board.card-step-settled":
+        // Live step state (t3o-10): every payload carries the whole computed
+        // `BoardCardStepState`, so the persisted projection is one idempotent
+        // upsert on card_id — replay and rehydration cannot diverge.
+        yield* upsertStepState(event.payload.state);
+        return;
+
       case "board.plans-proposed":
         yield* replacePlans(event.payload.cardId, event.payload.plans);
         return;
@@ -1122,10 +1219,20 @@ export function loadBoardState(
     queries.listBoardLabelRows(),
     queries.listBoardCardLabelRows(),
     queries.listBoardCardStepRows(),
+    queries.listBoardCardStepStateRows(),
     queries.listBoardPlanRows(),
   ]).pipe(
     Effect.map(
-      ([cardRows, linkRows, counterRows, labelRows, cardLabelRows, stepRows, planRows]) => {
+      ([
+        cardRows,
+        linkRows,
+        counterRows,
+        labelRows,
+        cardLabelRows,
+        stepRows,
+        stepStateRows,
+        planRows,
+      ]) => {
         // Canonical ordering comes from the shared JS comparators — the same
         // ones the replay path uses — never from SQL collation.
         const labels = labelRows
@@ -1173,6 +1280,22 @@ export function loadBoardState(
             completedAt: row.completedAt,
           }))
           .sort(compareBoardStepCompletions);
+        const stepStates = stepStateRows
+          .map(
+            (row): BoardCardStepState => ({
+              cardId: row.cardId,
+              stepId: row.stepId,
+              stepLabel: row.stepLabel,
+              attempt: row.attempt,
+              maxAttempts: row.maxAttempts,
+              threadId: row.threadId,
+              status: row.status,
+              slotHeld: row.slotHeld !== 0,
+              startedAt: row.startedAt,
+              updatedAt: row.updatedAt,
+            }),
+          )
+          .sort(compareBoardStepStates);
         const plans = planRows
           .map((row) => ({
             planId: row.planId,
@@ -1198,6 +1321,7 @@ export function loadBoardState(
             .sort(compareBoardCards),
           labels,
           ...(stepCompletions.length > 0 ? { stepCompletions } : {}),
+          ...(stepStates.length > 0 ? { stepStates } : {}),
           ...(plans.length > 0 ? { plans } : {}),
           nextCardNumberByProject: Object.fromEntries(
             counterRows.map((row) => [row.projectId, row.maxCardNumber + 1]),
@@ -1253,9 +1377,13 @@ export function withBoardShellCards(
     queries.listBoardCardShellRows(),
     queries.listLiveBoardCardThreadLinkRows(),
     queries.listBoardCardLabelRows(),
+    // The one step-state field on the bounded shell (t3o-11, D11): a card is
+    // `queued` when its live step is holding for a slot. One row per card
+    // (D4), so a small map keyed by card id.
+    queries.listBoardCardStepStateRows(),
   ]).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shell:query")));
   return Effect.all([snapshot, shellRows]).pipe(
-    Effect.map(([shell, [cardRows, linkRows, cardLabelRows]]) => {
+    Effect.map(([shell, [cardRows, linkRows, cardLabelRows, stepStateRows]]) => {
       if (cardRows.length === 0) return shell;
       const linksByCard = new Map<BoardCardId, BoardCardThreadLink[]>();
       for (const row of linkRows) {
@@ -1269,6 +1397,10 @@ export function withBoardShellCards(
         linksByCard.set(row.cardId, links);
       }
       const labelsByCard = groupCardLabels(cardLabelRows);
+      const queuedByCard = new Set<BoardCardId>();
+      for (const row of stepStateRows) {
+        if (row.status === "queued") queuedByCard.add(row.cardId);
+      }
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
         const activeThreadId = activeBoardCardThreadId(linksByCard.get(row.cardId) ?? []);
@@ -1285,6 +1417,7 @@ export function withBoardShellCards(
           hasBrief: row.hasBrief !== 0,
           archivedAt: row.archivedAt,
           activeThreadId,
+          queued: queuedByCard.has(row.cardId),
           thread: activeThreadId === null ? null : (threadsById.get(activeThreadId) ?? null),
         });
       });

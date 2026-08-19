@@ -324,6 +324,11 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`  | Import `BoardToolkitRegistrationLive`                                     | one-line append (import)                                                 |
 | `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`  | Board toolkit joins the MCP server layer merge (D3)                       | spread of a board-owned registration layer                               |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-09`  | Server-internal board commands in `InternalOrchestrationCommand`          | registry spread (`BOARD_INTERNAL_COMMANDS`)                              |
+| `apps/server/src/server.ts`                                            | `t3o-10`  | Import the supervisor reactor + its slots layer                           | one-line append (import)                                                 |
+| `apps/server/src/server.ts`                                            | `t3o-10`  | Supervisor reactor joins `ReactorLayerLive`                               | provideMerge of a board-owned reactor layer                              |
+| `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`  | Import the supervisor reactor tag                                         | one-line append (import)                                                 |
+| `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`  | Resolve the supervisor reactor in the startup effect                      | one-line append (`yield*` the tag)                                       |
+| `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`  | Start the supervisor reactor in the `reactors.start` phase                | one-line append (start call)                                             |
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
 (5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the
@@ -422,6 +427,44 @@ decider only — zero further upstream edits. `t3o-09` also added its `worktree`
 `board_cards` through a new board-owned migration (`910_BoardCardsWorktree`, registered in
 `BOARD_MIGRATIONS`) and grew `BoardCard` plus the board command/event registries — all board-owned,
 no upstream file beyond the one spread above.
+
+`t3o-10` opened the **reactor seam layer** — **5 marker lines across 2 upstream files** (marker count
+now **67**): a reactor has to be _registered_ in the runtime and _started_ in the boot sequence, and
+no board spec before `t3o-10` shipped a reactor, so this is the reactor analogue of how `t3o-04`
+opened the RPC seam and `t3o-09` opened the internal-command seam. `server.ts` imports the
+board-owned `SupervisorReactorLive` (provided its `BoardStepSlotsLive`) and `provideMerge`s it into
+`ReactorLayerLive` alongside the stock reactors; `serverRuntimeStartup.ts` imports the
+`SupervisorReactor` tag, resolves it, and starts it in the existing `reactors.start` phase against
+the shared `reactorScope`, exactly as `providerSessionReaper` is started one line above. Everything
+the supervisor _does_ — the step machine (six internal step-lifecycle commands/events, the
+`board_card_step_state` table via board migration **013**), the prompt envelope, death detection,
+escalating recovery, boot reconciliation, the one-writer enforcement and the concurrency-slot
+lifecycle — lives in board-owned files (`apps/server/src/board/supervisorReactor.ts`,
+`supervisor.ts`, `BoardStepSlots.ts`, `decider.ts`, `projector.ts`, `projection.ts`,
+`packages/contracts/src/board.ts`), so the whole subsystem grows behind those 5 lines. The
+core-only diff audit yields exactly `server.ts` and `serverRuntimeStartup.ts`. Adding a second board
+reactor grows the same two seams by one merge line and one start line — it never opens a new one.
+
+`t3o-11` (the concurrency governor) added **zero new core seams** — marker count stays **67** and the
+core-only diff audit is empty. This is the seam grammar paying off: the governor's whole surface lives
+in board-owned files. The admission policy (per-`providerInstanceId` `maxConcurrent` + global ceiling)
+and boot-time `restore` are in `BoardStepSlots.ts`; the pure ordering (stage desc → started before
+unstarted → drag order) and `resolveBoardConcurrencyLimit` are in `supervisor.ts`; the `schedule`
+pass (offer candidates to `acquire` in priority order, queue the rest, run after every slot release
+for step-boundary preemption) and the `reschedule` boot decision are in `supervisorReactor.ts`. The
+one bit of governor state that reaches the column card — the `queued` flag on `BoardCardShell` — was
+already a placeholder field on the shell (from `t3o-04`), so wiring it added no core line: the
+snapshot builder (`projection.ts`) sources it from `board_card_step_state`, and a new **`card-queued`**
+shell delta carries live flips. That delta is board-owned in every respect — it rides the existing
+`...BOARD_SHELL_STREAM_EVENTS` spread into `OrchestrationShellStreamEvent`, its `card-` prefix already
+routes through `isBoardShellStreamEvent`, and the client reducer delegates through the existing board
+seam — so it needed no edit to `orchestration.ts`, `ws.ts`, `shellReducer.ts` or the settings files
+(the concurrency settings shape already existed under `BoardSettings.concurrency` from `t3o-07`).
+`queued` is derived from step state the card aggregate does not carry, so — exactly like `threadState`
+— it rests at `false` on card-carrying deltas and the client preserves its last value, with the
+`card-queued` delta and the snapshot as its authoritative source. The byte-budget tests were extended
+to cover the now-sourced `queued` field and still pass (position is derived client-side in
+`boardBuildingQueueInfo`, never on the wire, so the shell stays scalar-plus-one-array under budget).
 
 Marker-less upstream churn that rides along with `t3o-02`:
 

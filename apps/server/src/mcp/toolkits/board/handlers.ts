@@ -109,21 +109,17 @@ const readBoardState = (deps: BoardToolDeps): Effect.Effect<BoardState, BoardToo
  * agent-created card and a human-created card land in one key namespace, and
  * neither path can re-derive a different prefix after a rename.
  *
- * Reads the project title from the same read model the tools already query; an
- * unknown project (never registered, or removed) derives from an empty name,
- * which the contracts helper answers with the compiled-in default.
+ * Takes the project title the caller already resolved from the read model; an
+ * unknown project (never registered, or removed) passes an empty name, which
+ * the contracts helper answers with the compiled-in default.
  */
 const resolveCardKeyPrefix = (
-  deps: BoardToolDeps,
   projectId: ProjectId,
+  projectTitle: string,
 ): Effect.Effect<string, BoardToolError, ServerSettings.ServerSettingsService> =>
   Effect.gen(function* () {
     const settings = yield* ServerSettings.ServerSettingsService;
     const current = yield* settings.getSettings.pipe(Effect.mapError(internalError));
-    const model = yield* deps.snapshotQuery
-      .getCommandReadModel()
-      .pipe(Effect.mapError(internalError));
-    const projectTitle = model.projects.find((project) => project.id === projectId)?.title ?? "";
     const { prefix, assigned } = assignBoardKeyPrefix({
       board: current.board,
       projectId,
@@ -203,6 +199,107 @@ const resolveLabelIds = (
   }
   return Effect.succeed(ids);
 };
+
+/** The non-deleted projects the caller can target, from the same command read
+    model the tools already query. */
+const listProjects = (
+  deps: BoardToolDeps,
+): Effect.Effect<ReadonlyArray<OrchestrationReadModel["projects"][number]>, BoardToolError> =>
+  deps.snapshotQuery.getCommandReadModel().pipe(
+    Effect.map((model) => model.projects.filter((project) => project.deletedAt === null)),
+    Effect.mapError(internalError),
+  );
+
+/** The trailing path segment, so `~/projects/t3o-test` and
+    `/home/ai1/projects/t3o-test` both compare as `t3o-test`. */
+const workspaceBasename = (value: string): string => {
+  const trimmed = value.replace(/[/\\]+$/, "");
+  const segments = trimmed.split(/[/\\]/);
+  return segments[segments.length - 1] ?? trimmed;
+};
+
+/** Available projects as `id — title`, the same "rejected with the live list"
+    shape unknown labels use, so an agent that guessed wrong is handed the exact
+    ids to retry with. */
+const formatProjectList = (
+  projects: ReadonlyArray<OrchestrationReadModel["projects"][number]>,
+): string => projects.map((project) => `${project.id} — ${project.title}`).join("; ") || "(none)";
+
+/**
+ * Resolve the project a card should be created in (t3o: agents guess titles,
+ * not ids). With no `projectId` the card lands in the calling thread's own
+ * project — the common "cards for the project I'm in" case, resolved from the
+ * read model via the scope's threadId (a thread's project never changes, so no
+ * value has to be baked into the credential). With a `projectId` it is matched
+ * as an id first, then leniently against a project's title (case-insensitive)
+ * or workspace-root folder name, so a value copied from the app's dropdown
+ * still resolves. Anything unresolvable is rejected with the live project list
+ * rather than dispatched to fail deep in the decider with a bare "does not
+ * exist".
+ *
+ * Pure over an already-fetched read model — board_create_card resolves it once
+ * and reuses it for the board slice and the key prefix, so a single create does
+ * not re-materialise the read model per lookup.
+ */
+const resolveProjectId = (
+  model: OrchestrationReadModel,
+  scope: McpInvocationScope,
+  input: string | undefined,
+): Effect.Effect<ProjectId, BoardToolError> =>
+  Effect.gen(function* () {
+    const projects = model.projects.filter((project) => project.deletedAt === null);
+    if (input === undefined) {
+      const thread = model.threads.find((candidate) => candidate.id === scope.threadId);
+      const owned = thread
+        ? projects.find((project) => project.id === thread.projectId)
+        : undefined;
+      if (owned !== undefined) {
+        return owned.id;
+      }
+      // Either the thread has no project row, or its project was deleted — both
+      // leave nothing to default to, so name the projects that CAN be targeted.
+      return yield* new BoardToolError({
+        code: "invalid-input",
+        message: `No project given, and this thread has no active project to default to. Pass projectId (call board_list_projects for the ids). Available projects: ${formatProjectList(projects)}.`,
+      });
+    }
+    const byId = projects.find((project) => project.id === input);
+    if (byId !== undefined) {
+      return byId.id;
+    }
+    const lowered = input.toLowerCase();
+    const byTitle = projects.filter((project) => project.title.toLowerCase() === lowered);
+    if (byTitle.length === 1) {
+      return byTitle[0]!.id;
+    }
+    if (byTitle.length > 1) {
+      return yield* new BoardToolError({
+        code: "invalid-input",
+        message: `'${input}' matches more than one project by title. Pass an id instead. Matching projects: ${formatProjectList(byTitle)}.`,
+      });
+    }
+    // Case-insensitive like the title match above — friendly to a guessed
+    // folder name and correct on case-insensitive filesystems (macOS). Two
+    // folders differing only in case fall through to the ambiguity branch
+    // rather than silently mismatching.
+    const inputBasename = workspaceBasename(input).toLowerCase();
+    const byPath = projects.filter(
+      (project) => workspaceBasename(project.workspaceRoot).toLowerCase() === inputBasename,
+    );
+    if (byPath.length === 1) {
+      return byPath[0]!.id;
+    }
+    if (byPath.length > 1) {
+      return yield* new BoardToolError({
+        code: "invalid-input",
+        message: `'${input}' matches more than one project by workspace folder. Pass an id instead. Matching projects: ${formatProjectList(byPath)}.`,
+      });
+    }
+    return yield* new BoardToolError({
+      code: "invalid-input",
+      message: `No project matches '${input}' by id, title, or workspace folder. Available projects: ${formatProjectList(projects)}.`,
+    });
+  });
 
 const dispatch = (
   engine: OrchestrationEngineShape,
@@ -314,6 +411,19 @@ export const boardHandlers = {
       };
     }),
 
+  board_list_projects: () =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      const projects = yield* listProjects(deps);
+      return {
+        projects: projects.map((project) => ({
+          projectId: project.id,
+          title: project.title,
+          workspaceRoot: project.workspaceRoot,
+        })),
+      };
+    }),
+
   board_list_cards: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
@@ -339,7 +449,19 @@ export const boardHandlers = {
   board_create_card: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
-      const board = yield* readBoardState(deps);
+      // One read model for the whole create: project resolution, the board
+      // slice, and the key-prefix title all read from it (the card's key is
+      // read back with a fresh model after the write).
+      const model = yield* deps.snapshotQuery
+        .getCommandReadModel()
+        .pipe(Effect.mapError(internalError));
+      // Resolve the target project first (t3o: omitted → this thread's project;
+      // a title or workspace folder → its id), so a card never dispatches
+      // against a phantom project and an unresolvable target is rejected up
+      // front with the live project list.
+      const projectId = yield* resolveProjectId(model, deps.scope, input.projectId);
+      const projectTitle = model.projects.find((project) => project.id === projectId)?.title ?? "";
+      const board = model.board ?? EMPTY_BOARD_STATE;
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
       const stage = input.stage ?? ("backlog" as BoardStage);
       // `brief` and `dependsOn` ride a follow-up update (the create command
@@ -361,7 +483,7 @@ export const boardHandlers = {
       // Bottom of the target column, computed from the read model.
       const orderKey = boardAppendOrderKey(
         board.cards
-          .filter((card) => card.projectId === input.projectId && card.stage === stage)
+          .filter((card) => card.projectId === projectId && card.stage === stage)
           .map((card) => card.orderKey),
       );
       const cardId = BoardCardId.make(yield* mintUuid);
@@ -369,12 +491,12 @@ export const boardHandlers = {
         type: "board.card.create",
         commandId: yield* mintCommandId,
         cardId,
-        projectId: input.projectId,
+        projectId,
         title: input.title,
         labels,
         stage,
         orderKey,
-        keyPrefix: yield* resolveCardKeyPrefix(deps, input.projectId),
+        keyPrefix: yield* resolveCardKeyPrefix(projectId, projectTitle),
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps.engine, create);

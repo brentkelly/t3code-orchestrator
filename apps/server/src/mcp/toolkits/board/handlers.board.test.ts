@@ -293,6 +293,130 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_list_projects returns the seeded project's id, title and workspace root", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const { projects } = yield* boardHandlers.board_list_projects().pipe(withScope(orphanThread));
+      const project = projects.find((candidate) => candidate.projectId === projectId);
+      assert.isDefined(project);
+      assert.strictEqual(project?.title, "Project A");
+      assert.strictEqual(project?.workspaceRoot, "/tmp/project-a");
+    }),
+  );
+
+  it.effect("board_create_card with no projectId lands in the calling thread's project", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // linkedThread belongs to project-a; omitting projectId must resolve to
+      // it from the thread, not require the agent to know the id.
+      const created = yield* boardHandlers
+        .board_create_card({ title: "Thread-default card", stage: "sprint" })
+        .pipe(withScope(linkedThread));
+      const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(linkedThread));
+      const card = listed.cards.find((candidate) => candidate.cardId === created.cardId);
+      assert.strictEqual(card?.projectId, projectId);
+    }),
+  );
+
+  it.effect("board_create_card resolves a project by title and by workspace folder name", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // A value copied from the app — the title, or a path whose last segment
+      // is the workspace folder — resolves to the id (orphanThread has no
+      // project of its own, so only the passed value can resolve it).
+      const byTitle = yield* boardHandlers
+        .board_create_card({ projectId: ProjectId.make("Project A"), title: "By title" })
+        .pipe(withScope(orphanThread));
+      // Mixed case on the folder segment still resolves (case-insensitive, like
+      // the title match, and correct on case-insensitive filesystems).
+      const byPath = yield* boardHandlers
+        .board_create_card({
+          projectId: ProjectId.make("/somewhere/else/Project-A"),
+          title: "By path",
+        })
+        .pipe(withScope(orphanThread));
+      const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(orphanThread));
+      const titleCard = listed.cards.find((candidate) => candidate.cardId === byTitle.cardId);
+      const pathCard = listed.cards.find((candidate) => candidate.cardId === byPath.cardId);
+      assert.strictEqual(titleCard?.projectId, projectId);
+      assert.strictEqual(pathCard?.projectId, projectId);
+    }),
+  );
+
+  it.effect("board_create_card rejects an unresolvable project with the live project list", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_create_card({ projectId: ProjectId.make("does-not-exist"), title: "Nope" })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      // Handed the id AND title so the agent can retry with the real id.
+      assert.include(failure.message, projectId);
+      assert.include(failure.message, "Project A");
+    }),
+  );
+
+  it.effect("board_create_card rejects an ambiguous project match by title and by folder", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const engine = yield* OrchestrationEngineService;
+      const dupProject = (id: string, title: string, workspaceRoot: string, commandId: string) =>
+        engine.dispatch({
+          type: "project.create" as const,
+          commandId: CommandId.make(commandId),
+          projectId: ProjectId.make(id),
+          title,
+          workspaceRoot,
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt: t0,
+        });
+      // A second project with the SAME title as the seed's "Project A", and two
+      // more that SHARE a workspace folder name (`shared-ws`) that is not itself
+      // any project's id — so only the workspace-folder branch can match them.
+      yield* dupProject(
+        "project-dup-title",
+        "Project A",
+        "/var/dup-title",
+        "cmd-project-dup-title",
+      );
+      yield* dupProject("project-ws-1", "Yak", "/a/shared-ws", "cmd-project-ws-1");
+      yield* dupProject("project-ws-2", "Zebra", "/b/shared-ws", "cmd-project-ws-2");
+      // Two projects titled "Project A" → the title is no longer a unique key.
+      const byTitle = yield* Effect.flip(
+        boardHandlers
+          .board_create_card({ projectId: ProjectId.make("Project A"), title: "Ambiguous" })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(byTitle.code, "invalid-input");
+      assert.include(byTitle.message, "more than one project by title");
+      // `shared-ws` is no id and no title, but is the folder name of two
+      // projects (/a/shared-ws and /b/shared-ws).
+      const byPath = yield* Effect.flip(
+        boardHandlers
+          .board_create_card({ projectId: ProjectId.make("/tmp/shared-ws"), title: "Ambiguous" })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(byPath.code, "invalid-input");
+      assert.include(byPath.message, "more than one project by workspace folder");
+    }),
+  );
+
+  it.effect("board_create_card with no projectId from an unlinked thread lists the projects", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const failure = yield* Effect.flip(
+        boardHandlers.board_create_card({ title: "Homeless" }).pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, projectId);
+    }),
+  );
+
   it.effect("the agent write path replays identically from an empty read model (D8)", () =>
     Effect.gen(function* () {
       yield* seed();

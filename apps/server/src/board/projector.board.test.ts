@@ -298,4 +298,101 @@ describe("board projector", () => {
       assert.deepStrictEqual(model.board?.cards[0]?.threadLinks, tombstonedCard.threadLinks);
     }),
   );
+
+  it.effect("projects step state as one record per card, overwriting on transition (t3o-10)", () =>
+    Effect.gen(function* () {
+      const running = {
+        cardId,
+        stepId: "build",
+        stepLabel: "Build",
+        attempt: 1,
+        maxAttempts: 3,
+        threadId: ThreadId.make("thread-1"),
+        status: "running" as const,
+        slotHeld: true,
+        startedAt: NOW,
+        updatedAt: NOW,
+      };
+      const selectedEvent: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-selected",
+        payload: {
+          cardId,
+          state: {
+            ...running,
+            status: "pending",
+            threadId: null,
+            slotHeld: false,
+            startedAt: null,
+          },
+        },
+      };
+      const admittedEvent: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-admitted",
+        payload: { cardId, state: running },
+      };
+      const settledEvent: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-settled",
+        payload: { cardId, state: { ...running, status: "succeeded", slotHeld: false } },
+      };
+      const base = {
+        ...emptyModel(),
+        board: { cards: [makeCard({})], labels: [], nextCardNumberByProject: {} },
+      };
+      const afterSelect = yield* projectBoardEvent(base, selectedEvent);
+      assert.strictEqual(afterSelect.board?.stepStates?.length, 1);
+      assert.strictEqual(afterSelect.board?.stepStates?.[0]?.status, "pending");
+      const afterAdmit = yield* projectBoardEvent(afterSelect, admittedEvent);
+      assert.strictEqual(afterAdmit.board?.stepStates?.length, 1); // still one record per card
+      assert.strictEqual(afterAdmit.board?.stepStates?.[0]?.status, "running");
+      const afterSettle = yield* projectBoardEvent(afterAdmit, settledEvent);
+      assert.strictEqual(afterSettle.board?.stepStates?.[0]?.status, "succeeded");
+      assert.strictEqual(afterSettle.board?.stepStates?.[0]?.slotHeld, false);
+      // Admission to RUNNING flips the one step field on the shell (t3o-11,
+      // D11): a `card-queued` delta clearing the queued badge (queued=false).
+      // Every other step field stays card DETAIL on the subscription (D7).
+      const admittedDelta = boardShellStreamEvent(admittedEvent);
+      assert.strictEqual(Option.isSome(admittedDelta), true);
+      assert.deepStrictEqual(Option.getOrThrow(admittedDelta), {
+        kind: "card-queued",
+        sequence: admittedEvent.sequence,
+        cardId,
+        queued: false,
+      });
+      // Settling emits no shell delta — a step only leaves `queued` via
+      // admission above, never via settle.
+      assert.strictEqual(Option.isNone(boardShellStreamEvent(settledEvent)), true);
+    }),
+  );
+
+  it.effect("admission that queues the step raises the queued badge (t3o-11)", () =>
+    Effect.sync(() => {
+      const queuedState = {
+        cardId,
+        stepId: "build",
+        stepLabel: "Build",
+        attempt: 1,
+        maxAttempts: 3,
+        threadId: null,
+        status: "queued" as const,
+        slotHeld: false,
+        startedAt: null,
+        updatedAt: NOW,
+      };
+      const queuedAdmit: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-admitted",
+        payload: { cardId, state: queuedState },
+      };
+      const delta = boardShellStreamEvent(queuedAdmit);
+      assert.deepStrictEqual(Option.getOrThrow(delta), {
+        kind: "card-queued",
+        sequence: queuedAdmit.sequence,
+        cardId,
+        queued: true,
+      });
+    }),
+  );
 });
