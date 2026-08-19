@@ -48,10 +48,18 @@ export function requireProject(input: {
   if (project) {
     return Effect.succeed(project);
   }
+  // Name the projects that DO exist (id — title): the caller reached here with
+  // a value that is not a live project id — often a title or folder name — and
+  // the live list is what it needs to correct the call.
+  const available =
+    input.readModel.projects
+      .filter((candidate) => candidate.deletedAt === null)
+      .map((candidate) => `${candidate.id} — ${candidate.title}`)
+      .join("; ") || "(none)";
   return Effect.fail(
     invariantError(
       input.command.type,
-      `Project '${input.projectId}' does not exist for command '${input.command.type}'.`,
+      `Project '${input.projectId}' does not exist for command '${input.command.type}'. Available projects: ${available}.`,
     ),
   );
 }
