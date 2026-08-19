@@ -34,7 +34,11 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { resolveDefaultProviderModelSelection } from "../providerInstances";
-import { blankThreadCreateInput, planningThreadTurnInput } from "./boardCardThreadSpawn";
+import {
+  blankThreadCreateInput,
+  canRestartBoardPlanning,
+  planningThreadTurnInput,
+} from "./boardCardThreadSpawn";
 import { indexBoardLabels } from "./labelColour";
 import {
   BoardCardDetailPopup,
@@ -280,7 +284,7 @@ export function BoardCardDetail({
     <BoardCardDetailView
       adoptableThreads={adoptableThreads}
       branch={branch}
-      canRestartPlanning={card.stage === "planning" && planningStep !== null}
+      canRestartPlanning={canRestartBoardPlanning(card.stage, planningStep)}
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}

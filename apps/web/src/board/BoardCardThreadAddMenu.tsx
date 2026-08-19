@@ -55,6 +55,62 @@ function MenuRow({
   );
 }
 
+/**
+ * The popover's contents. Exported and pure so the Planning-only gate — the
+ * invariant this module exists to hold — is assertable in rendered markup: the
+ * popup itself portals, and a portal renders nothing on the server, so the rows
+ * are unreachable through `BoardCardThreadAddMenu`.
+ */
+export function BoardCardThreadAddMenuBody({
+  mode,
+  canRestartPlanning,
+  adoptableThreads,
+  onRestartPlanning,
+  onCreateBlankThread,
+  onAdoptThread,
+  onEnterAdoptMode,
+}: {
+  readonly mode: "menu" | "adopt";
+  readonly canRestartPlanning: boolean;
+  readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
+  readonly onRestartPlanning: () => void;
+  readonly onCreateBlankThread: () => void;
+  readonly onAdoptThread: (threadId: string) => void;
+  readonly onEnterAdoptMode: () => void;
+}) {
+  if (mode === "adopt") {
+    return (
+      <BoardPickerSearchBody
+        onPick={onAdoptThread}
+        options={adoptableThreads}
+        placeholder="Search threads…"
+      />
+    );
+  }
+  return (
+    <div className="flex flex-col gap-0.5">
+      {canRestartPlanning ? (
+        <MenuRow
+          hint="Restart planning"
+          icon={<RotateCwIcon className="size-3.5" />}
+          onClick={onRestartPlanning}
+          title="New thread"
+        />
+      ) : null}
+      <MenuRow
+        icon={<MessageSquarePlusIcon className="size-3.5" />}
+        onClick={onCreateBlankThread}
+        title={canRestartPlanning ? "New blank thread" : "New thread"}
+      />
+      <MenuRow
+        icon={<SearchIcon className="size-3.5" />}
+        onClick={onEnterAdoptMode}
+        title="Adopt an existing thread…"
+      />
+    </div>
+  );
+}
+
 export function BoardCardThreadAddMenu({
   label,
   canRestartPlanning,
@@ -73,16 +129,22 @@ export function BoardCardThreadAddMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"menu" | "adopt">("menu");
-  const close = () => {
-    setOpen(false);
-    setMode("menu");
-  };
+  // Reset on OPEN, never on close. The popup's contents unmount when it closes
+  // but this component does not, so `mode` has to be cleared somewhere — doing
+  // it on close swaps the adopt list back to the menu rows while the popover is
+  // still fading out, which is the flicker `openCount` removes next door in
+  // BoardSearchAddPicker.
+  const [openCount, setOpenCount] = useState(0);
+  const close = () => setOpen(false);
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (!next) setMode("menu");
+        if (next) {
+          setMode("menu");
+          setOpenCount((count) => count + 1);
+        }
       }}
     >
       <PopoverTrigger
@@ -94,43 +156,25 @@ export function BoardCardThreadAddMenu({
         {label}
       </PopoverTrigger>
       <PopoverPopup className="w-64 p-1.5">
-        {mode === "adopt" ? (
-          <BoardPickerSearchBody
-            onPick={(threadId) => {
-              onAdoptThread(threadId);
-              close();
-            }}
-            options={adoptableThreads}
-            placeholder="Search threads…"
-          />
-        ) : (
-          <div className="flex flex-col gap-0.5">
-            {canRestartPlanning ? (
-              <MenuRow
-                hint="Restart planning"
-                icon={<RotateCwIcon className="size-3.5" />}
-                onClick={() => {
-                  onRestartPlanning();
-                  close();
-                }}
-                title="New thread"
-              />
-            ) : null}
-            <MenuRow
-              icon={<MessageSquarePlusIcon className="size-3.5" />}
-              onClick={() => {
-                onCreateBlankThread();
-                close();
-              }}
-              title={canRestartPlanning ? "New blank thread" : "New thread"}
-            />
-            <MenuRow
-              icon={<SearchIcon className="size-3.5" />}
-              onClick={() => setMode("adopt")}
-              title="Adopt an existing thread…"
-            />
-          </div>
-        )}
+        <BoardCardThreadAddMenuBody
+          adoptableThreads={adoptableThreads}
+          canRestartPlanning={canRestartPlanning}
+          key={openCount}
+          mode={mode}
+          onAdoptThread={(threadId) => {
+            onAdoptThread(threadId);
+            close();
+          }}
+          onCreateBlankThread={() => {
+            onCreateBlankThread();
+            close();
+          }}
+          onEnterAdoptMode={() => setMode("adopt")}
+          onRestartPlanning={() => {
+            onRestartPlanning();
+            close();
+          }}
+        />
       </PopoverPopup>
     </Popover>
   );

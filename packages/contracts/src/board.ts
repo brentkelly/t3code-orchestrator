@@ -2633,14 +2633,25 @@ export function resolveBoardPlanningStep(board: BoardSettings): BoardStep | null
  * unattended. `full-access` would map to Codex's `danger-full-access` sandbox
  * with `approvalPolicy: "never"` (`CodexSessionRuntime.ts`), i.e. an
  * auto-approving agent with write access to the user's real checkout, on the
- * strength of a card brief it did not write. `approval-required` maps to
- * Codex's `read-only` sandbox, and on Claude leaves the base permission mode at
- * the SDK default. Either way the agent can read the codebase — which is what
- * the default prompt asks it to do — and cannot silently edit it.
+ * strength of a card brief it did not write.
+ *
+ * The cost, stated plainly because it IS the product behaviour: the agent reads
+ * SUBJECT TO APPROVAL, and the thread parks on its first tool call rather than
+ * exploring straight away. `approval-required` maps to Codex's `read-only`
+ * sandbox but also to `approvalPolicy: "untrusted"`, which gates commands and
+ * not just writes; and on Claude `canUseTool` short-circuits to `allow` only
+ * under `full-access`, so every tool — including the `board_get_card_context`
+ * the preamble tells the agent to call first — opens an approval request. So
+ * "entering Planning starts the conversation by itself" means it starts and
+ * waits for you, which is defensible for an interview you were going to sit in
+ * on anyway, and is the trade being made against unattended write access.
  *
  * `interactionMode: "plan"` layers Claude's real plan mode on top
  * (`ClaudeAdapter` calls `setPermissionMode("plan")`); on providers where plan
- * mode is prompt text only, the runtime mode above is what actually holds.
+ * mode is prompt text only, the runtime mode above is what actually holds. The
+ * alternative to this trade is not another `RuntimeMode` literal — none of the
+ * four expresses "read freely, never write" — but narrowing the block to writes
+ * at the adapter level, which is a bigger change than this stage warrants.
  */
 export const BOARD_PLANNING_THREAD_RUNTIME_MODE = "approval-required";
 export const BOARD_PLANNING_THREAD_INTERACTION_MODE = "plan";

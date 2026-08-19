@@ -136,8 +136,11 @@ export const settingsWith = (input: {
   readonly building: ReadonlyArray<BoardStep>;
   readonly globalMaxConcurrent: number;
   readonly perInstance?: Record<string, number | null>;
-  /** The planning recipe (t3o-14). Absent means the stage has no steps, which
-      is the "planning is switched off" case — nothing spawns. */
+  /** The planning recipe (t3o-14). Absent means the stage was NEVER CONFIGURED,
+      so the compiled-in `DEFAULT_BOARD_PLANNING_STEP` applies (per-stage
+      defaulting in `resolveBoardStageSteps`) and a card entering Planning DOES
+      spawn. Pass `[]` for the switched-off case — that is what the settings UI
+      persists when you remove a stage's last step. */
   readonly planning?: ReadonlyArray<BoardStep>;
 }): BoardSettings => ({
   projects: {},

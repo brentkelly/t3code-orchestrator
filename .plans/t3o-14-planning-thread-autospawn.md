@@ -147,14 +147,29 @@ checkout, on the strength of a card brief it did not write — a materially wors
 the build path, which is isolated in a worktree.
 
 `approval-required` maps to Codex's `read-only` sandbox and leaves Claude at the SDK default
-under plan mode. The agent can still read the codebase — which the default prompt explicitly asks
-it to do — and cannot write unattended. Both modes are stated once, as
-`BOARD_PLANNING_THREAD_RUNTIME_MODE` / `BOARD_PLANNING_THREAD_INTERACTION_MODE` in contracts, and
-shared by the supervisor and the client so the two spawns cannot diverge.
+under plan mode. Both modes are stated once, as `BOARD_PLANNING_THREAD_RUNTIME_MODE` /
+`BOARD_PLANNING_THREAD_INTERACTION_MODE` in contracts, and shared by the supervisor and the client
+so the two spawns cannot diverge.
 
-*To watch on the live run:* `board_propose_plans` is not annotated read-only, so it will surface
-as an approval prompt rather than running silently. That is acceptable — the human sees the plan
-being recorded — but it is the first thing to check.
+**The trade, stated plainly.** The agent reads *subject to approval*, and the thread parks on its
+first tool call rather than exploring straight away: `approval-required` also carries
+`approvalPolicy: "untrusted"` on Codex, which gates commands and not just writes, and on Claude
+`canUseTool` short-circuits to `allow` only under `full-access`, so every tool — including the
+`board_get_card_context` the preamble tells the agent to call first — opens an approval request.
+"Entering Planning starts the conversation by itself" therefore means it starts and waits for you.
+That is defensible for an interview you were going to sit in on anyway, and it is the price of not
+handing an auto-started agent write access to the shared checkout.
+
+*Rejected:* another `RuntimeMode` literal. None of the four expresses "read freely, never write" —
+the two middle options both map to Codex's `workspace-write`. Getting that behaviour means
+narrowing the block to writes at the adapter level, which is a larger change than this stage
+warrants. **Open for the human:** if the parking is unwanted, the other lever is gating
+`full-access` on providers whose plan mode is genuinely enforced (Claude), keeping
+`approval-required` elsewhere.
+
+*To watch on the live run:* (a) the first exploration command surfaces as an approval prompt —
+confirm that reads as intended rather than as a stall; (b) `board_propose_plans` is not annotated
+read-only, so it too will prompt rather than running silently.
 
 ### D5 — Suppression: any live linked thread
 
@@ -271,8 +286,9 @@ moment of the spawn. Editing the prompt and restarting always uses the new text.
 
 ### Watched-run items (not unit-assertable)
 
-- Plan mode does not hard-block `board_propose_plans` (D4). If it does, flip to
-  `interactionMode: "default"` and note it.
+- The planning thread's FIRST exploration command surfaces as an approval prompt (D4) — expected
+  under `approval-required`, but confirm it reads as "waiting for you" rather than as a stall.
+- `board_propose_plans` is not annotated read-only, so it prompts rather than running silently.
 - The planning thread survives a server restart mid-conversation as an ordinary thread, and no
   reconciliation pass tries to recover or respawn it.
 

@@ -11,6 +11,8 @@ import {
   BOARD_PLANNING_THREAD_INTERACTION_MODE,
   BOARD_PLANNING_THREAD_RUNTIME_MODE,
   DEFAULT_BOARD_PLANNING_STEP,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   MessageId,
   ProjectId,
   ThreadId,
@@ -93,9 +95,13 @@ describe("blankThreadCreateInput", () => {
   });
 
   it("is an ordinary thread — the planning modes are not imposed on it", () => {
-    // You asked for a blank thread to type into; it behaves like one started
-    // from the Threads view, not like the auto-spawned planning thread.
-    expect(input.interactionMode).toBe("default");
+    // You asked for a blank thread to type into, so it behaves like one started
+    // from the Threads view rather than like the auto-spawned planning thread.
+    // Asserted against the app defaults, not literals, so this stays true if
+    // those defaults move.
+    expect(input.runtimeMode).toBe(DEFAULT_RUNTIME_MODE);
+    expect(input.interactionMode).toBe(DEFAULT_PROVIDER_INTERACTION_MODE);
+    expect(input.runtimeMode).not.toBe(BOARD_PLANNING_THREAD_RUNTIME_MODE);
     expect(input.modelSelection).toEqual(selection);
   });
 });
