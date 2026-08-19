@@ -246,11 +246,13 @@ const resolveProjectId = (
   input: string | undefined,
 ): Effect.Effect<ProjectId, BoardToolError> =>
   Effect.gen(function* () {
-    const projects = yield* listProjects(deps);
+    // One read model for both the project set and (for the omitted case) the
+    // calling thread's own project.
+    const model = yield* deps.snapshotQuery
+      .getCommandReadModel()
+      .pipe(Effect.mapError(internalError));
+    const projects = model.projects.filter((project) => project.deletedAt === null);
     if (input === undefined) {
-      const model = yield* deps.snapshotQuery
-        .getCommandReadModel()
-        .pipe(Effect.mapError(internalError));
       const thread = model.threads.find((candidate) => candidate.id === deps.scope.threadId);
       const owned = thread
         ? projects.find((project) => project.id === thread.projectId)

@@ -356,6 +356,54 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_create_card rejects an ambiguous project match by title and by folder", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const engine = yield* OrchestrationEngineService;
+      const dupProject = (id: string, title: string, workspaceRoot: string, commandId: string) =>
+        engine.dispatch({
+          type: "project.create" as const,
+          commandId: CommandId.make(commandId),
+          projectId: ProjectId.make(id),
+          title,
+          workspaceRoot,
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt: t0,
+        });
+      // A second project with the SAME title as the seed's "Project A", and two
+      // more that SHARE a workspace folder name (`shared-ws`) that is not itself
+      // any project's id — so only the workspace-folder branch can match them.
+      yield* dupProject(
+        "project-dup-title",
+        "Project A",
+        "/var/dup-title",
+        "cmd-project-dup-title",
+      );
+      yield* dupProject("project-ws-1", "Yak", "/a/shared-ws", "cmd-project-ws-1");
+      yield* dupProject("project-ws-2", "Zebra", "/b/shared-ws", "cmd-project-ws-2");
+      // Two projects titled "Project A" → the title is no longer a unique key.
+      const byTitle = yield* Effect.flip(
+        boardHandlers
+          .board_create_card({ projectId: ProjectId.make("Project A"), title: "Ambiguous" })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(byTitle.code, "invalid-input");
+      assert.include(byTitle.message, "more than one project by title");
+      // `shared-ws` is no id and no title, but is the folder name of two
+      // projects (/a/shared-ws and /b/shared-ws).
+      const byPath = yield* Effect.flip(
+        boardHandlers
+          .board_create_card({ projectId: ProjectId.make("/tmp/shared-ws"), title: "Ambiguous" })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(byPath.code, "invalid-input");
+      assert.include(byPath.message, "more than one project by workspace folder");
+    }),
+  );
+
   it.effect("board_create_card with no projectId from an unlinked thread lists the projects", () =>
     Effect.gen(function* () {
       yield* seed();
