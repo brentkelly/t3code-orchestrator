@@ -9,11 +9,11 @@
  * dependency rows (`BoardCardFields`) — a card being created should look like
  * the card it is about to become, not like a form.
  *
- * Target stage offers Backlog, Sprint and Planning ONLY (t3o-06a): later
- * stages describe work the board has already started shepherding, so a card
- * cannot appear mid-pipeline — it reaches them by being moved under D18's
- * human gate. The decider enforces the same restriction, so this is a
- * convenience, not the guard.
+ * A card may be created into ANY stage (t3o-15, D10): Mode governs the
+ * worktree/slot on entry, so creation and dragging follow an identical path.
+ * The picker offers every stage in read-model order, and a warning appears when
+ * the chosen stage auto-executes ("creating here starts an agent"). The decider
+ * enforces existence + the dependency gate; this is a convenience, not the guard.
  */
 import {
   BOARD_SEED_STAGES,

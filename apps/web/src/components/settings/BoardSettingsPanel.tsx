@@ -1,14 +1,16 @@
 /**
- * Settings → Board (t3o-07). The typed pipeline recipe (D10) plus per-project
- * card identity, concurrency ceilings, and lifecycle windows. Every field is
- * server-authoritative (it reaches the decider / reactors), so the panel reads
- * and writes through `usePrimarySettings` / `useUpdatePrimarySettings`.
+ * Settings → Board (t3o-15, D4). Per-stage execution config (auto-execute,
+ * prompt, model, mode, human-in-the-loop, auto-advance, timeout, attempts),
+ * stage CRUD (create / rename / reorder / delete), plus per-project card
+ * identity, concurrency ceilings and lifecycle windows. Execution config and
+ * project edits reach the decider / reactor, so the panel reads and writes
+ * through `usePrimarySettings` / `useUpdatePrimarySettings`; stage CRUD is a
+ * board command dispatched through the environment.
  *
- * Recipe and project edits send whole maps (the `providerInstances` discipline):
- * a stage's step list and the projects map are replaced wholesale, never
- * partially patched, so a running card's snapshotted recipe (captured on stage
- * entry, t3o-10) can never be corrupted by a mid-flight edit — the edit takes
- * effect on the next stage entry.
+ * The pipeline is keyed by STAGE ID, so a rename never orphans a stage's config.
+ * A stage's resolved config is frozen onto the card at stage entry (D12), so a
+ * mid-flight edit here takes effect only on the next entry, never on a running
+ * card.
  */
 import {
   BOARD_SEED_STAGES,

@@ -8,26 +8,26 @@
  */
 import {
   BoardCardId,
+  BoardStageId,
   ProjectId,
   makeBoardCardShell,
   type BoardCardShell,
   type BoardLabel,
   type BoardLabelId,
-  type BoardStage,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { BoardCardContent } from "./BoardCardItem";
 
-function shell(stage: BoardStage, overrides?: Partial<BoardCardShell>): BoardCardShell {
+function shell(stage: string, overrides?: Partial<BoardCardShell>): BoardCardShell {
   return {
     ...makeBoardCardShell({
       cardId: BoardCardId.make("card-1"),
       key: "T3-9",
       projectId: ProjectId.make("project-1"),
       labelIds: [],
-      stage,
+      stage: BoardStageId.make(stage),
       orderKey: "m",
       title: "Render me from the shell",
       blocked: false,

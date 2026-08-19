@@ -1,9 +1,9 @@
 /**
- * T3o board settings — the typed pipeline recipe (D10, t3o-07). These lock the
- * three things the spec's verification calls out: an empty settings file
- * produces a working pipeline, the recipe round-trips (survives a restart), and
- * a settings edit mid-stage diverges from a card's captured snapshot rather
- * than silently mutating what that card runs.
+ * T3o board settings — the typed stage-execution pipeline (D4, t3o-07/t3o-15).
+ * These lock the three things the spec's verification calls out: an empty
+ * settings file produces a working pipeline, the pipeline round-trips (survives
+ * a restart), and a stage absent from the pipeline resolves to the all-defaults
+ * (auto-execute off) config rather than throwing.
  */
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -11,32 +11,37 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProjectId } from "./baseSchemas.ts";
 import {
   assignBoardKeyPrefix,
-  BoardCardRecipeSnapshot,
+  BOARD_SEED_STAGE_IDS,
   BoardSettings,
   boardProjectAcronym,
-  boardRecipeSnapshotDiffersFromCurrent,
   DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
-  DEFAULT_BOARD_BUILD_STEP,
+  DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_KEY_PREFIX,
+  DEFAULT_BOARD_PIPELINE,
   DEFAULT_BOARD_SETTINGS,
+  DEFAULT_BOARD_STAGE_EXECUTION,
   resolveBoardKeyPrefix,
   resolveBoardProjectAccent,
-  resolveBoardRecipeForStage,
-  type BoardResolvedRecipe,
-  type BoardStep,
+  resolveBoardStageExecution,
+  resolveBoardStageModelSelection,
 } from "./board.ts";
 
 const decodeSettings = Schema.decodeUnknownSync(BoardSettings);
 const encodeSettings = Schema.encodeUnknownSync(BoardSettings);
-const decodeSnapshot = Schema.decodeUnknownSync(BoardCardRecipeSnapshot);
-const encodeSnapshot = Schema.encodeUnknownSync(BoardCardRecipeSnapshot);
 
 const PROJECT = ProjectId.make("project-1");
 
 describe("board settings defaults", () => {
   it("decodes an empty file to a working default pipeline", () => {
     const settings = decodeSettings({});
-    expect(settings.pipeline.building).toEqual([DEFAULT_BOARD_BUILD_STEP]);
+    // Building ships auto-executing in build mode (D4) — a working pipeline out
+    // of an empty file.
+    expect(settings.pipeline[BOARD_SEED_STAGE_IDS.building]).toEqual(
+      DEFAULT_BOARD_PIPELINE[BOARD_SEED_STAGE_IDS.building],
+    );
+    expect(settings.pipeline[BOARD_SEED_STAGE_IDS.planning]).toEqual(
+      DEFAULT_BOARD_PIPELINE[BOARD_SEED_STAGE_IDS.planning],
+    );
     expect(settings.projects).toEqual({});
     expect(settings.concurrency.globalMaxConcurrent).toBeGreaterThan(0);
     expect(settings.lifecycle.archiveAfterDays).toBe(DEFAULT_BOARD_ARCHIVE_AFTER_DAYS);
@@ -44,31 +49,49 @@ describe("board settings defaults", () => {
     expect(settings).toEqual(DEFAULT_BOARD_SETTINGS);
   });
 
-  it("the default Building step is runnable (real instance + model), not a placeholder", () => {
-    expect(DEFAULT_BOARD_BUILD_STEP.providerInstanceId).toBe("codex");
-    expect(DEFAULT_BOARD_BUILD_STEP.model.length).toBeGreaterThan(0);
-    expect(DEFAULT_BOARD_BUILD_STEP.maxAttempts).toBeGreaterThan(0);
-    expect(DEFAULT_BOARD_BUILD_STEP.timeoutMs).toBeGreaterThan(0);
+  it("the default Building stage is runnable (real instance + model), not a placeholder", () => {
+    const building = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building);
+    expect(building.autoExecute).toBe(true);
+    expect(building.mode).toBe("build");
+    expect(building.prompt).toBe(DEFAULT_BOARD_BUILD_PROMPT);
+    expect(building.maxAttempts).toBeGreaterThan(0);
+    expect(building.timeoutMs).toBeGreaterThan(0);
+    // Its `null` model resolves to a concrete, runnable instance + model (D12).
+    const selection = resolveBoardStageModelSelection(building.model);
+    expect(selection.instanceId).toBe("codex");
+    expect(selection.model.length).toBeGreaterThan(0);
   });
 });
 
 describe("board settings round-trip", () => {
-  it("survives encode/decode (a restart) unchanged, including a full recipe", () => {
+  it("survives encode/decode (a restart) unchanged, including a full pipeline", () => {
     const configured = decodeSettings({
       projects: { [PROJECT]: { keyPrefix: "T3", accentColor: "#39d" } },
       pipeline: {
-        building: [{ ...DEFAULT_BOARD_BUILD_STEP, model: "custom-model" }],
-        review: [
-          {
-            id: "r1",
-            label: "Fresh eyes",
-            promptTemplate: "Review the diff.",
-            providerInstanceId: "codex",
-            model: "review-model",
-            timeoutMs: 600000,
-            maxAttempts: 2,
-          },
-        ],
+        [BOARD_SEED_STAGE_IDS.building]: {
+          autoExecute: true,
+          prompt: DEFAULT_BOARD_BUILD_PROMPT,
+          model: { instanceId: "codex", model: "custom-model" },
+          mode: "build",
+          humanInLoop: false,
+          humanInLoopWithPlan: false,
+          humanInLoopWithoutPlan: true,
+          autoAdvance: true,
+          timeoutMs: 600000,
+          maxAttempts: 3,
+        },
+        [BOARD_SEED_STAGE_IDS.review]: {
+          autoExecute: true,
+          prompt: "Review the diff.",
+          model: { instanceId: "codex", model: "review-model" },
+          mode: "build",
+          humanInLoop: false,
+          humanInLoopWithPlan: false,
+          humanInLoopWithoutPlan: true,
+          autoAdvance: true,
+          timeoutMs: 600000,
+          maxAttempts: 2,
+        },
       },
     });
     const roundTripped = decodeSettings(JSON.parse(JSON.stringify(encodeSettings(configured))));
@@ -77,15 +100,16 @@ describe("board settings round-trip", () => {
 });
 
 describe("resolveBoard* helpers", () => {
-  it("resolves a stage's recipe, or [] when the stage has no steps", () => {
-    expect(resolveBoardRecipeForStage(DEFAULT_BOARD_SETTINGS, "building")).toEqual({
-      stage: "building",
-      steps: [DEFAULT_BOARD_BUILD_STEP],
-    });
-    expect(resolveBoardRecipeForStage(DEFAULT_BOARD_SETTINGS, "planning")).toEqual({
-      stage: "planning",
-      steps: [],
-    });
+  it("resolves a stage's execution config, or the all-defaults config when the stage has none", () => {
+    expect(resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building)).toEqual(
+      DEFAULT_BOARD_PIPELINE[BOARD_SEED_STAGE_IDS.building],
+    );
+    // A stage absent from the pipeline map runs nothing — the all-defaults
+    // (auto-execute off) config.
+    expect(resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.ready)).toEqual(
+      DEFAULT_BOARD_STAGE_EXECUTION,
+    );
+    expect(DEFAULT_BOARD_STAGE_EXECUTION.autoExecute).toBe(false);
   });
 
   it("falls back to the default key prefix, or uses the configured one and accent", () => {
@@ -144,39 +168,31 @@ describe("project key acronyms (D14)", () => {
   });
 });
 
-describe("recipe snapshot divergence (D10)", () => {
-  const step: BoardStep = DEFAULT_BOARD_BUILD_STEP;
-  const current: BoardResolvedRecipe = { stage: "building", steps: [step] };
-
-  it("a null snapshot has not diverged — the card is not running a recipe", () => {
-    expect(boardRecipeSnapshotDiffersFromCurrent(null, current)).toBe(false);
-  });
-
-  it("an identical snapshot has not diverged", () => {
-    const snapshot = decodeSnapshot(encodeSnapshot({ stage: "building", steps: [step] }));
-    expect(boardRecipeSnapshotDiffersFromCurrent(snapshot, current)).toBe(false);
-  });
-
-  it("editing settings mid-stage leaves the card's captured snapshot, and the divergence is visible", () => {
-    // The card captured the recipe on stage entry...
-    const captured: BoardResolvedRecipe = { stage: "building", steps: [step] };
-    // ...then settings were edited to a different model.
-    const editedSettings = decodeSettings({
-      pipeline: { building: [{ ...step, model: "a-newer-model" }] },
+describe("stage execution resolution reflects edits (D4)", () => {
+  it("resolveBoardStageExecution tracks the current settings, so an edit changes what a stage runs", () => {
+    // Settings edited mid-flight to a different model for Building.
+    const edited = decodeSettings({
+      pipeline: {
+        [BOARD_SEED_STAGE_IDS.building]: {
+          autoExecute: true,
+          prompt: DEFAULT_BOARD_BUILD_PROMPT,
+          model: { instanceId: "codex", model: "a-newer-model" },
+          mode: "build",
+          humanInLoop: false,
+          humanInLoopWithPlan: false,
+          humanInLoopWithoutPlan: true,
+          autoAdvance: true,
+          timeoutMs: DEFAULT_BOARD_STAGE_EXECUTION.timeoutMs,
+          maxAttempts: DEFAULT_BOARD_STAGE_EXECUTION.maxAttempts,
+        },
+      },
     });
-    const nowResolves = resolveBoardRecipeForStage(editedSettings, "building");
-    // The card still runs its captured recipe (its stored model is unchanged),
-    // and that captured recipe now differs from current settings.
-    expect(captured.steps[0]!.model).toBe(step.model);
-    expect(boardRecipeSnapshotDiffersFromCurrent(captured, nowResolves)).toBe(true);
-  });
-
-  it("detects step-count and stage differences", () => {
-    expect(boardRecipeSnapshotDiffersFromCurrent({ stage: "building", steps: [] }, current)).toBe(
-      true,
-    );
-    expect(boardRecipeSnapshotDiffersFromCurrent({ stage: "review", steps: [step] }, current)).toBe(
-      true,
-    );
+    const before = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building);
+    const after = resolveBoardStageExecution(edited, BOARD_SEED_STAGE_IDS.building);
+    // The default resolves to a null model (the global default); the edit
+    // resolves to the concrete override — the two diverge exactly at the model.
+    expect(before.model).toBe(null);
+    expect(after.model).toEqual({ instanceId: "codex", model: "a-newer-model" });
+    expect(after).not.toEqual(before);
   });
 });

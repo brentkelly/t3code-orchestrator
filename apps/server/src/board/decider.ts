@@ -14,11 +14,11 @@
  * from `nextCardNumberByProject` in the read model, so allocation is exact
  * and race-free under the engine's total command ordering.
  *
- * Stage advancement is human-gated (D18): every event this module emits is
- * caused by a client-dispatched command, and no other module emits board
- * events in t3o-03 — so no board-driven path can move a card into
- * `building`. The command catalog test in decider.board.test.ts asserts
- * this over every member of `BoardCommand`.
+ * Stage advancement (t3o-15, D8): a card advances either by a client move
+ * command (the human gate) or by the reactor's auto-advance — a successful
+ * unattended run dispatches an ordinary `board.card.move` to the next stage in
+ * order. The decider validates every move the same way regardless of who sent
+ * it; it never advances a card on its own.
  */
 import {
   areBoardStagesAdjacent,

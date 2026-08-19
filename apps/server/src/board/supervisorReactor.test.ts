@@ -7,12 +7,12 @@
  */
 import {
   BoardCardId,
+  BoardStageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
   type BoardCardStepState,
-  type BoardResolvedRecipe,
   type BoardState,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -40,20 +40,9 @@ const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
 const cardId = BoardCardId.make("card-1");
 
-const recipe: BoardResolvedRecipe = {
-  stage: "building",
-  steps: [
-    {
-      id: "build",
-      label: "Build",
-      promptTemplate: "do it",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5.4",
-      timeoutMs: 1000,
-      maxAttempts: 3,
-    },
-  ],
-};
+// The single step id per stage is the stage id (t3o-15, D1): a card in Building
+// runs a step keyed "building", and its completion is keyed the same.
+const stepId = String(BoardStageId.make("building"));
 
 const card: BoardCard = {
   id: cardId,
@@ -61,7 +50,7 @@ const card: BoardCard = {
   cardNumber: 1,
   projectId,
   labels: [],
-  stage: "building",
+  stage: BoardStageId.make("building"),
   orderKey: "m",
   title: "Card",
   briefRef: null,
@@ -69,7 +58,7 @@ const card: BoardCard = {
   parentCardId: null,
   threadLinks: [],
   externalRef: null,
-  recipeSnapshot: recipe,
+  humanInLoop: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",
@@ -85,12 +74,20 @@ const card: BoardCard = {
   updatedAt: NOW,
 };
 
+// The frozen execution config (t3o-15, D12) the Building stage stamped onto the
+// run row at entry: an unattended build-mode step on codex.
 const runningState: BoardCardStepState = {
   cardId,
-  stepId: "build",
+  stepId,
   stepLabel: "Build",
   attempt: 1,
+  prompt: "do it",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5.4",
+  mode: "build",
+  humanInLoop: false,
   maxAttempts: 3,
+  timeoutMs: 1000,
   threadId: ThreadId.make("thread-1"),
   status: "running",
   slotHeld: true,
@@ -248,7 +245,7 @@ it.effect("boot: a step that completed while the server was down is settled and 
         stepCompletions: [
           {
             cardId,
-            stepId: "build",
+            stepId,
             outcome: "succeeded",
             summary: "done",
             payload: null,

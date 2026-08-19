@@ -1,12 +1,10 @@
 import {
   BoardCardId,
+  BoardStageId,
   PositiveInt,
   ProviderInstanceId,
   type BoardCardStepState,
   type BoardConcurrencySettings,
-  type BoardResolvedRecipe,
-  type BoardStep,
-  type BoardStepCompletion,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 
@@ -17,38 +15,26 @@ import {
   reconcileStepDecision,
   recoveryDecision,
   resolveBoardConcurrencyLimit,
-  selectNextStep,
   type BoardQueueCandidate,
+  type ComposeStepPromptStep,
 } from "./supervisor.ts";
 
-const step = (overrides: Partial<BoardStep> = {}): BoardStep => ({
-  id: "build",
-  label: "Build",
-  promptTemplate: "Implement the brief.",
+// The frozen run-row fields a spawn needs (t3o-15, D12) — the single step per
+// stage replaces the old multi-step recipe. `humanInLoop` false is an unattended
+// run, whose postamble carries the completion-contract / never-prose stance.
+const step = (overrides: Partial<ComposeStepPromptStep> = {}): ComposeStepPromptStep => ({
+  stepLabel: "Build",
   providerInstanceId: ProviderInstanceId.make("codex"),
-  model: "gpt-5.4",
-  timeoutMs: 1000,
+  prompt: "Implement the brief.",
   maxAttempts: 3,
+  humanInLoop: false,
   ...overrides,
-});
-
-const completion = (
-  stepId: string,
-  outcome: BoardStepCompletion["outcome"],
-): BoardStepCompletion => ({
-  cardId: "card-1" as BoardStepCompletion["cardId"],
-  stepId,
-  outcome,
-  summary: "done",
-  payload: null,
-  threadId: null,
-  completedAt: "2026-01-01T00:00:00.000Z",
 });
 
 describe("composeStepPrompt (D5 envelope)", () => {
   it("has preamble (card context), body (template) and postamble (completion contract)", () => {
     const prompt = composeStepPrompt({
-      card: { key: "T3-1", title: "Ship it", stage: "building" },
+      card: { key: "T3-1", title: "Ship it", stage: BoardStageId.make("building") },
       step: step(),
       attempt: 2,
     });
@@ -57,7 +43,7 @@ describe("composeStepPrompt (D5 envelope)", () => {
     assert.include(prompt, "Ship it");
     assert.include(prompt, "attempt 2 of 3");
     assert.include(prompt, "board_get_card_context");
-    // Body: the recipe's promptTemplate verbatim.
+    // Body: the frozen step prompt verbatim.
     assert.include(prompt, "Implement the brief.");
     // Postamble: the completion contract and the never-prose rule.
     assert.include(prompt, "board_complete_step");
@@ -66,13 +52,13 @@ describe("composeStepPrompt (D5 envelope)", () => {
 
   it("words the question mechanism per provider instance", () => {
     const claudePrompt = composeStepPrompt({
-      card: { key: "T3-1", title: "x", stage: "building" },
+      card: { key: "T3-1", title: "x", stage: BoardStageId.make("building") },
       step: step({ providerInstanceId: ProviderInstanceId.make("claude") }),
       attempt: 1,
     });
     assert.include(claudePrompt, "Claude Code question");
     const codexPrompt = composeStepPrompt({
-      card: { key: "T3-1", title: "x", stage: "building" },
+      card: { key: "T3-1", title: "x", stage: BoardStageId.make("building") },
       step: step({ providerInstanceId: ProviderInstanceId.make("codex") }),
       attempt: 1,
     });
@@ -81,29 +67,10 @@ describe("composeStepPrompt (D5 envelope)", () => {
   });
 });
 
-describe("selectNextStep (D4)", () => {
-  const recipe: BoardResolvedRecipe = {
-    stage: "building",
-    steps: [step({ id: "plan" }), step({ id: "build" })],
-  };
-
-  it("returns the first step with no successful completion", () => {
-    assert.strictEqual(selectNextStep(recipe, [])?.id, "plan");
-    assert.strictEqual(selectNextStep(recipe, [completion("plan", "succeeded")])?.id, "build");
-  });
-
-  it("does not skip a step that failed or blocked — recovery/gating owns it", () => {
-    assert.strictEqual(selectNextStep(recipe, [completion("plan", "failed")])?.id, "plan");
-    assert.strictEqual(selectNextStep(recipe, [completion("plan", "blocked")])?.id, "plan");
-  });
-
-  it("returns null when every step has succeeded", () => {
-    assert.strictEqual(
-      selectNextStep(recipe, [completion("plan", "succeeded"), completion("build", "succeeded")]),
-      null,
-    );
-  });
-});
+// NOTE (t3o-15): the `selectNextStep (D4)` suite was deleted. Each stage now
+// runs exactly ONE step whose config is frozen onto the card's step-state row at
+// stage entry, so there is no multi-step recipe to pick a "next step" from —
+// `selectNextStep` and `BoardResolvedRecipe` no longer exist.
 
 describe("recoveryDecision (D13 escalation, bounded)", () => {
   const base = (
@@ -206,7 +173,9 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
     cardId: BoardCardId.make("card"),
     stepId: "build",
     providerInstanceId: ProviderInstanceId.make("codex"),
-    stage: "building",
+    // Stage position in board order (t3o-15): Building is index 4, Code review 5
+    // in the seed stage list — higher is later, and later ranks first.
+    stageOrder: 4,
     started: false,
     orderKey: "m",
     ...overrides,
@@ -224,8 +193,8 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
 
   it("puts a later stage first (finishing beats starting)", () => {
     const ordered = orderBoardQueue([
-      candidate({ cardId: BoardCardId.make("building"), stage: "building", orderKey: "a" }),
-      candidate({ cardId: BoardCardId.make("review"), stage: "review", orderKey: "z" }),
+      candidate({ cardId: BoardCardId.make("building"), stageOrder: 4, orderKey: "a" }),
+      candidate({ cardId: BoardCardId.make("review"), stageOrder: 5, orderKey: "z" }),
     ]);
     // Even with a much larger orderKey, the review-stage card outranks the
     // building one — a nearly-done card is never starved by new work.
@@ -246,25 +215,25 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
     const ordered = orderBoardQueue([
       candidate({
         cardId: BoardCardId.make("b-unstarted-late"),
-        stage: "building",
+        stageOrder: 4,
         started: false,
         orderKey: "z",
       }),
       candidate({
         cardId: BoardCardId.make("b-started"),
-        stage: "building",
+        stageOrder: 4,
         started: true,
         orderKey: "m",
       }),
       candidate({
         cardId: BoardCardId.make("b-unstarted-early"),
-        stage: "building",
+        stageOrder: 4,
         started: false,
         orderKey: "a",
       }),
       candidate({
         cardId: BoardCardId.make("review"),
-        stage: "review",
+        stageOrder: 5,
         started: false,
         orderKey: "z",
       }),
