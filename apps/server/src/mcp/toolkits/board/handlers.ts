@@ -109,21 +109,17 @@ const readBoardState = (deps: BoardToolDeps): Effect.Effect<BoardState, BoardToo
  * agent-created card and a human-created card land in one key namespace, and
  * neither path can re-derive a different prefix after a rename.
  *
- * Reads the project title from the same read model the tools already query; an
- * unknown project (never registered, or removed) derives from an empty name,
- * which the contracts helper answers with the compiled-in default.
+ * Takes the project title the caller already resolved from the read model; an
+ * unknown project (never registered, or removed) passes an empty name, which
+ * the contracts helper answers with the compiled-in default.
  */
 const resolveCardKeyPrefix = (
-  deps: BoardToolDeps,
   projectId: ProjectId,
+  projectTitle: string,
 ): Effect.Effect<string, BoardToolError, ServerSettings.ServerSettingsService> =>
   Effect.gen(function* () {
     const settings = yield* ServerSettings.ServerSettingsService;
     const current = yield* settings.getSettings.pipe(Effect.mapError(internalError));
-    const model = yield* deps.snapshotQuery
-      .getCommandReadModel()
-      .pipe(Effect.mapError(internalError));
-    const projectTitle = model.projects.find((project) => project.id === projectId)?.title ?? "";
     const { prefix, assigned } = assignBoardKeyPrefix({
       board: current.board,
       projectId,
@@ -240,29 +236,31 @@ const formatProjectList = (
  * still resolves. Anything unresolvable is rejected with the live project list
  * rather than dispatched to fail deep in the decider with a bare "does not
  * exist".
+ *
+ * Pure over an already-fetched read model — board_create_card resolves it once
+ * and reuses it for the board slice and the key prefix, so a single create does
+ * not re-materialise the read model per lookup.
  */
 const resolveProjectId = (
-  deps: BoardToolDeps,
+  model: OrchestrationReadModel,
+  scope: McpInvocationScope,
   input: string | undefined,
 ): Effect.Effect<ProjectId, BoardToolError> =>
   Effect.gen(function* () {
-    // One read model for both the project set and (for the omitted case) the
-    // calling thread's own project.
-    const model = yield* deps.snapshotQuery
-      .getCommandReadModel()
-      .pipe(Effect.mapError(internalError));
     const projects = model.projects.filter((project) => project.deletedAt === null);
     if (input === undefined) {
-      const thread = model.threads.find((candidate) => candidate.id === deps.scope.threadId);
+      const thread = model.threads.find((candidate) => candidate.id === scope.threadId);
       const owned = thread
         ? projects.find((project) => project.id === thread.projectId)
         : undefined;
       if (owned !== undefined) {
         return owned.id;
       }
+      // Either the thread has no project row, or its project was deleted — both
+      // leave nothing to default to, so name the projects that CAN be targeted.
       return yield* new BoardToolError({
         code: "invalid-input",
-        message: `No project given and this thread is not linked to one. Pass projectId (call board_list_projects for the ids). Available projects: ${formatProjectList(projects)}.`,
+        message: `No project given, and this thread has no active project to default to. Pass projectId (call board_list_projects for the ids). Available projects: ${formatProjectList(projects)}.`,
       });
     }
     const byId = projects.find((project) => project.id === input);
@@ -447,12 +445,19 @@ export const boardHandlers = {
   board_create_card: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
+      // One read model for the whole create: project resolution, the board
+      // slice, and the key-prefix title all read from it (the card's key is
+      // read back with a fresh model after the write).
+      const model = yield* deps.snapshotQuery
+        .getCommandReadModel()
+        .pipe(Effect.mapError(internalError));
       // Resolve the target project first (t3o: omitted → this thread's project;
       // a title or workspace folder → its id), so a card never dispatches
       // against a phantom project and an unresolvable target is rejected up
       // front with the live project list.
-      const projectId = yield* resolveProjectId(deps, input.projectId);
-      const board = yield* readBoardState(deps);
+      const projectId = yield* resolveProjectId(model, deps.scope, input.projectId);
+      const projectTitle = model.projects.find((project) => project.id === projectId)?.title ?? "";
+      const board = model.board ?? EMPTY_BOARD_STATE;
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
       const stage = input.stage ?? ("backlog" as BoardStage);
       // `brief` and `dependsOn` ride a follow-up update (the create command
@@ -487,7 +492,7 @@ export const boardHandlers = {
         labels,
         stage,
         orderKey,
-        keyPrefix: yield* resolveCardKeyPrefix(deps, projectId),
+        keyPrefix: yield* resolveCardKeyPrefix(projectId, projectTitle),
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps.engine, create);
