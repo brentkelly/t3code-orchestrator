@@ -504,8 +504,12 @@ Everything else grows in board-owned files:
     whatever the stages are called.
 18. A from-empty event replay and a table rehydration produce an identical stage list.
 19. `SimpleStageExecutor.planNext` is unit-tested with no reactor, no database and no git.
-20. The supervisor reactor contains **no** branch on stage role or stage id; the only role lookup is
-    the executor registry, and the only stage-kind branch in the web app is the settings card.
+20. No code outside the executor registry branches on stage role, kind or id to decide **what to
+    execute**; the only stage-kind branch in the web app is the settings card choosing which panel to
+    render. Role-based *policy* that this spec mandates is expected and is not a violation —
+    specifically the `build`-role scoping of the per-card human-in-the-loop toggle (D6) and the
+    Mode-driven worktree and slot decisions (D5). The rule is about execution shape, not about
+    whether the word "role" appears.
 21. `pnpm test` passes, with t3o-10/11/12 supervisor suites adapted only where the step array became
     a single seeded step.
 
