@@ -41,6 +41,8 @@ stage list itself user-editable, with `build`, `review` and `done` locked as the
 7. `ProviderModelPicker` (the composer's picker) replaces the provider Select + free-text model box.
 8. `board.card.start-stage-thread` command + RPC, the on-demand counterpart of auto-kickoff
    (consumed by t3o-14's `+` menu).
+9. The `BoardStageExecutor` seam (D15) — the extension point t3o-16's review loop plugs into
+   without touching the reactor.
 
 **Out**
 
@@ -146,7 +148,16 @@ stage list.
 
 ### D4 — Stage execution config, keyed by stage id
 
-`BoardSettings.pipeline: Record<BoardStageId, BoardStageExecution>`:
+`BoardSettings.pipeline: Record<BoardStageId, BoardStageExecution>`, where `BoardStageExecution` is
+a **discriminated union** on `kind` (D15). Every stage this spec ships is `kind: "simple"`; t3o-16
+adds `kind: "review"` and nothing else in the codebase learns about it:
+
+```
+BoardStageExecution = { kind: "simple", … }        this spec
+                    | { kind: "review", … }        t3o-16
+```
+
+The `simple` member:
 
 ```
 BoardStageExecution
@@ -390,6 +401,53 @@ silently discards every unrelated setting: provider instances, model defaults, a
 project ever ships to a second machine, that hazard returns and the answer is a lenient decoder on
 the changed field, never a migration script.
 
+### D15 — The stage executor seam
+
+The reactor must not learn what kind of stage it is driving. A `if (stage.role === "review")` branch
+in the supervisor is the beginning of review logic leaking through the reactor, the decider, the
+projector and the board UI.
+
+So the reactor keeps everything generic — stage-entry detection, worktree provisioning, slot
+acquisition, thread spawn, `sendTurn`, death detection, the recovery ladder, auto-advance — and
+delegates exactly one question to a **stage executor**: *what runs next, or are we done?*
+
+```
+BoardStageExecutor.planNext({ card, config, completions, runState })
+  -> { kind: "run", round, stepId, label, prompt, model, timeoutMs, maxAttempts }
+   | { kind: "complete", outcome }
+   | { kind: "escalate", question }
+```
+
+Pure — no SQL, no git, no thread handles — so it is unit-testable without a reactor, in the same
+spirit as `selectNextStep` and `decideBoardCommand`.
+
+This spec ships one implementation, `SimpleStageExecutor`, which wraps `selectNextStep` and returns
+`complete` as soon as the stage's single step has succeeded. t3o-16 adds `ReviewLoopExecutor`,
+holding the entire review loop — phases, rounds, convergence — inside itself.
+
+Resolution is a **registry keyed by stage role**, consulted in exactly one place. Combined with the
+settings union in D4, the whole codebase branches on stage kind in precisely two spots:
+
+| Branch point | Owner |
+| --- | --- |
+| Which settings card to render | `BoardSettingsPanel` |
+| Which executor to run | the executor registry |
+
+Reactor, decider, projector, MCP toolkit and board UI stay uniform.
+
+Two boundaries this fixes by construction:
+
+- **The slot belongs to Mode, not the executor** (D5). A multi-phase executor holds one slot for its
+  whole run rather than re-acquiring per phase — a half-finished loop never stalls behind newer work,
+  at the cost of a longer-held slot.
+- **The executor never sees a diff or a repository.** It returns a prompt; the *agent* runs `git` in
+  its worktree. Git stays out of the decision path entirely, which is what keeps `planNext` pure.
+
+`runState` carries the `round` the executor stamps, which is also what keeps rounds and
+`maxAttempts` from being confused: `maxAttempts` is the reactor's recovery ladder for a step whose
+thread died, `round` is the executor's counter for a sequence that completed but did not converge.
+Different owners, different lifecycles.
+
 ---
 
 ## Seam inventory
@@ -445,7 +503,10 @@ Everything else grows in board-owned files:
 17. A card with unmet dependencies cannot enter the `build`-role stage or anything after it,
     whatever the stages are called.
 18. A from-empty event replay and a table rehydration produce an identical stage list.
-19. `pnpm test` passes, with t3o-10/11/12 supervisor suites adapted only where the step array became
+19. `SimpleStageExecutor.planNext` is unit-tested with no reactor, no database and no git.
+20. The supervisor reactor contains **no** branch on stage role or stage id; the only role lookup is
+    the executor registry, and the only stage-kind branch in the web app is the settings card.
+21. `pnpm test` passes, with t3o-10/11/12 supervisor suites adapted only where the step array became
     a single seeded step.
 
 ### Watched-run items
@@ -464,6 +525,7 @@ Everything else grows in board-owned files:
 | `apps/server/src/board/decider.ts` | stage CRUD invariants; role-keyed gates; `blocked` derivation from the `build` role |
 | `apps/server/src/board/projector.ts` / `projection.ts` | `stages` slice; run-row config columns; drop `recipe_snapshot` |
 | `apps/server/src/board/supervisor.ts` | `composeStepPrompt` branches on human-in-the-loop; `/unattended` postamble |
+| `apps/server/src/board/stageExecutor.ts` | **new** — `BoardStageExecutor`, `SimpleStageExecutor`, the role-keyed registry (D15) |
 | `apps/server/src/board/supervisorReactor.ts` | generic auto-kickoff; first-entry vs re-entry; Mode-driven worktree/slot; auto-advance to next in order; mid-run toggle turn; `board.card-created` in the event filter; `start-stage-thread` |
 | `apps/server/src/board/migrations/014_…` onward | `board_stages`; run-row columns; drop `recipe_snapshot` |
 | `apps/server/src/board/rpc.ts` | stage CRUD + `startStageThread` RPCs |
