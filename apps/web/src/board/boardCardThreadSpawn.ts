@@ -3,12 +3,13 @@
  * card pane's `+` menu can start.
  *
  * "Restart planning" produces the SAME thread the supervisor produces when a
- * card enters Planning: same prompt (`composeBoardPlanningPrompt`), same title
- * (`boardPlanningThreadTitle`), same link role, same plan-mode/no-worktree
- * bootstrap. The prompt and title come from `@t3tools/contracts` precisely so
- * the two entry points cannot drift; only the six bootstrap literals below are
- * stated twice, and `spawnPlanningThread` in `apps/server/src/board/supervisorReactor.ts`
- * is the other copy — change one, change both.
+ * card enters Planning: same prompt, title, link role and bootstrap. Every field
+ * that decides what KIND of thread you get comes from `@t3tools/contracts` —
+ * `composeBoardPlanningPrompt`, `boardPlanningThreadTitle`, and the
+ * `BOARD_PLANNING_THREAD_*` modes — so the two entry points cannot drift into
+ * spawning differently-configured threads. `planningThreadTurnInput` is covered
+ * by `boardCardThreadSpawn.test.ts`; the reactor's copy by
+ * `apps/server/src/board/planningStageSpawn.test.ts`.
  *
  * The step is always resolved from CURRENT settings (`resolveBoardPlanningStep`
  * over the live `ServerSettings.board`), never from the card's `recipeSnapshot`.
@@ -16,6 +17,8 @@
  * the prompt as it is edited in Settings → Board → Pipeline right now.
  */
 import {
+  BOARD_PLANNING_THREAD_INTERACTION_MODE,
+  BOARD_PLANNING_THREAD_RUNTIME_MODE,
   boardPlanningThreadTitle,
   composeBoardPlanningPrompt,
   type BoardCard,
@@ -45,15 +48,15 @@ export function planningThreadTurnInput(input: {
       attachments: [],
     },
     modelSelection: { instanceId: step.providerInstanceId, model: step.model },
-    runtimeMode: "full-access",
-    interactionMode: "plan",
+    runtimeMode: BOARD_PLANNING_THREAD_RUNTIME_MODE,
+    interactionMode: BOARD_PLANNING_THREAD_INTERACTION_MODE,
     bootstrap: {
       createThread: {
         projectId: card.projectId,
         title,
         modelSelection: { instanceId: step.providerInstanceId, model: step.model },
-        runtimeMode: "full-access",
-        interactionMode: "plan",
+        runtimeMode: BOARD_PLANNING_THREAD_RUNTIME_MODE,
+        interactionMode: BOARD_PLANNING_THREAD_INTERACTION_MODE,
         branch: null,
         worktreePath: null,
         createdAt,

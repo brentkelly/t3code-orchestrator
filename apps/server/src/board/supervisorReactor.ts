@@ -25,6 +25,8 @@ import {
   CommandId,
   DEFAULT_BOARD_SETTINGS,
   EMPTY_BOARD_STATE,
+  BOARD_PLANNING_THREAD_INTERACTION_MODE,
+  BOARD_PLANNING_THREAD_RUNTIME_MODE,
   boardPlanningThreadTitle,
   composeBoardPlanningPrompt,
   isBoardTerminalStepStatus,
@@ -521,18 +523,21 @@ const make = Effect.gen(function* () {
         text: composeBoardPlanningPrompt({ card, step }),
         attachments: [],
       },
-      runtimeMode: "full-access",
-      // Plan mode (t3o-14, D4): the thread opens on the project's shared
-      // working tree rather than an isolated worktree, so it reads the codebase
-      // — which the default prompt asks it to do — without editing it.
-      interactionMode: "plan",
+      // t3o-14, D4. The thread opens on the project's shared working tree rather
+      // than an isolated worktree, so it can read the codebase — which the
+      // default prompt asks it to do — but must not be able to write there
+      // unattended, because nothing human-gated its start. Both modes are stated
+      // once in contracts (`BOARD_PLANNING_THREAD_*`) and shared with the web
+      // client's "restart planning", which spawns the same kind of thread.
+      runtimeMode: BOARD_PLANNING_THREAD_RUNTIME_MODE,
+      interactionMode: BOARD_PLANNING_THREAD_INTERACTION_MODE,
       bootstrap: {
         createThread: {
           projectId: card.projectId,
           title: boardPlanningThreadTitle(card, step),
           modelSelection: { instanceId: step.providerInstanceId, model: step.model },
-          runtimeMode: "full-access",
-          interactionMode: "plan",
+          runtimeMode: BOARD_PLANNING_THREAD_RUNTIME_MODE,
+          interactionMode: BOARD_PLANNING_THREAD_INTERACTION_MODE,
           branch: null,
           worktreePath: null,
           createdAt,

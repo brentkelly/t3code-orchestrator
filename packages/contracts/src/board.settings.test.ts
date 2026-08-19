@@ -27,6 +27,7 @@ import {
   resolveBoardProjectAccent,
   resolveBoardPlanningStep,
   resolveBoardRecipeForStage,
+  resolveBoardStageSteps,
   type BoardResolvedRecipe,
   type BoardStep,
 } from "./board.ts";
@@ -102,6 +103,42 @@ describe("resolveBoard* helpers", () => {
   it("resolves the planning step from the first step of the planning recipe", () => {
     expect(resolveBoardPlanningStep(DEFAULT_BOARD_SETTINGS)).toEqual(DEFAULT_BOARD_PLANNING_STEP);
     expect(resolveBoardPlanningStep(decodeSettings({ pipeline: { planning: [] } }))).toBe(null);
+  });
+
+  // The compiled-in pipeline applies PER STAGE. `withDecodingDefault` fires only
+  // when the whole `pipeline` key is absent, and settings are stripped per key —
+  // so anyone who has ever edited one stage has a pipeline containing only that
+  // stage. Defaulting per object would silently switch the other stage off for
+  // exactly the users who tuned the board.
+  it("defaults a stage the settings file has never mentioned, in both directions", () => {
+    const customBuild: BoardStep = { ...DEFAULT_BOARD_BUILD_STEP, promptTemplate: "custom" };
+    const editedBuildingOnly = decodeSettings({ pipeline: { building: [customBuild] } });
+    expect(resolveBoardStageSteps(editedBuildingOnly, "building")).toEqual([customBuild]);
+    expect(resolveBoardStageSteps(editedBuildingOnly, "planning")).toEqual([
+      DEFAULT_BOARD_PLANNING_STEP,
+    ]);
+    expect(resolveBoardPlanningStep(editedBuildingOnly)).toEqual(DEFAULT_BOARD_PLANNING_STEP);
+
+    const editedPlanningOnly = decodeSettings({
+      pipeline: { planning: [{ ...DEFAULT_BOARD_PLANNING_STEP, promptTemplate: "mine" }] },
+    });
+    expect(resolveBoardStageSteps(editedPlanningOnly, "building")).toEqual([
+      DEFAULT_BOARD_BUILD_STEP,
+    ]);
+  });
+
+  it("honours an explicitly emptied stage as off, which is how a stage is switched off", () => {
+    // An absent key means "never configured"; a stored `[]` means "I cleared it".
+    // The settings UI persists `[]` when you remove a stage's last step, so this
+    // is the difference between an upgrade default and a user's decision.
+    const off = decodeSettings({ pipeline: { planning: [], building: [] } });
+    expect(resolveBoardStageSteps(off, "planning")).toEqual([]);
+    expect(resolveBoardStageSteps(off, "building")).toEqual([]);
+    expect(resolveBoardPlanningStep(off)).toBe(null);
+  });
+
+  it("a stage with no compiled-in default resolves to no steps", () => {
+    expect(resolveBoardStageSteps(DEFAULT_BOARD_SETTINGS, "ready")).toEqual([]);
   });
 
   it("falls back to the default key prefix, or uses the configured one and accent", () => {

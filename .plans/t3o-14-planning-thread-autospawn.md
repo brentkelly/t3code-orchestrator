@@ -31,7 +31,9 @@ planning, start a blank thread, or adopt an existing one.
 2. A lightweight planning spawner in the supervisor reactor: `board.card-moved → planning`
    and `board.card-created (stage: planning)` create + link + prompt a thread.
 3. A planning prompt envelope (preamble + postamble) around the settings `promptTemplate`.
-4. A new board command/RPC that starts a stage thread on demand, so the UI can re-trigger it.
+4. Pure prompt/title/mode builders in contracts, shared by the supervisor and the web client, so
+   "restart planning" produces the same thread the automatic spawn does (see D8 — the first draft
+   proposed a command + RPC here and was revised during implementation).
 5. The `+` menu in `BoardCardThreadPane`: restart planning / new blank thread / adopt.
 
 **Out**
@@ -92,6 +94,14 @@ If a question can be answered by exploring the codebase, explore the codebase in
 Provider instance and model default to the same values `DEFAULT_BOARD_BUILD_STEP` uses, so an
 empty settings file still yields a runnable planning stage.
 
+The compiled-in pipeline is applied **per stage**, not per object (`DEFAULT_BOARD_PIPELINE` +
+`resolveBoardStageSteps`). `withDecodingDefault` fires only when the whole `pipeline` key is
+absent and `stripDefaultServerSettings` strips per key, so anyone who has ever edited one stage
+already has a `pipeline` containing only that stage — defaulting per object would silently switch
+Planning off for exactly the users who tuned the board. A stored `[]` still means "switched off",
+which is distinguishable from an absent key, and the settings UI renders through the same resolver
+so it can never show "No steps" for a stage that spawns anyway.
+
 ### D3 — A planning envelope, mirroring `composeStepPrompt`
 
 `composePlanningPrompt` wraps the settings text the way `composeStepPrompt`
@@ -118,21 +128,33 @@ proposed plans and activity. It needs no card id — only the link, which the sp
 The postamble must **not** mention `board_complete_step`: no step exists (D1), and the tool
 would fail on a missing `stepId`. `providerQuestionMechanism` is reused unchanged.
 
-### D4 — Plan mode, project root, no worktree
+### D4 — Read-only on the project root, no worktree
 
 The thread is bootstrapped on the project's normal workspace — `worktreePath: null`,
-`branch: null` — with `runtimeMode: "full-access"` and **`interactionMode: "plan"`**.
+`branch: null` — with **`runtimeMode: "approval-required"`** and **`interactionMode: "plan"`**.
 
-*Why:* planning is a conversation about a card that may never be built; provisioning a branch
-and worktree for it is cost and a new pre-start failure mode. Plan mode keeps the agent out of
-the shared working tree while still letting it read the codebase, which the default prompt
-explicitly asks it to do.
+*Why no worktree:* planning is a conversation about a card that may never be built; provisioning
+a branch and worktree for it is cost and a new pre-start failure mode.
 
-*Verified:* `interactionMode: "plan"` maps to the Claude SDK's `setPermissionMode("plan")`
-(`ClaudeAdapter.ts:4339`). Consequence to watch: `board_propose_plans` is not annotated
-read-only, so plan mode will surface it as an approval prompt rather than running silently.
-That is acceptable (the human sees the plan being recorded) — but it is the first thing to
-check on the live run, and the fallback if it hard-blocks is `interactionMode: "default"`.
+*Why `approval-required` and not `full-access`* (corrected during review): plan mode alone is not
+a containment boundary. `interactionMode: "plan"` maps to the Claude SDK's
+`setPermissionMode("plan")` (`ClaudeAdapter.ts:4339`) and is genuinely enforced there — but on
+Codex, which is `DEFAULT_BOARD_PROVIDER_INSTANCE_ID`, plan mode is prompt text only, while
+`full-access` maps to `sandbox: "danger-full-access"` with `approvalPolicy: "never"`
+(`CodexSessionRuntime.ts`). On the stock configuration that combination would mean dragging a
+card into Planning silently starts an auto-approving agent with write access to the user's real
+checkout, on the strength of a card brief it did not write — a materially worse risk profile than
+the build path, which is isolated in a worktree.
+
+`approval-required` maps to Codex's `read-only` sandbox and leaves Claude at the SDK default
+under plan mode. The agent can still read the codebase — which the default prompt explicitly asks
+it to do — and cannot write unattended. Both modes are stated once, as
+`BOARD_PLANNING_THREAD_RUNTIME_MODE` / `BOARD_PLANNING_THREAD_INTERACTION_MODE` in contracts, and
+shared by the supervisor and the client so the two spawns cannot diverge.
+
+*To watch on the live run:* `board_propose_plans` is not annotated read-only, so it will surface
+as an approval prompt rather than running silently. That is acceptable — the human sees the plan
+being recorded — but it is the first thing to check.
 
 ### D5 — Suppression: any live linked thread
 
@@ -182,6 +204,9 @@ owns the threads; a lightweight spawn there would produce a thread carrying the 
 that has no step state, no worktree and no slot, and that the supervisor does not know exists.
 Restarting a build stays a supervisor concern (drag out and back). The restart item is also
 hidden when the planning recipe has no steps.
+
+It dispatches the same `thread.turn.start` + `board.card.link-thread` pair the reactor does, built
+from the shared contracts helpers (D8) — not a board command of its own.
 
 "New blank thread" creates a thread with no first turn and links it — the agent still resolves
 the card through `board_get_card_context` once the human types. Client-side: `threadEnvironment.create`
@@ -255,7 +280,9 @@ moment of the spawn. Editing the prompt and restarting always uses the new text.
 
 | File | Change |
 | --- | --- |
-| `packages/contracts/src/board.ts` | `DEFAULT_BOARD_PLANNING_STEP`; `planning` in the default pipeline; `resolveBoardPlanningStep` / `composeBoardPlanningPrompt` / `boardPlanningThreadTitle`; `providerQuestionMechanism` moved here |
+| `packages/contracts/src/board.ts` | `DEFAULT_BOARD_PLANNING_STEP`; `DEFAULT_BOARD_PIPELINE` + `resolveBoardStageSteps` (per-stage defaulting); `resolveBoardPlanningStep` / `composeBoardPlanningPrompt` / `boardPlanningThreadTitle` / `BOARD_PLANNING_THREAD_*`; `providerQuestionMechanism` moved here |
+| `apps/web/src/components/settings/BoardSettingsPanel.tsx` | render through `resolveBoardStageSteps`; correct the "only Building is executed" copy |
+| `apps/web/src/board/boardCardThreadSpawn.test.ts` | new — locks the client spawn against the reactor's |
 | `apps/server/src/board/supervisor.ts` | re-exports `providerQuestionMechanism` from contracts |
 | `apps/server/src/board/supervisorReactor.ts` | `beginCardPlanning` + `spawnPlanningThread`; `board.card-created` in the event filter |
 | `apps/server/src/board/supervisorHarness.testkit.ts` | `planning` recipes, seeded thread links, `movedToPlanning` / `cardCreated` / `liveThreadLinks`; the engine double now materialises bootstrapped threads so `link-thread` is decided as in production |

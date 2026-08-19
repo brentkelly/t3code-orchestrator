@@ -198,13 +198,36 @@ it.effect("clearing every planning step in settings switches the spawn off", () 
   withGovernor(
     {
       board: { cards: [planningCard("card-1")], nextCardNumberByProject: {} },
-      // No `planning` key at all: the stage has no steps.
-      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      // An explicitly persisted empty array — what the settings UI writes when
+      // you remove a stage's last step. This, not an absent key, is "off".
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3, planning: [] }),
     },
     ({ pumpDomain, board }) =>
       Effect.gen(function* () {
         yield* pumpDomain(movedToPlanning(planningCard("card-1"), 1));
         assert.strictEqual(liveThreadLinks(yield* board, BoardCardId.make("card-1")).length, 0);
+      }),
+  ),
+);
+
+it.effect("an upgrade whose settings predate Planning still spawns the compiled-in step", () =>
+  withGovernor(
+    {
+      board: { cards: [planningCard("card-1")], nextCardNumberByProject: {} },
+      // No `planning` key at all — the shape every install has that ever edited
+      // the Building prompt, since settings are stripped per key. Absent means
+      // "never configured", so the compiled-in default applies; the feature must
+      // not be silently off for exactly the users who tuned the board.
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("card-1");
+        yield* pumpDomain(movedToPlanning(planningCard("card-1"), 1));
+
+        const links = liveThreadLinks(yield* board, id);
+        assert.strictEqual(links.length, 1);
+        assert.strictEqual(links[0]!.role, DEFAULT_BOARD_PLANNING_STEP.id);
       }),
   ),
 );

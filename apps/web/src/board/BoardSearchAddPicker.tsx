@@ -81,17 +81,25 @@ export function BoardSearchAddPicker({
   readonly onPick: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Bumped on OPEN only. Keying the body on `open` itself would also remount it
+  // while the popover is animating closed, blanking the list under the user.
+  const [openCount, setOpenCount] = useState(0);
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setOpenCount((count) => count + 1);
+      }}
+    >
       <PopoverTrigger render={<Button size="xs" variant="ghost" />}>
         <PlusIcon />
         {label}
       </PopoverTrigger>
       <PopoverPopup className="w-64 p-1.5">
-        {/* Keyed by `open` so the query resets when the popover reopens — the
-            body owns its own filter state. */}
+        {/* Remounted per open so the query resets — the body owns its filter state. */}
         <BoardPickerSearchBody
-          key={open ? "open" : "closed"}
+          key={openCount}
           onPick={(id) => {
             onPick(id);
             setOpen(false);

@@ -370,9 +370,14 @@ export type BoardCardExternalRef = typeof BoardCardExternalRef.Type;
 // `ServerSettings.board` (`BoardSettings`, at the bottom of this file). A
 // step is one short-lived thread with one job (D4): a prompt wrapped by the
 // provider-neutral envelope (D5), pinned to a provider instance and model
-// (D11 governs concurrency per instance), with a timeout and attempt cap. For
-// the MVP only Building's recipe is executed (t3o-12); the rest are stored and
-// displayed until later stages automate.
+// (D11 governs concurrency per instance), with a timeout and attempt cap.
+//
+// Two stages execute today. Building runs its whole recipe through the step
+// machine (t3o-12): timeouts, attempt caps and recovery all apply. Planning
+// runs only the FIRST step, and only its prompt / provider / model — it spawns
+// one thread and stops, entering none of the step machine (t3o-14, D1), so
+// `timeoutMs` and `maxAttempts` are stored and ignored there. Later stages are
+// stored and displayed until they automate.
 
 export const BoardStep = Schema.Struct({
   /** Stable within its stage; identifies the step across settings edits and
@@ -2463,16 +2468,24 @@ export const DEFAULT_BOARD_BUILD_STEP: BoardStep = {
   maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
 };
 
+/**
+ * The compiled-in pipeline. Applied PER STAGE, not per object: `withDecodingDefault`
+ * only fires when the whole `pipeline` key is absent, and `stripDefaultServerSettings`
+ * strips per key — so a user who has ever edited one stage already has a
+ * `pipeline` with only that stage in it. Defaulting per object would mean every
+ * install that ever touched the Building prompt silently loses the Planning step
+ * (and vice versa). `resolveBoardStageSteps` is the one reader that applies this,
+ * and it treats an explicitly persisted `[]` as "this stage runs nothing" — which
+ * is how a stage is switched off, and is distinguishable from an absent key.
+ */
+export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
+  planning: [DEFAULT_BOARD_PLANNING_STEP],
+  building: [DEFAULT_BOARD_BUILD_STEP],
+};
+
 export const BoardSettings = Schema.Struct({
   projects: BoardProjectSettingsMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  pipeline: BoardPipeline.pipe(
-    Schema.withDecodingDefault(
-      Effect.succeed({
-        planning: [DEFAULT_BOARD_PLANNING_STEP],
-        building: [DEFAULT_BOARD_BUILD_STEP],
-      }),
-    ),
-  ),
+  pipeline: BoardPipeline.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_PIPELINE))),
   concurrency: BoardConcurrencySettings.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -2541,7 +2554,24 @@ export function resolveBoardRecipeForStage(
   board: BoardSettings,
   stage: BoardStage,
 ): BoardResolvedRecipe {
-  return { stage, steps: board.pipeline[stage] ?? [] };
+  return { stage, steps: resolveBoardStageSteps(board, stage) };
+}
+
+/**
+ * A stage's steps as configured, falling back to the compiled-in default for a
+ * stage the settings file has never mentioned (see `DEFAULT_BOARD_PIPELINE`).
+ * A stored `[]` is honoured as "no steps" — clearing a stage in the settings UI
+ * persists an empty array, which is how you switch a stage off.
+ *
+ * The single reader, so the settings UI renders exactly the steps the server
+ * will run: "Planning shows No steps but a thread spawns anyway" is not a state
+ * this can reach.
+ */
+export function resolveBoardStageSteps(
+  board: BoardSettings,
+  stage: BoardStage,
+): ReadonlyArray<BoardStep> {
+  return board.pipeline[stage] ?? DEFAULT_BOARD_PIPELINE[stage] ?? [];
 }
 
 // ── Planning stage (t3o-14) ────────────────────────────────────────────
@@ -2589,8 +2619,31 @@ export function providerQuestionMechanism(providerInstanceId: ProviderInstanceId
  * the extras are stored and ignored.
  */
 export function resolveBoardPlanningStep(board: BoardSettings): BoardStep | null {
-  return resolveBoardRecipeForStage(board, "planning").steps[0] ?? null;
+  return resolveBoardStageSteps(board, "planning")[0] ?? null;
 }
+
+/**
+ * The runtime and interaction modes a planning thread opens with — stated once
+ * because the supervisor and the web client both spawn one and must produce the
+ * same kind of thread.
+ *
+ * `approval-required` is load-bearing, not a default. A planning thread runs on
+ * the project's SHARED working tree with no worktree to contain it, and it is
+ * started automatically by a card moving stage — so it must not be able to write
+ * unattended. `full-access` would map to Codex's `danger-full-access` sandbox
+ * with `approvalPolicy: "never"` (`CodexSessionRuntime.ts`), i.e. an
+ * auto-approving agent with write access to the user's real checkout, on the
+ * strength of a card brief it did not write. `approval-required` maps to
+ * Codex's `read-only` sandbox, and on Claude leaves the base permission mode at
+ * the SDK default. Either way the agent can read the codebase — which is what
+ * the default prompt asks it to do — and cannot silently edit it.
+ *
+ * `interactionMode: "plan"` layers Claude's real plan mode on top
+ * (`ClaudeAdapter` calls `setPermissionMode("plan")`); on providers where plan
+ * mode is prompt text only, the runtime mode above is what actually holds.
+ */
+export const BOARD_PLANNING_THREAD_RUNTIME_MODE = "approval-required";
+export const BOARD_PLANNING_THREAD_INTERACTION_MODE = "plan";
 
 /** The planning thread's title, in the same `KEY · Label` shape build threads
     use. Shared so the automatic spawn and the card pane's "restart planning"
