@@ -926,12 +926,15 @@ const make = Effect.gen(function* () {
   });
 
   // Mid-run human-in-the-loop toggle (D5/D6): when the per-card Build toggle is
-  // flipped on a card with a live step, send a turn into the LIVE thread — the
-  // `/unattended` stance switching to unattended, the question-friendly stance
-  // switching back — and retune the run row so drop-monitoring and auto-advance
-  // honour the new stance. Slot, worktree and thread are untouched. Only an
-  // EXPLICIT toggle (`card.humanInLoop` non-null and different from the frozen
-  // stance) reacts, so an unrelated card edit never flips a run.
+  // flipped on a card with a non-terminal step, retune the run row so
+  // drop-monitoring and auto-advance honour the new stance, and — if the step
+  // has a LIVE thread — send a turn into it (the `/unattended` stance switching
+  // to unattended, the question-friendly stance switching back). A queued or
+  // pending step has no thread yet, so it only needs the frozen stance updated;
+  // the flip would otherwise be lost before the step admits and spawns. Slot,
+  // worktree and thread are untouched. Only an EXPLICIT toggle
+  // (`card.humanInLoop` non-null and different from the frozen stance) reacts,
+  // so an unrelated card edit never flips a run.
   const handleCardUpdated = Effect.fn("board-supervisor-handleCardUpdated")(function* (
     event: Extract<OrchestrationEvent, { type: "board.card-updated" }>,
   ) {
@@ -939,7 +942,7 @@ const make = Effect.gen(function* () {
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     const state = boardCardStepState(board, event.payload.cardId);
     if (card === undefined || state === null) return;
-    if (state.status !== "running" && state.status !== "awaiting-input") return;
+    if (isBoardTerminalStepStatus(state.status)) return;
     const stage = boardStageById(board, card.stage);
     const desired =
       stage?.role === "build" ? (card.humanInLoop ?? state.humanInLoop) : state.humanInLoop;
