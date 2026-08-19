@@ -7,6 +7,7 @@
  */
 import {
   BoardCardId,
+  BoardStageId,
   CommandId,
   ProjectId,
   ProviderInstanceId,
@@ -133,7 +134,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
           type: "board.card.move",
           commandId: CommandId.make(`cmd-card-move-${index}`),
           cardId: cardOne,
-          toStage,
+          toStage: BoardStageId.make(toStage),
           createdAt: t0,
         });
       }
@@ -141,8 +142,10 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
       const atReady = yield* snapshotQuery.getCommandReadModel();
       const cardOneAtReady = atReady.board?.cards.find((card) => card.id === cardOne);
       assert.strictEqual(cardOneAtReady?.stage, "ready");
-      // card-two is not done, so the Ready boundary derives blocked.
-      assert.strictEqual(cardOneAtReady?.blocked, true);
+      // Ready is an ordinary pre-build stage now (D11): dependency blocking is
+      // derived only from the build role onward, so an unmet dependency does
+      // not block a card sitting at Ready.
+      assert.strictEqual(cardOneAtReady?.blocked, false);
       // The brief body never enters the read model, only its ref (D8).
       assert.strictEqual(cardOneAtReady?.briefRef, "brief");
 
