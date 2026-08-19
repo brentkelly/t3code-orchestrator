@@ -327,9 +327,11 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const byTitle = yield* boardHandlers
         .board_create_card({ projectId: ProjectId.make("Project A"), title: "By title" })
         .pipe(withScope(orphanThread));
+      // Mixed case on the folder segment still resolves (case-insensitive, like
+      // the title match, and correct on case-insensitive filesystems).
       const byPath = yield* boardHandlers
         .board_create_card({
-          projectId: ProjectId.make("/somewhere/else/project-a"),
+          projectId: ProjectId.make("/somewhere/else/Project-A"),
           title: "By path",
         })
         .pipe(withScope(orphanThread));

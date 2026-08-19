@@ -278,9 +278,13 @@ const resolveProjectId = (
         message: `'${input}' matches more than one project by title. Pass an id instead. Matching projects: ${formatProjectList(byTitle)}.`,
       });
     }
-    const inputBasename = workspaceBasename(input);
+    // Case-insensitive like the title match above — friendly to a guessed
+    // folder name and correct on case-insensitive filesystems (macOS). Two
+    // folders differing only in case fall through to the ambiguity branch
+    // rather than silently mismatching.
+    const inputBasename = workspaceBasename(input).toLowerCase();
     const byPath = projects.filter(
-      (project) => workspaceBasename(project.workspaceRoot) === inputBasename,
+      (project) => workspaceBasename(project.workspaceRoot).toLowerCase() === inputBasename,
     );
     if (byPath.length === 1) {
       return byPath[0]!.id;
