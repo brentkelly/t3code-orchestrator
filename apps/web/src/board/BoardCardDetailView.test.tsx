@@ -86,6 +86,9 @@ const baseProps = {
   dependencyOptions: [],
   threadLinks: [],
   adoptableThreads: [],
+  stageRestart: null,
+  onRestartStage: noop,
+  onCreateBlankThread: () => Promise.resolve(null),
   feedback: null,
   maximised: false,
   onToggleMaximised: noop,
@@ -223,7 +226,11 @@ describe("BoardCardDetailPanel", () => {
 
   it("shows the primary stage action for a live card but not an archived one", () => {
     const live = renderToStaticMarkup(
-      <BoardCardDetailPanel {...baseProps} detail={detail({ stage: BOARD_SEED_STAGE_IDS.ready })} projectName="P" />,
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.ready })}
+        projectName="P"
+      />,
     );
     expect(live).toContain("Begin build");
     const archived = renderToStaticMarkup(
@@ -276,7 +283,11 @@ describe("BoardCardDetailPanel", () => {
 
   it("renders the whole stage ladder with the card's stage marked current", () => {
     const html = renderToStaticMarkup(
-      <BoardCardDetailPanel {...baseProps} detail={detail({ stage: BOARD_SEED_STAGE_IDS.review })} projectName="P" />,
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.review })}
+        projectName="P"
+      />,
     );
     for (const stage of BOARD_SEED_STAGES) expect(html).toContain(stage.label);
     // Exactly one rung is the current one.
