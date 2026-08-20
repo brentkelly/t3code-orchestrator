@@ -3,18 +3,20 @@
  *
  * Three actions, one popover:
  *
- *   Planning:  New thread — restart planning   (spawns with the CURRENT settings prompt)
- *              New blank thread
- *              Adopt an existing thread…
+ *   Auto-executing stage:  New thread — restart <stage label>   (board.card.start-stage-thread)
+ *                          New blank thread
+ *                          Adopt an existing thread…
  *
- *   Elsewhere: New thread                      (blank)
- *              Adopt an existing thread…
+ *   Otherwise:             New thread                            (blank)
+ *                          Adopt an existing thread…
  *
- * The restart item appears only in Planning. Never in Building: the supervisor
- * owns build threads, and a thread spawned from here would carry the build
- * prompt with no step state, no worktree and no governor slot — a thread that
- * looks like a build and that the supervisor does not know exists. Restarting a
- * build stays a supervisor concern.
+ * The restart item appears ONLY when the card's current stage has `Auto execute`
+ * on (t3o-15 generalised auto-kickoff to any stage), and is DISABLED while a
+ * supervised run is in flight for the card — restarting under the supervisor
+ * would leave two threads believing they own the same step (D1). Restart is a
+ * server command, not a client-composed prompt: the reactor runs the stage's
+ * configured prompt through the same envelope the automatic trigger uses (D2),
+ * so the two entry points cannot drift.
  *
  * Adoption shares `BoardPickerSearchBody` with the standalone picker rather than
  * nesting a second popover inside a menu item — `mode` swaps this popover's
@@ -27,20 +29,37 @@ import { Button } from "../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import { BoardPickerSearchBody, type BoardPickerOption } from "./BoardSearchAddPicker";
 
+/**
+ * The restart affordance's state, or `null` when the current stage does not
+ * auto-execute (the item is absent, not disabled — D4). `label` names the stage
+ * ("restart Planning"); a non-null `disabledReason` disables the item and gives
+ * the tooltip / hint the reason a supervised run in flight blocks a restart.
+ */
+export interface BoardThreadStageRestart {
+  readonly label: string;
+  readonly disabledReason: string | null;
+}
+
 function MenuRow({
   icon,
   title,
   hint,
+  disabled,
   onClick,
 }: {
   readonly icon: React.ReactNode;
   readonly title: string;
-  readonly hint?: string;
+  readonly hint?: string | undefined;
+  readonly disabled?: boolean | undefined;
   readonly onClick: () => void;
 }) {
+  // `disabled:pointer-events-none` would swallow a native `title` tooltip, so the
+  // reason rides the always-visible `hint` sub-label instead — a disabled row is
+  // still legible about WHY it is disabled.
   return (
     <button
-      className="flex w-full items-start gap-2 rounded px-1.5 py-1.5 text-left hover:bg-accent"
+      className="flex w-full items-start gap-2 rounded px-1.5 py-1.5 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+      disabled={disabled}
       onClick={onClick}
       type="button"
     >
@@ -56,24 +75,24 @@ function MenuRow({
 }
 
 /**
- * The popover's contents. Exported and pure so the Planning-only gate — the
+ * The popover's contents. Exported and pure so the auto-execute gate — the
  * invariant this module exists to hold — is assertable in rendered markup: the
  * popup itself portals, and a portal renders nothing on the server, so the rows
  * are unreachable through `BoardCardThreadAddMenu`.
  */
 export function BoardCardThreadAddMenuBody({
   mode,
-  canRestartPlanning,
+  stageRestart,
   adoptableThreads,
-  onRestartPlanning,
+  onRestartStage,
   onCreateBlankThread,
   onAdoptThread,
   onEnterAdoptMode,
 }: {
   readonly mode: "menu" | "adopt";
-  readonly canRestartPlanning: boolean;
+  readonly stageRestart: BoardThreadStageRestart | null;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
-  readonly onRestartPlanning: () => void;
+  readonly onRestartStage: () => void;
   readonly onCreateBlankThread: () => void;
   readonly onAdoptThread: (threadId: string) => void;
   readonly onEnterAdoptMode: () => void;
@@ -89,18 +108,19 @@ export function BoardCardThreadAddMenuBody({
   }
   return (
     <div className="flex flex-col gap-0.5">
-      {canRestartPlanning ? (
+      {stageRestart !== null ? (
         <MenuRow
-          hint="Restart planning"
+          disabled={stageRestart.disabledReason !== null}
+          hint={stageRestart.disabledReason ?? undefined}
           icon={<RotateCwIcon className="size-3.5" />}
-          onClick={onRestartPlanning}
-          title="New thread"
+          onClick={onRestartStage}
+          title={`New thread — restart ${stageRestart.label}`}
         />
       ) : null}
       <MenuRow
         icon={<MessageSquarePlusIcon className="size-3.5" />}
         onClick={onCreateBlankThread}
-        title={canRestartPlanning ? "New blank thread" : "New thread"}
+        title={stageRestart !== null ? "New blank thread" : "New thread"}
       />
       <MenuRow
         icon={<SearchIcon className="size-3.5" />}
@@ -113,17 +133,18 @@ export function BoardCardThreadAddMenuBody({
 
 export function BoardCardThreadAddMenu({
   label,
-  canRestartPlanning,
+  stageRestart,
   adoptableThreads,
-  onRestartPlanning,
+  onRestartStage,
   onCreateBlankThread,
   onAdoptThread,
 }: {
   readonly label: string;
-  /** True only in Planning, and only while the planning recipe has a step. */
-  readonly canRestartPlanning: boolean;
+  /** Present only when the current stage auto-executes; `null` hides the
+      restart item entirely. */
+  readonly stageRestart: BoardThreadStageRestart | null;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
-  readonly onRestartPlanning: () => void;
+  readonly onRestartStage: () => void;
   readonly onCreateBlankThread: () => void;
   readonly onAdoptThread: (threadId: string) => void;
 }) {
@@ -158,7 +179,6 @@ export function BoardCardThreadAddMenu({
       <PopoverPopup className="w-64 p-1.5">
         <BoardCardThreadAddMenuBody
           adoptableThreads={adoptableThreads}
-          canRestartPlanning={canRestartPlanning}
           key={openCount}
           mode={mode}
           onAdoptThread={(threadId) => {
@@ -170,10 +190,11 @@ export function BoardCardThreadAddMenu({
             close();
           }}
           onEnterAdoptMode={() => setMode("adopt")}
-          onRestartPlanning={() => {
-            onRestartPlanning();
+          onRestartStage={() => {
+            onRestartStage();
             close();
           }}
+          stageRestart={stageRestart}
         />
       </PopoverPopup>
     </Popover>

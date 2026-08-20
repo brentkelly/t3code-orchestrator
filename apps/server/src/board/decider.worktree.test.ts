@@ -10,6 +10,7 @@
  */
 import {
   BoardCardId,
+  BoardStageId,
   CommandId,
   ProjectId,
   type BoardCard,
@@ -26,13 +27,18 @@ import { boardDecidedEvents, decideBoardCommand, type BoardCommand } from "./dec
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
 
-function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: string }): BoardCard {
+function makeCard(
+  overrides: Omit<Partial<BoardCard>, "id" | "stage"> & {
+    readonly id: string;
+    readonly stage?: string;
+  },
+): BoardCard {
+  const { id, stage, ...rest } = overrides;
   return {
     key: "CARD-1",
     cardNumber: 1,
     projectId,
     labels: [],
-    stage: "building",
     orderKey: "m",
     title: "Card",
     briefRef: null,
@@ -40,14 +46,15 @@ function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: str
     parentCardId: null,
     threadLinks: [],
     externalRef: null,
-    recipeSnapshot: null,
+    humanInLoop: null,
     worktree: null,
     blocked: false,
     archivedAt: null,
     createdAt: NOW,
     updatedAt: NOW,
-    ...overrides,
-    id: BoardCardId.make(overrides.id),
+    ...rest,
+    stage: BoardStageId.make(stage ?? "building"),
+    id: BoardCardId.make(id),
   };
 }
 
@@ -141,7 +148,7 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
         type: "board.card.move",
         commandId: CommandId.make("cmd-move-card-1"),
         cardId: BoardCardId.make("card-1"),
-        toStage: "building",
+        toStage: BoardStageId.make("building"),
         createdAt: NOW,
       } as const satisfies BoardCommand;
       const event = yield* decide(move, makeReadModel(boardWith([card])));
@@ -155,13 +162,22 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
     }),
   );
 
-  // ── D6 / D18: provisioning is gated on Building ──────────────────────
+  // ── D6: provisioning is mode-gated by the REACTOR, not stage-gated here ──
+  // Which stages need a worktree is a settings question (any stage may resolve
+  // to `mode: "build"`; the review stage always does), and the pure decider
+  // cannot read settings. The command is server-internal, so the resolved-mode
+  // gate lives with its only dispatcher — a stage-literal invariant here would
+  // orphan real git worktrees for build-mode stages not named 'building'.
 
-  it.effect("refuses to provision a worktree before the card is in Building", () =>
+  it.effect("provisions a worktree for a card in any stage (e.g. the review stage)", () =>
     Effect.gen(function* () {
-      const card = makeCard({ id: "card-1", stage: "ready" });
-      const failure = yield* decideFail(provision("card-1"), makeReadModel(boardWith([card])));
-      assert.match(String(failure), /must be in 'building'/);
+      const card = makeCard({ id: "card-1", stage: "review" });
+      const event = yield* decide(provision("card-1"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-worktree-provisioning");
+      if (event.type === "board.card-worktree-provisioning") {
+        assert.strictEqual(event.payload.card.stage, "review");
+        assert.strictEqual(event.payload.card.worktree?.status, "provisioning");
+      }
     }),
   );
 

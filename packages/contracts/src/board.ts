@@ -262,59 +262,127 @@ export function legacyBoardCardTypeLabelId(type: LegacyBoardCardType): BoardLabe
   return BOARD_SEED_LABEL_IDS[type];
 }
 
-// ── Stages ─────────────────────────────────────────────────────────────
+// ── Stages (t3o-15) ────────────────────────────────────────────────────
+// Stages are a user-editable board read-model aggregate (D2): created,
+// renamed, reordered and deleted through decider-gated commands. `build`,
+// `review` and `done` are the product spine (D3) — exactly one stage holds
+// each role, and nothing keys on a stage's NAME any more. What a stage IS
+// (id, label, role, order) lives here; what a stage DOES (prompt, model,
+// mode, execution) lives in settings keyed by stage id (D4).
 
 /**
- * The fixed, closed stage set (D12), in board order. The decider derives
- * adjacency from this array and the stage UIs derive column order and
- * labels from it — it is the single source of stage ordering.
+ * A stage's stable identity — an open branded string (D3), not a closed
+ * literal: a user-invented stage is a first-class id, and a persisted event
+ * naming a since-deleted stage still decodes. Card `stage` fields and the
+ * `card-created` / `card-moved` payloads carry this.
  */
-export const BOARD_STAGES = [
-  "backlog",
-  "sprint",
-  "planning",
-  "ready",
-  "building",
-  "review",
-  "merge",
-  "done",
-] as const;
-
-export const BoardStage = Schema.Literals(BOARD_STAGES);
-export type BoardStage = typeof BoardStage.Type;
-
-export function boardStageIndex(stage: BoardStage): number {
-  return BOARD_STAGES.indexOf(stage);
-}
-
-export function areBoardStagesAdjacent(a: BoardStage, b: BoardStage): boolean {
-  return Math.abs(boardStageIndex(a) - boardStageIndex(b)) === 1;
-}
-
-/** Dependency gating starts at Ready (D18): a card may reach Ready with
-    unmet dependencies and is blocked from Ready onward, never earlier. */
-export function isBoardStageReadyOrBeyond(stage: BoardStage): boolean {
-  return boardStageIndex(stage) >= boardStageIndex("ready");
-}
-
-/** Sub-board plan cards (D12) use the Ready-onward stage subset; a card with
-    a parent can never enter these stages, override or not. */
-export function isBoardStageBeforeReady(stage: BoardStage): boolean {
-  return boardStageIndex(stage) < boardStageIndex("ready");
-}
+export const BoardStageId = TrimmedNonEmptyString.pipe(Schema.brand("BoardStageId"));
+export type BoardStageId = typeof BoardStageId.Type;
 
 /**
- * Cards may be created only into these stages (t3o-06a): later stages
- * describe work the board has already started shepherding, so a card cannot
- * appear mid-pipeline. A card still REACHES later stages the only way it
- * ever could — by being moved, under D18's human gate. The decider rejects a
- * create targeting any other stage; the web add button appears only on these
- * columns. Generalises t3o-03's "no create path may land a card in Building".
+ * The three product roles (D3). Exactly one stage holds each; every other
+ * stage carries a null role. Dependency blocking (`build`), the review loop
+ * (`review`) and archival / dependency satisfaction (`done`) key on the role,
+ * never on a stage name.
  */
-export const BOARD_CREATABLE_STAGES = ["backlog", "sprint", "planning"] as const;
+export const BoardStageRole = Schema.Literals(["build", "review", "done"]);
+export type BoardStageRole = typeof BoardStageRole.Type;
 
-export function isBoardCreatableStage(stage: BoardStage): boolean {
-  return (BOARD_CREATABLE_STAGES as ReadonlyArray<BoardStage>).includes(stage);
+/**
+ * A stage definition in the read model (D2). `orderKey` is a fractional
+ * ordering key (the same client-computed / server-stored scheme cards use),
+ * so a reorder rewrites one stage rather than the whole column; stages sort by
+ * `compareBoardStages` (orderKey, then stageId). Embedded in persisted event
+ * payloads, so the id must decode even after the stage is deleted.
+ */
+export const BoardStageDefinition = Schema.Struct({
+  stageId: BoardStageId,
+  label: TrimmedNonEmptyString,
+  role: Schema.NullOr(BoardStageRole),
+  orderKey: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type BoardStageDefinition = typeof BoardStageDefinition.Type;
+
+/** The eight compiled-in seed stages ship with fixed ids matching the legacy
+    stage names, so persisted card `stage` values keep resolving. Roles anchor
+    Building / Code review / Done; the rest are ordinary movable stages. */
+export const BOARD_SEED_STAGE_IDS = {
+  backlog: BoardStageId.make("backlog"),
+  sprint: BoardStageId.make("sprint"),
+  planning: BoardStageId.make("planning"),
+  ready: BoardStageId.make("ready"),
+  building: BoardStageId.make("building"),
+  review: BoardStageId.make("review"),
+  merge: BoardStageId.make("merge"),
+  done: BoardStageId.make("done"),
+} as const;
+
+// Staggered genesis timestamps, mirroring `BOARD_SEED_LABEL_AT`: a canonical
+// (orderKey, stageId) sort makes a from-empty replay and a table rehydration
+// produce an identical stage list, and the createdAt values are stable seeds.
+const BOARD_SEED_STAGE_AT = {
+  backlog: "1970-01-01T00:00:00.000Z",
+  sprint: "1970-01-01T00:00:00.001Z",
+  planning: "1970-01-01T00:00:00.002Z",
+  ready: "1970-01-01T00:00:00.003Z",
+  building: "1970-01-01T00:00:00.004Z",
+  review: "1970-01-01T00:00:00.005Z",
+  merge: "1970-01-01T00:00:00.006Z",
+  done: "1970-01-01T00:00:00.007Z",
+} as const;
+
+// Spaced single-character order keys, leaving room for `pinOrderKeyBetween`
+// to bisect between any two neighbours when a stage is created or reordered.
+const BOARD_SEED_STAGE_SHAPES: ReadonlyArray<{
+  readonly stageId: BoardStageId;
+  readonly label: string;
+  readonly role: BoardStageRole | null;
+  readonly orderKey: string;
+}> = [
+  { stageId: BOARD_SEED_STAGE_IDS.backlog, label: "Backlog", role: null, orderKey: "b" },
+  { stageId: BOARD_SEED_STAGE_IDS.sprint, label: "Sprint", role: null, orderKey: "d" },
+  { stageId: BOARD_SEED_STAGE_IDS.planning, label: "Planning", role: null, orderKey: "f" },
+  { stageId: BOARD_SEED_STAGE_IDS.ready, label: "Ready", role: null, orderKey: "h" },
+  { stageId: BOARD_SEED_STAGE_IDS.building, label: "Building", role: "build", orderKey: "j" },
+  { stageId: BOARD_SEED_STAGE_IDS.review, label: "Code review", role: "review", orderKey: "l" },
+  { stageId: BOARD_SEED_STAGE_IDS.merge, label: "Ready for merge", role: null, orderKey: "n" },
+  { stageId: BOARD_SEED_STAGE_IDS.done, label: "Done", role: "done", orderKey: "p" },
+];
+
+export const BOARD_SEED_STAGES: ReadonlyArray<BoardStageDefinition> = BOARD_SEED_STAGE_SHAPES.map(
+  (seed): BoardStageDefinition => {
+    const at = BOARD_SEED_STAGE_AT[seed.stageId as keyof typeof BOARD_SEED_STAGE_AT];
+    return { ...seed, createdAt: at, updatedAt: at };
+  },
+);
+
+/** Canonical stage order: (orderKey, stageId) by code units — total and
+    deterministic, applied on both the replay and rehydration paths so SQL
+    collation can never make the two disagree. */
+export function compareBoardStages(a: BoardStageDefinition, b: BoardStageDefinition): number {
+  const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+  return compare(a.orderKey, b.orderKey) || compare(a.stageId, b.stageId);
+}
+
+/** Whether a stage list is exactly the compiled seed set, untouched — the
+    stage analogue of `boardLabelsAreSeedOnly`, used by `loadBoardState` to
+    report an unused board's slice as absent so rehydration equals a from-empty
+    replay. Assumes canonical `compareBoardStages` order (both inputs are). */
+export function boardStagesAreSeedOnly(stages: ReadonlyArray<BoardStageDefinition>): boolean {
+  if (stages.length !== BOARD_SEED_STAGES.length) return false;
+  return stages.every((stage, index) => {
+    const seed = BOARD_SEED_STAGES[index]!;
+    return (
+      stage.stageId === seed.stageId &&
+      stage.label === seed.label &&
+      stage.role === seed.role &&
+      stage.orderKey === seed.orderKey &&
+      stage.createdAt === seed.createdAt &&
+      stage.updatedAt === seed.updatedAt
+    );
+  });
 }
 
 // ── Card pieces ────────────────────────────────────────────────────────
@@ -365,64 +433,37 @@ export const BoardCardExternalRef = Schema.Struct({
 });
 export type BoardCardExternalRef = typeof BoardCardExternalRef.Type;
 
-// ── Pipeline recipe (D10, t3o-07) ──────────────────────────────────────
-// Stages are fixed (D12); the steps within a stage are configurable data in
-// `ServerSettings.board` (`BoardSettings`, at the bottom of this file). A
-// step is one short-lived thread with one job (D4): a prompt wrapped by the
-// provider-neutral envelope (D5), pinned to a provider instance and model
-// (D11 governs concurrency per instance), with a timeout and attempt cap.
-//
-// Two stages execute today. Building runs its whole recipe through the step
-// machine (t3o-12): timeouts, attempt caps and recovery all apply. Planning
-// runs only the FIRST step, and only its prompt / provider / model — it spawns
-// one thread and stops, entering none of the step machine (t3o-14, D1), so
-// `timeoutMs` and `maxAttempts` are stored and ignored there. Later stages are
-// stored and displayed until they automate.
+// ── Stage execution primitives (D4/D5, t3o-15) ─────────────────────────
+// Every stage runs exactly one step, seeded from code (D1); the step's shape
+// is no longer user data. What the step does — prompt, model, mode, timeout,
+// attempts, human-in-the-loop — is the stage's execution config in settings
+// (`BoardStageExecution`, at the bottom of this file), resolved and FROZEN onto
+// the card's step-state row at stage entry (D12). These two small primitives —
+// the model selection and the mode — are the pieces both the settings config
+// and the frozen run-row share, defined here because `BoardCardStepState`
+// (below) references them.
 
-export const BoardStep = Schema.Struct({
-  /** Stable within its stage; identifies the step across settings edits and
-      through recovery/escalation (D13). */
-  id: TrimmedNonEmptyString,
-  label: TrimmedNonEmptyString,
-  /** The step prompt, wrapped by the envelope at execution (D5). A reference
-      to a user skill instead of an inline template is post-MVP (t3o-10). */
-  promptTemplate: Schema.String,
-  providerInstanceId: ProviderInstanceId,
+/**
+ * A provider instance + model pair (D4), the board-local mirror of upstream's
+ * `ModelSelection`. Defined here rather than imported because `orchestration.ts`
+ * imports this module (importing back would be a cycle). A stage config's
+ * `model` is `BoardModelSelection | null`; `null` means "run on the global
+ * text-generation model", resolved to a concrete pair at stage entry (D12).
+ */
+export const BoardModelSelection = Schema.Struct({
+  instanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
-  timeoutMs: PositiveInt,
-  maxAttempts: PositiveInt,
 });
-export type BoardStep = typeof BoardStep.Type;
+export type BoardModelSelection = typeof BoardModelSelection.Type;
 
 /**
- * The resolved recipe for one stage: exactly the ordered steps that stage
- * runs, resolved from `BoardSettings.pipeline` by `resolveBoardRecipeForStage`.
- * This is the value snapshotted onto a card on stage entry (D10).
+ * Mode governs resources (D5): `plan` runs read-only with no worktree, no
+ * branch and no concurrency slot; `build` provisions a worktree, writes, and
+ * holds a slot. Orthogonal to human-in-the-loop, which governs the
+ * conversation.
  */
-export const BoardResolvedRecipe = Schema.Struct({
-  stage: Schema.Literals(BOARD_STAGES),
-  steps: Schema.Array(BoardStep),
-});
-export type BoardResolvedRecipe = typeof BoardResolvedRecipe.Type;
-
-/**
- * The resolved recipe captured on stage entry (D10). t3o-03 shipped this as an
- * opaque `Record` placeholder; t3o-07 tightens it to the real resolved-recipe
- * shape with no seam change — the `BoardCard.recipeSnapshot` field, its
- * `NullOr` wrapper, and the `board_cards.recipe_snapshot` JSON column are all
- * unchanged, and every existing writer stores `null`.
- *
- * Nothing in t3o-07 writes a non-null snapshot: the stage-entry reactor that
- * stamps the resolved recipe onto the card (calling `resolveBoardRecipeForStage`
- * against current settings, server-side where settings are in hand — the pure
- * decider cannot read settings, D8) lands with step execution (t3o-10), and
- * the Building automation consumes it (t3o-12). t3o-07 ships the resolver and
- * the divergence check (`boardRecipeSnapshotDiffersFromCurrent`) those specs
- * and the card UI build on, so "this card is running an older recipe than
- * current settings" is a one-call comparison the moment snapshots exist.
- */
-export const BoardCardRecipeSnapshot = BoardResolvedRecipe;
-export type BoardCardRecipeSnapshot = typeof BoardCardRecipeSnapshot.Type;
+export const BoardStageMode = Schema.Literals(["plan", "build"]);
+export type BoardStageMode = typeof BoardStageMode.Type;
 
 /** The `kind` under which a card's brief body is stored in
     `board_card_bodies`; `BoardCard.briefRef` holds it when a brief exists. */
@@ -507,7 +548,7 @@ export const BoardCard = Schema.Struct({
       tombstoned label (rendered muted) — deleting a label never rewrites the
       cards that carry it. */
   labels: Schema.Array(BoardLabelId),
-  stage: BoardStage,
+  stage: BoardStageId,
   /** Fractional ordering key within the stage column, following the
       `pinOrderKey` precedent: the client computes it (threadSort.ts helpers)
       and the server stores it. */
@@ -522,7 +563,13 @@ export const BoardCard = Schema.Struct({
   parentCardId: Schema.NullOr(BoardCardId),
   threadLinks: Schema.Array(BoardCardThreadLink),
   externalRef: Schema.NullOr(BoardCardExternalRef),
-  recipeSnapshot: Schema.NullOr(BoardCardRecipeSnapshot),
+  /** Per-card human-in-the-loop override on the Build stage (D6). `null` means
+      untouched — the effective value is computed from the build stage's
+      `humanInLoopWithPlan` / `humanInLoopWithoutPlan` settings and whether the
+      card has a plan, so writing a plan moves the default with it. Flipping the
+      toggle writes an explicit boolean that survives. Decodes to null on legacy
+      payloads. Only the build role reads it. */
+  humanInLoop: Schema.NullOr(Schema.Boolean).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Branch + worktree the card owns once it enters Building (D6, t3o-09);
       null for every card that has not — planning is worktree-free. Decodes
       to null on the legacy `card`-carrying event payloads written before
@@ -553,28 +600,35 @@ export type BoardCard = typeof BoardCard.Type;
  * gate straight back with no restoration bookkeeping.
  */
 export function unmetBoardCardDependencies(input: {
+  /** The board, read for the `done`-role stage id (D3): satisfaction keys on
+      the role, not on a stage literally named "done". */
+  readonly board: BoardState;
   readonly dependsOn: ReadonlyArray<BoardCardId>;
   readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "stage" | "archivedAt">>;
 }): ReadonlyArray<BoardCardId> {
+  const doneStageId = boardStageWithRole(input.board, "done")?.stageId ?? null;
   return input.dependsOn.filter((dependencyId) => {
     const dependency = input.cards.find((card) => card.id === dependencyId);
     if (dependency === undefined) return true;
     if (dependency.archivedAt !== null) return false;
-    return dependency.stage !== "done";
+    // No done role (never in practice — the role is undeletable) means nothing
+    // can be proven done, so every dependency stays unmet.
+    return doneStageId === null ? true : dependency.stage !== doneStageId;
   });
 }
 
 /**
- * Blocked derivation (D18): unmet dependencies block a card from Ready
- * onward and never earlier. Shared by the decider and any client that wants
- * a live view.
+ * Blocked derivation (D11): unmet dependencies block a card from the `build`
+ * role onward and never earlier — no Ready anchor, whatever the stages are
+ * called. Shared by the decider and any client that wants a live view.
  */
 export function deriveBoardCardBlocked(input: {
-  readonly stage: BoardStage;
+  readonly board: BoardState;
+  readonly stage: BoardStageId;
   readonly dependsOn: ReadonlyArray<BoardCardId>;
   readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "stage" | "archivedAt">>;
 }): boolean {
-  if (!isBoardStageReadyOrBeyond(input.stage)) return false;
+  if (!isBoardStageAtOrAfterBuild(input.board, input.stage)) return false;
   return unmetBoardCardDependencies(input).length > 0;
 }
 
@@ -655,17 +709,23 @@ export type BoardStepCompletion = typeof BoardStepCompletion.Type;
  * advance (D18). The MVP reactor collapses that window into a single turn
  * (settle → advance), so it is not yet emitted; it is kept in the union so a
  * future reactor that persists it needs no migration, and boot reconciliation
- * already treats any non-`running`/`awaiting-input` non-terminal status as a
- * re-drive. Every way in has a way out: `queued` → `running` on admission,
- * `awaiting-input` → `running` on the answer, and the three terminals
- * (`succeeded`, `failed`, `abandoned`) are the reverse states a running step
- * owes.
+ * already treats any non-`running`/`awaiting-input`/`stalled` non-terminal
+ * status as a re-drive. `stalled` (t3o-17, D3) is where recovery gives up: an
+ * unattended step that stops making progress lands here — distinct from
+ * `awaiting-input`, which is a healthy agent question. It is non-terminal (a
+ * human still has to act) but supervision does not drive it, so boot
+ * reconciliation re-reads and leaves it alone. Every way in has a way out:
+ * `queued` → `running` on admission, `awaiting-input` → `running` on the
+ * answer, `stalled` → `queued`/`running` when a human retries, and the three
+ * terminals (`succeeded`, `failed`, `abandoned`) are the reverse states a
+ * running step owes.
  */
 export const BOARD_STEP_STATUSES = [
   "pending",
   "queued",
   "running",
   "awaiting-input",
+  "stalled",
   "completing",
   "succeeded",
   "failed",
@@ -687,17 +747,60 @@ export function isBoardTerminalStepStatus(status: BoardStepStatus): boolean {
 
 export const BoardCardStepState = Schema.Struct({
   cardId: BoardCardId,
-  /** Stable step id from the card's `recipeSnapshot` (`BoardStep.id`). */
+  /** The stage's single step id (D1). Equal to the stage id, so a completion
+      keyed `(cardId, stepId)` records that this card has run this stage's step
+      — the first-entry-vs-re-entry signal (D7). */
   stepId: TrimmedNonEmptyString,
   /** The step's human label, carried so a card can render "which step" without
-      re-resolving the recipe. */
+      re-resolving the stage config. */
   stepLabel: TrimmedNonEmptyString,
-  /** Attempt number, 1-based; recovery increments it. Capped at `maxAttempts`,
-      past which recovery escalates to the human gate (D13). */
+  /** Cumulative invocation count of this step this stage entry, 1-based;
+      recovery increments it and it never resets within the entry (t3o-17, D1).
+      Kept for display ("attempt 7") and for the per-stage-entry invocation
+      ceiling (D5) — the runaway detector that stops a stage whose steps have,
+      in total, been invoked more than `maxInvocationsPerStageEntry` times, even
+      when no single step exhausted `maxAttempts`. Resets to 1 on stage entry
+      (a fresh `select-step` row). */
   attempt: PositiveInt,
-  /** `BoardStep.maxAttempts` from the snapshot, carried so the card and the
-      reactor read the escalation ceiling without re-resolving the recipe. */
+  /** CONSECUTIVE stalls with no progress between them (t3o-17, D1). Distinct
+      from `attempt`: this is what recovery gates on — it is compared against
+      `maxAttempts`, and it RESETS to zero whenever progress is observed since
+      the last nudge (D2: a `board_report_progress` activity entry or a new
+      commit on the card's branch). A step that keeps inching forward never
+      escalates on stall grounds however many times it is nudged; only a
+      genuinely wedged agent — `maxAttempts` unproductive stops in a row —
+      does. Starts at zero on a fresh step. */
+  stallCount: NonNegativeInt,
+  /** When recovery last nudged this step (t3o-17, D2), or null before the first
+      nudge. The boundary "since the last nudge" the reactor resolves the
+      progress signal against — a progress note or commit after this instant
+      resets `stallCount`. */
+  lastNudgeAt: Schema.NullOr(IsoDateTime),
+  // ── Frozen execution config (D12) ────────────────────────────────────
+  // Resolved from the stage's settings ONCE at stage entry and stamped here,
+  // so editing settings mid-flight cannot corrupt a running card. The reactor
+  // reads these fields instead of re-resolving the stage config.
+  /** The resolved step prompt. Empty on a re-entry (D7: a clean conversational
+      thread with no prompt injected). */
+  prompt: Schema.String,
+  /** The resolved provider instance the step runs on (D12). */
+  providerInstanceId: ProviderInstanceId,
+  /** The resolved model, concrete — a null stage `model` was resolved to the
+      global default here, so a later default change never moves a running card. */
+  model: TrimmedNonEmptyString,
+  /** Mode governs resources (D5): `plan` holds no worktree and no slot; `build`
+      provisions a worktree and holds a slot. */
+  mode: BoardStageMode,
+  /** Whether this run is human-in-the-loop (D5/D6): the frozen resolution of
+      the stage's / card's human-in-the-loop setting. Governs the prompt
+      postamble, drop monitoring and auto-advance eligibility. */
+  humanInLoop: Schema.Boolean,
+  /** The escalation ceiling, frozen from the stage config. Enforced only on an
+      unattended run. */
   maxAttempts: PositiveInt,
+  /** The step timeout in ms, frozen from the stage config. Enforced only on an
+      unattended run. */
+  timeoutMs: PositiveInt,
   /** The step's thread; null before spawn and while `queued`. */
   threadId: Schema.NullOr(ThreadId),
   status: BoardStepStatus,
@@ -796,6 +899,15 @@ export const BoardState = Schema.Struct({
       Bodies live only in `board_plans`. Optional and absent until the first
       `board_propose_plans`; rebuilt from `board_plans` on rehydration. */
   plans: Schema.optional(Schema.Array(BoardPlan)),
+  /** User-defined stage list (t3o-15, D2). In the read model because the
+      decider branches on it: stage adjacency, the `build`/`review`/`done`
+      role positions and the ordering invariant are all validated off this
+      slice, and stage mutation is transactional with card moves. Includes the
+      eight compiled seeds until edited. Kept in canonical `compareBoardStages`
+      order. Optional and read through `boardStages`, mirroring the
+      `labels` fallback: absent means the compiled seeds, and a persisted
+      pre-stage read model decodes unchanged. */
+  stages: Schema.optional(Schema.Array(BoardStageDefinition)),
   /** Next key number per project (D14). Lives in the read model so
       allocation is exact and race-free under the engine's total command
       ordering; rebuilt from `MAX(card_number)` on rehydration. */
@@ -828,6 +940,34 @@ export function boardNonTerminalStepStates(board: BoardState): ReadonlyArray<Boa
   return (board.stepStates ?? []).filter((state) => !isBoardTerminalStepStatus(state.status));
 }
 
+/**
+ * A card's total step invocations this stage entry (t3o-17, D5): the number the
+ * reactor feeds the per-stage-entry ceiling in `recoveryDecision`. Computed as
+ * the sum of `attempt` across the card's step-state rows.
+ *
+ * Today the read model keeps exactly ONE step-state row per card (D4: one step
+ * at a time), and the review loop advances that row step to step — so the
+ * running total is carried on `attempt` itself: an intra-stage `select-step`
+ * passes `priorInvocations` (this count at selection time) and the decider
+ * stamps `attempt = priorInvocations + 1`, while a genuine stage entry omits it
+ * and resets (D1). It is still written as a sum, not a single-row read, so it
+ * stays correct if a future model tracks more than one step-state row per card
+ * at once. Either way the ceiling is enforced by `recoveryDecision` on whatever
+ * total it is handed, which is the generic, unit-tested guarantee.
+ */
+export function boardStageEntryInvocationCount(board: BoardState, cardId: BoardCardId): number {
+  return (board.stepStates ?? [])
+    .filter((state) => state.cardId === cardId)
+    .reduce((total, state) => total + state.attempt, 0);
+}
+
+/** Every card whose live step has given up (t3o-17, D3): the `stalled` set the
+    board surfaces so a human can find every card that needs rescuing without
+    opening each. */
+export function boardStalledStepStates(board: BoardState): ReadonlyArray<BoardCardStepState> {
+  return (board.stepStates ?? []).filter((state) => state.status === "stalled");
+}
+
 /** A card's proposed plans (t3o-08), in `ordinal` order. Absent slice means
     none. */
 export function boardCardPlans(board: BoardState, cardId: BoardCardId): ReadonlyArray<BoardPlan> {
@@ -855,6 +995,7 @@ export function resolveBoardCardForThread(board: BoardState, threadId: ThreadId)
 export const EMPTY_BOARD_STATE: BoardState = {
   cards: [],
   labels: BOARD_SEED_LABELS,
+  stages: BOARD_SEED_STAGES,
   nextCardNumberByProject: {},
 };
 
@@ -864,6 +1005,77 @@ export const EMPTY_BOARD_STATE: BoardState = {
     seeds" are always the same catalogue. */
 export function boardLabelCatalogue(board: BoardState): ReadonlyArray<BoardLabel> {
   return board.labels ?? BOARD_SEED_LABELS;
+}
+
+// ── Stage read-model helpers (D2/D3, t3o-15) ───────────────────────────
+
+/** A board's stage list: its `stages`, or the compiled seeds when absent (a
+    board that has never touched a stage). The single reader every
+    decider/projector/UI path goes through, so "absent" and "the eight seeds"
+    are always the same list. */
+export function boardStages(board: BoardState): ReadonlyArray<BoardStageDefinition> {
+  return board.stages ?? BOARD_SEED_STAGES;
+}
+
+/** The stage list in canonical (orderKey, stageId) order. */
+export function boardStagesInOrder(board: BoardState): ReadonlyArray<BoardStageDefinition> {
+  return [...boardStages(board)].sort(compareBoardStages);
+}
+
+/** The stage with the given id, or null. */
+export function boardStageById(
+  board: BoardState,
+  stageId: BoardStageId,
+): BoardStageDefinition | null {
+  return boardStages(board).find((stage) => stage.stageId === stageId) ?? null;
+}
+
+/** A stage's position in board order, or -1 when the id is unknown (a
+    since-deleted stage named by a legacy event). */
+export function boardStageIndex(board: BoardState, stageId: BoardStageId): number {
+  return boardStagesInOrder(board).findIndex((stage) => stage.stageId === stageId);
+}
+
+/** Whether two stages are neighbours in board order. Unknown ids are never
+    adjacent. */
+export function areBoardStagesAdjacent(
+  board: BoardState,
+  a: BoardStageId,
+  b: BoardStageId,
+): boolean {
+  const indexA = boardStageIndex(board, a);
+  const indexB = boardStageIndex(board, b);
+  if (indexA < 0 || indexB < 0) return false;
+  return Math.abs(indexA - indexB) === 1;
+}
+
+/** The single stage holding a product role (D3), or null. */
+export function boardStageWithRole(
+  board: BoardState,
+  role: BoardStageRole,
+): BoardStageDefinition | null {
+  return boardStages(board).find((stage) => stage.role === role) ?? null;
+}
+
+/** The stage immediately after `stageId` in board order, or null when it is
+    last or unknown (D8: auto-advance moves to the next stage in order). */
+export function boardNextStageId(board: BoardState, stageId: BoardStageId): BoardStageId | null {
+  const ordered = boardStagesInOrder(board);
+  const index = ordered.findIndex((stage) => stage.stageId === stageId);
+  if (index < 0 || index + 1 >= ordered.length) return null;
+  return ordered[index + 1]!.stageId;
+}
+
+/** Whether a stage sits at or after the `build` role in board order (D11):
+    dependency blocking is unconditional from here onward, and sub-board plan
+    cards are restricted to this subset. A board with no build role (never in
+    practice — the role is undeletable) treats nothing as at-or-after. */
+export function isBoardStageAtOrAfterBuild(board: BoardState, stageId: BoardStageId): boolean {
+  const build = boardStageWithRole(board, "build");
+  if (build === null) return false;
+  const buildIndex = boardStageIndex(board, build.stageId);
+  const stageIndex = boardStageIndex(board, stageId);
+  return stageIndex >= 0 && buildIndex >= 0 && stageIndex >= buildIndex;
 }
 
 // ── Key allocation ─────────────────────────────────────────────────────
@@ -933,10 +1145,12 @@ export const BoardCardCreateCommand = Schema.Struct({
       decider rejects the create when it exceeds `BOARD_CARD_LABELS_MAX` or
       references an unknown / tombstoned label. */
   labels: Schema.optional(Schema.Array(BoardLabelId)),
-  /** Target stage (t3o-06a). Absent lands in Backlog. The decider rejects any
-      stage outside `BOARD_CREATABLE_STAGES` — a card cannot appear
-      mid-pipeline. t3o-06 wires the create dialog's stage picker to this. */
-  stage: Schema.optional(BoardStage),
+  /** Target stage (D10). Absent lands in the first stage. A card may be
+      created into ANY existing stage — creation and dragging follow one path;
+      Mode governs worktree/slot on entry, and the build-onward dependency
+      gate still applies. t3o-06 wires the create dialog's stage picker to
+      this. */
+  stage: Schema.optional(BoardStageId),
   /** Client-computed fractional position in the target column. */
   orderKey: TrimmedNonEmptyString,
   /** Overrides DEFAULT_BOARD_KEY_PREFIX; the t3o-07 settings surface will
@@ -950,7 +1164,7 @@ export const BoardCardMoveCommand = Schema.Struct({
   type: Schema.Literal("board.card.move"),
   commandId: CommandId,
   cardId: BoardCardId,
-  toStage: BoardStage,
+  toStage: BoardStageId,
   /** Fractional position in the target column; absent keeps the current key. */
   orderKey: Schema.optional(TrimmedNonEmptyString),
   /** Permits non-adjacent stage moves. A drag is an override — a rigid
@@ -986,6 +1200,11 @@ export const BoardCardUpdateCommand = Schema.Struct({
   labels: Schema.optional(Schema.Array(BoardLabelId)),
   dependsOn: Schema.optional(Schema.Array(BoardCardId)),
   externalRef: Schema.optional(Schema.NullOr(BoardCardExternalRef)),
+  /** Per-card human-in-the-loop override on the Build stage (D6). Absent leaves
+      it unchanged; `null` clears it back to the computed default; a boolean
+      writes an explicit value. Flipping it mid-run sends a turn into the live
+      thread (D5), handled by the supervisor reactor. */
+  humanInLoop: Schema.optional(Schema.NullOr(Schema.Boolean)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -1077,6 +1296,75 @@ export const BoardLabelUndeleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardLabelUndeleteCommand = typeof BoardLabelUndeleteCommand.Type;
+
+// ── Stage aggregate commands (t3o-15, D2/D9) ───────────────────────────
+// Stage definitions are a board read-model aggregate, mutated by these
+// decider-gated commands. The decider enforces the D3 ordering invariant
+// (`build` before `review`, `done` last), refuses deleting a stage that holds
+// any card or a role-holder (D9), and refuses reordering across the `build`
+// boundary while the stage holds cards (D9). Being `board.` commands they ride
+// the same generalised seams as every other board write.
+
+export const BoardStageCreateCommand = Schema.Struct({
+  type: Schema.Literal("board.stage.create"),
+  commandId: CommandId,
+  stageId: BoardStageId,
+  label: TrimmedNonEmptyString,
+  /** Client-computed fractional key placing the stage; the decider validates
+      the resulting order against the role invariant (D3/D9). */
+  orderKey: TrimmedNonEmptyString,
+  /** Optional role for the new stage — always null in practice (the three
+      role-holders are seeded and undeletable); present for completeness. */
+  role: Schema.optional(Schema.NullOr(BoardStageRole)),
+  createdAt: IsoDateTime,
+});
+export type BoardStageCreateCommand = typeof BoardStageCreateCommand.Type;
+
+/** Rename — label only, id immutable, always allowed, no side effects (D9). */
+export const BoardStageRenameCommand = Schema.Struct({
+  type: Schema.Literal("board.stage.rename"),
+  commandId: CommandId,
+  stageId: BoardStageId,
+  label: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardStageRenameCommand = typeof BoardStageRenameCommand.Type;
+
+/** Reorder — move a stage to a new fractional key, subject to the ordering
+    invariant and the build-boundary-while-occupied refusal (D9). */
+export const BoardStageReorderCommand = Schema.Struct({
+  type: Schema.Literal("board.stage.reorder"),
+  commandId: CommandId,
+  stageId: BoardStageId,
+  orderKey: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardStageReorderCommand = typeof BoardStageReorderCommand.Type;
+
+/** Delete — refused if the stage holds any card (archived included) or is a
+    role-holder (D9). The error names the count. */
+export const BoardStageDeleteCommand = Schema.Struct({
+  type: Schema.Literal("board.stage.delete"),
+  commandId: CommandId,
+  stageId: BoardStageId,
+  createdAt: IsoDateTime,
+});
+export type BoardStageDeleteCommand = typeof BoardStageDeleteCommand.Type;
+
+/**
+ * Start a thread for the card's CURRENT stage on demand (D7), the on-demand
+ * counterpart of auto-kickoff — consumed by t3o-14's `+` menu. The decider
+ * validates the card exists and emits `board.card-stage-thread-requested`; the
+ * supervisor reactor reacts by beginning a stage run (first entry runs the
+ * stage prompt; a re-entry opens a clean human-in-the-loop thread).
+ */
+export const BoardCardStartStageThreadCommand = Schema.Struct({
+  type: Schema.Literal("board.card.start-stage-thread"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardStartStageThreadCommand = typeof BoardCardStartStageThreadCommand.Type;
 
 // ── Agent write path (t3o-08) ──────────────────────────────────────────
 // The MCP board toolkit (apps/server/src/mcp/toolkits/board/) is the agent
@@ -1233,27 +1521,30 @@ export type BoardCardReclaimWorktreeCommand = typeof BoardCardReclaimWorktreeCom
 // the minimal facts the reactor observed, and the decider builds the recorded
 // `BoardCardStepState` from them.
 
-export const BoardCardSnapshotRecipeCommand = Schema.Struct({
-  type: Schema.Literal("board.card.snapshot-recipe"),
-  commandId: CommandId,
-  cardId: BoardCardId,
-  /** The recipe resolved from current settings on stage entry (D10). Captured
-      on the card so editing settings mid-flight cannot corrupt a running
-      pipeline. The reactor resolves it server-side (the pure decider cannot
-      read settings, D8). */
-  recipe: BoardResolvedRecipe,
-  createdAt: IsoDateTime,
-});
-export type BoardCardSnapshotRecipeCommand = typeof BoardCardSnapshotRecipeCommand.Type;
-
 export const BoardCardSelectStepCommand = Schema.Struct({
   type: Schema.Literal("board.card.select-step"),
   commandId: CommandId,
   cardId: BoardCardId,
-  /** The step resolved as next from the card's `recipeSnapshot`. */
+  /** The stage's single step id (D1), equal to the stage id. */
   stepId: TrimmedNonEmptyString,
   stepLabel: TrimmedNonEmptyString,
+  // ── Frozen execution config resolved on stage entry (D12) ────────────
+  // The reactor resolves these server-side (the pure decider cannot read
+  // settings, D8) and the decider stamps them onto the step-state row, so
+  // editing settings mid-flight cannot corrupt a running card.
+  prompt: Schema.String,
+  providerInstanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  mode: BoardStageMode,
+  humanInLoop: Schema.Boolean,
   maxAttempts: PositiveInt,
+  timeoutMs: PositiveInt,
+  /** The stage entry's step invocations BEFORE this selection (t3o-17, D5).
+      An intra-stage continuation (t3o-16's next review phase) carries the
+      running total forward so the per-stage-entry ceiling survives step
+      replacement; a genuine stage entry omits it (resets, D1). The decider
+      stamps `attempt = priorInvocations + 1` onto the fresh run row. */
+  priorInvocations: Schema.optional(NonNegativeInt),
   createdAt: IsoDateTime,
 });
 export type BoardCardSelectStepCommand = typeof BoardCardSelectStepCommand.Type;
@@ -1290,10 +1581,19 @@ export const BoardCardRecoverStepCommand = Schema.Struct({
   /** The thread the reactor resumed or respawned for the recovery attempt; may
       be the same thread (resume) or a fresh one (respawn). */
   threadId: Schema.NullOr(ThreadId),
-  /** True when recovery has exhausted `maxAttempts` and escalates to the human
-      gate (D13): the step goes to `awaiting-input` and never loops unbounded.
-      False for an ordinary retry, which returns the step to `running`. */
+  /** True when recovery gives up (t3o-17, D3): consecutive stalls exhausted
+      `maxAttempts`, or the stage-entry invocation ceiling was crossed (D5). The
+      step goes to the distinct `stalled` status (not `awaiting-input`), still
+      asks its question, and RELEASES its concurrency slot (D4) — nobody is
+      working and nobody will until a human acts. False for an ordinary retry,
+      which returns the step to `running` and keeps its slot. */
   escalateToHuman: Schema.Boolean,
+  /** Whether progress was observed since the last nudge (t3o-17, D2): the
+      reactor resolves it (a `board_report_progress` activity entry or a new
+      commit on the card's branch) and the decider resets `stallCount` to zero
+      when true, or increments it when false. Kept out of the pure
+      `recoveryDecision` — git and SQL stay in the reactor. */
+  progressed: Schema.Boolean,
   createdAt: IsoDateTime,
 });
 export type BoardCardRecoverStepCommand = typeof BoardCardRecoverStepCommand.Type;
@@ -1311,6 +1611,24 @@ export const BoardCardSettleStepCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardSettleStepCommand = typeof BoardCardSettleStepCommand.Type;
+
+/**
+ * Retune the live step's human-in-the-loop stance (D5/D6): flipping the
+ * per-card toggle mid-run updates the frozen run-row so drop-monitoring and
+ * auto-advance honour the new stance, while slot, worktree and thread are
+ * untouched (the reactor also sends a turn into the live thread). Internal —
+ * dispatched by the reactor when it observes the toggle change on a running
+ * card.
+ */
+export const BoardCardRetuneStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.retune-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  humanInLoop: Schema.Boolean,
+  createdAt: IsoDateTime,
+});
+export type BoardCardRetuneStepCommand = typeof BoardCardRetuneStepCommand.Type;
 
 // ── Event payloads ─────────────────────────────────────────────────────
 
@@ -1349,7 +1667,9 @@ export const BoardCardCreatedPayload = Schema.Struct({
       means the empty set, matching migration 903's `depends_on DEFAULT '[]'`,
       so a from-empty replay of a pre-t3o-06 log equals table rehydration. */
   dependsOn: Schema.optionalKey(Schema.Array(BoardCardId)),
-  stage: BoardStage.pipe(Schema.withDecodingDefault(Effect.succeed("backlog" as const))),
+  stage: BoardStageId.pipe(
+    Schema.withDecodingDefault(Effect.succeed(BOARD_SEED_STAGE_IDS.backlog)),
+  ),
   orderKey: TrimmedNonEmptyString.pipe(
     Schema.withDecodingDefault(Effect.succeed(LEGACY_BOARD_CARD_ORDER_KEY)),
   ),
@@ -1386,8 +1706,8 @@ export function boardCardCreatedDependsOn(
 
 export const BoardCardMovedPayload = Schema.Struct({
   cardId: BoardCardId,
-  fromStage: BoardStage,
-  toStage: BoardStage,
+  fromStage: BoardStageId,
+  toStage: BoardStageId,
   card: BoardCard,
 });
 export type BoardCardMovedPayload = typeof BoardCardMovedPayload.Type;
@@ -1473,6 +1793,43 @@ export const BoardLabelUndeletedPayload = Schema.Struct({
 });
 export type BoardLabelUndeletedPayload = typeof BoardLabelUndeletedPayload.Type;
 
+// ── Stage aggregate event payloads (t3o-15) ────────────────────────────
+// Create / rename / reorder each carry the full post-change stage the
+// projector writes verbatim (replay equals rehydration); delete carries just
+// the id it removes.
+
+export const BoardStageCreatedPayload = Schema.Struct({
+  stageId: BoardStageId,
+  stage: BoardStageDefinition,
+});
+export type BoardStageCreatedPayload = typeof BoardStageCreatedPayload.Type;
+
+export const BoardStageRenamedPayload = Schema.Struct({
+  stageId: BoardStageId,
+  stage: BoardStageDefinition,
+});
+export type BoardStageRenamedPayload = typeof BoardStageRenamedPayload.Type;
+
+export const BoardStageReorderedPayload = Schema.Struct({
+  stageId: BoardStageId,
+  stage: BoardStageDefinition,
+});
+export type BoardStageReorderedPayload = typeof BoardStageReorderedPayload.Type;
+
+export const BoardStageDeletedPayload = Schema.Struct({
+  stageId: BoardStageId,
+});
+export type BoardStageDeletedPayload = typeof BoardStageDeletedPayload.Type;
+
+/** On-demand kickoff request (D7): the reactor reacts by beginning a stage run
+    for the card's current stage. Carries the stage so the reactor need not
+    re-read the card. */
+export const BoardCardStageThreadRequestedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  stageId: BoardStageId,
+});
+export type BoardCardStageThreadRequestedPayload = typeof BoardCardStageThreadRequestedPayload.Type;
+
 // ── Agent write-path event payloads (t3o-08) ───────────────────────────
 // Each carries the full post-change record its projector writes verbatim
 // (activity entry / step completion / plan set), so replay and rehydration
@@ -1556,13 +1913,6 @@ export type BoardCardWorktreeReclaimedPayload = typeof BoardCardWorktreeReclaime
 // events carry the whole `BoardCardStepState` the decider computed, so the
 // projector upserts exactly that and replay equals rehydration.
 
-export const BoardCardRecipeSnapshottedPayload = Schema.Struct({
-  cardId: BoardCardId,
-  recipe: BoardResolvedRecipe,
-  card: BoardCard,
-});
-export type BoardCardRecipeSnapshottedPayload = typeof BoardCardRecipeSnapshottedPayload.Type;
-
 export const BoardCardStepSelectedPayload = Schema.Struct({
   cardId: BoardCardId,
   state: BoardCardStepState,
@@ -1592,6 +1942,12 @@ export const BoardCardStepSettledPayload = Schema.Struct({
   state: BoardCardStepState,
 });
 export type BoardCardStepSettledPayload = typeof BoardCardStepSettledPayload.Type;
+
+export const BoardCardStepRetunedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardCardStepRetunedPayload = typeof BoardCardStepRetunedPayload.Type;
 
 // ── Card shell (t3o-04, D7) ────────────────────────────────────────────
 
@@ -1631,7 +1987,7 @@ export const BoardCardShell = Schema.Struct({
       `BOARD_CARD_LABELS_MAX`, so the shell stays scalar-plus-one-small-array
       and grows linearly with card count (asserted in `board.test.ts`). */
   labelIds: Schema.Array(BoardLabelId),
-  stage: BoardStage,
+  stage: BoardStageId,
   orderKey: TrimmedNonEmptyString,
   /** Capped at `BOARD_CARD_SHELL_TITLE_MAX_BYTES` (UTF-8) by
       `makeBoardCardShell` (the aggregate's title is unbounded; the
@@ -1670,6 +2026,16 @@ export const BoardCardShell = Schema.Struct({
       deltas rest it at false and the client preserves its last known value
       (`applyBoardShellStreamEvent`). */
   queued: Schema.Boolean,
+  /** Whether the card's live step has given up (t3o-17, D3): recovery exhausted
+      its consecutive-stall budget or crossed the per-stage-entry invocation
+      ceiling, so nobody is working and nobody will until a human acts. Rendered
+      distinctly from `awaitingInput` (a healthy agent question) — the "loud"
+      half of stall detection — and the board offers a way to find every stalled
+      card. Like `queued`, it is derived from the step-state read-model slice the
+      card aggregate does not carry, so it rides its own `card-stalled` delta and
+      the snapshot; card-carrying deltas rest it at false and the client
+      preserves the last known value (`applyBoardShellStreamEvent`). */
+  stalled: Schema.Boolean,
   // Thread-derived — joined from `board_card_thread_links` (902) and the
   // linked thread's shell; no new plumbing (t3o-04).
   threadState: BoardCardThreadState,
@@ -1798,7 +2164,7 @@ export function makeBoardCardShell(input: {
   readonly key: string;
   readonly projectId: ProjectId;
   readonly labelIds: ReadonlyArray<BoardLabelId>;
-  readonly stage: BoardStage;
+  readonly stage: BoardStageId;
   readonly orderKey: string;
   readonly title: string;
   readonly blocked: boolean;
@@ -1813,6 +2179,11 @@ export function makeBoardCardShell(input: {
       card-carrying delta producers omit it, resting it at false — the client
       preserves its last known queued value across those deltas. */
   readonly queued?: boolean | undefined;
+  /** Whether the card's live step has stalled (t3o-17, D3). The snapshot builder
+      passes the real value (derived from step state); card-carrying delta
+      producers omit it, resting it at false — the client preserves its last
+      known stalled value across those deltas. */
+  readonly stalled?: boolean | undefined;
   readonly thread?: BoardThreadStateSource | null | undefined;
 }): BoardCardShell {
   const { threadState, awaitingInput } = deriveBoardCardThreadState(input.thread);
@@ -1831,6 +2202,7 @@ export function makeBoardCardShell(input: {
     hasPr: false, // t3o-11
     attachmentCount: 0, // t3o-11
     queued: input.queued ?? false, // t3o-11 (D11): real on the snapshot, rests false on card deltas
+    stalled: input.stalled ?? false, // t3o-17 (D3): real on the snapshot, rests false on card deltas
     threadState,
     awaitingInput,
     activeThreadId: input.activeThreadId,
@@ -1915,6 +2287,25 @@ export const BoardCardQueuedShellEvent = Schema.Struct({
 export type BoardCardQueuedShellEvent = typeof BoardCardQueuedShellEvent.Type;
 
 /**
+ * Stall-flag delta (t3o-17, D3): the card's `stalled` flag flipped as recovery
+ * gave up on its step (→ `stalled=true`) or a retry / human answer put the step
+ * back to work (→ `stalled=false`). A dedicated one-boolean delta, the exact
+ * analogue of `card-queued`: `stalled` is derived from the step-state
+ * read-model slice a card-carrying event cannot see (the step events carry
+ * `state`, not the card), so this delta and the snapshot are its authoritative
+ * source and the client preserves the last known value across card upserts. Its
+ * `kind` keeps the `card-` prefix, so it routes through `isBoardShellStreamEvent`
+ * with zero core-seam change.
+ */
+export const BoardCardStalledShellEvent = Schema.Struct({
+  kind: Schema.Literal("card-stalled"),
+  sequence: NonNegativeInt,
+  cardId: BoardCardId,
+  stalled: Schema.Boolean,
+});
+export type BoardCardStalledShellEvent = typeof BoardCardStalledShellEvent.Type;
+
+/**
  * Catalogue delta (t3o-06a): a label created, renamed, recoloured, tombstoned
  * or restored. Carries the whole `BoardLabel` (including `deletedAt`), so a
  * recolour repaints every card that references it with no card deltas and no
@@ -1933,6 +2324,28 @@ export const BoardLabelUpsertedShellEvent = Schema.Struct({
   label: BoardLabel,
 });
 export type BoardLabelUpsertedShellEvent = typeof BoardLabelUpsertedShellEvent.Type;
+
+/**
+ * Stage aggregate delta (t3o-15): a stage created, renamed or reordered. Carries
+ * the whole `BoardStageDefinition`, so the board reads column order and labels
+ * from the read model (D13) with no card deltas. Its `kind` starts with
+ * `stage-`; `isBoardShellStreamEvent` admits that prefix too.
+ */
+export const BoardStageUpsertedShellEvent = Schema.Struct({
+  kind: Schema.Literal("stage-upserted"),
+  sequence: NonNegativeInt,
+  stage: BoardStageDefinition,
+});
+export type BoardStageUpsertedShellEvent = typeof BoardStageUpsertedShellEvent.Type;
+
+/** A stage removed (t3o-15): a delete is a real removal (not a tombstone), so
+    unlike labels there is a `stage-removed` delta. */
+export const BoardStageRemovedShellEvent = Schema.Struct({
+  kind: Schema.Literal("stage-removed"),
+  sequence: NonNegativeInt,
+  stageId: BoardStageId,
+});
+export type BoardStageRemovedShellEvent = typeof BoardStageRemovedShellEvent.Type;
 
 /**
  * Type guards for the `board.` / `card-` prefix rule. Generic over the input
@@ -1956,11 +2369,16 @@ export function isBoardEvent<Event extends { readonly type: string }>(
 
 export function isBoardShellStreamEvent<Event extends { readonly kind: string }>(
   event: Event,
-): event is Extract<Event, { kind: `card-${string}` | `label-${string}` }> {
+): event is Extract<Event, { kind: `card-${string}` | `label-${string}` | `stage-${string}` }> {
   // t3o-06a widened this beyond the original `card-` prefix: label catalogue
-  // deltas (`label-upserted`) are board shell deltas too. Both prefixes route
-  // to the board reducer / mapper; see docs/t3o/seams.md's prefix rule.
-  return event.kind.startsWith("card-") || event.kind.startsWith("label-");
+  // deltas (`label-upserted`) are board shell deltas too; t3o-15 adds `stage-`
+  // for the stage aggregate. All three prefixes route to the board reducer /
+  // mapper; see docs/t3o/seams.md's prefix rule.
+  return (
+    event.kind.startsWith("card-") ||
+    event.kind.startsWith("label-") ||
+    event.kind.startsWith("stage-")
+  );
 }
 
 /**
@@ -1981,6 +2399,11 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardLabelUpdateCommand,
   BoardLabelDeleteCommand,
   BoardLabelUndeleteCommand,
+  BoardStageCreateCommand,
+  BoardStageRenameCommand,
+  BoardStageReorderCommand,
+  BoardStageDeleteCommand,
+  BoardCardStartStageThreadCommand,
   BoardCardReportProgressCommand,
   BoardCardRequestInputCommand,
   BoardCardCompleteStepCommand,
@@ -2003,12 +2426,12 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardRecordWorktreeCommand,
   BoardCardFailWorktreeCommand,
   BoardCardReclaimWorktreeCommand,
-  BoardCardSnapshotRecipeCommand,
   BoardCardSelectStepCommand,
   BoardCardAdmitStepCommand,
   BoardCardAwaitStepInputCommand,
   BoardCardRecoverStepCommand,
   BoardCardSettleStepCommand,
+  BoardCardRetuneStepCommand,
 ] as const;
 
 export const BOARD_EVENT_TYPES = [
@@ -2024,6 +2447,11 @@ export const BOARD_EVENT_TYPES = [
   "board.label-updated",
   "board.label-deleted",
   "board.label-undeleted",
+  "board.stage-created",
+  "board.stage-renamed",
+  "board.stage-reordered",
+  "board.stage-deleted",
+  "board.card-stage-thread-requested",
   "board.card-progress-reported",
   "board.card-input-requested",
   "board.card-step-completed",
@@ -2033,19 +2461,22 @@ export const BOARD_EVENT_TYPES = [
   "board.card-worktree-ready",
   "board.card-worktree-failed",
   "board.card-worktree-reclaimed",
-  "board.card-recipe-snapshotted",
   "board.card-step-selected",
   "board.card-step-admitted",
   "board.card-step-awaiting-input",
   "board.card-step-recovered",
   "board.card-step-settled",
+  "board.card-step-retuned",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
   BoardCardUpsertedShellEvent,
   BoardCardRemovedShellEvent,
   BoardCardQueuedShellEvent,
+  BoardCardStalledShellEvent,
   BoardLabelUpsertedShellEvent,
+  BoardStageUpsertedShellEvent,
+  BoardStageRemovedShellEvent,
 ] as const;
 
 /**
@@ -2119,6 +2550,31 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     }),
     Schema.Struct({
       ...base,
+      type: Schema.Literal("board.stage-created"),
+      payload: BoardStageCreatedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.stage-renamed"),
+      payload: BoardStageRenamedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.stage-reordered"),
+      payload: BoardStageReorderedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.stage-deleted"),
+      payload: BoardStageDeletedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-stage-thread-requested"),
+      payload: BoardCardStageThreadRequestedPayload,
+    }),
+    Schema.Struct({
+      ...base,
       type: Schema.Literal("board.card-progress-reported"),
       payload: BoardCardProgressReportedPayload,
     }),
@@ -2164,11 +2620,6 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     }),
     Schema.Struct({
       ...base,
-      type: Schema.Literal("board.card-recipe-snapshotted"),
-      payload: BoardCardRecipeSnapshottedPayload,
-    }),
-    Schema.Struct({
-      ...base,
       type: Schema.Literal("board.card-step-selected"),
       payload: BoardCardStepSelectedPayload,
     }),
@@ -2191,6 +2642,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-step-settled"),
       payload: BoardCardStepSettledPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-retuned"),
+      payload: BoardCardStepRetunedPayload,
     }),
   ] as const;
 }
@@ -2258,7 +2714,7 @@ export const BoardCardDependencyRef = Schema.Struct({
   cardId: BoardCardId,
   key: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
-  stage: BoardStage,
+  stage: BoardStageId,
   archivedAt: Schema.NullOr(IsoDateTime),
 });
 export type BoardCardDependencyRef = typeof BoardCardDependencyRef.Type;
@@ -2267,6 +2723,11 @@ export const BoardCardDetail = Schema.Struct({
   card: BoardCard,
   /** Brief body text, or null when the card has no brief. */
   brief: Schema.NullOr(TrimmedNonEmptyString),
+  /** Whether the card has any proposed plan (t3o-15, D6): the Build stage's
+      per-card human-in-the-loop default flips on this — a card with a plan
+      defaults to `humanInLoopWithPlan`, one without to `humanInLoopWithoutPlan`.
+      Decodes to false on legacy detail payloads. */
+  hasPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** `card.dependsOn` resolved, in `dependsOn` order. Archived dependencies
       are included — they no longer gate, but they are still real cards and
       must read as such rather than as a dangling id. An id with no row left
@@ -2275,6 +2736,15 @@ export const BoardCardDetail = Schema.Struct({
   /** Cards whose `dependsOn` names this one, archived included. Feeds the
       archive confirmation (t3o-13, D3), which counts only the live ones. */
   dependents: Schema.Array(BoardCardDependencyRef),
+  /** The card's recorded step completions with their opaque payloads (t3o-16,
+      D9). Carried on the detail so the modal can render a stage's structured
+      output — the review loop's findings, dispositions and verdicts — from the
+      same payloads the agents write, with no PR to anchor them to. Generic (any
+      stage's completions), so the projector stays role-blind; only the view
+      parses a review payload. Decodes to `[]` on legacy detail payloads. */
+  stepCompletions: Schema.Array(BoardStepCompletion).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
 
@@ -2297,7 +2767,7 @@ export function liveBoardCardDependents(
  * has nothing to warn about.
  */
 export function boardCardArchiveNeedsConfirmation(input: {
-  readonly stage: BoardStage;
+  readonly stage: BoardStageId;
   readonly dependents: ReadonlyArray<BoardCardDependencyRef>;
 }): boolean {
   if (input.stage === "done") return false;
@@ -2375,18 +2845,6 @@ export type BoardProjectSettings = typeof BoardProjectSettings.Type;
 export const BoardProjectSettingsMap = Schema.Record(ProjectId, BoardProjectSettings);
 export type BoardProjectSettingsMap = typeof BoardProjectSettingsMap.Type;
 
-/**
- * The pipeline recipe: per stage, an ordered list of steps. Keyed by stage
- * name (a `BoardStage` string; the resolver reads `pipeline[stage] ?? []`), so
- * a settings edit that rewrites a stage's steps replaces that stage's whole
- * array — `deepMerge` in `applyServerSettingsPatch` replaces arrays wholesale,
- * so a step list is never half-merged. That is the same whole-map discipline
- * `providerInstances` documents, achieved without a merge seam. A stage absent
- * from the map runs no steps.
- */
-export const BoardPipeline = Schema.Record(Schema.String, Schema.Array(BoardStep));
-export type BoardPipeline = typeof BoardPipeline.Type;
-
 /** Concurrency governance (D11, consumed by t3o-11): a ceiling per provider
     instance plus a global ceiling. A per-instance value of `null` means "no
     cap for this instance, use the global limit" — clearing a cap is stored as
@@ -2422,65 +2880,402 @@ export type BoardLifecycleSettings = typeof BoardLifecycleSettings.Type;
 export const DEFAULT_BOARD_ARCHIVE_AFTER_DAYS = 7;
 export const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
 export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
-export const DEFAULT_BOARD_STEP_MAX_ATTEMPTS = 3;
+/** Consecutive-stall ceiling per step (t3o-17, D1). Raised from 3 to 5: safe
+    only because the counter now measures CONSECUTIVE unproductive stalls
+    (`stallCount`, reset on progress), not cumulative nudges — five wedged stops
+    in a row is a stuck agent, where five cumulative nudges was often a long
+    healthy job. */
+export const DEFAULT_BOARD_STEP_MAX_ATTEMPTS = 5;
+/** Per-stage-entry invocation ceiling (t3o-17, D5): the runaway detector above
+    the per-step ladder. When a stage entry's total `attempt` across all its
+    steps crosses this, the stage stalls and escalates regardless of the
+    per-step ladder — the backstop that makes t3o-16's rounds × phases ×
+    attempts compound bound observable. Deliberately generous: a runaway
+    detector, not a budget. */
+export const DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY = 20;
 export const DEFAULT_BOARD_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
 
 /**
- * The Planning step (t3o-14). Unlike Building, Planning does NOT run through
- * the step machine: only `promptTemplate`, `providerInstanceId` and `model`
- * are honoured (`timeoutMs` / `maxAttempts` / any later step belong to the
- * governor and the completion contract, which a human-paced interview must
- * not enter — see the t3o-14 spec, D1). It lives here rather than in a skill
- * file because a slash-command skill only exists in the repository the thread
- * opens on: shipped in this fork it would be a no-op for a card on any other
- * project, and for every non-Claude provider. Settings text works everywhere,
- * and the user can edit it at Settings → Board → Pipeline.
+ * A stage's execution config (D4), keyed by stage id in `BoardSettings.pipeline`
+ * so renaming a stage never orphans its config. `autoExecute` alone by default;
+ * every other field is progressive UI that appears once it is on. Every field
+ * carries a decoding default so a partial `{ autoExecute, prompt }` entry — or
+ * an empty settings file — decodes to a complete, runnable config.
+ *
+ * - `model` is a single `BoardModelSelection | null` (D4): `null` runs the stage
+ *   on the global text-generation model, resolved to a concrete pair at stage
+ *   entry (D12).
+ * - `mode` governs resources (D5); `humanInLoop` governs the conversation for
+ *   non-build stages; `humanInLoopWithPlan` / `humanInLoopWithoutPlan` are the
+ *   build role's two per-card defaults (D6); `autoAdvance` moves the card to the
+ *   next stage in order on a successful unattended run (D8).
+ * - `timeoutMs` / `maxAttempts` are enforced only on an unattended run (D5).
+ *
+ * `kind` is the discriminant of a **discriminated union** (D4/D15): every stage
+ * this spec ships is `{ kind: "simple", … }`, and t3o-16 widens this to
+ * `Schema.Union(simple, review)` with `{ kind: "review", … }`. Because the
+ * reactor never branches on `kind` — the executor registry (keyed by stage
+ * role) is the single place that resolves an implementation — adding the review
+ * member touches neither the reactor, decider, projector nor MCP. The literal
+ * carries a decoding default so a partial `{ autoExecute, prompt }` entry still
+ * decodes to a complete `simple` config.
  */
-export const DEFAULT_BOARD_PLANNING_STEP: BoardStep = {
-  id: "plan",
-  label: "Plan",
-  promptTemplate: [
-    "Build a plan that allows us to implement the functionality requested on this card. Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.",
-    "Ask the questions one at a time.",
-    "If a question can be answered by exploring the codebase, explore the codebase instead.",
-  ].join("\n\n"),
-  providerInstanceId: DEFAULT_BOARD_PROVIDER_INSTANCE_ID,
-  model: DEFAULT_TEXT_GENERATION_MODEL,
-  timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
-  maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+// ── Code review loop (t3o-16) ──────────────────────────────────────────
+//
+// The `review`-role stage is the one stage that is a LOOP, not a single
+// prompt: review the worktree, triage the findings, adjudicate the fixes,
+// repeat until a review round raises no blocking findings or a round cap
+// stops it (D3). Its phases are compiled in — their order and existence are
+// product decisions — while their prompts and models are per-phase settings,
+// because the loop's economics depend on running a cheap reviewer against an
+// expensive adjudicator (D2). None of this leaks past the `ReviewLoopExecutor`
+// (registered against the `review` role) and the bespoke settings card; the
+// reactor, decider, projector and MCP toolkit never learn the stage is special
+// (D1). Findings ride the opaque completion payload — no new MCP tool, no new
+// table, no new column (D4).
+
+/** Finding severity, ported verbatim from the `pullrequest-review` skill (D5).
+    `critical` and `improvement` block a review round; `nitpick` never does, so
+    a round reporting only nitpicks converges. */
+export const BOARD_REVIEW_SEVERITIES = ["critical", "improvement", "nitpick"] as const;
+export const BoardReviewSeverity = Schema.Literals(BOARD_REVIEW_SEVERITIES);
+export type BoardReviewSeverity = typeof BoardReviewSeverity.Type;
+
+/** The convergence rule (D5), in one place: only these two severities block a
+    round. A review round whose findings are all non-blocking converges. */
+export function isBoardReviewBlockingSeverity(severity: BoardReviewSeverity): boolean {
+  return severity !== "nitpick";
+}
+
+/** One finding raised by a review phase (D4). `file`/`line` are optional
+    because a finding may be repo-wide; `id` keys the triage disposition and the
+    adjudication verdict that ride the later phases' payloads. */
+export const BoardReviewFinding = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  severity: BoardReviewSeverity,
+  file: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  line: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  title: TrimmedNonEmptyString,
+  detail: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BoardReviewFinding = typeof BoardReviewFinding.Type;
+
+/** The `review` phase's completion payload (D4): the SHA it reviewed (D7) and
+    the findings it raised. A malformed or absent payload fails the phase — it
+    must NEVER be read as "no findings", which would converge the loop on a
+    broken reviewer and pass unreviewed code (D4). */
+export const BoardReviewPayload = Schema.Struct({
+  reviewedSha: TrimmedNonEmptyString,
+  findings: Schema.Array(BoardReviewFinding),
+});
+export type BoardReviewPayload = typeof BoardReviewPayload.Type;
+
+/** A triage disposition (D4): for each blocking finding, either a fix or a
+    reasoned rejection. */
+export const BOARD_REVIEW_TRIAGE_ACTIONS = ["fixed", "rejected"] as const;
+export const BoardReviewTriageAction = Schema.Literals(BOARD_REVIEW_TRIAGE_ACTIONS);
+export type BoardReviewTriageAction = typeof BoardReviewTriageAction.Type;
+
+export const BoardReviewDisposition = Schema.Struct({
+  findingId: TrimmedNonEmptyString,
+  action: BoardReviewTriageAction,
+  note: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BoardReviewDisposition = typeof BoardReviewDisposition.Type;
+
+/** The `triage` phase's completion payload (D4/D7): the SHA it produced and one
+    disposition per finding. */
+export const BoardTriagePayload = Schema.Struct({
+  fixedSha: TrimmedNonEmptyString,
+  dispositions: Schema.Array(BoardReviewDisposition),
+});
+export type BoardTriagePayload = typeof BoardTriagePayload.Type;
+
+/** An adjudication verdict (D4), the `pullrequest-rereview` vocabulary verbatim. */
+export const BOARD_REVIEW_VERDICTS = [
+  "fix-upheld",
+  "fix-incomplete",
+  "fix-absent",
+  "rejection-justified",
+  "rejection-unjustified",
+] as const;
+export const BoardReviewVerdict = Schema.Literals(BOARD_REVIEW_VERDICTS);
+export type BoardReviewVerdict = typeof BoardReviewVerdict.Type;
+
+export const BoardReviewAdjudication = Schema.Struct({
+  findingId: TrimmedNonEmptyString,
+  verdict: BoardReviewVerdict,
+  note: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BoardReviewAdjudication = typeof BoardReviewAdjudication.Type;
+
+/** The `adjudicate` phase's completion payload (D4): one verdict per finding.
+    Adjudicate never bounces back to triage — its verdicts ride into the next
+    round's review as context and unresolved items resurface there (D3). */
+export const BoardAdjudicatePayload = Schema.Struct({
+  verdicts: Schema.Array(BoardReviewAdjudication),
+});
+export type BoardAdjudicatePayload = typeof BoardAdjudicatePayload.Type;
+
+/** The three compiled-in review phases, in loop order (D2/D3). Phase `id` and
+    `label` are code, not settings — no add, remove or reorder. */
+export const BOARD_REVIEW_PHASE_IDS = ["review", "triage", "adjudicate"] as const;
+export const BoardReviewPhaseId = Schema.Literals(BOARD_REVIEW_PHASE_IDS);
+export type BoardReviewPhaseId = typeof BoardReviewPhaseId.Type;
+
+export const BOARD_REVIEW_PHASE_LABELS: Record<BoardReviewPhaseId, string> = {
+  review: "Review",
+  triage: "Triage",
+  adjudicate: "Adjudicate",
 };
 
-/**
- * The one stage the MVP executes through the step machine (t3o-12). A
- * compiled-in Building step makes the default pipeline a working pipeline with
- * an empty settings file (the spec's third verification). Provider instance
- * and model mirror the stock text-generation default so the default step is
- * runnable, not a placeholder.
- */
-export const DEFAULT_BOARD_BUILD_STEP: BoardStep = {
-  id: "build",
-  label: "Build",
-  promptTemplate:
-    "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.",
-  providerInstanceId: DEFAULT_BOARD_PROVIDER_INSTANCE_ID,
-  model: DEFAULT_TEXT_GENERATION_MODEL,
+const BOARD_REVIEW_STEP_ID = /^(review|triage|adjudicate)@(\d+)$/;
+
+/** The round-scoped step id scheme (D8): `<phase>@<round>` — `review@1`,
+    `triage@1`, `review@2`. Minted and parsed in one place (shared by the
+    server executor and the card-detail view) so the completion key and every
+    reader's view of loop progress can never drift. */
+export function reviewStepId(phase: BoardReviewPhaseId, round: number): string {
+  return `${phase}@${round}`;
+}
+
+export function parseReviewStepId(
+  stepId: string,
+): { readonly phase: BoardReviewPhaseId; readonly round: number } | null {
+  const match = BOARD_REVIEW_STEP_ID.exec(stepId);
+  if (match === null) return null;
+  const round = Number.parseInt(match[2]!, 10);
+  if (!Number.isInteger(round) || round < 1) return null;
+  return { phase: match[1] as BoardReviewPhaseId, round };
+}
+
+export const DEFAULT_BOARD_REVIEW_ROUNDS = 5;
+
+/** Default per-phase prompts (D2), ported from the `pullrequest-review` /
+    `pullrequest-rereview` skills. The `ReviewLoopExecutor` wraps these with the
+    loop protocol (round-scoped step ids, worktree diff, payload shape); these
+    carry the per-phase intent a user then edits. */
+export const DEFAULT_BOARD_REVIEW_PHASE_PROMPT =
+  "Review the changes on this card's branch against its base ref as a fresh-eyes senior engineer. Diff the worktree and read every changed file. Report each problem as a finding: a stable id, a severity of critical, improvement or nitpick, the file and line, a short title and a detailed explanation. Critical and improvement findings block; nitpicks do not. If the change raises no blocking findings, say so explicitly.";
+export const DEFAULT_BOARD_TRIAGE_PHASE_PROMPT =
+  "For each blocking finding, either FIX it in the worktree or REJECT it with a clear, specific reason. Make the smallest correct change and run the project's checks before finishing. Record one disposition per finding: action fixed or rejected, with a note.";
+export const DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT =
+  "For each finding, rule on the triage. Scope yourself to exactly what changed between the reviewed SHA and the fixed SHA. Verify whether a claimed fix actually holds and whether a rejection is justified. Record one verdict per finding: fix-upheld, fix-incomplete, fix-absent, rejection-justified or rejection-unjustified, with a note. You cannot see problems a fix introduced; only the next review can.";
+
+/** A single review phase's execution config (D2): its own prompt and its own
+    model, so a thorough reviewer can pair with a cheap triager. `model` null
+    runs the phase on the global text-generation model (resolved at run). */
+export const BoardReviewPhaseExecution = Schema.Struct({
+  prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  timeoutMs: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
+  ),
+  maxAttempts: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
+  ),
+});
+export type BoardReviewPhaseExecution = typeof BoardReviewPhaseExecution.Type;
+
+const makeDefaultReviewPhase = (prompt: string): BoardReviewPhaseExecution => ({
+  prompt,
+  model: null,
   timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
   maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
-};
+});
+
+/** The compiled-in default for each phase — a per-phase default prompt, no
+    per-phase model override (global default), stock timeout/attempts. */
+export const DEFAULT_BOARD_REVIEW_PHASES = {
+  review: makeDefaultReviewPhase(DEFAULT_BOARD_REVIEW_PHASE_PROMPT),
+  triage: makeDefaultReviewPhase(DEFAULT_BOARD_TRIAGE_PHASE_PROMPT),
+  adjudicate: makeDefaultReviewPhase(DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT),
+} as const;
 
 /**
- * The compiled-in pipeline. Applied PER STAGE, not per object: `withDecodingDefault`
- * only fires when the whole `pipeline` key is absent, and `stripDefaultServerSettings`
- * strips per key — so a user who has ever edited one stage already has a
- * `pipeline` with only that stage in it. Defaulting per object would mean every
- * install that ever touched the Building prompt silently loses the Planning step
- * (and vice versa). `resolveBoardStageSteps` is the one reader that applies this,
- * and it treats an explicitly persisted `[]` as "this stage runs nothing" — which
- * is how a stage is switched off, and is distinguishable from an absent key.
+ * The `{ kind: "simple" }` member (D4): every stage this spec-family ships save
+ * the review stage. The reactor reads `prompt`, `model`, `mode`, `autoExecute`,
+ * `autoAdvance`, `humanInLoop*`, `timeoutMs`, `maxAttempts` off it verbatim.
+ */
+export const BoardStageExecutionSimple = Schema.Struct({
+  kind: Schema.Literal("simple").pipe(
+    Schema.withDecodingDefault(Effect.succeed("simple" as const)),
+  ),
+  autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("plan" as const))),
+  humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithoutPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  autoAdvance: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  timeoutMs: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
+  ),
+  maxAttempts: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
+  ),
+  /** Per-stage-entry invocation ceiling (t3o-17, D5), enforced only on an
+      unattended run: when the stage entry's total `attempt` across its steps
+      crosses it, the stage stalls regardless of the per-step ladder. */
+  maxInvocationsPerStageEntry: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
+  ),
+});
+export type BoardStageExecutionSimple = typeof BoardStageExecutionSimple.Type;
+
+/**
+ * The `{ kind: "review" }` member (D2/D4) — the union widening t3o-15 designed
+ * for. It carries EVERY field the simple member does (so the reactor keeps
+ * reading `prompt`/`model`/`mode`/… uniformly and never learns this stage is a
+ * loop), PLUS `rounds` and the three per-phase configs. `mode` defaults to
+ * `build` (the loop needs the worktree, D6) and `humanInLoop` to off (an
+ * unattended loop is the point, D2); the build-mode invariant is enforced by
+ * `resolveBoardStageExecution`, which always resolves the review stage to a
+ * review member, so a stored `mode` can never strand the loop without a
+ * worktree. The top-level `prompt`/`model` are unused by the executor, which
+ * composes each phase's run from `phases`.
+ */
+export const BoardStageExecutionReview = Schema.Struct({
+  kind: Schema.Literal("review"),
+  autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("build" as const))),
+  humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithoutPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  autoAdvance: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  timeoutMs: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
+  ),
+  maxAttempts: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
+  ),
+  /** Per-stage-entry invocation ceiling (t3o-17, D5), enforced only on an
+      unattended run: when the stage entry's total `attempt` across its steps
+      crosses it, the stage stalls regardless of the per-step ladder. Carried
+      identically to the simple member so the reactor reads it uniformly. */
+  maxInvocationsPerStageEntry: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
+  ),
+  rounds: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_ROUNDS))),
+  phases: Schema.Struct({
+    review: BoardReviewPhaseExecution.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES.review)),
+    ),
+    triage: BoardReviewPhaseExecution.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES.triage)),
+    ),
+    adjudicate: BoardReviewPhaseExecution.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES.adjudicate)),
+    ),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES))),
+});
+export type BoardStageExecutionReview = typeof BoardStageExecutionReview.Type;
+
+/**
+ * A stage's execution config (D4/D15) — a `kind`-discriminated union so the
+ * codebase branches on stage kind in exactly two places (the executor registry
+ * and the settings card). The simple member is tried first, and its `kind`
+ * decoding default means a bare `{}` or a partial `{ autoExecute, prompt }`
+ * still decodes to a complete simple config; a `{ kind: "review" }` entry falls
+ * through to the review member.
+ */
+export const BoardStageExecution = Schema.Union([
+  BoardStageExecutionSimple,
+  BoardStageExecutionReview,
+]);
+export type BoardStageExecution = typeof BoardStageExecution.Type;
+
+/** True when a resolved stage config is the review-loop member (D4). The one
+    narrowing helper the executor registry and settings card share; nothing else
+    branches on kind. */
+export function isBoardReviewStageExecution(
+  execution: BoardStageExecution,
+): execution is BoardStageExecutionReview {
+  return execution.kind === "review";
+}
+
+/**
+ * Stage execution config keyed by stage id (D4). Keyed by stage id, not name,
+ * so renaming a stage never orphans its config. A stage absent from the map
+ * runs nothing (auto-execute off). Merged by the stock `deepMerge`, exactly as
+ * the rest of settings.
+ */
+export const BoardPipeline = Schema.Record(Schema.String, BoardStageExecution);
+export type BoardPipeline = typeof BoardPipeline.Type;
+
+/** The all-defaults stage execution config (auto-execute off) — what a stage
+    absent from the pipeline map resolves to, and the base a settings edit
+    patches from. */
+export const DEFAULT_BOARD_STAGE_EXECUTION: BoardStageExecution = Schema.decodeSync(
+  BoardStageExecution,
+)({});
+
+/** The all-defaults review-loop config (D2): auto-execute on, build mode,
+    unattended, the default round cap and the three default per-phase configs.
+    The base a review settings edit patches from, and what the `review` stage
+    resolves to when absent from the pipeline map. */
+export const DEFAULT_BOARD_REVIEW_STAGE_EXECUTION: BoardStageExecutionReview = Schema.decodeSync(
+  BoardStageExecution,
+)({ kind: "review" }) as BoardStageExecutionReview;
+
+/** The Building prompt carried today by `DEFAULT_BOARD_BUILD_STEP` (D4). */
+export const DEFAULT_BOARD_BUILD_PROMPT =
+  "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.";
+
+/** The planning prompt drafted for the superseded planning spawner (D4),
+    verbatim. The `board_propose_plans` instruction lives in the prompt, not the
+    envelope (D5), so a user-invented stage can do the same. */
+export const DEFAULT_BOARD_PLANNING_PROMPT = `Build a plan that allows us to implement the functionality requested on this card. Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+
+Ask the questions one at a time.
+
+If a question can be answered by exploring the codebase, explore the codebase instead.
+
+When we have agreed a plan, record it with board_propose_plans. Do not move the card yourself.`;
+
+/**
+ * Two stages ship with `Auto execute` on so an empty settings file is a working
+ * pipeline (D4). Building runs unattended in `build` mode and auto-advances;
+ * Planning runs human-in-the-loop in `plan` mode and stays. Every other stage
+ * ships with `Auto execute` off (absent from the map).
  */
 export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
-  planning: [DEFAULT_BOARD_PLANNING_STEP],
-  building: [DEFAULT_BOARD_BUILD_STEP],
+  [BOARD_SEED_STAGE_IDS.building]: {
+    kind: "simple",
+    autoExecute: true,
+    prompt: DEFAULT_BOARD_BUILD_PROMPT,
+    model: null,
+    mode: "build",
+    humanInLoop: false,
+    humanInLoopWithPlan: false,
+    humanInLoopWithoutPlan: true,
+    autoAdvance: true,
+    timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
+    maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+    maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
+  },
+  [BOARD_SEED_STAGE_IDS.planning]: {
+    kind: "simple",
+    autoExecute: true,
+    prompt: DEFAULT_BOARD_PLANNING_PROMPT,
+    model: null,
+    mode: "plan",
+    humanInLoop: true,
+    humanInLoopWithPlan: false,
+    humanInLoopWithoutPlan: true,
+    autoAdvance: false,
+    timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
+    maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+    maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
+  },
+  // Code review ships as a working loop out of the box (t3o-16): auto-execute
+  // on, build mode for the worktree, the default round cap and per-phase
+  // prompts. The `ReviewLoopExecutor` reads this member; the reactor drives it
+  // as any other stage.
+  [BOARD_SEED_STAGE_IDS.review]: DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
 };
 
 export const BoardSettings = Schema.Struct({
@@ -2542,154 +3337,57 @@ export const BoardSettingsPatch = Schema.Struct({
 });
 export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
 
-// ── Board settings resolution (pure; D10) ──────────────────────────────
+// ── Board settings resolution (pure; D4/D12) ───────────────────────────
 
 /**
- * The resolved recipe for a stage — what the stage-entry reactor (t3o-10)
- * snapshots onto a card and the Building automation (t3o-12) executes. Pure so
- * it is callable from the server (at stage entry), the client (to compute
- * divergence), and tests alike.
+ * A stage's execution config (D4). A stage absent from the pipeline map runs
+ * nothing — the all-defaults config (auto-execute off). Pure so it is callable
+ * from the server (at stage entry, to freeze onto the run row), the client (to
+ * render the settings card), and tests alike.
+ *
+ * The compiled-in review stage (t3o-16) always resolves to the review-loop
+ * member: `mode: "build"` is a product invariant (the loop needs the worktree,
+ * D6), so the resolver enforces it rather than trusting the stored config. An
+ * absent `review` key (a partial pipeline that configured only Building) OR a
+ * legacy/hand-edited `simple` entry at the review stage id both coerce to the
+ * review default; only a genuine review member configured there (the settings
+ * card's own writes) is passed through, preserving a user's rounds and per-phase
+ * edits. This keys on the fixed compiled-in stage id, not on a role lookup — the
+ * resolver has no stage definitions — so it is not a dispatch on `stage.role`.
  */
-export function resolveBoardRecipeForStage(
+export function resolveBoardStageExecution(
   board: BoardSettings,
-  stage: BoardStage,
-): BoardResolvedRecipe {
-  return { stage, steps: resolveBoardStageSteps(board, stage) };
+  stageId: BoardStageId,
+): BoardStageExecution {
+  const configured = board.pipeline[stageId];
+  if (stageId === BOARD_SEED_STAGE_IDS.review) {
+    // Coerce absent / legacy-simple entries to the review default, then FORCE
+    // the build-mode + unattended invariants (D2/D6) even on a genuine review
+    // member: a hand-edited `{ kind: "review", mode: "plan" }` would otherwise
+    // pass through and strand the loop without a worktree. Enforced here, the
+    // one resolution point, so the reactor keeps reading `mode`/`humanInLoop`
+    // uniformly.
+    const base =
+      configured !== undefined && isBoardReviewStageExecution(configured)
+        ? configured
+        : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
+    return { ...base, mode: "build", humanInLoop: false };
+  }
+  return configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
 }
 
-/**
- * A stage's steps as configured, falling back to the compiled-in default for a
- * stage the settings file has never mentioned (see `DEFAULT_BOARD_PIPELINE`).
- * A stored `[]` is honoured as "no steps" — clearing a stage in the settings UI
- * persists an empty array, which is how you switch a stage off.
- *
- * The single reader, so the settings UI renders exactly the steps the server
- * will run: "Planning shows No steps but a thread spawns anyway" is not a state
- * this can reach.
- */
-export function resolveBoardStageSteps(
-  board: BoardSettings,
-  stage: BoardStage,
-): ReadonlyArray<BoardStep> {
-  return board.pipeline[stage] ?? DEFAULT_BOARD_PIPELINE[stage] ?? [];
-}
-
-// ── Planning stage (t3o-14) ────────────────────────────────────────────
-// Planning spawns ONE thread and stops — no step state, no governor slot, no
-// worktree, no completion contract, no recovery (spec t3o-14, D1). The prompt
-// composition is pure and lives here, not in the server, because BOTH the
-// supervisor (automatic spawn on stage entry) and the web client (the card
-// thread pane's "restart planning") must produce byte-identical prompts; a
-// second implementation on the client is how those two drift apart.
-
-/**
- * The provider-specific wording for "ask through your question tool, never in
- * prose" (D5). The board assigned the work, so it knows which provider it is
- * talking to — this is the concrete payoff of envelopes over Claude-specific
- * skills. Unknown instances fall back to neutral phrasing.
- */
-export function providerQuestionMechanism(providerInstanceId: ProviderInstanceId): string {
-  const key = String(providerInstanceId).toLowerCase();
-  if (key.includes("claude") || key.includes("anthropic")) {
-    return "raise it as a Claude Code question so it surfaces as a real prompt";
-  }
-  if (key.includes("codex") || key.includes("openai")) {
-    return "raise it through Codex's ask-for-input request";
-  }
-  if (key.includes("cursor")) {
-    return "raise it through Cursor's user-input request";
-  }
-  if (key.includes("gemini") || key.includes("google")) {
-    return "raise it through Gemini's user-input request";
-  }
-  if (key.includes("grok")) {
-    return "raise it through Grok's user-input request";
-  }
-  if (key.includes("opencode")) {
-    return "raise it through OpenCode's user-input request";
-  }
-  return "raise it through your runtime's user-input request";
-}
-
-/**
- * The step the planning spawn runs: the FIRST step of the planning recipe, or
- * null when the user has cleared the stage's steps in settings. Only the first
- * is ever used — a multi-step planning recipe would need the step machine,
- * which D1 declines to enter; the settings UI still lets you write more, and
- * the extras are stored and ignored.
- */
-export function resolveBoardPlanningStep(board: BoardSettings): BoardStep | null {
-  return resolveBoardStageSteps(board, "planning")[0] ?? null;
-}
-
-/**
- * The runtime and interaction modes a planning thread opens with — stated once
- * because the supervisor and the web client both spawn one and must produce the
- * same kind of thread.
- *
- * `approval-required` is load-bearing, not a default. A planning thread runs on
- * the project's SHARED working tree with no worktree to contain it, and it is
- * started automatically by a card moving stage — so it must not be able to write
- * unattended. `full-access` would map to Codex's `danger-full-access` sandbox
- * with `approvalPolicy: "never"` (`CodexSessionRuntime.ts`), i.e. an
- * auto-approving agent with write access to the user's real checkout, on the
- * strength of a card brief it did not write.
- *
- * The cost, stated plainly because it IS the product behaviour: the agent reads
- * SUBJECT TO APPROVAL, and the thread parks on its first tool call rather than
- * exploring straight away. `approval-required` maps to Codex's `read-only`
- * sandbox but also to `approvalPolicy: "untrusted"`, which gates commands and
- * not just writes; and on Claude `canUseTool` short-circuits to `allow` only
- * under `full-access`, so every tool — including the `board_get_card_context`
- * the preamble tells the agent to call first — opens an approval request. So
- * "entering Planning starts the conversation by itself" means it starts and
- * waits for you, which is defensible for an interview you were going to sit in
- * on anyway, and is the trade being made against unattended write access.
- *
- * `interactionMode: "plan"` layers Claude's real plan mode on top
- * (`ClaudeAdapter` calls `setPermissionMode("plan")`); on providers where plan
- * mode is prompt text only, the runtime mode above is what actually holds. The
- * alternative to this trade is not another `RuntimeMode` literal — none of the
- * four expresses "read freely, never write" — but narrowing the block to writes
- * at the adapter level, which is a bigger change than this stage warrants.
- */
-export const BOARD_PLANNING_THREAD_RUNTIME_MODE = "approval-required";
-export const BOARD_PLANNING_THREAD_INTERACTION_MODE = "plan";
-
-/** The planning thread's title, in the same `KEY · Label` shape build threads
-    use. Shared so the automatic spawn and the card pane's "restart planning"
-    cannot produce differently-titled threads. */
-export function boardPlanningThreadTitle(
-  card: Pick<BoardCard, "key">,
-  step: Pick<BoardStep, "label">,
-): string {
-  return `${card.key} · ${step.label}`;
-}
-
-/**
- * The planning prompt: preamble + the settings `promptTemplate` + postamble,
- * mirroring the build envelope (`composeStepPrompt`) but carrying the PLANNING
- * contract. The postamble must never mention `board_complete_step`: no step
- * state exists for a planning thread, so the call would fail on an unknown
- * `stepId`. The planning output is `board_propose_plans`, and the card does not
- * leave Planning by itself — D18 still holds, Building → Code review remains
- * the only board-driven stage crossing.
- */
-export function composeBoardPlanningPrompt(input: {
-  readonly card: Pick<BoardCard, "key" | "title">;
-  readonly step: BoardStep;
-}): string {
-  const { card, step } = input;
-  const preamble = [
-    `You are planning card ${card.key} — "${card.title}".`,
-    `Stage: planning.`,
-    `Call board_get_card_context for the brief, labels, dependencies and prior activity.`,
-  ].join("\n");
-  const postamble = [
-    `When you and the human have agreed a plan, record it with board_propose_plans — that is the planning output the board reads. A human moves the card to Ready; do not move it yourself.`,
-    `If you need a human decision, ${providerQuestionMechanism(step.providerInstanceId)}; never end a turn with an unanswered question in prose.`,
-  ].join("\n");
-  return `${preamble}\n\n${step.promptTemplate}\n\n${postamble}`;
+/** Resolve a stage config's `model` to a concrete provider-instance + model
+    pair (D12): `null` becomes the global text-generation default, so a running
+    card is unaffected by a later change to that default. */
+export function resolveBoardStageModelSelection(
+  model: BoardModelSelection | null,
+): BoardModelSelection {
+  return (
+    model ?? {
+      instanceId: DEFAULT_BOARD_PROVIDER_INSTANCE_ID,
+      model: DEFAULT_TEXT_GENERATION_MODEL,
+    }
+  );
 }
 
 /** The per-project key prefix as STORED, falling back to the compiled-in
@@ -2780,35 +3478,4 @@ export function resolveBoardProjectAccent(
   projectId: ProjectId,
 ): string | null {
   return board.projects[projectId]?.accentColor ?? null;
-}
-
-function boardStepsEqual(a: BoardStep, b: BoardStep): boolean {
-  return (
-    a.id === b.id &&
-    a.label === b.label &&
-    a.promptTemplate === b.promptTemplate &&
-    a.providerInstanceId === b.providerInstanceId &&
-    a.model === b.model &&
-    a.timeoutMs === b.timeoutMs &&
-    a.maxAttempts === b.maxAttempts
-  );
-}
-
-/**
- * Whether a card's captured recipe snapshot has diverged from what current
- * settings would resolve for the same stage (D10). A null snapshot has not
- * diverged — the card is not running a recipe. This is the "this card is on an
- * older recipe than settings" signal the card UI surfaces once t3o-10 stamps
- * snapshots; editing settings mid-stage changes what `resolveBoardRecipeForStage`
- * returns but never the stored snapshot, so the divergence is exactly the
- * visible consequence of the snapshot-on-entry rule.
- */
-export function boardRecipeSnapshotDiffersFromCurrent(
-  snapshot: BoardCardRecipeSnapshot | null,
-  current: BoardResolvedRecipe,
-): boolean {
-  if (snapshot === null) return false;
-  if (snapshot.stage !== current.stage) return true;
-  if (snapshot.steps.length !== current.steps.length) return true;
-  return snapshot.steps.some((step, index) => !boardStepsEqual(step, current.steps[index]!));
 }

@@ -7,12 +7,14 @@
 import {
   BOARD_SEED_LABEL_IDS,
   BoardCardId,
+  BoardStageId,
   boardCardShellFromCard,
   EventId,
   LEGACY_BOARD_CARD_KEY,
   LEGACY_BOARD_CARD_NUMBER,
   LEGACY_BOARD_CARD_ORDER_KEY,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   type BoardCard,
   type OrchestrationReadModel,
@@ -43,7 +45,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     cardNumber: 1,
     projectId,
     labels: [],
-    stage: "backlog",
+    stage: BoardStageId.make("backlog"),
     orderKey: "m",
     title: "Card",
     briefRef: null,
@@ -51,7 +53,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     parentCardId: null,
     threadLinks: [],
     externalRef: null,
-    recipeSnapshot: null,
+    humanInLoop: null,
     worktree: null,
     blocked: false,
     archivedAt: null,
@@ -224,7 +226,7 @@ describe("board projector", () => {
         id: dependentId,
         key: "CARD-2",
         cardNumber: 2,
-        stage: "ready",
+        stage: BoardStageId.make("ready"),
         blocked: false,
         dependsOn: [cardId],
       });
@@ -306,7 +308,16 @@ describe("board projector", () => {
         stepId: "build",
         stepLabel: "Build",
         attempt: 1,
+        stallCount: 0,
+        lastNudgeAt: null,
+        // Frozen execution config on the run row (D12).
+        prompt: "do it",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        mode: "build" as const,
+        humanInLoop: false,
         maxAttempts: 3,
+        timeoutMs: 1000,
         threadId: ThreadId.make("thread-1"),
         status: "running" as const,
         slotHeld: true,
@@ -361,9 +372,16 @@ describe("board projector", () => {
         cardId,
         queued: false,
       });
-      // Settling emits no shell delta — a step only leaves `queued` via
-      // admission above, never via settle.
-      assert.strictEqual(Option.isNone(boardShellStreamEvent(settledEvent)), true);
+      // A step only leaves `queued` via admission above, never via settle — but
+      // settling clears the stalled badge (t3o-17, D3): the one path a stalled
+      // step leaves without a fresh select-step is a human taking over its live
+      // thread and completing it, so settle emits card-stalled=false.
+      assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(settledEvent)), {
+        kind: "card-stalled",
+        sequence: settledEvent.sequence,
+        cardId,
+        stalled: false,
+      });
     }),
   );
 
@@ -374,7 +392,15 @@ describe("board projector", () => {
         stepId: "build",
         stepLabel: "Build",
         attempt: 1,
+        stallCount: 0,
+        lastNudgeAt: null,
+        prompt: "do it",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        mode: "build" as const,
+        humanInLoop: false,
         maxAttempts: 3,
+        timeoutMs: 1000,
         threadId: null,
         status: "queued" as const,
         slotHeld: false,
@@ -392,6 +418,69 @@ describe("board projector", () => {
         sequence: queuedAdmit.sequence,
         cardId,
         queued: true,
+      });
+    }),
+  );
+
+  it.effect("recovery giving up raises the stalled badge; a fresh run clears it (t3o-17, D3)", () =>
+    Effect.sync(() => {
+      const baseState = {
+        cardId,
+        stepId: "build",
+        stepLabel: "Build",
+        attempt: 5,
+        stallCount: 5,
+        lastNudgeAt: NOW,
+        prompt: "do it",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        mode: "build" as const,
+        humanInLoop: false,
+        maxAttempts: 5,
+        timeoutMs: 1000,
+        threadId: ThreadId.make("thread-1"),
+        slotHeld: false,
+        startedAt: NOW,
+        updatedAt: NOW,
+      };
+      // A recover event that landed the step in `stalled` emits card-stalled=true.
+      const stalledRecover: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-recovered",
+        payload: { cardId, state: { ...baseState, status: "stalled" as const } },
+      };
+      assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(stalledRecover)), {
+        kind: "card-stalled",
+        sequence: stalledRecover.sequence,
+        cardId,
+        stalled: true,
+      });
+      // An ordinary retry (status running) clears the badge.
+      const retryRecover: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-recovered",
+        payload: { cardId, state: { ...baseState, status: "running" as const } },
+      };
+      assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(retryRecover)), {
+        kind: "card-stalled",
+        sequence: retryRecover.sequence,
+        cardId,
+        stalled: false,
+      });
+      // A fresh stage run (select-step) also clears any lingering stalled badge.
+      const selected: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-selected",
+        payload: {
+          cardId,
+          state: { ...baseState, attempt: 1, stallCount: 0, status: "pending" as const },
+        },
+      };
+      assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(selected)), {
+        kind: "card-stalled",
+        sequence: selected.sequence,
+        cardId,
+        stalled: false,
       });
     }),
   );

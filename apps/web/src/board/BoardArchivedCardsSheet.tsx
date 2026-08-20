@@ -30,7 +30,7 @@ import { orchestrationEnvironment } from "../state/orchestration";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { boardArchivedCardsInScope } from "./boardArchivedCards";
-import { BOARD_STAGE_LABELS } from "./boardStages";
+import { boardStageLabel } from "./boardStages";
 
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
   return orchestrationEnvironment.archivedShellSnapshot({ environmentId, input: {} });
@@ -107,7 +107,7 @@ function ArchivedCardList({
               {card.title}
             </span>
             <span className="shrink-0 text-[11px] text-muted-foreground">
-              {BOARD_STAGE_LABELS[card.stage]}
+              {boardStageLabel(snapshot?.boardStages ?? [], card.stage)}
             </span>
             {card.archivedAt === null ? null : (
               <span className="shrink-0 text-[11px] text-muted-foreground">

@@ -9,11 +9,11 @@
  * composer, same model row, so a card thread and a Threads-view thread can
  * never drift apart.
  *
- * Threads arrive here three ways (t3o-14, superseding adoption-only): the
- * board spawns one by itself when a card enters Planning, the `+` menu starts
- * one on demand, or you adopt an existing thread. All three end at the same
- * `board.card.link-thread` (D9) — the link is still the only way a thread joins
- * a card.
+ * Threads arrive here three ways (t3o-14, superseding adoption-only): the board
+ * starts one by itself when a card enters an auto-executing stage (t3o-15), the
+ * `+` menu starts one on demand, or you adopt an existing thread. All three end
+ * at the same `board.card.link-thread` (D9) — the link is still the only way a
+ * thread joins a card.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -30,7 +30,7 @@ import ChatView from "../components/ChatView";
 import { cn } from "../lib/utils";
 import { useThreadDetail, useThreadShell, useThreadStatus } from "../state/entities";
 import { resolveThreadSyncPhase } from "../threadSync";
-import { BoardCardThreadAddMenu } from "./BoardCardThreadAddMenu";
+import { BoardCardThreadAddMenu, type BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 
@@ -79,9 +79,9 @@ export function BoardCardThreadPane({
   selectedThreadId,
   onSelectThread,
   adoptableThreads,
-  canRestartPlanning,
+  stageRestart,
   onLinkThread,
-  onRestartPlanning,
+  onRestartStage,
   onCreateBlankThread,
   onUnlinkThread,
   maximised,
@@ -93,15 +93,25 @@ export function BoardCardThreadPane({
   readonly selectedThreadId: ThreadId | null;
   readonly onSelectThread: (threadId: ThreadId) => void;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
-  /** True only in Planning, and only while the planning recipe has a step. */
-  readonly canRestartPlanning: boolean;
+  /** Present only when the card's current stage auto-executes; `null` hides the
+      restart item. A non-null `disabledReason` disables it (a run is in flight). */
+  readonly stageRestart: BoardThreadStageRestart | null;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
-  readonly onRestartPlanning: () => void;
-  readonly onCreateBlankThread: () => void;
+  readonly onRestartStage: () => void;
+  /** Creates a blank server thread, links it, and returns its id so the pane
+      can select it (opening its composer); `null` on a dispatch failure. */
+  readonly onCreateBlankThread: () => Promise<ThreadId | null>;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   readonly maximised: boolean;
   readonly onToggleMaximised: () => void;
 }) {
+  // A new blank thread becomes the card's most-recently-linked live thread, so
+  // selecting it opens its ChatView (which focuses the composer on mount, D3).
+  const createBlankThreadAndSelect = () => {
+    void onCreateBlankThread().then((threadId) => {
+      if (threadId !== null) onSelectThread(threadId);
+    });
+  };
   const selected = threadLinks.find((link) => link.threadId === selectedThreadId) ?? null;
 
   return (
@@ -111,7 +121,12 @@ export function BoardCardThreadPane({
           {threadLinks.map((link) => {
             const active = link.threadId === selectedThreadId;
             return (
-              <button
+              // The pill is a GROUP, not one button: nesting the unlink control
+              // inside the select button would be invalid HTML and made it
+              // keyboard-unreachable (it was a presentation-role span). The
+              // wrapper draws the pill; select and unlink are real sibling
+              // buttons, each focusable in its own right.
+              <span
                 className={cn(
                   // The tab strip scrolls, so its overflow clips anything drawn
                   // outside a pill's border box — an outer ring shadow loses its
@@ -123,46 +138,51 @@ export function BoardCardThreadPane({
                   link.tombstoned && "line-through",
                 )}
                 key={link.threadId}
-                onClick={() => onSelectThread(link.threadId)}
-                title={link.tombstoned ? "Deleted thread" : link.role}
-                type="button"
               >
-                {link.awaitingInput ? (
-                  <span
-                    className="size-2 shrink-0 rounded-full bg-info"
-                    title="Awaiting your input"
-                  />
-                ) : link.threadState === "working" ? (
-                  <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="Working" />
-                ) : (
-                  <MessageSquareIcon className="size-3 shrink-0 opacity-70" />
-                )}
-                <span className="max-w-40 truncate whitespace-nowrap">
-                  {link.title ?? "Deleted thread"}
-                </span>
+                <button
+                  className="inline-flex min-w-0 items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-ring"
+                  onClick={() => onSelectThread(link.threadId)}
+                  title={link.tombstoned ? "Deleted thread" : link.role}
+                  type="button"
+                >
+                  {link.awaitingInput ? (
+                    <span
+                      className="size-2 shrink-0 rounded-full bg-info"
+                      title="Awaiting your input"
+                    />
+                  ) : link.threadState === "working" ? (
+                    <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="Working" />
+                  ) : (
+                    <MessageSquareIcon className="size-3 shrink-0 opacity-70" />
+                  )}
+                  <span className="max-w-40 truncate whitespace-nowrap">
+                    {link.title ?? "Deleted thread"}
+                  </span>
+                </button>
                 {active && !link.tombstoned ? (
-                  <span
-                    className="-mr-1 inline-flex size-[15px] shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                  <button
+                    aria-label="Unlink thread"
+                    className="-mr-1 inline-flex size-[15px] shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
                     onClick={(event) => {
                       event.stopPropagation();
                       onUnlinkThread(link.threadId);
                     }}
-                    role="presentation"
                     title="Unlink thread"
+                    type="button"
                   >
                     <XIcon className="size-2.5" />
-                  </span>
+                  </button>
                 ) : null}
-              </button>
+              </span>
             );
           })}
           <BoardCardThreadAddMenu
             adoptableThreads={adoptableThreads}
-            canRestartPlanning={canRestartPlanning}
             label=""
             onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
-            onCreateBlankThread={onCreateBlankThread}
-            onRestartPlanning={onRestartPlanning}
+            onCreateBlankThread={createBlankThreadAndSelect}
+            onRestartStage={onRestartStage}
+            stageRestart={stageRestart}
           />
         </div>
         <span className="flex-1" />
@@ -197,18 +217,18 @@ export function BoardCardThreadPane({
             <div className="text-[12.5px]/[1.6] text-pretty text-muted-foreground">
               {selected?.tombstoned === true
                 ? "The link stays so the card's history reads honestly. Start another thread to keep working."
-                : canRestartPlanning
-                  ? "Moving a card into Planning starts one by itself. Start another here, or adopt an existing thread — either way the brief, labels and dependencies travel with the card."
+                : stageRestart !== null
+                  ? "Moving a card into this stage starts one by itself. Start another here, or adopt an existing thread — either way the brief, labels and dependencies travel with the card."
                   : "Start a thread here, or adopt an existing one — the brief, labels and dependencies travel with the card."}
             </div>
             <div className="pt-0.5">
               <BoardCardThreadAddMenu
                 adoptableThreads={adoptableThreads}
-                canRestartPlanning={canRestartPlanning}
                 label="Add a thread"
                 onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
-                onCreateBlankThread={onCreateBlankThread}
-                onRestartPlanning={onRestartPlanning}
+                onCreateBlankThread={createBlankThreadAndSelect}
+                onRestartStage={onRestartStage}
+                stageRestart={stageRestart}
               />
             </div>
           </div>

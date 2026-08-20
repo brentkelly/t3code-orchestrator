@@ -1,74 +1,72 @@
 /**
  * t3o-14 — the card thread pane's `+` menu.
  *
- * The load-bearing invariant is the Planning-only gate on "restart planning".
- * It must never appear in Building: the supervisor owns build threads, and one
- * started through this path would carry the build prompt with no step state, no
- * worktree and no governor slot — a thread that looks like a build and that the
- * supervisor does not know exists.
+ * The load-bearing invariant is the restart gate: "New thread — restart <stage>"
+ * appears ONLY when the card's current stage auto-executes (t3o-15 generalised
+ * auto-kickoff to any stage), and is DISABLED while a supervised run is in
+ * flight — restarting then would leave two threads owning the same step (D1).
  *
- * The gate is computed in `BoardCardDetail` and threaded through
- * `BoardCardDetailView` → `BoardCardThreadPane` → the menu, so both ends are
- * pinned here: `canRestartBoardPlanning` (the decision) and
- * `BoardCardThreadAddMenuBody` (the rows it produces). The popover itself
- * portals, and a portal renders nothing on the server, so the body is exported
- * separately rather than reached through the trigger.
+ * The gate is computed in `BoardCardDetail` (auto-execute + in-flight proxy) and
+ * threaded through `BoardCardDetailView` → `BoardCardThreadPane` → the menu, so
+ * the rows it produces are pinned here. The popover itself portals, and a portal
+ * renders nothing on the server, so the body is exported separately rather than
+ * reached through the trigger.
  */
-import { DEFAULT_BOARD_PLANNING_STEP } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { BoardCardThreadAddMenuBody } from "./BoardCardThreadAddMenu";
-import { canRestartBoardPlanning } from "./boardCardThreadSpawn";
+import { BoardCardThreadAddMenuBody, type BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 
 const noop = () => {};
 
-const body = (canRestartPlanning: boolean, mode: "menu" | "adopt" = "menu") =>
+const body = (stageRestart: BoardThreadStageRestart | null, mode: "menu" | "adopt" = "menu") =>
   renderToStaticMarkup(
     <BoardCardThreadAddMenuBody
       adoptableThreads={[{ id: "thread-1", key: "", title: "An existing thread" }]}
-      canRestartPlanning={canRestartPlanning}
       mode={mode}
       onAdoptThread={noop}
       onCreateBlankThread={noop}
       onEnterAdoptMode={noop}
-      onRestartPlanning={noop}
+      onRestartStage={noop}
+      stageRestart={stageRestart}
     />,
   );
 
-describe("canRestartBoardPlanning", () => {
-  it("is Planning-only, and only while the recipe has a step", () => {
-    expect(canRestartBoardPlanning("planning", DEFAULT_BOARD_PLANNING_STEP)).toBe(true);
-    // Clearing every planning step in settings takes the item away too.
-    expect(canRestartBoardPlanning("planning", null)).toBe(false);
-  });
-
-  it("is false in Building, where the supervisor owns the threads", () => {
-    for (const stage of ["backlog", "sprint", "ready", "building", "review", "done"] as const) {
-      expect(canRestartBoardPlanning(stage, DEFAULT_BOARD_PLANNING_STEP)).toBe(false);
-    }
-  });
-});
-
 describe("BoardCardThreadAddMenuBody", () => {
-  it("offers all three actions in Planning", () => {
-    const html = body(true);
-    expect(html).toContain("Restart planning");
+  it("offers all three actions on an auto-executing stage", () => {
+    const html = body({ label: "Planning", disabledReason: null });
+    expect(html).toContain("New thread — restart Planning");
     expect(html).toContain("New blank thread");
     expect(html).toContain("Adopt an existing thread");
+    // Enabled: no rendered `disabled` attribute (the className carries Tailwind
+    // `disabled:` variants, so match the attribute React emits, not the substring).
+    expect(html).not.toContain('disabled=""');
   });
 
-  it("drops the restart row everywhere else, and the blank item becomes the plain New thread", () => {
-    const html = body(false);
-    expect(html).not.toContain("Restart planning");
+  it("drops the restart row when the stage does not auto-execute, and the blank item becomes plain New thread", () => {
+    const html = body(null);
+    expect(html).not.toContain("restart");
     expect(html).toContain("New thread");
     expect(html).not.toContain("New blank thread");
     expect(html).toContain("Adopt an existing thread");
   });
 
+  it("disables the restart row, with its reason, while a run is in flight", () => {
+    const reason = "A run is already in flight for this card — drag it out and back to restart.";
+    const html = body({ label: "Planning", disabledReason: reason });
+    // The row is still offered (named after the stage) but disabled...
+    expect(html).toContain("New thread — restart Planning");
+    expect(html).toContain('disabled=""');
+    // ...and the reason is shown.
+    expect(html).toContain(reason);
+    // The other two actions remain available.
+    expect(html).toContain("New blank thread");
+    expect(html).toContain("Adopt an existing thread");
+  });
+
   it("swaps the whole body for the thread search in adopt mode", () => {
-    const html = body(true, "adopt");
+    const html = body({ label: "Planning", disabledReason: null }, "adopt");
     expect(html).toContain("An existing thread");
-    expect(html).not.toContain("Restart planning");
+    expect(html).not.toContain("restart");
   });
 });

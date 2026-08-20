@@ -8,7 +8,7 @@
  * displays) — a running thread is a solid dot, not a spinner.
  */
 import type { BoardCardShell, BoardLabel, BoardLabelId } from "@t3tools/contracts";
-import { CircleAlertIcon, LockIcon } from "lucide-react";
+import { CircleAlertIcon, LockIcon, TriangleAlertIcon } from "lucide-react";
 import type { DragEvent } from "react";
 
 import { cn } from "../lib/utils";
@@ -70,6 +70,17 @@ export function BoardCardContent({
         </span>
         {card.threadState === "working" ? (
           <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="Thread running" />
+        ) : null}
+        {card.stalled ? (
+          // Stalled (t3o-17, D3): recovery gave up — loud and distinct from the
+          // blue "Input needed", because nobody is working until a human acts.
+          <span
+            className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-semibold text-destructive-foreground"
+            title="Stalled — recovery gave up; needs a human to retry or take over"
+          >
+            <TriangleAlertIcon className="size-3" />
+            Stalled
+          </span>
         ) : null}
         {card.awaitingInput ? (
           <span className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-info-foreground">
@@ -149,6 +160,7 @@ export function DraggableBoardCard({
   onSelect,
   onDragStart,
   onDragEnd,
+  onReorder,
   accentName,
 }: {
   readonly card: BoardCardShell;
@@ -159,13 +171,41 @@ export function DraggableBoardCard({
   readonly onSelect: (card: BoardCardShell) => void;
   readonly onDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
   readonly onDragEnd: () => void;
+  /** Keyboard analogue of the pointer drag: move one visible slot up/down. */
+  readonly onReorder: (card: BoardCardShell, direction: -1 | 1) => void;
   readonly accentName?: string | null | undefined;
 }) {
   return (
+    // Keyboard path: the card is a focusable button-role element — Enter/Space
+    // opens the detail dialog, whose stage actions are real buttons, so moving
+    // a card never REQUIRES the pointer drag (which has no keyboard analogue).
     <div
       draggable
-      className={cn("cursor-grab", dragging && "opacity-40")}
+      role="button"
+      tabIndex={0}
+      aria-label={`${card.key} — ${card.title}`}
+      className={cn(
+        "cursor-grab rounded-xl focus-visible:outline-2 focus-visible:outline-ring",
+        dragging && "opacity-40",
+      )}
       onClick={() => onSelect(card)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(card);
+          return;
+        }
+        // Ctrl/Cmd+Arrow reorders within the column — plain arrows stay free
+        // for scrolling and focus movement. Stage moves ride the detail
+        // dialog's stage actions (Enter opens it).
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          (event.key === "ArrowUp" || event.key === "ArrowDown")
+        ) {
+          event.preventDefault();
+          onReorder(card, event.key === "ArrowUp" ? -1 : 1);
+        }
+      }}
       onDragStart={(event) => onDragStart(card, event)}
       onDragEnd={onDragEnd}
     >

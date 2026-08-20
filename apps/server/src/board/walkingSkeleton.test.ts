@@ -8,6 +8,8 @@
 import {
   BOARD_SEED_LABEL_IDS,
   BOARD_SEED_LABELS,
+  BOARD_SEED_STAGES,
+  BoardStageId,
   BoardCardId,
   CommandId,
   ProjectId,
@@ -85,7 +87,7 @@ const expectedCard = {
   cardNumber: 1,
   projectId,
   labels: [],
-  stage: "backlog",
+  stage: BoardStageId.make("backlog"),
   orderKey: "m",
   title: "First card",
   briefRef: null,
@@ -93,7 +95,7 @@ const expectedCard = {
   parentCardId: null,
   threadLinks: [],
   externalRef: null,
-  recipeSnapshot: null,
+  humanInLoop: null,
   worktree: null,
   blocked: false,
   archivedAt: null,
@@ -109,7 +111,7 @@ const expectedCardShell = {
   key: "CARD-1",
   projectId,
   labelIds: [],
-  stage: "backlog",
+  stage: BoardStageId.make("backlog"),
   orderKey: "m",
   title: "First card",
   blocked: false,
@@ -120,6 +122,7 @@ const expectedCardShell = {
   hasPr: false,
   attachmentCount: 0,
   queued: false,
+  stalled: false,
   threadState: "none",
   awaitingInput: false,
   activeThreadId: null,
@@ -143,9 +146,12 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         const rehydrated = yield* snapshotQuery.getCommandReadModel();
         assert.deepStrictEqual(rehydrated.board, {
           cards: [expectedCard],
-          // The 906 migration seeds the catalogue on every board; a card
-          // created without labels carries none, but the seeds are present.
+          // The migration seeds the catalogue on every board; a card created
+          // without labels carries none, but the seeds are present.
           labels: BOARD_SEED_LABELS,
+          // The eight compiled stages are seeded too (D2), and a from-empty
+          // replay reproduces the same list (AC18).
+          stages: BOARD_SEED_STAGES,
           nextCardNumberByProject: { [projectId]: 2 },
         });
 

@@ -1,7 +1,8 @@
 import type {
-  // T3o: card + label aggregate ids (D9 / t3o-06a).
+  // T3o: card + label + stage aggregate ids (D9 / t3o-06a / t3o-15).
   BoardCardId,
   BoardLabelId,
+  BoardStageId,
   OrchestrationEvent,
   OrchestrationReadModel,
   ProjectId,
@@ -63,9 +64,10 @@ interface CommandEnvelope {
 
 function commandToAggregateRef(command: OrchestrationCommand): {
   // T3o: "card" kind + BoardCardId appended for card commands (D9), "label" +
-  // BoardLabelId for the label aggregate (t3o-06a). Frozen widening.
-  readonly aggregateKind: "project" | "thread" | "card" | "label";
-  readonly aggregateId: ProjectId | ThreadId | BoardCardId | BoardLabelId;
+  // BoardLabelId for the label aggregate (t3o-06a), "stage" + BoardStageId for
+  // the stage aggregate (t3o-15). Frozen widening.
+  readonly aggregateKind: "project" | "thread" | "card" | "label" | "stage";
+  readonly aggregateId: ProjectId | ThreadId | BoardCardId | BoardLabelId | BoardStageId;
 } {
   switch (command.type) {
     case "project.create":

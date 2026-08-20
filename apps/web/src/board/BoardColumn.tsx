@@ -10,11 +10,10 @@
  * bounded enough to render in full.
  */
 import {
-  isBoardCreatableStage,
   type BoardCardShell,
   type BoardLabel,
   type BoardLabelId,
-  type BoardStage,
+  type BoardStageId,
   type ProjectId,
 } from "@t3tools/contracts";
 import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
@@ -23,7 +22,6 @@ import { Fragment } from "react";
 
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
-import { BOARD_STAGE_LABELS } from "./boardStages";
 import { DraggableBoardCard, type BoardCardQueueSlot } from "./BoardCardItem";
 
 /** Vertical gap (px) between cards; kept in sync with the list's `gap-2` so
@@ -54,14 +52,19 @@ export interface BoardColumnDragProps {
   readonly dragOverIndex: number | null;
   /** Height (px) of the dragged card, for the placeholder gap. */
   readonly dragHeight: number;
-  readonly onColumnDragOver: (stage: BoardStage, event: DragEvent<HTMLElement>) => void;
-  readonly onColumnDrop: (stage: BoardStage, event: DragEvent<HTMLElement>) => void;
+  readonly onColumnDragOver: (stage: BoardStageId, event: DragEvent<HTMLElement>) => void;
+  readonly onColumnDrop: (stage: BoardStageId, event: DragEvent<HTMLElement>) => void;
   readonly onCardDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
   readonly onCardDragEnd: () => void;
+  /** Keyboard reorder (Ctrl/Cmd+ArrowUp/Down on a focused card): the pointer
+      drag's keyboard analogue, moving the card one visible slot in its column. */
+  readonly onCardReorder: (card: BoardCardShell, direction: -1 | 1) => void;
 }
 
 export interface BoardColumnProps extends BoardColumnDragProps {
-  readonly stage: BoardStage;
+  readonly stage: BoardStageId;
+  /** The column's display label from the read-model stage list (D13). */
+  readonly label: string;
   readonly cards: ReadonlyArray<BoardCardShell>;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly collapsed: boolean;
@@ -72,10 +75,10 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly addProjects: ReadonlyArray<BoardAddProject>;
   /** Resolves a project's configured accent name (t3o-07); hash fallback when null. */
   readonly accentNameFor: (projectId: ProjectId) => string | null;
-  readonly onSetCollapsed: (stage: BoardStage, collapsed: boolean) => void;
+  readonly onSetCollapsed: (stage: BoardStageId, collapsed: boolean) => void;
   readonly onSelectCard: (card: BoardCardShell) => void;
   /** Opens the create dialog onto this column's stage (t3o-06). */
-  readonly onRequestCreate: (stage: BoardStage) => void;
+  readonly onRequestCreate: (stage: BoardStageId) => void;
 }
 
 export function BoardColumn(props: BoardColumnProps) {
@@ -84,6 +87,7 @@ export function BoardColumn(props: BoardColumnProps) {
 
 function CollapsedColumn({
   stage,
+  label,
   cards,
   draggedCardId,
   dragOverIndex,
@@ -112,7 +116,7 @@ function CollapsedColumn({
       <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
       <span className="text-[11px] font-medium text-muted-foreground">{cards.length}</span>
       <span className="text-sm font-semibold text-muted-foreground [writing-mode:vertical-rl]">
-        {BOARD_STAGE_LABELS[stage]}
+        {label}
       </span>
     </button>
   );
@@ -120,6 +124,7 @@ function CollapsedColumn({
 
 function ExpandedColumn({
   stage,
+  label,
   cards,
   labelsById,
   queueSlots,
@@ -136,10 +141,11 @@ function ExpandedColumn({
   onColumnDrop,
   onCardDragStart,
   onCardDragEnd,
+  onCardReorder,
 }: BoardColumnProps) {
   // Cards may be created only into Backlog, Sprint or Planning (t3o-06a); the
   // add affordance is absent from the other five columns entirely.
-  const canAdd = addProjects.length > 0 && isBoardCreatableStage(stage);
+  const canAdd = addProjects.length > 0;
 
   // The placeholder gap: clamp the target index, and suppress it when it lands
   // on the dragged card's own slot (dropping back where it started is a no-op).
@@ -187,9 +193,7 @@ function ExpandedColumn({
               ignored. Lighter than the muted token, which read too heavy. */}
           <ChevronLeftIcon className="text-muted-foreground/70" />
         </Button>
-        <span className="truncate text-sm font-semibold text-muted-foreground">
-          {BOARD_STAGE_LABELS[stage]}
-        </span>
+        <span className="truncate text-sm font-semibold text-muted-foreground">{label}</span>
         <span className="flex-1" />
         <span className="text-[11px] font-medium text-muted-foreground">{cards.length}</span>
         {canAdd ? (
@@ -229,6 +233,7 @@ function ExpandedColumn({
                   onSelect={onSelectCard}
                   onDragStart={onCardDragStart}
                   onDragEnd={onCardDragEnd}
+                  onReorder={onCardReorder}
                   accentName={accentNameFor(card.projectId)}
                 />
               </Fragment>

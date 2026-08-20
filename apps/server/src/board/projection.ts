@@ -25,19 +25,25 @@ import {
   BoardCardActivityEntry,
   BoardCardExternalRef,
   BoardCardId,
-  BoardCardRecipeSnapshot,
   BoardCardThreadLink,
   BoardLabel,
   BoardLabelId,
   boardLabelsAreSeedOnly,
   BoardPlan,
   BoardPlanId,
+  BoardStageDefinition,
+  BoardStageId,
+  BoardStageRole,
+  boardStagesAreSeedOnly,
   BoardStepCompletion,
   BoardCardStepState,
+  BoardStageMode,
   compareBoardLabels,
+  compareBoardStages,
   BoardCardWorktree,
   isBoardEvent,
   makeBoardCardShell,
+  ProviderInstanceId,
   sortBoardCardThreadLinks,
   type BoardCardDetail,
   type BoardState,
@@ -46,6 +52,7 @@ import {
   type OrchestrationShellSnapshot,
   ProjectId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -63,6 +70,10 @@ import {
 } from "./projector.ts";
 
 export const BOARD_CARDS_PROJECTOR_NAME = "projection.board-cards" as const;
+
+/** How many trailing activity entries a context read returns (t3o-08 hygiene);
+    outstanding `input-requested` entries are always included on top. */
+export const BOARD_CARD_ACTIVITY_TAIL_LIMIT = 50;
 
 /**
  * Spread into upstream's `ORCHESTRATION_PROJECTOR_NAMES`. Keeping board
@@ -89,7 +100,9 @@ const BoardCardDbRow = Schema.Struct({
   dependsOn: Schema.fromJsonString(Schema.Array(BoardCardId)),
   parentCardId: BoardCard.fields.parentCardId,
   externalRef: Schema.NullOr(Schema.fromJsonString(BoardCardExternalRef)),
-  recipeSnapshot: Schema.NullOr(Schema.fromJsonString(BoardCardRecipeSnapshot)),
+  // Per-card human-in-the-loop override (D6): 0/1/NULL (SQLite has no boolean;
+  // NULL means untouched).
+  humanInLoop: Schema.NullOr(Schema.Int),
   worktree: Schema.NullOr(Schema.fromJsonString(BoardCardWorktree)),
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
@@ -117,6 +130,18 @@ const BoardLabelDbRow = Schema.Struct({
   updatedAt: BoardLabel.fields.updatedAt,
 });
 type BoardLabelDbRow = typeof BoardLabelDbRow.Type;
+
+// Stage definitions (014_BoardStages). `role` is 'build' | 'review' | 'done' |
+// NULL (an ordinary stage). One row per stage; rehydrates `BoardState.stages`.
+const BoardStageDbRow = Schema.Struct({
+  stageId: BoardStageDefinition.fields.stageId,
+  label: BoardStageDefinition.fields.label,
+  role: BoardStageDefinition.fields.role,
+  orderKey: BoardStageDefinition.fields.orderKey,
+  createdAt: BoardStageDefinition.fields.createdAt,
+  updatedAt: BoardStageDefinition.fields.updatedAt,
+});
+type BoardStageDbRow = typeof BoardStageDbRow.Type;
 
 // Card↔label join row (905_BoardCardLabels). `ordinal` preserves the card's
 // label order so rehydration reproduces the array the decider computed.
@@ -163,7 +188,17 @@ const BoardCardStepStateDbRow = Schema.Struct({
   stepId: BoardCardStepState.fields.stepId,
   stepLabel: BoardCardStepState.fields.stepLabel,
   attempt: BoardCardStepState.fields.attempt,
+  // Stall detection counters (t3o-17, D1/D2).
+  stallCount: BoardCardStepState.fields.stallCount,
+  lastNudgeAt: BoardCardStepState.fields.lastNudgeAt,
+  // Frozen execution config (D12).
+  prompt: BoardCardStepState.fields.prompt,
+  providerInstanceId: BoardCardStepState.fields.providerInstanceId,
+  model: BoardCardStepState.fields.model,
+  mode: BoardCardStepState.fields.mode,
+  humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
+  timeoutMs: BoardCardStepState.fields.timeoutMs,
   threadId: BoardCardStepState.fields.threadId,
   status: BoardCardStepState.fields.status,
   slotHeld: Schema.Int,
@@ -233,7 +268,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     dependsOn: card.dependsOn,
     parentCardId: card.parentCardId,
     externalRef: card.externalRef,
-    recipeSnapshot: card.recipeSnapshot,
+    humanInLoop: card.humanInLoop === null ? null : card.humanInLoop ? 1 : 0,
     worktree: card.worktree,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
@@ -260,7 +295,7 @@ function rowToBoardCard(
     dependsOn: row.dependsOn,
     parentCardId: row.parentCardId,
     externalRef: row.externalRef,
-    recipeSnapshot: row.recipeSnapshot,
+    humanInLoop: row.humanInLoop === null ? null : row.humanInLoop !== 0,
     worktree: row.worktree,
     blocked: row.blocked !== 0,
     threadLinks,
@@ -310,7 +345,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on,
         parent_card_id,
         external_ref,
-        recipe_snapshot,
+        human_in_loop,
         worktree,
         blocked,
         archived_at,
@@ -329,7 +364,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.dependsOn},
         ${row.parentCardId},
         ${row.externalRef},
-        ${row.recipeSnapshot},
+        ${row.humanInLoop},
         ${row.worktree},
         ${row.blocked},
         ${row.archivedAt},
@@ -348,7 +383,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on = excluded.depends_on,
         parent_card_id = excluded.parent_card_id,
         external_ref = excluded.external_ref,
-        recipe_snapshot = excluded.recipe_snapshot,
+        human_in_loop = excluded.human_in_loop,
         worktree = excluded.worktree,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
@@ -377,7 +412,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on AS "dependsOn",
         parent_card_id AS "parentCardId",
         external_ref AS "externalRef",
-        recipe_snapshot AS "recipeSnapshot",
+        human_in_loop AS "humanInLoop",
         worktree,
         blocked,
         archived_at AS "archivedAt",
@@ -524,7 +559,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on AS "dependsOn",
         parent_card_id AS "parentCardId",
         external_ref AS "externalRef",
-        recipe_snapshot AS "recipeSnapshot",
+        human_in_loop AS "humanInLoop",
         worktree,
         blocked,
         archived_at AS "archivedAt",
@@ -672,6 +707,48 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // ── Stages (t3o-15) ──────────────────────────────────────────────────
+
+  const upsertBoardStageRow = SqlSchema.void({
+    Request: BoardStageDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_stages (stage_id, label, role, order_key, created_at, updated_at)
+      VALUES (${row.stageId}, ${row.label}, ${row.role}, ${row.orderKey}, ${row.createdAt}, ${row.updatedAt})
+      ON CONFLICT (stage_id)
+      DO UPDATE SET
+        label = excluded.label,
+        role = excluded.role,
+        order_key = excluded.order_key,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at
+    `,
+  });
+
+  const deleteBoardStageRow = SqlSchema.void({
+    Request: BoardStageId,
+    execute: (stageId) => sql`
+      DELETE FROM board_stages
+      WHERE stage_id = ${stageId}
+    `,
+  });
+
+  // Read order is advisory only: `loadBoardState` re-sorts with
+  // `compareBoardStages`.
+  const listBoardStageRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardStageDbRow,
+    execute: () => sql`
+      SELECT
+        stage_id AS "stageId",
+        label,
+        role,
+        order_key AS "orderKey",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM board_stages
+    `,
+  });
+
   // Wholesale rewrite of a card's label rows from the card's authoritative
   // ordered label list: idempotent, and structurally incapable of drifting
   // from the read model (mirrors the thread-link sync).
@@ -726,20 +803,41 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // Bounded read (t3o-08 hygiene): the log is append-only and unbounded while
+  // `board_report_progress` is advertised as "call it often", so context reads
+  // return a TAIL — the most recent entries — plus EVERY `input-requested`
+  // entry (an outstanding human gate must never age out of view). The UNION
+  // dedupes rows that qualify both ways; the outer ORDER restores log order.
   const listBoardCardActivityRowsForCard = SqlSchema.findAll({
     Request: BoardCardId,
     Result: BoardCardActivityDbRow,
     execute: (cardId) => sql`
-      SELECT
-        activity_id AS "activityId",
-        card_id AS "cardId",
-        kind,
-        body,
-        thread_id AS "threadId",
-        created_at AS "createdAt"
-      FROM board_card_activity
-      WHERE card_id = ${cardId}
-      ORDER BY created_at ASC, activity_id ASC
+      SELECT * FROM (
+        SELECT
+          activity_id AS "activityId",
+          card_id AS "cardId",
+          kind,
+          body,
+          thread_id AS "threadId",
+          created_at AS "createdAt"
+        FROM board_card_activity
+        WHERE card_id = ${cardId} AND kind = 'input-requested'
+        UNION
+        SELECT * FROM (
+          SELECT
+            activity_id AS "activityId",
+            card_id AS "cardId",
+            kind,
+            body,
+            thread_id AS "threadId",
+            created_at AS "createdAt"
+          FROM board_card_activity
+          WHERE card_id = ${cardId}
+          ORDER BY created_at DESC, activity_id DESC
+          LIMIT ${BOARD_CARD_ACTIVITY_TAIL_LIMIT}
+        )
+      )
+      ORDER BY "createdAt" ASC, "activityId" ASC
     `,
   });
 
@@ -774,24 +872,57 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // One card's step completions (t3o-16, D9): the card-detail loader reads these
+  // to render the review loop's findings, so it filters in SQL rather than
+  // scanning the whole table per modal open.
+  const listBoardCardStepRowsForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardStepDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        card_id AS "cardId",
+        step_id AS "stepId",
+        outcome,
+        summary,
+        payload,
+        thread_id AS "threadId",
+        completed_at AS "completedAt"
+      FROM board_card_steps
+      WHERE card_id = ${cardId}
+      ORDER BY completed_at ASC, step_id ASC
+    `,
+  });
+
   // One row per card (t3o-10): the card's live step state. Upsert on card_id
   // so a step transition or the next step of a recipe replaces the prior row.
   const upsertBoardCardStepStateRow = SqlSchema.void({
     Request: BoardCardStepStateDbRow,
     execute: (row) => sql`
       INSERT INTO board_card_step_state (
-        card_id, step_id, step_label, attempt, max_attempts, thread_id, status, slot_held, started_at, updated_at
+        card_id, step_id, step_label, attempt, stall_count, last_nudge_at, prompt,
+        provider_instance_id, model, mode,
+        human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, started_at, updated_at
       )
       VALUES (
-        ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.attempt}, ${row.maxAttempts},
-        ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.startedAt}, ${row.updatedAt}
+        ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.attempt}, ${row.stallCount},
+        ${row.lastNudgeAt}, ${row.prompt},
+        ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.humanInLoop}, ${row.maxAttempts},
+        ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.startedAt}, ${row.updatedAt}
       )
       ON CONFLICT (card_id)
       DO UPDATE SET
         step_id = excluded.step_id,
         step_label = excluded.step_label,
         attempt = excluded.attempt,
+        stall_count = excluded.stall_count,
+        last_nudge_at = excluded.last_nudge_at,
+        prompt = excluded.prompt,
+        provider_instance_id = excluded.provider_instance_id,
+        model = excluded.model,
+        mode = excluded.mode,
+        human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
+        timeout_ms = excluded.timeout_ms,
         thread_id = excluded.thread_id,
         status = excluded.status,
         slot_held = excluded.slot_held,
@@ -809,7 +940,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         step_id AS "stepId",
         step_label AS "stepLabel",
         attempt,
+        stall_count AS "stallCount",
+        last_nudge_at AS "lastNudgeAt",
+        prompt,
+        provider_instance_id AS "providerInstanceId",
+        model,
+        mode,
+        human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
+        timeout_ms AS "timeoutMs",
         thread_id AS "threadId",
         status,
         slot_held AS "slotHeld",
@@ -886,6 +1025,16 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // Whether a card has any proposed plan (t3o-15, D6) — one bounded scalar for
+  // the Build stage's human-in-the-loop default, not the plan bodies.
+  const countBoardPlansForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: Schema.Struct({ count: Schema.Int }),
+    execute: (cardId) => sql`
+      SELECT COUNT(*) AS "count" FROM board_plans WHERE card_id = ${cardId}
+    `,
+  });
+
   const findBoardPlanRow = SqlSchema.findOneOption({
     Request: BoardPlanId,
     Result: BoardPlanDbRow,
@@ -925,12 +1074,16 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     deleteBoardCardBodyRow,
     upsertBoardLabelRow,
     listBoardLabelRows,
+    upsertBoardStageRow,
+    deleteBoardStageRow,
+    listBoardStageRows,
     deleteBoardCardLabelsForCard,
     insertBoardCardLabelRow,
     listBoardCardLabelRows,
     listBoardCardLabelRowsForCard,
     insertBoardCardActivityRow,
     listBoardCardActivityRowsForCard,
+    listBoardCardStepRowsForCard,
     upsertBoardCardStepRow,
     listBoardCardStepRows,
     upsertBoardCardStepStateRow,
@@ -939,6 +1092,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
     listBoardPlanRows,
+    countBoardPlansForCard,
     findBoardPlanRow,
   };
 }
@@ -1032,7 +1186,15 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         stepId: state.stepId,
         stepLabel: state.stepLabel,
         attempt: state.attempt,
+        stallCount: state.stallCount,
+        lastNudgeAt: state.lastNudgeAt,
+        prompt: state.prompt,
+        providerInstanceId: state.providerInstanceId,
+        model: state.model,
+        mode: state.mode,
+        humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
+        timeoutMs: state.timeoutMs,
         threadId: state.threadId,
         status: state.status,
         slotHeld: state.slotHeld ? 1 : 0,
@@ -1040,6 +1202,23 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         updatedAt: state.updatedAt,
       })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.stepState:query")));
+
+  const upsertStage = (stage: BoardStageDefinition) =>
+    queries
+      .upsertBoardStageRow({
+        stageId: stage.stageId,
+        label: stage.label,
+        role: stage.role,
+        orderKey: stage.orderKey,
+        createdAt: stage.createdAt,
+        updatedAt: stage.updatedAt,
+      })
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.stage:query")));
+
+  const removeStage = (stageId: BoardStageId) =>
+    queries
+      .deleteBoardStageRow(stageId)
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.stageDelete:query")));
 
   // Wholesale rewrite of a card's plan rows from the proposal (bodies live
   // here, D8): idempotent, and structurally incapable of drifting from the
@@ -1107,10 +1286,6 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       case "board.card-worktree-ready":
       case "board.card-worktree-failed":
       case "board.card-worktree-reclaimed":
-      // Recipe snapshot (t3o-10): the payload carries the whole card, so the
-      // persisted projection is the same idempotent upsert — the snapshot rides
-      // `board_cards.recipe_snapshot` with the rest of the aggregate.
-      case "board.card-recipe-snapshotted":
         yield* upsertCard(event.payload.card);
         return;
 
@@ -1120,6 +1295,21 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       case "board.label-undeleted":
         // Catalogue rows (904); delete/undelete are tombstone upserts.
         yield* upsertLabel(event.payload.label);
+        return;
+
+      case "board.stage-created":
+      case "board.stage-renamed":
+      case "board.stage-reordered":
+        // Stage rows (014); the payload carries the whole post-change stage.
+        yield* upsertStage(event.payload.stage);
+        return;
+
+      case "board.stage-deleted":
+        yield* removeStage(event.payload.stageId);
+        return;
+
+      case "board.card-stage-thread-requested":
+        // A request signal only — the reactor reacts; no table write.
         return;
 
       case "board.card-updated": {
@@ -1166,6 +1356,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       case "board.card-step-awaiting-input":
       case "board.card-step-recovered":
       case "board.card-step-settled":
+      case "board.card-step-retuned":
         // Live step state (t3o-10): every payload carries the whole computed
         // `BoardCardStepState`, so the persisted projection is one idempotent
         // upsert on card_id — replay and rehydration cannot diverge.
@@ -1217,6 +1408,7 @@ export function loadBoardState(
     queries.listBoardCardThreadLinkRows(),
     queries.listNextCardNumberRows(),
     queries.listBoardLabelRows(),
+    queries.listBoardStageRows(),
     queries.listBoardCardLabelRows(),
     queries.listBoardCardStepRows(),
     queries.listBoardCardStepStateRows(),
@@ -1228,6 +1420,7 @@ export function loadBoardState(
         linkRows,
         counterRows,
         labelRows,
+        stageRows,
         cardLabelRows,
         stepRows,
         stepStateRows,
@@ -1245,12 +1438,30 @@ export function loadBoardState(
             updatedAt: row.updatedAt,
           }))
           .sort(compareBoardLabels);
-        // A migrated-but-unused board (no cards, catalogue still the compiled
-        // seeds) reports the board slice as ABSENT — the decider falls back to
-        // EMPTY_BOARD_STATE (same seeds), so this equals a from-empty replay
-        // where no board event ever fired. The moment a card or a label change
-        // exists, the slice materialises.
-        if (cardRows.length === 0 && boardLabelsAreSeedOnly(labels)) return null;
+        const stages = stageRows
+          .map(
+            (row): BoardStageDefinition => ({
+              stageId: row.stageId,
+              label: row.label,
+              role: row.role,
+              orderKey: row.orderKey,
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt,
+            }),
+          )
+          .sort(compareBoardStages);
+        // A migrated-but-unused board (no cards, catalogue AND stage list still
+        // the compiled seeds) reports the board slice as ABSENT — the decider
+        // falls back to EMPTY_BOARD_STATE (same seeds), so this equals a
+        // from-empty replay where no board event ever fired. The moment a card,
+        // a label change or a stage change exists, the slice materialises.
+        if (
+          cardRows.length === 0 &&
+          boardLabelsAreSeedOnly(labels) &&
+          boardStagesAreSeedOnly(stages)
+        ) {
+          return null;
+        }
 
         const linksByCard = new Map<BoardCardId, BoardCardThreadLink[]>();
         for (const row of linkRows) {
@@ -1287,7 +1498,15 @@ export function loadBoardState(
               stepId: row.stepId,
               stepLabel: row.stepLabel,
               attempt: row.attempt,
+              stallCount: row.stallCount,
+              lastNudgeAt: row.lastNudgeAt,
+              prompt: row.prompt,
+              providerInstanceId: row.providerInstanceId,
+              model: row.model,
+              mode: row.mode,
+              humanInLoop: row.humanInLoop !== 0,
               maxAttempts: row.maxAttempts,
+              timeoutMs: row.timeoutMs,
               threadId: row.threadId,
               status: row.status,
               slotHeld: row.slotHeld !== 0,
@@ -1320,6 +1539,7 @@ export function loadBoardState(
             )
             .sort(compareBoardCards),
           labels,
+          stages,
           ...(stepCompletions.length > 0 ? { stepCompletions } : {}),
           ...(stepStates.length > 0 ? { stepStates } : {}),
           ...(plans.length > 0 ? { plans } : {}),
@@ -1398,8 +1618,12 @@ export function withBoardShellCards(
       }
       const labelsByCard = groupCardLabels(cardLabelRows);
       const queuedByCard = new Set<BoardCardId>();
+      const stalledByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
+        // The second step-state field on the bounded shell (t3o-17, D3): a card
+        // is `stalled` when recovery gave up on its live step.
+        if (row.status === "stalled") stalledByCard.add(row.cardId);
       }
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
@@ -1418,6 +1642,7 @@ export function withBoardShellCards(
           archivedAt: row.archivedAt,
           activeThreadId,
           queued: queuedByCard.has(row.cardId),
+          stalled: stalledByCard.has(row.cardId),
           thread: activeThreadId === null ? null : (threadsById.get(activeThreadId) ?? null),
         });
       });
@@ -1509,6 +1734,36 @@ export function withBoardShellLabels(
   );
 }
 
+/** Enrich the shell snapshot with the user-defined stage list (t3o-15) so the
+    board reads column order and labels from it (D13). Always present (stages
+    are seeded), so — unlike labels — this is not conditional on non-empty. */
+export function withBoardShellStages(
+  queries: BoardCardQueries,
+  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
+): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
+  const stageRows = queries
+    .listBoardStageRows()
+    .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellStages:query")));
+  return Effect.all([snapshot, stageRows]).pipe(
+    Effect.map(([shell, rows]) => {
+      if (rows.length === 0) return shell;
+      const boardStages = rows
+        .map(
+          (row): BoardStageDefinition => ({
+            stageId: row.stageId,
+            label: row.label,
+            role: row.role,
+            orderKey: row.orderKey,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+          }),
+        )
+        .sort(compareBoardStages);
+      return { ...shell, boardStages };
+    }),
+  );
+}
+
 /**
  * Full detail for one open card (`board.subscribeCard`, t3o-04): the whole
  * aggregate (thread links incl. tombstones from 902) plus the brief body
@@ -1530,39 +1785,58 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardLabelRowsForCard(cardId),
       queries.listBoardCardDependencyRefRows(cardId),
       queries.listBoardCardDependentRefRows(cardId),
+      queries.countBoardPlansForCard(cardId),
+      queries.listBoardCardStepRowsForCard(cardId),
     ]).pipe(
-      Effect.map(([cardRow, linkRows, bodyRow, labelRows, dependencyRows, dependentRows]) => {
-        if (Option.isNone(cardRow)) return null;
-        const links = sortBoardCardThreadLinks(
-          linkRows.map((row) => ({
-            threadId: row.threadId,
-            role: row.role,
-            linkedAt: row.linkedAt,
-            tombstonedAt: row.tombstonedAt,
-          })),
-        );
-        const labels = [...labelRows]
-          .sort((left, right) => left.ordinal - right.ordinal)
-          .map((row) => row.labelId);
-        const card = rowToBoardCard(cardRow.value, links, labels);
-        // `dependsOn` order is the card's order — the SQL returns a set, so
-        // the sequence is restored here rather than trusted from the rows.
-        // An id whose row is gone is simply dropped: the chip has nothing to
-        // show, and the gate already treats it as unmet.
-        const dependencyRefsById = new Map(dependencyRows.map((row) => [row.cardId, row]));
-        return {
-          card,
-          brief: Option.match(bodyRow, {
-            onNone: () => null,
-            onSome: (row) => row.body,
-          }),
-          dependencies: card.dependsOn.flatMap((dependencyId) => {
-            const row = dependencyRefsById.get(dependencyId);
-            return row === undefined ? [] : [row];
-          }),
-          dependents: dependentRows,
-        };
-      }),
+      Effect.map(
+        ([
+          cardRow,
+          linkRows,
+          bodyRow,
+          labelRows,
+          dependencyRows,
+          dependentRows,
+          planCountRows,
+          stepRows,
+        ]) => {
+          if (Option.isNone(cardRow)) return null;
+          const links = sortBoardCardThreadLinks(
+            linkRows.map((row) => ({
+              threadId: row.threadId,
+              role: row.role,
+              linkedAt: row.linkedAt,
+              tombstonedAt: row.tombstonedAt,
+            })),
+          );
+          const labels = [...labelRows]
+            .sort((left, right) => left.ordinal - right.ordinal)
+            .map((row) => row.labelId);
+          const card = rowToBoardCard(cardRow.value, links, labels);
+          // `dependsOn` order is the card's order — the SQL returns a set, so
+          // the sequence is restored here rather than trusted from the rows.
+          // An id whose row is gone is simply dropped: the chip has nothing to
+          // show, and the gate already treats it as unmet.
+          const dependencyRefsById = new Map(dependencyRows.map((row) => [row.cardId, row]));
+          return {
+            card,
+            brief: Option.match(bodyRow, {
+              onNone: () => null,
+              onSome: (row) => row.body,
+            }),
+            dependencies: card.dependsOn.flatMap((dependencyId) => {
+              const row = dependencyRefsById.get(dependencyId);
+              return row === undefined ? [] : [row];
+            }),
+            dependents: dependentRows,
+            hasPlan: (planCountRows[0]?.count ?? 0) > 0,
+            // The card's completions in completion order (t3o-16, D9), from the
+            // per-card step query — the same rows the read model's
+            // `stepCompletions` slice is built from — sorted so the modal renders
+            // review rounds in the order they landed.
+            stepCompletions: [...stepRows].sort(compareBoardStepCompletions),
+          };
+        },
+      ),
       Effect.mapError(toPersistenceSqlError("BoardCardsProjection.detail:query")),
     );
 }
@@ -1683,19 +1957,53 @@ export function boardSnapshotQueryMethods(
 ): Partial<ProjectionSnapshotQueryShape> & BoardSnapshotQueryMethods {
   // Compiled once here — every reader below closes over the same query set.
   const queries = makeBoardCardQueries(sql);
+  // Failure isolation for the PRESENTATION overrides: these wrap queries every
+  // consumer runs (engine bootstrap, subscribeShell, HTTP snapshot), so a
+  // board SQL failure must not take the Threads view down for thread-only
+  // users — log loudly and serve the unenriched base snapshot instead. The
+  // command read model is deliberately NOT isolated: the decider decides
+  // against it, and silently substituting a board-less model would let
+  // commands validate against an empty board (e.g. re-minting an existing
+  // card) — a correctness read fails loudly.
+  const isolated = <A, E>(
+    label: string,
+    enriched: Effect.Effect<A, E>,
+    fallback: Effect.Effect<A, E>,
+  ): Effect.Effect<A, E> =>
+    enriched.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError(`board snapshot enrichment failed; serving base ${label}`, {
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.flatMap(() => fallback)),
+      ),
+    );
   return {
     // Board cards join the engine's command read model (D8).
     getCommandReadModel: () => withBoardReadModel(queries, base.getCommandReadModel()),
     // Bounded card shells + the label catalogue ride the shell snapshot
     // (D2/D7; catalogue once, t3o-06a).
     getShellSnapshot: () =>
-      withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+      isolated(
+        "shell snapshot",
+        withBoardShellStages(
+          queries,
+          withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+        ),
+        base.getShellSnapshot(),
+      ),
     // Archived cards ride the archive page's snapshot (t3o-13, D7), with the
     // catalogue so their label chips render like any other card's.
     getArchivedShellSnapshot: () =>
-      withBoardShellLabels(
-        queries,
-        withBoardArchivedShellCards(queries, base.getArchivedShellSnapshot()),
+      isolated(
+        "archived shell snapshot",
+        withBoardShellStages(
+          queries,
+          withBoardShellLabels(
+            queries,
+            withBoardArchivedShellCards(queries, base.getArchivedShellSnapshot()),
+          ),
+        ),
+        base.getArchivedShellSnapshot(),
       ),
     // Board-only detail reader for board.subscribeCard (t3o-04).
     boardCardDetail: makeBoardCardDetailLoader(queries),

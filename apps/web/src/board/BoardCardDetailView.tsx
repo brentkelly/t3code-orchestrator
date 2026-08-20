@@ -25,20 +25,35 @@
  * inventory); their owning specs are named in comments.
  */
 import {
-  BOARD_STAGES,
+  BoardAdjudicatePayload,
+  BoardReviewPayload,
+  BoardTriagePayload,
   activeBoardCardThreadId,
   boardCardArchiveNeedsConfirmation,
   boardStageIndex,
+  boardStagesInOrder,
+  boardStageWithRole,
+  isBoardReviewBlockingSeverity,
   liveBoardCardDependents,
+  parseReviewStepId,
+  type BoardAdjudicatePayload as BoardAdjudicatePayloadType,
   type BoardCardDetail,
   type BoardCardId,
   type BoardCardThreadState,
   type BoardLabel,
   type BoardLabelId,
-  type BoardStage,
+  type BoardReviewFinding,
+  type BoardReviewPayload as BoardReviewPayloadType,
+  type BoardStageDefinition,
+  type BoardStageId,
+  type BoardState,
+  type BoardStepCompletion,
+  type BoardTriagePayload as BoardTriagePayloadType,
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Link } from "@tanstack/react-router";
 import {
   ArchiveIcon,
@@ -71,8 +86,15 @@ import {
   type BoardDependencyEntry,
 } from "./BoardCardFields";
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
-import { BOARD_STAGE_LABELS } from "./boardStages";
+import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
+import { boardStageLabel } from "./boardStages";
 import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
+
+/** A `BoardState` view over a bare stage list, so the read-model stage helpers
+    apply inside this pure view. */
+function stageStateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
+  return { cards: [], stages, nextCardNumberByProject: {} };
+}
 
 /** One id, so the dialog can label itself from the title the panel renders
     (the panel is mounted outside the dialog context by its tests). */
@@ -92,8 +114,14 @@ const BoardCardThreadPane = lazy(() =>
  * opens onto the thread instead of the brief — the prototype's
  * `stageIndex(status) >= 2`.
  */
-export function boardCardHasThreadPane(stage: BoardStage): boolean {
-  return boardStageIndex(stage) >= boardStageIndex("planning");
+export function boardCardHasThreadPane(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stage: BoardStageId,
+): boolean {
+  // From the third stage onward the card has work running against it, so the
+  // modal opens onto the thread instead of the brief — the prototype's
+  // `stageIndex(status) >= 2`, now over the user-defined stage order (D13).
+  return boardStageIndex(stageStateOf(stages), stage) >= 2;
 }
 
 /** Named for the modal that first rendered it; the shape is shared with the
@@ -113,6 +141,15 @@ export interface BoardCardDetailViewProps {
   readonly environmentId: EnvironmentId;
   readonly detail: BoardCardDetail;
   readonly catalogue: ReadonlyArray<BoardLabel>;
+  /** The read-model stage list (D13): column labels, the stage ladder, and the
+      per-card human-in-the-loop toggle's Build-role detection all read it. */
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+  /** The computed human-in-the-loop stance for this card on the Build stage
+      (D6) — `null` when the card is not on the build role (no toggle shown).
+      `value` is the effective boolean; `explicit` is whether the card has an
+      explicit override (vs the computed default). */
+  readonly humanInLoop: { readonly value: boolean; readonly explicit: boolean } | null;
+  readonly onSetHumanInLoop: (value: boolean) => void;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   /** Project title, or null when the project is not on disk (archived card). */
   readonly projectName: string | null;
@@ -123,6 +160,14 @@ export interface BoardCardDetailViewProps {
   readonly dependencyOptions: ReadonlyArray<BoardPickerOption>;
   readonly threadLinks: ReadonlyArray<BoardDetailThreadLink>;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
+  /** The thread pane `+` menu's restart affordance (t3o-14): present only when
+      the card's current stage auto-executes, `null` otherwise. */
+  readonly stageRestart: BoardThreadStageRestart | null;
+  /** Dispatch `board.card.start-stage-thread` for the card's current stage. */
+  readonly onRestartStage: () => void;
+  /** Create a blank server thread, link it, and resolve to its id (or `null` on
+      failure) so the pane can open it. */
+  readonly onCreateBlankThread: () => Promise<ThreadId | null>;
   /** Inline feedback for the last rejected command (e.g. a dependency cycle). */
   readonly feedback: string | null;
   readonly onClose: () => void;
@@ -135,15 +180,10 @@ export interface BoardCardDetailViewProps {
   readonly onSaveBrief: (brief: string | null) => void;
   readonly onAddDependency: (cardId: BoardCardId) => void;
   readonly onRemoveDependency: (cardId: BoardCardId) => void;
-  readonly onMoveStage: (toStage: BoardStage) => void;
+  readonly onMoveStage: (toStage: BoardStageId) => void;
   readonly onArchiveToggle: () => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
-  /** True only in Planning, and only while the planning recipe has a step
-      (t3o-14) — gates the thread pane's "restart planning" menu item. */
-  readonly canRestartPlanning: boolean;
-  readonly onRestartPlanning: () => void;
-  readonly onCreateBlankThread: () => void;
 }
 
 export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
@@ -292,6 +332,7 @@ function DependenciesSection(props: BoardCardDetailViewProps) {
       onAdd={props.onAddDependency}
       onRemove={props.onRemoveDependency}
       options={props.dependencyOptions}
+      stages={props.stages}
     />
   );
 }
@@ -373,19 +414,21 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
     than as a collapsed select. */
 function StageLadder({
   stage,
+  stages,
   onMoveStage,
 }: {
-  readonly stage: BoardStage;
-  readonly onMoveStage: (toStage: BoardStage) => void;
+  readonly stage: BoardStageId;
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+  readonly onMoveStage: (toStage: BoardStageId) => void;
 }) {
   return (
     <div className="flex flex-col gap-px">
-      {BOARD_STAGES.map((candidate) => {
-        const current = candidate === stage;
+      {boardStagesInOrder(stageStateOf(stages)).map((candidate) => {
+        const current = candidate.stageId === stage;
         const rung = (
           <>
             <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/45" />
-            <span className="flex-1 text-left">{BOARD_STAGE_LABELS[candidate]}</span>
+            <span className="flex-1 text-left">{candidate.label}</span>
             {current ? <CheckIcon className="size-3.5 shrink-0" /> : null}
           </>
         );
@@ -393,11 +436,15 @@ function StageLadder({
           "flex h-[26px] items-center gap-2 rounded-[7px] px-2 text-[12.5px]",
           current ? "bg-accent font-medium text-foreground" : "text-muted-foreground",
         );
-        // Ready onward is granted by the pipeline, not chosen — those rungs
-        // render as plain rows so the ladder still reads whole.
-        if (current || !isBoardStageManuallySelectable(candidate)) {
+        // The build role onward is granted by the pipeline, not chosen — those
+        // rungs render as plain rows so the ladder still reads whole.
+        if (current || !isBoardStageManuallySelectable(stages, candidate.stageId)) {
           return (
-            <div aria-current={current ? "true" : undefined} className={className} key={candidate}>
+            <div
+              aria-current={current ? "true" : undefined}
+              className={className}
+              key={candidate.stageId}
+            >
               {rung}
             </div>
           );
@@ -405,8 +452,8 @@ function StageLadder({
         return (
           <button
             className={cn(className, "hover:bg-accent/50")}
-            key={candidate}
-            onClick={() => onMoveStage(candidate)}
+            key={candidate.stageId}
+            onClick={() => onMoveStage(candidate.stageId)}
             type="button"
           >
             {rung}
@@ -468,9 +515,12 @@ function ActionsSection({
 }) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
-  const primaryAction = boardStagePrimaryAction(card.stage);
+  const primaryAction = boardStagePrimaryAction(props.stages, card.stage);
   const forward = primaryAction !== null && !archived ? primaryAction : null;
-  if (forward === null && !card.blocked) return null;
+  // The per-card human-in-the-loop toggle shows only on the Build role (D6);
+  // `props.humanInLoop` is non-null exactly then.
+  const humanInLoop = archived ? null : props.humanInLoop;
+  if (forward === null && !card.blocked && humanInLoop === null) return null;
   return (
     <div className="flex flex-col gap-2 p-3.5">
       {forward !== null ? (
@@ -503,6 +553,195 @@ function ActionsSection({
           </span>
         </div>
       ) : null}
+      {humanInLoop !== null ? (
+        <label className="flex items-center justify-between gap-2 rounded-lg border border-input bg-popover px-2.5 py-2 text-[12.5px]">
+          <span className="flex flex-col">
+            <span className="font-medium text-foreground">Human in the loop</span>
+            <span className="text-[11px] text-muted-foreground">
+              {humanInLoop.explicit
+                ? humanInLoop.value
+                  ? "You drive the build in conversation."
+                  : "The build runs unattended."
+                : humanInLoop.value
+                  ? "Default: conversation (no plan yet)."
+                  : "Default: unattended (a plan exists)."}
+            </span>
+          </span>
+          <input
+            aria-label="Human in the loop"
+            checked={humanInLoop.value}
+            className="size-4 shrink-0"
+            onChange={(event) => props.onSetHumanInLoop(event.target.checked)}
+            type="checkbox"
+          />
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Review findings (t3o-16, D9) ───────────────────────────────────────
+// With no PR to anchor them to (D6), the review loop's findings live on the
+// card. The panel reads the SAME opaque completion payloads the agents write —
+// review findings, triage dispositions, adjudication verdicts — grouped by
+// round. It parses payloads, never branches on the stage's role, so it is not
+// a third dispatch on `review` (AC10): a card with no review completions
+// renders nothing at all (absent, not empty).
+
+const decodeReviewPayload = Schema.decodeUnknownOption(BoardReviewPayload);
+const decodeTriagePayload = Schema.decodeUnknownOption(BoardTriagePayload);
+const decodeAdjudicatePayload = Schema.decodeUnknownOption(BoardAdjudicatePayload);
+
+function parsePayloadJson(payload: string | null): unknown {
+  if (payload === null) return undefined;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+}
+
+interface ReviewRound {
+  readonly round: number;
+  readonly review: BoardReviewPayloadType | null;
+  readonly reviewMalformed: boolean;
+  readonly triage: BoardTriagePayloadType | null;
+  readonly adjudicate: BoardAdjudicatePayloadType | null;
+}
+
+/** Group a card's completions into review rounds (D8/D9). Pure over the
+    completion list, so the same round-scoped step ids the executor mints drive
+    the render. */
+function groupReviewRounds(completions: ReadonlyArray<BoardStepCompletion>): ReviewRound[] {
+  const byRound = new Map<
+    number,
+    { review?: BoardStepCompletion; triage?: BoardStepCompletion; adjudicate?: BoardStepCompletion }
+  >();
+  for (const completion of completions) {
+    const parsed = parseReviewStepId(completion.stepId);
+    if (parsed === null) continue;
+    const entry = byRound.get(parsed.round) ?? {};
+    entry[parsed.phase] = completion;
+    byRound.set(parsed.round, entry);
+  }
+  return [...byRound.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([round, entry]) => {
+      const reviewJson = entry.review ? parsePayloadJson(entry.review.payload) : undefined;
+      const review = entry.review ? decodeReviewPayload(reviewJson) : Option.none();
+      const triage = entry.triage
+        ? decodeTriagePayload(parsePayloadJson(entry.triage.payload))
+        : Option.none();
+      const adjudicate = entry.adjudicate
+        ? decodeAdjudicatePayload(parsePayloadJson(entry.adjudicate.payload))
+        : Option.none();
+      return {
+        round,
+        review: Option.getOrNull(review),
+        // A recorded review phase whose payload will not parse is a broken
+        // reviewer, surfaced as such rather than silently dropped.
+        reviewMalformed: entry.review !== undefined && Option.isNone(review),
+        triage: Option.getOrNull(triage),
+        adjudicate: Option.getOrNull(adjudicate),
+      };
+    });
+}
+
+const SEVERITY_STYLES: Record<BoardReviewFinding["severity"], string> = {
+  critical: "border-destructive/40 bg-destructive/10 text-destructive-foreground",
+  improvement: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  nitpick: "border-border/60 bg-muted text-muted-foreground",
+};
+
+function ReviewFindingsSection({
+  completions,
+}: {
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+}) {
+  const rounds = groupReviewRounds(completions);
+  if (rounds.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-3 border-t border-border p-3.5">
+      <SectionHeading>Code review</SectionHeading>
+      {rounds.map((round) => {
+        const findings = round.review?.findings ?? [];
+        const blocking = findings.filter((f) => isBoardReviewBlockingSeverity(f.severity));
+        const dispositionsByFinding = new Map(
+          (round.triage?.dispositions ?? []).map((d) => [d.findingId, d]),
+        );
+        const verdictsByFinding = new Map(
+          (round.adjudicate?.verdicts ?? []).map((v) => [v.findingId, v]),
+        );
+        return (
+          <div key={round.round} className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] font-semibold text-foreground">Round {round.round}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {round.reviewMalformed
+                  ? "reviewer payload unreadable"
+                  : round.review === null
+                    ? "in progress"
+                    : blocking.length === 0
+                      ? "no blocking findings"
+                      : `${blocking.length} blocking`}
+              </span>
+            </div>
+            {findings.length === 0 ? null : (
+              <ul className="flex flex-col gap-1.5">
+                {findings.map((finding) => {
+                  const disposition = dispositionsByFinding.get(finding.id);
+                  const verdict = verdictsByFinding.get(finding.id);
+                  return (
+                    <li
+                      key={finding.id}
+                      className="rounded-md border border-border/50 px-2 py-1.5 text-[12px]"
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                            SEVERITY_STYLES[finding.severity],
+                          )}
+                        >
+                          {finding.severity}
+                        </span>
+                        <span className="font-medium text-foreground">{finding.title}</span>
+                        {finding.file !== null ? (
+                          <span className="text-[11px] text-muted-foreground">
+                            {finding.file}
+                            {finding.line !== null ? `:${finding.line}` : ""}
+                          </span>
+                        ) : null}
+                      </div>
+                      {finding.detail.trim().length > 0 ? (
+                        <p className="mt-1 text-[11.5px] leading-[1.4] text-muted-foreground">
+                          {finding.detail}
+                        </p>
+                      ) : null}
+                      {disposition !== undefined || verdict !== undefined ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                          {disposition !== undefined ? (
+                            <span className="rounded border border-border/60 px-1.5 py-0.5 text-muted-foreground">
+                              triage: {disposition.action}
+                              {disposition.note.trim().length > 0 ? ` — ${disposition.note}` : ""}
+                            </span>
+                          ) : null}
+                          {verdict !== undefined ? (
+                            <span className="rounded border border-border/60 px-1.5 py-0.5 text-muted-foreground">
+                              {verdict.verdict}
+                              {verdict.note.trim().length > 0 ? ` — ${verdict.note}` : ""}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -557,7 +796,7 @@ function PaneTabs({
 export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
-  const wide = boardCardHasThreadPane(card.stage);
+  const wide = boardCardHasThreadPane(props.stages, card.stage);
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
@@ -589,7 +828,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">{card.key}</span>
         <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
         <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground">
-          {BOARD_STAGE_LABELS[card.stage]}
+          {boardStageLabel(props.stages, card.stage)}
         </span>
         {archived ? (
           <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
@@ -664,17 +903,17 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardThreadPane
                 adoptableThreads={props.adoptableThreads}
-                canRestartPlanning={props.canRestartPlanning}
                 cardKey={card.key}
                 environmentId={props.environmentId}
                 maximised={props.maximised}
                 onCreateBlankThread={props.onCreateBlankThread}
                 onLinkThread={props.onLinkThread}
-                onRestartPlanning={props.onRestartPlanning}
+                onRestartStage={props.onRestartStage}
                 onSelectThread={setSelectedThreadId}
                 onToggleMaximised={props.onToggleMaximised}
                 onUnlinkThread={props.onUnlinkThread}
                 selectedThreadId={selectedThread}
+                stageRestart={props.stageRestart}
                 threadLinks={props.threadLinks}
               />
             </Suspense>
@@ -708,8 +947,13 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </div>
             <div className="flex flex-col gap-2 border-t border-border p-3.5">
               <SectionHeading>Stage</SectionHeading>
-              <StageLadder onMoveStage={props.onMoveStage} stage={card.stage} />
+              <StageLadder
+                onMoveStage={props.onMoveStage}
+                stage={card.stage}
+                stages={props.stages}
+              />
             </div>
+            <ReviewFindingsSection completions={props.detail.stepCompletions} />
             <InfoSection props={props} />
           </div>
         </div>
@@ -764,7 +1008,11 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               </div>
               <div className="flex flex-col gap-2 border-t border-border p-3.5">
                 <SectionHeading>Stage</SectionHeading>
-                <StageLadder onMoveStage={props.onMoveStage} stage={card.stage} />
+                <StageLadder
+                  onMoveStage={props.onMoveStage}
+                  stage={card.stage}
+                  stages={props.stages}
+                />
               </div>
               <InfoSection props={props} />
             </div>
@@ -777,7 +1025,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
 export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   const [maximised, setMaximised] = useState(false);
-  const wide = boardCardHasThreadPane(props.detail.card.stage);
+  const wide = boardCardHasThreadPane(props.stages, props.detail.card.stage);
   return (
     <Dialog
       open

@@ -1,12 +1,10 @@
 import {
   BoardCardId,
+  BoardStageId,
   PositiveInt,
   ProviderInstanceId,
   type BoardCardStepState,
   type BoardConcurrencySettings,
-  type BoardResolvedRecipe,
-  type BoardStep,
-  type BoardStepCompletion,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 
@@ -17,38 +15,26 @@ import {
   reconcileStepDecision,
   recoveryDecision,
   resolveBoardConcurrencyLimit,
-  selectNextStep,
   type BoardQueueCandidate,
+  type ComposeStepPromptStep,
 } from "./supervisor.ts";
 
-const step = (overrides: Partial<BoardStep> = {}): BoardStep => ({
-  id: "build",
-  label: "Build",
-  promptTemplate: "Implement the brief.",
+// The frozen run-row fields a spawn needs (t3o-15, D12) — the single step per
+// stage replaces the old multi-step recipe. `humanInLoop` false is an unattended
+// run, whose postamble carries the completion-contract / never-prose stance.
+const step = (overrides: Partial<ComposeStepPromptStep> = {}): ComposeStepPromptStep => ({
+  stepLabel: "Build",
   providerInstanceId: ProviderInstanceId.make("codex"),
-  model: "gpt-5.4",
-  timeoutMs: 1000,
+  prompt: "Implement the brief.",
   maxAttempts: 3,
+  humanInLoop: false,
   ...overrides,
-});
-
-const completion = (
-  stepId: string,
-  outcome: BoardStepCompletion["outcome"],
-): BoardStepCompletion => ({
-  cardId: "card-1" as BoardStepCompletion["cardId"],
-  stepId,
-  outcome,
-  summary: "done",
-  payload: null,
-  threadId: null,
-  completedAt: "2026-01-01T00:00:00.000Z",
 });
 
 describe("composeStepPrompt (D5 envelope)", () => {
   it("has preamble (card context), body (template) and postamble (completion contract)", () => {
     const prompt = composeStepPrompt({
-      card: { key: "T3-1", title: "Ship it", stage: "building" },
+      card: { key: "T3-1", title: "Ship it", stage: BoardStageId.make("building") },
       step: step(),
       attempt: 2,
     });
@@ -57,7 +43,7 @@ describe("composeStepPrompt (D5 envelope)", () => {
     assert.include(prompt, "Ship it");
     assert.include(prompt, "attempt 2 of 3");
     assert.include(prompt, "board_get_card_context");
-    // Body: the recipe's promptTemplate verbatim.
+    // Body: the frozen step prompt verbatim.
     assert.include(prompt, "Implement the brief.");
     // Postamble: the completion contract and the never-prose rule.
     assert.include(prompt, "board_complete_step");
@@ -66,13 +52,13 @@ describe("composeStepPrompt (D5 envelope)", () => {
 
   it("words the question mechanism per provider instance", () => {
     const claudePrompt = composeStepPrompt({
-      card: { key: "T3-1", title: "x", stage: "building" },
+      card: { key: "T3-1", title: "x", stage: BoardStageId.make("building") },
       step: step({ providerInstanceId: ProviderInstanceId.make("claude") }),
       attempt: 1,
     });
     assert.include(claudePrompt, "Claude Code question");
     const codexPrompt = composeStepPrompt({
-      card: { key: "T3-1", title: "x", stage: "building" },
+      card: { key: "T3-1", title: "x", stage: BoardStageId.make("building") },
       step: step({ providerInstanceId: ProviderInstanceId.make("codex") }),
       attempt: 1,
     });
@@ -81,63 +67,120 @@ describe("composeStepPrompt (D5 envelope)", () => {
   });
 });
 
-describe("selectNextStep (D4)", () => {
-  const recipe: BoardResolvedRecipe = {
-    stage: "building",
-    steps: [step({ id: "plan" }), step({ id: "build" })],
-  };
+// NOTE (t3o-15): the `selectNextStep (D4)` suite was deleted. Each stage now
+// runs exactly ONE step whose config is frozen onto the card's step-state row at
+// stage entry, so there is no multi-step recipe to pick a "next step" from —
+// `selectNextStep` and `BoardResolvedRecipe` no longer exist.
 
-  it("returns the first step with no successful completion", () => {
-    assert.strictEqual(selectNextStep(recipe, [])?.id, "plan");
-    assert.strictEqual(selectNextStep(recipe, [completion("plan", "succeeded")])?.id, "build");
-  });
+describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", () => {
+  // crit 5: recoveryDecision is pure — driven only by scalars (the stall
+  // counters, a progressedSinceLastNudge boolean, the invocation total and the
+  // ceiling), never git or a database. Every case here is a plain function call.
+  const decide = (input: {
+    readonly attempt?: number;
+    readonly stallCount: number;
+    readonly maxAttempts?: number;
+    readonly progressedSinceLastNudge?: boolean;
+    readonly stageEntryInvocations?: number;
+    readonly maxInvocationsPerStageEntry?: number;
+  }) =>
+    recoveryDecision({
+      stepState: {
+        attempt: input.attempt ?? input.stallCount + 1,
+        stallCount: input.stallCount,
+        maxAttempts: input.maxAttempts ?? 5,
+        stepLabel: "Build",
+      } satisfies Pick<BoardCardStepState, "attempt" | "stallCount" | "maxAttempts" | "stepLabel">,
+      progressedSinceLastNudge: input.progressedSinceLastNudge ?? false,
+      stageEntryInvocations: input.stageEntryInvocations ?? 0,
+      maxInvocationsPerStageEntry: input.maxInvocationsPerStageEntry ?? 20,
+      questionMechanism: "ask",
+    });
 
-  it("does not skip a step that failed or blocked — recovery/gating owns it", () => {
-    assert.strictEqual(selectNextStep(recipe, [completion("plan", "failed")])?.id, "plan");
-    assert.strictEqual(selectNextStep(recipe, [completion("plan", "blocked")])?.id, "plan");
-  });
-
-  it("returns null when every step has succeeded", () => {
-    assert.strictEqual(
-      selectNextStep(recipe, [completion("plan", "succeeded"), completion("build", "succeeded")]),
-      null,
-    );
-  });
-});
-
-describe("recoveryDecision (D13 escalation, bounded)", () => {
-  const base = (
-    attempt: number,
-  ): Pick<BoardCardStepState, "attempt" | "maxAttempts" | "stepLabel"> => ({
-    attempt,
-    maxAttempts: 3,
-    stepLabel: "Build",
-  });
-
-  it("resumes with a nudge within budget, adding an outstanding summary on later tries", () => {
-    const first = recoveryDecision({ stepState: base(1), questionMechanism: "ask" });
+  it("resumes with a nudge within budget, adding an outstanding summary on the third consecutive stall", () => {
+    const first = decide({ stallCount: 0 });
     assert.strictEqual(first.kind, "resume");
     if (first.kind === "resume") {
-      assert.strictEqual(first.attempt, 2);
+      assert.strictEqual(first.stallCount, 1);
       assert.notInclude(first.nudge, "outstanding");
     }
-    const second = recoveryDecision({ stepState: base(2), questionMechanism: "ask" });
-    assert.strictEqual(second.kind, "resume");
-    if (second.kind === "resume") {
-      assert.strictEqual(second.attempt, 3);
-      assert.include(second.nudge, "outstanding");
+    const third = decide({ stallCount: 2 });
+    assert.strictEqual(third.kind, "resume");
+    if (third.kind === "resume") {
+      assert.strictEqual(third.stallCount, 3);
+      assert.include(third.nudge, "outstanding");
     }
   });
 
-  it("escalates to the human when the attempt budget is exhausted, and never loops", () => {
-    const escalated = recoveryDecision({ stepState: base(3), questionMechanism: "ask" });
-    assert.strictEqual(escalated.kind, "escalate");
-    if (escalated.kind === "escalate") {
-      assert.strictEqual(escalated.attempt, 4);
-      assert.include(escalated.question, "retry");
-      assert.include(escalated.question, "switch");
-      assert.include(escalated.question, "manually");
+  it("crit 1: a progress signal between two stalls holds stallCount at 1, not 2, and does not escalate", () => {
+    // First stall: no progress → streak length 1.
+    const firstStall = decide({ stallCount: 0, progressedSinceLastNudge: false });
+    assert.strictEqual(firstStall.kind, "resume");
+    assert.strictEqual(firstStall.kind === "resume" ? firstStall.stallCount : -1, 1);
+    // A board_report_progress landed; the second stall resolves progressed=true,
+    // so the prior streak is forgotten and this is stall #1 of a new one — 1, not 2.
+    const secondStall = decide({ stallCount: 1, progressedSinceLastNudge: true });
+    assert.strictEqual(secondStall.kind, "resume");
+    assert.strictEqual(secondStall.kind === "resume" ? secondStall.stallCount : -1, 1);
+  });
+
+  it("crit 2: five consecutive stalls with no progress escalate on the fifth", () => {
+    // Four resume, the fifth escalates (maxAttempts 5 measured on stallCount).
+    for (let stallCount = 0; stallCount < 4; stallCount += 1) {
+      assert.strictEqual(decide({ stallCount }).kind, "resume");
     }
+    const fifth = decide({ stallCount: 4 });
+    assert.strictEqual(fifth.kind, "escalate");
+    if (fifth.kind === "escalate") {
+      assert.strictEqual(fifth.stallCount, 5);
+      assert.include(fifth.question, "5 times in a row");
+      assert.include(fifth.question, "retry");
+      assert.include(fifth.question, "switch");
+      assert.include(fifth.question, "manually");
+    }
+  });
+
+  it("crit 3: a progress signal resets a nearly-exhausted streak so it does not escalate", () => {
+    // Four stalls deep, but a commit/report landed since the last nudge: the
+    // streak resets, so the next stall is #1 again — resume, not escalate.
+    const reset = decide({ stallCount: 4, progressedSinceLastNudge: true });
+    assert.strictEqual(reset.kind, "resume");
+    assert.strictEqual(reset.kind === "resume" ? reset.stallCount : -1, 1);
+  });
+
+  it("crit 4: attempt keeps counting across stall-count resets", () => {
+    // A high cumulative attempt with a freshly-reset stall streak still resumes,
+    // and reports the growing attempt number for display.
+    const decision = decide({ attempt: 8, stallCount: 4, progressedSinceLastNudge: true });
+    assert.strictEqual(decision.kind, "resume");
+    assert.strictEqual(decision.kind === "resume" ? decision.attempt : -1, 9);
+  });
+
+  it("crit 11/13: crossing the per-stage-entry invocation ceiling stalls the stage even when no single step exhausted maxAttempts", () => {
+    // stallCount is nowhere near maxAttempts, but the stage entry's total
+    // invocations cross the ceiling — the runaway backstop escalates regardless.
+    // Generic over any stage's invocation count, so a t3o-16 review loop cannot
+    // exceed the ceiling silently.
+    const capped = decide({
+      stallCount: 0,
+      maxAttempts: 5,
+      stageEntryInvocations: 20,
+      maxInvocationsPerStageEntry: 20,
+    });
+    assert.strictEqual(capped.kind, "escalate");
+    if (capped.kind === "escalate") {
+      assert.include(capped.question, "21 agent invocations");
+      assert.include(capped.question, "20 allowed");
+    }
+    // One below the ceiling still resumes.
+    assert.strictEqual(
+      decide({
+        stallCount: 0,
+        stageEntryInvocations: 18,
+        maxInvocationsPerStageEntry: 20,
+      }).kind,
+      "resume",
+    );
   });
 });
 
@@ -206,7 +249,9 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
     cardId: BoardCardId.make("card"),
     stepId: "build",
     providerInstanceId: ProviderInstanceId.make("codex"),
-    stage: "building",
+    // Stage position in board order (t3o-15): Building is index 4, Code review 5
+    // in the seed stage list — higher is later, and later ranks first.
+    stageOrder: 4,
     started: false,
     orderKey: "m",
     ...overrides,
@@ -224,8 +269,8 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
 
   it("puts a later stage first (finishing beats starting)", () => {
     const ordered = orderBoardQueue([
-      candidate({ cardId: BoardCardId.make("building"), stage: "building", orderKey: "a" }),
-      candidate({ cardId: BoardCardId.make("review"), stage: "review", orderKey: "z" }),
+      candidate({ cardId: BoardCardId.make("building"), stageOrder: 4, orderKey: "a" }),
+      candidate({ cardId: BoardCardId.make("review"), stageOrder: 5, orderKey: "z" }),
     ]);
     // Even with a much larger orderKey, the review-stage card outranks the
     // building one — a nearly-done card is never starved by new work.
@@ -246,25 +291,25 @@ describe("orderBoardQueue (governor ordering, t3o-11 D11)", () => {
     const ordered = orderBoardQueue([
       candidate({
         cardId: BoardCardId.make("b-unstarted-late"),
-        stage: "building",
+        stageOrder: 4,
         started: false,
         orderKey: "z",
       }),
       candidate({
         cardId: BoardCardId.make("b-started"),
-        stage: "building",
+        stageOrder: 4,
         started: true,
         orderKey: "m",
       }),
       candidate({
         cardId: BoardCardId.make("b-unstarted-early"),
-        stage: "building",
+        stageOrder: 4,
         started: false,
         orderKey: "a",
       }),
       candidate({
         cardId: BoardCardId.make("review"),
-        stage: "review",
+        stageOrder: 5,
         started: false,
         orderKey: "z",
       }),

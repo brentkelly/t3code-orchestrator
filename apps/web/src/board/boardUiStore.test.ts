@@ -2,6 +2,7 @@
  * T3o board UI store (t3o-05): collapse defaults and persisted-state
  * sanitisation.
  */
+import { BOARD_SEED_STAGE_IDS } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -17,15 +18,19 @@ function resetStore() {
 }
 
 describe("isBoardColumnCollapsed", () => {
-  it("collapses Backlog by default and nothing else", () => {
-    expect(isBoardColumnCollapsed({}, "backlog")).toBe(true);
-    expect(isBoardColumnCollapsed({}, "sprint")).toBe(false);
-    expect(isBoardColumnCollapsed({}, "building")).toBe(false);
+  it("collapses the first column by default and nothing else", () => {
+    // The default is now the read-model first stage (t3o-15), not a hard-coded
+    // "backlog": the first stage collapses, every later one stays open.
+    expect(isBoardColumnCollapsed({}, BOARD_SEED_STAGE_IDS.backlog, true)).toBe(true);
+    expect(isBoardColumnCollapsed({}, BOARD_SEED_STAGE_IDS.sprint, false)).toBe(false);
+    expect(isBoardColumnCollapsed({}, BOARD_SEED_STAGE_IDS.building, false)).toBe(false);
   });
 
   it("lets an explicit override beat the default", () => {
-    expect(isBoardColumnCollapsed({ backlog: false }, "backlog")).toBe(false);
-    expect(isBoardColumnCollapsed({ done: true }, "done")).toBe(true);
+    expect(isBoardColumnCollapsed({ backlog: false }, BOARD_SEED_STAGE_IDS.backlog, true)).toBe(
+      false,
+    );
+    expect(isBoardColumnCollapsed({ done: true }, BOARD_SEED_STAGE_IDS.done, false)).toBe(true);
   });
 });
 

@@ -7,12 +7,12 @@
  */
 import {
   BoardCardId,
+  BoardStageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
   type BoardCardStepState,
-  type BoardResolvedRecipe,
   type BoardState,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -40,20 +40,9 @@ const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
 const cardId = BoardCardId.make("card-1");
 
-const recipe: BoardResolvedRecipe = {
-  stage: "building",
-  steps: [
-    {
-      id: "build",
-      label: "Build",
-      promptTemplate: "do it",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5.4",
-      timeoutMs: 1000,
-      maxAttempts: 3,
-    },
-  ],
-};
+// The single step id per stage is the stage id (t3o-15, D1): a card in Building
+// runs a step keyed "building", and its completion is keyed the same.
+const stepId = String(BoardStageId.make("building"));
 
 const card: BoardCard = {
   id: cardId,
@@ -61,7 +50,7 @@ const card: BoardCard = {
   cardNumber: 1,
   projectId,
   labels: [],
-  stage: "building",
+  stage: BoardStageId.make("building"),
   orderKey: "m",
   title: "Card",
   briefRef: null,
@@ -69,7 +58,7 @@ const card: BoardCard = {
   parentCardId: null,
   threadLinks: [],
   externalRef: null,
-  recipeSnapshot: recipe,
+  humanInLoop: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",
@@ -85,12 +74,22 @@ const card: BoardCard = {
   updatedAt: NOW,
 };
 
+// The frozen execution config (t3o-15, D12) the Building stage stamped onto the
+// run row at entry: an unattended build-mode step on codex.
 const runningState: BoardCardStepState = {
   cardId,
-  stepId: "build",
+  stepId,
   stepLabel: "Build",
   attempt: 1,
+  stallCount: 0,
+  lastNudgeAt: null,
+  prompt: "do it",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5.4",
+  mode: "build",
+  humanInLoop: false,
   maxAttempts: 3,
+  timeoutMs: 1000,
   threadId: ThreadId.make("thread-1"),
   status: "running",
   slotHeld: true,
@@ -224,19 +223,28 @@ it.effect("boot: a running step with a gone thread and no worktree does not burn
   }),
 );
 
-it.effect("boot: an attempt-exhausted step escalates to the human without driving the agent", () =>
-  Effect.gen(function* () {
-    const exhausted: BoardCardStepState = { ...runningState, attempt: 3, maxAttempts: 3 };
-    const types = yield* reconcileCommands({
-      board: { cards: [card], stepStates: [exhausted], nextCardNumberByProject: {} },
-      // no shell → thread gone, but escalation must not respawn/nudge it
-    });
-    // D13 gate: a human-facing question is recorded, the step is parked...
-    assert.include(types, "board.card.request-input");
-    assert.include(types, "board.card.recover-step");
-    // ...and the agent is NOT driven (no turn), so recovery never loops.
-    assert.notInclude(types, "thread.turn.start");
-  }),
+it.effect(
+  "boot: a stall-exhausted step escalates to the human without driving the agent (t3o-17)",
+  () =>
+    Effect.gen(function* () {
+      // Consecutive stalls at the ceiling (stallCount 3 = maxAttempts 3): the next
+      // recovery gives up rather than retrying.
+      const exhausted: BoardCardStepState = {
+        ...runningState,
+        attempt: 3,
+        maxAttempts: 3,
+        stallCount: 3,
+      };
+      const types = yield* reconcileCommands({
+        board: { cards: [card], stepStates: [exhausted], nextCardNumberByProject: {} },
+        // no shell → thread gone, but escalation must not respawn/nudge it
+      });
+      // D3 gate: a human-facing question is recorded, the step is parked stalled...
+      assert.include(types, "board.card.request-input");
+      assert.include(types, "board.card.recover-step");
+      // ...and the agent is NOT driven (no turn), so recovery never loops.
+      assert.notInclude(types, "thread.turn.start");
+    }),
 );
 
 it.effect("boot: a step that completed while the server was down is settled and advanced", () =>
@@ -248,7 +256,7 @@ it.effect("boot: a step that completed while the server was down is settled and 
         stepCompletions: [
           {
             cardId,
-            stepId: "build",
+            stepId,
             outcome: "succeeded",
             summary: "done",
             payload: null,

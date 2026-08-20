@@ -12,6 +12,7 @@
 import {
   BoardCardId,
   boardPlanId,
+  BoardStageId,
   CommandId,
   EnvironmentId,
   ProjectId,
@@ -163,6 +164,24 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   it.effect("board_complete_step twice produces exactly one completion", () =>
     Effect.gen(function* () {
       yield* seed();
+      // Completions are validated against the card's LIVE step — select one,
+      // as the reactor would, before the agent reports against it.
+      const engine = yield* OrchestrationEngineService;
+      yield* engine.dispatch({
+        type: "board.card.select-step",
+        commandId: CommandId.make("cmd-select-step"),
+        cardId,
+        stepId: "build",
+        stepLabel: "Build",
+        prompt: "",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+        mode: "plan",
+        humanInLoop: false,
+        maxAttempts: 3,
+        timeoutMs: 60_000,
+        createdAt: t0,
+      });
       const first = yield* boardHandlers
         .board_complete_step({ stepId: "build", outcome: "succeeded", summary: "Built" })
         .pipe(withScope(linkedThread));
@@ -235,7 +254,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
           projectId,
           title: "Agent-made card",
           brief: "Do the thing",
-          stage: "sprint",
+          stage: BoardStageId.make("sprint"),
           labels: ["feature"],
         })
         .pipe(withScope(orphanThread));
@@ -244,7 +263,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       // and human-created cards share one key namespace (D14).
       assert.strictEqual(created.key, "PA-2");
       const listed = yield* boardHandlers
-        .board_list_cards({ stage: "sprint" })
+        .board_list_cards({ stage: BoardStageId.make("sprint") })
         .pipe(withScope(orphanThread));
       assert.deepStrictEqual(
         listed.cards.map((card) => card.cardId),
@@ -280,16 +299,97 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  it.effect("board_create_card cannot create into Building (D18)", () =>
+  it.effect("board_create_card can create directly into any stage, Building included (D10)", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // BOARD_CREATABLE_STAGES is deleted (D10): a card may be created into any
+      // stage, so a create straight into Building succeeds. The auto-execute
+      // warning is a create-dialog concern (AC16), not a handler-level refusal.
+      const created = yield* boardHandlers
+        .board_create_card({
+          projectId,
+          title: "Straight to build",
+          stage: BoardStageId.make("building"),
+        })
+        .pipe(withScope(orphanThread));
+      assert.isDefined(created.cardId);
+      const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(orphanThread));
+      const card = listed.cards.find((candidate) => candidate.cardId === created.cardId);
+      assert.strictEqual(card?.stage, "building");
+    }),
+  );
+
+  it.effect("board_move_card lands the moved card at the bottom of the target column", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // A resident card in the target column, so "bottom" is observable.
+      const resident = yield* boardHandlers
+        .board_create_card({ projectId, title: "Resident", stage: BoardStageId.make("sprint") })
+        .pipe(withScope(orphanThread));
+      const moved = yield* boardHandlers
+        .board_move_card({ cardId, toStage: BoardStageId.make("sprint") })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual(moved.stage, "sprint");
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const model = yield* snapshotQuery.getCommandReadModel();
+      const cards = model.board?.cards ?? [];
+      const movedCard = cards.find((candidate) => candidate.id === cardId);
+      const residentCard = cards.find((candidate) => candidate.id === resident.cardId);
+      assert.strictEqual(movedCard?.stage, "sprint");
+      // Bottom of the target column: the computed key sorts after the resident's.
+      assert.isDefined(movedCard);
+      assert.isDefined(residentCard);
+      assert.isTrue(movedCard!.orderKey > residentCard!.orderKey);
+    }),
+  );
+
+  it.effect("board_move_card on a missing card is rejected actionably, not given a key", () =>
     Effect.gen(function* () {
       yield* seed();
       const failure = yield* Effect.flip(
         boardHandlers
-          .board_create_card({ projectId, title: "Sneaky", stage: "building" })
+          .board_move_card({
+            cardId: BoardCardId.make("card-ghost"),
+            toStage: BoardStageId.make("sprint"),
+          })
           .pipe(withScope(orphanThread)),
       );
       assert.strictEqual(failure.code, "rejected");
-      assert.include(failure.message, "creation stage");
+      assert.include(failure.message, "card-ghost");
+    }),
+  );
+
+  it.effect("board_update_card resolves label names on update and rejects unknown ones", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* boardHandlers
+        .board_update_card({ cardId, title: "Renamed", brief: "New brief", labels: ["feature"] })
+        .pipe(withScope(orphanThread));
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(linkedThread));
+      assert.strictEqual(context.card.title, "Renamed");
+      assert.strictEqual(context.brief, "New brief");
+      assert.strictEqual(context.card.labels.length, 1);
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId, labels: ["nonexistent-label"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(failure.code, "unknown-label");
+    }),
+  );
+
+  it.effect("board_request_input records an input-requested activity on the caller's card", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const requested = yield* boardHandlers
+        .board_request_input({ question: "Which database?" })
+        .pipe(withScope(linkedThread));
+      assert.isDefined(requested.activityId);
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(linkedThread));
+      const entry = context.activity.find((candidate) => candidate.kind === "input-requested");
+      assert.isDefined(entry);
+      assert.strictEqual(entry?.body, "Which database?");
+      assert.strictEqual(entry?.threadId, linkedThread);
     }),
   );
 
@@ -310,7 +410,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       // linkedThread belongs to project-a; omitting projectId must resolve to
       // it from the thread, not require the agent to know the id.
       const created = yield* boardHandlers
-        .board_create_card({ title: "Thread-default card", stage: "sprint" })
+        .board_create_card({ title: "Thread-default card", stage: BoardStageId.make("sprint") })
         .pipe(withScope(linkedThread));
       const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(linkedThread));
       const card = listed.cards.find((candidate) => candidate.cardId === created.cardId);

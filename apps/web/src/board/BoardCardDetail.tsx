@@ -11,34 +11,43 @@
 import {
   BoardCardId,
   BoardLabelId,
-  MessageId,
+  BOARD_SEED_STAGE_IDS,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   ThreadId,
   activeBoardCardThreadId,
   areBoardStagesAdjacent,
+  boardStageWithRole,
   deriveBoardCardThreadState,
-  resolveBoardPlanningStep,
+  resolveBoardStageExecution,
+  type BoardState,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { useCallback, useMemo, useState } from "react";
 
 import { Dialog } from "../components/ui/dialog";
 import { randomUUID } from "../lib/utils";
+import { resolveAppModelSelectionState } from "../modelSelection";
 import { boardEnvironment } from "../state/board";
 import { primaryServerProvidersAtom } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
-import { useAtomCommand } from "../state/use-atom-command";
 import { usePrimarySettings } from "../hooks/useSettings";
-import { resolveDefaultProviderModelSelection } from "../providerInstances";
+import { useAtomCommand } from "../state/use-atom-command";
 import {
-  blankThreadCreateInput,
-  canRestartBoardPlanning,
-  planningThreadTurnInput,
-} from "./boardCardThreadSpawn";
+  isBoardCardRunInFlight,
+  resolveBoardThreadStageRestart,
+  runBlankThreadCreation,
+  type BlankThreadDispatch,
+} from "./boardCardThreadMenu";
+import { boardStageLabel } from "./boardStages";
 import { indexBoardLabels } from "./labelColour";
 import {
   BoardCardDetailPopup,
@@ -80,6 +89,7 @@ export function BoardCardDetail({
 }) {
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
+  const stages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
 
   const updateCard = useAtomCommand(boardEnvironment.updateCard);
@@ -88,19 +98,17 @@ export function BoardCardDetail({
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
   const linkThread = useAtomCommand(boardEnvironment.linkThread);
   const unlinkThread = useAtomCommand(boardEnvironment.unlinkThread);
+  // Restart and blank-thread creation report their own failures (D4: log and
+  // stop — the menu is its own recovery), so they opt out of the shared toast.
+  const startStageThread = useAtomCommand(boardEnvironment.startStageThread, {
+    reportFailure: false,
+  });
+  const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const createLabel = useAtomCommand(boardEnvironment.createLabel);
   const updateLabel = useAtomCommand(boardEnvironment.updateLabel);
   const deleteLabel = useAtomCommand(boardEnvironment.deleteLabel);
   const undeleteLabel = useAtomCommand(boardEnvironment.undeleteLabel);
-  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn);
-  const createThread = useAtomCommand(threadEnvironment.create);
-
-  // Read from CURRENT settings, never from the card's `recipeSnapshot` (t3o-14,
-  // D1: planning snapshots nothing), so restarting planning always uses the
-  // prompt as it stands in Settings → Board → Pipeline right now.
-  const boardSettings = usePrimarySettings((settings) => settings.board);
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const planningStep = useMemo(() => resolveBoardPlanningStep(boardSettings), [boardSettings]);
 
   /** The settled result of any board command atom — a tagged Success/Failure
       the dispatch helpers understand. */
@@ -110,6 +118,16 @@ export function BoardCardDetail({
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
   const labelsById = useMemo(() => indexBoardLabels(catalogue), [catalogue]);
+  const stageState = useMemo<BoardState>(
+    () => ({ cards: [], stages, nextCardNumberByProject: {} }),
+    [stages],
+  );
+  const boardSettings = usePrimarySettings((settings) => settings.board);
+  // Full settings + providers resolve the default model for a blank thread — the
+  // same resolution a Threads-view "new thread" uses, so a card-started blank
+  // thread lands on the app's default model, not a board-specific one (D3).
+  const allSettings = usePrimarySettings();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
 
   /** Report a rejected command inline (the decider names cycles, missing
       dependencies, the label cap); clear it once the next command succeeds. */
@@ -138,7 +156,7 @@ export function BoardCardDetail({
         cardId: dependencyId,
         key: resolved?.key ?? dependencyId,
         title: resolved?.title ?? null,
-        stage: resolved?.stage ?? "backlog",
+        stage: resolved?.stage ?? BOARD_SEED_STAGE_IDS.backlog,
         known: resolved !== undefined,
         archived: resolved !== undefined && resolved.archivedAt !== null,
       };
@@ -196,7 +214,7 @@ export function BoardCardDetail({
     return (
       <LoadingModal
         onClose={onClose}
-        wide={shell !== undefined && boardCardHasThreadPane(shell.stage)}
+        wide={shell !== undefined && boardCardHasThreadPane(stages, shell.stage)}
       />
     );
   }
@@ -210,100 +228,101 @@ export function BoardCardDetail({
       ? null
       : (snapshot?.threads.find((thread) => thread.id === activeThreadId)?.branch ?? null);
 
-  /** Link a freshly created thread to this card. The thread is already running
-      by the time this fires, so a failed link leaves an orphan the supervisor
-      and `board_get_card_context` cannot resolve to a card — say exactly that,
-      rather than the generic command-rejected message `runCommand` shows, so
-      the human can adopt or clean it up. The `.catch` covers the promise
-      rejecting outright (not resolving to a `Failure` tag). */
-  const linkNewThread = (threadId: ThreadId, role: string) => {
-    void linkThread({ environmentId, input: { cardId: card.id, threadId, role } })
-      .then((linked) => {
-        if (linked._tag === "Failure") {
-          if (!isAtomCommandInterrupted(linked)) {
-            setFeedback(
-              `The thread started but could not be linked to this card, so it may not resolve its card context — ${describeBoardCommandFailure(linked)}`,
-            );
-          }
-        } else {
-          setFeedback(null);
-        }
-      })
-      .catch(() => {
-        setFeedback("The thread started but linking it to this card failed unexpectedly.");
-      });
-  };
+  // Per-card human-in-the-loop stance on the Build role (D6): shown only when
+  // the card is on the build stage. The default flips on whether the card has a
+  // plan; an explicit override wins over it.
+  const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
+  const humanInLoop =
+    buildStageId !== null && card.stage === buildStageId
+      ? (() => {
+          const exec = resolveBoardStageExecution(boardSettings, buildStageId);
+          const fallback = detail.hasPlan ? exec.humanInLoopWithPlan : exec.humanInLoopWithoutPlan;
+          return { value: card.humanInLoop ?? fallback, explicit: card.humanInLoop !== null };
+        })()
+      : null;
 
-  /** Report a failed thread command (a different result type from the board
-      commands `runCommand` handles) without swallowing it. */
-  const reportThreadFailure = (result: { readonly _tag: string }) => {
-    if (!isAtomCommandInterrupted(result as never)) {
-      setFeedback(describeBoardCommandFailure(result));
-    }
-  };
+  // The `+` menu's restart affordance (t3o-14, D1): shown only when the card's
+  // current stage auto-executes, and disabled while a supervised run is in
+  // flight for the card — restarting then would leave two threads owning the
+  // same step. Both facts are derived by pure helpers (asserted in
+  // `boardCardThreadMenu.test.ts`); the in-flight proxy reads the card shell's
+  // live status since the step-state read model is server-only.
+  const cardShell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+  const stageRestart = resolveBoardThreadStageRestart({
+    autoExecute: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
+    stageLabel: boardStageLabel(stages, card.stage),
+    runInFlight: isBoardCardRunInFlight(cardShell),
+  });
 
-  // "+ → New thread — restart planning": the same thread the supervisor spawns
-  // on entry to Planning, from the CURRENT settings prompt (t3o-14, D8). Unlike
-  // the automatic spawn it does not check for an existing thread — starting a
-  // second planning pass on a card that already carries one is the point of it.
-  const onRestartPlanning = () => {
-    if (planningStep === null) return;
-    const threadId = ThreadId.make(`thread-${randomUUID()}`);
-    void startThreadTurn({
-      environmentId,
-      input: planningThreadTurnInput({
-        card,
-        step: planningStep,
-        threadId,
-        messageId: MessageId.make(`msg-${randomUUID()}`),
-        createdAt: new Date().toISOString(),
-      }),
-    }).then((started) => {
-      if (started._tag === "Failure") {
-        reportThreadFailure(started);
-        return;
+  // Restart is a server command (D2): the reactor runs the stage's configured
+  // prompt through the same envelope the automatic trigger uses, so the two
+  // entry points cannot drift. Failure logs and stops (D4).
+  const restartStage = () => {
+    void startStageThread({ environmentId, input: { cardId: card.id } }).then((result) => {
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        console.warn("Could not start a stage thread for the card.", result);
       }
-      linkNewThread(threadId, planningStep.id);
     });
   };
 
-  // "+ → New thread": an empty thread, already linked, for you to type into.
-  // The agent still resolves the card through `board_get_card_context` — the
-  // link is what makes that work, not the first message.
-  const onCreateBlankThread = () => {
-    const project = snapshot?.projects.find((entry) => entry.id === card.projectId) ?? null;
-    const modelSelection =
-      resolveDefaultProviderModelSelection(serverProviders, project?.defaultModelSelection) ??
-      (planningStep === null
-        ? null
-        : { instanceId: planningStep.providerInstanceId, model: planningStep.model });
-    if (modelSelection === null) {
-      setFeedback("No provider instance is configured, so a thread cannot be started.");
-      return;
-    }
-    const threadId = ThreadId.make(`thread-${randomUUID()}`);
-    void createThread({
-      environmentId,
-      input: blankThreadCreateInput({
-        card,
-        threadId,
-        modelSelection,
-        createdAt: new Date().toISOString(),
-      }),
-    }).then((created) => {
-      if (created._tag === "Failure") {
-        reportThreadFailure(created);
-        return;
-      }
-      linkNewThread(threadId, "linked");
+  // "New blank thread" (D3): a real server thread with no first turn, linked so
+  // its agent resolves the card through `board_get_card_context`. Returns the id
+  // so the pane can select it (opening its composer). Failure logs and stops.
+  const createBlankThread = async (): Promise<ThreadId | null> => {
+    const threadId = ThreadId.make(randomUUID());
+    // Flatten an atom-command result to a dispatch outcome: `step` drives the
+    // orchestrator (a settled failure is definite; an interrupted one has an
+    // unknown server outcome), and the raw result rides along as `detail` so a
+    // definite-failure log keeps its error payload.
+    const dispatch = (result: AtomCommandResult<unknown, unknown>): BlankThreadDispatch => ({
+      step:
+        result._tag !== "Failure"
+          ? "ok"
+          : isAtomCommandInterrupted(result)
+            ? "interrupted"
+            : "failed",
+      detail: result,
     });
+    const ok = await runBlankThreadCreation({
+      createThread: async () =>
+        dispatch(
+          await createThread({
+            environmentId,
+            input: {
+              threadId,
+              projectId: card.projectId,
+              title: `${card.key} · Thread`,
+              modelSelection: resolveAppModelSelectionState(allSettings, serverProviders),
+              runtimeMode: DEFAULT_RUNTIME_MODE,
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              branch: null,
+              worktreePath: null,
+            },
+          }),
+        ),
+      linkThread: async () =>
+        dispatch(
+          await linkThread({ environmentId, input: { cardId: card.id, threadId, role: "linked" } }),
+        ),
+      rollbackThread: async () =>
+        dispatch(await deleteThread({ environmentId, input: { threadId } })),
+      warn: (message, detail) => console.warn(message, detail),
+    });
+    return ok ? threadId : null;
   };
 
   return (
     <BoardCardDetailView
       adoptableThreads={adoptableThreads}
+      stageRestart={stageRestart}
+      onRestartStage={restartStage}
+      onCreateBlankThread={createBlankThread}
       branch={branch}
-      canRestartPlanning={canRestartBoardPlanning(card.stage, planningStep)}
+      humanInLoop={humanInLoop}
+      onSetHumanInLoop={(value) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, humanInLoop: value } }))
+      }
+      stages={stages}
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}
@@ -328,7 +347,6 @@ export function BoardCardDetail({
         )
       }
       onClose={onClose}
-      onCreateBlankThread={onCreateBlankThread}
       onCreateLabel={(name) => {
         // Create the label, then tag this card with it in one gesture — a
         // client-generated id lets the tag reference it without a round trip,
@@ -361,7 +379,9 @@ export function BoardCardDetail({
               cardId: card.id,
               toStage,
               orderKey: boardColumnAppendOrderKey(targetColumn),
-              ...(areBoardStagesAdjacent(card.stage, toStage) ? {} : { override: true }),
+              ...(areBoardStagesAdjacent(stageState, card.stage, toStage)
+                ? {}
+                : { override: true }),
             },
           }),
         );
@@ -369,7 +389,6 @@ export function BoardCardDetail({
       onRecolourLabel={(labelId, colour) =>
         runCommand(updateLabel({ environmentId, input: { labelId, colour } }))
       }
-      onRestartPlanning={onRestartPlanning}
       onRemoveDependency={(dependencyId) =>
         runCommand(
           updateCard({

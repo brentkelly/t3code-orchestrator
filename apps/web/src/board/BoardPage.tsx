@@ -10,11 +10,14 @@
  */
 import {
   BoardCardId,
-  BOARD_STAGES,
+  BOARD_SEED_STAGES,
   areBoardStagesAdjacent,
+  boardStageWithRole,
   resolveBoardProjectAccent,
   type BoardCardShell,
-  type BoardStage,
+  type BoardStageDefinition,
+  type BoardStageId,
+  type BoardState,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -30,7 +33,7 @@ import {
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { getRouteApi } from "@tanstack/react-router";
-import { ArchiveIcon, PlusIcon } from "lucide-react";
+import { ArchiveIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
@@ -65,19 +68,26 @@ import { projectAccent } from "./projectAccent";
 const routeApi = getRouteApi("/board");
 
 const EMPTY_COLUMNS: BoardStageColumns = mergeBoardStageColumns([]);
+const EMPTY_CARDS: ReadonlyArray<BoardCardShell> = [];
 
 const ALL_PROJECTS = "__all__";
 
+/** A `BoardState` view over a bare ordered stage list, so the read-model stage
+    helpers (`areBoardStagesAdjacent`, `boardStageWithRole`, …) apply. */
+function stageStateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
+  return { cards: [], stages, nextCardNumberByProject: {} };
+}
+
 interface FoundCard {
-  readonly stage: BoardStage;
+  readonly stage: BoardStageId;
   readonly card: BoardCardShell;
 }
 
 function findBoardCard(columns: BoardStageColumns, cardId: string | null): FoundCard | null {
   if (cardId === null) return null;
-  for (const stage of BOARD_STAGES) {
-    const card = columns[stage].find((existing) => existing.cardId === cardId);
-    if (card !== undefined) return { stage, card };
+  for (const [stage, cards] of Object.entries(columns)) {
+    const card = cards.find((existing) => existing.cardId === cardId);
+    if (card !== undefined) return { stage: stage as BoardStageId, card };
   }
   return null;
 }
@@ -88,7 +98,7 @@ interface BoardDrag {
 }
 
 interface BoardDragOver {
-  readonly stage: BoardStage;
+  readonly stage: BoardStageId;
   readonly index: number;
 }
 
@@ -158,6 +168,14 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   const collapsedByStage = useBoardUiStore((state) => state.collapsedByStage);
   const setColumnCollapsed = useBoardUiStore((state) => state.setColumnCollapsed);
 
+  // The user-defined stage list drives column order and labels (D13); falls
+  // back to the compiled seeds until the first shell snapshot arrives.
+  const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+  const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
+  const stageState = useMemo(() => stageStateOf(orderedStages), [orderedStages]);
+  const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
+  const firstStageId = orderedStages[0]?.stageId ?? null;
+
   // Board settings (t3o-07): the per-project key prefix used when creating a
   // card, and the configured accent used to colour a project's cards. Read
   // once here and threaded down, rather than subscribed per card.
@@ -203,7 +221,31 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     [liveColumns, placements],
   );
 
-  const queueSlots = useMemo(() => boardBuildingQueueInfo(columns.building), [columns.building]);
+  const buildColumn = buildStageId === null ? EMPTY_CARDS : (columns[buildStageId] ?? EMPTY_CARDS);
+  const queueSlots = useMemo(() => boardBuildingQueueInfo(buildColumn), [buildColumn]);
+
+  // Stalled cards (t3o-17, D3): the "find every stalled card" affordance. Count
+  // them across every column, and when the `stalled` filter is on, show only
+  // the cards recovery gave up on — so a human never has to open forty cards to
+  // find the one that needs rescuing.
+  const showStalledOnly = search.stalled === true;
+  const stalledCount = useMemo(
+    () =>
+      Object.values(columns).reduce(
+        (total, cards) => total + cards.filter((card) => card.stalled).length,
+        0,
+      ),
+    [columns],
+  );
+  const visibleColumns = useMemo(() => {
+    if (!showStalledOnly) return columns;
+    return Object.fromEntries(
+      Object.entries(columns).map(([stageId, cards]) => [
+        stageId,
+        cards.filter((card) => card.stalled),
+      ]),
+    ) as typeof columns;
+  }, [columns, showStalledOnly]);
 
   // ── Drag (native HTML5, the prototype's model) ──────────────────────
   // dnd-kit's sortable transforms were incompatible with the virtualised
@@ -226,11 +268,13 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   // placement lands first, then the move/reorder commands, with rejection
   // rollback and the Building queue toast. Shared by drop and (future) keyboard.
   const dispatchDrop = useCallback(
-    (targetStage: BoardStage, orderedIds: ReadonlyArray<string>, source: FoundCard) => {
+    (targetStage: BoardStageId, orderedIds: ReadonlyArray<string>, source: FoundCard) => {
       const cardId = source.card.cardId as string;
       const isMove = targetStage !== source.stage;
       if (!isMove) {
-        const currentIds = columns[targetStage].map((card) => card.cardId as string);
+        const currentIds = (columns[targetStage] ?? EMPTY_CARDS).map(
+          (card) => card.cardId as string,
+        );
         if (
           orderedIds.length === currentIds.length &&
           orderedIds.every((id, index) => id === currentIds[index])
@@ -240,7 +284,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
       }
 
       const keysByCardId = new Map<string, string>(
-        columns[targetStage].map((card) => [card.cardId as string, card.orderKey]),
+        (columns[targetStage] ?? EMPTY_CARDS).map((card) => [card.cardId as string, card.orderKey]),
       );
       keysByCardId.set(cardId, source.card.orderKey);
       const assignments = planBoardCardReorder({
@@ -273,7 +317,9 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
                   orderKey: assignment.orderKey,
                   // A drag may cross several stages; override forces the
                   // non-adjacent transition (never the dependency gate).
-                  ...(areBoardStagesAdjacent(source.stage, targetStage) ? {} : { override: true }),
+                  ...(areBoardStagesAdjacent(stageState, source.stage, targetStage)
+                    ? {}
+                    : { override: true }),
                 },
               })
             : reorderCard({
@@ -310,10 +356,11 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           // this stays silent until t3o-11 populates the queue.
           const movedAssignment = assignments.find((next) => next.cardId === cardId);
           if (movedAssignment === undefined) return;
+          const projected = applyBoardCardPlacements(liveColumns, [
+            { cardId, stage: targetStage, orderKey: movedAssignment.orderKey },
+          ]);
           const slot = boardBuildingQueueInfo(
-            applyBoardCardPlacements(liveColumns, [
-              { cardId, stage: targetStage, orderKey: movedAssignment.orderKey },
-            ]).building,
+            buildStageId === null ? EMPTY_CARDS : (projected[buildStageId] ?? EMPTY_CARDS),
           ).get(cardId);
           if (slot !== undefined) {
             toastManager.add({
@@ -333,21 +380,61 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   );
 
   // Turns a target stage + raw insertion index into the settled card order.
-  // The index is in "full column" coordinates (the dragged card still counts);
-  // convert it to a slot in the list without that card, matching the prototype.
+  // The index is measured against the RENDERED cards — `visibleColumns`, which
+  // the stalled filter may have thinned — so it is resolved to an anchor card
+  // in that same rendered list first, then mapped into the full column. A drop
+  // computed in filtered coordinates but spliced into the full list would
+  // persist a wrong order server-side, for every client.
   const commitDrop = useCallback(
-    (targetStage: BoardStage, insertIndex: number, cardId: string) => {
+    (targetStage: BoardStageId, insertIndex: number, cardId: string) => {
       const source = findBoardCard(columns, cardId);
       if (source === null) return;
-      const ids = columns[targetStage].map((card) => card.cardId as string);
-      const own = ids.indexOf(cardId);
+      const rendered = (visibleColumns[targetStage] ?? EMPTY_CARDS).map(
+        (card) => card.cardId as string,
+      );
+      // The rendered index still counts the dragged card; convert to a slot in
+      // the rendered list without it, matching the prototype.
+      const renderedOwn = rendered.indexOf(cardId);
+      const renderedRest = rendered.filter((id) => id !== cardId);
+      let renderedIndex = Math.max(0, Math.min(rendered.length, insertIndex));
+      if (renderedOwn >= 0 && renderedIndex > renderedOwn) renderedIndex -= 1;
+      // The visible card the drop lands BEFORE anchors the position; past the
+      // last visible card appends to the end of the full column.
+      const anchor = renderedRest[renderedIndex];
+      const ids = (columns[targetStage] ?? EMPTY_CARDS).map((card) => card.cardId as string);
       const list = ids.filter((id) => id !== cardId);
-      let index = Math.max(0, Math.min(ids.length, insertIndex));
-      if (own >= 0 && index > own) index -= 1;
+      const index = anchor === undefined ? list.length : Math.max(0, list.indexOf(anchor));
       list.splice(index, 0, cardId);
       dispatchDrop(targetStage, list, source);
     },
-    [columns, dispatchDrop],
+    [columns, visibleColumns, dispatchDrop],
+  );
+
+  // Keyboard reorder (Ctrl/Cmd+ArrowUp/Down on a focused card): the pointer
+  // drag's keyboard analogue. Moves relative to the RENDERED (possibly
+  // stalled-filtered) neighbour, anchored into the full column exactly like
+  // commitDrop, and commits through the same drop path.
+  const handleCardReorder = useCallback(
+    (card: BoardCardShell, direction: -1 | 1) => {
+      const source = findBoardCard(columns, card.cardId);
+      if (source === null) return;
+      const rendered = (visibleColumns[source.stage] ?? EMPTY_CARDS).map(
+        (candidate) => candidate.cardId as string,
+      );
+      const renderedIndex = rendered.indexOf(card.cardId);
+      const renderedTarget = renderedIndex + direction;
+      if (renderedIndex < 0 || renderedTarget < 0 || renderedTarget >= rendered.length) return;
+      const anchor = rendered[renderedTarget]!;
+      const ids = (columns[source.stage] ?? EMPTY_CARDS).map(
+        (candidate) => candidate.cardId as string,
+      );
+      const list = ids.filter((id) => id !== card.cardId);
+      const anchorIndex = list.indexOf(anchor);
+      if (anchorIndex < 0) return;
+      list.splice(direction > 0 ? anchorIndex + 1 : anchorIndex, 0, card.cardId);
+      dispatchDrop(source.stage, list, source);
+    },
+    [columns, visibleColumns, dispatchDrop],
   );
 
   const handleCardDragStart = useCallback(
@@ -374,7 +461,9 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
 
       const source = findBoardCard(columns, card.cardId);
       const startIndex =
-        source === null ? 0 : columns[source.stage].findIndex((c) => c.cardId === card.cardId);
+        source === null
+          ? 0
+          : (columns[source.stage] ?? EMPTY_CARDS).findIndex((c) => c.cardId === card.cardId);
       const next: BoardDrag = { cardId: card.cardId, height: Math.round(rect.height) };
       dragRef.current = next;
       setDrag(next);
@@ -390,7 +479,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     setDragOver(null);
   }, [clearGhost]);
 
-  const handleColumnDragOver = useCallback((stage: BoardStage, event: DragEvent<HTMLElement>) => {
+  const handleColumnDragOver = useCallback((stage: BoardStageId, event: DragEvent<HTMLElement>) => {
     if (dragRef.current === null) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
@@ -403,7 +492,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   }, []);
 
   const handleColumnDrop = useCallback(
-    (stage: BoardStage, event: DragEvent<HTMLElement>) => {
+    (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
       event.preventDefault();
       const active = dragRef.current;
       if (active === null) {
@@ -451,7 +540,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     const found = findBoardCard(columns, cardId);
     if (found === null) return;
     handledDeepLinkRef.current = cardId;
-    if (isBoardColumnCollapsed(collapsedByStage, found.stage)) {
+    if (isBoardColumnCollapsed(collapsedByStage, found.stage, found.stage === firstStageId)) {
       setColumnCollapsed(found.stage, false);
     }
     // Two frames: the first lets a just-expanded column mount its list.
@@ -469,8 +558,8 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   // (t3o-06). The dialog owns creation (title, brief, labels, project, stage
   // and initial dependencies land in one atomic create); this only tracks
   // which stage to prefill. Absent means closed.
-  const [createStage, setCreateStage] = useState<BoardStage | null>(null);
-  const openCreate = useCallback((stage: BoardStage) => setCreateStage(stage), []);
+  const [createStage, setCreateStage] = useState<BoardStageId | null>(null);
+  const openCreate = useCallback((stage: BoardStageId) => setCreateStage(stage), []);
 
   // ── Archive (t3o-13, D7) ────────────────────────────────────────────
   // Archived cards are off the live shell by design, so they need a place to
@@ -579,12 +668,30 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           </div>
         ) : null}
         <span className="flex-1" />
+        {showStalledOnly || stalledCount > 0 ? (
+          <Button
+            onClick={() =>
+              void navigate({
+                search: (previous) => {
+                  const { stalled: _stalled, ...rest } = previous;
+                  return showStalledOnly ? rest : { ...rest, stalled: true };
+                },
+              })
+            }
+            size="xs"
+            variant={showStalledOnly ? "secondary" : "ghost"}
+            title="Show only stalled cards — recovery gave up and a human is needed"
+          >
+            <TriangleAlertIcon />
+            {showStalledOnly ? "Stalled only" : `Stalled ${stalledCount}`}
+          </Button>
+        ) : null}
         <Button onClick={() => setArchiveOpen(true)} size="xs" variant="ghost">
           <ArchiveIcon />
           Archived
         </Button>
-        {projects.length > 0 ? (
-          <Button onClick={() => openCreate("backlog")} size="xs" variant="secondary">
+        {projects.length > 0 && firstStageId !== null ? (
+          <Button onClick={() => openCreate(firstStageId)} size="xs" variant="secondary">
             <PlusIcon />
             New card
           </Button>
@@ -595,22 +702,24 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
             opts back into full height with `self-stretch`. The row scrolls in
             both axes, so a column taller than the viewport is reachable. */}
         <div className="flex min-h-0 flex-1 items-start gap-2.5 overflow-auto px-3 pb-3 sm:px-5">
-          {BOARD_STAGES.map((stage) => (
+          {orderedStages.map((stage, index) => (
             <BoardColumn
               accentNameFor={accentNameFor}
               addProjects={addProjects}
-              cards={columns[stage]}
+              cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
               labelsById={labelsById}
-              collapsed={isBoardColumnCollapsed(collapsedByStage, stage)}
+              collapsed={isBoardColumnCollapsed(collapsedByStage, stage.stageId, index === 0)}
               draggedCardId={drag?.cardId ?? null}
               dragHeight={drag?.height ?? 0}
               dragOverIndex={
-                drag !== null && dragOver !== null && dragOver.stage === stage
+                drag !== null && dragOver !== null && dragOver.stage === stage.stageId
                   ? dragOver.index
                   : null
               }
-              key={stage}
+              key={stage.stageId}
+              label={stage.label}
               onCardDragEnd={handleCardDragEnd}
+              onCardReorder={handleCardReorder}
               onCardDragStart={handleCardDragStart}
               onColumnDragOver={handleColumnDragOver}
               onColumnDrop={handleColumnDrop}
@@ -619,7 +728,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
               onSetCollapsed={setColumnCollapsed}
               queueSlots={queueSlots}
               selectedCardId={selectedCardId}
-              stage={stage}
+              stage={stage.stageId}
             />
           ))}
         </div>
@@ -647,7 +756,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
       />
       <BoardCardCreateDialog
         defaultProjectId={scopeProjectId}
-        defaultStage={createStage ?? "backlog"}
+        defaultStage={createStage ?? firstStageId ?? BOARD_SEED_STAGES[0]!.stageId}
         environmentId={environmentId}
         onOpenChange={(open) => {
           if (!open) setCreateStage(null);

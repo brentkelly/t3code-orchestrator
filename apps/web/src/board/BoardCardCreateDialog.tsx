@@ -9,19 +9,23 @@
  * dependency rows (`BoardCardFields`) — a card being created should look like
  * the card it is about to become, not like a form.
  *
- * Target stage offers Backlog, Sprint and Planning ONLY (t3o-06a): later
- * stages describe work the board has already started shepherding, so a card
- * cannot appear mid-pipeline — it reaches them by being moved under D18's
- * human gate. The decider enforces the same restriction, so this is a
- * convenience, not the guard.
+ * A card may be created into ANY stage (t3o-15, D10): Mode governs the
+ * worktree/slot on entry, so creation and dragging follow an identical path.
+ * The picker offers every stage in read-model order, and a warning appears when
+ * the chosen stage auto-executes ("creating here starts an agent"). The decider
+ * enforces existence + the dependency gate; this is a convenience, not the guard.
  */
 import {
-  BOARD_CREATABLE_STAGES,
+  BOARD_SEED_STAGES,
   BoardCardId,
   BoardLabelId,
   assignBoardKeyPrefix,
+  boardStagesInOrder,
   resolveBoardProjectAccent,
-  type BoardStage,
+  resolveBoardStageExecution,
+  type BoardStageDefinition,
+  type BoardStageId,
+  type BoardState,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -54,9 +58,15 @@ import {
   type BoardDependencyEntry,
 } from "./BoardCardFields";
 import { BoardLabelField } from "./BoardLabelField";
-import { BOARD_STAGE_LABELS } from "./boardStages";
+import { boardStageLabel } from "./boardStages";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { projectAccent } from "./projectAccent";
+
+/** A `BoardState` view over a bare stage list, so the read-model stage helpers
+    apply. */
+function stageStateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
+  return { cards: [], stages, nextCardNumberByProject: {} };
+}
 
 export interface BoardCreateProject {
   readonly id: ProjectId;
@@ -76,9 +86,11 @@ export function BoardCardCreateDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly projects: ReadonlyArray<BoardCreateProject>;
   readonly defaultProjectId: ProjectId | null;
-  readonly defaultStage: BoardStage;
+  readonly defaultStage: BoardStageId;
 }) {
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
+  const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+  const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const boardSettings = usePrimarySettings((settings) => settings.board);
   const updateSettings = useUpdatePrimarySettings();
@@ -93,7 +105,7 @@ export function BoardCardCreateDialog({
 
   const initialProjectId = defaultProjectId ?? projects[0]?.id ?? null;
   const [projectId, setProjectId] = useState<ProjectId | null>(initialProjectId);
-  const [stage, setStage] = useState<BoardStage>(defaultStage);
+  const [stage, setStage] = useState<BoardStageId>(defaultStage);
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
   const [labelIds, setLabelIds] = useState<ReadonlyArray<BoardLabelId>>([]);
@@ -141,7 +153,7 @@ export function BoardCardCreateDialog({
       cardId: id,
       key: card?.key ?? id,
       title: card?.title ?? null,
-      stage: card?.stage ?? "backlog",
+      stage: card?.stage ?? stages[0]!.stageId,
       known: card !== undefined,
       // The picker only ever offers live cards, so a dependency chosen here
       // cannot be archived.
@@ -210,13 +222,13 @@ export function BoardCardCreateDialog({
         <div className="flex shrink-0 items-center gap-[9px] px-4 pt-4 pr-11">
           <DialogTitle className="text-[17px]/[1.25] tracking-[-0.01em]">New card</DialogTitle>
           <Select
-            items={BOARD_CREATABLE_STAGES.map((creatable) => ({
-              value: creatable as string,
-              label: BOARD_STAGE_LABELS[creatable],
+            items={boardStagesInOrder(stageStateOf(stages)).map((definition) => ({
+              value: definition.stageId as string,
+              label: definition.label,
             }))}
             modal={false}
             onValueChange={(value: string | null) => {
-              if (value !== null) setStage(value as BoardStage);
+              if (value !== null) setStage(value as BoardStageId);
             }}
             value={stage}
           >
@@ -224,15 +236,22 @@ export function BoardCardCreateDialog({
               <SelectValue />
             </SelectTrigger>
             <SelectPopup>
-              {BOARD_CREATABLE_STAGES.map((creatable) => (
-                <SelectItem key={creatable} value={creatable}>
-                  {BOARD_STAGE_LABELS[creatable]}
+              {boardStagesInOrder(stageStateOf(stages)).map((definition) => (
+                <SelectItem key={definition.stageId} value={definition.stageId}>
+                  {definition.label}
                 </SelectItem>
               ))}
             </SelectPopup>
           </Select>
           <span className="flex-1" />
         </div>
+        {/* A card may be created into any stage (D10); warn when the chosen
+            stage auto-executes, since creating there starts an agent. */}
+        {resolveBoardStageExecution(boardSettings, stage).autoExecute ? (
+          <p className="mx-4 mt-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-[12px] text-warning-foreground">
+            {boardStageLabel(stages, stage)} runs automatically — creating here starts an agent.
+          </p>
+        ) : null}
 
         <div className="mt-3 flex min-h-0 flex-[0_1_auto] flex-col gap-[18px] overflow-y-auto border-t border-border px-5 pt-4 pb-5">
           {feedback !== null ? (
@@ -349,6 +368,7 @@ export function BoardCardCreateDialog({
               onAdd={(cardId) => setDependsOn((prev) => [...prev, cardId])}
               onRemove={(cardId) => setDependsOn((prev) => prev.filter((id) => id !== cardId))}
               options={dependencyOptions}
+              stages={stages}
             />
           </div>
         </div>

@@ -8,6 +8,8 @@
  * through, role preserved, no dead deep-link).
  */
 import {
+  BOARD_SEED_STAGE_IDS,
+  BOARD_SEED_STAGES,
   BoardCardId,
   BoardLabelId,
   ProjectId,
@@ -28,19 +30,20 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const { BoardCardDetailPanel } = await import("./BoardCardDetailView");
-const { BOARD_STAGE_LABELS } = await import("./boardStages");
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const environmentId = "env-1" as never;
 
+const cardId = BoardCardId.make("card-1");
+
 function card(overrides?: Partial<BoardCard>): BoardCard {
   return {
-    id: BoardCardId.make("card-1"),
+    id: cardId,
     key: "T3-7",
     cardNumber: 7,
     projectId: ProjectId.make("project-gone"),
     labels: [],
-    stage: "ready",
+    stage: BOARD_SEED_STAGE_IDS.ready,
     orderKey: "m",
     title: "Wire the widget",
     briefRef: null,
@@ -48,7 +51,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     parentCardId: null,
     threadLinks: [],
     externalRef: null,
-    recipeSnapshot: null,
+    humanInLoop: null,
     worktree: null,
     blocked: false,
     archivedAt: null,
@@ -61,13 +64,15 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
 function detail(
   overrides?: Partial<BoardCard>,
   brief: string | null = null,
-  edges?: Partial<Pick<BoardCardDetail, "dependencies" | "dependents">>,
+  edges?: Partial<Pick<BoardCardDetail, "dependencies" | "dependents" | "stepCompletions">>,
 ): BoardCardDetail {
   return {
     card: card(overrides),
     brief,
+    hasPlan: false,
     dependencies: edges?.dependencies ?? [],
     dependents: edges?.dependents ?? [],
+    stepCompletions: edges?.stepCompletions ?? [],
   };
 }
 
@@ -75,12 +80,18 @@ const noop = () => {};
 const baseProps = {
   environmentId,
   catalogue: [] as ReadonlyArray<BoardLabel>,
+  stages: BOARD_SEED_STAGES,
+  humanInLoop: null,
+  onSetHumanInLoop: noop,
   labelsById: new Map<BoardLabelId, BoardLabel>(),
   branch: null,
   dependencies: [],
   dependencyOptions: [],
   threadLinks: [],
   adoptableThreads: [],
+  stageRestart: null,
+  onRestartStage: noop,
+  onCreateBlankThread: () => Promise.resolve(null),
   feedback: null,
   maximised: false,
   onToggleMaximised: noop,
@@ -98,9 +109,6 @@ const baseProps = {
   onArchiveToggle: noop,
   onLinkThread: noop,
   onUnlinkThread: noop,
-  canRestartPlanning: false,
-  onRestartPlanning: noop,
-  onCreateBlankThread: noop,
 } as const;
 
 describe("BoardCardDetailPanel", () => {
@@ -121,6 +129,80 @@ describe("BoardCardDetailPanel", () => {
     expect(html).toContain("More actions");
   });
 
+  it("renders review findings grouped by round with triage and verdict (t3o-16, D9/AC5)", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.review }, null, {
+          stepCompletions: [
+            {
+              cardId,
+              stepId: "review@1",
+              outcome: "succeeded",
+              summary: "reviewed",
+              payload: JSON.stringify({
+                reviewedSha: "sha1",
+                findings: [
+                  {
+                    id: "f1",
+                    severity: "critical",
+                    file: "src/a.ts",
+                    line: 12,
+                    title: "Null deref",
+                    detail: "x may be null",
+                  },
+                ],
+              }),
+              threadId: null,
+              completedAt: NOW,
+            },
+            {
+              cardId,
+              stepId: "triage@1",
+              outcome: "succeeded",
+              summary: "triaged",
+              payload: JSON.stringify({
+                fixedSha: "sha2",
+                dispositions: [{ findingId: "f1", action: "fixed", note: "guarded it" }],
+              }),
+              threadId: null,
+              completedAt: NOW,
+            },
+            {
+              cardId,
+              stepId: "adjudicate@1",
+              outcome: "succeeded",
+              summary: "adjudicated",
+              payload: JSON.stringify({
+                verdicts: [{ findingId: "f1", verdict: "fix-upheld", note: "" }],
+              }),
+              threadId: null,
+              completedAt: NOW,
+            },
+            {
+              cardId,
+              stepId: "review@2",
+              outcome: "succeeded",
+              summary: "clean",
+              payload: JSON.stringify({ reviewedSha: "sha3", findings: [] }),
+              threadId: null,
+              completedAt: NOW,
+            },
+          ],
+        })}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Code review");
+    expect(html).toContain("Round 1");
+    expect(html).toContain("Round 2");
+    expect(html).toContain("Null deref");
+    expect(html).toContain("critical");
+    expect(html).toContain("triage: fixed");
+    expect(html).toContain("fix-upheld");
+    expect(html).toContain("no blocking findings");
+  });
+
   it("renders an archived dependency as the card it is, not as an unknown id", () => {
     // The bug (t3o-13): the shell snapshot drops archived cards, so resolving
     // a dependency from it produced "Unknown task" on "unknown card".
@@ -132,12 +214,12 @@ describe("BoardCardDetailPanel", () => {
             cardId: BoardCardId.make("dep-archived"),
             key: "T3-9",
             title: "Work that was called off",
-            stage: "building",
+            stage: BOARD_SEED_STAGE_IDS.building,
             known: true,
             archived: true,
           },
         ]}
-        detail={detail({ stage: "ready" })}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.ready })}
         projectName="Project One"
       />,
     );
@@ -160,7 +242,7 @@ describe("BoardCardDetailPanel", () => {
             cardId: BoardCardId.make("dep-known"),
             key: "T3-2",
             title: "Land the widget",
-            stage: "building",
+            stage: BOARD_SEED_STAGE_IDS.building,
             known: true,
             archived: false,
           },
@@ -168,7 +250,7 @@ describe("BoardCardDetailPanel", () => {
             cardId: BoardCardId.make("dep-gone"),
             key: "dep-gone",
             title: null,
-            stage: "backlog",
+            stage: BOARD_SEED_STAGE_IDS.backlog,
             known: false,
             archived: false,
           },
@@ -187,7 +269,7 @@ describe("BoardCardDetailPanel", () => {
     const html = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
-        detail={detail({ stage: "sprint" })}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.sprint })}
         projectName="Project One"
         threadLinks={[
           {
@@ -221,13 +303,17 @@ describe("BoardCardDetailPanel", () => {
 
   it("shows the primary stage action for a live card but not an archived one", () => {
     const live = renderToStaticMarkup(
-      <BoardCardDetailPanel {...baseProps} detail={detail({ stage: "ready" })} projectName="P" />,
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.ready })}
+        projectName="P"
+      />,
     );
     expect(live).toContain("Begin build");
     const archived = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
-        detail={detail({ stage: "ready", archivedAt: NOW })}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.ready, archivedAt: NOW })}
         projectName="P"
       />,
     );
@@ -238,7 +324,7 @@ describe("BoardCardDetailPanel", () => {
     const html = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
-        detail={detail({ stage: "sprint" }, "Ship the thing")}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.sprint }, "Ship the thing")}
         projectName="P"
       />,
     );
@@ -251,7 +337,7 @@ describe("BoardCardDetailPanel", () => {
     const sprint = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
-        detail={detail({ stage: "sprint" }, "Ship the thing")}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.sprint }, "Ship the thing")}
         projectName="P"
       />,
     );
@@ -262,7 +348,7 @@ describe("BoardCardDetailPanel", () => {
     const planning = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
-        detail={detail({ stage: "planning" }, "Ship the thing")}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.planning }, "Ship the thing")}
         projectName="P"
       />,
     );
@@ -274,9 +360,13 @@ describe("BoardCardDetailPanel", () => {
 
   it("renders the whole stage ladder with the card's stage marked current", () => {
     const html = renderToStaticMarkup(
-      <BoardCardDetailPanel {...baseProps} detail={detail({ stage: "review" })} projectName="P" />,
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.review })}
+        projectName="P"
+      />,
     );
-    for (const label of Object.values(BOARD_STAGE_LABELS)) expect(html).toContain(label);
+    for (const stage of BOARD_SEED_STAGES) expect(html).toContain(stage.label);
     // Exactly one rung is the current one.
     expect(html.match(/aria-current="true"/g)).toHaveLength(1);
   });
@@ -290,7 +380,7 @@ describe("BoardCardDetailPanel", () => {
             cardId: BoardCardId.make("dep-done"),
             key: "T3-1",
             title: "Finished work",
-            stage: "done",
+            stage: BOARD_SEED_STAGE_IDS.done,
             known: true,
             archived: false,
           },
@@ -298,12 +388,12 @@ describe("BoardCardDetailPanel", () => {
             cardId: BoardCardId.make("dep-open"),
             key: "T3-2",
             title: "Outstanding work",
-            stage: "building",
+            stage: BOARD_SEED_STAGE_IDS.building,
             known: true,
             archived: false,
           },
         ]}
-        detail={detail({ stage: "ready", blocked: true })}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.ready, blocked: true })}
         projectName="P"
       />,
     );

@@ -8,26 +8,26 @@
  */
 import {
   BoardCardId,
+  BoardStageId,
   ProjectId,
   makeBoardCardShell,
   type BoardCardShell,
   type BoardLabel,
   type BoardLabelId,
-  type BoardStage,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { BoardCardContent } from "./BoardCardItem";
 
-function shell(stage: BoardStage, overrides?: Partial<BoardCardShell>): BoardCardShell {
+function shell(stage: string, overrides?: Partial<BoardCardShell>): BoardCardShell {
   return {
     ...makeBoardCardShell({
       cardId: BoardCardId.make("card-1"),
       key: "T3-9",
       projectId: ProjectId.make("project-1"),
       labelIds: [],
-      stage,
+      stage: BoardStageId.make(stage),
       orderKey: "m",
       title: "Render me from the shell",
       blocked: false,
@@ -95,6 +95,34 @@ describe("BoardCardContent (D7)", () => {
     );
     expect(gated).toContain("Blocked");
     expect(gated).toContain("Blocked by 2 dependencies");
+  });
+
+  it("renders a distinct stalled badge, separate from the awaiting-input treatment (t3o-17, D3)", () => {
+    const stalled = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building", { stalled: true })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    // The loud, human-needed signal — distinct from the blue "Input needed".
+    expect(stalled).toContain("Stalled");
+    expect(stalled).toContain("text-destructive-foreground");
+    expect(stalled).not.toContain("Input needed");
+
+    // A healthy question is still the blue awaiting-input treatment, never flagged
+    // as stalled (crit 8).
+    const awaiting = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building", { awaitingInput: true })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    expect(awaiting).toContain("Input needed");
+    expect(awaiting).not.toContain("Stalled");
   });
 
   it("mutes a Done card", () => {

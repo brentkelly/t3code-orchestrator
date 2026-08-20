@@ -2,7 +2,12 @@
  * The archive sheet's selection rule (t3o-13, D7): which archived cards the
  * board's project scope admits, and in what order.
  */
-import { BoardCardId, ProjectId, makeBoardCardShell } from "@t3tools/contracts";
+import {
+  BoardCardId,
+  BOARD_SEED_STAGE_IDS,
+  ProjectId,
+  makeBoardCardShell,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { boardArchivedCardsInScope } from "./boardArchivedCards";
@@ -16,7 +21,7 @@ const archivedCard = (id: string, projectId: ProjectId, archivedAt: string) =>
     key: id.toUpperCase(),
     projectId,
     labelIds: [],
-    stage: "building",
+    stage: BOARD_SEED_STAGE_IDS.building,
     orderKey: "m",
     title: `Card ${id}`,
     blocked: false,

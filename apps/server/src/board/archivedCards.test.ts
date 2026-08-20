@@ -11,7 +11,9 @@
  */
 import {
   BoardCardId,
+  BoardStageId,
   CommandId,
+  EMPTY_BOARD_STATE,
   ProjectId,
   ProviderInstanceId,
   unmetBoardCardDependencies,
@@ -76,8 +78,12 @@ const createProject = {
   createdAt,
 } as const;
 
-/** A dependency card and, behind it, a card in Ready that waits on it — the
-    exact shape the archive used to strand. */
+/** A dependency card and, behind it, a card in Building that waits on it — the
+    exact shape the archive used to strand. Dependency blocking is derived from
+    the build role onward now (D11), so the dependent must sit in Building (not
+    Ready) to be blocked. Entry into Building with an unmet dependency is refused
+    (D11), so the dependent is moved there dependency-free and then edited to add
+    the dependency — which re-derives its blocked flag in place. */
 const seedBoard = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   yield* engine.dispatch(createProject);
@@ -97,16 +103,23 @@ const seedBoard = Effect.gen(function* () {
     projectId,
     title: "The work that waits",
     orderKey: "n",
-    dependsOn: [dependencyId],
     createdAt,
   });
-  // Ready is where the gate starts to bite (D18).
   yield* engine.dispatch({
     type: "board.card.move",
-    commandId: CommandId.make("cmd-move-ready"),
+    commandId: CommandId.make("cmd-move-building"),
     cardId: dependentId,
-    toStage: "ready",
+    toStage: BoardStageId.make("building"),
     override: true,
+    createdAt,
+  });
+  // Adding the dependency to a card already in the build role re-derives its
+  // blocked flag (D11) without refusing — refusal is only on entry into build.
+  yield* engine.dispatch({
+    type: "board.card.update",
+    commandId: CommandId.make("cmd-add-dependency"),
+    cardId: dependentId,
+    dependsOn: [dependencyId],
     createdAt,
   });
   return engine;
@@ -157,6 +170,7 @@ it.layer(makeTestLayer("t3o-board-archive-1-"))("archiving a depended-on card", 
       assert.deepStrictEqual(dependent?.dependsOn, [dependencyId]);
       assert.deepStrictEqual(
         unmetBoardCardDependencies({
+          board: readModel.board ?? EMPTY_BOARD_STATE,
           dependsOn: dependent?.dependsOn ?? [],
           cards: readModel.board?.cards ?? [],
         }),
@@ -178,7 +192,7 @@ it.layer(makeTestLayer("t3o-board-archive-2-"))("moving past a released gate", (
         type: "board.card.move",
         commandId: CommandId.make("cmd-move-building"),
         cardId: dependentId,
-        toStage: "building",
+        toStage: BoardStageId.make("building"),
         createdAt,
       });
 

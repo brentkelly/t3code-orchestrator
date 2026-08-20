@@ -23,8 +23,8 @@
  * Exported to apps through `state/shell.ts`.
  */
 import {
-  BOARD_STAGES,
   BOARD_WS_METHODS,
+  compareBoardStages,
   deriveBoardCardThreadState,
   isBoardShellStreamEvent,
   type BoardCardDetail,
@@ -32,10 +32,14 @@ import {
   type BoardCardQueuedShellEvent,
   type BoardCardRemovedShellEvent,
   type BoardCardShell,
+  type BoardCardStalledShellEvent,
   type BoardCardUpsertedShellEvent,
   type BoardLabel,
   type BoardLabelUpsertedShellEvent,
-  type BoardStage,
+  type BoardStageDefinition,
+  type BoardStageId,
+  type BoardStageRemovedShellEvent,
+  type BoardStageUpsertedShellEvent,
   type EnvironmentId,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
@@ -52,10 +56,15 @@ import {
   archiveBoardCard,
   createBoardCard,
   createBoardLabel,
+  createBoardStage,
   deleteBoardLabel,
+  deleteBoardStage,
   linkBoardCardThread,
   moveBoardCard,
+  renameBoardStage,
   reorderBoardCard,
+  reorderBoardStage,
+  startBoardStageThread,
   unarchiveBoardCard,
   undeleteBoardLabel,
   unlinkBoardCardThread,
@@ -64,10 +73,15 @@ import {
   type ArchiveBoardCardInput,
   type CreateBoardCardInput,
   type CreateBoardLabelInput,
+  type CreateBoardStageInput,
   type DeleteBoardLabelInput,
+  type DeleteBoardStageInput,
   type LinkBoardCardThreadInput,
   type MoveBoardCardInput,
+  type RenameBoardStageInput,
   type ReorderBoardCardInput,
+  type ReorderBoardStageInput,
+  type StartBoardStageThreadInput,
   type UnarchiveBoardCardInput,
   type UndeleteBoardLabelInput,
   type UnlinkBoardCardThreadInput,
@@ -86,10 +100,15 @@ export type {
   ArchiveBoardCardInput,
   CreateBoardCardInput,
   CreateBoardLabelInput,
+  CreateBoardStageInput,
   DeleteBoardLabelInput,
+  DeleteBoardStageInput,
   LinkBoardCardThreadInput,
   MoveBoardCardInput,
+  RenameBoardStageInput,
   ReorderBoardCardInput,
+  ReorderBoardStageInput,
+  StartBoardStageThreadInput,
   UnarchiveBoardCardInput,
   UndeleteBoardLabelInput,
   UnlinkBoardCardThreadInput,
@@ -101,7 +120,10 @@ export type BoardShellStreamEvent =
   | BoardCardUpsertedShellEvent
   | BoardCardRemovedShellEvent
   | BoardCardQueuedShellEvent
-  | BoardLabelUpsertedShellEvent;
+  | BoardCardStalledShellEvent
+  | BoardLabelUpsertedShellEvent
+  | BoardStageUpsertedShellEvent
+  | BoardStageRemovedShellEvent;
 
 // Re-exported so the upstream reducer imports predicate + delegate on one line.
 export { isBoardShellStreamEvent };
@@ -141,7 +163,14 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.queued === event.card.queued
           ? event.card
           : { ...event.card, queued: existing.queued };
-      const card = withDerivedThreadFields(withQueued, (threadId) =>
+      // `stalled` (t3o-17, D3) is derived from step state the same way, so a
+      // card-carrying delta rests it at false too — preserve the last known
+      // value so a drag never blanks a stalled badge.
+      const withStalled =
+        existing === undefined || existing.stalled === withQueued.stalled
+          ? withQueued
+          : { ...withQueued, stalled: existing.stalled };
+      const card = withDerivedThreadFields(withStalled, (threadId) =>
         snapshot.threads.find((thread) => thread.id === threadId),
       );
       const nextCards = cards.some((entry) => entry.cardId === card.cardId)
@@ -156,6 +185,17 @@ export function applyBoardShellStreamEvent(
       const nextCards = Arr.map(cards, (card) =>
         card.cardId === event.cardId && card.queued !== event.queued
           ? { ...card, queued: event.queued }
+          : card,
+      );
+      return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
+    }
+    case "card-stalled": {
+      // The authoritative live flip of `stalled` (t3o-17, D3): recovery gave up
+      // on the card's step (→ true) or a retry / fresh run put it back to work
+      // (→ false). A no-op for a card we do not hold.
+      const nextCards = Arr.map(cards, (card) =>
+        card.cardId === event.cardId && card.stalled !== event.stalled
+          ? { ...card, stalled: event.stalled }
           : card,
       );
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
@@ -178,6 +218,28 @@ export function applyBoardShellStreamEvent(
           )
         : Arr.append(labels, event.label);
       return { ...snapshot, boardLabels: nextLabels, snapshotSequence: event.sequence };
+    }
+    case "stage-upserted": {
+      // Stage aggregate delta (t3o-15): the whole stage list rides so the board
+      // reads column order and labels from it (D13). Create / rename / reorder
+      // all arrive here; kept in canonical `compareBoardStages` order.
+      const stages = snapshot.boardStages ?? [];
+      const nextStages = (
+        stages.some((existing) => existing.stageId === event.stage.stageId)
+          ? Arr.map(stages, (existing) =>
+              existing.stageId === event.stage.stageId ? event.stage : existing,
+            )
+          : Arr.append(stages, event.stage)
+      ).toSorted(compareBoardStages);
+      return { ...snapshot, boardStages: nextStages, snapshotSequence: event.sequence };
+    }
+    case "stage-removed": {
+      const stages = snapshot.boardStages ?? [];
+      return {
+        ...snapshot,
+        boardStages: Arr.filter(stages, (stage) => stage.stageId !== event.stageId),
+        snapshotSequence: event.sequence,
+      };
     }
   }
 }
@@ -231,21 +293,20 @@ export function planBoardCardReorder(input: {
 // Pure helpers shared by every board UI (D17): the web board consumes them
 // today, a mobile board reuses them without a rewrite.
 
-export type BoardStageColumns = Readonly<Record<BoardStage, ReadonlyArray<BoardCardShell>>>;
+// Columns are keyed by stage id (t3o-15): stages are user-defined, so the
+// column map is dynamic — only stages that hold cards appear. The board UI
+// iterates the read-model stage list and reads `columns[stageId] ?? []`, so an
+// empty stage still renders as an empty column without needing a key here.
+export type BoardStageColumns = Readonly<Record<string, ReadonlyArray<BoardCardShell>>>;
 
 const EMPTY_BOARD_PROJECTS: ReadonlyMap<ProjectId, BoardStageColumns> = new Map();
 
-function emptyBoardColumns(): Record<BoardStage, BoardCardShell[]> {
-  return {
-    backlog: [],
-    sprint: [],
-    planning: [],
-    ready: [],
-    building: [],
-    review: [],
-    merge: [],
-    done: [],
-  };
+function pushColumn(
+  columns: Record<string, BoardCardShell[]>,
+  stage: string,
+  card: BoardCardShell,
+): void {
+  (columns[stage] ??= []).push(card);
 }
 
 function groupBoardCards(
@@ -254,20 +315,22 @@ function groupBoardCards(
   const cards = snapshot.cards ?? [];
   if (cards.length === 0) return EMPTY_BOARD_PROJECTS;
   const threadsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
-  const byProject = new Map<ProjectId, Record<BoardStage, BoardCardShell[]>>();
+  const byProject = new Map<ProjectId, Record<string, BoardCardShell[]>>();
   for (const card of cards) {
     let columns = byProject.get(card.projectId);
     if (columns === undefined) {
-      columns = emptyBoardColumns();
+      columns = {};
       byProject.set(card.projectId, columns);
     }
-    columns[card.stage].push(
+    pushColumn(
+      columns,
+      card.stage,
       withDerivedThreadFields(card, (threadId) => threadsById.get(threadId)),
     );
   }
   for (const columns of byProject.values()) {
-    for (const stage of BOARD_STAGES) {
-      columns[stage].sort(compareBoardCardShells);
+    for (const stage of Object.keys(columns)) {
+      columns[stage]!.sort(compareBoardCardShells);
     }
   }
   return byProject;
@@ -282,14 +345,14 @@ function groupBoardCards(
 export function mergeBoardStageColumns(
   columnsList: Iterable<BoardStageColumns>,
 ): BoardStageColumns {
-  const merged = emptyBoardColumns();
+  const merged: Record<string, BoardCardShell[]> = {};
   for (const columns of columnsList) {
-    for (const stage of BOARD_STAGES) {
-      if (columns[stage].length > 0) merged[stage].push(...columns[stage]);
+    for (const [stage, cards] of Object.entries(columns)) {
+      if (cards.length > 0) (merged[stage] ??= []).push(...cards);
     }
   }
-  for (const stage of BOARD_STAGES) {
-    merged[stage].sort(compareBoardCardShells);
+  for (const stage of Object.keys(merged)) {
+    merged[stage]!.sort(compareBoardCardShells);
   }
   return merged;
 }
@@ -299,7 +362,7 @@ export function mergeBoardStageColumns(
     server reconciliation; the drag never blocks on a round trip). */
 export interface BoardCardPlacement {
   readonly cardId: string;
-  readonly stage: BoardStage;
+  readonly stage: BoardStageId;
   readonly orderKey: string;
 }
 
@@ -317,25 +380,29 @@ export function applyBoardCardPlacements(
 ): BoardStageColumns {
   if (placements.length === 0) return columns;
   const placementByCardId = new Map(placements.map((placement) => [placement.cardId, placement]));
-  const next = emptyBoardColumns();
+  const next: Record<string, BoardCardShell[]> = {};
   let changed = false;
-  for (const stage of BOARD_STAGES) {
-    for (const card of columns[stage]) {
+  for (const cards of Object.values(columns)) {
+    for (const card of cards) {
       const placement = placementByCardId.get(card.cardId);
       if (
         placement === undefined ||
         (placement.stage === card.stage && placement.orderKey === card.orderKey)
       ) {
-        next[card.stage].push(card);
+        pushColumn(next, card.stage, card);
         continue;
       }
       changed = true;
-      next[placement.stage].push({ ...card, stage: placement.stage, orderKey: placement.orderKey });
+      pushColumn(next, placement.stage, {
+        ...card,
+        stage: placement.stage,
+        orderKey: placement.orderKey,
+      });
     }
   }
   if (!changed) return columns;
-  for (const stage of BOARD_STAGES) {
-    next[stage].sort(compareBoardCardShells);
+  for (const stage of Object.keys(next)) {
+    next[stage]!.sort(compareBoardCardShells);
   }
   return next;
 }
@@ -347,8 +414,8 @@ export function isBoardCardPlacementSettled(
   columns: BoardStageColumns,
   placement: BoardCardPlacement,
 ): boolean {
-  for (const stage of BOARD_STAGES) {
-    const card = columns[stage].find((existing) => existing.cardId === placement.cardId);
+  for (const cards of Object.values(columns)) {
+    const card = cards.find((existing) => existing.cardId === placement.cardId);
     if (card !== undefined) {
       return card.stage === placement.stage && card.orderKey === placement.orderKey;
     }
@@ -417,6 +484,21 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-labels:${environmentId}`)),
   );
 
+  /** The board's user-defined stage list (t3o-15) in canonical order — the
+      source of column order and labels the board UI reads (D13). Rides the
+      shell snapshot once. Empty until the first snapshot (the caller falls back
+      to the compiled seeds via `boardStages`). */
+  const EMPTY_STAGES: ReadonlyArray<BoardStageDefinition> = [];
+  const stageListAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const state = get(options.shellStateValueAtom(environmentId));
+      return Option.match(state.snapshot, {
+        onNone: () => EMPTY_STAGES,
+        onSome: (snapshot) => [...(snapshot.boardStages ?? EMPTY_STAGES)].sort(compareBoardStages),
+      });
+    }).pipe(Atom.withLabel(`environment-board-stages:${environmentId}`)),
+  );
+
   const cardDetailStateAtom = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-board-card-detail",
     tag: BOARD_WS_METHODS.subscribeCard,
@@ -459,6 +541,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
   return {
     cardsByProjectAtom,
     labelCatalogueAtom,
+    stageListAtom,
     /** Raw subscription state (loading/failure visible), keyed like
         `cardDetailValueAtom`. */
     cardDetailStateAtom,
@@ -510,6 +593,26 @@ export function createBoardEnvironmentAtoms<R, ER>(
     undeleteLabel: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:undelete-label",
       execute: (input: UndeleteBoardLabelInput) => undeleteBoardLabel(input),
+    }),
+    createStage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:create-stage",
+      execute: (input: CreateBoardStageInput) => createBoardStage(input),
+    }),
+    renameStage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:rename-stage",
+      execute: (input: RenameBoardStageInput) => renameBoardStage(input),
+    }),
+    reorderStage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:reorder-stage",
+      execute: (input: ReorderBoardStageInput) => reorderBoardStage(input),
+    }),
+    deleteStage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:delete-stage",
+      execute: (input: DeleteBoardStageInput) => deleteBoardStage(input),
+    }),
+    startStageThread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:start-stage-thread",
+      execute: (input: StartBoardStageThreadInput) => startBoardStageThread(input),
     }),
   };
 }

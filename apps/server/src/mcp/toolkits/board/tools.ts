@@ -20,7 +20,7 @@ import {
   BoardCardId,
   BoardPlan,
   BoardProposedPlanInput,
-  BoardStage,
+  BoardStageId,
   BoardStepCompletion,
   BoardStepOutcome,
   ProjectId,
@@ -73,7 +73,7 @@ const BoardCardContextDependency = Schema.Struct({
   cardId: BoardCardId,
   key: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
-  stage: BoardStage,
+  stage: BoardStageId,
   /** True when the dependency is Done (no longer blocking). */
   met: Schema.Boolean,
 });
@@ -98,7 +98,7 @@ const BoardCardListItem = Schema.Struct({
   key: TrimmedNonEmptyString,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
-  stage: BoardStage,
+  stage: BoardStageId,
   blocked: Schema.Boolean,
 });
 
@@ -130,7 +130,7 @@ const NoParameters = Schema.Record(Schema.String, Schema.Never);
 
 export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
   description:
-    "Pull everything you need to work on your card: its title, brief, stage, dependency states, prior steps and their outcomes, proposed plans, and outstanding progress/input activity. Call this first when you start a step, and again whenever you need to re-orient. Your card is resolved from your thread — you never pass a card id. Fails if your thread is not linked to a card.",
+    "Pull everything you need to work on your card: its title, brief, stage, dependency states, prior steps and their outcomes, proposed plans, and recent activity. Activity is truncated to the most recent entries (every outstanding input request is always included), so treat it as a tail, not the full history. Call this first when you start a step, and again whenever you need to re-orient. Your card is resolved from your thread — you never pass a card id. Fails if your thread is not linked to a card.",
   parameters: NoParameters,
   success: BoardCardContext,
   failure: BoardToolError,
@@ -153,7 +153,7 @@ export const BoardReportProgressTool = Tool.make("board_report_progress", {
 
 export const BoardCompleteStepTool = Tool.make("board_complete_step", {
   description:
-    "Report that your assigned step is finished. THIS IS THE COMPLETION CONTRACT: the board considers a step done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your step will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary and optional structured payload. Idempotent: calling it again with the same stepId is a no-op that returns the first outcome, so it is safe to retry on a timeout. Your card is resolved from your thread.",
+    "Report that your assigned step is finished. THIS IS THE COMPLETION CONTRACT: the board considers a step done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your step will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary (max 2 KiB) and optional structured payload (max 16 KiB serialised). The stepId must be the step you were assigned — completing any other step is rejected. Retry-safe: a repeat call with the same stepId re-returns a recorded 'succeeded' outcome unchanged; after a 'failed' or 'blocked' report, a later call on the live step records your new outcome (that is how a recovered retry reports success). Your card is resolved from your thread.",
   parameters: Schema.Struct({
     stepId: TrimmedNonEmptyString,
     outcome: BoardStepOutcome,
@@ -190,7 +190,7 @@ export const BoardListCardsTool = Tool.make("board_list_cards", {
     "List board cards, optionally filtered by project, stage, key, or a free-text match on the title. Use it to find a card id before creating a dependency or moving a card. Returns bounded summaries — fetch full context for one card with board_get_card_context (yours) or open it in the app.",
   parameters: Schema.Struct({
     projectId: Schema.optional(ProjectId),
-    stage: Schema.optional(BoardStage),
+    stage: Schema.optional(BoardStageId),
     key: Schema.optional(TrimmedNonEmptyString),
     text: Schema.optional(TrimmedNonEmptyString),
   }),
@@ -216,14 +216,14 @@ export const BoardListProjectsTool = Tool.make("board_list_projects", {
 
 export const BoardCreateCardTool = Tool.make("board_create_card", {
   description:
-    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card can be created ONLY into Backlog, Sprint, or Planning (omit stage for Backlog); you cannot inject work mid-pipeline — later stages are reached only by moving a card, which a human gates. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created. dependsOn lists card ids this card waits on.",
+    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card may be created into ANY existing stage (omit stage for Backlog). CAUTION: creating into an auto-executing stage (e.g. Building) starts an unattended agent run immediately, with a worktree and a concurrency slot — default to the early stages unless a human asked for mid-pipeline work; the build-onward dependency gate still applies. NOT idempotent: a retried call creates a second card, so on a timeout list cards before retrying. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created. dependsOn lists card ids this card waits on.",
   parameters: Schema.Struct({
     projectId: Schema.optional(ProjectId),
     title: TrimmedNonEmptyString,
     brief: Schema.optional(TrimmedNonEmptyString),
     /** Label NAMES against the catalogue; unknown names are rejected. */
     labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
-    stage: Schema.optional(BoardStage),
+    stage: Schema.optional(BoardStageId),
     dependsOn: Schema.optional(Schema.Array(BoardCardId)),
   }),
   success: Schema.Struct({ cardId: BoardCardId, key: TrimmedNonEmptyString }),
@@ -233,13 +233,13 @@ export const BoardCreateCardTool = Tool.make("board_create_card", {
 
 export const BoardMoveCardTool = Tool.make("board_move_card", {
   description:
-    "Move a card to another stage, subject to the same rules a human drag obeys: a blocked card (unmet dependencies) cannot cross into Building or beyond, and you have no privileged path around that. Set override to move to a non-adjacent stage (e.g. dragging backwards). Note that most forward transitions are human-gated by design; use this for board tidying, not to advance your own work past a gate.",
+    "Move a card to another stage, subject to the same rules a human drag obeys: a blocked card (unmet dependencies) cannot cross into the build stage or beyond, and you have no privileged path around that. Set override to move to a non-adjacent stage (e.g. dragging backwards). CAUTION: the server does not require a human sign-off on forward moves — moving a card into an auto-executing stage starts an unattended agent run (worktree, concurrency slot). Use this for board tidying and explicitly requested moves, not to advance your own work; leave forward transitions to a human unless one asked you to make them.",
   parameters: Schema.Struct({
     cardId: BoardCardId,
-    toStage: BoardStage,
+    toStage: BoardStageId,
     override: Schema.optional(Schema.Boolean),
   }),
-  success: Schema.Struct({ cardId: BoardCardId, stage: BoardStage }),
+  success: Schema.Struct({ cardId: BoardCardId, stage: BoardStageId }),
   failure: BoardToolError,
   dependencies,
 }).annotate(Tool.Title, "Move board card");
