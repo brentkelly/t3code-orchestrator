@@ -81,6 +81,8 @@ const runningState: BoardCardStepState = {
   stepId,
   stepLabel: "Build",
   attempt: 1,
+  stallCount: 0,
+  lastNudgeAt: null,
   prompt: "do it",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
@@ -221,19 +223,28 @@ it.effect("boot: a running step with a gone thread and no worktree does not burn
   }),
 );
 
-it.effect("boot: an attempt-exhausted step escalates to the human without driving the agent", () =>
-  Effect.gen(function* () {
-    const exhausted: BoardCardStepState = { ...runningState, attempt: 3, maxAttempts: 3 };
-    const types = yield* reconcileCommands({
-      board: { cards: [card], stepStates: [exhausted], nextCardNumberByProject: {} },
-      // no shell → thread gone, but escalation must not respawn/nudge it
-    });
-    // D13 gate: a human-facing question is recorded, the step is parked...
-    assert.include(types, "board.card.request-input");
-    assert.include(types, "board.card.recover-step");
-    // ...and the agent is NOT driven (no turn), so recovery never loops.
-    assert.notInclude(types, "thread.turn.start");
-  }),
+it.effect(
+  "boot: a stall-exhausted step escalates to the human without driving the agent (t3o-17)",
+  () =>
+    Effect.gen(function* () {
+      // Consecutive stalls at the ceiling (stallCount 3 = maxAttempts 3): the next
+      // recovery gives up rather than retrying.
+      const exhausted: BoardCardStepState = {
+        ...runningState,
+        attempt: 3,
+        maxAttempts: 3,
+        stallCount: 3,
+      };
+      const types = yield* reconcileCommands({
+        board: { cards: [card], stepStates: [exhausted], nextCardNumberByProject: {} },
+        // no shell → thread gone, but escalation must not respawn/nudge it
+      });
+      // D3 gate: a human-facing question is recorded, the step is parked stalled...
+      assert.include(types, "board.card.request-input");
+      assert.include(types, "board.card.recover-step");
+      // ...and the agent is NOT driven (no turn), so recovery never loops.
+      assert.notInclude(types, "thread.turn.start");
+    }),
 );
 
 it.effect("boot: a step that completed while the server was down is settled and advanced", () =>

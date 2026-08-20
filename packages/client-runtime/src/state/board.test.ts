@@ -126,7 +126,9 @@ describe("board shell reducer", () => {
   });
 
   it("card-queued raises then clears the queued badge on a held card (t3o-11)", () => {
-    const held = snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] });
+    const held = snapshot({
+      cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })],
+    });
     const queued = applyShellStreamEvent(held, {
       kind: "card-queued",
       sequence: 2,
@@ -142,6 +144,41 @@ describe("board shell reducer", () => {
       queued: false,
     });
     expect(cleared.cards?.[0]?.queued).toBe(false);
+  });
+
+  it("card-stalled raises then clears the stalled badge on a card (t3o-17, D3)", () => {
+    const held = snapshot({
+      cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })],
+    });
+    const stalled = applyShellStreamEvent(held, {
+      kind: "card-stalled",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      stalled: true,
+    });
+    expect(stalled.cards?.[0]?.stalled).toBe(true);
+    expect(stalled.snapshotSequence).toBe(2);
+    const cleared = applyShellStreamEvent(stalled, {
+      kind: "card-stalled",
+      sequence: 3,
+      cardId: BoardCardId.make("card-1"),
+      stalled: false,
+    });
+    expect(cleared.cards?.[0]?.stalled).toBe(false);
+  });
+
+  it("a card-carrying upsert preserves the stalled badge — a drag never blanks it (t3o-17)", () => {
+    const stalled = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
+      { kind: "card-stalled", sequence: 2, cardId: BoardCardId.make("card-1"), stalled: true },
+    );
+    expect(stalled.cards?.[0]?.stalled).toBe(true);
+    const reordered = applyShellStreamEvent(stalled, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
+    });
+    expect(reordered.cards?.[0]?.stalled).toBe(true); // preserved
   });
 
   it("card-queued is a no-op for a card the client does not hold (t3o-11)", () => {
@@ -376,12 +413,22 @@ describe("applyBoardCardPlacements", () => {
 
 describe("isBoardCardPlacementSettled", () => {
   it("reports settled when the live card matches, unsettled when it does not", () => {
-    const columns = columnsOf([cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.ready, orderKey: "m" })]);
+    const columns = columnsOf([
+      cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.ready, orderKey: "m" }),
+    ]);
     expect(
-      isBoardCardPlacementSettled(columns, { cardId: "card-a", stage: BOARD_SEED_STAGE_IDS.ready, orderKey: "m" }),
+      isBoardCardPlacementSettled(columns, {
+        cardId: "card-a",
+        stage: BOARD_SEED_STAGE_IDS.ready,
+        orderKey: "m",
+      }),
     ).toBe(true);
     expect(
-      isBoardCardPlacementSettled(columns, { cardId: "card-a", stage: BOARD_SEED_STAGE_IDS.building, orderKey: "m" }),
+      isBoardCardPlacementSettled(columns, {
+        cardId: "card-a",
+        stage: BOARD_SEED_STAGE_IDS.building,
+        orderKey: "m",
+      }),
     ).toBe(false);
   });
 
@@ -404,9 +451,18 @@ describe("boardBuildingQueueInfo", () => {
 
   it("numbers queued cards in column order and marks the head as starting next", () => {
     const column = [
-      { ...cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "c" }), queued: false },
-      { ...cardShell("card-b", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "m" }), queued: true },
-      { ...cardShell("card-c", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "t" }), queued: true },
+      {
+        ...cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "c" }),
+        queued: false,
+      },
+      {
+        ...cardShell("card-b", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "m" }),
+        queued: true,
+      },
+      {
+        ...cardShell("card-c", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "t" }),
+        queued: true,
+      },
     ];
     const queue = boardBuildingQueueInfo(column);
     expect(queue.get("card-b")).toEqual({ position: 1, startsNext: true });

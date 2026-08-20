@@ -76,6 +76,8 @@ const stepState = (
   stepId: "build",
   stepLabel: "Build",
   attempt: 1,
+  stallCount: 0,
+  lastNudgeAt: null,
   ...frozenConfig,
   threadId: ThreadId.make("thread-1"),
   status,
@@ -201,31 +203,73 @@ it.effect("admit-step admitted → running with a thread and a held slot; queued
   }),
 );
 
-it.effect("recover-step increments the attempt and escalates to the human gate when asked", () =>
-  Effect.gen(function* () {
-    const card = makeCard({ id: "card-1" });
-    const board = makeReadModel({
-      cards: [card],
-      stepStates: [stepState("card-1", "running", { attempt: 3 })],
-      nextCardNumberByProject: {},
-    });
-    const event = yield* decide(
-      {
-        type: "board.card.recover-step",
-        commandId: CommandId.make("c1"),
-        cardId: card.id,
-        stepId: "build",
-        threadId: ThreadId.make("thread-1"),
-        escalateToHuman: true,
-        createdAt: NOW,
-      },
-      board,
-    );
-    if (event.type === "board.card-step-recovered") {
-      assert.strictEqual(event.payload.state.attempt, 4);
-      assert.strictEqual(event.payload.state.status, "awaiting-input");
-    }
-  }),
+it.effect(
+  "recover-step increments the counters and lands the step in stalled, releasing its slot, when giving up (t3o-17)",
+  () =>
+    Effect.gen(function* () {
+      const card = makeCard({ id: "card-1" });
+      const board = makeReadModel({
+        cards: [card],
+        stepStates: [stepState("card-1", "running", { attempt: 3, stallCount: 4, slotHeld: true })],
+        nextCardNumberByProject: {},
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.recover-step",
+          commandId: CommandId.make("c1"),
+          cardId: card.id,
+          stepId: "build",
+          threadId: ThreadId.make("thread-1"),
+          escalateToHuman: true,
+          progressed: false,
+          createdAt: NOW,
+        },
+        board,
+      );
+      if (event.type === "board.card-step-recovered") {
+        // attempt keeps counting (cumulative, D1); stallCount extends the streak.
+        assert.strictEqual(event.payload.state.attempt, 4);
+        assert.strictEqual(event.payload.state.stallCount, 5);
+        // Giving up is the distinct `stalled` status, not `awaiting-input` (D3),
+        // and releases the slot (D4).
+        assert.strictEqual(event.payload.state.status, "stalled");
+        assert.strictEqual(event.payload.state.slotHeld, false);
+        assert.strictEqual(event.payload.state.lastNudgeAt, NOW);
+      }
+    }),
+);
+
+it.effect(
+  "recover-step resets stallCount on progress and keeps the slot on an ordinary retry (t3o-17)",
+  () =>
+    Effect.gen(function* () {
+      const card = makeCard({ id: "card-1" });
+      const board = makeReadModel({
+        cards: [card],
+        stepStates: [stepState("card-1", "running", { attempt: 3, stallCount: 4, slotHeld: true })],
+        nextCardNumberByProject: {},
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.recover-step",
+          commandId: CommandId.make("c1"),
+          cardId: card.id,
+          stepId: "build",
+          threadId: ThreadId.make("thread-1"),
+          escalateToHuman: false,
+          progressed: true,
+          createdAt: NOW,
+        },
+        board,
+      );
+      if (event.type === "board.card-step-recovered") {
+        assert.strictEqual(event.payload.state.attempt, 4);
+        // Progress forgets the streak; this stall is #1 of a new one.
+        assert.strictEqual(event.payload.state.stallCount, 1);
+        assert.strictEqual(event.payload.state.status, "running");
+        assert.strictEqual(event.payload.state.slotHeld, true);
+      }
+    }),
 );
 
 it.effect("settle-step releases the slot and is idempotent (a double settle advances once)", () =>

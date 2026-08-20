@@ -20,6 +20,9 @@ export interface BoardSearch {
   readonly project?: string;
   /** Deep-linked card: selected and scrolled into view on open. */
   readonly card?: string;
+  /** Show only stalled cards (t3o-17, D3): the "find every stalled card"
+      affordance. Absent / false means show everything. */
+  readonly stalled?: boolean;
 }
 
 function BoardRoute() {
@@ -36,9 +39,11 @@ export const Route = createFileRoute("/board")({
       typeof value === "string" && value.length > 0 ? value : undefined;
     const project = nonEmpty(search.project);
     const card = nonEmpty(search.card);
+    const stalled = search.stalled === true || search.stalled === "true";
     return {
       ...(project === undefined ? {} : { project }),
       ...(card === undefined ? {} : { card }),
+      ...(stalled ? { stalled: true } : {}),
     };
   },
   beforeLoad: ({ context }) => {

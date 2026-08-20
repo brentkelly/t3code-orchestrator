@@ -675,6 +675,31 @@ export function boardShellStreamEvent(
         queued: event.payload.state.status === "queued",
       });
 
+    case "board.card-step-recovered":
+      // The second step transition that IS a column-card shell field (t3o-17,
+      // D3): recovery either gave up (→ `stalled`, the loud badge) or put the
+      // step back to work on a retry (→ running, badge cleared). A dedicated
+      // `card-stalled` delta, the exact analogue of `card-queued` above, because
+      // this event carries `state`, not the card, so the full bounded shell
+      // cannot be rebuilt here (D7 keeps it one bit).
+      return Option.some({
+        kind: "card-stalled",
+        sequence: event.sequence,
+        cardId: event.payload.cardId,
+        stalled: event.payload.state.status === "stalled",
+      });
+
+    case "board.card-step-selected":
+      // A fresh stage run (first entry, or a human retry re-queuing a stalled
+      // card through the governor, D4) starts from `pending` — never stalled —
+      // so clear any lingering stalled badge as the new run begins.
+      return Option.some({
+        kind: "card-stalled",
+        sequence: event.sequence,
+        cardId: event.payload.cardId,
+        stalled: false,
+      });
+
     case "board.card-progress-reported":
     case "board.card-input-requested":
     case "board.card-step-completed":
@@ -686,9 +711,7 @@ export function boardShellStreamEvent(
     // discipline). The column card's thread-derived indicators already reflect
     // the step's thread through the existing `threadState`/`awaitingInput`
     // fields, so a step transition needs no separate shell delta.
-    case "board.card-step-selected":
     case "board.card-step-awaiting-input":
-    case "board.card-step-recovered":
     case "board.card-step-settled":
     case "board.card-step-retuned":
       // Agent write-path events are card DETAIL, not column-card shell fields

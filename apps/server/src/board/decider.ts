@@ -1575,6 +1575,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         stepId: command.stepId,
         stepLabel: command.stepLabel,
         attempt: 1,
+        // A fresh step (t3o-17): no stalls yet and no nudge to measure progress
+        // against. `attempt` resetting to 1 here is the "resets on stage entry"
+        // of D1 — a new `select-step` row per stage entry.
+        stallCount: 0,
+        lastNudgeAt: null,
         prompt: command.prompt,
         providerInstanceId: command.providerInstanceId,
         model: command.model,
@@ -1696,13 +1701,20 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       }
       // Recovery reuses the held slot — a retry never releases and re-acquires,
       // which could starve the step behind a queue it was already at the front
-      // of. Escalation to the human gate (D13) parks the step on a question;
-      // an ordinary retry returns it to running.
+      // of. Escalation (t3o-17, D3/D4) lands the step in the distinct `stalled`
+      // status AND releases its slot (`slotHeld: false`; the reactor rides the
+      // existing release machinery once); an ordinary retry returns it to
+      // running and keeps its slot. `attempt` counts every invocation (D1, for
+      // display and the D5 ceiling); `stallCount` counts CONSECUTIVE stalls and
+      // resets to zero when the reactor observed progress since the last nudge.
       const state: BoardCardStepState = {
         ...current,
         attempt: current.attempt + 1,
-        status: command.escalateToHuman ? "awaiting-input" : "running",
+        stallCount: (command.progressed ? 0 : current.stallCount) + 1,
+        status: command.escalateToHuman ? "stalled" : "running",
+        slotHeld: command.escalateToHuman ? false : current.slotHeld,
         threadId: command.threadId,
+        lastNudgeAt: command.createdAt,
         updatedAt: command.createdAt,
       };
       return {

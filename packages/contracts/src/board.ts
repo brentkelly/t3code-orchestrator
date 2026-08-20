@@ -709,17 +709,23 @@ export type BoardStepCompletion = typeof BoardStepCompletion.Type;
  * advance (D18). The MVP reactor collapses that window into a single turn
  * (settle → advance), so it is not yet emitted; it is kept in the union so a
  * future reactor that persists it needs no migration, and boot reconciliation
- * already treats any non-`running`/`awaiting-input` non-terminal status as a
- * re-drive. Every way in has a way out: `queued` → `running` on admission,
- * `awaiting-input` → `running` on the answer, and the three terminals
- * (`succeeded`, `failed`, `abandoned`) are the reverse states a running step
- * owes.
+ * already treats any non-`running`/`awaiting-input`/`stalled` non-terminal
+ * status as a re-drive. `stalled` (t3o-17, D3) is where recovery gives up: an
+ * unattended step that stops making progress lands here — distinct from
+ * `awaiting-input`, which is a healthy agent question. It is non-terminal (a
+ * human still has to act) but supervision does not drive it, so boot
+ * reconciliation re-reads and leaves it alone. Every way in has a way out:
+ * `queued` → `running` on admission, `awaiting-input` → `running` on the
+ * answer, `stalled` → `queued`/`running` when a human retries, and the three
+ * terminals (`succeeded`, `failed`, `abandoned`) are the reverse states a
+ * running step owes.
  */
 export const BOARD_STEP_STATUSES = [
   "pending",
   "queued",
   "running",
   "awaiting-input",
+  "stalled",
   "completing",
   "succeeded",
   "failed",
@@ -748,9 +754,28 @@ export const BoardCardStepState = Schema.Struct({
   /** The step's human label, carried so a card can render "which step" without
       re-resolving the stage config. */
   stepLabel: TrimmedNonEmptyString,
-  /** Attempt number, 1-based; recovery increments it. Capped at `maxAttempts`,
-      past which recovery escalates to the human gate (D13). */
+  /** Cumulative invocation count of this step this stage entry, 1-based;
+      recovery increments it and it never resets within the entry (t3o-17, D1).
+      Kept for display ("attempt 7") and for the per-stage-entry invocation
+      ceiling (D5) — the runaway detector that stops a stage whose steps have,
+      in total, been invoked more than `maxInvocationsPerStageEntry` times, even
+      when no single step exhausted `maxAttempts`. Resets to 1 on stage entry
+      (a fresh `select-step` row). */
   attempt: PositiveInt,
+  /** CONSECUTIVE stalls with no progress between them (t3o-17, D1). Distinct
+      from `attempt`: this is what recovery gates on — it is compared against
+      `maxAttempts`, and it RESETS to zero whenever progress is observed since
+      the last nudge (D2: a `board_report_progress` activity entry or a new
+      commit on the card's branch). A step that keeps inching forward never
+      escalates on stall grounds however many times it is nudged; only a
+      genuinely wedged agent — `maxAttempts` unproductive stops in a row —
+      does. Starts at zero on a fresh step. */
+  stallCount: NonNegativeInt,
+  /** When recovery last nudged this step (t3o-17, D2), or null before the first
+      nudge. The boundary "since the last nudge" the reactor resolves the
+      progress signal against — a progress note or commit after this instant
+      resets `stallCount`. */
+  lastNudgeAt: Schema.NullOr(IsoDateTime),
   // ── Frozen execution config (D12) ────────────────────────────────────
   // Resolved from the stage's settings ONCE at stage entry and stamped here,
   // so editing settings mid-flight cannot corrupt a running card. The reactor
@@ -913,6 +938,27 @@ export function boardCardStepState(
     settled and no longer supervised. */
 export function boardNonTerminalStepStates(board: BoardState): ReadonlyArray<BoardCardStepState> {
   return (board.stepStates ?? []).filter((state) => !isBoardTerminalStepStatus(state.status));
+}
+
+/**
+ * A card's total step invocations this stage entry (t3o-17, D5): the sum of
+ * `attempt` across the card's step states. The number the reactor feeds the
+ * per-stage-entry ceiling in `recoveryDecision`. Written to generalise over any
+ * stage's step count — a `simple` stage has one step so this is that step's
+ * `attempt`, and t3o-16's review loop, which runs several steps per entry, sums
+ * across them so the compound rounds × phases × attempts bound is observable.
+ */
+export function boardStageEntryInvocationCount(board: BoardState, cardId: BoardCardId): number {
+  return (board.stepStates ?? [])
+    .filter((state) => state.cardId === cardId)
+    .reduce((total, state) => total + state.attempt, 0);
+}
+
+/** Every card whose live step has given up (t3o-17, D3): the `stalled` set the
+    board surfaces so a human can find every card that needs rescuing without
+    opening each. */
+export function boardStalledStepStates(board: BoardState): ReadonlyArray<BoardCardStepState> {
+  return (board.stepStates ?? []).filter((state) => state.status === "stalled");
 }
 
 /** A card's proposed plans (t3o-08), in `ordinal` order. Absent slice means
@@ -1520,10 +1566,19 @@ export const BoardCardRecoverStepCommand = Schema.Struct({
   /** The thread the reactor resumed or respawned for the recovery attempt; may
       be the same thread (resume) or a fresh one (respawn). */
   threadId: Schema.NullOr(ThreadId),
-  /** True when recovery has exhausted `maxAttempts` and escalates to the human
-      gate (D13): the step goes to `awaiting-input` and never loops unbounded.
-      False for an ordinary retry, which returns the step to `running`. */
+  /** True when recovery gives up (t3o-17, D3): consecutive stalls exhausted
+      `maxAttempts`, or the stage-entry invocation ceiling was crossed (D5). The
+      step goes to the distinct `stalled` status (not `awaiting-input`), still
+      asks its question, and RELEASES its concurrency slot (D4) — nobody is
+      working and nobody will until a human acts. False for an ordinary retry,
+      which returns the step to `running` and keeps its slot. */
   escalateToHuman: Schema.Boolean,
+  /** Whether progress was observed since the last nudge (t3o-17, D2): the
+      reactor resolves it (a `board_report_progress` activity entry or a new
+      commit on the card's branch) and the decider resets `stallCount` to zero
+      when true, or increments it when false. Kept out of the pure
+      `recoveryDecision` — git and SQL stay in the reactor. */
+  progressed: Schema.Boolean,
   createdAt: IsoDateTime,
 });
 export type BoardCardRecoverStepCommand = typeof BoardCardRecoverStepCommand.Type;
@@ -1956,6 +2011,16 @@ export const BoardCardShell = Schema.Struct({
       deltas rest it at false and the client preserves its last known value
       (`applyBoardShellStreamEvent`). */
   queued: Schema.Boolean,
+  /** Whether the card's live step has given up (t3o-17, D3): recovery exhausted
+      its consecutive-stall budget or crossed the per-stage-entry invocation
+      ceiling, so nobody is working and nobody will until a human acts. Rendered
+      distinctly from `awaitingInput` (a healthy agent question) — the "loud"
+      half of stall detection — and the board offers a way to find every stalled
+      card. Like `queued`, it is derived from the step-state read-model slice the
+      card aggregate does not carry, so it rides its own `card-stalled` delta and
+      the snapshot; card-carrying deltas rest it at false and the client
+      preserves the last known value (`applyBoardShellStreamEvent`). */
+  stalled: Schema.Boolean,
   // Thread-derived — joined from `board_card_thread_links` (902) and the
   // linked thread's shell; no new plumbing (t3o-04).
   threadState: BoardCardThreadState,
@@ -2099,6 +2164,11 @@ export function makeBoardCardShell(input: {
       card-carrying delta producers omit it, resting it at false — the client
       preserves its last known queued value across those deltas. */
   readonly queued?: boolean | undefined;
+  /** Whether the card's live step has stalled (t3o-17, D3). The snapshot builder
+      passes the real value (derived from step state); card-carrying delta
+      producers omit it, resting it at false — the client preserves its last
+      known stalled value across those deltas. */
+  readonly stalled?: boolean | undefined;
   readonly thread?: BoardThreadStateSource | null | undefined;
 }): BoardCardShell {
   const { threadState, awaitingInput } = deriveBoardCardThreadState(input.thread);
@@ -2117,6 +2187,7 @@ export function makeBoardCardShell(input: {
     hasPr: false, // t3o-11
     attachmentCount: 0, // t3o-11
     queued: input.queued ?? false, // t3o-11 (D11): real on the snapshot, rests false on card deltas
+    stalled: input.stalled ?? false, // t3o-17 (D3): real on the snapshot, rests false on card deltas
     threadState,
     awaitingInput,
     activeThreadId: input.activeThreadId,
@@ -2199,6 +2270,25 @@ export const BoardCardQueuedShellEvent = Schema.Struct({
   queued: Schema.Boolean,
 });
 export type BoardCardQueuedShellEvent = typeof BoardCardQueuedShellEvent.Type;
+
+/**
+ * Stall-flag delta (t3o-17, D3): the card's `stalled` flag flipped as recovery
+ * gave up on its step (→ `stalled=true`) or a retry / human answer put the step
+ * back to work (→ `stalled=false`). A dedicated one-boolean delta, the exact
+ * analogue of `card-queued`: `stalled` is derived from the step-state
+ * read-model slice a card-carrying event cannot see (the step events carry
+ * `state`, not the card), so this delta and the snapshot are its authoritative
+ * source and the client preserves the last known value across card upserts. Its
+ * `kind` keeps the `card-` prefix, so it routes through `isBoardShellStreamEvent`
+ * with zero core-seam change.
+ */
+export const BoardCardStalledShellEvent = Schema.Struct({
+  kind: Schema.Literal("card-stalled"),
+  sequence: NonNegativeInt,
+  cardId: BoardCardId,
+  stalled: Schema.Boolean,
+});
+export type BoardCardStalledShellEvent = typeof BoardCardStalledShellEvent.Type;
 
 /**
  * Catalogue delta (t3o-06a): a label created, renamed, recoloured, tombstoned
@@ -2368,6 +2458,7 @@ export const BOARD_SHELL_STREAM_EVENTS = [
   BoardCardUpsertedShellEvent,
   BoardCardRemovedShellEvent,
   BoardCardQueuedShellEvent,
+  BoardCardStalledShellEvent,
   BoardLabelUpsertedShellEvent,
   BoardStageUpsertedShellEvent,
   BoardStageRemovedShellEvent,
@@ -2765,7 +2856,19 @@ export type BoardLifecycleSettings = typeof BoardLifecycleSettings.Type;
 export const DEFAULT_BOARD_ARCHIVE_AFTER_DAYS = 7;
 export const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
 export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
-export const DEFAULT_BOARD_STEP_MAX_ATTEMPTS = 3;
+/** Consecutive-stall ceiling per step (t3o-17, D1). Raised from 3 to 5: safe
+    only because the counter now measures CONSECUTIVE unproductive stalls
+    (`stallCount`, reset on progress), not cumulative nudges — five wedged stops
+    in a row is a stuck agent, where five cumulative nudges was often a long
+    healthy job. */
+export const DEFAULT_BOARD_STEP_MAX_ATTEMPTS = 5;
+/** Per-stage-entry invocation ceiling (t3o-17, D5): the runaway detector above
+    the per-step ladder. When a stage entry's total `attempt` across all its
+    steps crosses this, the stage stalls and escalates regardless of the
+    per-step ladder — the backstop that makes t3o-16's rounds × phases ×
+    attempts compound bound observable. Deliberately generous: a runaway
+    detector, not a budget. */
+export const DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY = 20;
 export const DEFAULT_BOARD_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
 
 /**
@@ -2810,6 +2913,12 @@ export const BoardStageExecution = Schema.Struct({
   ),
   maxAttempts: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
+  ),
+  /** Per-stage-entry invocation ceiling (t3o-17, D5), enforced only on an
+      unattended run: when the stage entry's total `attempt` across its steps
+      crosses it, the stage stalls regardless of the per-step ladder. */
+  maxInvocationsPerStageEntry: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
   ),
 });
 export type BoardStageExecution = typeof BoardStageExecution.Type;
@@ -2864,6 +2973,7 @@ export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
     autoAdvance: true,
     timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
     maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+    maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   },
   [BOARD_SEED_STAGE_IDS.planning]: {
     kind: "simple",
@@ -2877,6 +2987,7 @@ export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
     autoAdvance: false,
     timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
     maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+    maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   },
 };
 
