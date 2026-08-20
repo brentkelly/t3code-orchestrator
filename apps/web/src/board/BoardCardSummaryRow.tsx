@@ -8,9 +8,15 @@
  * loops peg the GPU on high-refresh displays). The row renders nothing when
  * `items` is empty, so a stage with no data adds no height to the card.
  */
-import { GitPullRequestIcon, PaperclipIcon } from "lucide-react";
+import type { BoardCardThreadShell } from "@t3tools/contracts";
+import {
+  BOARD_THREAD_TODO_STATUS_DONE,
+  BOARD_THREAD_TODO_STATUS_IN_PROGRESS,
+} from "@t3tools/contracts";
+import { ChevronDownIcon, ChevronRightIcon, GitPullRequestIcon, PaperclipIcon } from "lucide-react";
 
 import { cn } from "../lib/utils";
+import { formatRelativeTime } from "../timestampFormat";
 import type { BoardCardSummaryItem } from "./boardCardSummary";
 
 /** Max pips rendered for either the review-round or plan-progress rows, so a
@@ -171,6 +177,162 @@ export function BoardCardSummaryRow({
       {items.map((item) => (
         <SummaryItem item={item} key={item.kind} />
       ))}
+    </div>
+  );
+}
+
+// ── Thread todo strip (t3o-18, D4/D5) ──────────────────────────────────
+
+/**
+ * One pip per STORED todo item, coloured by that item's real status.
+ *
+ * Deriving pips from `(done, total, hasDoing)` renders a tidy
+ * `[done…][doing][pending…]` fiction that is wrong whenever an agent completes an
+ * item out of order — which they do — so the server sends a status STRING and
+ * every character renders where it actually is.
+ *
+ * All stored pips render, at `flex:1`. At 24 items each pip is ~7px on a ~230px
+ * card: thin, but it reads as the progress bar it is, and the `2/24` beside it
+ * carries the precision. `MAX_SUMMARY_PIPS` is deliberately NOT reused — six pips
+ * standing for twenty-four items is actively misleading rather than merely
+ * coarse.
+ *
+ * Static presentation only: no animation (upstream AGENTS.md — repainting loops
+ * peg the GPU on high-refresh displays).
+ */
+export function BoardTodoPips({
+  statuses,
+  done,
+  total,
+}: {
+  readonly statuses: string;
+  readonly done: number;
+  readonly total: number;
+}) {
+  const label = `${done} of ${total} todos done`;
+  return (
+    <span aria-label={label} className="flex items-center gap-[2px]" title={label}>
+      {/* Indexed rather than mapped over the characters: a pip IS its position
+          — the row is a positional progress bar and items never reorder within a
+          render — which is the same shape `PlanPips` and `RoundPips` use. */}
+      {Array.from({ length: statuses.length }, (_, index) => (
+        <span
+          className={cn(
+            "h-[3px] min-w-[2px] flex-1 rounded-full",
+            statuses[index] === BOARD_THREAD_TODO_STATUS_DONE
+              ? "bg-emerald-500"
+              : statuses[index] === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
+                ? "bg-info"
+                : "bg-muted-foreground/25",
+          )}
+          key={index}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** "13m" / "2h" on the item the agent is currently on (D6). Elapsed is anchored
+    to the moment the in-progress item's TEXT changed, so reordering and
+    insertion do not reset it. */
+function todoElapsedLabel(startedAt: string | undefined): string | null {
+  if (startedAt === undefined) return null;
+  const relative = formatRelativeTime(startedAt);
+  return relative === null || relative.suffix === null ? null : relative.value;
+}
+
+/**
+ * The card's todo strip: the pip row, the honest `done/total` (TRUE counts, even
+ * when only 30 pips were stored), the in-progress item, and how long it has been
+ * on it.
+ *
+ * A card with more than one live thread gets a chip carrying the count. The chip
+ * adds no height — it sits on the existing meta row — and clicking it expands the
+ * other threads WITHOUT opening the card.
+ */
+export function BoardCardTodoStrip({
+  todo,
+  otherThreadCount,
+  expanded,
+  onToggleThreads,
+}: {
+  readonly todo: BoardCardThreadShell;
+  readonly otherThreadCount: number;
+  readonly expanded: boolean;
+  readonly onToggleThreads?: (() => void) | undefined;
+}) {
+  const done = todo.todoDone ?? 0;
+  const total = todo.todoTotal ?? 0;
+  const elapsed = todoElapsedLabel(todo.todoStartedAt);
+  return (
+    <div className="flex flex-col gap-1">
+      <BoardTodoPips done={done} statuses={todo.todoStatuses ?? ""} total={total} />
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="shrink-0 text-[10.5px] font-medium tabular-nums text-muted-foreground">
+          {done}/{total}
+        </span>
+        {todo.todoCurrent === undefined ? null : (
+          <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground">
+            {todo.todoCurrent}
+          </span>
+        )}
+        {elapsed === null ? null : (
+          <span
+            className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70"
+            title="Time on the current todo"
+          >
+            {elapsed}
+          </span>
+        )}
+        {otherThreadCount > 0 && onToggleThreads !== undefined ? (
+          <button
+            className="-my-0.5 inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+            // The chip must NOT open the card: clicking it expands the other
+            // threads in place.
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleThreads();
+            }}
+            title={
+              expanded
+                ? "Hide the other threads on this card"
+                : `Show ${otherThreadCount} other ${otherThreadCount === 1 ? "thread" : "threads"}`
+            }
+            type="button"
+          >
+            {expanded ? (
+              <ChevronDownIcon className="size-2.5" />
+            ) : (
+              <ChevronRightIcon className="size-2.5" />
+            )}
+            +{otherThreadCount}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** One non-winning thread, revealed only after the chip is clicked (D8: a second
+    thread adds no card height until then). Rendered from what is STORED, so a
+    finished list still reads `5/5` here even though the strip above hid it. */
+export function BoardCardTodoThreadRow({
+  todo,
+  title,
+}: {
+  readonly todo: BoardCardThreadShell;
+  readonly title: string;
+}) {
+  const done = todo.todoDone ?? 0;
+  const total = todo.todoTotal ?? 0;
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground">{title}</span>
+      {total === 0 ? null : (
+        <span className="shrink-0 text-[10.5px] font-medium tabular-nums text-muted-foreground">
+          {done}/{total}
+        </span>
+      )}
     </div>
   );
 }

@@ -73,8 +73,9 @@ import {
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 // T3o: board events map to card shell deltas in the board module.
 import { boardShellStreamEvent, isBoardEvent } from "./board/projector.ts";
-// T3o: board RPC handlers live in the board module (t3o-04).
-import { boardRpcHandlers } from "./board/rpc.ts";
+// T3o: board RPC handlers live in the board module (t3o-04); the actor stamp and
+// the card-threads shell delta live beside them (t3o-18, D3/D11).
+import { boardActorStamp, boardCardThreadsShellEvents, boardRpcHandlers } from "./board/rpc.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -367,6 +368,15 @@ const makeWsRpcLayer = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      // T3o (t3o-18, D3/D11): the human actor stamp for board commands, and the
+      // card-threads shell deltas board-linked threads imply. Both are built once
+      // per connection so their caches (project git name, board method handles)
+      // live as long as the socket.
+      const boardStampActor = boardActorStamp({
+        projectionSnapshotQuery,
+        git: yield* GitVcsDriver.GitVcsDriver,
+      });
+      const boardCardThreadsDeltas = boardCardThreadsShellEvents({ projectionSnapshotQuery });
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
@@ -541,6 +551,21 @@ const makeWsRpcLayer = (
             });
       };
 
+      /**
+       * The shell deltas one domain event implies. An ARRAY rather than a single
+       * Option because t3o-18 (D3) adds a second, orthogonal delta: a thread
+       * event both refreshes that thread's shell AND carries its card's todo
+       * summaries, and neither may swallow the other.
+       */
+      const toShellStreamEvents = (
+        event: OrchestrationEvent,
+      ): Effect.Effect<ReadonlyArray<OrchestrationShellStreamEvent>, never, never> =>
+        Effect.gen(function* () {
+          const primary = yield* toShellStreamEvent(event);
+          const cardThreads = yield* boardCardThreadsDeltas(event);
+          return Option.isSome(primary) ? [primary.value, ...cardThreads] : cardThreads;
+        });
+
       const toShellStreamEvent = (
         event: OrchestrationEvent,
       ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> => {
@@ -696,10 +721,10 @@ const makeWsRpcLayer = (
           const survivors = Array.from(latestByAggregate.values()).sort(
             (left, right) => left.sequence - right.sequence,
           );
-          const shellEvents = yield* Effect.forEach(survivors, toShellStreamEvent, {
+          const shellEvents = yield* Effect.forEach(survivors, toShellStreamEvents, {
             concurrency: SHELL_REFETCH_CONCURRENCY,
           });
-          return shellEvents.flatMap((option) => (Option.isSome(option) ? [option.value] : []));
+          return shellEvents.flat();
         });
 
       // Small time/size window over which to coalesce shell events. The window
@@ -1041,6 +1066,11 @@ const makeWsRpcLayer = (
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
+              // T3o (t3o-18, D11): this RPC is the transport that knows a person
+              // is on the other end, so it is where the human actor is stamped —
+              // no command schema changes, and no other caller can claim to be
+              // one. A non-board command is left alone.
+              yield* boardStampActor(normalizedCommand);
               const shouldStopSessionAfterArchive =
                 normalizedCommand.type === "thread.archive"
                   ? yield* projectionSnapshotQuery

@@ -33,6 +33,8 @@ import {
   type BoardCardRemovedShellEvent,
   type BoardCardShell,
   type BoardCardStalledShellEvent,
+  type BoardCardThreadShell,
+  type BoardCardThreadsShellEvent,
   type BoardCardUpsertedShellEvent,
   type BoardLabel,
   type BoardLabelUpsertedShellEvent,
@@ -121,6 +123,7 @@ export type BoardShellStreamEvent =
   | BoardCardRemovedShellEvent
   | BoardCardQueuedShellEvent
   | BoardCardStalledShellEvent
+  | BoardCardThreadsShellEvent
   | BoardLabelUpsertedShellEvent
   | BoardStageUpsertedShellEvent
   | BoardStageRemovedShellEvent;
@@ -130,15 +133,36 @@ export { isBoardShellStreamEvent };
 
 type ThreadShellLookup = (threadId: ThreadId) => OrchestrationThreadShell | undefined;
 
+/** Every live-linked thread id of a card (t3o-18, D7). `boardCardThreads` rides
+    the shell snapshot with one entry per live link; a client that has not
+    received it yet (or a card with no links) falls back to `activeThreadId`, so
+    the aggregate degrades to exactly the pre-t3o-18 behaviour rather than to
+    nothing. */
+function liveCardThreadIds(
+  card: BoardCardShell,
+  cardThreads: ReadonlyArray<BoardCardThreadShell> | undefined,
+): ReadonlyArray<ThreadId> {
+  const linked = (cardThreads ?? [])
+    .filter((entry) => entry.cardId === card.cardId)
+    .map((entry) => entry.threadId);
+  if (linked.length > 0) return linked;
+  return card.activeThreadId === null ? [] : [card.activeThreadId];
+}
+
 /** Thread-derived fields recomputed from the current thread shells; returns
     the same card reference when nothing changed so memoized consumers keep
-    their identity. */
+    their identity.
+
+    Aggregated across EVERY live-linked thread (t3o-18, D7), matching the
+    server's snapshot enrichment exactly — the two must agree, or the badge would
+    flicker between a snapshot and the next delta. */
 function withDerivedThreadFields(
   card: BoardCardShell,
   threadById: ThreadShellLookup,
+  cardThreads?: ReadonlyArray<BoardCardThreadShell> | undefined,
 ): BoardCardShell {
-  const thread = card.activeThreadId === null ? undefined : threadById(card.activeThreadId);
-  const { threadState, awaitingInput } = deriveBoardCardThreadState(thread);
+  const threads = liveCardThreadIds(card, cardThreads).map(threadById);
+  const { threadState, awaitingInput } = deriveBoardCardThreadState(threads);
   return card.threadState === threadState && card.awaitingInput === awaitingInput
     ? card
     : { ...card, threadState, awaitingInput };
@@ -170,8 +194,10 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.stalled === withQueued.stalled
           ? withQueued
           : { ...withQueued, stalled: existing.stalled };
-      const card = withDerivedThreadFields(withStalled, (threadId) =>
-        snapshot.threads.find((thread) => thread.id === threadId),
+      const card = withDerivedThreadFields(
+        withStalled,
+        (threadId) => snapshot.threads.find((thread) => thread.id === threadId),
+        snapshot.boardCardThreads,
       );
       const nextCards = cards.some((entry) => entry.cardId === card.cardId)
         ? Arr.map(cards, (entry) => (entry.cardId === card.cardId ? card : entry))
@@ -200,10 +226,28 @@ export function applyBoardShellStreamEvent(
       );
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
     }
+    case "card-threads": {
+      // The card's whole live link set, replaced wholesale (t3o-18, D3): the set
+      // changes for three different reasons — a todo revision, a link, an unlink
+      // — and a replace is idempotent under all three.
+      const others = (snapshot.boardCardThreads ?? []).filter(
+        (entry) => entry.cardId !== event.cardId,
+      );
+      return {
+        ...snapshot,
+        boardCardThreads: [...others, ...event.threads],
+        snapshotSequence: event.sequence,
+      };
+    }
     case "card-removed":
       return {
         ...snapshot,
         cards: Arr.filter(cards, (card) => card.cardId !== event.cardId),
+        // A card that left the board takes its thread entries with it; leaving
+        // them would leak an unbounded list across a long-lived session.
+        boardCardThreads: (snapshot.boardCardThreads ?? []).filter(
+          (entry) => entry.cardId !== event.cardId,
+        ),
         snapshotSequence: event.sequence,
       };
     case "label-upserted": {
@@ -325,7 +369,11 @@ function groupBoardCards(
     pushColumn(
       columns,
       card.stage,
-      withDerivedThreadFields(card, (threadId) => threadsById.get(threadId)),
+      withDerivedThreadFields(
+        card,
+        (threadId) => threadsById.get(threadId),
+        snapshot.boardCardThreads,
+      ),
     );
   }
   for (const columns of byProject.values()) {
@@ -468,6 +516,40 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-cards:${environmentId}`)),
   );
 
+  /**
+   * Live card→thread links and their cached todo summaries (t3o-18, D3), keyed
+   * by card id. Rides the shell snapshot once and is kept current by the
+   * `card-threads` delta, so this is a cheap projection over cached state, not a
+   * subscription — and `BoardCardShell` still carries no todo field.
+   *
+   * Empty until the first snapshot. A card with no entry has no live-linked
+   * thread; a thread with no todo fields is linked but has never emitted a
+   * `turn.plan.updated` (D14: the cache fills forward only).
+   */
+  const EMPTY_CARD_THREADS: ReadonlyMap<
+    BoardCardId,
+    ReadonlyArray<BoardCardThreadShell>
+  > = new Map();
+  const cardThreadsByCardAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const state = get(options.shellStateValueAtom(environmentId));
+      return Option.match(state.snapshot, {
+        onNone: () => EMPTY_CARD_THREADS,
+        onSome: (snapshot) => {
+          const entries = snapshot.boardCardThreads ?? [];
+          if (entries.length === 0) return EMPTY_CARD_THREADS;
+          const byCard = new Map<BoardCardId, BoardCardThreadShell[]>();
+          for (const entry of entries) {
+            const list = byCard.get(entry.cardId) ?? [];
+            list.push(entry);
+            byCard.set(entry.cardId, list);
+          }
+          return byCard;
+        },
+      });
+    }).pipe(Atom.withLabel(`environment-board-card-threads:${environmentId}`)),
+  );
+
   /** The board's label catalogue (t3o-06a) — the vocabulary every card chip
       and the label picker read, keyed by id. Rides the shell snapshot once,
       so this is a cheap projection over cached state, not a subscription.
@@ -540,6 +622,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
 
   return {
     cardsByProjectAtom,
+    cardThreadsByCardAtom,
     labelCatalogueAtom,
     stageListAtom,
     /** Raw subscription state (loading/failure visible), keyed like

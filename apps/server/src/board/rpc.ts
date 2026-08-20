@@ -25,13 +25,20 @@ import {
   BOARD_WS_METHODS,
   BoardSubscribeCardError,
   EnvironmentAuthorizationError,
+  isBoardCommand,
   isBoardEvent,
+  ThreadId,
   type BoardCardDetail,
   type BoardCardDetailStreamItem,
   type BoardCardId,
   type BoardSubscribeCardInput,
+  type OrchestrationCommand,
+  type OrchestrationEvent,
+  type OrchestrationShellStreamEvent,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
@@ -39,6 +46,12 @@ import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import { observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import {
+  BOARD_HUMAN_ACTOR_FALLBACK_NAME,
+  boardHumanActor,
+  stampBoardActivityActor,
+} from "./activityActors.ts";
 import { boardSnapshotQueryMethodsOf } from "./projection.ts";
 
 export interface BoardRpcHandlerDeps {
@@ -152,4 +165,143 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
         { "rpc.aggregate": "board" },
       ),
   };
+}
+
+// ── The human dispatch boundary (t3o-18, D11) ──────────────────────────
+
+/**
+ * Stamp the HUMAN actor on a board command arriving over the web client's
+ * `orchestration.dispatchCommand` RPC, so the Activity rail can say "brent moved
+ * to Building" rather than attributing every drag to the system.
+ *
+ * Called from ws.ts immediately before dispatch: that RPC is the transport that
+ * knows a person is on the other end, and no other caller can claim to be one.
+ * A non-board command, or one that names no card, is left alone.
+ *
+ * **The name** is the card's project git `user.name`, cached per project and
+ * frozen onto the row at write time (so it stays correct after the git config
+ * changes), falling back to `"You"`. There is no user identity anywhere in
+ * t3code — it is a single-user local server — and for a dev tool the git identity
+ * is the right one: it is already what lands on every commit the agent makes.
+ *
+ * Resolution is two point reads plus at most one `git config` per project for the
+ * lifetime of the process, on a path a human drives by hand. Every failure
+ * degrades to the fallback name; none can fail the dispatch.
+ */
+export function boardActorStamp(deps: {
+  readonly projectionSnapshotQuery: ProjectionSnapshotQueryShape;
+  readonly git: GitVcsDriver["Service"];
+}): (command: OrchestrationCommand) => Effect.Effect<void> {
+  const boardMethods = boardSnapshotQueryMethodsOf(deps.projectionSnapshotQuery);
+  const projectByCard = new Map<string, ProjectId>();
+  const nameByProject = new Map<string, string>();
+
+  const gitUserName = (workspaceRoot: string) =>
+    deps.git
+      .execute({
+        operation: "board.activityActor.userName",
+        cwd: workspaceRoot,
+        args: ["config", "user.name"],
+        allowNonZeroExit: true,
+      })
+      .pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.catchCause(() => Effect.succeed("")),
+      );
+
+  const resolveName = Effect.fn("board-activity-actor-name")(function* (cardId: BoardCardId) {
+    if (boardMethods === null) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
+    let projectId = projectByCard.get(String(cardId));
+    if (projectId === undefined) {
+      const detail = yield* boardMethods
+        .boardCardDetail(cardId)
+        .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      if (detail === null) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
+      // A card never changes project, so this mapping is cacheable forever.
+      projectId = detail.card.projectId;
+      projectByCard.set(String(cardId), projectId);
+    }
+    const cached = nameByProject.get(String(projectId));
+    if (cached !== undefined) return cached;
+    const project = yield* deps.projectionSnapshotQuery.getProjectShellById(projectId).pipe(
+      Effect.map(Option.getOrUndefined),
+      Effect.catchCause(() => Effect.succeed(undefined)),
+    );
+    const workspaceRoot = project?.workspaceRoot;
+    const resolved =
+      workspaceRoot === undefined || workspaceRoot.length === 0
+        ? ""
+        : yield* gitUserName(workspaceRoot);
+    const name = resolved.length > 0 ? resolved : BOARD_HUMAN_ACTOR_FALLBACK_NAME;
+    nameByProject.set(String(projectId), name);
+    return name;
+  });
+
+  return (command) =>
+    Effect.gen(function* () {
+      if (!isBoardCommand(command)) return;
+      const cardId = (command as { readonly cardId?: BoardCardId }).cardId;
+      if (cardId === undefined) return;
+      stampBoardActivityActor(command.commandId, boardHumanActor(yield* resolveName(cardId)));
+    }).pipe(Effect.catchCause(() => Effect.void));
+}
+
+// ── The card-threads shell delta (t3o-18, D3) ──────────────────────────
+
+/**
+ * The `card-threads` shell deltas an orchestration event implies, if any.
+ *
+ * Emitted from the SAME domain-event stream every other shell delta rides, with
+ * the causing event's own `sequence`, so resume-by-sequence stays exact and a
+ * client can never see a todo revision out of order with the card it belongs to.
+ * Two triggers:
+ *
+ * - a THREAD event whose thread is live-linked to a card — one point read on the
+ *   link table's primary key, and the coalescing window upstream has already
+ *   collapsed a burst of `turn.plan.updated` revisions to the latest;
+ * - a card's link set changing (`board.card-thread-linked` / `-unlinked`), since
+ *   the set membership is what the delta carries.
+ *
+ * A card archive needs none: `card-removed` already drops the card, and the
+ * client drops its thread entries with it.
+ *
+ * Best-effort: every failure yields no delta rather than breaking the shell
+ * stream, and the next snapshot repairs the view.
+ */
+export function boardCardThreadsShellEvents(deps: {
+  readonly projectionSnapshotQuery: ProjectionSnapshotQueryShape;
+}): (event: OrchestrationEvent) => Effect.Effect<ReadonlyArray<OrchestrationShellStreamEvent>> {
+  const boardMethods = boardSnapshotQueryMethodsOf(deps.projectionSnapshotQuery);
+
+  const forCard = (cardId: BoardCardId, sequence: number) =>
+    boardMethods === null
+      ? Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>)
+      : boardMethods.boardCardThreads(cardId).pipe(
+          Effect.map(
+            (threads): ReadonlyArray<OrchestrationShellStreamEvent> => [
+              { kind: "card-threads" as const, sequence, cardId, threads },
+            ],
+          ),
+          Effect.catchCause(() =>
+            Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>),
+          ),
+        );
+
+  return (event) =>
+    Effect.gen(function* () {
+      if (boardMethods === null) return [];
+      if (
+        event.type === "board.card-thread-linked" ||
+        event.type === "board.card-thread-unlinked"
+      ) {
+        return yield* forCard(event.payload.cardId, event.sequence);
+      }
+      if (event.aggregateKind !== "thread") return [];
+      const cardId = yield* boardMethods
+        .boardCardIdForThread(ThreadId.make(String(event.aggregateId)))
+        .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      return cardId === null ? [] : yield* forCard(cardId, event.sequence);
+    }).pipe(
+      Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>)),
+    );
 }

@@ -64,7 +64,9 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
 function detail(
   overrides?: Partial<BoardCard>,
   brief: string | null = null,
-  edges?: Partial<Pick<BoardCardDetail, "dependencies" | "dependents" | "stepCompletions">>,
+  edges?: Partial<
+    Pick<BoardCardDetail, "dependencies" | "dependents" | "stepCompletions" | "activity">
+  >,
 ): BoardCardDetail {
   return {
     card: card(overrides),
@@ -72,6 +74,7 @@ function detail(
     hasPlan: false,
     dependencies: edges?.dependencies ?? [],
     dependents: edges?.dependents ?? [],
+    activity: edges?.activity ?? [],
     stepCompletions: edges?.stepCompletions ?? [],
   };
 }

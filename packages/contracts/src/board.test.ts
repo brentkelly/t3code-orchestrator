@@ -10,6 +10,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   BOARD_CARD_LABELS_MAX,
+  BOARD_THREAD_TODO_CURRENT_MAX_BYTES,
+  BOARD_THREAD_TODO_ITEMS_MAX,
+  boardThreadTodosComplete,
+  boardThreadTodoSummary,
   BOARD_CARD_SHELL_TITLE_MAX_BYTES,
   BOARD_LABEL_NAME_MAX_LENGTH,
   BOARD_SEED_STAGE_IDS,
@@ -489,5 +493,83 @@ describe("archive confirmation (t3o-13, D3)", () => {
         dependents: [archived],
       }),
     ).toBe(false);
+  });
+});
+
+describe("thread todo summary (t3o-18, D4)", () => {
+  it("caps stored pips at BOARD_THREAD_TODO_ITEMS_MAX while the counts stay true", () => {
+    const plan = Array.from({ length: 47 }, (_, index) => ({
+      step: `Item ${index}`,
+      status: index < 2 ? ("completed" as const) : ("pending" as const),
+    }));
+    const summary = boardThreadTodoSummary(plan);
+    expect(summary.statuses.length).toBe(BOARD_THREAD_TODO_ITEMS_MAX);
+    // The counts are the TRUE ones, before capping — `2/47` stays honest even
+    // when only 30 pips are stored.
+    expect(summary.doneCount).toBe(2);
+    expect(summary.totalCount).toBe(47);
+  });
+
+  it("renders out-of-order completion in TRUE positions, not a tidy fiction", () => {
+    const summary = boardThreadTodoSummary([
+      { step: "One", status: "pending" },
+      { step: "Two", status: "completed" },
+      { step: "Three", status: "inProgress" },
+      { step: "Four", status: "completed" },
+    ]);
+    // Deriving from (done, total, hasDoing) would print `ddip`; the real list is
+    // `pdid`, and an agent that finishes item 4 before item 1 must not be lied
+    // about.
+    expect(summary.statuses).toBe("pdid");
+    expect(summary.currentText).toBe("Three");
+  });
+
+  it("truncates the in-progress text on code-point boundaries", () => {
+    const long = "🙂".repeat(200);
+    const summary = boardThreadTodoSummary([{ step: long, status: "inProgress" }]);
+    const bytes = new TextEncoder().encode(summary.currentText ?? "").length;
+    expect(bytes).toBeLessThanOrEqual(BOARD_THREAD_TODO_CURRENT_MAX_BYTES);
+    // No lone surrogate survived the cut.
+    expect(summary.currentText ?? "").toBe([...(summary.currentText ?? "")].join(""));
+  });
+
+  it("calls a list complete only when it has items and all of them are done", () => {
+    expect(boardThreadTodosComplete({ todoDone: 5, todoTotal: 5 })).toBe(true);
+    expect(boardThreadTodosComplete({ todoDone: 4, todoTotal: 5 })).toBe(false);
+    // An absent list is not a complete one.
+    expect(boardThreadTodosComplete({})).toBe(false);
+  });
+});
+
+describe("deriveBoardCardThreadState aggregates across live threads (t3o-18, D7)", () => {
+  const idle = { hasPendingUserInput: false, hasPendingApprovals: false, session: null };
+  const waiting = { hasPendingUserInput: true, hasPendingApprovals: false, session: null };
+  const working = {
+    hasPendingUserInput: false,
+    hasPendingApprovals: false,
+    session: { status: "running" },
+  };
+
+  it("AC 8: a card whose OLDER linked thread awaits input still shows Input needed", () => {
+    // The older thread is first; `activeThreadId` would have picked the last.
+    const state = deriveBoardCardThreadState([waiting, idle]);
+    expect(state.awaitingInput).toBe(true);
+    expect(state.threadState).toBe("waiting");
+  });
+
+  it("AC 9: a card whose NON-active linked thread is running shows the running dot", () => {
+    expect(deriveBoardCardThreadState([working, idle]).threadState).toBe("working");
+  });
+
+  it("keeps waiting above working, lifted from one thread to N", () => {
+    expect(deriveBoardCardThreadState([working, waiting]).threadState).toBe("waiting");
+    expect(deriveBoardCardThreadState([idle, idle]).threadState).toBe("stopped");
+    expect(deriveBoardCardThreadState([]).threadState).toBe("none");
+    expect(deriveBoardCardThreadState([undefined, null]).threadState).toBe("none");
+  });
+
+  it("still accepts a single thread, so every pre-t3o-18 caller is unchanged", () => {
+    expect(deriveBoardCardThreadState(waiting).threadState).toBe("waiting");
+    expect(deriveBoardCardThreadState(null).threadState).toBe("none");
   });
 });

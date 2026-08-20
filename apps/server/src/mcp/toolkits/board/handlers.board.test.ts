@@ -42,6 +42,7 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import { boardHandlers } from "./handlers.ts";
+import { BoardToolkit } from "./tools.ts";
 
 const makeLayer = (prefix: string) =>
   Layer.mergeAll(
@@ -148,16 +149,28 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  it.effect("records progress and surfaces it in the card context", () =>
+  it.effect("board_report_progress and board_request_input no longer exist (t3o-18, D13)", () =>
     Effect.gen(function* () {
       yield* seed();
-      yield* boardHandlers
-        .board_report_progress({ note: "Started planning" })
-        .pipe(withScope(linkedThread));
+      const names = Object.values(BoardToolkit.tools).map((tool) => tool.name);
+      assert.notInclude(names, "board_report_progress");
+      assert.notInclude(names, "board_request_input");
+      assert.include(names, "board_get_card_context");
+      assert.include(names, "board_complete_step");
+    }),
+  );
+
+  it.effect("the card context carries every live thread's todo list (t3o-18, D13)", () =>
+    Effect.gen(function* () {
+      yield* seed();
       const context = yield* boardHandlers.board_get_card_context().pipe(withScope(linkedThread));
-      assert.strictEqual(context.activity.length, 1);
-      assert.strictEqual(context.activity[0]?.kind, "progress");
-      assert.strictEqual(context.activity[0]?.body, "Started planning");
+      // The link exists, so the thread rides — with no todo fields until it
+      // emits its first `turn.plan.updated` (D14: the cache fills forward).
+      assert.deepStrictEqual(
+        context.threads.map((entry) => entry.threadId),
+        [linkedThread],
+      );
+      assert.strictEqual(context.threads[0]?.todoStatuses, undefined);
     }),
   );
 
@@ -428,7 +441,6 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   it.effect("the agent write path replays identically from an empty read model (D8)", () =>
     Effect.gen(function* () {
       yield* seed();
-      yield* boardHandlers.board_report_progress({ note: "note" }).pipe(withScope(linkedThread));
       yield* boardHandlers
         .board_complete_step({ stepId: "build", outcome: "succeeded", summary: "done" })
         .pipe(withScope(linkedThread));

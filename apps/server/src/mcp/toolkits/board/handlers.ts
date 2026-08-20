@@ -16,7 +16,6 @@ import {
   boardCardStepCompletions,
   boardLabelCatalogue,
   boardPlanId,
-  BoardActivityId,
   BoardCardId,
   CommandId,
   EMPTY_BOARD_STATE,
@@ -24,8 +23,6 @@ import {
   type BoardCardCreateCommand,
   type BoardCardCompleteStepCommand,
   type BoardCardMoveCommand,
-  type BoardCardReportProgressCommand,
-  type BoardCardRequestInputCommand,
   type BoardCardUpdateCommand,
   type BoardCard,
   type BoardLabelId,
@@ -56,6 +53,7 @@ import {
   type BoardSnapshotQueryMethods,
 } from "../../../board/projection.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import { boardAgentActor, stampBoardActivityActor } from "../../../board/activityActors.ts";
 import { BoardToolError, BoardToolkit } from "./tools.ts";
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
@@ -302,11 +300,27 @@ const resolveProjectId = (
     });
   });
 
+/**
+ * Dispatch a board command from the MCP toolkit, stamping the AGENT actor first
+ * (t3o-18, D11). This is one of the three dispatch boundaries that know who
+ * called; the projector reads the stamp back off the event's `commandId` when it
+ * writes an Activity row. The command schema is unchanged, and an agent cannot
+ * misreport itself — the provider instance and thread come from the invocation
+ * scope, not from tool input.
+ */
 const dispatch = (
-  engine: OrchestrationEngineShape,
+  deps: BoardToolDeps,
   command: OrchestrationCommand,
-): Effect.Effect<{ readonly sequence: number }, BoardToolError> =>
-  engine.dispatch(command).pipe(Effect.mapError(dispatchError));
+): Effect.Effect<{ readonly sequence: number }, BoardToolError> => {
+  stampBoardActivityActor(
+    command.commandId,
+    boardAgentActor({
+      providerInstanceId: deps.scope.providerInstanceId,
+      threadId: deps.scope.threadId,
+    }),
+  );
+  return deps.engine.dispatch(command).pipe(Effect.mapError(dispatchError));
+};
 
 export const boardHandlers = {
   board_get_card_context: () =>
@@ -319,6 +333,12 @@ export const boardHandlers = {
         .pipe(Effect.mapError(internalError));
       const activity = yield* deps.board
         .boardCardActivity(card.id)
+        .pipe(Effect.mapError(internalError));
+      // Per-thread todo summaries (t3o-18, D13): what a restarted agent — or a
+      // second thread on the same card — actually wanted from the progress notes
+      // this replaces.
+      const threads = yield* deps.board
+        .boardCardThreads(card.id)
         .pipe(Effect.mapError(internalError));
       // A dependency is satisfied when it sits in the `done`-role stage — keyed
       // on the role, not on a stage literally named "done" (D3).
@@ -340,45 +360,8 @@ export const boardHandlers = {
         steps: boardCardStepCompletions(board, card.id),
         plans: boardCardPlans(board, card.id),
         activity,
+        threads,
       };
-    }),
-
-  board_report_progress: (input) =>
-    Effect.gen(function* () {
-      const deps = yield* boardToolDeps;
-      const board = yield* readBoardState(deps);
-      const card = yield* requireCallerCard(board, deps.scope);
-      const activityId = BoardActivityId.make(yield* mintUuid);
-      const command: BoardCardReportProgressCommand = {
-        type: "board.card.report-progress",
-        commandId: yield* mintCommandId,
-        cardId: card.id,
-        activityId,
-        note: input.note,
-        threadId: deps.scope.threadId,
-        createdAt: yield* nowIso,
-      };
-      yield* dispatch(deps.engine, command);
-      return { activityId };
-    }),
-
-  board_request_input: (input) =>
-    Effect.gen(function* () {
-      const deps = yield* boardToolDeps;
-      const board = yield* readBoardState(deps);
-      const card = yield* requireCallerCard(board, deps.scope);
-      const activityId = BoardActivityId.make(yield* mintUuid);
-      const command: BoardCardRequestInputCommand = {
-        type: "board.card.request-input",
-        commandId: yield* mintCommandId,
-        cardId: card.id,
-        activityId,
-        question: input.question,
-        threadId: deps.scope.threadId,
-        createdAt: yield* nowIso,
-      };
-      yield* dispatch(deps.engine, command);
-      return { activityId };
     }),
 
   board_complete_step: (input) =>
@@ -407,7 +390,7 @@ export const boardHandlers = {
         threadId: deps.scope.threadId,
         createdAt: yield* nowIso,
       };
-      yield* dispatch(deps.engine, command);
+      yield* dispatch(deps, command);
       return {
         stepId: input.stepId,
         outcome: existing?.outcome ?? input.outcome,
@@ -503,7 +486,7 @@ export const boardHandlers = {
         keyPrefix: yield* resolveCardKeyPrefix(projectId, projectTitle),
         createdAt: yield* nowIso,
       };
-      yield* dispatch(deps.engine, create);
+      yield* dispatch(deps, create);
       // brief and dependsOn are set through a follow-up update — the create
       // command carries neither.
       if (input.brief !== undefined || dependsOn.length > 0) {
@@ -515,7 +498,7 @@ export const boardHandlers = {
           dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
           createdAt: yield* nowIso,
         };
-        yield* dispatch(deps.engine, update);
+        yield* dispatch(deps, update);
       }
       // Read back the allocated key.
       const after = yield* readBoardState(deps);
@@ -552,7 +535,7 @@ export const boardHandlers = {
         override: input.override,
         createdAt: yield* nowIso,
       };
-      yield* dispatch(deps.engine, command);
+      yield* dispatch(deps, command);
       return { cardId: input.cardId, stage: input.toStage };
     }),
 
@@ -573,7 +556,7 @@ export const boardHandlers = {
         externalRef: input.externalRef,
         createdAt: yield* nowIso,
       };
-      yield* dispatch(deps.engine, command);
+      yield* dispatch(deps, command);
       return { cardId: input.cardId };
     }),
 
@@ -589,7 +572,7 @@ export const boardHandlers = {
         plans: input.plans,
         createdAt: yield* nowIso,
       };
-      yield* dispatch(deps.engine, command);
+      yield* dispatch(deps, command);
       return { planIds: input.plans.map((plan) => boardPlanId(card.id, plan.key)) };
     }),
 
@@ -635,7 +618,7 @@ export const boardHandlers = {
         body: input.body,
         createdAt: yield* nowIso,
       };
-      yield* dispatch(deps.engine, command);
+      yield* dispatch(deps, command);
       return { planId: input.planId };
     }),
 } satisfies Parameters<typeof BoardToolkit.toLayer>[0];

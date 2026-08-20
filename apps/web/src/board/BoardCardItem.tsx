@@ -7,15 +7,50 @@
  * animations (upstream AGENTS.md: loops peg the GPU on high-refresh
  * displays) — a running thread is a solid dot, not a spinner.
  */
-import type { BoardCardShell, BoardLabel, BoardLabelId } from "@t3tools/contracts";
+import type {
+  BoardCardShell,
+  BoardCardThreadShell,
+  BoardLabel,
+  BoardLabelId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { CircleAlertIcon, LockIcon, TriangleAlertIcon } from "lucide-react";
 import type { DragEvent } from "react";
 
 import { cn } from "../lib/utils";
+import {
+  boardCardProgressBlock,
+  boardCardShellThreadState,
+  pickBoardCardTodoThread,
+  type BoardTodoThreadState,
+} from "./boardCardProgressBlock";
 import { boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
-import { BoardCardSummaryRow } from "./BoardCardSummaryRow";
+import {
+  BoardCardSummaryRow,
+  BoardCardTodoStrip,
+  BoardCardTodoThreadRow,
+} from "./BoardCardSummaryRow";
 import { projectAccent } from "./projectAccent";
+
+/** What a card needs to render its todo strip (t3o-18). All of it is joined
+    client-side from state the client already holds — `boardCardThreads` off the
+    shell snapshot and the thread shells beside it — so `BoardCardShell` gains no
+    field and nothing is duplicated onto the wire. */
+export interface BoardCardTodoContext {
+  /** The card's live-linked threads and their cached lists. */
+  readonly threads: ReadonlyArray<BoardCardThreadShell>;
+  /** Live state of one thread, for the strip's winner rule (D7). */
+  readonly stateOf: (threadId: ThreadId) => BoardTodoThreadState | undefined;
+  /** A thread's display title, for the expanded rows. */
+  readonly titleOf: (threadId: ThreadId) => string;
+  /** Whether the non-winning threads are revealed (client-only, session-scoped
+      React state keyed by card id — D9). */
+  readonly expanded: boolean;
+  readonly onToggleExpanded: () => void;
+}
+
+const EMPTY_TODO_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
 
 export interface BoardCardQueueSlot {
   readonly position: number;
@@ -28,6 +63,7 @@ export function BoardCardContent({
   queueSlot,
   selected,
   accentName,
+  todos,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -35,9 +71,31 @@ export function BoardCardContent({
   readonly selected: boolean;
   /** Configured project accent (t3o-07); falls back to the hash colour. */
   readonly accentName?: string | null | undefined;
+  /** Thread todo lists (t3o-18). Absent on surfaces that do not carry them
+      (the archive sheet, the drag ghost), where the card renders exactly as it
+      did before. */
+  readonly todos?: BoardCardTodoContext | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
+  const todoThreads = todos?.threads ?? EMPTY_TODO_THREADS;
+  const stateOf = todos?.stateOf ?? (() => boardCardShellThreadState(card));
+  const winner = pickBoardCardTodoThread({
+    threads: todoThreads,
+    stateOf,
+    activeThreadId: card.activeThreadId,
+  });
+  // Exactly one progress block per card (D8), with subcards outranking review
+  // outranking todos — so a parent card's plan pips and a review ledger are never
+  // pushed off the card by a todo strip.
+  const progress = boardCardProgressBlock(summary, winner, {
+    liveThreadCount: todoThreads.length,
+    winnerStopped: winner === null ? undefined : stateOf(winner.threadId)?.stopped,
+  });
+  const otherThreads =
+    progress.kind === "todos" && todos?.expanded === true
+      ? todoThreads.filter((entry) => entry.threadId !== progress.todo.threadId)
+      : EMPTY_TODO_THREADS;
   return (
     <article
       className={cn(
@@ -139,6 +197,25 @@ export function BoardCardContent({
         {card.title}
       </div>
       <BoardCardSummaryRow items={summary.items} />
+      {progress.kind === "todos" ? (
+        <BoardCardTodoStrip
+          expanded={todos?.expanded ?? false}
+          onToggleThreads={todos?.onToggleExpanded}
+          otherThreadCount={progress.otherThreadCount}
+          todo={progress.todo}
+        />
+      ) : null}
+      {otherThreads.length === 0 ? null : (
+        <div className="flex flex-col gap-0.5 border-t border-border/60 pt-1">
+          {otherThreads.map((entry) => (
+            <BoardCardTodoThreadRow
+              key={entry.threadId}
+              title={todos?.titleOf(entry.threadId) ?? "Thread"}
+              todo={entry}
+            />
+          ))}
+        </div>
+      )}
     </article>
   );
 }
@@ -161,6 +238,7 @@ export function DraggableBoardCard({
   onDragStart,
   onDragEnd,
   accentName,
+  todos,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -171,6 +249,7 @@ export function DraggableBoardCard({
   readonly onDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
   readonly onDragEnd: () => void;
   readonly accentName?: string | null | undefined;
+  readonly todos?: BoardCardTodoContext | undefined;
 }) {
   return (
     <div
@@ -186,6 +265,7 @@ export function DraggableBoardCard({
         queueSlot={queueSlot}
         selected={selected}
         accentName={accentName}
+        todos={todos}
       />
     </div>
   );

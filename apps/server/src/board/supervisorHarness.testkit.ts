@@ -374,6 +374,12 @@ export const cardArchived = (card: BoardCard, sequence: number): OrchestrationEv
 export const turnCompleted = (threadId: ThreadId): ProviderRuntimeEvent =>
   ({ type: "turn.completed", threadId }) as unknown as ProviderRuntimeEvent;
 
+/** An ORDINARY agent question (t3o-18, D13): the runtime event every provider
+    emits when it asks a human, with no board tool call behind it. This is what
+    re-sourced `handleInputRequested` now watches. */
+export const userInputRequested = (threadId: ThreadId): ProviderRuntimeEvent =>
+  ({ type: "user-input.requested", threadId }) as unknown as ProviderRuntimeEvent;
+
 export const stepStatus = (board: BoardState, cardId: BoardCardId) =>
   boardCardStepState(board, cardId)?.status ?? null;
 

@@ -16,7 +16,7 @@
  * thread joins a card.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { BoardCardThreadShell, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import {
   MaximizeIcon,
@@ -31,6 +31,7 @@ import { cn } from "../lib/utils";
 import { useThreadDetail, useThreadShell, useThreadStatus } from "../state/entities";
 import { resolveThreadSyncPhase } from "../threadSync";
 import { BoardCardThreadAddMenu, type BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
+import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 
@@ -86,6 +87,7 @@ export function BoardCardThreadPane({
   onUnlinkThread,
   maximised,
   onToggleMaximised,
+  threadTodos,
 }: {
   readonly environmentId: EnvironmentId;
   readonly cardKey: string;
@@ -104,6 +106,11 @@ export function BoardCardThreadPane({
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   readonly maximised: boolean;
   readonly onToggleMaximised: () => void;
+  /** Each live-linked thread's cached todo list (t3o-18, D3/D5). The modal
+      always shows what is STORED — unlike the card strip, which hides a finished
+      list on a stopped thread — so a thread that succeeded still reads `5/5`
+      here. */
+  readonly threadTodos?: ReadonlyMap<ThreadId, BoardCardThreadShell> | undefined;
 }) {
   // A new blank thread becomes the card's most-recently-linked live thread, so
   // selecting it opens its ChatView (which focuses the composer on mount, D3).
@@ -150,6 +157,17 @@ export function BoardCardThreadPane({
                 <span className="max-w-40 truncate whitespace-nowrap">
                   {link.title ?? "Deleted thread"}
                 </span>
+                {(() => {
+                  // Per-tab todo counts (t3o-18): the point of tabs is choosing
+                  // between threads, and "3/9" answers that better than a title.
+                  const todo = threadTodos?.get(link.threadId);
+                  const total = todo?.todoTotal ?? 0;
+                  return total === 0 ? null : (
+                    <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+                      {todo?.todoDone ?? 0}/{total}
+                    </span>
+                  );
+                })()}
                 {active && !link.tombstoned ? (
                   <span
                     className="-mr-1 inline-flex size-[15px] shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -225,6 +243,13 @@ export function BoardCardThreadPane({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {/* Sticky above the conversation so the selected thread's list stays
+              visible while the transcript scrolls. */}
+          <BoardCardThreadTodosStrip
+            awaitingInput={selected.awaitingInput}
+            threadId={selected.threadId}
+            todo={threadTodos?.get(selected.threadId)}
+          />
           <BoardCardChat
             environmentId={environmentId}
             key={selected.threadId}

@@ -30,6 +30,7 @@ import {
   BOARD_SHELL_STREAM_EVENTS,
   BoardCardId,
   BoardCardShell,
+  BoardCardThreadShell,
   BoardLabel,
   BoardLabelId,
   BoardStageDefinition,
@@ -498,6 +499,13 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   // T3o: the user-defined stage list rides the shell ONCE (t3o-15) so the board
   // reads column order and labels from it (D13). Optional for interop. Frozen.
   boardStages: Schema.optional(Schema.Array(BoardStageDefinition)),
+  // T3o: live card->thread links and their cached todo summaries (t3o-18, D3).
+  // Its own array, following the `boardLabels` precedent — `BoardCardShell` gains
+  // no field, so the 1280-byte card budget and the scalars-only test stay
+  // untouched. One entry per live link on a non-archived card; the todo fields
+  // are key-optional, so threads without a list cost almost nothing. Optional for
+  // interop.
+  boardCardThreads: Schema.optional(Schema.Array(BoardCardThreadShell)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
