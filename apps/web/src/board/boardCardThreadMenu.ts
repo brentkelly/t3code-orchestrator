@@ -59,12 +59,21 @@ export function resolveBoardThreadStageRestart(input: {
  */
 export type BlankThreadStep = "ok" | "failed" | "interrupted";
 
+/** One dispatch's flattened outcome: its control-flow `step` plus the raw
+    command result as an opaque `detail`, so a definite failure can carry its
+    error payload to the log (the sole diagnostic — these commands run with
+    `reportFailure: false`) without the pure orchestrator inspecting it. */
+export interface BlankThreadDispatch {
+  readonly step: BlankThreadStep;
+  readonly detail: unknown;
+}
+
 export interface BlankThreadCreation {
-  readonly createThread: () => Promise<BlankThreadStep>;
-  readonly linkThread: () => Promise<BlankThreadStep>;
+  readonly createThread: () => Promise<BlankThreadDispatch>;
+  readonly linkThread: () => Promise<BlankThreadDispatch>;
   /** Best-effort rollback of the created-but-unlinked thread. */
-  readonly rollbackThread: () => Promise<BlankThreadStep>;
-  readonly warn: (message: string) => void;
+  readonly rollbackThread: () => Promise<BlankThreadDispatch>;
+  readonly warn: (message: string, detail: unknown) => void;
 }
 
 /** Log messages, exported so the tests assert them without restating literals. */
@@ -89,17 +98,17 @@ export const BLANK_THREAD_WARN = {
  */
 export async function runBlankThreadCreation(handlers: BlankThreadCreation): Promise<boolean> {
   const created = await handlers.createThread();
-  if (created !== "ok") {
-    if (created === "failed") handlers.warn(BLANK_THREAD_WARN.create);
+  if (created.step !== "ok") {
+    if (created.step === "failed") handlers.warn(BLANK_THREAD_WARN.create, created.detail);
     return false;
   }
   const linked = await handlers.linkThread();
-  if (linked === "ok") return true;
-  if (linked === "failed") {
-    handlers.warn(BLANK_THREAD_WARN.link);
+  if (linked.step === "ok") return true;
+  if (linked.step === "failed") {
+    handlers.warn(BLANK_THREAD_WARN.link, linked.detail);
     const rolledBack = await handlers.rollbackThread();
-    if (rolledBack === "failed") handlers.warn(BLANK_THREAD_WARN.rollback);
+    if (rolledBack.step === "failed") handlers.warn(BLANK_THREAD_WARN.rollback, rolledBack.detail);
   }
-  // linked === "interrupted": outcome unknown — deliberately no rollback.
+  // linked.step === "interrupted": outcome unknown — deliberately no rollback.
   return false;
 }

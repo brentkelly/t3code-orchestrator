@@ -82,28 +82,33 @@ describe("resolveBoardThreadStageRestart", () => {
 });
 
 describe("runBlankThreadCreation", () => {
+  // A distinct detail payload per step, so tests can assert the failing
+  // command's raw result is forwarded to the log — not swallowed by the tag.
+  const detailOf = (step: BlankThreadStep) => `detail:${step}`;
+
   const harness = (steps: {
     create: BlankThreadStep;
     link?: BlankThreadStep;
     rollback?: BlankThreadStep;
   }) => {
     const calls = { create: 0, link: 0, rollback: 0 };
-    const warnings: string[] = [];
+    const warnings: Array<{ message: string; detail: unknown }> = [];
+    const dispatch = (step: BlankThreadStep) => ({ step, detail: detailOf(step) });
     const run = () =>
       runBlankThreadCreation({
         createThread: async () => {
           calls.create += 1;
-          return steps.create;
+          return dispatch(steps.create);
         },
         linkThread: async () => {
           calls.link += 1;
-          return steps.link ?? "ok";
+          return dispatch(steps.link ?? "ok");
         },
         rollbackThread: async () => {
           calls.rollback += 1;
-          return steps.rollback ?? "ok";
+          return dispatch(steps.rollback ?? "ok");
         },
-        warn: (message) => warnings.push(message),
+        warn: (message, detail) => warnings.push({ message, detail }),
       });
     return { run, calls, warnings };
   };
@@ -115,11 +120,11 @@ describe("runBlankThreadCreation", () => {
     expect(h.warnings).toEqual([]);
   });
 
-  it("warns and stops before linking when create fails", async () => {
+  it("warns (with the error payload) and stops before linking when create fails", async () => {
     const h = harness({ create: "failed" });
     expect(await h.run()).toBe(false);
     expect(h.calls.link).toBe(0);
-    expect(h.warnings).toEqual([BLANK_THREAD_WARN.create]);
+    expect(h.warnings).toEqual([{ message: BLANK_THREAD_WARN.create, detail: detailOf("failed") }]);
   });
 
   it("stays silent and does not link when create is interrupted", async () => {
@@ -129,18 +134,21 @@ describe("runBlankThreadCreation", () => {
     expect(h.warnings).toEqual([]);
   });
 
-  it("rolls back on a DEFINITE link failure", async () => {
+  it("rolls back on a DEFINITE link failure, logging the link error", async () => {
     const h = harness({ create: "ok", link: "failed", rollback: "ok" });
     expect(await h.run()).toBe(false);
     expect(h.calls.rollback).toBe(1);
-    expect(h.warnings).toEqual([BLANK_THREAD_WARN.link]);
+    expect(h.warnings).toEqual([{ message: BLANK_THREAD_WARN.link, detail: detailOf("failed") }]);
   });
 
-  it("warns twice when the rollback itself fails", async () => {
+  it("warns twice, each with its payload, when the rollback itself fails", async () => {
     const h = harness({ create: "ok", link: "failed", rollback: "failed" });
     expect(await h.run()).toBe(false);
     expect(h.calls.rollback).toBe(1);
-    expect(h.warnings).toEqual([BLANK_THREAD_WARN.link, BLANK_THREAD_WARN.rollback]);
+    expect(h.warnings).toEqual([
+      { message: BLANK_THREAD_WARN.link, detail: detailOf("failed") },
+      { message: BLANK_THREAD_WARN.rollback, detail: detailOf("failed") },
+    ]);
   });
 
   it("does NOT roll back an interrupted link — its server outcome is unknown", async () => {

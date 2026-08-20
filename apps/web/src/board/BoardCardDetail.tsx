@@ -45,7 +45,7 @@ import {
   isBoardCardRunInFlight,
   resolveBoardThreadStageRestart,
   runBlankThreadCreation,
-  type BlankThreadStep,
+  type BlankThreadDispatch,
 } from "./boardCardThreadMenu";
 import { boardStageLabel } from "./boardStages";
 import { indexBoardLabels } from "./labelColour";
@@ -270,17 +270,22 @@ export function BoardCardDetail({
   // so the pane can select it (opening its composer). Failure logs and stops.
   const createBlankThread = async (): Promise<ThreadId | null> => {
     const threadId = ThreadId.make(randomUUID());
-    // Flatten an atom-command result to the orchestrator's tri-state: a settled
-    // failure is definite, an interrupted one has an unknown server outcome.
-    const step = (result: AtomCommandResult<unknown, unknown>): BlankThreadStep =>
-      result._tag !== "Failure"
-        ? "ok"
-        : isAtomCommandInterrupted(result)
-          ? "interrupted"
-          : "failed";
+    // Flatten an atom-command result to a dispatch outcome: `step` drives the
+    // orchestrator (a settled failure is definite; an interrupted one has an
+    // unknown server outcome), and the raw result rides along as `detail` so a
+    // definite-failure log keeps its error payload.
+    const dispatch = (result: AtomCommandResult<unknown, unknown>): BlankThreadDispatch => ({
+      step:
+        result._tag !== "Failure"
+          ? "ok"
+          : isAtomCommandInterrupted(result)
+            ? "interrupted"
+            : "failed",
+      detail: result,
+    });
     const ok = await runBlankThreadCreation({
       createThread: async () =>
-        step(
+        dispatch(
           await createThread({
             environmentId,
             input: {
@@ -296,11 +301,12 @@ export function BoardCardDetail({
           }),
         ),
       linkThread: async () =>
-        step(
+        dispatch(
           await linkThread({ environmentId, input: { cardId: card.id, threadId, role: "linked" } }),
         ),
-      rollbackThread: async () => step(await deleteThread({ environmentId, input: { threadId } })),
-      warn: (message) => console.warn(message),
+      rollbackThread: async () =>
+        dispatch(await deleteThread({ environmentId, input: { threadId } })),
+      warn: (message, detail) => console.warn(message, detail),
     });
     return ok ? threadId : null;
   };
