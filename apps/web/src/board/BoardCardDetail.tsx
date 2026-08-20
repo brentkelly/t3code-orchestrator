@@ -210,10 +210,29 @@ export function BoardCardDetail({
       ? null
       : (snapshot?.threads.find((thread) => thread.id === activeThreadId)?.branch ?? null);
 
-  /** Link a freshly created thread to this card, surfacing a rejection the same
-      way every other board command does. */
-  const linkNewThread = (threadId: ThreadId, role: string) =>
-    runCommand(linkThread({ environmentId, input: { cardId: card.id, threadId, role } }));
+  /** Link a freshly created thread to this card. The thread is already running
+      by the time this fires, so a failed link leaves an orphan the supervisor
+      and `board_get_card_context` cannot resolve to a card — say exactly that,
+      rather than the generic command-rejected message `runCommand` shows, so
+      the human can adopt or clean it up. The `.catch` covers the promise
+      rejecting outright (not resolving to a `Failure` tag). */
+  const linkNewThread = (threadId: ThreadId, role: string) => {
+    void linkThread({ environmentId, input: { cardId: card.id, threadId, role } })
+      .then((linked) => {
+        if (linked._tag === "Failure") {
+          if (!isAtomCommandInterrupted(linked)) {
+            setFeedback(
+              `The thread started but could not be linked to this card, so it may not resolve its card context — ${describeBoardCommandFailure(linked)}`,
+            );
+          }
+        } else {
+          setFeedback(null);
+        }
+      })
+      .catch(() => {
+        setFeedback("The thread started but linking it to this card failed unexpectedly.");
+      });
+  };
 
   /** Report a failed thread command (a different result type from the board
       commands `runCommand` handles) without swallowing it. */
