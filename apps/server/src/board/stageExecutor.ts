@@ -134,10 +134,11 @@ export const SimpleStageExecutor: BoardStageExecutor = {
 };
 
 /**
- * Executor implementations keyed by stage role (D15). Empty for now — every
- * role runs `SimpleStageExecutor`; t3o-16 registers its `ReviewLoopExecutor`
- * under `"review"` here, the single edit that teaches the pipeline about review
- * without touching the reactor.
+ * Executor implementations keyed by stage role (D15). The `review` role runs the
+ * multi-phase `ReviewLoopExecutor` (t3o-16); every other role, and a null-role
+ * custom stage, falls through to `SimpleStageExecutor`. Registering here is the
+ * single edit that teaches the pipeline about review without touching the
+ * reactor — the reactor only ever asks `stageExecutorForRole(...).planNext`.
  */
 const STAGE_EXECUTORS: Partial<Record<BoardStageRole, BoardStageExecutor>> = {
   review: ReviewLoopExecutor,

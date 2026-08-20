@@ -19,9 +19,7 @@
  */
 import {
   BOARD_REVIEW_PHASE_LABELS,
-  BoardAdjudicatePayload,
   BoardReviewPayload,
-  BoardTriagePayload,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
   isBoardReviewBlockingSeverity,
   isBoardReviewStageExecution,
@@ -47,8 +45,6 @@ import type { BoardStageExecutor, BoardStagePlan, BoardStagePlanInput } from "./
 export type ParsedPayload<A> = { readonly ok: true; readonly value: A } | { readonly ok: false };
 
 const decodeReview = Schema.decodeUnknownOption(BoardReviewPayload);
-const decodeTriage = Schema.decodeUnknownOption(BoardTriagePayload);
-const decodeAdjudicate = Schema.decodeUnknownOption(BoardAdjudicatePayload);
 
 function parseJson(payload: string | null): Option.Option<unknown> {
   if (payload === null) return Option.none();
@@ -59,20 +55,12 @@ function parseJson(payload: string | null): Option.Option<unknown> {
   }
 }
 
+// Only the `review` phase's payload gates the loop (convergence is decided by
+// review, D3), so the executor parses only that. The triage/adjudicate payloads
+// are opaque to the executor — it advances on their *presence* (a succeeded
+// completion), and the card-detail view is what decodes them for display.
 export function parseReviewPayload(payload: string | null): ParsedPayload<BoardReviewPayload> {
   const decoded = Option.flatMap(parseJson(payload), decodeReview);
-  return Option.isSome(decoded) ? { ok: true, value: decoded.value } : { ok: false };
-}
-
-export function parseTriagePayload(payload: string | null): ParsedPayload<BoardTriagePayload> {
-  const decoded = Option.flatMap(parseJson(payload), decodeTriage);
-  return Option.isSome(decoded) ? { ok: true, value: decoded.value } : { ok: false };
-}
-
-export function parseAdjudicatePayload(
-  payload: string | null,
-): ParsedPayload<BoardAdjudicatePayload> {
-  const decoded = Option.flatMap(parseJson(payload), decodeAdjudicate);
   return Option.isSome(decoded) ? { ok: true, value: decoded.value } : { ok: false };
 }
 

@@ -3004,10 +3004,13 @@ export type BoardStageExecutionSimple = typeof BoardStageExecutionSimple.Type;
  * The `{ kind: "review" }` member (D2/D4) — the union widening t3o-15 designed
  * for. It carries EVERY field the simple member does (so the reactor keeps
  * reading `prompt`/`model`/`mode`/… uniformly and never learns this stage is a
- * loop), PLUS `rounds` and the three per-phase configs. `mode` is pinned to
- * `build` (the loop needs the worktree, D6) and `humanInLoop` off (an
- * unattended loop is the point, D2); the top-level `prompt`/`model` are
- * unused by the executor, which composes each phase's run from `phases`.
+ * loop), PLUS `rounds` and the three per-phase configs. `mode` defaults to
+ * `build` (the loop needs the worktree, D6) and `humanInLoop` to off (an
+ * unattended loop is the point, D2); the build-mode invariant is enforced by
+ * `resolveBoardStageExecution`, which always resolves the review stage to a
+ * review member, so a stored `mode` can never strand the loop without a
+ * worktree. The top-level `prompt`/`model` are unused by the executor, which
+ * composes each phase's run from `phases`.
  */
 export const BoardStageExecutionReview = Schema.Struct({
   kind: Schema.Literal("review"),
@@ -3209,23 +3212,27 @@ export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
  * from the server (at stage entry, to freeze onto the run row), the client (to
  * render the settings card), and tests alike.
  *
- * The compiled-in review stage (t3o-16) falls back to the review-loop member,
- * not the simple default: its config is a review member whatever the pipeline
- * map holds, so a board with a partial pipeline (one that configured, say, only
- * Building and so has no `review` key) still runs Code review in build mode with
- * a worktree rather than silently degrading to a plan-mode single step. This
- * keys on the fixed compiled-in stage id, not on a role lookup — the resolver
- * has no stage definitions — so it is not a dispatch on `stage.role`.
+ * The compiled-in review stage (t3o-16) always resolves to the review-loop
+ * member: `mode: "build"` is a product invariant (the loop needs the worktree,
+ * D6), so the resolver enforces it rather than trusting the stored config. An
+ * absent `review` key (a partial pipeline that configured only Building) OR a
+ * legacy/hand-edited `simple` entry at the review stage id both coerce to the
+ * review default; only a genuine review member configured there (the settings
+ * card's own writes) is passed through, preserving a user's rounds and per-phase
+ * edits. This keys on the fixed compiled-in stage id, not on a role lookup — the
+ * resolver has no stage definitions — so it is not a dispatch on `stage.role`.
  */
 export function resolveBoardStageExecution(
   board: BoardSettings,
   stageId: BoardStageId,
 ): BoardStageExecution {
   const configured = board.pipeline[stageId];
-  if (configured !== undefined) return configured;
-  return stageId === BOARD_SEED_STAGE_IDS.review
-    ? DEFAULT_BOARD_REVIEW_STAGE_EXECUTION
-    : DEFAULT_BOARD_STAGE_EXECUTION;
+  if (stageId === BOARD_SEED_STAGE_IDS.review) {
+    return configured !== undefined && isBoardReviewStageExecution(configured)
+      ? configured
+      : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
+  }
+  return configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
 }
 
 /** Resolve a stage config's `model` to a concrete provider-instance + model
