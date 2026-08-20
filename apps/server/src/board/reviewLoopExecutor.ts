@@ -25,6 +25,8 @@ import {
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
   isBoardReviewBlockingSeverity,
   isBoardReviewStageExecution,
+  parseReviewStepId,
+  reviewStepId,
   type BoardModelSelection,
   type BoardReviewPhaseExecution,
   type BoardReviewPhaseId,
@@ -35,28 +37,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { BoardStageExecutor, BoardStagePlan, BoardStagePlanInput } from "./stageExecutor.ts";
-
-/** The round-scoped step id scheme (D8): `<phase>@<round>`. The one place the
-    id shape is minted and parsed, so the completion key and the executor's view
-    of loop progress can never drift. */
-export function reviewStepId(phase: BoardReviewPhaseId, round: number): string {
-  return `${phase}@${round}`;
-}
-
-const REVIEW_STEP_ID = /^(review|triage|adjudicate)@(\d+)$/;
-
-interface ParsedReviewStep {
-  readonly phase: BoardReviewPhaseId;
-  readonly round: number;
-}
-
-export function parseReviewStepId(stepId: string): ParsedReviewStep | null {
-  const match = REVIEW_STEP_ID.exec(stepId);
-  if (match === null) return null;
-  const round = Number.parseInt(match[2]!, 10);
-  if (!Number.isInteger(round) || round < 1) return null;
-  return { phase: match[1] as BoardReviewPhaseId, round };
-}
 
 /**
  * A payload parse result. `absent`/`malformed` are kept distinct from a valid
@@ -163,14 +143,14 @@ export function reviewLoopDecision(input: {
     const reviewPayload = parseReviewPayload(reviewStep.payload);
     if (!reviewPayload.ok) {
       // A malformed/absent review payload must never be read as "no findings"
-      // (D4). The healthy path is the agent completing the phase `failed` (the
-      // reactor's recovery ladder then retries); a `succeeded` completion with
-      // an unreadable payload is a broken reviewer, so escalate rather than
-      // converge on unreviewed code.
-      return {
-        kind: "escalate",
-        question: `Code review round ${round} completed without a readable findings payload; a human should inspect the reviewer before the loop can proceed.`,
-      };
+      // (D4). The healthy path is the agent completing the phase `failed`, which
+      // the reactor's recovery ladder retries and, on exhaustion, escalates. But
+      // a phase that recorded `succeeded` with an unreadable payload is a broken
+      // reviewer whose completion is idempotently pinned — it can neither be
+      // re-run nor be trusted — so the loop terminates `blocked` (the card stays
+      // in Code review with the unreadable round visible, D9) rather than either
+      // converging on unreviewed code or re-escalating forever on every re-plan.
+      return { kind: "complete", outcome: "blocked" };
     }
     if (reviewRoundConverged(reviewPayload)) {
       return { kind: "complete", outcome: "succeeded" };

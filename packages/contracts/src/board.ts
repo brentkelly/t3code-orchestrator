@@ -2911,6 +2911,26 @@ export const BOARD_REVIEW_PHASE_LABELS: Record<BoardReviewPhaseId, string> = {
   adjudicate: "Adjudicate",
 };
 
+const BOARD_REVIEW_STEP_ID = /^(review|triage|adjudicate)@(\d+)$/;
+
+/** The round-scoped step id scheme (D8): `<phase>@<round>` — `review@1`,
+    `triage@1`, `review@2`. Minted and parsed in one place (shared by the
+    server executor and the card-detail view) so the completion key and every
+    reader's view of loop progress can never drift. */
+export function reviewStepId(phase: BoardReviewPhaseId, round: number): string {
+  return `${phase}@${round}`;
+}
+
+export function parseReviewStepId(
+  stepId: string,
+): { readonly phase: BoardReviewPhaseId; readonly round: number } | null {
+  const match = BOARD_REVIEW_STEP_ID.exec(stepId);
+  if (match === null) return null;
+  const round = Number.parseInt(match[2]!, 10);
+  if (!Number.isInteger(round) || round < 1) return null;
+  return { phase: match[1] as BoardReviewPhaseId, round };
+}
+
 export const DEFAULT_BOARD_REVIEW_ROUNDS = 5;
 
 /** Default per-phase prompts (D2), ported from the `pullrequest-review` /
@@ -3188,12 +3208,24 @@ export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
  * nothing — the all-defaults config (auto-execute off). Pure so it is callable
  * from the server (at stage entry, to freeze onto the run row), the client (to
  * render the settings card), and tests alike.
+ *
+ * The compiled-in review stage (t3o-16) falls back to the review-loop member,
+ * not the simple default: its config is a review member whatever the pipeline
+ * map holds, so a board with a partial pipeline (one that configured, say, only
+ * Building and so has no `review` key) still runs Code review in build mode with
+ * a worktree rather than silently degrading to a plan-mode single step. This
+ * keys on the fixed compiled-in stage id, not on a role lookup — the resolver
+ * has no stage definitions — so it is not a dispatch on `stage.role`.
  */
 export function resolveBoardStageExecution(
   board: BoardSettings,
   stageId: BoardStageId,
 ): BoardStageExecution {
-  return board.pipeline[stageId] ?? Schema.decodeSync(BoardStageExecution)({});
+  const configured = board.pipeline[stageId];
+  if (configured !== undefined) return configured;
+  return stageId === BOARD_SEED_STAGE_IDS.review
+    ? DEFAULT_BOARD_REVIEW_STAGE_EXECUTION
+    : DEFAULT_BOARD_STAGE_EXECUTION;
 }
 
 /** Resolve a stage config's `model` to a concrete provider-instance + model

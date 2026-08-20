@@ -843,6 +843,27 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // One card's step completions (t3o-16, D9): the card-detail loader reads these
+  // to render the review loop's findings, so it filters in SQL rather than
+  // scanning the whole table per modal open.
+  const listBoardCardStepRowsForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardStepDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        card_id AS "cardId",
+        step_id AS "stepId",
+        outcome,
+        summary,
+        payload,
+        thread_id AS "threadId",
+        completed_at AS "completedAt"
+      FROM board_card_steps
+      WHERE card_id = ${cardId}
+      ORDER BY completed_at ASC, step_id ASC
+    `,
+  });
+
   // One row per card (t3o-10): the card's live step state. Upsert on card_id
   // so a step transition or the next step of a recipe replaces the prior row.
   const upsertBoardCardStepStateRow = SqlSchema.void({
@@ -1027,6 +1048,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardLabelRowsForCard,
     insertBoardCardActivityRow,
     listBoardCardActivityRowsForCard,
+    listBoardCardStepRowsForCard,
     upsertBoardCardStepRow,
     listBoardCardStepRows,
     upsertBoardCardStepStateRow,
@@ -1720,7 +1742,7 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardDependencyRefRows(cardId),
       queries.listBoardCardDependentRefRows(cardId),
       queries.countBoardPlansForCard(cardId),
-      queries.listBoardCardStepRows(),
+      queries.listBoardCardStepRowsForCard(cardId),
     ]).pipe(
       Effect.map(
         ([
@@ -1763,13 +1785,11 @@ export function makeBoardCardDetailLoader(
             }),
             dependents: dependentRows,
             hasPlan: (planCountRows[0]?.count ?? 0) > 0,
-            // The card's completions in completion order (t3o-16, D9). Filtered
-            // from the all-cards step list — the same rows the read model's
-            // `stepCompletions` slice is built from — and sorted so the modal
-            // renders review rounds in the order they landed.
-            stepCompletions: [...stepRows]
-              .filter((row) => row.cardId === cardId)
-              .sort(compareBoardStepCompletions),
+            // The card's completions in completion order (t3o-16, D9), from the
+            // per-card step query — the same rows the read model's
+            // `stepCompletions` slice is built from — sorted so the modal renders
+            // review rounds in the order they landed.
+            stepCompletions: [...stepRows].sort(compareBoardStepCompletions),
           };
         },
       ),

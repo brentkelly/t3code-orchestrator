@@ -19,13 +19,15 @@ import {
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
   ProviderInstanceId,
   isBoardReviewBlockingSeverity,
+  parseReviewStepId,
+  reviewStepId,
   type BoardModelSelection,
   type BoardReviewFinding,
   type BoardStageExecutionReview,
   type BoardStepCompletion,
 } from "@t3tools/contracts";
 
-import { ReviewLoopExecutor, parseReviewStepId, reviewStepId } from "./reviewLoopExecutor.ts";
+import { ReviewLoopExecutor } from "./reviewLoopExecutor.ts";
 import type { BoardStageExecutorConfig, BoardStagePlan } from "./stageExecutor.ts";
 import { makeBoardCard } from "./supervisorHarness.testkit.ts";
 
@@ -176,14 +178,16 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(capped).toEqual({ kind: "complete", outcome: "blocked" });
   });
 
-  it("AC8: a malformed review payload escalates rather than converging", () => {
+  it("AC8: a malformed review payload terminates blocked rather than converging", () => {
     const malformed = plan([completion("review@1", "{not json")]);
-    expect(malformed.kind).toBe("escalate");
+    // Never read as "no findings" (which would be complete/succeeded); the loop
+    // terminates blocked so it neither passes unreviewed code nor wedges.
+    expect(malformed).toEqual({ kind: "complete", outcome: "blocked" });
   });
 
-  it("AC8: an absent review payload escalates rather than converging", () => {
+  it("AC8: an absent review payload terminates blocked rather than converging", () => {
     const absent = plan([completion("review@1", undefined)]);
-    expect(absent.kind).toBe("escalate");
+    expect(absent).toEqual({ kind: "complete", outcome: "blocked" });
   });
 
   it("AC8: a valid payload with an empty findings list converges (not confused with malformed)", () => {

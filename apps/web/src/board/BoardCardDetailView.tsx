@@ -35,6 +35,7 @@ import {
   boardStageWithRole,
   isBoardReviewBlockingSeverity,
   liveBoardCardDependents,
+  parseReviewStepId,
   type BoardAdjudicatePayload as BoardAdjudicatePayloadType,
   type BoardCardDetail,
   type BoardCardId,
@@ -578,7 +579,6 @@ function ActionsSection({
 // a third dispatch on `review` (AC10): a card with no review completions
 // renders nothing at all (absent, not empty).
 
-const REVIEW_STEP_ID = /^(review|triage|adjudicate)@(\d+)$/;
 const decodeReviewPayload = Schema.decodeUnknownOption(BoardReviewPayload);
 const decodeTriagePayload = Schema.decodeUnknownOption(BoardTriagePayload);
 const decodeAdjudicatePayload = Schema.decodeUnknownOption(BoardAdjudicatePayload);
@@ -609,14 +609,11 @@ function groupReviewRounds(completions: ReadonlyArray<BoardStepCompletion>): Rev
     { review?: BoardStepCompletion; triage?: BoardStepCompletion; adjudicate?: BoardStepCompletion }
   >();
   for (const completion of completions) {
-    const match = REVIEW_STEP_ID.exec(completion.stepId);
-    if (match === null) continue;
-    const round = Number.parseInt(match[2]!, 10);
-    if (!Number.isInteger(round) || round < 1) continue;
-    const phase = match[1] as "review" | "triage" | "adjudicate";
-    const entry = byRound.get(round) ?? {};
-    entry[phase] = completion;
-    byRound.set(round, entry);
+    const parsed = parseReviewStepId(completion.stepId);
+    if (parsed === null) continue;
+    const entry = byRound.get(parsed.round) ?? {};
+    entry[parsed.phase] = completion;
+    byRound.set(parsed.round, entry);
   }
   return [...byRound.entries()]
     .sort(([a], [b]) => a - b)
