@@ -2729,6 +2729,15 @@ export const BoardCardDetail = Schema.Struct({
   /** Cards whose `dependsOn` names this one, archived included. Feeds the
       archive confirmation (t3o-13, D3), which counts only the live ones. */
   dependents: Schema.Array(BoardCardDependencyRef),
+  /** The card's recorded step completions with their opaque payloads (t3o-16,
+      D9). Carried on the detail so the modal can render a stage's structured
+      output — the review loop's findings, dispositions and verdicts — from the
+      same payloads the agents write, with no PR to anchor them to. Generic (any
+      stage's completions), so the projector stays role-blind; only the view
+      parses a review payload. Decodes to `[]` on legacy detail payloads. */
+  stepCompletions: Schema.Array(BoardStepCompletion).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
 
@@ -2904,7 +2913,184 @@ export const DEFAULT_BOARD_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex
  * carries a decoding default so a partial `{ autoExecute, prompt }` entry still
  * decodes to a complete `simple` config.
  */
-export const BoardStageExecution = Schema.Struct({
+// ── Code review loop (t3o-16) ──────────────────────────────────────────
+//
+// The `review`-role stage is the one stage that is a LOOP, not a single
+// prompt: review the worktree, triage the findings, adjudicate the fixes,
+// repeat until a review round raises no blocking findings or a round cap
+// stops it (D3). Its phases are compiled in — their order and existence are
+// product decisions — while their prompts and models are per-phase settings,
+// because the loop's economics depend on running a cheap reviewer against an
+// expensive adjudicator (D2). None of this leaks past the `ReviewLoopExecutor`
+// (registered against the `review` role) and the bespoke settings card; the
+// reactor, decider, projector and MCP toolkit never learn the stage is special
+// (D1). Findings ride the opaque completion payload — no new MCP tool, no new
+// table, no new column (D4).
+
+/** Finding severity, ported verbatim from the `pullrequest-review` skill (D5).
+    `critical` and `improvement` block a review round; `nitpick` never does, so
+    a round reporting only nitpicks converges. */
+export const BOARD_REVIEW_SEVERITIES = ["critical", "improvement", "nitpick"] as const;
+export const BoardReviewSeverity = Schema.Literals(BOARD_REVIEW_SEVERITIES);
+export type BoardReviewSeverity = typeof BoardReviewSeverity.Type;
+
+/** The convergence rule (D5), in one place: only these two severities block a
+    round. A review round whose findings are all non-blocking converges. */
+export function isBoardReviewBlockingSeverity(severity: BoardReviewSeverity): boolean {
+  return severity !== "nitpick";
+}
+
+/** One finding raised by a review phase (D4). `file`/`line` are optional
+    because a finding may be repo-wide; `id` keys the triage disposition and the
+    adjudication verdict that ride the later phases' payloads. */
+export const BoardReviewFinding = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  severity: BoardReviewSeverity,
+  file: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  line: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  title: TrimmedNonEmptyString,
+  detail: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BoardReviewFinding = typeof BoardReviewFinding.Type;
+
+/** The `review` phase's completion payload (D4): the SHA it reviewed (D7) and
+    the findings it raised. A malformed or absent payload fails the phase — it
+    must NEVER be read as "no findings", which would converge the loop on a
+    broken reviewer and pass unreviewed code (D4). */
+export const BoardReviewPayload = Schema.Struct({
+  reviewedSha: TrimmedNonEmptyString,
+  findings: Schema.Array(BoardReviewFinding),
+});
+export type BoardReviewPayload = typeof BoardReviewPayload.Type;
+
+/** A triage disposition (D4): for each blocking finding, either a fix or a
+    reasoned rejection. */
+export const BOARD_REVIEW_TRIAGE_ACTIONS = ["fixed", "rejected"] as const;
+export const BoardReviewTriageAction = Schema.Literals(BOARD_REVIEW_TRIAGE_ACTIONS);
+export type BoardReviewTriageAction = typeof BoardReviewTriageAction.Type;
+
+export const BoardReviewDisposition = Schema.Struct({
+  findingId: TrimmedNonEmptyString,
+  action: BoardReviewTriageAction,
+  note: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BoardReviewDisposition = typeof BoardReviewDisposition.Type;
+
+/** The `triage` phase's completion payload (D4/D7): the SHA it produced and one
+    disposition per finding. */
+export const BoardTriagePayload = Schema.Struct({
+  fixedSha: TrimmedNonEmptyString,
+  dispositions: Schema.Array(BoardReviewDisposition),
+});
+export type BoardTriagePayload = typeof BoardTriagePayload.Type;
+
+/** An adjudication verdict (D4), the `pullrequest-rereview` vocabulary verbatim. */
+export const BOARD_REVIEW_VERDICTS = [
+  "fix-upheld",
+  "fix-incomplete",
+  "fix-absent",
+  "rejection-justified",
+  "rejection-unjustified",
+] as const;
+export const BoardReviewVerdict = Schema.Literals(BOARD_REVIEW_VERDICTS);
+export type BoardReviewVerdict = typeof BoardReviewVerdict.Type;
+
+export const BoardReviewAdjudication = Schema.Struct({
+  findingId: TrimmedNonEmptyString,
+  verdict: BoardReviewVerdict,
+  note: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BoardReviewAdjudication = typeof BoardReviewAdjudication.Type;
+
+/** The `adjudicate` phase's completion payload (D4): one verdict per finding.
+    Adjudicate never bounces back to triage — its verdicts ride into the next
+    round's review as context and unresolved items resurface there (D3). */
+export const BoardAdjudicatePayload = Schema.Struct({
+  verdicts: Schema.Array(BoardReviewAdjudication),
+});
+export type BoardAdjudicatePayload = typeof BoardAdjudicatePayload.Type;
+
+/** The three compiled-in review phases, in loop order (D2/D3). Phase `id` and
+    `label` are code, not settings — no add, remove or reorder. */
+export const BOARD_REVIEW_PHASE_IDS = ["review", "triage", "adjudicate"] as const;
+export const BoardReviewPhaseId = Schema.Literals(BOARD_REVIEW_PHASE_IDS);
+export type BoardReviewPhaseId = typeof BoardReviewPhaseId.Type;
+
+export const BOARD_REVIEW_PHASE_LABELS: Record<BoardReviewPhaseId, string> = {
+  review: "Review",
+  triage: "Triage",
+  adjudicate: "Adjudicate",
+};
+
+const BOARD_REVIEW_STEP_ID = /^(review|triage|adjudicate)@(\d+)$/;
+
+/** The round-scoped step id scheme (D8): `<phase>@<round>` — `review@1`,
+    `triage@1`, `review@2`. Minted and parsed in one place (shared by the
+    server executor and the card-detail view) so the completion key and every
+    reader's view of loop progress can never drift. */
+export function reviewStepId(phase: BoardReviewPhaseId, round: number): string {
+  return `${phase}@${round}`;
+}
+
+export function parseReviewStepId(
+  stepId: string,
+): { readonly phase: BoardReviewPhaseId; readonly round: number } | null {
+  const match = BOARD_REVIEW_STEP_ID.exec(stepId);
+  if (match === null) return null;
+  const round = Number.parseInt(match[2]!, 10);
+  if (!Number.isInteger(round) || round < 1) return null;
+  return { phase: match[1] as BoardReviewPhaseId, round };
+}
+
+export const DEFAULT_BOARD_REVIEW_ROUNDS = 5;
+
+/** Default per-phase prompts (D2), ported from the `pullrequest-review` /
+    `pullrequest-rereview` skills. The `ReviewLoopExecutor` wraps these with the
+    loop protocol (round-scoped step ids, worktree diff, payload shape); these
+    carry the per-phase intent a user then edits. */
+export const DEFAULT_BOARD_REVIEW_PHASE_PROMPT =
+  "Review the changes on this card's branch against its base ref as a fresh-eyes senior engineer. Diff the worktree and read every changed file. Report each problem as a finding: a stable id, a severity of critical, improvement or nitpick, the file and line, a short title and a detailed explanation. Critical and improvement findings block; nitpicks do not. If the change raises no blocking findings, say so explicitly.";
+export const DEFAULT_BOARD_TRIAGE_PHASE_PROMPT =
+  "For each blocking finding, either FIX it in the worktree or REJECT it with a clear, specific reason. Make the smallest correct change and run the project's checks before finishing. Record one disposition per finding: action fixed or rejected, with a note.";
+export const DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT =
+  "For each finding, rule on the triage. Scope yourself to exactly what changed between the reviewed SHA and the fixed SHA. Verify whether a claimed fix actually holds and whether a rejection is justified. Record one verdict per finding: fix-upheld, fix-incomplete, fix-absent, rejection-justified or rejection-unjustified, with a note. You cannot see problems a fix introduced; only the next review can.";
+
+/** A single review phase's execution config (D2): its own prompt and its own
+    model, so a thorough reviewer can pair with a cheap triager. `model` null
+    runs the phase on the global text-generation model (resolved at run). */
+export const BoardReviewPhaseExecution = Schema.Struct({
+  prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  timeoutMs: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
+  ),
+  maxAttempts: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
+  ),
+});
+export type BoardReviewPhaseExecution = typeof BoardReviewPhaseExecution.Type;
+
+const makeDefaultReviewPhase = (prompt: string): BoardReviewPhaseExecution => ({
+  prompt,
+  model: null,
+  timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
+  maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+});
+
+/** The compiled-in default for each phase — a per-phase default prompt, no
+    per-phase model override (global default), stock timeout/attempts. */
+export const DEFAULT_BOARD_REVIEW_PHASES = {
+  review: makeDefaultReviewPhase(DEFAULT_BOARD_REVIEW_PHASE_PROMPT),
+  triage: makeDefaultReviewPhase(DEFAULT_BOARD_TRIAGE_PHASE_PROMPT),
+  adjudicate: makeDefaultReviewPhase(DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT),
+} as const;
+
+/**
+ * The `{ kind: "simple" }` member (D4): every stage this spec-family ships save
+ * the review stage. The reactor reads `prompt`, `model`, `mode`, `autoExecute`,
+ * `autoAdvance`, `humanInLoop*`, `timeoutMs`, `maxAttempts` off it verbatim.
+ */
+export const BoardStageExecutionSimple = Schema.Struct({
   kind: Schema.Literal("simple").pipe(
     Schema.withDecodingDefault(Effect.succeed("simple" as const)),
   ),
@@ -2929,7 +3115,73 @@ export const BoardStageExecution = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
   ),
 });
+export type BoardStageExecutionSimple = typeof BoardStageExecutionSimple.Type;
+
+/**
+ * The `{ kind: "review" }` member (D2/D4) — the union widening t3o-15 designed
+ * for. It carries EVERY field the simple member does (so the reactor keeps
+ * reading `prompt`/`model`/`mode`/… uniformly and never learns this stage is a
+ * loop), PLUS `rounds` and the three per-phase configs. `mode` defaults to
+ * `build` (the loop needs the worktree, D6) and `humanInLoop` to off (an
+ * unattended loop is the point, D2); the build-mode invariant is enforced by
+ * `resolveBoardStageExecution`, which always resolves the review stage to a
+ * review member, so a stored `mode` can never strand the loop without a
+ * worktree. The top-level `prompt`/`model` are unused by the executor, which
+ * composes each phase's run from `phases`.
+ */
+export const BoardStageExecutionReview = Schema.Struct({
+  kind: Schema.Literal("review"),
+  autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("build" as const))),
+  humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithoutPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  autoAdvance: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  timeoutMs: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
+  ),
+  maxAttempts: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
+  ),
+  rounds: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_ROUNDS))),
+  phases: Schema.Struct({
+    review: BoardReviewPhaseExecution.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES.review)),
+    ),
+    triage: BoardReviewPhaseExecution.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES.triage)),
+    ),
+    adjudicate: BoardReviewPhaseExecution.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES.adjudicate)),
+    ),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES))),
+});
+export type BoardStageExecutionReview = typeof BoardStageExecutionReview.Type;
+
+/**
+ * A stage's execution config (D4/D15) — a `kind`-discriminated union so the
+ * codebase branches on stage kind in exactly two places (the executor registry
+ * and the settings card). The simple member is tried first, and its `kind`
+ * decoding default means a bare `{}` or a partial `{ autoExecute, prompt }`
+ * still decodes to a complete simple config; a `{ kind: "review" }` entry falls
+ * through to the review member.
+ */
+export const BoardStageExecution = Schema.Union([
+  BoardStageExecutionSimple,
+  BoardStageExecutionReview,
+]);
 export type BoardStageExecution = typeof BoardStageExecution.Type;
+
+/** True when a resolved stage config is the review-loop member (D4). The one
+    narrowing helper the executor registry and settings card share; nothing else
+    branches on kind. */
+export function isBoardReviewStageExecution(
+  execution: BoardStageExecution,
+): execution is BoardStageExecutionReview {
+  return execution.kind === "review";
+}
 
 /**
  * Stage execution config keyed by stage id (D4). Keyed by stage id, not name,
@@ -2946,6 +3198,14 @@ export type BoardPipeline = typeof BoardPipeline.Type;
 export const DEFAULT_BOARD_STAGE_EXECUTION: BoardStageExecution = Schema.decodeSync(
   BoardStageExecution,
 )({});
+
+/** The all-defaults review-loop config (D2): auto-execute on, build mode,
+    unattended, the default round cap and the three default per-phase configs.
+    The base a review settings edit patches from, and what the `review` stage
+    resolves to when absent from the pipeline map. */
+export const DEFAULT_BOARD_REVIEW_STAGE_EXECUTION: BoardStageExecutionReview = Schema.decodeSync(
+  BoardStageExecution,
+)({ kind: "review" }) as BoardStageExecutionReview;
 
 /** The Building prompt carried today by `DEFAULT_BOARD_BUILD_STEP` (D4). */
 export const DEFAULT_BOARD_BUILD_PROMPT =
@@ -2997,6 +3257,11 @@ export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
     maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
     maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   },
+  // Code review ships as a working loop out of the box (t3o-16): auto-execute
+  // on, build mode for the worktree, the default round cap and per-phase
+  // prompts. The `ReviewLoopExecutor` reads this member; the reactor drives it
+  // as any other stage.
+  [BOARD_SEED_STAGE_IDS.review]: DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
 };
 
 export const BoardSettings = Schema.Struct({
@@ -3065,12 +3330,36 @@ export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
  * nothing — the all-defaults config (auto-execute off). Pure so it is callable
  * from the server (at stage entry, to freeze onto the run row), the client (to
  * render the settings card), and tests alike.
+ *
+ * The compiled-in review stage (t3o-16) always resolves to the review-loop
+ * member: `mode: "build"` is a product invariant (the loop needs the worktree,
+ * D6), so the resolver enforces it rather than trusting the stored config. An
+ * absent `review` key (a partial pipeline that configured only Building) OR a
+ * legacy/hand-edited `simple` entry at the review stage id both coerce to the
+ * review default; only a genuine review member configured there (the settings
+ * card's own writes) is passed through, preserving a user's rounds and per-phase
+ * edits. This keys on the fixed compiled-in stage id, not on a role lookup — the
+ * resolver has no stage definitions — so it is not a dispatch on `stage.role`.
  */
 export function resolveBoardStageExecution(
   board: BoardSettings,
   stageId: BoardStageId,
 ): BoardStageExecution {
-  return board.pipeline[stageId] ?? Schema.decodeSync(BoardStageExecution)({});
+  const configured = board.pipeline[stageId];
+  if (stageId === BOARD_SEED_STAGE_IDS.review) {
+    // Coerce absent / legacy-simple entries to the review default, then FORCE
+    // the build-mode + unattended invariants (D2/D6) even on a genuine review
+    // member: a hand-edited `{ kind: "review", mode: "plan" }` would otherwise
+    // pass through and strand the loop without a worktree. Enforced here, the
+    // one resolution point, so the reactor keeps reading `mode`/`humanInLoop`
+    // uniformly.
+    const base =
+      configured !== undefined && isBoardReviewStageExecution(configured)
+        ? configured
+        : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
+    return { ...base, mode: "build", humanInLoop: false };
+  }
+  return configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
 }
 
 /** Resolve a stage config's `model` to a concrete provider-instance + model

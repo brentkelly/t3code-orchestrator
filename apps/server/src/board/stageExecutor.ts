@@ -30,10 +30,13 @@
 import type {
   BoardCard,
   BoardModelSelection,
+  BoardStageExecution,
   BoardStageRole,
   BoardStepCompletion,
   BoardStepOutcome,
 } from "@t3tools/contracts";
+
+import { ReviewLoopExecutor } from "./reviewLoopExecutor.ts";
 
 /**
  * The execution parameters a stage executor plans over, assembled by the
@@ -42,7 +45,8 @@ import type {
  * (D12), so the executor stays pure and never reaches for a global default.
  */
 export interface BoardStageExecutorConfig {
-  /** The stage's single step id (D1) — the stage id itself. */
+  /** The stage's single step id (D1) — the stage id itself. A multi-step
+      executor (t3o-16) mints its own round-scoped step ids and ignores this. */
   readonly stepId: string;
   /** The step's display label — the stage's label. */
   readonly label: string;
@@ -50,6 +54,14 @@ export interface BoardStageExecutorConfig {
   readonly model: BoardModelSelection;
   readonly timeoutMs: number;
   readonly maxAttempts: number;
+  /**
+   * The stage's fully resolved execution config (D4). A single-step executor
+   * plans over the flat `prompt`/`model`/… above; a multi-step executor
+   * (t3o-16's review loop) reads its per-phase config off this discriminated
+   * union member. Passing the whole resolved config keeps the reactor generic —
+   * it never unpacks a stage kind it does not understand.
+   */
+  readonly execution: BoardStageExecution;
 }
 
 /**
@@ -97,11 +109,13 @@ export interface BoardStageExecutor {
 }
 
 /**
- * The single-step executor every stage this spec ships uses (D1/D15). It yields
- * the stage's one seeded step, and reports `complete` as soon as that step has
- * succeeded in the current run. It never escalates — the reactor owns the
- * recovery ladder (D13); escalation is reserved for a multi-round executor that
- * ran its sequence to the round cap without converging (t3o-16).
+ * The single-step executor every stage uses except the review loop (D1/D15). It
+ * yields the stage's one seeded step, and reports `complete` as soon as that
+ * step has succeeded in the current run. It never escalates — the reactor owns
+ * the recovery ladder (D13). t3o-16's `ReviewLoopExecutor` is the multi-round
+ * exception: it completes `blocked` when its sequence runs to the round cap
+ * without converging (the `escalate` arm stays part of the seam contract for a
+ * future executor, but no shipped executor emits it).
  */
 export const SimpleStageExecutor: BoardStageExecutor = {
   planNext({ config, runState }: BoardStagePlanInput): BoardStagePlan {
@@ -122,12 +136,15 @@ export const SimpleStageExecutor: BoardStageExecutor = {
 };
 
 /**
- * Executor implementations keyed by stage role (D15). Empty for now — every
- * role runs `SimpleStageExecutor`; t3o-16 registers its `ReviewLoopExecutor`
- * under `"review"` here, the single edit that teaches the pipeline about review
- * without touching the reactor.
+ * Executor implementations keyed by stage role (D15). The `review` role runs the
+ * multi-phase `ReviewLoopExecutor` (t3o-16); every other role, and a null-role
+ * custom stage, falls through to `SimpleStageExecutor`. Registering here is the
+ * single edit that teaches the pipeline about review without touching the
+ * reactor — the reactor only ever asks `stageExecutorForRole(...).planNext`.
  */
-const STAGE_EXECUTORS: Partial<Record<BoardStageRole, BoardStageExecutor>> = {};
+const STAGE_EXECUTORS: Partial<Record<BoardStageRole, BoardStageExecutor>> = {
+  review: ReviewLoopExecutor,
+};
 
 /**
  * Resolve the executor for a stage's role — the one place in the codebase that

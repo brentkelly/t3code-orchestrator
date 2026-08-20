@@ -9,6 +9,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  DEFAULT_BOARD_STAGE_EXECUTION,
   ProviderInstanceId,
   type BoardModelSelection,
   type BoardStepCompletion,
@@ -19,6 +20,7 @@ import {
   stageExecutorForRole,
   type BoardStageExecutorConfig,
 } from "./stageExecutor.ts";
+import { ReviewLoopExecutor } from "./reviewLoopExecutor.ts";
 import { makeBoardCard } from "./supervisorHarness.testkit.ts";
 
 const model: BoardModelSelection = {
@@ -33,6 +35,7 @@ const config = (overrides: Partial<BoardStageExecutorConfig> = {}): BoardStageEx
   model,
   timeoutMs: 600_000,
   maxAttempts: 3,
+  execution: DEFAULT_BOARD_STAGE_EXECUTION,
   ...overrides,
 });
 
@@ -127,10 +130,10 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
   });
 });
 
-describe("stageExecutorForRole registry (D15)", () => {
-  it("returns the simple executor for every role this spec ships, and for a null-role custom stage", () => {
+describe("stageExecutorForRole registry (D15 / t3o-16)", () => {
+  it("routes the review role to the review loop and every other role to the simple executor", () => {
     expect(stageExecutorForRole("build")).toBe(SimpleStageExecutor);
-    expect(stageExecutorForRole("review")).toBe(SimpleStageExecutor);
+    expect(stageExecutorForRole("review")).toBe(ReviewLoopExecutor);
     expect(stageExecutorForRole("done")).toBe(SimpleStageExecutor);
     expect(stageExecutorForRole(null)).toBe(SimpleStageExecutor);
   });

@@ -34,9 +34,11 @@ const { BoardCardDetailPanel } = await import("./BoardCardDetailView");
 const NOW = "2026-01-01T00:00:00.000Z";
 const environmentId = "env-1" as never;
 
+const cardId = BoardCardId.make("card-1");
+
 function card(overrides?: Partial<BoardCard>): BoardCard {
   return {
-    id: BoardCardId.make("card-1"),
+    id: cardId,
     key: "T3-7",
     cardNumber: 7,
     projectId: ProjectId.make("project-gone"),
@@ -62,7 +64,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
 function detail(
   overrides?: Partial<BoardCard>,
   brief: string | null = null,
-  edges?: Partial<Pick<BoardCardDetail, "dependencies" | "dependents">>,
+  edges?: Partial<Pick<BoardCardDetail, "dependencies" | "dependents" | "stepCompletions">>,
 ): BoardCardDetail {
   return {
     card: card(overrides),
@@ -70,6 +72,7 @@ function detail(
     hasPlan: false,
     dependencies: edges?.dependencies ?? [],
     dependents: edges?.dependents ?? [],
+    stepCompletions: edges?.stepCompletions ?? [],
   };
 }
 
@@ -124,6 +127,80 @@ describe("BoardCardDetailPanel", () => {
     // Archive — and its reverse, Restore — moved into the header's kebab,
     // which portals: static markup carries the trigger, not the closed menu.
     expect(html).toContain("More actions");
+  });
+
+  it("renders review findings grouped by round with triage and verdict (t3o-16, D9/AC5)", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.review }, null, {
+          stepCompletions: [
+            {
+              cardId,
+              stepId: "review@1",
+              outcome: "succeeded",
+              summary: "reviewed",
+              payload: JSON.stringify({
+                reviewedSha: "sha1",
+                findings: [
+                  {
+                    id: "f1",
+                    severity: "critical",
+                    file: "src/a.ts",
+                    line: 12,
+                    title: "Null deref",
+                    detail: "x may be null",
+                  },
+                ],
+              }),
+              threadId: null,
+              completedAt: NOW,
+            },
+            {
+              cardId,
+              stepId: "triage@1",
+              outcome: "succeeded",
+              summary: "triaged",
+              payload: JSON.stringify({
+                fixedSha: "sha2",
+                dispositions: [{ findingId: "f1", action: "fixed", note: "guarded it" }],
+              }),
+              threadId: null,
+              completedAt: NOW,
+            },
+            {
+              cardId,
+              stepId: "adjudicate@1",
+              outcome: "succeeded",
+              summary: "adjudicated",
+              payload: JSON.stringify({
+                verdicts: [{ findingId: "f1", verdict: "fix-upheld", note: "" }],
+              }),
+              threadId: null,
+              completedAt: NOW,
+            },
+            {
+              cardId,
+              stepId: "review@2",
+              outcome: "succeeded",
+              summary: "clean",
+              payload: JSON.stringify({ reviewedSha: "sha3", findings: [] }),
+              threadId: null,
+              completedAt: NOW,
+            },
+          ],
+        })}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Code review");
+    expect(html).toContain("Round 1");
+    expect(html).toContain("Round 2");
+    expect(html).toContain("Null deref");
+    expect(html).toContain("critical");
+    expect(html).toContain("triage: fixed");
+    expect(html).toContain("fix-upheld");
+    expect(html).toContain("no blocking findings");
   });
 
   it("renders an archived dependency as the card it is, not as an unknown id", () => {

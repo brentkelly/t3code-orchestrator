@@ -44,7 +44,11 @@ export function setBoardStageExecution(
   patch: Partial<BoardStageExecution>,
 ): Record<string, BoardStageExecution> {
   const current = pipeline[stageId] ?? DEFAULT_BOARD_STAGE_EXECUTION;
-  return { ...pipeline, [stageId]: { ...current, ...patch } };
+  // `current` is a discriminated-union member and `patch` a partial of the same
+  // member (the caller never crosses `kind`), so the field-wise merge stays
+  // within one member; the cast re-narrows what a spread over a union widens.
+  const next = { ...current, ...patch } as BoardStageExecution;
+  return { ...pipeline, [stageId]: next };
 }
 
 /**

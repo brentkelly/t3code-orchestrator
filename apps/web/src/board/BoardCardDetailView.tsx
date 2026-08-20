@@ -25,23 +25,35 @@
  * inventory); their owning specs are named in comments.
  */
 import {
+  BoardAdjudicatePayload,
+  BoardReviewPayload,
+  BoardTriagePayload,
   activeBoardCardThreadId,
   boardCardArchiveNeedsConfirmation,
   boardStageIndex,
   boardStagesInOrder,
   boardStageWithRole,
+  isBoardReviewBlockingSeverity,
   liveBoardCardDependents,
+  parseReviewStepId,
+  type BoardAdjudicatePayload as BoardAdjudicatePayloadType,
   type BoardCardDetail,
   type BoardCardId,
   type BoardCardThreadState,
   type BoardLabel,
   type BoardLabelId,
+  type BoardReviewFinding,
+  type BoardReviewPayload as BoardReviewPayloadType,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
+  type BoardStepCompletion,
+  type BoardTriagePayload as BoardTriagePayloadType,
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Link } from "@tanstack/react-router";
 import {
   ArchiveIcon,
@@ -568,6 +580,172 @@ function ActionsSection({
   );
 }
 
+// ── Review findings (t3o-16, D9) ───────────────────────────────────────
+// With no PR to anchor them to (D6), the review loop's findings live on the
+// card. The panel reads the SAME opaque completion payloads the agents write —
+// review findings, triage dispositions, adjudication verdicts — grouped by
+// round. It parses payloads, never branches on the stage's role, so it is not
+// a third dispatch on `review` (AC10): a card with no review completions
+// renders nothing at all (absent, not empty).
+
+const decodeReviewPayload = Schema.decodeUnknownOption(BoardReviewPayload);
+const decodeTriagePayload = Schema.decodeUnknownOption(BoardTriagePayload);
+const decodeAdjudicatePayload = Schema.decodeUnknownOption(BoardAdjudicatePayload);
+
+function parsePayloadJson(payload: string | null): unknown {
+  if (payload === null) return undefined;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+}
+
+interface ReviewRound {
+  readonly round: number;
+  readonly review: BoardReviewPayloadType | null;
+  readonly reviewMalformed: boolean;
+  readonly triage: BoardTriagePayloadType | null;
+  readonly adjudicate: BoardAdjudicatePayloadType | null;
+}
+
+/** Group a card's completions into review rounds (D8/D9). Pure over the
+    completion list, so the same round-scoped step ids the executor mints drive
+    the render. */
+function groupReviewRounds(completions: ReadonlyArray<BoardStepCompletion>): ReviewRound[] {
+  const byRound = new Map<
+    number,
+    { review?: BoardStepCompletion; triage?: BoardStepCompletion; adjudicate?: BoardStepCompletion }
+  >();
+  for (const completion of completions) {
+    const parsed = parseReviewStepId(completion.stepId);
+    if (parsed === null) continue;
+    const entry = byRound.get(parsed.round) ?? {};
+    entry[parsed.phase] = completion;
+    byRound.set(parsed.round, entry);
+  }
+  return [...byRound.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([round, entry]) => {
+      const reviewJson = entry.review ? parsePayloadJson(entry.review.payload) : undefined;
+      const review = entry.review ? decodeReviewPayload(reviewJson) : Option.none();
+      const triage = entry.triage
+        ? decodeTriagePayload(parsePayloadJson(entry.triage.payload))
+        : Option.none();
+      const adjudicate = entry.adjudicate
+        ? decodeAdjudicatePayload(parsePayloadJson(entry.adjudicate.payload))
+        : Option.none();
+      return {
+        round,
+        review: Option.getOrNull(review),
+        // A recorded review phase whose payload will not parse is a broken
+        // reviewer, surfaced as such rather than silently dropped.
+        reviewMalformed: entry.review !== undefined && Option.isNone(review),
+        triage: Option.getOrNull(triage),
+        adjudicate: Option.getOrNull(adjudicate),
+      };
+    });
+}
+
+const SEVERITY_STYLES: Record<BoardReviewFinding["severity"], string> = {
+  critical: "border-destructive/40 bg-destructive/10 text-destructive-foreground",
+  improvement: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  nitpick: "border-border/60 bg-muted text-muted-foreground",
+};
+
+function ReviewFindingsSection({
+  completions,
+}: {
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+}) {
+  const rounds = groupReviewRounds(completions);
+  if (rounds.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-3 border-t border-border p-3.5">
+      <SectionHeading>Code review</SectionHeading>
+      {rounds.map((round) => {
+        const findings = round.review?.findings ?? [];
+        const blocking = findings.filter((f) => isBoardReviewBlockingSeverity(f.severity));
+        const dispositionsByFinding = new Map(
+          (round.triage?.dispositions ?? []).map((d) => [d.findingId, d]),
+        );
+        const verdictsByFinding = new Map(
+          (round.adjudicate?.verdicts ?? []).map((v) => [v.findingId, v]),
+        );
+        return (
+          <div key={round.round} className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] font-semibold text-foreground">Round {round.round}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {round.reviewMalformed
+                  ? "reviewer payload unreadable"
+                  : round.review === null
+                    ? "in progress"
+                    : blocking.length === 0
+                      ? "no blocking findings"
+                      : `${blocking.length} blocking`}
+              </span>
+            </div>
+            {findings.length === 0 ? null : (
+              <ul className="flex flex-col gap-1.5">
+                {findings.map((finding) => {
+                  const disposition = dispositionsByFinding.get(finding.id);
+                  const verdict = verdictsByFinding.get(finding.id);
+                  return (
+                    <li
+                      key={finding.id}
+                      className="rounded-md border border-border/50 px-2 py-1.5 text-[12px]"
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                            SEVERITY_STYLES[finding.severity],
+                          )}
+                        >
+                          {finding.severity}
+                        </span>
+                        <span className="font-medium text-foreground">{finding.title}</span>
+                        {finding.file !== null ? (
+                          <span className="text-[11px] text-muted-foreground">
+                            {finding.file}
+                            {finding.line !== null ? `:${finding.line}` : ""}
+                          </span>
+                        ) : null}
+                      </div>
+                      {finding.detail.trim().length > 0 ? (
+                        <p className="mt-1 text-[11.5px] leading-[1.4] text-muted-foreground">
+                          {finding.detail}
+                        </p>
+                      ) : null}
+                      {disposition !== undefined || verdict !== undefined ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                          {disposition !== undefined ? (
+                            <span className="rounded border border-border/60 px-1.5 py-0.5 text-muted-foreground">
+                              triage: {disposition.action}
+                              {disposition.note.trim().length > 0 ? ` — ${disposition.note}` : ""}
+                            </span>
+                          ) : null}
+                          {verdict !== undefined ? (
+                            <span className="rounded border border-border/60 px-1.5 py-0.5 text-muted-foreground">
+                              {verdict.verdict}
+                              {verdict.note.trim().length > 0 ? ` — ${verdict.note}` : ""}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   return (
     <div className="border-t border-border p-3.5 text-[11.5px]/[1.7] text-muted-foreground">
@@ -775,6 +953,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 stages={props.stages}
               />
             </div>
+            <ReviewFindingsSection completions={props.detail.stepCompletions} />
             <InfoSection props={props} />
           </div>
         </div>
