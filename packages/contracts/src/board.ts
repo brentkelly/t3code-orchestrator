@@ -3145,6 +3145,13 @@ export const BoardStageExecutionReview = Schema.Struct({
   maxAttempts: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
   ),
+  /** Per-stage-entry invocation ceiling (t3o-17, D5), enforced only on an
+      unattended run: when the stage entry's total `attempt` across its steps
+      crosses it, the stage stalls regardless of the per-step ladder. Carried
+      identically to the simple member so the reactor reads it uniformly. */
+  maxInvocationsPerStageEntry: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
+  ),
   rounds: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_ROUNDS))),
   phases: Schema.Struct({
     review: BoardReviewPhaseExecution.pipe(
