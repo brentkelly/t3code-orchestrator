@@ -266,10 +266,15 @@ export function boardActorStamp(deps: {
  * carries, so a thread event that cannot have touched it emits nothing:
  *
  * - a `turn.plan.updated` activity append on a thread live-linked to a card
- *   (the only thread event the projector writes `board_thread_todos` on), so a
+ *   (the only thread event the projector WRITES `board_thread_todos` on), so a
  *   burst of streaming message deltas on an active linked thread no longer
  *   triggers a per-event refetch of a list that did not change. The upstream
  *   coalescing window still collapses a burst of plan revisions to the latest;
+ * - a `thread.deleted` on a live-linked thread, the one thread event the
+ *   projector DROPS the cache row on (its link stays live until tombstoned, so
+ *   no `board.card-thread-unlinked` fires for it) — without this the client's
+ *   snapshot array keeps the dead thread's stale summary until an unrelated card
+ *   event happens to refetch;
  * - a card's link set changing (`board.card-thread-linked` / `-unlinked`), since
  *   the set membership is what the delta carries.
  *
@@ -307,12 +312,24 @@ export function boardCardThreadsShellEvents(deps: {
       ) {
         return yield* forCard(event.payload.cardId, event.sequence);
       }
-      // Only a todo-changing thread event refetches. The projector writes
-      // `board_thread_todos` on exactly one thread event — a `turn.plan.updated`
-      // activity append — so every other thread event (message deltas, session
-      // status, non-plan activities) would carry an identical list and is
-      // skipped. This is the difference between one refetch per plan revision
-      // and one per streamed message chunk on a live linked thread.
+      // A deleted thread's cache row was just dropped by the projector, but its
+      // link stays live until something tombstones it, so no
+      // `board.card-thread-unlinked` fires. Refetch the card to push the now
+      // todo-less link entry — otherwise the client keeps the dead thread's
+      // stale summary. (Resolves via the still-live link.)
+      if (event.type === "thread.deleted") {
+        const cardId = yield* boardMethods
+          .boardCardIdForThread(ThreadId.make(String(event.payload.threadId)))
+          .pipe(Effect.catchCause(() => Effect.succeed(null)));
+        return cardId === null ? [] : yield* forCard(cardId, event.sequence);
+      }
+      // Otherwise only a todo-changing thread event refetches. The projector
+      // WRITES `board_thread_todos` on exactly one thread event — a
+      // `turn.plan.updated` activity append — so every other thread event
+      // (message deltas, session status, non-plan activities) would carry an
+      // identical list and is skipped. This is the difference between one
+      // refetch per plan revision and one per streamed message chunk on a live
+      // linked thread.
       if (event.type !== "thread.activity-appended") return [];
       if (event.payload.activity.kind !== "turn.plan.updated") return [];
       const cardId = yield* boardMethods
