@@ -1,4 +1,5 @@
 import {
+  BOARD_SEED_STAGE_IDS,
   BoardCardId,
   BoardStageId,
   PositiveInt,
@@ -81,6 +82,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     readonly stallCount: number;
     readonly maxAttempts?: number;
     readonly progressedSinceLastNudge?: boolean;
+    readonly hasTodoList?: boolean;
     readonly stageEntryInvocations?: number;
     readonly maxInvocationsPerStageEntry?: number;
   }) =>
@@ -92,6 +94,9 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
         stepLabel: "Build",
       } satisfies Pick<BoardCardStepState, "attempt" | "stallCount" | "maxAttempts" | "stepLabel">,
       progressedSinceLastNudge: input.progressedSinceLastNudge ?? false,
+      // t3o-18 D16: default to "the thread keeps a list", so the todo-specific
+      // assertions below are the only ones that see the extra nudge line.
+      hasTodoList: input.hasTodoList ?? true,
       stageEntryInvocations: input.stageEntryInvocations ?? 0,
       maxInvocationsPerStageEntry: input.maxInvocationsPerStageEntry ?? 20,
       questionMechanism: "ask",
@@ -117,11 +122,86 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     const firstStall = decide({ stallCount: 0, progressedSinceLastNudge: false });
     assert.strictEqual(firstStall.kind, "resume");
     assert.strictEqual(firstStall.kind === "resume" ? firstStall.stallCount : -1, 1);
-    // A board_report_progress landed; the second stall resolves progressed=true,
+    // The thread's todo list advanced; the second stall resolves progressed=true,
     // so the prior streak is forgotten and this is stall #1 of a new one — 1, not 2.
     const secondStall = decide({ stallCount: 1, progressedSinceLastNudge: true });
     assert.strictEqual(secondStall.kind, "resume");
     assert.strictEqual(secondStall.kind === "resume" ? secondStall.stallCount : -1, 1);
+  });
+
+  it("t3o-18 D16: a nudged thread with NO todo list is asked to write one; one with a list is not", () => {
+    const without = decide({ stallCount: 0, hasTodoList: false });
+    assert.strictEqual(without.kind, "resume");
+    if (without.kind === "resume") {
+      assert.include(without.nudge, "todo list");
+      assert.include(without.nudge, "write one");
+    }
+    const withList = decide({ stallCount: 0, hasTodoList: true });
+    assert.strictEqual(withList.kind, "resume");
+    if (withList.kind === "resume") assert.notInclude(withList.nudge, "write one");
+  });
+
+  it("t3o-18 D16: no envelope, nudge or escalation names a deleted tool", () => {
+    const texts = [
+      composeStepPrompt({
+        card: { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building },
+        step: {
+          stepLabel: "Build",
+          providerInstanceId: ProviderInstanceId.make("claude_code"),
+          prompt: "Do the work",
+          maxAttempts: 5,
+          humanInLoop: false,
+        },
+        attempt: 1,
+      }),
+      composeStepPrompt({
+        card: { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building },
+        step: {
+          stepLabel: "Build",
+          providerInstanceId: ProviderInstanceId.make("claude_code"),
+          prompt: "Do the work",
+          maxAttempts: 5,
+          humanInLoop: true,
+        },
+        attempt: 1,
+      }),
+      (() => {
+        const resumed = decide({ stallCount: 0, hasTodoList: false });
+        return resumed.kind === "resume" ? resumed.nudge : "";
+      })(),
+      (() => {
+        const escalated = decide({ stallCount: 4 });
+        return escalated.kind === "escalate" ? escalated.question : "";
+      })(),
+    ];
+    for (const text of texts) {
+      assert.notInclude(text, "board_report_progress");
+      assert.notInclude(text, "board_request_input");
+    }
+  });
+
+  it("t3o-18 D16: the unattended postamble asks for a todo list; the human-in-the-loop one does not", () => {
+    const step = {
+      stepLabel: "Build",
+      providerInstanceId: ProviderInstanceId.make("claude_code"),
+      prompt: "Do the work",
+      maxAttempts: 5,
+    };
+    const card = { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building };
+    const unattended = composeStepPrompt({
+      card,
+      step: { ...step, humanInLoop: false },
+      attempt: 1,
+    });
+    assert.include(unattended, "todo list");
+    // AC 25: nagging a conversational turn into a todo list for a one-line
+    // answer is noise, and these steps are not stall-supervised anyway.
+    const humanInLoop = composeStepPrompt({
+      card,
+      step: { ...step, humanInLoop: true },
+      attempt: 1,
+    });
+    assert.notInclude(humanInLoop, "todo list");
   });
 
   it("crit 2: five consecutive stalls with no progress escalate on the fifth", () => {

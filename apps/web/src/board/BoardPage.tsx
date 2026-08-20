@@ -13,13 +13,16 @@ import {
   BOARD_SEED_STAGES,
   areBoardStagesAdjacent,
   boardStageWithRole,
+  deriveBoardCardThreadState,
   resolveBoardProjectAccent,
   type BoardCardShell,
+  type BoardCardThreadShell,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
   type EnvironmentId,
   type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   applyBoardCardPlacements,
@@ -59,6 +62,7 @@ import { BoardArchivedCardsSheet, refreshBoardArchivedCards } from "./BoardArchi
 import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { BoardCardDetail } from "./BoardCardDetail";
+import type { BoardCardTodoContext } from "./BoardCardItem";
 import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
 import { indexBoardLabels } from "./labelColour";
 import { BoardModeTabs } from "./BoardModeTabs";
@@ -69,6 +73,7 @@ const routeApi = getRouteApi("/board");
 
 const EMPTY_COLUMNS: BoardStageColumns = mergeBoardStageColumns([]);
 const EMPTY_CARDS: ReadonlyArray<BoardCardShell> = [];
+const EMPTY_CARD_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
 
 const ALL_PROJECTS = "__all__";
 
@@ -223,6 +228,64 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
 
   const buildColumn = buildStageId === null ? EMPTY_CARDS : (columns[buildStageId] ?? EMPTY_CARDS);
   const queueSlots = useMemo(() => boardBuildingQueueInfo(buildColumn), [buildColumn]);
+
+  // ── Card todo strips (t3o-18) ────────────────────────────────────────
+  // The card→thread links and their cached lists ride the shell snapshot as
+  // their own array; everything else the strip needs — the thread's title and
+  // whether it is running or waiting — is joined here from the thread shells the
+  // client already holds. Nothing is duplicated onto the wire, and no card opens
+  // a subscription.
+  const cardThreadsByCard = useAtomValue(boardEnvironment.cardThreadsByCardAtom(environmentId));
+  const threadShellsById = useMemo(() => {
+    const shells = Option.getOrNull(shellState.snapshot)?.threads ?? [];
+    return new Map(shells.map((thread) => [thread.id, thread]));
+  }, [shellState.snapshot]);
+  // Which cards have their extra threads revealed. In-memory and session-scoped
+  // (D9): a collapse preference has near-zero value across reloads, and persisted
+  // board UI state has already caused a navigation bug in this codebase.
+  const [expandedThreadCards, setExpandedThreadCards] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const toggleCardThreads = useCallback((cardId: string) => {
+    setExpandedThreadCards((current) => {
+      const next = new Set(current);
+      if (!next.delete(cardId)) next.add(cardId);
+      return next;
+    });
+  }, []);
+  const todoThreadStateOf = useCallback(
+    (threadId: ThreadId) => {
+      const shell = threadShellsById.get(threadId);
+      if (shell === undefined) return undefined;
+      const { threadState, awaitingInput } = deriveBoardCardThreadState(shell);
+      return {
+        awaitingInput,
+        running: threadState === "working",
+        stopped: threadState === "stopped" || threadState === "none",
+      };
+    },
+    [threadShellsById],
+  );
+  const todoThreadTitleOf = useCallback(
+    (threadId: ThreadId) => threadShellsById.get(threadId)?.title ?? "Thread",
+    [threadShellsById],
+  );
+  const todosFor = useCallback(
+    (cardId: string): BoardCardTodoContext => ({
+      threads: cardThreadsByCard.get(BoardCardId.make(cardId)) ?? EMPTY_CARD_THREADS,
+      stateOf: todoThreadStateOf,
+      titleOf: todoThreadTitleOf,
+      expanded: expandedThreadCards.has(cardId),
+      onToggleExpanded: () => toggleCardThreads(cardId),
+    }),
+    [
+      cardThreadsByCard,
+      expandedThreadCards,
+      todoThreadStateOf,
+      todoThreadTitleOf,
+      toggleCardThreads,
+    ],
+  );
 
   // Stalled cards (t3o-17, D3): the "find every stalled card" affordance. Count
   // them across every column, and when the `stalled` filter is on, show only
@@ -728,6 +791,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
               onSetCollapsed={setColumnCollapsed}
               queueSlots={queueSlots}
               selectedCardId={selectedCardId}
+              todosFor={todosFor}
               stage={stage.stageId}
             />
           ))}

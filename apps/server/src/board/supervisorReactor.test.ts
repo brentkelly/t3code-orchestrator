@@ -239,8 +239,10 @@ it.effect(
         board: { cards: [card], stepStates: [exhausted], nextCardNumberByProject: {} },
         // no shell → thread gone, but escalation must not respawn/nudge it
       });
-      // D3 gate: a human-facing question is recorded, the step is parked stalled...
-      assert.include(types, "board.card.request-input");
+      // D3 gate: the step is parked stalled (its badge is the human-facing
+      // signal — t3o-18 D13 deleted `board.card.request-input`, so the question
+      // itself now goes to the server log)...
+      assert.notInclude(types, "board.card.request-input");
       assert.include(types, "board.card.recover-step");
       // ...and the agent is NOT driven (no turn), so recovery never loops.
       assert.notInclude(types, "thread.turn.start");

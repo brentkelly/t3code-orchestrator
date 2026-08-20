@@ -1,7 +1,7 @@
 /**
  * Timeout-sweep liveness clock (t3o-17): the sweep recovers a running
  * unattended step only when EVERY life sign is older than its `timeoutMs` —
- * the last nudge/start, the thread's `board_report_progress` watermark, and
+ * the last nudge/start, the thread's todo list advancing (`board_thread_todos`), and
  * (for a build-mode step, checked once already overdue) the latest commit on
  * the card's worktree. Driven through the reactor's `sweep` test hook against
  * the shared harness. `it.effect` runs on the TestClock, whose "now" is the
@@ -17,7 +17,6 @@ import {
   ThreadId,
   type BoardCardStepState,
   type BoardState,
-  type OrchestrationEvent,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -91,22 +90,10 @@ const boardWithStep = (step: BoardCardStepState): BoardState => ({
   nextCardNumberByProject: {},
 });
 
-const progressReported = (at: string, sequence: number): OrchestrationEvent =>
-  ({
-    type: "board.card-progress-reported",
-    sequence,
-    payload: {
-      cardId,
-      entry: {
-        activityId: "act-progress",
-        cardId,
-        kind: "progress",
-        body: "still going",
-        threadId,
-        createdAt: at,
-      },
-    },
-  }) as unknown as OrchestrationEvent;
+/** A cached todo whose list last advanced at `at` — the t3o-18 liveness signal
+    that replaced the deleted `board_report_progress` watermark. */
+const todoAdvancedAt = (at: string) =>
+  new Map([[String(threadId), { advancedAt: at, hasList: true }]]);
 
 const attemptOf = (board: BoardState): number => boardCardStepState(board, cardId)?.attempt ?? -1;
 
@@ -129,32 +116,32 @@ it.effect("recovers an overdue step with no life sign since the window opened", 
   ),
 );
 
-it.effect("a fresh board_report_progress watermark keeps an overdue-by-start step alive", () =>
+it.effect("a fresh todo advance keeps an overdue-by-start step alive", () =>
   withGovernor(
     {
       board: boardWithStep(runningStep()),
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
       initialShells: aliveShells(),
+      threadTodos: todoAdvancedAt(FRESH),
     },
-    ({ reactor, board, pumpDomain }) =>
+    ({ reactor, board }) =>
       Effect.gen(function* () {
-        yield* pumpDomain(progressReported(FRESH, 1));
         yield* reactor.sweep;
         assert.strictEqual(attemptOf(yield* board), 1); // not recovered
       }),
   ),
 );
 
-it.effect("a STALE progress watermark does not shield an overdue step", () =>
+it.effect("a STALE todo advance does not shield an overdue step", () =>
   withGovernor(
     {
       board: boardWithStep(runningStep()),
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
       initialShells: aliveShells(),
+      threadTodos: todoAdvancedAt(OVERDUE),
     },
-    ({ reactor, board, pumpDomain }) =>
+    ({ reactor, board }) =>
       Effect.gen(function* () {
-        yield* pumpDomain(progressReported(OVERDUE, 1));
         yield* reactor.sweep;
         assert.strictEqual(attemptOf(yield* board), 2); // recovered
       }),

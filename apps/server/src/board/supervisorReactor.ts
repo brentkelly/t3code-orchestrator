@@ -17,7 +17,6 @@
  * server will restart mid-step.
  */
 import {
-  BoardActivityId,
   boardCardPlans,
   boardCardStepCompletions,
   boardCardStepState,
@@ -64,6 +63,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
+import { boardSnapshotQueryMethodsOf } from "./projection.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
@@ -164,28 +164,21 @@ const make = Effect.gen(function* () {
     Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
   );
 
-  // Progress signal (t3o-17, D2). The reactor — not the pure `recoveryDecision`
-  // — resolves whether a step made progress since the last nudge, from two OR'd
-  // sources: a `board_report_progress` activity entry written by the step's
-  // thread (observed off the event stream into this watermark), or a new commit
-  // on the card's branch (read from git). A step with a live progress signal has
-  // its consecutive `stallCount` reset, so a long productive job never
-  // escalates. The watermark is best-effort in-memory state: a restart loses it,
-  // costing at most one un-reset stall, never correctness (the counters persist).
-  const progressAtByThread = new Map<string, string>();
-  const recordThreadProgress = (threadId: ThreadId | null, at: string) => {
-    if (threadId === null) return;
-    const key = String(threadId);
-    const prior = progressAtByThread.get(key);
-    if (prior === undefined || Date.parse(at) > Date.parse(prior)) progressAtByThread.set(key, at);
-  };
-  // Prune a thread's watermark once its step is done with (settled) or its
-  // thread is replaced (respawn) / abandoned (escalation) — a thread id is never
-  // revisited after that, so keeping its entry would leak the map without bound
-  // over a long-lived reactor.
-  const forgetThreadProgress = (threadId: ThreadId | null) => {
-    if (threadId !== null) progressAtByThread.delete(String(threadId));
-  };
+  // Progress signal (t3o-17 D2, re-pointed by t3o-18 D16). The reactor — not the
+  // pure `recoveryDecision` — resolves whether a step made progress since the
+  // last nudge, from two OR'd sources: the step thread's TODO LIST advancing (a
+  // `turn.plan.updated` whose done count rose or whose in-progress item changed,
+  // recorded as `advancedAt` on `board_thread_todos`), or a new commit on the
+  // card's branch (read from git). A step with a live progress signal has its
+  // consecutive `stallCount` reset, so a long productive job never escalates.
+  //
+  // This replaces t3o-17's `board_report_progress` watermark, deleted by D13 —
+  // and it is a better signal on t3o-17's own terms. It wanted "the agent
+  // asserting it did some work" and rejected token output and tool-call counts as
+  // noise: a ticked todo names the specific item finished, where a prose note
+  // asserted only that the model still had tokens to spend. It is also durable
+  // rather than in-memory, so a restart no longer costs an un-reset stall.
+  const boardQueries = boardSnapshotQueryMethodsOf(snapshotQuery);
   // Threads spawned for a step whose admit was then rejected (see
   // admitBuildCandidate): their turn must be stopped, but an interrupt fired
   // milliseconds after spawn races provider session startup and no-ops. The
@@ -230,31 +223,35 @@ const make = Effect.gen(function* () {
         Effect.catchCause(() => Effect.succeed(null as string | null)),
       );
 
-  /** Resolve `progressedSinceLastNudge` for a step (D2): a progress report by
-      the step's thread OR a new commit on the card's branch, both since the
-      recorded `lastNudgeAt`. The first stall has no nudge window yet, so it is
-      never counted as progress. Kept out of `recoveryDecision`, which stays pure. */
+  /** The step thread's cached todo row, or null (t3o-18, D16). Best-effort: a
+      snapshot query built without the board factory (upstream test mocks) or a
+      read failure both answer "no list", which reads as "no progress" — the
+      conservative direction. */
+  const threadTodoState = Effect.fn("board-supervisor-threadTodoState")(function* (
+    threadId: ThreadId | null,
+  ) {
+    if (threadId === null || boardQueries === null) return null;
+    return yield* boardQueries
+      .boardThreadTodo(threadId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+  });
+
+  /** Resolve `progressedSinceLastNudge` for a step (t3o-17 D2 / t3o-18 D16): the
+      step thread's todo list ADVANCED, or a new commit landed on the card's
+      branch, both since the recorded `lastNudgeAt`. The first stall has no nudge
+      window yet, so it is never counted as progress. Kept out of
+      `recoveryDecision`, which stays pure — no git, no SQL. */
   const resolveProgressedSinceLastNudge = Effect.fn(
     "board-supervisor-resolveProgressedSinceLastNudge",
   )(function* (state: BoardCardStepState, card: BoardCard) {
     if (state.lastNudgeAt === null) return false;
-    const reportedAt =
-      state.threadId === null ? undefined : progressAtByThread.get(String(state.threadId));
-    if (reportedAt !== undefined && isAfter(reportedAt, state.lastNudgeAt)) return true;
+    const todo = yield* threadTodoState(state.threadId);
+    if (todo?.advancedAt != null && isAfter(todo.advancedAt, state.lastNudgeAt)) return true;
     // A commit counts too (D2); only a build-mode step has a worktree to inspect.
     const worktreePath = card.worktree?.path ?? null;
     if (state.mode !== "build" || worktreePath === null) return false;
     const committedAt = yield* latestCommitIso(worktreePath);
     return committedAt !== null && isAfter(committedAt, state.lastNudgeAt);
-  });
-
-  const handleProgressReported = Effect.fn("board-supervisor-handleProgressReported")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-progress-reported" }>,
-  ) {
-    // Only a genuine progress note (not an input-request activity) counts (D2).
-    const entry = event.payload.entry;
-    if (entry.kind !== "progress") return;
-    recordThreadProgress(entry.threadId, entry.createdAt);
   });
 
   /** The card + step the reactor is watching for a given thread, or null. */
@@ -821,7 +818,6 @@ const make = Effect.gen(function* () {
           threadId: existing.threadId,
           createdAt: yield* nowIso,
         });
-        forgetThreadProgress(existing.threadId);
       }
       // The adopted-thread guard still applies (D7): superseding clears the
       // stalled step's OWN link, but a live stage thread beyond it — one a
@@ -1033,16 +1029,17 @@ const make = Effect.gen(function* () {
       }
       case "escalate": {
         // The executor cannot proceed and wants a human (e.g. a phase that
-        // completed with an unreadable payload). Surface the question as a card
-        // activity and leave the card put — there is no live step to gate.
-        yield* dispatch({
-          type: "board.card.request-input",
-          commandId: yield* commandId("escalate-input"),
+        // completed with an unreadable payload). Leave the card put — there is no
+        // live step to gate. t3o-18 D13 deleted `board.card.request-input`, the
+        // command this used to record the question with, and the Activity rail's
+        // curated kinds (D12) have no "escalation note" among them. Nothing
+        // rendered that activity row before either, so nothing regresses
+        // visually; the question goes to the server log, where the operator
+        // reading a card that stopped moving will find it.
+        yield* Effect.logWarning("board supervisor: stage executor escalated to a human", {
           cardId: card.id,
-          activityId: BoardActivityId.make(yield* crypto.randomUUIDv4),
+          stepId: state.stepId,
           question: plan.question,
-          threadId: state.threadId,
-          createdAt: yield* nowIso,
         });
         return;
       }
@@ -1068,7 +1065,6 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     yield* releaseSlot(input.state);
-    forgetThreadProgress(input.state.threadId);
   });
 
   const recoverStep = Effect.fn("board-supervisor-recoverStep")(function* (input: {
@@ -1087,9 +1083,11 @@ const make = Effect.gen(function* () {
       input.card,
     );
     const stageEntryInvocations = boardStageEntryInvocationCount(board, input.card.id);
+    const todo = yield* threadTodoState(input.state.threadId);
     const decision = recoveryDecision({
       stepState: input.state,
       progressedSinceLastNudge,
+      hasTodoList: todo?.hasList ?? false,
       stageEntryInvocations,
       maxInvocationsPerStageEntry: exec.maxInvocationsPerStageEntry,
       questionMechanism,
@@ -1106,14 +1104,16 @@ const make = Effect.gen(function* () {
     // turn. Not driving the agent is what makes recovery "escalate and never
     // loop": it stops here until a human acts.
     if (decision.kind === "escalate") {
-      yield* dispatch({
-        type: "board.card.request-input",
-        commandId: yield* commandId("escalate-input"),
+      // The escalation question used to be recorded with
+      // `board.card.request-input`; t3o-18 D13 deleted that command. The
+      // human-facing signal is the card's `stalled` badge (t3o-17, D3) — loud,
+      // and the board offers a way to find every stalled card — and the question
+      // itself goes to the server log.
+      yield* Effect.logWarning("board supervisor: recovery escalated to a human", {
         cardId: input.card.id,
-        activityId: BoardActivityId.make(yield* crypto.randomUUIDv4),
+        stepId: input.state.stepId,
+        stallCount: decision.stallCount,
         question: decision.question,
-        threadId: input.state.threadId,
-        createdAt: yield* nowIso,
       });
       yield* dispatch({
         type: "board.card.recover-step",
@@ -1129,7 +1129,6 @@ const make = Effect.gen(function* () {
       // the pre-escalation state's `slotHeld` gates the release, and the decider
       // has set the persisted `slotHeld` to false, so a re-run releases nothing.
       yield* releaseSlot(input.state);
-      forgetThreadProgress(input.state.threadId);
       yield* schedule();
       return;
     }
@@ -1167,8 +1166,6 @@ const make = Effect.gen(function* () {
             threadId: input.state.threadId,
             createdAt: yield* nowIso,
           });
-          // The dead thread is replaced; its watermark will never be read again.
-          forgetThreadProgress(input.state.threadId);
         }
         threadId = yield* spawnStepThread({
           card: input.card,
@@ -1307,17 +1304,31 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /**
+   * A step's thread asked a human a question (t3o-18, D13). Moving the step to
+   * `awaiting-input` is what stops a card waiting on a human from being counted
+   * as stalled.
+   *
+   * RE-SOURCED, not removed: this used to react to the `board.card-input-requested`
+   * domain event that the deleted `board_request_input` tool produced. It now
+   * reacts to the runtime `user-input.requested` event on the stream the reactor
+   * already consumes, resolving the card from the emitting thread. That is
+   * strictly more complete than what it replaces, because it fires for EVERY
+   * input request rather than only the ones an agent remembered to double-report
+   * — an agent that asked normally and skipped the tool used to leave the board
+   * blind, which was the actual failure mode.
+   */
   const handleInputRequested = Effect.fn("board-supervisor-handleInputRequested")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-input-requested" }>,
+    threadId: ThreadId,
   ) {
     const board = yield* readBoard;
-    const state = boardCardStepState(board, event.payload.cardId);
-    if (state === null || state.status !== "running") return;
+    const watched = stepThreadCard(board, threadId);
+    if (watched === null || watched.state.status !== "running") return;
     yield* dispatch({
       type: "board.card.await-step-input",
       commandId: yield* commandId("await-input"),
-      cardId: event.payload.cardId,
-      stepId: state.stepId,
+      cardId: watched.card.id,
+      stepId: watched.state.stepId,
       createdAt: yield* nowIso,
     });
   });
@@ -1435,6 +1446,20 @@ const make = Effect.gen(function* () {
   );
 
   const reconcile = Effect.gen(function* () {
+    // Sweep cached todo rows whose thread or link no longer exists (t3o-18,
+    // AC 20). The cache is a projection with no event to un-apply, so a row can
+    // outlive its link when a delete lands while the server is down; a single
+    // set-difference DELETE at boot is the cheap, total answer. Best-effort — a
+    // sweep failure must never block reconciliation of live steps.
+    if (boardQueries !== null) {
+      yield* boardQueries.boardSweepThreadTodos().pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: thread-todo sweep failed", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+    }
     const board = yield* readBoard;
     // Cards whose step reconcile settles as succeeded: `continueStage` may
     // auto-advance them, and the `board.card-moved` that publishes goes into a
@@ -1532,12 +1557,6 @@ const make = Effect.gen(function* () {
         return handleCardUpdated(event);
       case "board.card-step-completed":
         return handleStepCompleted(event);
-      case "board.card-progress-reported":
-        // Observe the progress watermark (t3o-17, D2) so recovery can reset a
-        // productive step's consecutive `stallCount`.
-        return handleProgressReported(event);
-      case "board.card-input-requested":
-        return handleInputRequested(event);
       case "board.card-archived":
         return handleArchived(event);
       default:
@@ -1558,15 +1577,15 @@ const make = Effect.gen(function* () {
       if (state.status !== "running" || state.humanInLoop) continue;
       if (state.timeoutMs <= 0) continue;
       // The clock runs from the LATEST life sign, using the same two OR'd
-      // progress sources as recovery (D2): the last nudge/start, a
-      // `board_report_progress` note from the step's thread, and — checked
-      // below, only once a step already looks overdue — a fresh commit on the
-      // card's branch. Without this, a healthy hours-long turn would be
-      // nudged mid-turn every timeoutMs and marched toward the stall ceiling.
-      const reportedAt =
-        state.threadId === null ? undefined : progressAtByThread.get(String(state.threadId));
+      // progress sources as recovery (t3o-17 D2, re-pointed by t3o-18 D16): the
+      // last nudge/start, the step thread's todo list ADVANCING (`advancedAt` on
+      // `board_thread_todos`), and — checked below, only once a step already
+      // looks overdue — a fresh commit on the card's branch. Without this, a
+      // healthy hours-long turn would be nudged mid-turn every timeoutMs and
+      // marched toward the stall ceiling.
+      const todo = yield* threadTodoState(state.threadId);
       const referenceMs = Math.max(
-        ...[state.lastNudgeAt ?? state.startedAt, reportedAt]
+        ...[state.lastNudgeAt ?? state.startedAt, todo?.advancedAt ?? null]
           .filter((value): value is string => value != null)
           .map((value) => Date.parse(value))
           .filter((value) => Number.isFinite(value)),
@@ -1605,6 +1624,11 @@ const make = Effect.gen(function* () {
           orphanedThreads.delete(String(threadId));
           return handleTurnCompleted(threadId);
         }
+        // An ordinary agent question (t3o-18, D13): re-sourced from the runtime
+        // event on the stream the reactor already consumes, so it fires for
+        // EVERY input request rather than only the ones a now-deleted board tool
+        // remembered to double-report.
+        if (input.event.type === "user-input.requested") return handleInputRequested(threadId);
         return Effect.void;
       }
       case "reconcile":
@@ -1645,8 +1669,6 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-stage-thread-requested" &&
           event.type !== "board.card-updated" &&
           event.type !== "board.card-step-completed" &&
-          event.type !== "board.card-progress-reported" &&
-          event.type !== "board.card-input-requested" &&
           event.type !== "board.card-archived"
         ) {
           return Effect.void;
@@ -1657,6 +1679,10 @@ const make = Effect.gen(function* () {
     yield* forkParked(
       Stream.runForEach(providerService.streamEvents, (event) => {
         if (event.type === "turn.completed") return worker.enqueue({ source: "runtime", event });
+        // `user-input.requested` rides the same stream (t3o-18, D13): one more
+        // case in an existing subscription, no new seam. It fires for every
+        // agent question, which is what re-parks a step on the gate.
+        if (event.type === "user-input.requested") return worker.enqueue({ source: "runtime", event });
         // session.started matters only for a thread orphaned by a rejected
         // admit — the durable delivery point for its turn interrupt.
         if (event.type === "session.started" && orphanedThreads.has(String(event.threadId))) {

@@ -39,6 +39,7 @@ import {
   type BoardAdjudicatePayload as BoardAdjudicatePayloadType,
   type BoardCardDetail,
   type BoardCardId,
+  type BoardCardThreadShell,
   type BoardCardThreadState,
   type BoardLabel,
   type BoardLabelId,
@@ -87,6 +88,7 @@ import {
 } from "./BoardCardFields";
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
+import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { boardStageLabel } from "./boardStages";
 import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
 
@@ -128,6 +130,26 @@ export function boardCardHasThreadPane(
     create dialog, so it lives in `BoardCardFields`. */
 export type BoardDetailDependency = BoardDependencyEntry;
 
+/** The rail in the working-surface layout's right rail. Absent when the card
+    has no activity — not an empty skeleton (no-speculative-inventory). */
+function ActivitySection({
+  detail,
+  stages,
+  agents,
+}: {
+  readonly detail: BoardCardDetail;
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+  readonly agents: BoardActivityAgentLookup | undefined;
+}) {
+  if (detail.activity.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2 border-t border-border p-3.5">
+      <SectionHeading>Activity</SectionHeading>
+      <BoardCardActivityRail agents={agents} entries={detail.activity} stages={stages} />
+    </div>
+  );
+}
+
 export interface BoardDetailThreadLink {
   readonly threadId: ThreadId;
   readonly role: string;
@@ -159,6 +181,13 @@ export interface BoardCardDetailViewProps {
   readonly dependencies: ReadonlyArray<BoardDetailDependency>;
   readonly dependencyOptions: ReadonlyArray<BoardPickerOption>;
   readonly threadLinks: ReadonlyArray<BoardDetailThreadLink>;
+  /** Provider display names and accents for the Activity rail's agent actors
+      (t3o-18, D11), resolved at render time so a renamed instance relabels its
+      own history. */
+  readonly agents?: BoardActivityAgentLookup | undefined;
+  /** Each live-linked thread's cached todo list (t3o-18, D3), keyed by thread —
+      the modal's per-tab counts and its sticky todos strip. */
+  readonly threadTodos?: ReadonlyMap<ThreadId, BoardCardThreadShell> | undefined;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
   /** The thread pane `+` menu's restart affordance (t3o-14): present only when
       the card's current stage auto-executes, `null` otherwise. */
@@ -915,6 +944,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 selectedThreadId={selectedThread}
                 stageRestart={props.stageRestart}
                 threadLinks={props.threadLinks}
+                threadTodos={props.threadTodos}
               />
             </Suspense>
           )}
@@ -930,10 +960,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <div className="border-t border-border p-3.5">
               <DependenciesSection {...props} />
             </div>
-            {/*
-              Activity (t3o-08) renders here once the card's event history
-              reaches the client. Absent, not empty (no-speculative-inventory).
-            */}
+            <ActivitySection agents={props.agents} detail={props.detail} stages={props.stages} />
             <div className="flex flex-col gap-2 border-t border-border p-3.5">
               <LabelSection
                 catalogue={props.catalogue}
@@ -986,10 +1013,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 </div>
               )}
 
-              {/*
-                Activity (t3o-08) renders here once the card's event history
-                reaches the client. Absent, not empty.
-              */}
+              {props.detail.activity.length === 0 ? null : (
+                <div className="min-w-0">
+                  <SectionHeading className="mb-[7px]">Activity</SectionHeading>
+                  <BoardCardActivityRail
+                    agents={props.agents}
+                    entries={props.detail.activity}
+                    stages={props.stages}
+                  />
+                </div>
+              )}
             </div>
 
             {/* ── Right: what you can do with it ──────────────────────── */}

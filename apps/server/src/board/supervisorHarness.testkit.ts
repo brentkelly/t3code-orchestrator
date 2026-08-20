@@ -204,6 +204,13 @@ export function withGovernor(
         commit-liveness signal the timeout sweep reads. Defaults to "" (no
         commit history). */
     readonly latestCommitIso?: string;
+    /** The cached todo state per thread id (t3o-18): the reactor reads
+        `advancedAt` for the stall-reset / timeout-liveness signal and `hasList`
+        for the recovery nudge. Absent threads answer "no list". */
+    readonly threadTodos?: ReadonlyMap<
+      string,
+      { readonly advancedAt: string | null; readonly hasList: boolean }
+    >;
   },
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
@@ -243,6 +250,7 @@ export function withGovernor(
       latestSequence: Ref.get(seq),
     } as unknown as OrchestrationEngineService["Service"];
 
+    const threadTodos = input.threadTodos ?? new Map();
     const snapshotStub = {
       getCommandReadModel: () => Ref.get(model),
       getThreadShellById: (threadId: ThreadId) =>
@@ -252,6 +260,24 @@ export function withGovernor(
             return shell === undefined ? Option.none() : Option.some(shell);
           }),
         ),
+      // The board-owned method set (t3o-04/08/18): present so
+      // `boardSnapshotQueryMethodsOf` resolves the stub and the reactor's todo
+      // signal + boot sweep have something to call. Only `boardThreadTodo` is
+      // fixture-driven; the rest are inert.
+      boardCardDetail: () => Effect.succeed(null),
+      boardCardActivity: () => Effect.succeed([]),
+      boardPlanBody: () => Effect.succeed(null),
+      boardCardThreads: () => Effect.succeed([]),
+      boardCardIdForThread: () => Effect.succeed(null),
+      boardThreadTodo: (threadId: ThreadId) => {
+        const todo = threadTodos.get(String(threadId));
+        return Effect.succeed(
+          todo === undefined
+            ? null
+            : { hasList: todo.hasList, doneCount: 0, totalCount: todo.hasList ? 1 : 0, advancedAt: todo.advancedAt },
+        );
+      },
+      boardSweepThreadTodos: () => Effect.void,
     } as unknown as ProjectionSnapshotQuery["Service"];
 
     const providerStub = {
@@ -392,6 +418,12 @@ export const cardArchived = (card: BoardCard, sequence: number): OrchestrationEv
 
 export const turnCompleted = (threadId: ThreadId): ProviderRuntimeEvent =>
   ({ type: "turn.completed", threadId }) as unknown as ProviderRuntimeEvent;
+
+/** An ORDINARY agent question (t3o-18, D13): the runtime event every provider
+    emits when it asks a human, with no board tool call behind it. This is what
+    re-sourced `handleInputRequested` now watches. */
+export const userInputRequested = (threadId: ThreadId): ProviderRuntimeEvent =>
+  ({ type: "user-input.requested", threadId }) as unknown as ProviderRuntimeEvent;
 
 export const stepStatus = (board: BoardState, cardId: BoardCardId) =>
   boardCardStepState(board, cardId)?.status ?? null;

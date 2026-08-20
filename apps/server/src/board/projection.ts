@@ -22,10 +22,15 @@ import {
   activeBoardCardThreadId,
   BOARD_CARD_BRIEF_BODY_KIND,
   BoardCard,
+  BoardActivityActor,
+  BoardActivityId,
   BoardCardActivityEntry,
+  BoardCardActivityPayload,
   BoardCardExternalRef,
   BoardCardId,
   BoardCardThreadLink,
+  BoardCardThreadShell,
+  boardThreadTodoSummary,
   BoardLabel,
   BoardLabelId,
   boardLabelsAreSeedOnly,
@@ -50,7 +55,9 @@ import {
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationShellSnapshot,
+  IsoDateTime,
   ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -60,6 +67,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
+import { boardActivityActorFor } from "./activityActors.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   boardCardFromCreatedPayload,
@@ -68,6 +76,34 @@ import {
   compareBoardStepCompletions,
   compareBoardStepStates,
 } from "./projector.ts";
+
+/**
+ * The plan steps carried by a `turn.plan.updated` thread activity, or null when
+ * the payload is not a plan. The activity payload is `Schema.Unknown` upstream
+ * (deliberately — activities are provider-shaped), so it is read leniently here
+ * exactly as the in-chat plan chip reads it: an entry without a string `step` is
+ * skipped, and any unrecognised status is `pending`. A malformed payload must
+ * never fail a projection transaction.
+ */
+function readTurnPlanSteps(
+  payload: unknown,
+): ReadonlyArray<{ readonly step: string; readonly status: string }> | null {
+  const record =
+    payload !== null && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
+  const rawPlan = record?.plan;
+  if (!Array.isArray(rawPlan)) return null;
+  const steps: Array<{ readonly step: string; readonly status: string }> = [];
+  for (const entry of rawPlan) {
+    if (entry === null || typeof entry !== "object") continue;
+    const item = entry as Record<string, unknown>;
+    if (typeof item.step !== "string" || item.step.trim().length === 0) continue;
+    steps.push({
+      step: item.step,
+      status: typeof item.status === "string" ? item.status : "pending",
+    });
+  }
+  return steps;
+}
 
 export const BOARD_CARDS_PROJECTOR_NAME = "projection.board-cards" as const;
 
@@ -159,15 +195,95 @@ const NextCardNumberDbRow = Schema.Struct({
 
 // Agent write-path rows (t3o-08). Activity is table-only (D8); step and plan
 // rows rehydrate the read-model slices `BoardState.stepCompletions` / `plans`.
+// Activity rows are structured (t3o-18, D10): kind + typed payload + actor. The
+// payload rides as a JSON string, the same "carried verbatim" discipline
+// `BoardStepCompletion.payload` uses, so a round-trip cannot re-serialise into a
+// different string. `actor_kind` is NOT NULL — an unstamped command resolves to
+// the system actor at write time, never to a null column.
 const BoardCardActivityDbRow = Schema.Struct({
   activityId: BoardCardActivityEntry.fields.activityId,
   cardId: BoardCardId,
   kind: BoardCardActivityEntry.fields.kind,
-  body: BoardCardActivityEntry.fields.body,
+  payload: Schema.fromJsonString(BoardCardActivityPayload),
+  actorKind: BoardActivityActor.fields.kind,
+  actorName: BoardActivityActor.fields.name,
+  actorProviderInstanceId: BoardActivityActor.fields.providerInstanceId,
+  actorThreadId: BoardActivityActor.fields.threadId,
   threadId: BoardCardActivityEntry.fields.threadId,
   createdAt: BoardCardActivityEntry.fields.createdAt,
 });
 type BoardCardActivityDbRow = typeof BoardCardActivityDbRow.Type;
+
+/** The board's cached copy of one thread's todo list (t3o-18, D1). `statuses`
+    is one char per stored item; `done_count` / `total_count` are the TRUE
+    counts, before capping, so `2/47` stays honest with 30 pips stored. */
+const BoardThreadTodoDbRow = Schema.Struct({
+  threadId: ThreadId,
+  cardId: BoardCardId,
+  statuses: Schema.String,
+  currentText: Schema.NullOr(Schema.String),
+  doneCount: Schema.Int,
+  totalCount: Schema.Int,
+  currentStartedAt: Schema.NullOr(IsoDateTime),
+  /** When the list last ADVANCED (t3o-18, D16): `done_count` rose or the
+      in-progress item changed. The stall-reset signal reads this, so
+      `recoveryDecision` stays pure with no git and no SQL. */
+  advancedAt: Schema.NullOr(IsoDateTime),
+  updatedAt: IsoDateTime,
+});
+type BoardThreadTodoDbRow = typeof BoardThreadTodoDbRow.Type;
+
+/** The shell-snapshot row: one live link on a non-archived card, LEFT JOINed to
+    its todo cache, so a linked thread with no list still rides (D3). */
+const BoardCardThreadShellDbRow = Schema.Struct({
+  cardId: BoardCardId,
+  threadId: ThreadId,
+  statuses: Schema.NullOr(Schema.String),
+  currentText: Schema.NullOr(Schema.String),
+  doneCount: Schema.NullOr(Schema.Int),
+  totalCount: Schema.NullOr(Schema.Int),
+  currentStartedAt: Schema.NullOr(IsoDateTime),
+  updatedAt: Schema.NullOr(IsoDateTime),
+});
+type BoardCardThreadShellDbRow = typeof BoardCardThreadShellDbRow.Type;
+
+/** Map an activity row to the wire entry (t3o-18, D10). The actor's four
+    columns rebuild the discriminated actor; `payload` decoded from its JSON
+    string by the row schema. */
+function toBoardCardActivityEntry(row: BoardCardActivityDbRow): BoardCardActivityEntry {
+  return {
+    activityId: row.activityId,
+    cardId: row.cardId,
+    kind: row.kind,
+    payload: row.payload,
+    actor: {
+      kind: row.actorKind,
+      name: row.actorName,
+      providerInstanceId: row.actorProviderInstanceId,
+      threadId: row.actorThreadId,
+    },
+    threadId: row.threadId,
+    createdAt: row.createdAt,
+  };
+}
+
+/** Map a joined row to the wire shell (t3o-18, D3): the todo fields are
+    key-optional, so a thread with no list serialises as a bare link entry. */
+function toBoardCardThreadShell(row: BoardCardThreadShellDbRow): BoardCardThreadShell {
+  const hasTodos = row.statuses !== null && row.statuses.length > 0;
+  return {
+    cardId: row.cardId,
+    threadId: row.threadId,
+    ...(hasTodos ? { todoStatuses: row.statuses as string } : {}),
+    ...(row.currentText !== null && row.currentText.length > 0
+      ? { todoCurrent: row.currentText }
+      : {}),
+    ...(hasTodos ? { todoDone: Math.max(0, row.doneCount ?? 0) } : {}),
+    ...(hasTodos ? { todoTotal: Math.max(0, row.totalCount ?? 0) } : {}),
+    ...(row.currentStartedAt !== null ? { todoStartedAt: row.currentStartedAt } : {}),
+    ...(row.updatedAt !== null ? { todoUpdatedAt: row.updatedAt } : {}),
+  };
+}
 
 const BoardCardStepDbRow = Schema.Struct({
   cardId: BoardCardId,
@@ -793,21 +909,31 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   // ── Agent write path (t3o-08) ────────────────────────────────────────
 
   // Append-only; `ON CONFLICT DO NOTHING` makes re-applying the same event
-  // (replay) a no-op, since `activity_id` is the event's own id.
+  // (replay) a no-op, since `activity_id` is derived from the event's own id.
   const insertBoardCardActivityRow = SqlSchema.void({
     Request: BoardCardActivityDbRow,
     execute: (row) => sql`
-      INSERT INTO board_card_activity (activity_id, card_id, kind, body, thread_id, created_at)
-      VALUES (${row.activityId}, ${row.cardId}, ${row.kind}, ${row.body}, ${row.threadId}, ${row.createdAt})
+      INSERT INTO board_card_activity (
+        activity_id, card_id, kind, payload,
+        actor_kind, actor_name, actor_provider_instance_id, actor_thread_id,
+        thread_id, created_at
+      )
+      VALUES (
+        ${row.activityId}, ${row.cardId}, ${row.kind}, ${row.payload},
+        ${row.actorKind}, ${row.actorName}, ${row.actorProviderInstanceId}, ${row.actorThreadId},
+        ${row.threadId}, ${row.createdAt}
+      )
       ON CONFLICT (activity_id) DO NOTHING
     `,
   });
 
-  // Bounded read (t3o-08 hygiene): the log is append-only and unbounded while
-  // `board_report_progress` is advertised as "call it often", so context reads
-  // return a TAIL — the most recent entries — plus EVERY `input-requested`
-  // entry (an outstanding human gate must never age out of view). The UNION
-  // dedupes rows that qualify both ways; the outer ORDER restores log order.
+  // Bounded read (t3o-08 hygiene, kept through t3o-18's restructure): the log is
+  // append-only and can outgrow a useful context window, so a read returns a TAIL
+  // — the most recent entries — plus EVERY `card-input-requested` entry, since an
+  // outstanding human gate must never age out of view. The UNION dedupes rows
+  // that qualify both ways; the outer ORDER restores log order. The columns are
+  // t3o-18's structured shape (kind + typed payload + actor), not the old prose
+  // `body`, so `SELECT *` inside the subqueries stays column-aligned across both.
   const listBoardCardActivityRowsForCard = SqlSchema.findAll({
     Request: BoardCardId,
     Result: BoardCardActivityDbRow,
@@ -817,18 +943,26 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           activity_id AS "activityId",
           card_id AS "cardId",
           kind,
-          body,
+          payload,
+          actor_kind AS "actorKind",
+          actor_name AS "actorName",
+          actor_provider_instance_id AS "actorProviderInstanceId",
+          actor_thread_id AS "actorThreadId",
           thread_id AS "threadId",
           created_at AS "createdAt"
         FROM board_card_activity
-        WHERE card_id = ${cardId} AND kind = 'input-requested'
+        WHERE card_id = ${cardId} AND kind = 'card-input-requested'
         UNION
         SELECT * FROM (
           SELECT
             activity_id AS "activityId",
             card_id AS "cardId",
             kind,
-            body,
+            payload,
+            actor_kind AS "actorKind",
+            actor_name AS "actorName",
+            actor_provider_instance_id AS "actorProviderInstanceId",
+            actor_thread_id AS "actorThreadId",
             thread_id AS "threadId",
             created_at AS "createdAt"
           FROM board_card_activity
@@ -838,6 +972,141 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         )
       )
       ORDER BY "createdAt" ASC, "activityId" ASC
+    `,
+  });
+
+  // ── Thread todo cache (t3o-18, D1) ───────────────────────────────────
+
+  const upsertBoardThreadTodoRow = SqlSchema.void({
+    Request: BoardThreadTodoDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_thread_todos (
+        thread_id, card_id, statuses, current_text, done_count, total_count,
+        current_started_at, advanced_at, updated_at
+      )
+      VALUES (
+        ${row.threadId}, ${row.cardId}, ${row.statuses}, ${row.currentText},
+        ${row.doneCount}, ${row.totalCount}, ${row.currentStartedAt}, ${row.advancedAt},
+        ${row.updatedAt}
+      )
+      ON CONFLICT (thread_id) DO UPDATE SET
+        card_id = excluded.card_id,
+        statuses = excluded.statuses,
+        current_text = excluded.current_text,
+        done_count = excluded.done_count,
+        total_count = excluded.total_count,
+        current_started_at = excluded.current_started_at,
+        advanced_at = excluded.advanced_at,
+        updated_at = excluded.updated_at
+    `,
+  });
+
+  const findBoardThreadTodoRow = SqlSchema.findOneOption({
+    Request: ThreadId,
+    Result: BoardThreadTodoDbRow,
+    execute: (threadId) => sql`
+      SELECT
+        thread_id AS "threadId",
+        card_id AS "cardId",
+        statuses,
+        current_text AS "currentText",
+        done_count AS "doneCount",
+        total_count AS "totalCount",
+        current_started_at AS "currentStartedAt",
+        advanced_at AS "advancedAt",
+        updated_at AS "updatedAt"
+      FROM board_thread_todos
+      WHERE thread_id = ${threadId}
+    `,
+  });
+
+  const deleteBoardThreadTodoRow = SqlSchema.void({
+    Request: ThreadId,
+    execute: (threadId) => sql`DELETE FROM board_thread_todos WHERE thread_id = ${threadId}`,
+  });
+
+  const deleteBoardThreadTodoRowsForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`DELETE FROM board_thread_todos WHERE card_id = ${cardId}`,
+  });
+
+  /**
+   * Boot reconciliation sweep (t3o-18, AC 20): drop every cached row whose
+   * thread or link no longer exists — an unlinked or tombstoned link, an
+   * archived card, a deleted thread, or a card that is simply gone. The cache is
+   * a projection, so a leaked row is invisible until it resurfaces on a reused
+   * id; sweeping at boot is the cheap, total answer.
+   */
+  const sweepOrphanBoardThreadTodoRows = SqlSchema.void({
+    Request: Schema.Void,
+    execute: () => sql`
+      DELETE FROM board_thread_todos
+      WHERE thread_id NOT IN (
+              SELECT thread_id FROM board_card_thread_links WHERE tombstoned_at IS NULL
+            )
+         OR card_id NOT IN (SELECT card_id FROM board_cards WHERE archived_at IS NULL)
+         OR thread_id NOT IN (
+              SELECT thread_id FROM projection_threads WHERE deleted_at IS NULL
+            )
+    `,
+  });
+
+  /** Every live link on a non-archived card, LEFT JOINed to its todo cache
+      (t3o-18, D3) — one entry per link, todos when the thread has a list. */
+  const listBoardCardThreadShellRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardCardThreadShellDbRow,
+    execute: () => sql`
+      SELECT
+        links.card_id AS "cardId",
+        links.thread_id AS "threadId",
+        todos.statuses AS "statuses",
+        todos.current_text AS "currentText",
+        todos.done_count AS "doneCount",
+        todos.total_count AS "totalCount",
+        todos.current_started_at AS "currentStartedAt",
+        todos.updated_at AS "updatedAt"
+      FROM board_card_thread_links links
+      INNER JOIN board_cards cards ON cards.card_id = links.card_id
+      LEFT JOIN board_thread_todos todos ON todos.thread_id = links.thread_id
+      WHERE links.tombstoned_at IS NULL AND cards.archived_at IS NULL
+      ORDER BY links.card_id ASC, links.linked_at ASC, links.thread_id ASC
+    `,
+  });
+
+  const listBoardCardThreadShellRowsForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardThreadShellDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        links.card_id AS "cardId",
+        links.thread_id AS "threadId",
+        todos.statuses AS "statuses",
+        todos.current_text AS "currentText",
+        todos.done_count AS "doneCount",
+        todos.total_count AS "totalCount",
+        todos.current_started_at AS "currentStartedAt",
+        todos.updated_at AS "updatedAt"
+      FROM board_card_thread_links links
+      INNER JOIN board_cards cards ON cards.card_id = links.card_id
+      LEFT JOIN board_thread_todos todos ON todos.thread_id = links.thread_id
+      WHERE links.card_id = ${cardId}
+        AND links.tombstoned_at IS NULL
+        AND cards.archived_at IS NULL
+      ORDER BY links.linked_at ASC, links.thread_id ASC
+    `,
+  });
+
+  /** The card a live-linked thread belongs to — the "which card does this
+      thread's todo update belong to" lookup (t3o-18, D2). `thread_id` is the
+      link table's primary key, so this is a point read. */
+  const findBoardCardIdForLiveThread = SqlSchema.findOneOption({
+    Request: ThreadId,
+    Result: Schema.Struct({ cardId: BoardCardId }),
+    execute: (threadId) => sql`
+      SELECT card_id AS "cardId"
+      FROM board_card_thread_links
+      WHERE thread_id = ${threadId} AND tombstoned_at IS NULL
     `,
   });
 
@@ -1083,6 +1352,14 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardLabelRowsForCard,
     insertBoardCardActivityRow,
     listBoardCardActivityRowsForCard,
+    upsertBoardThreadTodoRow,
+    findBoardThreadTodoRow,
+    deleteBoardThreadTodoRow,
+    deleteBoardThreadTodoRowsForCard,
+    sweepOrphanBoardThreadTodoRows,
+    listBoardCardThreadShellRows,
+    listBoardCardThreadShellRowsForCard,
+    findBoardCardIdForLiveThread,
     listBoardCardStepRowsForCard,
     upsertBoardCardStepRow,
     listBoardCardStepRows,
@@ -1154,17 +1431,123 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
 
   // ── Agent write path (t3o-08) ────────────────────────────────────────
 
-  const insertActivity = (entry: BoardCardActivityEntry) =>
-    queries
+  /**
+   * Write one curated Activity row (t3o-18, D10/D12). The row id is the EVENT's
+   * own id, so re-applying the same event (replay) is a no-op via
+   * `ON CONFLICT DO NOTHING` — the rail can never double-count. The actor comes
+   * from the dispatch-boundary stamp keyed on the event's `commandId`, falling
+   * back to the system actor.
+   */
+  const recordActivity = (input: {
+    readonly event: OrchestrationEvent;
+    readonly cardId: BoardCardId;
+    readonly kind: BoardCardActivityEntry["kind"];
+    readonly payload: BoardCardActivityPayload;
+    readonly threadId: ThreadId | null;
+  }) => {
+    const actor = boardActivityActorFor(input.event.commandId);
+    return queries
       .insertBoardCardActivityRow({
-        activityId: entry.activityId,
-        cardId: entry.cardId,
-        kind: entry.kind,
-        body: entry.body,
-        threadId: entry.threadId,
-        createdAt: entry.createdAt,
+        activityId: BoardActivityId.make(String(input.event.eventId)),
+        cardId: input.cardId,
+        kind: input.kind,
+        payload: input.payload,
+        actorKind: actor.kind,
+        actorName: actor.name,
+        actorProviderInstanceId: actor.providerInstanceId,
+        actorThreadId: actor.threadId,
+        threadId: input.threadId ?? actor.threadId,
+        createdAt: input.event.occurredAt,
       })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.activity:query")));
+  };
+
+  // ── Thread todo cache (t3o-18, D1/D2/D6) ─────────────────────────────
+
+  /**
+   * Capture a thread's `turn.plan.updated` into the board's cache.
+   *
+   * **Sourced from the DOMAIN event, not the runtime stream.** The spec's D2
+   * hangs this off the supervisor reactor's existing `providerService`
+   * subscription; it is captured here instead, from the `thread.activity-appended`
+   * event that same runtime event is already ingested into. Three reasons, all
+   * of which preserve every locked outcome (D1's projection-only table, D2's
+   * "unlinked thread writes nothing", D14's forward-only fill):
+   *
+   * 1. **Ordering.** The card strip has to update live, and shell deltas are
+   *    driven by the domain event stream with the causing event's `sequence`. A
+   *    reactor writing the row on a separate stream races that delta, so the
+   *    client would render the previous revision.
+   * 2. **Transactionality.** Written here, the row commits with the event, so a
+   *    reader that sees the event always sees the row.
+   * 3. **Rebuild.** D1 justifies a non-event-sourced board table by pointing at
+   *    the durable thread activity behind it; projecting from that activity makes
+   *    the rebuild path real rather than theoretical (D14's stated worry).
+   *
+   * An event from a thread with no LIVE card link is ignored, not stored.
+   *
+   * `current_started_at` is reset ONLY when the in-progress item's TEXT changes
+   * (D6): it survives reordering and insertion, needs nothing new from any
+   * provider, and costs one column. `advanced_at` moves when `done_count` rises
+   * or the in-progress item changes — the stall-reset signal (D16), recorded here
+   * so `recoveryDecision` stays pure.
+   */
+  const captureThreadTodos = (input: {
+    readonly threadId: ThreadId;
+    readonly plan: ReadonlyArray<{ readonly step: string; readonly status: string }>;
+    readonly occurredAt: string;
+  }) =>
+    Effect.gen(function* () {
+      const cardRow = yield* queries.findBoardCardIdForLiveThread(input.threadId);
+      if (Option.isNone(cardRow)) return;
+      const summary = boardThreadTodoSummary(
+        input.plan.map((item) => ({
+          step: item.step,
+          status:
+            item.status === "completed"
+              ? ("completed" as const)
+              : item.status === "inProgress"
+                ? ("inProgress" as const)
+                : ("pending" as const),
+        })),
+      );
+      const priorRow = yield* queries.findBoardThreadTodoRow(input.threadId);
+      const prior = Option.getOrUndefined(priorRow);
+      const currentChanged = (prior?.currentText ?? null) !== summary.currentText;
+      const advanced = currentChanged || summary.doneCount > (prior?.doneCount ?? 0);
+      yield* queries.upsertBoardThreadTodoRow({
+        threadId: input.threadId,
+        cardId: cardRow.value.cardId,
+        statuses: summary.statuses,
+        currentText: summary.currentText,
+        doneCount: summary.doneCount,
+        totalCount: summary.totalCount,
+        currentStartedAt:
+          summary.currentText === null
+            ? null
+            : currentChanged
+              ? input.occurredAt
+              : (prior?.currentStartedAt ?? input.occurredAt),
+        advancedAt: advanced ? input.occurredAt : (prior?.advancedAt ?? null),
+        updatedAt: input.occurredAt,
+      });
+    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodos:query")));
+
+  /** Drop one thread's cached list — an unlink, whether it removed the link or
+      tombstoned it, ends the same way (t3o-18, AC 19). Also the `thread.deleted`
+      path, which reaches here before any board event does. */
+  const dropThreadTodos = (threadId: ThreadId) =>
+    queries
+      .deleteBoardThreadTodoRow(threadId)
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodosDrop:query")));
+
+  /** Drop every cached list on a card — archiving it (AC 19). Unarchiving does
+      NOT restore them: the cache fills forward from the next `turn.plan.updated`
+      (D14), which is the same rule a fresh upgrade follows. */
+  const dropCardThreadTodos = (cardId: BoardCardId) =>
+    queries
+      .deleteBoardThreadTodoRowsForCard(cardId)
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodosSweep:query")));
 
   const upsertStep = (completion: BoardStepCompletion) =>
     queries
@@ -1253,7 +1636,31 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
   const applyBoardCardsProjection = Effect.fn("applyBoardCardsProjection")(function* (
     event: OrchestrationEvent,
   ) {
-    if (!isBoardEvent(event)) return;
+    // T3o-18: two THREAD events feed board-owned tables. Nothing upstream is
+    // written — this projector still owns only `board_*` tables — but the board's
+    // todo cache is a projection of the thread activity that already carries the
+    // full plan (D1), so it is captured where every other projection is: in the
+    // event's own transaction.
+    if (!isBoardEvent(event)) {
+      if (event.type === "thread.activity-appended") {
+        const activity = event.payload.activity;
+        if (activity.kind !== "turn.plan.updated") return;
+        const plan = readTurnPlanSteps(activity.payload);
+        if (plan === null) return;
+        yield* captureThreadTodos({
+          threadId: event.payload.threadId,
+          plan,
+          occurredAt: activity.createdAt,
+        });
+        return;
+      }
+      if (event.type === "thread.deleted") {
+        // The link is tombstoned by its own board event, but a deleted thread's
+        // cached list must go now — it can never be updated again (AC 19).
+        yield* dropThreadTodos(event.payload.threadId);
+      }
+      return;
+    }
     switch (event.type) {
       case "board.card-created": {
         const card = boardCardFromCreatedPayload(event.payload);
@@ -1272,19 +1679,71 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
             })
             .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.body:query")));
         }
+        yield* recordActivity({
+          event,
+          cardId: card.id,
+          kind: "card-created",
+          payload: { toStage: card.stage },
+          threadId: null,
+        });
         return;
       }
 
       case "board.card-moved":
-      case "board.card-reordered":
+        yield* upsertCard(event.payload.card);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-moved",
+          payload: { fromStage: event.payload.fromStage, toStage: event.payload.toStage },
+          threadId: null,
+        });
+        return;
+
       case "board.card-archived":
+        yield* upsertCard(event.payload.card);
+        // An archived card leaves the board, so its cached todo lists go with it
+        // (AC 19) — nothing renders them and nothing will update them again.
+        yield* dropCardThreadTodos(event.payload.cardId);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-archived",
+          payload: {},
+          threadId: null,
+        });
+        return;
+
       case "board.card-unarchived":
+        yield* upsertCard(event.payload.card);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-unarchived",
+          payload: {},
+          threadId: null,
+        });
+        return;
+
+      case "board.card-worktree-failed":
+        yield* upsertCard(event.payload.card);
+        // The one worktree event on the rail (D12): the three non-failure ones
+        // are progress noise, this one is a card that cannot start.
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-worktree-failed",
+          payload: { detail: event.payload.error },
+          threadId: null,
+        });
+        return;
+
+      case "board.card-reordered":
       // Worktree lifecycle (t3o-09): every payload carries the whole card, so
       // the persisted projection is the same idempotent upsert — the worktree
       // column rides `board_cards` with the rest of the aggregate.
       case "board.card-worktree-provisioning":
       case "board.card-worktree-ready":
-      case "board.card-worktree-failed":
       case "board.card-worktree-reclaimed":
         yield* upsertCard(event.payload.card);
         return;
@@ -1337,34 +1796,73 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       }
 
       case "board.card-thread-linked":
-      case "board.card-thread-unlinked":
         yield* upsertCard(event.payload.card);
         yield* syncThreadLinks(event.payload.card);
         return;
 
-      case "board.card-progress-reported":
-      case "board.card-input-requested":
-        yield* insertActivity(event.payload.entry);
+      case "board.card-thread-unlinked":
+        yield* upsertCard(event.payload.card);
+        yield* syncThreadLinks(event.payload.card);
+        // The link is gone (removed or tombstoned) — so is the cached list it
+        // was the only justification for (AC 19).
+        yield* dropThreadTodos(event.payload.threadId);
         return;
 
       case "board.card-step-completed":
         yield* upsertStep(event.payload.completion);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-step-completed",
+          payload: {
+            stepId: event.payload.completion.stepId,
+            outcome: event.payload.completion.outcome,
+          },
+          threadId: event.payload.completion.threadId,
+        });
+        return;
+
+      case "board.card-step-awaiting-input":
+        yield* upsertStepState(event.payload.state);
+        // The rail's `card-input-requested` row (D12/D13). Sourced from the step
+        // parking on the gate rather than from the deleted `board_request_input`
+        // tool, so it fires for EVERY input request — including the ordinary
+        // question an agent asks without calling any board tool at all.
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-input-requested",
+          payload: {
+            stepId: event.payload.state.stepId,
+            stepLabel: event.payload.state.stepLabel,
+          },
+          threadId: event.payload.state.threadId,
+        });
         return;
 
       case "board.card-step-selected":
       case "board.card-step-admitted":
-      case "board.card-step-awaiting-input":
       case "board.card-step-recovered":
       case "board.card-step-settled":
       case "board.card-step-retuned":
         // Live step state (t3o-10): every payload carries the whole computed
         // `BoardCardStepState`, so the persisted projection is one idempotent
-        // upsert on card_id — replay and rehydration cannot diverge.
+        // upsert on card_id — replay and rehydration cannot diverge. None of
+        // these reaches the Activity rail (D12): a card that ran three steps
+        // would otherwise carry ~20 rows, which is the same unreadability that
+        // motivated deleting the agent-written notes.
         yield* upsertStepState(event.payload.state);
         return;
 
       case "board.plans-proposed":
         yield* replacePlans(event.payload.cardId, event.payload.plans);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "plans-proposed",
+          payload: { planCount: event.payload.plans.length },
+          threadId: null,
+        });
         return;
 
       case "board.plan-written":
@@ -1373,6 +1871,16 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
           event.payload.body,
           event.payload.plan.updatedAt,
         );
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "plan-written",
+          payload: {
+            planId: event.payload.planId,
+            planTitle: event.payload.plan.title,
+          },
+          threadId: null,
+        });
         return;
 
       default: {
@@ -1627,7 +2135,15 @@ export function withBoardShellCards(
       }
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
-        const activeThreadId = activeBoardCardThreadId(linksByCard.get(row.cardId) ?? []);
+        const links = linksByCard.get(row.cardId) ?? [];
+        const activeThreadId = activeBoardCardThreadId(links);
+        // The badge aggregates across EVERY live-linked thread (t3o-18, D7), not
+        // just the most recently linked one: a card whose OLDER thread awaits
+        // input showed no "Input needed" badge at all before this, and a card
+        // with work running in a non-active thread looked dead.
+        const liveThreads = links
+          .filter((link) => link.tombstonedAt === null)
+          .map((link) => threadsById.get(link.threadId));
         return makeBoardCardShell({
           cardId: row.cardId,
           key: row.key,
@@ -1643,10 +2159,34 @@ export function withBoardShellCards(
           activeThreadId,
           queued: queuedByCard.has(row.cardId),
           stalled: stalledByCard.has(row.cardId),
-          thread: activeThreadId === null ? null : (threadsById.get(activeThreadId) ?? null),
+          thread: liveThreads,
         });
       });
       return { ...shell, cards };
+    }),
+  );
+}
+
+/**
+ * Live card→thread links and their cached todo summaries ride the shell
+ * snapshot as their OWN array (t3o-18, D3), following the `boardLabels`
+ * precedent — never denormalised onto `BoardCardShell`, whose 1280-byte budget
+ * and scalars-only test are left untouched and unamended.
+ *
+ * Attached only when there is something to attach, exactly like the label
+ * catalogue: a board with no linked threads pays nothing.
+ */
+export function withBoardCardThreads(
+  queries: BoardCardQueries,
+  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
+): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
+  const rows = queries
+    .listBoardCardThreadShellRows()
+    .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellCardThreads:query")));
+  return Effect.all([snapshot, rows]).pipe(
+    Effect.map(([shell, threadRows]) => {
+      if (threadRows.length === 0) return shell;
+      return { ...shell, boardCardThreads: threadRows.map(toBoardCardThreadShell) };
     }),
   );
 }
@@ -1787,6 +2327,7 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardDependentRefRows(cardId),
       queries.countBoardPlansForCard(cardId),
       queries.listBoardCardStepRowsForCard(cardId),
+      queries.listBoardCardActivityRowsForCard(cardId),
     ]).pipe(
       Effect.map(
         ([
@@ -1798,6 +2339,7 @@ export function makeBoardCardDetailLoader(
           dependentRows,
           planCountRows,
           stepRows,
+          activityRows,
         ]) => {
           if (Option.isNone(cardRow)) return null;
           const links = sortBoardCardThreadLinks(
@@ -1834,6 +2376,10 @@ export function makeBoardCardDetailLoader(
             // `stepCompletions` slice is built from — sorted so the modal renders
             // review rounds in the order they landed.
             stepCompletions: [...stepRows].sort(compareBoardStepCompletions),
+            // The Activity rail (t3o-18, D10): already chronological from SQL,
+            // and live because `board.subscribeCard` re-emits the whole detail on
+            // every board event for this card.
+            activity: activityRows.map(toBoardCardActivityEntry),
           };
         },
       ),
@@ -1852,16 +2398,7 @@ export function makeBoardCardActivityLoader(
 ) => Effect.Effect<ReadonlyArray<BoardCardActivityEntry>, ProjectionRepositoryError> {
   return (cardId) =>
     queries.listBoardCardActivityRowsForCard(cardId).pipe(
-      Effect.map((rows) =>
-        rows.map((row) => ({
-          activityId: row.activityId,
-          cardId: row.cardId,
-          kind: row.kind,
-          body: row.body,
-          threadId: row.threadId,
-          createdAt: row.createdAt,
-        })),
-      ),
+      Effect.map((rows) => rows.map(toBoardCardActivityEntry)),
       Effect.mapError(toPersistenceSqlError("BoardCardsProjection.activityList:query")),
     );
 }
@@ -1913,6 +2450,34 @@ export interface BoardSnapshotQueryMethods {
   readonly boardPlanBody: (
     planId: BoardPlanId,
   ) => Effect.Effect<string | null, ProjectionRepositoryError>;
+  /** One card's live links + cached todo summaries (t3o-18, D3) — the shell
+      delta payload, and what `board_get_card_context` hands a restarted agent. */
+  readonly boardCardThreads: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<ReadonlyArray<BoardCardThreadShell>, ProjectionRepositoryError>;
+  /** The card a live-linked thread belongs to, or null — how a thread-shaped
+      shell refetch finds the card whose `card-threads` delta it must emit. */
+  readonly boardCardIdForThread: (
+    threadId: ThreadId,
+  ) => Effect.Effect<BoardCardId | null, ProjectionRepositoryError>;
+  /** One thread's cached todo row (t3o-18, D16): the supervisor reads
+      `hasTodoList` and the stall-reset signal from it, so `recoveryDecision`
+      stays pure with no SQL of its own. Null when the thread has no list. */
+  readonly boardThreadTodo: (
+    threadId: ThreadId,
+  ) => Effect.Effect<BoardThreadTodoState | null, ProjectionRepositoryError>;
+  /** Boot reconciliation sweep of orphaned todo rows (t3o-18, AC 20). */
+  readonly boardSweepThreadTodos: () => Effect.Effect<void, ProjectionRepositoryError>;
+}
+
+/** What the supervisor reads off one cached todo row (t3o-18, D16). */
+export interface BoardThreadTodoState {
+  readonly hasList: boolean;
+  readonly doneCount: number;
+  readonly totalCount: number;
+  /** When the list last ADVANCED — `done_count` rose or the in-progress item
+      changed. Null when it has never advanced. */
+  readonly advancedAt: string | null;
 }
 
 /**
@@ -1926,11 +2491,19 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
   const candidate = service as Partial<BoardSnapshotQueryMethods>;
   return typeof candidate.boardCardDetail === "function" &&
     typeof candidate.boardCardActivity === "function" &&
-    typeof candidate.boardPlanBody === "function"
+    typeof candidate.boardPlanBody === "function" &&
+    typeof candidate.boardCardThreads === "function" &&
+    typeof candidate.boardCardIdForThread === "function" &&
+    typeof candidate.boardThreadTodo === "function" &&
+    typeof candidate.boardSweepThreadTodos === "function"
     ? {
         boardCardDetail: candidate.boardCardDetail,
         boardCardActivity: candidate.boardCardActivity,
         boardPlanBody: candidate.boardPlanBody,
+        boardCardThreads: candidate.boardCardThreads,
+        boardCardIdForThread: candidate.boardCardIdForThread,
+        boardThreadTodo: candidate.boardThreadTodo,
+        boardSweepThreadTodos: candidate.boardSweepThreadTodos,
       }
     : null;
 }
@@ -1985,9 +2558,14 @@ export function boardSnapshotQueryMethods(
     getShellSnapshot: () =>
       isolated(
         "shell snapshot",
-        withBoardShellStages(
+        // t3o-18: the card->thread + todo array is the outermost enricher, so a
+        // failure serving it still degrades to the base snapshot like every other.
+        withBoardCardThreads(
           queries,
-          withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+          withBoardShellStages(
+            queries,
+            withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+          ),
         ),
         base.getShellSnapshot(),
       ),
@@ -2010,5 +2588,38 @@ export function boardSnapshotQueryMethods(
     // Board-only readers for the MCP context / plan tools (t3o-08).
     boardCardActivity: makeBoardCardActivityLoader(queries),
     boardPlanBody: makeBoardPlanBodyLoader(queries),
+    // Board-only readers for thread todos (t3o-18): the shell delta, the MCP
+    // context tool, the supervisor's stall signal, and the boot sweep.
+    boardCardThreads: (cardId) =>
+      queries.listBoardCardThreadShellRowsForCard(cardId).pipe(
+        Effect.map((rows) => rows.map(toBoardCardThreadShell)),
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardThreads:query")),
+      ),
+    boardCardIdForThread: (threadId) =>
+      queries
+        .findBoardCardIdForLiveThread(threadId)
+        .pipe(
+          Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.cardId })),
+          Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardForThread:query")),
+        ),
+    boardThreadTodo: (threadId) =>
+      queries.findBoardThreadTodoRow(threadId).pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => null,
+            onSome: (row): BoardThreadTodoState => ({
+              hasList: row.totalCount > 0,
+              doneCount: row.doneCount,
+              totalCount: row.totalCount,
+              advancedAt: row.advancedAt,
+            }),
+          }),
+        ),
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodo:query")),
+      ),
+    boardSweepThreadTodos: () =>
+      queries
+        .sweepOrphanBoardThreadTodoRows()
+        .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodoSweep:query"))),
   };
 }

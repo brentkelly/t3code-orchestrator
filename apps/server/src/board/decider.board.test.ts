@@ -8,7 +8,6 @@
 import {
   BOARD_SEED_LABEL_IDS,
   BOARD_SEED_LABELS,
-  BoardActivityId,
   BoardCardId,
   BoardStageId,
   BoardLabelId,
@@ -1178,25 +1177,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           createdAt: NOW,
         },
         // Agent write-path commands (t3o-08) all aggregate on the card and
-        // never emit a move.
-        "board.card.report-progress": {
-          type: "board.card.report-progress",
-          commandId: CommandId.make("cmd-progress"),
-          cardId: BoardCardId.make("card-ready"),
-          activityId: BoardActivityId.make("act-progress"),
-          note: "Working on it",
-          threadId: null,
-          createdAt: NOW,
-        },
-        "board.card.request-input": {
-          type: "board.card.request-input",
-          commandId: CommandId.make("cmd-input"),
-          cardId: BoardCardId.make("card-ready"),
-          activityId: BoardActivityId.make("act-input"),
-          question: "Which database?",
-          threadId: null,
-          createdAt: NOW,
-        },
+        // never emit a move. `board.card.report-progress` and
+        // `board.card.request-input` were deleted by t3o-18 (D13).
         "board.card.complete-step": {
           type: "board.card.complete-step",
           commandId: CommandId.make("cmd-step"),
@@ -1795,43 +1777,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       createdAt: NOW,
     }) as const;
 
-  it.effect("records a progress note and a human-input request as card activity", () =>
-    Effect.gen(function* () {
-      const progress = yield* decide(
-        {
-          type: "board.card.report-progress",
-          commandId: CommandId.make("cmd-progress"),
-          cardId: BoardCardId.make("card-1"),
-          activityId: BoardActivityId.make("act-1"),
-          note: "Halfway there",
-          threadId: ThreadId.make("thread-1"),
-          createdAt: NOW,
-        },
-        cardReadModel(),
-      );
-      assert.strictEqual(progress.type, "board.card-progress-reported");
-      if (progress.type === "board.card-progress-reported") {
-        assert.strictEqual(progress.payload.entry.kind, "progress");
-        assert.strictEqual(progress.payload.entry.body, "Halfway there");
-      }
-      const input = yield* decide(
-        {
-          type: "board.card.request-input",
-          commandId: CommandId.make("cmd-input"),
-          cardId: BoardCardId.make("card-1"),
-          activityId: BoardActivityId.make("act-2"),
-          question: "Postgres or SQLite?",
-          threadId: null,
-          createdAt: NOW,
-        },
-        cardReadModel(),
-      );
-      assert.strictEqual(input.type, "board.card-input-requested");
-      if (input.type === "board.card-input-requested") {
-        assert.strictEqual(input.payload.entry.kind, "input-requested");
-      }
-    }),
-  );
+  // t3o-18 (D13) deleted `board.card.report-progress` and `board.card.request-input`,
+  // so the test that recorded them as card activity is gone with them.
 
   // A live step for card-1, matching the step id the completion names —
   // complete-step validates the agent's stepId against it.

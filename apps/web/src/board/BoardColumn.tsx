@@ -22,7 +22,11 @@ import { Fragment } from "react";
 
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
-import { DraggableBoardCard, type BoardCardQueueSlot } from "./BoardCardItem";
+import {
+  DraggableBoardCard,
+  type BoardCardQueueSlot,
+  type BoardCardTodoContext,
+} from "./BoardCardItem";
 
 /** Vertical gap (px) between cards; kept in sync with the list's `gap-2` so
     the drop-index math can subtract the placeholder it inserts. */
@@ -75,6 +79,9 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly addProjects: ReadonlyArray<BoardAddProject>;
   /** Resolves a project's configured accent name (t3o-07); hash fallback when null. */
   readonly accentNameFor: (projectId: ProjectId) => string | null;
+  /** Thread todo lists for one card (t3o-18) — built once by the page and read
+      per card, so the column adds no state of its own. */
+  readonly todosFor: (cardId: string) => BoardCardTodoContext;
   readonly onSetCollapsed: (stage: BoardStageId, collapsed: boolean) => void;
   readonly onSelectCard: (card: BoardCardShell) => void;
   /** Opens the create dialog onto this column's stage (t3o-06). */
@@ -128,6 +135,7 @@ function ExpandedColumn({
   cards,
   labelsById,
   queueSlots,
+  todosFor,
   selectedCardId,
   addProjects,
   accentNameFor,
@@ -235,6 +243,7 @@ function ExpandedColumn({
                   onDragEnd={onCardDragEnd}
                   onReorder={onCardReorder}
                   accentName={accentNameFor(card.projectId)}
+                  todos={todosFor(card.cardId)}
                 />
               </Fragment>
             ))}

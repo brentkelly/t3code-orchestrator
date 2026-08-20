@@ -13,9 +13,9 @@
  * dying.
  */
 import {
-  BoardActivityId,
   BoardCard,
   BoardCardActivityEntry,
+  BoardCardThreadShell,
   BoardCardExternalRef,
   BoardCardId,
   BoardPlan,
@@ -89,8 +89,17 @@ const BoardCardContext = Schema.Struct({
   /** Proposed plans on this card, in order (metadata only; fetch a body with
       board_get_plan). */
   plans: Schema.Array(BoardPlan),
-  /** Progress notes and outstanding input requests, chronological. */
+  /** The card's Activity rail (t3o-18, D10), chronological: a deterministic,
+      actor-attributed projection of the board's own event log — created, moved,
+      plans proposed, plan written, step completed, input requested, archived,
+      unarchived, worktree failed. Structured, not prose. */
   activity: Schema.Array(BoardCardActivityEntry),
+  /** Every live-linked thread on this card and its current todo list (t3o-18,
+      D13) — what a restarted agent, or a SECOND thread on the same card,
+      actually wanted from the deleted progress notes: not "what did you say you
+      were doing", but "what is each thread on this card working through right
+      now". */
+  threads: Schema.Array(BoardCardThreadShell),
 });
 
 const BoardCardListItem = Schema.Struct({
@@ -130,7 +139,7 @@ const NoParameters = Schema.Record(Schema.String, Schema.Never);
 
 export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
   description:
-    "Pull everything you need to work on your card: its title, brief, stage, dependency states, prior steps and their outcomes, proposed plans, and recent activity. Activity is truncated to the most recent entries (every outstanding input request is always included), so treat it as a tail, not the full history. Call this first when you start a step, and again whenever you need to re-orient. Your card is resolved from your thread — you never pass a card id. Fails if your thread is not linked to a card.",
+    "Pull everything you need to work on your card: its title, brief, stage, dependency states, prior steps and their outcomes, proposed plans, its recent activity, and the current todo list of every thread working on it. Activity is truncated to the most recent entries, so treat it as a tail, not the full history; the per-thread todo lists are how you pick up where you (or another thread on this card) left off. Call this first when you start a step, and again whenever you need to re-orient. Your card is resolved from your thread — you never pass a card id. Fails if your thread is not linked to a card.",
   parameters: NoParameters,
   success: BoardCardContext,
   failure: BoardToolError,
@@ -139,17 +148,6 @@ export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
   .annotate(Tool.Title, "Get board card context")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Idempotent, true);
-
-export const BoardReportProgressTool = Tool.make("board_report_progress", {
-  description:
-    "Append a short human-readable progress note to your card's activity log — what you just did or discovered. Cheap and safe; call it often so a watching human (and your successor if you are restarted) can follow the work. This does NOT complete a step or move the card; it only records a note. Your card is resolved from your thread.",
-  parameters: Schema.Struct({
-    note: TrimmedNonEmptyString,
-  }),
-  success: Schema.Struct({ activityId: BoardActivityId }),
-  failure: BoardToolError,
-  dependencies,
-}).annotate(Tool.Title, "Report board progress");
 
 export const BoardCompleteStepTool = Tool.make("board_complete_step", {
   description:
@@ -172,16 +170,20 @@ export const BoardCompleteStepTool = Tool.make("board_complete_step", {
   dependencies,
 }).annotate(Tool.Title, "Complete board step");
 
-export const BoardRequestInputTool = Tool.make("board_request_input", {
-  description:
-    "Hand the decision back to the human by recording an explicit question on your card. Use this when you are blocked on something only a person can resolve (a choice, an approval, missing access) rather than guessing or stalling silently. The card surfaces the request so a human can answer; you should still ask the same question through your normal question mechanism so your thread waits for the reply. Your card is resolved from your thread.",
-  parameters: Schema.Struct({
-    question: TrimmedNonEmptyString,
-  }),
-  success: Schema.Struct({ activityId: BoardActivityId }),
-  failure: BoardToolError,
-  dependencies,
-}).annotate(Tool.Title, "Request human input");
+// `board_report_progress` and `board_request_input` were DELETED by t3o-18
+// (D13).
+//
+// The progress tool's own description told models to "call it often" — buying
+// tokens for a log with no reader. The agent's narration is already durable in
+// its transcript, and its INTENT is now on the card as the todo strip, observed
+// from the `turn.plan.updated` every provider already emits. Nothing rendered
+// progress notes, so nothing regresses.
+//
+// The input tool's description admitted its own gap: "you should still ask the
+// same question through your normal question mechanism so your thread waits for
+// the reply." An agent that asked normally and skipped the tool left the board
+// blind — the actual failure mode. The supervisor now observes the runtime
+// `user-input.requested` event instead, which fires for every input request.
 
 // ── Board-scoped tools (explicit target) ───────────────────────────────
 
@@ -301,9 +303,7 @@ export const BoardWritePlanTool = Tool.make("board_write_plan", {
 
 export const BoardToolkit = Toolkit.make(
   BoardGetCardContextTool,
-  BoardReportProgressTool,
   BoardCompleteStepTool,
-  BoardRequestInputTool,
   BoardListProjectsTool,
   BoardListCardsTool,
   BoardCreateCardTool,

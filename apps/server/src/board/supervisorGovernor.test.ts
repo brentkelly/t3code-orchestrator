@@ -30,6 +30,7 @@ import {
   stepCompleted,
   stepStatus,
   turnCompleted,
+  userInputRequested,
   withGovernor,
 } from "./supervisorHarness.testkit.ts";
 
@@ -151,4 +152,27 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
         assert.strictEqual(yield* slots.heldTotal, baseline);
       }),
   ),
+);
+
+it.effect(
+  "t3o-18 AC 18: an ordinary agent question parks the step on the gate with no board tool call",
+  () =>
+    withGovernor(
+      {
+        board: { cards: [buildingCard("asks", "m")], nextCardNumberByProject: {} },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      },
+      ({ pumpDomain, pumpRuntime, board }) =>
+        Effect.gen(function* () {
+          yield* pumpDomain(movedToBuilding(buildingCard("asks", "m"), 1));
+          const running = boardCardStepState(yield* board, BoardCardId.make("asks"));
+          assert.strictEqual(running?.status, "running");
+
+          // The agent asks through its own question mechanism. It calls NO board
+          // tool — the exact case that used to leave the board blind, because
+          // `board_request_input` was the only signal and agents skipped it.
+          yield* pumpRuntime(userInputRequested(running!.threadId!));
+          assert.strictEqual(stepStatus(yield* board, BoardCardId.make("asks")), "awaiting-input");
+        }),
+    ),
 );

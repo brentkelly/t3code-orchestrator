@@ -18,9 +18,7 @@ import {
   boardCardCreatedDependsOn,
   boardCardCreatedLabels,
   BoardCardCreatedPayload,
-  BoardCardInputRequestedPayload,
   BoardCardMovedPayload,
-  BoardCardProgressReportedPayload,
   BoardCardReorderedPayload,
   BoardCardStepCompletedPayload,
   BoardCardThreadLinkedPayload,
@@ -93,12 +91,6 @@ const decodeBoardLabelCreatedPayload = Schema.decodeUnknownEffect(BoardLabelCrea
 const decodeBoardLabelUpdatedPayload = Schema.decodeUnknownEffect(BoardLabelUpdatedPayload);
 const decodeBoardLabelDeletedPayload = Schema.decodeUnknownEffect(BoardLabelDeletedPayload);
 const decodeBoardLabelUndeletedPayload = Schema.decodeUnknownEffect(BoardLabelUndeletedPayload);
-const decodeBoardCardProgressReportedPayload = Schema.decodeUnknownEffect(
-  BoardCardProgressReportedPayload,
-);
-const decodeBoardCardInputRequestedPayload = Schema.decodeUnknownEffect(
-  BoardCardInputRequestedPayload,
-);
 const decodeBoardCardStepCompletedPayload = Schema.decodeUnknownEffect(
   BoardCardStepCompletedPayload,
 );
@@ -442,21 +434,6 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertLabel(model, payload.label)),
       );
 
-    case "board.card-progress-reported":
-      // Activity bodies never enter the read model (D8) — the SQL projector
-      // writes them to `board_card_activity`; the read model is unchanged. The
-      // payload is still decoded to fail loudly on a malformed event.
-      return decodeBoardCardProgressReportedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
-        Effect.as(model),
-      );
-
-    case "board.card-input-requested":
-      return decodeBoardCardInputRequestedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
-        Effect.as(model),
-      );
-
     case "board.card-step-completed":
       return decodeBoardCardStepCompletedPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
@@ -714,8 +691,6 @@ export function boardShellStreamEvent(
         stalled: false,
       });
 
-    case "board.card-progress-reported":
-    case "board.card-input-requested":
     case "board.card-step-completed":
     case "board.plans-proposed":
     case "board.plan-written":

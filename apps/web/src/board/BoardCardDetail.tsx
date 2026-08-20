@@ -20,6 +20,7 @@ import {
   boardStageWithRole,
   deriveBoardCardThreadState,
   resolveBoardStageExecution,
+  type BoardCardThreadShell,
   type BoardState,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -36,6 +37,7 @@ import { Dialog } from "../components/ui/dialog";
 import { randomUUID } from "../lib/utils";
 import { resolveAppModelSelectionState } from "../modelSelection";
 import { boardEnvironment } from "../state/board";
+import { deriveProviderInstanceEntries } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
@@ -47,6 +49,7 @@ import {
   runBlankThreadCreation,
   type BlankThreadDispatch,
 } from "./boardCardThreadMenu";
+import type { BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { boardStageLabel } from "./boardStages";
 import { indexBoardLabels } from "./labelColour";
 import {
@@ -191,6 +194,34 @@ export function BoardCardDetail({
       };
     });
   }, [card, snapshot]);
+
+  // Agent display names and accents for the Activity rail (t3o-18, D11). Resolved
+  // at render time from the provider instance list the app already holds, so a
+  // renamed or recoloured instance relabels its own history rather than freezing
+  // a stale label on every row it ever wrote.
+  const providerEntries = useMemo(
+    () => deriveProviderInstanceEntries(serverProviders ?? []),
+    [serverProviders],
+  );
+  const agents = useMemo<BoardActivityAgentLookup>(() => {
+    const byId = new Map(providerEntries.map((entry) => [entry.instanceId, entry]));
+    return {
+      displayName: (instanceId) => byId.get(instanceId)?.displayName ?? String(instanceId),
+      accentColor: (instanceId) => byId.get(instanceId)?.accentColor,
+    };
+  }, [providerEntries]);
+
+  // Each live-linked thread's cached todo list (t3o-18, D3), off the same shell
+  // array the column cards read — the modal opens no extra subscription.
+  const threadTodos = useMemo<ReadonlyMap<ThreadId, BoardCardThreadShell>>(
+    () =>
+      new Map(
+        (snapshot?.boardCardThreads ?? [])
+          .filter((entry) => entry.cardId === cardId)
+          .map((entry) => [entry.threadId, entry]),
+      ),
+    [snapshot, cardId],
+  );
 
   const adoptableThreads = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
@@ -415,8 +446,10 @@ export function BoardCardDetail({
       onUnlinkThread={(threadId) =>
         runCommand(unlinkThread({ environmentId, input: { cardId: card.id, threadId } }))
       }
+      agents={agents}
       projectName={projectName ?? null}
       threadLinks={threadLinks}
+      threadTodos={threadTodos}
     />
   );
 }

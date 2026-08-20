@@ -46,7 +46,6 @@ import {
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
-  type BoardCardActivityEntry,
   type BoardCardId,
   type BoardCardStepState,
   type BoardLabel,
@@ -1201,49 +1200,6 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         })),
         type: "board.stage-deleted",
         payload: { stageId: command.stageId },
-      };
-    }
-
-    case "board.card.report-progress": {
-      // Existence + not-archived gate; the note itself needs no other state.
-      yield* requireActiveBoardCard({ board, command });
-      const entry: BoardCardActivityEntry = {
-        activityId: command.activityId,
-        cardId: command.cardId,
-        kind: "progress",
-        body: command.note,
-        threadId: command.threadId,
-        createdAt: command.createdAt,
-      };
-      return {
-        ...(yield* makeBoardEventBase({
-          cardId: command.cardId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "board.card-progress-reported",
-        payload: { cardId: command.cardId, entry },
-      };
-    }
-
-    case "board.card.request-input": {
-      yield* requireActiveBoardCard({ board, command });
-      const entry: BoardCardActivityEntry = {
-        activityId: command.activityId,
-        cardId: command.cardId,
-        kind: "input-requested",
-        body: command.question,
-        threadId: command.threadId,
-        createdAt: command.createdAt,
-      };
-      return {
-        ...(yield* makeBoardEventBase({
-          cardId: command.cardId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "board.card-input-requested",
-        payload: { cardId: command.cardId, entry },
       };
     }
 

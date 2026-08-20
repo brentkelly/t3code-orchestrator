@@ -640,33 +640,6 @@ export function deriveBoardCardBlocked(input: {
 export const BoardActivityId = TrimmedNonEmptyString.pipe(Schema.brand("BoardActivityId"));
 export type BoardActivityId = typeof BoardActivityId.Type;
 
-/**
- * Progress notes and human-input requests share one card activity log: both
- * are human-readable, card-scoped, append-only facts an agent emits. `kind`
- * discriminates them. `input-requested` is the explicit gate hand-off (D13);
- * its thread-pending + APNs-notification wiring is the reactor's job (t3o-10),
- * so t3o-08 records it as a first-class, auditable board fact and the reactor
- * later reacts to `board.card-input-requested`. Activity bodies never enter
- * the read model (D8: nothing branches on them) — they live only in
- * `board_card_activity` and are read on demand by `board_get_card_context`.
- */
-export const BOARD_CARD_ACTIVITY_KINDS = ["progress", "input-requested"] as const;
-export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
-export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
-
-export const BoardCardActivityEntry = Schema.Struct({
-  activityId: BoardActivityId,
-  cardId: BoardCardId,
-  kind: BoardCardActivityKind,
-  /** The progress note, or the question handed to the human. */
-  body: TrimmedNonEmptyString,
-  /** The thread that emitted it (the agent's), or null for a human/system
-      note — kept so context can attribute activity to a step's thread. */
-  threadId: Schema.NullOr(ThreadId),
-  createdAt: IsoDateTime,
-});
-export type BoardCardActivityEntry = typeof BoardCardActivityEntry.Type;
-
 /** A step's terminal outcome (D4 completion contract). */
 export const BOARD_STEP_OUTCOMES = ["succeeded", "blocked", "failed"] as const;
 export const BoardStepOutcome = Schema.Literals(BOARD_STEP_OUTCOMES);
@@ -765,8 +738,10 @@ export const BoardCardStepState = Schema.Struct({
   /** CONSECUTIVE stalls with no progress between them (t3o-17, D1). Distinct
       from `attempt`: this is what recovery gates on — it is compared against
       `maxAttempts`, and it RESETS to zero whenever progress is observed since
-      the last nudge (D2: a `board_report_progress` activity entry or a new
-      commit on the card's branch). A step that keeps inching forward never
+      the last nudge (t3o-17 D2, re-pointed by t3o-18 D16: the step thread's
+      TODO LIST advanced, or a new commit landed on the card's branch — the
+      `board_report_progress` note this used to read was deleted with the tool).
+      A step that keeps inching forward never
       escalates on stall grounds however many times it is nudged; only a
       genuinely wedged agent — `maxAttempts` unproductive stops in a row —
       does. Starts at zero on a fresh step. */
@@ -858,6 +833,124 @@ export type BoardPlanWithBody = typeof BoardPlanWithBody.Type;
 export function boardPlanId(cardId: BoardCardId, key: string): BoardPlanId {
   return BoardPlanId.make(`${cardId}::${key}`);
 }
+
+/**
+ * The card Activity rail (t3o-18, D10/D12). Activity is a **projection of the
+ * board's own event log**, not something an agent narrates: the board already
+ * emits the exact moments the rail wants to show, so the projector writes a row
+ * for a curated subset of them in the same transaction. Single source of truth,
+ * so the rail can never drift from what actually happened; materialised, so
+ * reads stay cheap with stable ids and ordering.
+ *
+ * Rows are STRUCTURED — a kind, a small typed payload, and an actor. The server
+ * never writes English: the client renders the sentence and its links.
+ * Otherwise the log is unqueryable, unrelabelable, and "who approved it" ends
+ * up buried in prose.
+ *
+ * Nine curated kinds (D12) — "major stages being completed, or the card moving
+ * from one stage to the next". Everything else stays out (`card-reordered`,
+ * `card-updated`, thread link/unlink, the step lifecycle, the three non-failure
+ * worktree events): the full lifecycle would put ~20 rows on a card that ran
+ * three steps, which is the same unreadability that motivated removing
+ * agent-written progress notes. Each excluded kind is a one-line addition later
+ * if it earns its place.
+ *
+ * `progress` and `input-requested` (t3o-08's agent-written kinds) are GONE
+ * (D13): `board_report_progress` and `board_request_input` are deleted, the
+ * agent's narration is already durable in its transcript, and its intent is now
+ * on the card as the todo strip. `card-input-requested` survives as a kind, but
+ * it is now sourced from the runtime `user-input.requested` event rather than
+ * from a tool an agent had to remember to call.
+ */
+export const BOARD_CARD_ACTIVITY_KINDS = [
+  "card-created",
+  "card-moved",
+  "plans-proposed",
+  "plan-written",
+  "card-step-completed",
+  "card-input-requested",
+  "card-archived",
+  "card-unarchived",
+  "card-worktree-failed",
+] as const;
+export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
+export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
+
+/**
+ * Who caused an activity row (t3o-18, D11). `board.ts` carries no provenance on
+ * any command — a stage move may originate from a human drag, an agent's MCP
+ * tool call, or the supervisor reactor — so the actor is stamped at the
+ * DISPATCH BOUNDARY, where the transport already knows who called. No command
+ * schema changes, and no caller can misreport itself.
+ *
+ * - **human** — a board RPC from the web client. `name` is the card's project
+ *   git `user.name`, resolved once and STORED ON THE ROW so it stays correct
+ *   after the git config changes; `"You"` when git has no identity. There is no
+ *   user identity anywhere in t3code (it is a single-user local server), and for
+ *   a dev tool the git identity is the right one — it is already what lands on
+ *   every commit the agent makes.
+ * - **agent** — the MCP board toolkit. The display name and accent are resolved
+ *   client-side from `providerInstanceId`, exactly where "Claude Opus 4.8" and
+ *   its accent already come from, so a renamed provider instance relabels its
+ *   history.
+ * - **system** — the supervisor reactor and every other internal command.
+ */
+export const BoardActivityActor = Schema.Struct({
+  kind: Schema.Literals(["human", "agent", "system"]),
+  /** The resolved human name, frozen at write time. Null for agent/system. */
+  name: Schema.NullOr(TrimmedNonEmptyString),
+  /** The agent's provider instance, for the client-side name + accent lookup.
+      Null for human/system. */
+  providerInstanceId: Schema.NullOr(ProviderInstanceId),
+  /** The agent's thread, so the rail can link back to the conversation. */
+  threadId: Schema.NullOr(ThreadId),
+});
+export type BoardActivityActor = typeof BoardActivityActor.Type;
+
+/** The system actor — the resting value for every internally-dispatched
+    command, and the fallback when no dispatch boundary stamped one. */
+export const BOARD_SYSTEM_ACTOR: BoardActivityActor = {
+  kind: "system",
+  name: null,
+  providerInstanceId: null,
+  threadId: null,
+};
+
+/**
+ * The small typed payload an activity row carries (D10). Every field is
+ * key-optional: a row carries only what its kind needs, and the client renders
+ * the sentence. Deliberately narrow — ids and enums, never prose — so the rail
+ * stays queryable and relabelable.
+ */
+export const BoardCardActivityPayload = Schema.Struct({
+  /** card-moved: the stage it left and the stage it entered. */
+  fromStage: Schema.optionalKey(BoardStageId),
+  toStage: Schema.optionalKey(BoardStageId),
+  /** plans-proposed: how many plans landed. plan-written: which plan. */
+  planCount: Schema.optionalKey(NonNegativeInt),
+  planId: Schema.optionalKey(BoardPlanId),
+  planTitle: Schema.optionalKey(TrimmedNonEmptyString),
+  /** card-step-completed: which step, and how it ended. */
+  stepId: Schema.optionalKey(TrimmedNonEmptyString),
+  stepLabel: Schema.optionalKey(TrimmedNonEmptyString),
+  outcome: Schema.optionalKey(BoardStepOutcome),
+  /** card-worktree-failed: the failure detail, already agent-facing text. */
+  detail: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type BoardCardActivityPayload = typeof BoardCardActivityPayload.Type;
+
+export const BoardCardActivityEntry = Schema.Struct({
+  activityId: BoardActivityId,
+  cardId: BoardCardId,
+  kind: BoardCardActivityKind,
+  payload: BoardCardActivityPayload,
+  actor: BoardActivityActor,
+  /** The thread the row is about (the agent's), or null. Kept so context can
+      attribute activity to a step's thread. */
+  threadId: Schema.NullOr(ThreadId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardActivityEntry = typeof BoardCardActivityEntry.Type;
 
 /**
  * Board slice of the in-memory orchestration read model (D8: everything a
@@ -1381,34 +1474,15 @@ export type BoardCardStartStageThreadCommand = typeof BoardCardStartStageThreadC
 // are defined up with the other card pieces, since `BoardState` references
 // them.
 
-export const BoardCardReportProgressCommand = Schema.Struct({
-  type: Schema.Literal("board.card.report-progress"),
-  commandId: CommandId,
-  cardId: BoardCardId,
-  /** A fresh unique id per entry (the tool handler mints one per call). It is
-      NOT a retry-idempotency key — an MCP tool call carries no client-supplied
-      one, so a retried `board_report_progress` appends a second note. That is
-      acceptable for an append-only activity log (progress notes are cheap and
-      called often); the one call whose retries must NOT double-count — the
-      completion contract — is made idempotent in the decider (re-emit the
-      first outcome by (cardId, stepId)), not by receipt dedup. */
-  activityId: BoardActivityId,
-  note: TrimmedNonEmptyString,
-  threadId: Schema.NullOr(ThreadId),
-  createdAt: IsoDateTime,
-});
-export type BoardCardReportProgressCommand = typeof BoardCardReportProgressCommand.Type;
-
-export const BoardCardRequestInputCommand = Schema.Struct({
-  type: Schema.Literal("board.card.request-input"),
-  commandId: CommandId,
-  cardId: BoardCardId,
-  activityId: BoardActivityId,
-  question: TrimmedNonEmptyString,
-  threadId: Schema.NullOr(ThreadId),
-  createdAt: IsoDateTime,
-});
-export type BoardCardRequestInputCommand = typeof BoardCardRequestInputCommand.Type;
+// `board.card.report-progress` and `board.card.request-input` (t3o-08) were
+// DELETED here by t3o-18 (D13), together with their payloads and events. The
+// agent's narration was already durable in its transcript and nothing rendered
+// it; its intent now rides the card as the todo strip. The input-request tool
+// admitted its own gap in its description ("you should still ask the same
+// question through your normal question mechanism"), so an agent that asked
+// normally and skipped the tool left the board blind — today's actual failure
+// mode. The reactor now sources input-requested from the runtime
+// `user-input.requested` event instead, which fires for EVERY input request.
 
 export const BoardCardCompleteStepCommand = Schema.Struct({
   type: Schema.Literal("board.card.complete-step"),
@@ -1839,18 +1913,6 @@ export type BoardCardStageThreadRequestedPayload = typeof BoardCardStageThreadRe
 // DETAIL (board.subscribeCard / the MCP context tool), never a column-card
 // field (D7 payload discipline).
 
-export const BoardCardProgressReportedPayload = Schema.Struct({
-  cardId: BoardCardId,
-  entry: BoardCardActivityEntry,
-});
-export type BoardCardProgressReportedPayload = typeof BoardCardProgressReportedPayload.Type;
-
-export const BoardCardInputRequestedPayload = Schema.Struct({
-  cardId: BoardCardId,
-  entry: BoardCardActivityEntry,
-});
-export type BoardCardInputRequestedPayload = typeof BoardCardInputRequestedPayload.Type;
-
 export const BoardCardStepCompletedPayload = Schema.Struct({
   cardId: BoardCardId,
   completion: BoardStepCompletion,
@@ -1948,6 +2010,176 @@ export const BoardCardStepRetunedPayload = Schema.Struct({
   state: BoardCardStepState,
 });
 export type BoardCardStepRetunedPayload = typeof BoardCardStepRetunedPayload.Type;
+
+// ── Thread todo lists (t3o-18, D1/D3/D4) ───────────────────────────────
+
+/**
+ * Every provider the fork drives already emits a task list — Claude's
+ * `TodoWrite`, Codex's `update_plan`, Cursor's `cursor/update_todos` — and
+ * t3code already normalises all of them into one `turn.plan.updated` runtime
+ * event. It is the single best answer to "what is this agent actually doing",
+ * it costs nothing to obtain, and until t3o-18 the board threw it away.
+ *
+ * Naming discipline is part of the feature (t3o-18): `planTotal` / `planDone` /
+ * `PlanPips` stay reserved for D12 sub-board plan cards, and
+ * `projection_thread_proposed_plans` stays plan-mode. Four meanings of "plan"
+ * already coexist in this codebase — this one is called **todos**, everywhere,
+ * and never adds a fifth.
+ *
+ * A todo list belongs to a THREAD, not a card; a card may have several threads
+ * and therefore several lists. The board keeps its own copy in
+ * `board_thread_todos` as a projection-only side table — never a board domain
+ * command or event (D1). That is licensed by the board's own D8 rule: nothing
+ * branches on a todo. No stage transition, no step outcome, no gate, no
+ * concurrency decision reads one. It is display state, and an event per revision
+ * (10–18 per thread-turn) would dwarf every other board event in the log inside
+ * a week, for state nothing decides on.
+ *
+ * The table is a CACHE, not a source of truth: the authoritative record already
+ * exists upstream and durably, as a `turn.plan.updated` thread activity carrying
+ * the full plan. That is the property that makes a non-event-sourced board table
+ * safe to own here, and it is what must not be quietly lost.
+ */
+
+/** One character per todo item: `d` done, `i` in progress, `p` pending (D4).
+    A capped status STRING, not derived counts — deriving pips from
+    `(done, total, hasDoing)` renders a tidy `[done…][doing][pending…]` fiction
+    that is wrong the moment an agent completes an item out of order, which they
+    do. Still a scalar, ~30 bytes at the cap. */
+export const BOARD_THREAD_TODO_STATUS_DONE = "d";
+export const BOARD_THREAD_TODO_STATUS_IN_PROGRESS = "i";
+export const BOARD_THREAD_TODO_STATUS_PENDING = "p";
+
+/** Items beyond this are not STORED; the counts stay true, so a 47-item list
+    stores 30 status characters and still reports `n/47` (D4). */
+export const BOARD_THREAD_TODO_ITEMS_MAX = 30;
+
+/** The in-progress item's text cap, truncated on code-point boundaries — the
+    same treatment `BOARD_CARD_SHELL_TITLE_MAX_BYTES` gets, and for the same
+    reason (the budget it protects is a wire-byte budget). */
+export const BOARD_THREAD_TODO_CURRENT_MAX_BYTES = 120;
+
+const todoTextEncoder = new TextEncoder();
+
+/** Truncate on code-point boundaries (never splitting a surrogate pair),
+    reserving room for the ellipsis, and trim before it so the result still
+    decodes as a trimmed string on the receiving client. */
+export function boundBoardTodoText(text: string, maxBytes: number): string {
+  if (todoTextEncoder.encode(text).length <= maxBytes) return text;
+  let kept = "";
+  let keptBytes = 0;
+  for (const codePoint of text) {
+    const codePointBytes = todoTextEncoder.encode(codePoint).length;
+    if (keptBytes + codePointBytes > maxBytes - 3) break;
+    kept += codePoint;
+    keptBytes += codePointBytes;
+  }
+  return `${kept.trimEnd()}…`;
+}
+
+/** The runtime plan-step shape, structurally: this file cannot import
+    `providerRuntime.ts` (it is the contracts leaf every board module reads), and
+    any `RuntimePlanStep` satisfies this. */
+export interface BoardTodoSourceStep {
+  readonly step: string;
+  readonly status: "pending" | "inProgress" | "completed";
+}
+
+/** The board's cached summary of one thread's todo list. */
+export interface BoardThreadTodoSummary {
+  /** One status char per STORED item, capped at `BOARD_THREAD_TODO_ITEMS_MAX`. */
+  readonly statuses: string;
+  /** The in-progress item's text (capped), or null when nothing is in progress. */
+  readonly currentText: string | null;
+  /** TRUE counts, before capping — so `2/47` stays honest even when only 30
+      pips are stored. */
+  readonly doneCount: number;
+  readonly totalCount: number;
+}
+
+/**
+ * Summarise a `turn.plan.updated` plan into the board's cached shape. Pure, so
+ * the projector that writes the cache and the tests that assert the caps share
+ * one definition.
+ */
+export function boardThreadTodoSummary(
+  plan: ReadonlyArray<BoardTodoSourceStep>,
+): BoardThreadTodoSummary {
+  let doneCount = 0;
+  let currentText: string | null = null;
+  let statuses = "";
+  for (const [index, item] of plan.entries()) {
+    if (item.status === "completed") doneCount += 1;
+    if (item.status === "inProgress" && currentText === null) {
+      currentText = boundBoardTodoText(item.step, BOARD_THREAD_TODO_CURRENT_MAX_BYTES);
+    }
+    if (index < BOARD_THREAD_TODO_ITEMS_MAX) {
+      statuses +=
+        item.status === "completed"
+          ? BOARD_THREAD_TODO_STATUS_DONE
+          : item.status === "inProgress"
+            ? BOARD_THREAD_TODO_STATUS_IN_PROGRESS
+            : BOARD_THREAD_TODO_STATUS_PENDING;
+    }
+  }
+  return { statuses, currentText, doneCount, totalCount: plan.length };
+}
+
+/**
+ * One live card↔thread link, with that thread's cached todo summary (D3).
+ *
+ * `BoardCardShell` gains NOTHING here. It is under a fixed byte budget asserted
+ * at 1,000 cards and under a structural test that every field serialises to a
+ * scalar apart from the single bounded `labelIds` array — and, more decisively,
+ * card deltas "are a pure function of the card event and cannot carry live
+ * thread state", which is precisely what a todo summary and a thread-priority
+ * rule are. Denormalising onto the card shell would fight the architecture head
+ * on.
+ *
+ * So the data rides the shell snapshot as its OWN array, following the
+ * `boardLabels` precedent (it rides the shell once, never denormalised per
+ * card). One entry per live (non-tombstoned) link on a non-archived card. The
+ * todo fields are KEY-optional and absent when the thread has no list, so a bare
+ * link entry is ~90 bytes and a populated one ~150 — and the common case
+ * (threads without lists) costs almost nothing.
+ *
+ * `todoStatuses` is a string, so this entry is scalars-only too.
+ */
+export const BoardCardThreadShell = Schema.Struct({
+  cardId: BoardCardId,
+  threadId: ThreadId,
+  /** One char per stored item: `d` | `i` | `p`. Absent when the thread has no
+      list at all — never an empty string. */
+  todoStatuses: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The in-progress item's text, absent when nothing is in progress. */
+  todoCurrent: Schema.optionalKey(TrimmedNonEmptyString),
+  todoDone: Schema.optionalKey(NonNegativeInt),
+  todoTotal: Schema.optionalKey(NonNegativeInt),
+  /** When the CURRENT item's text last changed (D6) — the anchor for "how long
+      has it been on this item". `RuntimePlanStep` is `{ step, status }`: there is
+      no item id and no timestamp anywhere upstream, so elapsed time has to be
+      derived. Resetting on in-progress-TEXT change survives reordering and
+      insertion, needs nothing new from any provider, and costs one column; it
+      resets incorrectly only when an agent rewords a todo mid-flight — wrong,
+      harmless, and rare. Index-based matching was rejected: agents insert and
+      remove items routinely, so it either resets constantly or, worse, carries
+      an elapsed time onto a different task. */
+  todoStartedAt: Schema.optionalKey(IsoDateTime),
+  todoUpdatedAt: Schema.optionalKey(IsoDateTime),
+});
+export type BoardCardThreadShell = typeof BoardCardThreadShell.Type;
+
+/** Whether a cached list is complete — every stored item done, and at least one
+    item. The card STRIP hides on this AND a stopped thread (D5): retention is a
+    storage rule, visibility is a render rule, which is what lets a card show
+    `5/5` at the moment the agent succeeds and lets a stale card fall back to its
+    plain meta row without two different retention policies. */
+export function boardThreadTodosComplete(
+  entry: Pick<BoardCardThreadShell, "todoDone" | "todoTotal">,
+): boolean {
+  const total = entry.todoTotal ?? 0;
+  return total > 0 && (entry.todoDone ?? 0) >= total;
+}
 
 // ── Card shell (t3o-04, D7) ────────────────────────────────────────────
 
@@ -2090,27 +2322,51 @@ export interface BoardThreadStateSource {
  * and the client (live re-derivation as thread shells change). "Waiting"
  * outranks "working": a blocked agent needs the human, which is the signal
  * the board exists to surface.
+ *
+ * Aggregated across EVERY live-linked thread (t3o-18, D7), not just the card's
+ * `activeThreadId`. Taking only the most recently *linked* live link meant a
+ * card whose OLDER thread was awaiting input showed no "Input needed" badge at
+ * all, and a card with work running in a non-active thread looked dead. Both
+ * were shipped bugs. The precedence is the one this function already documented,
+ * lifted from one thread to N: `waiting` if any thread waits, else `working` if
+ * any runs, else `stopped`; `awaitingInput` is an OR.
+ *
+ * The badge and the card's todo STRIP are allowed to reflect different threads,
+ * and that is correct: the badge answers "does this card need me", a question
+ * about *any* thread; the strip answers "what is being worked on", a question
+ * about *one*.
+ *
+ * Accepts a single thread, an array, or nothing, so every existing caller keeps
+ * working and the shared server/client shape stays one function — the snapshot
+ * and the client's live re-derivation can never disagree.
  */
-export function deriveBoardCardThreadState(thread: BoardThreadStateSource | null | undefined): {
+export function deriveBoardCardThreadState(
+  threads:
+    | BoardThreadStateSource
+    | ReadonlyArray<BoardThreadStateSource | null | undefined>
+    | null
+    | undefined,
+): {
   readonly threadState: BoardCardThreadState;
   readonly awaitingInput: boolean;
 } {
-  if (thread === null || thread === undefined) {
-    return { threadState: "none", awaitingInput: false };
-  }
-  const awaitingInput = thread.hasPendingUserInput;
-  if (thread.hasPendingUserInput || thread.hasPendingApprovals) {
+  const live = (Array.isArray(threads) ? threads : [threads]).filter(
+    (thread): thread is BoardThreadStateSource => thread !== null && thread !== undefined,
+  );
+  if (live.length === 0) return { threadState: "none", awaitingInput: false };
+  const awaitingInput = live.some((thread) => thread.hasPendingUserInput);
+  if (awaitingInput || live.some((thread) => thread.hasPendingApprovals)) {
     return { threadState: "waiting", awaitingInput };
   }
-  const sessionStatus = thread.session?.status;
-  if (
-    sessionStatus === "starting" ||
-    sessionStatus === "running" ||
-    thread.backgroundLiveness === "working"
-  ) {
-    return { threadState: "working", awaitingInput };
-  }
-  return { threadState: "stopped", awaitingInput };
+  const working = live.some((thread) => {
+    const sessionStatus = thread.session?.status;
+    return (
+      sessionStatus === "starting" ||
+      sessionStatus === "running" ||
+      thread.backgroundLiveness === "working"
+    );
+  });
+  return { threadState: working ? "working" : "stopped", awaitingInput };
 }
 
 /** The card's active thread: the most recently linked live link, by the
@@ -2184,7 +2440,14 @@ export function makeBoardCardShell(input: {
       producers omit it, resting it at false — the client preserves its last
       known stalled value across those deltas. */
   readonly stalled?: boolean | undefined;
-  readonly thread?: BoardThreadStateSource | null | undefined;
+  /** Every LIVE-linked thread's shell (t3o-18, D7) — the badge aggregates
+      across all of them. A single thread is still accepted (delta producers and
+      tests pass one, or none). */
+  readonly thread?:
+    | BoardThreadStateSource
+    | ReadonlyArray<BoardThreadStateSource | null | undefined>
+    | null
+    | undefined;
 }): BoardCardShell {
   const { threadState, awaitingInput } = deriveBoardCardThreadState(input.thread);
   return {
@@ -2223,7 +2486,7 @@ export function makeBoardCardShell(input: {
  */
 export function boardCardShellFromCard(
   card: BoardCard,
-  thread?: BoardThreadStateSource | null,
+  thread?: BoardThreadStateSource | ReadonlyArray<BoardThreadStateSource | null | undefined> | null,
 ): BoardCardShell {
   return makeBoardCardShell({
     cardId: card.id,
@@ -2304,6 +2567,28 @@ export const BoardCardStalledShellEvent = Schema.Struct({
   stalled: Schema.Boolean,
 });
 export type BoardCardStalledShellEvent = typeof BoardCardStalledShellEvent.Type;
+
+/**
+ * Card-thread delta (t3o-18, D3): the live card↔thread links of ONE card, with
+ * their todo summaries — the whole set for that card, replaced wholesale.
+ *
+ * Wholesale rather than per-entry because the set changes for three different
+ * reasons (a todo revision, a link, an unlink) and a replace is idempotent under
+ * all three; a card carries a handful of threads, so the payload stays tiny.
+ * `boardCardThreads` on the shell snapshot is the same data at connect time.
+ *
+ * Its `kind` keeps the `card-` prefix, so it routes through
+ * `isBoardShellStreamEvent` with zero core-seam change — and, like every other
+ * shell delta, it is emitted with the sequence of the domain event that caused
+ * it, so resume-by-sequence stays exact.
+ */
+export const BoardCardThreadsShellEvent = Schema.Struct({
+  kind: Schema.Literal("card-threads"),
+  sequence: NonNegativeInt,
+  cardId: BoardCardId,
+  threads: Schema.Array(BoardCardThreadShell),
+});
+export type BoardCardThreadsShellEvent = typeof BoardCardThreadsShellEvent.Type;
 
 /**
  * Catalogue delta (t3o-06a): a label created, renamed, recoloured, tombstoned
@@ -2404,8 +2689,6 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardStageReorderCommand,
   BoardStageDeleteCommand,
   BoardCardStartStageThreadCommand,
-  BoardCardReportProgressCommand,
-  BoardCardRequestInputCommand,
   BoardCardCompleteStepCommand,
   BoardPlansProposeCommand,
   BoardPlanWriteCommand,
@@ -2452,8 +2735,6 @@ export const BOARD_EVENT_TYPES = [
   "board.stage-reordered",
   "board.stage-deleted",
   "board.card-stage-thread-requested",
-  "board.card-progress-reported",
-  "board.card-input-requested",
   "board.card-step-completed",
   "board.plans-proposed",
   "board.plan-written",
@@ -2474,6 +2755,7 @@ export const BOARD_SHELL_STREAM_EVENTS = [
   BoardCardRemovedShellEvent,
   BoardCardQueuedShellEvent,
   BoardCardStalledShellEvent,
+  BoardCardThreadsShellEvent,
   BoardLabelUpsertedShellEvent,
   BoardStageUpsertedShellEvent,
   BoardStageRemovedShellEvent,
@@ -2572,16 +2854,6 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-stage-thread-requested"),
       payload: BoardCardStageThreadRequestedPayload,
-    }),
-    Schema.Struct({
-      ...base,
-      type: Schema.Literal("board.card-progress-reported"),
-      payload: BoardCardProgressReportedPayload,
-    }),
-    Schema.Struct({
-      ...base,
-      type: Schema.Literal("board.card-input-requested"),
-      payload: BoardCardInputRequestedPayload,
     }),
     Schema.Struct({
       ...base,
@@ -2743,6 +3015,14 @@ export const BoardCardDetail = Schema.Struct({
       stage's completions), so the projector stays role-blind; only the view
       parses a review payload. Decodes to `[]` on legacy detail payloads. */
   stepCompletions: Schema.Array(BoardStepCompletion).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** The card's Activity rail (t3o-18, D10), newest last — a deterministic,
+      actor-attributed projection of the board's own event log, NOT anything an
+      agent narrated. Rides the detail because `board.subscribeCard` already
+      re-emits on every board event for the open card, so the rail is live with
+      no second subscription. Decodes to `[]` on legacy detail payloads. */
+  activity: Schema.Array(BoardCardActivityEntry).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
 });

@@ -45,6 +45,14 @@ it("advertises board_get_card_context among the board tools", () => {
   expect(boardToolNames).toContain("board_get_card_context");
 });
 
+it("no longer advertises the deleted agent-activity tools (t3o-18, D13)", () => {
+  const boardToolNames = Object.values(BoardToolkit.tools).map((tool) => tool.name);
+  // `tools/list` is all-or-nothing to a client, so this is also the tripwire for
+  // a stale reference resurrecting a tool that has no handler behind it.
+  expect(boardToolNames).not.toContain("board_report_progress");
+  expect(boardToolNames).not.toContain("board_request_input");
+});
+
 it("gives every advertised tool an MCP-valid object inputSchema", () => {
   const invalid = advertisedTools
     .map((tool) => {

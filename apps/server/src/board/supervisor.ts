@@ -93,13 +93,32 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
   const body = step.prompt;
   const postamble = step.humanInLoop
     ? [
+        // Human-in-the-loop envelopes are UNCHANGED by t3o-18 (D16), preserving
+        // t3o-17 AC 6's asymmetry: these steps are not stall-supervised and the
+        // human is already in the conversation, so nagging a conversational turn
+        // into producing a todo list for a one-line answer is noise. If such an
+        // agent writes a list anyway it renders on the card like any other.
         `This is a human-in-the-loop run: ask me anything you need directly, and it is fine to end a turn waiting on my answer.`,
         `When the work is done, call board_complete_step to finish the step.`,
       ].join("\n")
     : [
         `You are running unattended. Do not stop to ask permission; make every reasonable decision yourself and proceed.`,
         `When the step is finished, call board_complete_step — that is the ONLY way to complete it; ending your turn any other way is treated as a failure and recovered.`,
-        `On long-running work, call board_report_progress periodically (and commit as you go) so the supervisor can see you are making progress; without it a productive long job looks the same as a wedged one and will be escalated.`,
+        // t3o-18 D16 REPLACES t3o-17's `board_report_progress` line rather than
+        // joining it: leaving a dangling instruction that names a deleted tool is
+        // a defect, not a leftover. The requirement itself is kept and
+        // re-pointed, because t3o-17 D2's argument survives the substitution
+        // intact — a short step, or a provider in a mode that produces no plan,
+        // emits no `turn.plan.updated` at all, and assuming agents always keep a
+        // list would reopen exactly the hole t3o-17 identified.
+        //
+        // The compliance cost is LOWER than what it replaces. `board_report_progress`
+        // was an extra MCP call that did nothing for the agent, so it was pure
+        // overhead the model had every incentive to drop. A todo list is the
+        // model's own working memory — every supported provider ships the tool and
+        // uses it unprompted on non-trivial work — so this nudges a behaviour the
+        // agent already wants.
+        `Keep a todo list current as you work (your task/plan tool) and commit as you go: the supervisor watches your list advance to tell a productive long job from a wedged one, and without it a working step looks the same as a stalled one and will be escalated.`,
         `If you are truly blocked and need a human decision, ${questionMechanism}; never end a turn with an unanswered question in prose.`,
       ].join("\n");
   const bodyBlock = body.trim().length > 0 ? `${body}\n\n` : "";
@@ -139,16 +158,33 @@ export type BoardRecoveryDecision =
  *
  * Either ceiling crossed → escalate (the reactor lands the step in `stalled` and
  * releases its slot); it never loops. Prevention lives in the envelope (the
- * unattended postamble asks for progress reports); cure lives here.
+ * unattended postamble asks the agent to keep a todo list current, t3o-18 D16);
+ * cure lives here.
  */
 export function recoveryDecision(input: {
   readonly stepState: Pick<
     BoardCardStepState,
     "attempt" | "stallCount" | "maxAttempts" | "stepLabel"
   >;
-  /** Resolved by the reactor (D2): a `board_report_progress` entry or a new
-      commit on the card's branch since the last nudge. Resets `stallCount`. */
+  /** Resolved by the reactor (t3o-17 D2, re-pointed by t3o-18 D16): the step
+      thread's TODO LIST advanced — a `turn.plan.updated` whose done count rose or
+      whose in-progress item changed — or a new commit landed on the card's
+      branch, since the last nudge. Resets `stallCount`. */
   readonly progressedSinceLastNudge: boolean;
+  /** Whether the step's thread has a todo list at all (t3o-18, D16), resolved by
+      the reactor from `board_thread_todos` and passed in — the same pattern
+      `progressedSinceLastNudge` establishes, so this function stays pure with no
+      git and no SQL.
+
+      This is the conditional the INITIAL envelope cannot express: at step start
+      no turn has run, so no thread has a list yet, and only recovery time knows
+      the difference. A nudged thread with no list is explicitly asked to write
+      one and work through it; one that already has a list is not nagged.
+
+      An agent that produces a list and then freezes it still stalls correctly —
+      absence of a list and a frozen list are both "no progress", which is the
+      right reading of each. */
+  readonly hasTodoList: boolean;
   /** The stage entry's total step invocations so far (D5), summed across its
       steps by the reactor. This recovery is one more, so the ceiling is checked
       against `stageEntryInvocations + 1`. */
@@ -194,6 +230,15 @@ export function recoveryDecision(input: {
     `Your previous turn ended without calling board_complete_step, so the step is not finished.`,
     `Continue where you left off and call board_complete_step when done; if you are blocked, ${input.questionMechanism}.`,
   ];
+  // The nudge asks again, CONDITIONALLY (t3o-18, D16). Only a thread with no
+  // list is asked for one — a thread already keeping one needs no reminder, and
+  // repeating the ask would read as noise exactly where the agent is doing the
+  // right thing.
+  if (!input.hasTodoList) {
+    nudgeLines.push(
+      `You are not keeping a todo list: write one now (your task/plan tool) and work through it, so progress is visible and this step is not escalated as stalled.`,
+    );
+  }
   if (nextStallCount >= 3) {
     nudgeLines.splice(
       1,
