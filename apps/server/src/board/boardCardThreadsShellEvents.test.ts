@@ -31,8 +31,10 @@ const snapshotStub = {
 
 const mapper = boardCardThreadsShellEvents({ projectionSnapshotQuery: snapshotStub });
 
+/** Run the mapper on an event and collect its deltas — a plain Effect, yielded
+    inside each `it.effect` (no manual runtime). */
 const run = (event: unknown) =>
-  Effect.runPromise(mapper(event as OrchestrationEvent).pipe(Effect.map((deltas) => [...deltas])));
+  mapper(event as OrchestrationEvent).pipe(Effect.map((deltas) => [...deltas]));
 
 const planUpdate = (kind: string): OrchestrationEvent =>
   ({
@@ -45,7 +47,7 @@ const planUpdate = (kind: string): OrchestrationEvent =>
 
 it.effect("emits a card-threads delta for a turn.plan.updated activity append", () =>
   Effect.gen(function* () {
-    const deltas = yield* Effect.promise(() => run(planUpdate("turn.plan.updated")));
+    const deltas = yield* run(planUpdate("turn.plan.updated"));
     assert.strictEqual(deltas.length, 1);
     assert.strictEqual(deltas[0]?.kind, "card-threads");
     assert.strictEqual(deltas[0]?.sequence, 5);
@@ -54,7 +56,7 @@ it.effect("emits a card-threads delta for a turn.plan.updated activity append", 
 
 it.effect("emits nothing for a non-plan activity append (e.g. a streamed message)", () =>
   Effect.gen(function* () {
-    assert.deepStrictEqual(yield* Effect.promise(() => run(planUpdate("message"))), []);
+    assert.deepStrictEqual(yield* run(planUpdate("message")), []);
   }),
 );
 
@@ -67,7 +69,7 @@ it.effect("emits nothing for a bare thread event with no todo-relevant payload",
       sequence: 7,
       payload: { threadId },
     };
-    assert.deepStrictEqual(yield* Effect.promise(() => run(sessionEvent)), []);
+    assert.deepStrictEqual(yield* run(sessionEvent), []);
   }),
 );
 
@@ -80,7 +82,7 @@ it.effect("emits a card-threads delta on thread.deleted (the cache row was dropp
       sequence: 9,
       payload: { threadId },
     };
-    const deltas = yield* Effect.promise(() => run(deleted));
+    const deltas = yield* run(deleted);
     assert.strictEqual(deltas.length, 1);
     assert.strictEqual(deltas[0]?.kind, "card-threads");
   }),
@@ -95,7 +97,7 @@ it.effect("emits a card-threads delta on a link-set change", () =>
       sequence: 11,
       payload: { cardId, threadId },
     };
-    const deltas = yield* Effect.promise(() => run(linked));
+    const deltas = yield* run(linked);
     assert.strictEqual(deltas.length, 1);
     assert.strictEqual(deltas[0]?.kind, "card-threads");
   }),
