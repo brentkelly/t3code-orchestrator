@@ -279,6 +279,8 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-06a` | Widen receipt `aggregateId` union with `BoardLabelId`                     | one-line edit (frozen, D9-class)                                         |
 | `apps/server/src/ws.ts`                                                | `t3o-02`  | Import board shell-delta mapper + predicate                               | one-line append (import)                                                 |
 | `apps/server/src/ws.ts`                                                | `t3o-02a` | Board events become card shell deltas in `toShellStreamEvent`             | predicate delegation in `default`, before the thread-aggregate check     |
+| `apps/server/src/ws.ts`                                                | `t3o-18`  | `toShellStreamEvents` fans one event to N deltas (board `card-threads`)   | one-line wrapper delegating to a board-owned mapper                      |
+| `apps/server/src/ws.ts`                                                | `t3o-18`  | Human actor stamped on board commands before `dispatchCommand` dispatches | one-line delegation to a board-owned stamp (t3o-18, D11)                 |
 | `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`  | Import `BoardModeTabs`                                                    | one-line append (import)                                                 |
 | `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`  | Threads/Board mode tabs before the breadcrumb (D1 shell tab)              | one-line append (delegating element)                                     |
 | `apps/web/src/components/NoActiveThreadState.tsx`                      | `t3o-05`  | Import `BoardModeTabs`                                                    | one-line append (import)                                                 |
@@ -291,6 +293,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `board` field on `OrchestrationReadModel` (optional)                      | one-line append (frozen)                                                 |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02`  | `cards` field on `OrchestrationShellSnapshot` (optional)                  | one-line append (frozen)                                                 |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-06a` | `boardLabels` field on `OrchestrationShellSnapshot` (catalogue once)      | one-line append (frozen)                                                 |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-18`  | `boardCardThreads` field on `OrchestrationShellSnapshot` (links + todos)  | one-line append (frozen)                                                 |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Card shell deltas in `OrchestrationShellStreamEvent` union                | registry spread (`BOARD_SHELL_STREAM_EVENTS`)                            |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board commands in `DispatchableClientOrchestrationCommand`                | registry spread (`BOARD_CLIENT_COMMANDS`)                                |
 | `packages/contracts/src/orchestration.ts`                              | `t3o-02a` | Board commands in `ClientOrchestrationCommand`                            | registry spread (`BOARD_CLIENT_COMMANDS`)                                |
@@ -465,6 +468,36 @@ seam — so it needed no edit to `orchestration.ts`, `ws.ts`, `shellReducer.ts` 
 `card-queued` delta and the snapshot as its authoritative source. The byte-budget tests were extended
 to cover the now-sourced `queued` field and still pass (position is derived client-side in
 `boardBuildingQueueInfo`, never on the wire, so the shell stays scalar-plus-one-array under budget).
+
+`t3o-18` (thread todos on cards + the deterministic Activity rail) added **two core seam lines and
+one frozen contract field**, all in shapes the grammar already has. The todo cache
+(`board_thread_todos`, board migration **016**), the structured actor-attributed activity table
+(migration **017**), the projector that writes both, the `card-threads` shell delta, the strip, the
+rail and the tool deletions are all board-owned.
+
+Three things are worth recording because they read as deviations from the spec's own decision list:
+
+- **The todo cache is written by the board PROJECTOR, from the `thread.activity-appended` domain
+  event, not by the supervisor reactor off the provider runtime stream (spec D1/D2).** The observable
+  outcomes are identical — a projection-only side table, nothing stored for an unlinked thread, no
+  backfill — but the domain event carries a `sequence` and commits in the same transaction, which the
+  runtime stream does not. Without that, the `card-threads` shell delta (which must ride the domain
+  stream with the causing event's sequence, like every other delta) would race the reactor's write and
+  render the previous revision. It also makes D14's "rebuild from thread activities" path real rather
+  than theoretical. The board projector still writes only `board_*` tables.
+- **The actor reaches the projector through a board-owned in-process side channel keyed by
+  `commandId`** (`board/activityActors.ts`), because the projection pipeline runs on a different fiber
+  from the dispatcher and the event envelope is upstream-owned. It is bounded, read without eviction
+  (one command may land several events), and degrades to the system actor — so a rebuilt projection
+  attributes historic rows to the system rather than inventing a human.
+- **The two internal `board.card.request-input` dispatches in the supervisor reactor were dropped, not
+  re-homed.** D13 deletes that command, and D12's nine curated activity kinds have no "escalation
+  note" among them. Nothing rendered those rows before, so nothing regresses visually; the
+  human-facing signal stays the `stalled` badge (t3o-17, D3) and the question goes to the server log.
+
+`toShellStreamEvent` was widened to `toShellStreamEvents` (an array) because a thread event now
+implies two orthogonal deltas — its own thread shell, and its card's todo summaries — and neither may
+swallow the other.
 
 Marker-less upstream churn that rides along with `t3o-02`:
 
