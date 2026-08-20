@@ -173,10 +173,25 @@ export function DraggableBoardCard({
   readonly accentName?: string | null | undefined;
 }) {
   return (
+    // Keyboard path: the card is a focusable button-role element — Enter/Space
+    // opens the detail dialog, whose stage actions are real buttons, so moving
+    // a card never REQUIRES the pointer drag (which has no keyboard analogue).
     <div
       draggable
-      className={cn("cursor-grab", dragging && "opacity-40")}
+      role="button"
+      tabIndex={0}
+      aria-label={`${card.key} — ${card.title}`}
+      className={cn(
+        "cursor-grab rounded-xl focus-visible:outline-2 focus-visible:outline-ring",
+        dragging && "opacity-40",
+      )}
       onClick={() => onSelect(card)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(card);
+        }
+      }}
       onDragStart={(event) => onDragStart(card, event)}
       onDragEnd={onDragEnd}
     >

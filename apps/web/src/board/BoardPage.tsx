@@ -380,21 +380,34 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
   );
 
   // Turns a target stage + raw insertion index into the settled card order.
-  // The index is in "full column" coordinates (the dragged card still counts);
-  // convert it to a slot in the list without that card, matching the prototype.
+  // The index is measured against the RENDERED cards — `visibleColumns`, which
+  // the stalled filter may have thinned — so it is resolved to an anchor card
+  // in that same rendered list first, then mapped into the full column. A drop
+  // computed in filtered coordinates but spliced into the full list would
+  // persist a wrong order server-side, for every client.
   const commitDrop = useCallback(
     (targetStage: BoardStageId, insertIndex: number, cardId: string) => {
       const source = findBoardCard(columns, cardId);
       if (source === null) return;
+      const rendered = (visibleColumns[targetStage] ?? EMPTY_CARDS).map(
+        (card) => card.cardId as string,
+      );
+      // The rendered index still counts the dragged card; convert to a slot in
+      // the rendered list without it, matching the prototype.
+      const renderedOwn = rendered.indexOf(cardId);
+      const renderedRest = rendered.filter((id) => id !== cardId);
+      let renderedIndex = Math.max(0, Math.min(rendered.length, insertIndex));
+      if (renderedOwn >= 0 && renderedIndex > renderedOwn) renderedIndex -= 1;
+      // The visible card the drop lands BEFORE anchors the position; past the
+      // last visible card appends to the end of the full column.
+      const anchor = renderedRest[renderedIndex];
       const ids = (columns[targetStage] ?? EMPTY_CARDS).map((card) => card.cardId as string);
-      const own = ids.indexOf(cardId);
       const list = ids.filter((id) => id !== cardId);
-      let index = Math.max(0, Math.min(ids.length, insertIndex));
-      if (own >= 0 && index > own) index -= 1;
+      const index = anchor === undefined ? list.length : Math.max(0, list.indexOf(anchor));
       list.splice(index, 0, cardId);
       dispatchDrop(targetStage, list, source);
     },
-    [columns, dispatchDrop],
+    [columns, visibleColumns, dispatchDrop],
   );
 
   const handleCardDragStart = useCallback(

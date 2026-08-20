@@ -1053,9 +1053,10 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       const makeStepState = (
         cardId: string,
         status: BoardCardStepState["status"],
+        stepId = "s1",
       ): BoardCardStepState => ({
         cardId: BoardCardId.make(cardId),
-        stepId: "s1",
+        stepId,
         stepLabel: "Build",
         attempt: 1,
         stallCount: 0,
@@ -1096,6 +1097,9 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             makeStepState("card-await", "running"),
             makeStepState("card-recover", "running"),
             makeStepState("card-settle", "running"),
+            // complete-step validates against the card's LIVE step, so the
+            // catalog's completion needs one to succeed against.
+            makeStepState("card-ready", "running", "build"),
           ],
           nextCardNumberByProject: {},
         },
@@ -1829,26 +1833,104 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
-  it.effect("board_complete_step is idempotent — a second call re-emits the first outcome", () =>
+  // A live step for card-1, matching the step id the completion names —
+  // complete-step validates the agent's stepId against it.
+  const liveStep = (stepId: string, status: BoardCardStepState["status"] = "running") =>
+    ({
+      cardId: BoardCardId.make("card-1"),
+      stepId,
+      stepLabel: "Build",
+      attempt: 1,
+      stallCount: 0,
+      lastNudgeAt: null,
+      prompt: "do it",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+      mode: "build",
+      humanInLoop: false,
+      maxAttempts: 3,
+      timeoutMs: 1000,
+      threadId: null,
+      status,
+      slotHeld: status === "running",
+      startedAt: status === "running" ? NOW : null,
+      updatedAt: NOW,
+    }) as const satisfies BoardCardStepState;
+
+  it.effect("board_complete_step pins a succeeded outcome — a retry re-emits it", () =>
     Effect.gen(function* () {
       const first = yield* decide(
         completeStep({ stepId: "build", outcome: "succeeded", summary: "Built it" }),
-        cardReadModel(),
+        cardReadModel({ stepStates: [liveStep("build")] }),
       );
       assert.strictEqual(first.type, "board.card-step-completed");
       if (first.type !== "board.card-step-completed") return;
       // The first completion is now in the read model.
       const second = yield* decide(
         completeStep({ stepId: "build", outcome: "failed", summary: "A different story" }),
-        cardReadModel({ stepCompletions: [first.payload.completion] }),
+        cardReadModel({
+          stepStates: [liveStep("build")],
+          stepCompletions: [first.payload.completion],
+        }),
       );
       assert.strictEqual(second.type, "board.card-step-completed");
       if (second.type !== "board.card-step-completed") return;
-      // The retry re-emits the FIRST outcome verbatim — never a second, and
-      // never a contradictory transition.
+      // The retry re-emits the SUCCEEDED outcome verbatim — never a second,
+      // and never a contradictory transition.
       assert.strictEqual(second.payload.completion.outcome, "succeeded");
       assert.strictEqual(second.payload.completion.summary, "Built it");
       assert.deepStrictEqual(second.payload.completion, first.payload.completion);
+    }),
+  );
+
+  it.effect("board_complete_step lets a live step's retry supersede a prior failed outcome", () =>
+    Effect.gen(function* () {
+      const failed = yield* decide(
+        completeStep({ stepId: "build", outcome: "failed", summary: "Broke" }),
+        cardReadModel({ stepStates: [liveStep("build")] }),
+      );
+      assert.strictEqual(failed.type, "board.card-step-completed");
+      if (failed.type !== "board.card-step-completed") return;
+      // The recovery ladder nudged a retry and the step is STILL LIVE: the
+      // successful retry supersedes the pinned failure (retry-after-failure
+      // must be possible), and the projector upserts on (cardId, stepId).
+      const retried = yield* decide(
+        completeStep({ stepId: "build", outcome: "succeeded", summary: "Fixed on retry" }),
+        cardReadModel({
+          stepStates: [liveStep("build")],
+          stepCompletions: [failed.payload.completion],
+        }),
+      );
+      assert.strictEqual(retried.type, "board.card-step-completed");
+      if (retried.type !== "board.card-step-completed") return;
+      assert.strictEqual(retried.payload.completion.outcome, "succeeded");
+      assert.strictEqual(retried.payload.completion.summary, "Fixed on retry");
+      // With the step settled (no live step), the recorded outcome re-emits
+      // verbatim instead of superseding.
+      const afterSettle = yield* decide(
+        completeStep({ stepId: "build", outcome: "failed", summary: "Too late" }),
+        cardReadModel({
+          stepStates: [liveStep("build", "succeeded")],
+          stepCompletions: [retried.payload.completion],
+        }),
+      );
+      assert.strictEqual(afterSettle.type, "board.card-step-completed");
+      if (afterSettle.type !== "board.card-step-completed") return;
+      assert.strictEqual(afterSettle.payload.completion.summary, "Fixed on retry");
+    }),
+  );
+
+  it.effect("board_complete_step rejects a stepId that is not the card's live step", () =>
+    Effect.gen(function* () {
+      // Step ids are predictable, so a forged completion for a FUTURE step
+      // must be rejected — pinning it would make continueStage / reconcile
+      // skip the step as already-ran.
+      const failure = yield* decideFail(
+        completeStep({ stepId: "review@2", outcome: "succeeded", summary: "Forged" }),
+        cardReadModel({ stepStates: [liveStep("review@1")] }),
+      );
+      assert.include(String(failure), "not card");
+      assert.include(String(failure), "live step");
     }),
   );
 

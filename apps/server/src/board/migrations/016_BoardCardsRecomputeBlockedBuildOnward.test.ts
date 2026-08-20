@@ -1,9 +1,9 @@
 /**
- * T3o migration 012 (t3o-13, D6): recompute the stored `blocked` flag under
- * the new dependency rule. Databases written before t3o-13 flagged a card
- * blocked because of an archived dependency, which now no longer gates — the
- * flag those rows hold is simply wrong, and it is wrong at exactly the moment
- * a user is trying to work out why a card looked stuck.
+ * T3o migration 016 (t3o-15 follow-up): recompute the stored `blocked` flag
+ * under the build-onward rule. 012 recomputed under its day's ready-onward
+ * rule; t3o-15 moved the live gate to the build role, and `blocked` is
+ * rehydrated straight from `board_cards` — so a legacy database boots wearing
+ * badges the decider contradicts at the card's next event until this runs.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -11,21 +11,22 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
-import { BOARD_MIGRATIONS, runBoardMigrations } from "./index.ts";
+import { BOARD_MIGRATIONS } from "./index.ts";
+import Migration016 from "./016_BoardCardsRecomputeBlockedBuildOnward.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 
-/** The `depends_on` column holds a JSON array. Written literally here rather
-    than through a codec: these rows stand in for what a pre-012 database
-    already contains, so the fixture should not depend on today's schema. */
 const dependsOnColumn = (ids: ReadonlyArray<string>) => `[${ids.map((id) => `"${id}"`).join(",")}]`;
 
-/** Everything up to (but not including) 012 — the schema as the rows below
-    were written under. */
+/** Everything up to (but not including) 016, applied directly — the schema
+    and stage seed the rows below were written under, including 012's
+    ready-onward recompute. 016 itself then runs directly too: 014's ALTERs
+    are not idempotent, so re-running the lineage through the Migrator on top
+    of a directly-applied schema would double-apply them. */
 const migrateToPrevious = Effect.gen(function* () {
   yield* runMigrations();
   for (const [id, , migration] of BOARD_MIGRATIONS) {
-    if (id >= 12) break;
+    if (id >= 16) break;
     yield* migration;
   }
 });
@@ -57,8 +58,8 @@ const blockedById = Effect.gen(function* () {
   return Object.fromEntries(rows.map((row) => [row.card_id, row.blocked]));
 });
 
-describe("migration 012: recompute blocked", () => {
-  it.effect("clears a flag left by an archived dependency and keeps every honest one", () =>
+describe("migration 016: recompute blocked build-onward", () => {
+  it.effect("moves the gate from ready-onward to the build role onward", () =>
     Effect.gen(function* () {
       yield* migrateToPrevious;
 
@@ -72,51 +73,56 @@ describe("migration 012: recompute blocked", () => {
         archivedAt: NOW,
       });
 
-      // The bug this migration cleans up after: blocked forever by work that
-      // was archived rather than finished.
+      // The lie 016 exists to fix: 012 flagged Ready cards, the live rule
+      // (build-onward) does not — the stored badge contradicts the decider.
       yield* insertCard({
-        id: "stale-blocked",
+        id: "ready-stale",
         stage: "ready",
+        dependsOn: ["dep-open"],
+        blocked: 1,
+      });
+      // Genuinely blocked: unfinished live dependency at the build role.
+      yield* insertCard({
+        id: "building-open",
+        stage: "building",
+        dependsOn: ["dep-open"],
+        blocked: 0,
+      });
+      // Archived and done dependencies stop gating, wherever the card sits.
+      yield* insertCard({
+        id: "building-archived",
+        stage: "building",
         dependsOn: ["dep-archived"],
         blocked: 1,
       });
-      // Unfinished live dependency at Ready: blocked under 012's ready-onward
-      // rule, then UNBLOCKED by 016 (t3o-15 moved the gate to build-onward).
       yield* insertCard({
-        id: "ready-open-dep",
-        stage: "ready",
+        id: "review-done",
+        stage: "review",
+        dependsOn: ["dep-done"],
+        blocked: 1,
+      });
+      // A dependency id whose card is gone still counts as unmet at build+.
+      yield* insertCard({ id: "dangling", stage: "review", dependsOn: ["nothing"], blocked: 0 });
+      // Below the build role the gate does not apply at all.
+      yield* insertCard({
+        id: "sprint-open",
+        stage: "sprint",
         dependsOn: ["dep-open"],
         blocked: 1,
       });
-      // Genuinely blocked at head — unfinished, live dependency in Building.
-      yield* insertCard({
-        id: "really-blocked",
-        stage: "building",
-        dependsOn: ["dep-open"],
-        blocked: 1,
-      });
-      // Blocked flag set below the gate, where it does not apply at all.
-      yield* insertCard({ id: "too-early", stage: "sprint", dependsOn: ["dep-open"], blocked: 1 });
-      // Dependency satisfied the ordinary way.
-      yield* insertCard({ id: "unblocked", stage: "ready", dependsOn: ["dep-done"], blocked: 1 });
-      // A dependency id whose card is gone still counts as unmet — but only
-      // gates from the build role onward at head (016).
-      yield* insertCard({ id: "dangling", stage: "building", dependsOn: ["nothing"], blocked: 0 });
 
-      // Runs 012 and everything after it, so the assertions below are the
-      // TERMINAL state of the lineage — 016's build-onward recompute included.
-      yield* runBoardMigrations();
+      yield* Migration016;
 
       assert.deepStrictEqual(yield* blockedById, {
         "dep-open": 0,
         "dep-done": 0,
         "dep-archived": 0,
-        "stale-blocked": 0,
-        "ready-open-dep": 0,
-        "really-blocked": 1,
-        "too-early": 0,
-        unblocked: 0,
+        "ready-stale": 0,
+        "building-open": 1,
+        "building-archived": 0,
+        "review-done": 0,
         dangling: 1,
+        "sprint-open": 0,
       });
     }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
   );

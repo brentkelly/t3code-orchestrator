@@ -162,13 +162,22 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
     }),
   );
 
-  // ── D6 / D18: provisioning is gated on Building ──────────────────────
+  // ── D6: provisioning is mode-gated by the REACTOR, not stage-gated here ──
+  // Which stages need a worktree is a settings question (any stage may resolve
+  // to `mode: "build"`; the review stage always does), and the pure decider
+  // cannot read settings. The command is server-internal, so the resolved-mode
+  // gate lives with its only dispatcher — a stage-literal invariant here would
+  // orphan real git worktrees for build-mode stages not named 'building'.
 
-  it.effect("refuses to provision a worktree before the card is in Building", () =>
+  it.effect("provisions a worktree for a card in any stage (e.g. the review stage)", () =>
     Effect.gen(function* () {
-      const card = makeCard({ id: "card-1", stage: "ready" });
-      const failure = yield* decideFail(provision("card-1"), makeReadModel(boardWith([card])));
-      assert.match(String(failure), /must be in 'building'/);
+      const card = makeCard({ id: "card-1", stage: "review" });
+      const event = yield* decide(provision("card-1"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-worktree-provisioning");
+      if (event.type === "board.card-worktree-provisioning") {
+        assert.strictEqual(event.payload.card.stage, "review");
+        assert.strictEqual(event.payload.card.worktree?.status, "provisioning");
+      }
     }),
   );
 
