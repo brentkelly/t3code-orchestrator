@@ -410,6 +410,33 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     [columns, visibleColumns, dispatchDrop],
   );
 
+  // Keyboard reorder (Ctrl/Cmd+ArrowUp/Down on a focused card): the pointer
+  // drag's keyboard analogue. Moves relative to the RENDERED (possibly
+  // stalled-filtered) neighbour, anchored into the full column exactly like
+  // commitDrop, and commits through the same drop path.
+  const handleCardReorder = useCallback(
+    (card: BoardCardShell, direction: -1 | 1) => {
+      const source = findBoardCard(columns, card.cardId);
+      if (source === null) return;
+      const rendered = (visibleColumns[source.stage] ?? EMPTY_CARDS).map(
+        (candidate) => candidate.cardId as string,
+      );
+      const renderedIndex = rendered.indexOf(card.cardId);
+      const renderedTarget = renderedIndex + direction;
+      if (renderedIndex < 0 || renderedTarget < 0 || renderedTarget >= rendered.length) return;
+      const anchor = rendered[renderedTarget]!;
+      const ids = (columns[source.stage] ?? EMPTY_CARDS).map(
+        (candidate) => candidate.cardId as string,
+      );
+      const list = ids.filter((id) => id !== card.cardId);
+      const anchorIndex = list.indexOf(anchor);
+      if (anchorIndex < 0) return;
+      list.splice(direction > 0 ? anchorIndex + 1 : anchorIndex, 0, card.cardId);
+      dispatchDrop(source.stage, list, source);
+    },
+    [columns, visibleColumns, dispatchDrop],
+  );
+
   const handleCardDragStart = useCallback(
     (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => {
       const element = event.currentTarget;
@@ -692,6 +719,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
               key={stage.stageId}
               label={stage.label}
               onCardDragEnd={handleCardDragEnd}
+              onCardReorder={handleCardReorder}
               onCardDragStart={handleCardDragStart}
               onColumnDragOver={handleColumnDragOver}
               onColumnDrop={handleColumnDrop}

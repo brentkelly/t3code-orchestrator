@@ -160,6 +160,7 @@ export function DraggableBoardCard({
   onSelect,
   onDragStart,
   onDragEnd,
+  onReorder,
   accentName,
 }: {
   readonly card: BoardCardShell;
@@ -170,6 +171,8 @@ export function DraggableBoardCard({
   readonly onSelect: (card: BoardCardShell) => void;
   readonly onDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
   readonly onDragEnd: () => void;
+  /** Keyboard analogue of the pointer drag: move one visible slot up/down. */
+  readonly onReorder: (card: BoardCardShell, direction: -1 | 1) => void;
   readonly accentName?: string | null | undefined;
 }) {
   return (
@@ -190,6 +193,17 @@ export function DraggableBoardCard({
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onSelect(card);
+          return;
+        }
+        // Ctrl/Cmd+Arrow reorders within the column — plain arrows stay free
+        // for scrolling and focus movement. Stage moves ride the detail
+        // dialog's stage actions (Enter opens it).
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          (event.key === "ArrowUp" || event.key === "ArrowDown")
+        ) {
+          event.preventDefault();
+          onReorder(card, event.key === "ArrowUp" ? -1 : 1);
         }
       }}
       onDragStart={(event) => onDragStart(card, event)}

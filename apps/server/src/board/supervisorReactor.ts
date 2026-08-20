@@ -758,23 +758,44 @@ const make = Effect.gen(function* () {
   const beginStageRun = Effect.fn("board-supervisor-beginStageRun")(function* (input: {
     readonly card: BoardCard;
     readonly onDemand: boolean;
+    /** Reconcile's end-of-boot kickoff pass (see `reconcile`): FIRST entries
+        only — a re-entry's clean human thread stays a human action (drag /
+        on-demand), never a restart side effect. */
+    readonly bootPass?: boolean;
   }) {
     const { card, onDemand } = input;
+    const bootPass = input.bootPass === true;
     const board = yield* readBoard;
     const stage = boardStageById(board, card.stage);
     if (stage === null) return;
-    // Never trample a manually adopted thread for this stage (D7).
-    if (hasLiveStageThread(card, card.stage)) return;
     // One step at a time (D4): do not start a run while one is live. The one
     // exception is `stalled` (t3o-17): supervision has given up and nothing is
     // running, so an EXPLICIT on-demand start is the human's retry affordance
     // — it supersedes the stalled step (settled abandoned; its slot was
     // already released at escalation) instead of no-opping, which would leave
-    // a stalled card with a dead thread no exit but archive → unarchive.
+    // a stalled card with a dead thread no exit but archive → unarchive. The
+    // supersede runs BEFORE the live-stage-thread guard: the stalled step's
+    // own thread link (role = step id = stage id on a simple stage, never
+    // tombstoned at escalation) would otherwise trip that guard first, and it
+    // is unlinked here for the same reason.
     const existing = boardCardStepState(board, card.id);
-    if (existing !== null && !isBoardTerminalStepStatus(existing.status)) {
-      if (!(onDemand && existing.status === "stalled")) return;
+    const supersedeStalled = onDemand && existing !== null && existing.status === "stalled";
+    if (supersedeStalled) {
       yield* settleStep({ card, state: existing, outcome: "abandoned" });
+      if (existing.threadId !== null) {
+        yield* dispatch({
+          type: "board.card.unlink-thread",
+          commandId: yield* commandId("unlink-stalled"),
+          cardId: card.id,
+          threadId: existing.threadId,
+          createdAt: yield* nowIso,
+        });
+        forgetThreadProgress(existing.threadId);
+      }
+    } else {
+      // Never trample a manually adopted thread for this stage (D7).
+      if (hasLiveStageThread(card, card.stage)) return;
+      if (existing !== null && !isBoardTerminalStepStatus(existing.status)) return;
     }
     const settings = yield* boardSettings;
     const exec = resolveBoardStageExecution(settings, card.stage);
@@ -786,6 +807,10 @@ const make = Effect.gen(function* () {
     // human-in-the-loop conversation. This is reactor policy, orthogonal to the
     // executor's "what runs next".
     const firstEntry = !completions.some((completion) => completion.stepId === card.stage);
+    // The boot pass only ever STARTS fresh work (or resumes an executor-driven
+    // continuation below); a re-entry is skipped — its clean human thread must
+    // not re-open on every server restart.
+    if (bootPass && !firstEntry) return;
     const model = resolveBoardStageModelSelection(exec.model);
     // Ask the stage executor what runs next (D15): the reactor delegates the
     // "what to execute" decision rather than computing it inline. A card
@@ -813,6 +838,8 @@ const make = Effect.gen(function* () {
       // forever. A re-entry drag-back or an explicit on-demand request still
       // deserves a conversation (D7): open a clean human-in-the-loop thread on
       // the stage's own step id, exactly as a simple-stage re-entry does.
+      // Never from the boot pass, though — a restart is not a human action.
+      if (bootPass) return;
       yield* dispatch({
         type: "board.card.select-step",
         commandId: yield* commandId("select-step"),
@@ -1366,6 +1393,12 @@ const make = Effect.gen(function* () {
 
   const reconcile = Effect.gen(function* () {
     const board = yield* readBoard;
+    // Cards whose step reconcile settles as succeeded: `continueStage` may
+    // auto-advance them, and the `board.card-moved` that publishes goes into a
+    // live-only PubSub whose subscribers are PARKED until server activation
+    // (forkParked) — so their auto-kickoff must be re-derived from state at
+    // the end of this pass instead of riding the stream.
+    const advanced: BoardCard["id"][] = [];
     for (const state of boardNonTerminalStepStates(board)) {
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined) continue;
@@ -1397,6 +1430,7 @@ const make = Effect.gen(function* () {
           // stage, or resume the next round-scoped step of a multi-step loop
           // whose phase settled during downtime (t3o-16).
           yield* continueStage({ card, state });
+          advanced.push(card.id);
           break;
         case "recover":
           yield* recoverStep({ card, state });
@@ -1415,6 +1449,23 @@ const make = Effect.gen(function* () {
     // governor: re-admit what now fits, re-queue the rest. Slot accounting
     // reconciles to zero once all work drains, including after a forced restart.
     yield* schedule();
+    // Kickoff pass for the cards reconcile itself advanced: their card-moved
+    // events had no live subscriber (see `advanced` above), so the next
+    // stage's auto-kickoff is re-derived from state. `bootPass` restricts it
+    // to first entries (or executor-driven continuations) — a re-entry's
+    // clean human thread never opens as a restart side effect — and
+    // beginStageRun's own guards (autoExecute, live thread, live step) make
+    // the pass idempotent.
+    if (advanced.length > 0) {
+      const settled = yield* readBoard;
+      for (const cardId of advanced) {
+        const card = settled.cards.find((candidate) => candidate.id === cardId);
+        if (card === undefined || card.archivedAt !== null) continue;
+        const state = boardCardStepState(settled, card.id);
+        if (state !== null && !isBoardTerminalStepStatus(state.status)) continue;
+        yield* beginStageRun({ card, onDemand: false, bootPass: true });
+      }
+    }
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: reconciliation failed", { cause: Cause.pretty(cause) }),
@@ -1504,12 +1555,13 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const start: SupervisorReactorShape["start"] = Effect.fn("board-supervisor-start")(function* () {
-    // Subscribe BEFORE reconciling: production `streamDomainEvents` is a
-    // live-only PubSub, so the events reconcile itself causes (advanceStage's
-    // `board.card-moved`) need a subscriber already attached or the next
-    // stage's auto-kickoff is silently lost. Reconcile then runs THROUGH the
-    // sequential worker (enqueued below), so it is still processed before any
-    // live event it triggers.
+    // Subscriptions are forked first, but forkParked PARKS them until server
+    // activation — so reconcile (enqueued below, processed immediately by the
+    // unparked worker) cannot rely on the live PubSub for its own follow-
+    // through. That is why `reconcile` ends with a state-derived kickoff pass;
+    // the forked-first ordering still matters once activation opens the
+    // streams, so live events enqueue behind the reconcile item in the one
+    // sequential worker.
     yield* forkParked(
       Stream.runForEach(engine.streamDomainEvents, (event) => {
         if (
