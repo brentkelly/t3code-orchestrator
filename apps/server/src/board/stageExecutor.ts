@@ -109,11 +109,13 @@ export interface BoardStageExecutor {
 }
 
 /**
- * The single-step executor every stage this spec ships uses (D1/D15). It yields
- * the stage's one seeded step, and reports `complete` as soon as that step has
- * succeeded in the current run. It never escalates — the reactor owns the
- * recovery ladder (D13); escalation is reserved for a multi-round executor that
- * ran its sequence to the round cap without converging (t3o-16).
+ * The single-step executor every stage uses except the review loop (D1/D15). It
+ * yields the stage's one seeded step, and reports `complete` as soon as that
+ * step has succeeded in the current run. It never escalates — the reactor owns
+ * the recovery ladder (D13). t3o-16's `ReviewLoopExecutor` is the multi-round
+ * exception: it completes `blocked` when its sequence runs to the round cap
+ * without converging (the `escalate` arm stays part of the seam contract for a
+ * future executor, but no shipped executor emits it).
  */
 export const SimpleStageExecutor: BoardStageExecutor = {
   planNext({ config, runState }: BoardStagePlanInput): BoardStagePlan {

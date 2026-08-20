@@ -3228,9 +3228,17 @@ export function resolveBoardStageExecution(
 ): BoardStageExecution {
   const configured = board.pipeline[stageId];
   if (stageId === BOARD_SEED_STAGE_IDS.review) {
-    return configured !== undefined && isBoardReviewStageExecution(configured)
-      ? configured
-      : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
+    // Coerce absent / legacy-simple entries to the review default, then FORCE
+    // the build-mode + unattended invariants (D2/D6) even on a genuine review
+    // member: a hand-edited `{ kind: "review", mode: "plan" }` would otherwise
+    // pass through and strand the loop without a worktree. Enforced here, the
+    // one resolution point, so the reactor keeps reading `mode`/`humanInLoop`
+    // uniformly.
+    const base =
+      configured !== undefined && isBoardReviewStageExecution(configured)
+        ? configured
+        : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
+    return { ...base, mode: "build", humanInLoop: false };
   }
   return configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
 }
