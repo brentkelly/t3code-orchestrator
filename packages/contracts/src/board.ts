@@ -941,12 +941,20 @@ export function boardNonTerminalStepStates(board: BoardState): ReadonlyArray<Boa
 }
 
 /**
- * A card's total step invocations this stage entry (t3o-17, D5): the sum of
- * `attempt` across the card's step states. The number the reactor feeds the
- * per-stage-entry ceiling in `recoveryDecision`. Written to generalise over any
- * stage's step count — a `simple` stage has one step so this is that step's
- * `attempt`, and t3o-16's review loop, which runs several steps per entry, sums
- * across them so the compound rounds × phases × attempts bound is observable.
+ * A card's total step invocations this stage entry (t3o-17, D5): the number the
+ * reactor feeds the per-stage-entry ceiling in `recoveryDecision`. Computed as
+ * the sum of `attempt` across the card's step-state rows.
+ *
+ * Today the read model keeps exactly ONE step-state row per card (D4: one step
+ * at a time), so this equals the live step's `attempt` — sufficient for a
+ * `simple` stage, whose single step is the whole entry. It is written as a sum,
+ * not a single-row read, so it stays correct if a future model (t3o-16's review
+ * loop) tracks more than one step-state row per card at once. If instead that
+ * loop keeps one row and advances it step to step, the running total must be
+ * carried on `attempt` itself (it already does NOT reset per step, only per
+ * stage entry) rather than summed here — either way the ceiling is enforced by
+ * `recoveryDecision` on whatever total it is handed, which is the generic,
+ * unit-tested guarantee.
  */
 export function boardStageEntryInvocationCount(board: BoardState, cardId: BoardCardId): number {
   return (board.stepStates ?? [])

@@ -167,6 +167,13 @@ const make = Effect.gen(function* () {
     const prior = progressAtByThread.get(key);
     if (prior === undefined || Date.parse(at) > Date.parse(prior)) progressAtByThread.set(key, at);
   };
+  // Prune a thread's watermark once its step is done with (settled) or its
+  // thread is replaced (respawn) / abandoned (escalation) — a thread id is never
+  // revisited after that, so keeping its entry would leak the map without bound
+  // over a long-lived reactor.
+  const forgetThreadProgress = (threadId: ThreadId | null) => {
+    if (threadId !== null) progressAtByThread.delete(String(threadId));
+  };
   const isAfter = (candidate: string, floor: string): boolean => {
     const a = Date.parse(candidate);
     const b = Date.parse(floor);
@@ -783,6 +790,7 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     yield* releaseSlot(input.state);
+    forgetThreadProgress(input.state.threadId);
   });
 
   const recoverStep = Effect.fn("board-supervisor-recoverStep")(function* (input: {
@@ -843,6 +851,7 @@ const make = Effect.gen(function* () {
       // the pre-escalation state's `slotHeld` gates the release, and the decider
       // has set the persisted `slotHeld` to false, so a re-run releases nothing.
       yield* releaseSlot(input.state);
+      forgetThreadProgress(input.state.threadId);
       yield* schedule();
       return;
     }
@@ -880,6 +889,8 @@ const make = Effect.gen(function* () {
             threadId: input.state.threadId,
             createdAt: yield* nowIso,
           });
+          // The dead thread is replaced; its watermark will never be read again.
+          forgetThreadProgress(input.state.threadId);
         }
         threadId = yield* spawnStepThread({
           card: input.card,
