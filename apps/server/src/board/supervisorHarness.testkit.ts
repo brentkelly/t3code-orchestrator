@@ -194,12 +194,31 @@ export type Harness = {
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
 export function withGovernor(
-  input: { readonly board: BoardState; readonly settings: BoardSettings },
+  input: {
+    readonly board: BoardState;
+    readonly settings: BoardSettings;
+    /** Thread shells present BEFORE the reactor starts, so boot reconcile sees
+        the threads a seeded step-state fixture references as alive. */
+    readonly initialShells?: ReadonlyMap<string, OrchestrationThreadShell>;
+    /** What `git log -1 --format=%cI` answers in the stubbed driver — the
+        commit-liveness signal the timeout sweep reads. Defaults to "" (no
+        commit history). */
+    readonly latestCommitIso?: string;
+    /** The cached todo state per thread id (t3o-18): the reactor reads
+        `advancedAt` for the stall-reset / timeout-liveness signal and `hasList`
+        for the recovery nudge. Absent threads answer "no list". */
+    readonly threadTodos?: ReadonlyMap<
+      string,
+      { readonly advancedAt: string | null; readonly hasList: boolean }
+    >;
+  },
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
     const model = yield* Ref.make(readModel(input.board));
-    const shells = yield* Ref.make<ReadonlyMap<string, OrchestrationThreadShell>>(new Map());
+    const shells = yield* Ref.make<ReadonlyMap<string, OrchestrationThreadShell>>(
+      input.initialShells ?? new Map(),
+    );
     const seq = yield* Ref.make(0);
     const domainQueue = yield* Queue.unbounded<OrchestrationEvent>();
     const runtimeQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -231,6 +250,7 @@ export function withGovernor(
       latestSequence: Ref.get(seq),
     } as unknown as OrchestrationEngineService["Service"];
 
+    const threadTodos = input.threadTodos ?? new Map();
     const snapshotStub = {
       getCommandReadModel: () => Ref.get(model),
       getThreadShellById: (threadId: ThreadId) =>
@@ -240,6 +260,24 @@ export function withGovernor(
             return shell === undefined ? Option.none() : Option.some(shell);
           }),
         ),
+      // The board-owned method set (t3o-04/08/18): present so
+      // `boardSnapshotQueryMethodsOf` resolves the stub and the reactor's todo
+      // signal + boot sweep have something to call. Only `boardThreadTodo` is
+      // fixture-driven; the rest are inert.
+      boardCardDetail: () => Effect.succeed(null),
+      boardCardActivity: () => Effect.succeed([]),
+      boardPlanBody: () => Effect.succeed(null),
+      boardCardThreads: () => Effect.succeed([]),
+      boardCardIdForThread: () => Effect.succeed(null),
+      boardThreadTodo: (threadId: ThreadId) => {
+        const todo = threadTodos.get(String(threadId));
+        return Effect.succeed(
+          todo === undefined
+            ? null
+            : { hasList: todo.hasList, doneCount: 0, totalCount: todo.hasList ? 1 : 0, advancedAt: todo.advancedAt },
+        );
+      },
+      boardSweepThreadTodos: () => Effect.void,
     } as unknown as ProjectionSnapshotQuery["Service"];
 
     const providerStub = {
@@ -251,7 +289,14 @@ export function withGovernor(
     } as unknown as ServerSettingsService["Service"];
 
     const gitStub = {
-      execute: () => Effect.succeed({ stdout: "main", stderr: "", exitCode: 0 }),
+      execute: (request: { readonly args?: ReadonlyArray<string> }) =>
+        Effect.succeed({
+          // `git log -1 --format=%cI` answers the configured commit time (the
+          // sweep's commit-liveness signal); every other call answers "main".
+          stdout: request.args?.[0] === "log" ? (input.latestCommitIso ?? "") : "main",
+          stderr: "",
+          exitCode: 0,
+        }),
     } as unknown as GitVcsDriver.GitVcsDriver["Service"];
 
     const setupStub = {

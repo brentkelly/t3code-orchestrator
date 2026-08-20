@@ -29,8 +29,8 @@ import {
   type BoardPlansProposeCommand,
   type BoardPlanWriteCommand,
   BOARD_SEED_STAGE_IDS,
-  boardStageWithRole,
   type BoardState,
+  unmetBoardCardDependencies,
   type OrchestrationCommand,
   type OrchestrationReadModel,
   type ProjectId,
@@ -58,6 +58,13 @@ import { BoardToolError, BoardToolkit } from "./tools.ts";
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
   value !== undefined && value.trim().length > 0 ? value : fallback;
+
+// Byte caps on what a completion writes into the event log / read model /
+// every future detail frame (D8 discipline; matched to the contracts file's
+// bounded-payload stance — label names 64 bytes, shell titles 200).
+const BOARD_STEP_PAYLOAD_MAX_BYTES = 16_384;
+const BOARD_STEP_SUMMARY_MAX_BYTES = 2_048;
+const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
 
 const internalError = (cause: { readonly message?: string }): BoardToolError =>
   new BoardToolError({ code: "internal", message: nonEmpty(cause.message, "Board tool failed.") });
@@ -340,9 +347,13 @@ export const boardHandlers = {
       const threads = yield* deps.board
         .boardCardThreads(card.id)
         .pipe(Effect.mapError(internalError));
-      // A dependency is satisfied when it sits in the `done`-role stage — keyed
-      // on the role, not on a stage literally named "done" (D3).
-      const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
+      // `met` uses the ONE shared gating rule (`unmetBoardCardDependencies`,
+      // t3o-13 D1): done-role satisfies, and an ARCHIVED dependency stops
+      // gating entirely — otherwise this response would tell an agent to wait
+      // on a dependency the board's own `blocked` flag says is not gating.
+      const unmet = new Set(
+        unmetBoardCardDependencies({ board, dependsOn: card.dependsOn, cards: board.cards }),
+      );
       const dependencies = card.dependsOn.map((dependencyId) => {
         const dependency = board.cards.find((candidate) => candidate.id === dependencyId);
         return {
@@ -350,7 +361,7 @@ export const boardHandlers = {
           key: dependency?.key ?? dependencyId,
           title: dependency?.title ?? dependencyId,
           stage: dependency?.stage ?? BOARD_SEED_STAGE_IDS.backlog,
-          met: doneStageId !== null && dependency?.stage === doneStageId,
+          met: !unmet.has(dependencyId),
         };
       });
       return {
@@ -379,6 +390,22 @@ export const boardHandlers = {
       // nothing over a plain stringify.
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       const payload = input.payload === undefined ? null : JSON.stringify(input.payload);
+      // The completion enters the event log, the in-memory read model and every
+      // subscribeCard detail frame for the card's lifetime (D8 discipline:
+      // bodies never enter the read model) — one oversized call must not bloat
+      // them permanently, so both sizes are capped with an actionable reject.
+      if (payload !== null && utf8ByteLength(payload) > BOARD_STEP_PAYLOAD_MAX_BYTES) {
+        return yield* new BoardToolError({
+          code: "invalid-input",
+          message: `The payload serialises to ${utf8ByteLength(payload)} bytes, over the ${BOARD_STEP_PAYLOAD_MAX_BYTES}-byte cap. Keep the structured payload small (ids, verdicts, findings) and put prose in the summary.`,
+        });
+      }
+      if (utf8ByteLength(input.summary) > BOARD_STEP_SUMMARY_MAX_BYTES) {
+        return yield* new BoardToolError({
+          code: "invalid-input",
+          message: `The summary is ${utf8ByteLength(input.summary)} bytes, over the ${BOARD_STEP_SUMMARY_MAX_BYTES}-byte cap. Summarise in a few sentences; details belong in board_report_progress notes or the payload.`,
+        });
+      }
       const command: BoardCardCompleteStepCommand = {
         type: "board.card.complete-step",
         commandId: yield* mintCommandId,
@@ -451,13 +478,8 @@ export const boardHandlers = {
       const board = model.board ?? EMPTY_BOARD_STATE;
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
       const stage = input.stage ?? BOARD_SEED_STAGE_IDS.backlog;
-      // `brief` and `dependsOn` ride a follow-up update (the create command
-      // carries neither). Validate the ONE follow-up field that can be
-      // rejected — a dependency that does not exist — BEFORE creating the
-      // card, so a bad dependency never leaves a half-built card behind (and
-      // a retry never mints a duplicate). A brand-new card has no dependents,
-      // so its own dependencies can never close a cycle; existence is the
-      // only check the follow-up update would fail on.
+      // Pre-validate dependencies for the friendlier tool-shaped message; the
+      // decider re-checks existence inside the one atomic create below.
       const dependsOn = input.dependsOn ?? [];
       for (const dependencyId of dependsOn) {
         if (!board.cards.some((card) => card.id === dependencyId)) {
@@ -474,32 +496,26 @@ export const boardHandlers = {
           .map((card) => card.orderKey),
       );
       const cardId = BoardCardId.make(yield* mintUuid);
+      // ONE atomic command: the create command carries `brief` and `dependsOn`
+      // natively (t3o-06), so the card lands whole — no follow-up update whose
+      // rejection or a mid-write crash could strand a half-built card while
+      // the tool reports an error (inviting a retry that mints a duplicate).
       const create: BoardCardCreateCommand = {
         type: "board.card.create",
         commandId: yield* mintCommandId,
         cardId,
         projectId,
         title: input.title,
+        ...(input.brief === undefined ? {} : { brief: input.brief }),
+        ...(dependsOn.length > 0 ? { dependsOn } : {}),
         labels,
         stage,
         orderKey,
         keyPrefix: yield* resolveCardKeyPrefix(projectId, projectTitle),
         createdAt: yield* nowIso,
       };
+      // Stamps the agent actor (t3o-18, D11) via the deps-aware dispatch.
       yield* dispatch(deps, create);
-      // brief and dependsOn are set through a follow-up update — the create
-      // command carries neither.
-      if (input.brief !== undefined || dependsOn.length > 0) {
-        const update: BoardCardUpdateCommand = {
-          type: "board.card.update",
-          commandId: yield* mintCommandId,
-          cardId,
-          brief: input.brief,
-          dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
-          createdAt: yield* nowIso,
-        };
-        yield* dispatch(deps, update);
-      }
       // Read back the allocated key.
       const after = yield* readBoardState(deps);
       const created = after.cards.find((card) => card.id === cardId);

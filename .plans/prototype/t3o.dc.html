@@ -523,6 +523,37 @@ a:hover{text-decoration:underline}
                               </div>
                             </div>
                           </sc-if>
+                          <sc-if value="{{ c.todo }}" hint-placeholder-val="{{ false }}">
+                            <div style="display:flex;flex-direction:column;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
+                              <div style="display:flex;gap:3px">
+                                <sc-for list="{{ c.todo.pips }}" as="tp" hint-placeholder-count="0">
+                                  <span style="{{ tp.style }}"></span>
+                                </sc-for>
+                              </div>
+                              <div style="display:flex;align-items:center;gap:7px;min-width:0">
+                                <span style="font:500 10.5px var(--font-mono);color:var(--fg);flex:none">{{ c.todo.count }}</span>
+                                <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.todo.cur }}</span>
+                                <sc-if value="{{ c.todo.multi }}" hint-placeholder-val="{{ false }}">
+                                  <button type="button" onClick="{{ c.todo.toggle }}" title="{{ c.todo.tip }}" style="{{ c.todo.chipStyle }}">
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+                                    {{ c.todo.threadCount }}
+                                  </button>
+                                </sc-if>
+                              </div>
+                              <sc-if value="{{ c.todo.open }}" hint-placeholder-val="{{ false }}">
+                                <div style="display:flex;flex-direction:column;gap:5px;padding-top:2px">
+                                  <sc-for list="{{ c.todo.threads }}" as="tt" hint-placeholder-count="0">
+                                    <div style="display:flex;align-items:center;gap:6px;min-width:0">
+                                      <span style="{{ tt.dotStyle }}"></span>
+                                      <span style="font:500 10.5px var(--font-sans);color:var(--fg);flex:none">{{ tt.label }}</span>
+                                      <span style="font:400 10.5px var(--font-mono);color:var(--muted-fg);flex:none">{{ tt.count }}</span>
+                                      <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ tt.note }}</span>
+                                    </div>
+                                  </sc-for>
+                                </div>
+                              </sc-if>
+                            </div>
+                          </sc-if>
                           <sc-if value="{{ c.hasPlans }}" hint-placeholder-val="{{ false }}">
                             <div style="display:flex;align-items:center;gap:9px;margin-top:10px">
                               <div style="display:flex;gap:3px;flex:1;min-width:0">
@@ -902,6 +933,9 @@ a:hover{text-decoration:underline}
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;opacity:.7"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
                     </sc-if>
                     <span style="white-space:nowrap">{{ tb.label }}</span>
+                    <sc-if value="{{ tb.hasTodo }}" hint-placeholder-val="{{ false }}">
+                      <span style="font:500 10.5px var(--font-mono);color:var(--muted-fg);flex:none">{{ tb.todoCount }}</span>
+                    </sc-if>
                     <sc-if value="{{ tb.removable }}" hint-placeholder-val="{{ false }}">
                       <button type="button" onClick="{{ tb.remove }}" title="Close thread" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;flex:none;margin-right:-3px;border:none;border-radius:4px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
                         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
@@ -928,6 +962,54 @@ a:hover{text-decoration:underline}
                 </button>
               </div>
             </div>
+
+            <sc-if value="{{ cardThread.todo }}" hint-placeholder-val="{{ false }}">
+              <div style="flex:none;border-bottom:1px solid var(--border);background:var(--card)">
+                <div onClick="{{ cardThread.todo.toggle }}" style="display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer">
+                  <sc-if value="{{ cardThread.todo.open }}" hint-placeholder-val="{{ false }}">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m6 9 6 6 6-6"></path></svg>
+                    <span style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Todos</span>
+                  </sc-if>
+                  <sc-if value="{{ cardThread.todo.closed }}" hint-placeholder-val="{{ true }}">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m9 18 6-6-6-6"></path></svg>
+                  </sc-if>
+                  <span style="font:500 11px var(--font-mono);color:var(--fg);flex:none">{{ cardThread.todo.count }}</span>
+                  <sc-if value="{{ cardThread.todo.closed }}" hint-placeholder-val="{{ true }}">
+                    <span style="font:400 12px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ cardThread.todo.cur }}</span>
+                  </sc-if>
+                  <div style="display:flex;gap:3px;flex:1;min-width:56px;max-width:120px">
+                    <sc-for list="{{ cardThread.todo.pips }}" as="mp" hint-placeholder-count="0">
+                      <span style="{{ mp.style }}"></span>
+                    </sc-for>
+                  </div>
+                  <sc-if value="{{ cardThread.todo.open }}" hint-placeholder-val="{{ false }}">
+                    <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);flex:none">{{ cardThread.todo.updated }}</span>
+                  </sc-if>
+                </div>
+                <sc-if value="{{ cardThread.todo.open }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:7px;padding:0 12px 11px">
+                    <sc-for list="{{ cardThread.todo.items }}" as="ti" hint-placeholder-count="0">
+                      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                        <sc-if value="{{ ti.done }}" hint-placeholder-val="{{ false }}">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--success-fg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M20 6 9 17l-5-5"></path></svg>
+                        </sc-if>
+                        <sc-if value="{{ ti.doing }}" hint-placeholder-val="{{ false }}">
+                          <span style="width:11px;height:11px;flex:none;border-radius:99px;border:1.7px solid color-mix(in srgb,var(--info) 25%,transparent);border-top-color:var(--info-fg);animation:t3spin .8s linear infinite"></span>
+                        </sc-if>
+                        <sc-if value="{{ ti.pending }}" hint-placeholder-val="{{ false }}">
+                          <span style="width:11px;height:11px;flex:none;border-radius:99px;border:1.7px solid color-mix(in srgb,var(--fg) 18%,transparent)"></span>
+                        </sc-if>
+                        <span style="{{ ti.textStyle }}">{{ ti.text }}</span>
+                        <sc-if value="{{ ti.hasEl }}" hint-placeholder-val="{{ false }}">
+                          <span style="flex:1"></span>
+                          <span style="font:400 10.5px var(--font-mono);color:var(--muted-fg);flex:none">{{ ti.el }}</span>
+                        </sc-if>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
 
             <div ref="{{ msgScrollRef }}" style="flex:1;min-height:0;overflow-y:auto;padding:16px 16px 8px;display:flex;flex-direction:column;gap:14px">
               <sc-if value="{{ cardThread.empty }}" hint-placeholder-val="{{ false }}">
@@ -1475,6 +1557,65 @@ const REVIEWS = {
   },
 };
 
+// Agent todo lists: one list per thread on a card, index 0 = the main thread.
+const TODOS = {
+  "T3-193": [
+    {
+      label: "Picker grouping",
+      items: [
+        { t: "Read the worktree picker and its data source", s: "done" },
+        { t: "Sketch the env grouping rules", s: "done" },
+        { t: "Group rows by environment in the query", s: "doing", el: "1m 20s" },
+        { t: "Keep the flat list behind a preference", s: "todo" },
+        { t: "Update the picker tests", s: "todo" },
+      ],
+    },
+  ],
+  "T3-186": [
+    {
+      label: "Reducer cleanup",
+      items: [
+        { t: "Map event names to server ids", s: "done" },
+        { t: "Snapshot the current reducer tests", s: "done" },
+        { t: "Collapse the client reducer", s: "doing", el: "2m 10s" },
+        { t: "Delete the optimistic path", s: "todo" },
+        { t: "Re-run the replay benchmark", s: "todo" },
+      ],
+    },
+    {
+      label: "Migration spike",
+      note: "idle 2h",
+      items: [
+        { t: "Benchmark replay on 40k events", s: "done" },
+        { t: "Compare fold cost against the server path", s: "done" },
+        { t: "Write up the migration order", s: "done" },
+      ],
+    },
+  ],
+  "T3-188.5": [
+    {
+      label: "Threads in the modal",
+      items: [
+        { t: "Move the thread pane into the card modal", s: "done" },
+        { t: "Per-tab composer drafts", s: "done" },
+        { t: "Wire tab close and add", s: "doing", el: "4m 02s" },
+        { t: "Restore scroll position per tab", s: "todo" },
+      ],
+    },
+  ],
+  "T3-182": [
+    {
+      label: "Typed IPC",
+      items: [
+        { t: "Enumerate every desktopBridge call", s: "done" },
+        { t: "Generate the contract types", s: "done" },
+        { t: "Replace the untyped call sites", s: "done" },
+        { t: "Answer the review note on the fallback path", s: "doing", el: "38s" },
+      ],
+    },
+  ],
+};
+
 const THREADS = [
   { title: "Context window display shows stale count", age: "33m" },
   { title: "Datadog egress in mesh.advisor", age: "9h" },
@@ -1580,8 +1721,18 @@ class Component extends DCLogic {
       depHover: false,
       msgs: {},
       pending: {},
-      tabs: {},
+      tabs: (() => {
+        const out = {};
+        cards.forEach((c) => {
+          const ls = TODOS[c.key] || [];
+          if (ls.length > 1)
+            out[c.id] = ls.slice(1).map((l, i) => ({ id: "td" + i, label: l.label }));
+        });
+        return out;
+      })(),
       tab: {},
+      cardTodo: {},
+      todoOpen: {},
       briefOpen: {},
       composer: "",
       composerFocus: false,
@@ -1640,6 +1791,7 @@ class Component extends DCLogic {
       { who: "you", text: c.brief.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() },
       { who: "claude", text: copy.summary },
     ];
+    if ((TODOS[c.key] || []).length) out.push({ who: "event", text: "Todo list updated" });
     if (copy.question) out.push({ who: "claude", q: true, text: copy.question });
     return out;
   }
@@ -1992,6 +2144,37 @@ class Component extends DCLogic {
             : null;
     if (!kind) return null;
     return { kind, state: c.tstate || "stopped", title: c.title, id: c.id };
+  }
+
+  todoLists(c) {
+    return (c && TODOS[c.key]) || [];
+  }
+  todoStat(l) {
+    const done = l.items.filter((i) => i.s === "done").length;
+    const cur = l.items.filter((i) => i.s === "doing")[0];
+    return {
+      done,
+      total: l.items.length,
+      count: done + "/" + l.items.length,
+      cur: cur ? cur.t : "All steps done",
+      running: !!cur,
+    };
+  }
+  todoPip(i) {
+    return (
+      "flex:1;height:3px;border-radius:2px;background:" +
+      (i.s === "done"
+        ? "var(--success)"
+        : i.s === "doing"
+          ? "color-mix(in srgb,var(--info) 70%,transparent)"
+          : "color-mix(in srgb,var(--fg) 12%,transparent)")
+    );
+  }
+  // The card shows one list: awaiting input, else running, else most recent.
+  activeTodo(c) {
+    const ls = this.todoLists(c);
+    if (!ls.length) return null;
+    return ls.filter((l) => l.items.some((i) => i.s === "doing"))[0] || ls[0];
   }
 
   planCardsFor(key) {
@@ -2458,6 +2641,47 @@ class Component extends DCLogic {
         prLabel: hasPr ? "#" + c.pr.n : "",
         hasImage: c.brief.indexOf("<img") !== -1,
         hasMeta: hasDeps || hasPlan || hasPr,
+        todo: (() => {
+          const ls = this.todoLists(c);
+          const l = this.activeTodo(c);
+          if (!l || stacked || review) return null;
+          const s = this.todoStat(l);
+          const open = !!this.state.cardTodo[c.id];
+          return {
+            count: s.count,
+            cur: s.cur,
+            pips: l.items.map((i) => ({ style: this.todoPip(i) })),
+            multi: ls.length > 1,
+            threadCount: String(ls.length),
+            open: ls.length > 1 && open,
+            tip: ls.length > 1 ? "Show every thread on this task" : "",
+            chipStyle:
+              "display:inline-flex;align-items:center;gap:3px;height:18px;padding:0 5px;flex:none;border:1px solid " +
+              (open ? "color-mix(in srgb,var(--info) 45%,transparent)" : "var(--border)") +
+              ";border-radius:6px;background:" +
+              (open ? "color-mix(in srgb,var(--info) 10%,transparent)" : "var(--muted)") +
+              ";color:" +
+              (open ? "var(--info-fg)" : "var(--muted-fg)") +
+              ";font:500 10px var(--font-sans);cursor:pointer",
+            toggle: (e) => {
+              e.stopPropagation();
+              this.setState((st2) => ({
+                cardTodo: { ...st2.cardTodo, [c.id]: !st2.cardTodo[c.id] },
+              }));
+            },
+            threads: ls.map((x) => {
+              const xs = this.todoStat(x);
+              return {
+                label: x.label,
+                count: xs.count,
+                note: x.note || (xs.running ? "running" : "settled"),
+                dotStyle:
+                  "width:5px;height:5px;border-radius:99px;flex:none;background:" +
+                  (xs.running ? "var(--info)" : "color-mix(in srgb,var(--fg) 25%,transparent)"),
+              };
+            }),
+          };
+        })(),
         stacked,
         hasPlans: stacked && !review,
         planLabel: stacked ? planDone + "/" + plans.length + " plans" : "",
@@ -2946,7 +3170,12 @@ class Component extends DCLogic {
     const cardMaxed = !!st.cardMaxed;
     const ctCopy = active ? this.threadCopy(active) : null;
     const extraTabs = active ? st.tabs[active.id] || [] : [];
-    const mainLabel = ctCopy ? ctCopy.label.replace(" thread", "") : "Task thread";
+    const ctTodos = active ? this.todoLists(active) : [];
+    const mainLabel = ctTodos.length
+      ? ctTodos[0].label
+      : ctCopy
+        ? ctCopy.label.replace(" thread", "")
+        : "Task thread";
     const allTabs = [{ id: "main", label: mainLabel }].concat(extraTabs);
     const tabId = active
       ? allTabs.some((t) => t.id === st.tab[active.id])
@@ -2969,8 +3198,11 @@ class Component extends DCLogic {
             const on = t.id === tabId;
             const live = t.id === "main" && ctCopy ? ctCopy.state : null;
             const busy = !!st.pending[active.id + ":" + t.id];
+            const tl = ctTodos[i];
             return {
               label: t.label,
+              todoCount: tl ? this.todoStat(tl).count : "",
+              hasTodo: !!tl,
               tip: live === "waiting" ? "Awaiting your input" : "",
               working: live === "working" || busy,
               waiting: live === "waiting",
@@ -2990,14 +3222,14 @@ class Component extends DCLogic {
                 }));
               },
               style:
-                "display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:8px;cursor:pointer;font:" +
+                "display:inline-flex;align-items:center;gap:6px;height:26px;box-sizing:border-box;padding:0 9px;border-radius:8px;cursor:pointer;font:" +
                 (on ? "500" : "400") +
                 " 12px var(--font-sans);background:" +
                 (on ? "var(--card)" : "transparent") +
                 ";color:" +
                 (on ? "var(--fg)" : "var(--muted-fg)") +
-                ";box-shadow:" +
-                (on ? "0 0 0 1px var(--border)" : "none"),
+                ";border:1px solid " +
+                (on ? "var(--border)" : "transparent"),
             };
           }),
           addTab: () => {
@@ -3013,6 +3245,40 @@ class Component extends DCLogic {
               setTimeout(() => this.composerEl && this.composerEl.focus(), 0);
             }
           },
+          todo: (() => {
+            const idx = allTabs.map((t) => t.id).indexOf(tabId);
+            const l = ctTodos[idx];
+            if (!l) return null;
+            const s = this.todoStat(l);
+            const k = active.id + ":" + tabId;
+            const waiting = !!ctCopy && isMain && ctCopy.state === "waiting";
+            const open =
+              st.todoOpen[k] == null ? waiting || !s.running : !!st.todoOpen[k];
+            return {
+              open,
+              closed: !open,
+              count: s.count,
+              cur: s.cur,
+              pips: l.items.map((i) => ({ style: this.todoPip(i) })),
+              updated: l.note || (s.running ? "updated 40s ago" : "list settled"),
+              toggle: () =>
+                this.setState((x) => ({ todoOpen: { ...x.todoOpen, [k]: !open } })),
+              items: l.items.map((i) => ({
+                done: i.s === "done",
+                doing: i.s === "doing",
+                pending: i.s === "todo",
+                text: i.t,
+                hasEl: !!i.el,
+                el: i.el || "",
+                textStyle:
+                  i.s === "done"
+                    ? "font:400 12px var(--font-sans);color:var(--muted-fg);text-decoration:line-through;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    : i.s === "doing"
+                      ? "font:500 12.5px var(--font-sans);color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                      : "font:400 12px var(--font-sans);color:color-mix(in srgb,var(--muted-fg) 80%,transparent);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
+              })),
+            };
+          })(),
           empty: ctAll.length === 0 && !ctPending,
           emptyTitle: isMain
             ? "No thread on " + active.key + " yet"

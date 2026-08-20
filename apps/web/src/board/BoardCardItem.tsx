@@ -237,6 +237,7 @@ export function DraggableBoardCard({
   onSelect,
   onDragStart,
   onDragEnd,
+  onReorder,
   accentName,
   todos,
 }: {
@@ -248,14 +249,42 @@ export function DraggableBoardCard({
   readonly onSelect: (card: BoardCardShell) => void;
   readonly onDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
   readonly onDragEnd: () => void;
+  /** Keyboard analogue of the pointer drag: move one visible slot up/down. */
+  readonly onReorder: (card: BoardCardShell, direction: -1 | 1) => void;
   readonly accentName?: string | null | undefined;
   readonly todos?: BoardCardTodoContext | undefined;
 }) {
   return (
+    // Keyboard path: the card is a focusable button-role element — Enter/Space
+    // opens the detail dialog, whose stage actions are real buttons, so moving
+    // a card never REQUIRES the pointer drag (which has no keyboard analogue).
     <div
       draggable
-      className={cn("cursor-grab", dragging && "opacity-40")}
+      role="button"
+      tabIndex={0}
+      aria-label={`${card.key} — ${card.title}`}
+      className={cn(
+        "cursor-grab rounded-xl focus-visible:outline-2 focus-visible:outline-ring",
+        dragging && "opacity-40",
+      )}
       onClick={() => onSelect(card)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(card);
+          return;
+        }
+        // Ctrl/Cmd+Arrow reorders within the column — plain arrows stay free
+        // for scrolling and focus movement. Stage moves ride the detail
+        // dialog's stage actions (Enter opens it).
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          (event.key === "ArrowUp" || event.key === "ArrowDown")
+        ) {
+          event.preventDefault();
+          onReorder(card, event.key === "ArrowUp" ? -1 : 1);
+        }
+      }}
       onDragStart={(event) => onDragStart(card, event)}
       onDragEnd={onDragEnd}
     >

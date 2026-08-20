@@ -60,6 +60,9 @@ export interface BoardColumnDragProps {
   readonly onColumnDrop: (stage: BoardStageId, event: DragEvent<HTMLElement>) => void;
   readonly onCardDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
   readonly onCardDragEnd: () => void;
+  /** Keyboard reorder (Ctrl/Cmd+ArrowUp/Down on a focused card): the pointer
+      drag's keyboard analogue, moving the card one visible slot in its column. */
+  readonly onCardReorder: (card: BoardCardShell, direction: -1 | 1) => void;
 }
 
 export interface BoardColumnProps extends BoardColumnDragProps {
@@ -146,6 +149,7 @@ function ExpandedColumn({
   onColumnDrop,
   onCardDragStart,
   onCardDragEnd,
+  onCardReorder,
 }: BoardColumnProps) {
   // Cards may be created only into Backlog, Sprint or Planning (t3o-06a); the
   // add affordance is absent from the other five columns entirely.
@@ -237,6 +241,7 @@ function ExpandedColumn({
                   onSelect={onSelectCard}
                   onDragStart={onCardDragStart}
                   onDragEnd={onCardDragEnd}
+                  onReorder={onCardReorder}
                   accentName={accentNameFor(card.projectId)}
                   todos={todosFor(card.cardId)}
                 />

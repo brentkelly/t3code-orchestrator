@@ -134,7 +134,15 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
             const liveBuffer = yield* Queue.sliding<void>(1);
             yield* Effect.forkScoped(
               deps.orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter((event) => isBoardEvent(event) && event.aggregateId === input.cardId),
+                // Wake on ANY board event, not only ones aggregated on the open
+                // card: the detail embeds resolved dependencies/dependents with
+                // live stage/archive state, and those change under events fired
+                // on OTHER aggregate ids (a dependency moving to Done, another
+                // card adopting this one into its dependsOn). One card's detail
+                // re-read per coalesced burst (the sliding buffer above) is the
+                // cost; a stale dependency chip until an unrelated local event
+                // was the alternative.
+                Stream.filter((event) => isBoardEvent(event)),
                 Stream.runForEach(() => Queue.offer(liveBuffer, undefined)),
               ),
               { startImmediately: true },

@@ -128,7 +128,12 @@ export function BoardCardThreadPane({
           {threadLinks.map((link) => {
             const active = link.threadId === selectedThreadId;
             return (
-              <button
+              // The pill is a GROUP, not one button: nesting the unlink control
+              // inside the select button would be invalid HTML and made it
+              // keyboard-unreachable (it was a presentation-role span). The
+              // wrapper draws the pill; select and unlink are real sibling
+              // buttons, each focusable in its own right.
+              <span
                 className={cn(
                   // The tab strip scrolls, so its overflow clips anything drawn
                   // outside a pill's border box — an outer ring shadow loses its
@@ -140,48 +145,53 @@ export function BoardCardThreadPane({
                   link.tombstoned && "line-through",
                 )}
                 key={link.threadId}
-                onClick={() => onSelectThread(link.threadId)}
-                title={link.tombstoned ? "Deleted thread" : link.role}
-                type="button"
               >
-                {link.awaitingInput ? (
-                  <span
-                    className="size-2 shrink-0 rounded-full bg-info"
-                    title="Awaiting your input"
-                  />
-                ) : link.threadState === "working" ? (
-                  <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="Working" />
-                ) : (
-                  <MessageSquareIcon className="size-3 shrink-0 opacity-70" />
-                )}
-                <span className="max-w-40 truncate whitespace-nowrap">
-                  {link.title ?? "Deleted thread"}
-                </span>
-                {(() => {
-                  // Per-tab todo counts (t3o-18): the point of tabs is choosing
-                  // between threads, and "3/9" answers that better than a title.
-                  const todo = threadTodos?.get(link.threadId);
-                  const total = todo?.todoTotal ?? 0;
-                  return total === 0 ? null : (
-                    <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
-                      {todo?.todoDone ?? 0}/{total}
-                    </span>
-                  );
-                })()}
+                <button
+                  className="inline-flex min-w-0 items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-ring"
+                  onClick={() => onSelectThread(link.threadId)}
+                  title={link.tombstoned ? "Deleted thread" : link.role}
+                  type="button"
+                >
+                  {link.awaitingInput ? (
+                    <span
+                      className="size-2 shrink-0 rounded-full bg-info"
+                      title="Awaiting your input"
+                    />
+                  ) : link.threadState === "working" ? (
+                    <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="Working" />
+                  ) : (
+                    <MessageSquareIcon className="size-3 shrink-0 opacity-70" />
+                  )}
+                  <span className="max-w-40 truncate whitespace-nowrap">
+                    {link.title ?? "Deleted thread"}
+                  </span>
+                  {(() => {
+                    // Per-tab todo counts (t3o-18): the point of tabs is choosing
+                    // between threads, and "3/9" answers that better than a title.
+                    const todo = threadTodos?.get(link.threadId);
+                    const total = todo?.todoTotal ?? 0;
+                    return total === 0 ? null : (
+                      <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+                        {todo?.todoDone ?? 0}/{total}
+                      </span>
+                    );
+                  })()}
+                </button>
                 {active && !link.tombstoned ? (
-                  <span
-                    className="-mr-1 inline-flex size-[15px] shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                  <button
+                    aria-label="Unlink thread"
+                    className="-mr-1 inline-flex size-[15px] shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
                     onClick={(event) => {
                       event.stopPropagation();
                       onUnlinkThread(link.threadId);
                     }}
-                    role="presentation"
                     title="Unlink thread"
+                    type="button"
                   >
                     <XIcon className="size-2.5" />
-                  </span>
+                  </button>
                 ) : null}
-              </button>
+              </span>
             );
           })}
           <BoardCardThreadAddMenu

@@ -50,7 +50,10 @@ describe("board settings defaults", () => {
   });
 
   it("the default Building stage is runnable (real instance + model), not a placeholder", () => {
-    const building = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building);
+    const building = resolveBoardStageExecution(
+      DEFAULT_BOARD_SETTINGS,
+      BOARD_SEED_STAGE_IDS.building,
+    );
     expect(building.autoExecute).toBe(true);
     expect(building.mode).toBe("build");
     expect(building.prompt).toBe(DEFAULT_BOARD_BUILD_PROMPT);
@@ -101,9 +104,9 @@ describe("board settings round-trip", () => {
 
 describe("resolveBoard* helpers", () => {
   it("resolves a stage's execution config, or the all-defaults config when the stage has none", () => {
-    expect(resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building)).toEqual(
-      DEFAULT_BOARD_PIPELINE[BOARD_SEED_STAGE_IDS.building],
-    );
+    expect(
+      resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building),
+    ).toEqual(DEFAULT_BOARD_PIPELINE[BOARD_SEED_STAGE_IDS.building]);
     // A stage absent from the pipeline map runs nothing — the all-defaults
     // (auto-execute off) config.
     expect(resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.ready)).toEqual(
@@ -187,7 +190,10 @@ describe("stage execution resolution reflects edits (D4)", () => {
         },
       },
     });
-    const before = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building);
+    const before = resolveBoardStageExecution(
+      DEFAULT_BOARD_SETTINGS,
+      BOARD_SEED_STAGE_IDS.building,
+    );
     const after = resolveBoardStageExecution(edited, BOARD_SEED_STAGE_IDS.building);
     // The default resolves to a null model (the global default); the edit
     // resolves to the concrete override — the two diverge exactly at the model.

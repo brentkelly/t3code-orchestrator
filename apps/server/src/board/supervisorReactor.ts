@@ -68,6 +68,7 @@ import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
   provisionBoardCardWorktree,
+  reclaimBoardCardWorktree,
   resolveBoardCardBaseRef,
   runBoardCardWorktreeSetup,
 } from "./worktree.ts";
@@ -88,6 +89,10 @@ export interface SupervisorReactorShape {
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   /** Reconcile every non-terminal step against the live world (boot / test). */
   readonly reconcile: Effect.Effect<void>;
+  /** One timeout-sweep pass over running unattended steps (t3o-17). In
+      production the worker runs it on a timer; exposed so tests can drive the
+      liveness clock deterministically. */
+  readonly sweep: Effect.Effect<void>;
   /** Resolves when the internal queue is empty and idle (test hook). */
   readonly drain: Effect.Effect<void>;
 }
@@ -98,7 +103,14 @@ export class SupervisorReactor extends Context.Service<SupervisorReactor, Superv
 
 type SupervisorInput =
   | { readonly source: "domain"; readonly event: OrchestrationEvent }
-  | { readonly source: "runtime"; readonly event: ProviderRuntimeEvent };
+  | { readonly source: "runtime"; readonly event: ProviderRuntimeEvent }
+  // Boot reconcile, run THROUGH the worker so it is serialised before the live
+  // events it causes (the subscriptions attach first — see `start`).
+  | { readonly source: "reconcile" }
+  // Periodic timeout sweep (t3o-17): the edge-triggered turn.completed path
+  // cannot see a turn that HANGS, so a timer funnels overdue running steps
+  // into the same recovery ladder.
+  | { readonly source: "timeout-sweep" };
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -167,6 +179,25 @@ const make = Effect.gen(function* () {
   // asserted only that the model still had tokens to spend. It is also durable
   // rather than in-memory, so a restart no longer costs an un-reset stall.
   const boardQueries = boardSnapshotQueryMethodsOf(snapshotQuery);
+  // Threads spawned for a step whose admit was then rejected (see
+  // admitBuildCandidate): their turn must be stopped, but an interrupt fired
+  // milliseconds after spawn races provider session startup and no-ops. The
+  // set makes it durable — the runtime stream's `session.started` for an
+  // orphan re-dispatches the interrupt once a session exists to interrupt.
+  // Entries clear on interrupt or on the orphan's own turn.completed, so the
+  // set stays bounded.
+  const orphanedThreads = new Set<string>();
+  const interruptOrphan = Effect.fn("board-supervisor-interruptOrphan")(function* (
+    threadId: ThreadId,
+  ) {
+    yield* dispatch({
+      type: "thread.turn.interrupt",
+      commandId: yield* commandId("interrupt-orphan"),
+      threadId,
+      createdAt: yield* nowIso,
+    });
+  });
+
   const isAfter = (candidate: string, floor: string): boolean => {
     const a = Date.parse(candidate);
     const b = Date.parse(floor);
@@ -313,19 +344,38 @@ const make = Effect.gen(function* () {
       return null;
     }
     const branch = boardCardWorktreeBranchName(card);
-    // The base ref for a top-level card is the project's default branch; a
+    // The base ref for a top-level card is the project's DEFAULT branch — not
+    // whatever the project checkout happens to have checked out. origin/HEAD
+    // names it when a remote exists; a purely local repo falls back to the
+    // current branch, with a detached HEAD (`rev-parse` answers the literal
+    // string 'HEAD') treated as a resolution failure rather than a branch. A
     // sub-board plan card branches off its parent's integration branch (D12).
-    const defaultBranch = yield* git
-      .execute({
-        operation: "boardCardWorktree.defaultBranch",
-        cwd,
-        args: ["rev-parse", "--abbrev-ref", "HEAD"],
-        timeoutMs: 10_000,
-      })
-      .pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.catchCause(() => Effect.succeed("")),
-      );
+    const gitRef = (args: ReadonlyArray<string>) =>
+      git
+        .execute({
+          operation: "boardCardWorktree.defaultBranch",
+          cwd,
+          args: [...args],
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.catchCause(() => Effect.succeed("")),
+        );
+    const originHead = yield* gitRef([
+      "symbolic-ref",
+      "--quiet",
+      "--short",
+      "refs/remotes/origin/HEAD",
+    ]);
+    const currentBranch = yield* gitRef(["rev-parse", "--abbrev-ref", "HEAD"]);
+    const defaultBranch =
+      originHead.startsWith("origin/") && originHead.length > "origin/".length
+        ? originHead.slice("origin/".length)
+        : currentBranch === "HEAD"
+          ? ""
+          : currentBranch;
     const baseRefName = resolveBoardCardBaseRef({
       card,
       cards: (yield* readBoard).cards,
@@ -341,14 +391,28 @@ const make = Effect.gen(function* () {
       });
       return null;
     }
-    yield* dispatch({
-      type: "board.card.provision-worktree",
-      commandId: yield* commandId("provision-worktree"),
-      cardId: card.id,
-      branch,
-      baseRefName,
-      createdAt: yield* nowIso,
-    });
+    // Observe the provision dispatch: a rejected command (e.g. the worktree is
+    // not in a provisionable state) must abort BEFORE the git effect, or the
+    // tree lands on disk untracked while `record-worktree` is then rejected too.
+    const provisionAccepted = yield* engine
+      .dispatch({
+        type: "board.card.provision-worktree",
+        commandId: yield* commandId("provision-worktree"),
+        cardId: card.id,
+        branch,
+        baseRefName,
+        createdAt: yield* nowIso,
+      })
+      .pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: provision-worktree rejected; skipping git work", {
+            cardId: card.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(false)),
+        ),
+      );
+    if (!provisionAccepted) return null;
     const provisioned = yield* provisionBoardCardWorktree({
       projectCwd: cwd,
       branch,
@@ -505,6 +569,11 @@ const make = Effect.gen(function* () {
     // fails it; on failure we REFUSE before acquiring a slot, so the invariant
     // blocks rather than stranding a slot.
     const board = yield* readBoard;
+    // Re-check on the fresh read: external RPC commands are not serialised with
+    // the worker, so the card may have been archived since `schedule` snapshot
+    // it — admitting would be rejected AFTER the slot was acquired.
+    const fresh = board.cards.find((candidate) => candidate.id === card.id);
+    if (fresh === undefined || fresh.archivedAt !== null) return;
     const liveWriters = (board.stepStates ?? [])
       .filter(
         (candidate) =>
@@ -559,15 +628,49 @@ const make = Effect.gen(function* () {
       runSetup: true,
       text: stepPromptFor(card, state),
     });
-    yield* dispatch({
-      type: "board.card.admit-step",
-      commandId: yield* commandId("admit-step"),
-      cardId: card.id,
-      stepId: state.stepId,
-      admitted: true,
-      threadId,
-      createdAt: yield* nowIso,
-    });
+    // Observe the admit dispatch (the generic `dispatch` helper swallows
+    // rejections): if admit-step does not land, the persisted `slotHeld` stays
+    // false and the settle path can never release the slot just acquired — a
+    // permanent under-capacity leak. Release it here and unlink the orphaned
+    // thread instead.
+    const admitLanded = yield* engine
+      .dispatch({
+        type: "board.card.admit-step",
+        commandId: yield* commandId("admit-step"),
+        cardId: card.id,
+        stepId: state.stepId,
+        admitted: true,
+        threadId,
+        createdAt: yield* nowIso,
+      })
+      .pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: admit-step rejected after acquire; releasing slot", {
+            cardId: card.id,
+            stepId: state.stepId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(false)),
+        ),
+      );
+    if (!admitLanded) {
+      yield* slots.release(state.providerInstanceId);
+      // The spawn already started an agent turn — interrupt it so the orphan
+      // is not left burning tokens against a step the board refused to admit.
+      // The immediate dispatch only lands if the provider session has already
+      // bound (a slow admit); the usual case is caught durably by the
+      // orphanedThreads set — the runtime `session.started` for this thread
+      // re-dispatches the interrupt once there is a session to interrupt.
+      orphanedThreads.add(String(threadId));
+      yield* interruptOrphan(threadId);
+      yield* dispatch({
+        type: "board.card.unlink-thread",
+        commandId: yield* commandId("unlink-orphan"),
+        cardId: card.id,
+        threadId,
+        createdAt: yield* nowIso,
+      });
+    }
   });
 
   // A plan-mode step holds no slot and needs no worktree (D5): spawn it directly
@@ -640,9 +743,15 @@ const make = Effect.gen(function* () {
         continue;
       }
       // A build-mode step needs a ready worktree to spawn into; a card whose
-      // worktree is still provisioning is re-offered once it lands.
-      const worktreePath =
+      // worktree is still provisioning is re-offered once it lands. A null or
+      // FAILED worktree is retried right here (the decider permits
+      // re-provisioning a failed one), so a provisioning failure is a visible,
+      // retried step — never a silently wedged pending step.
+      let worktreePath =
         card.worktree !== null && card.worktree.status === "ready" ? card.worktree.path : null;
+      if (worktreePath === null && (card.worktree === null || card.worktree.status === "failed")) {
+        worktreePath = yield* ensureWorktree(card);
+      }
       if (worktreePath === null) continue;
       const key = `${String(card.id)}::${state.stepId}`;
       entries.set(key, {
@@ -677,16 +786,56 @@ const make = Effect.gen(function* () {
   const beginStageRun = Effect.fn("board-supervisor-beginStageRun")(function* (input: {
     readonly card: BoardCard;
     readonly onDemand: boolean;
+    /** Reconcile's end-of-boot kickoff pass (see `reconcile`): FIRST entries
+        only — a re-entry's clean human thread stays a human action (drag /
+        on-demand), never a restart side effect. */
+    readonly bootPass?: boolean;
   }) {
     const { card, onDemand } = input;
+    const bootPass = input.bootPass === true;
     const board = yield* readBoard;
     const stage = boardStageById(board, card.stage);
     if (stage === null) return;
-    // Never trample a manually adopted thread for this stage (D7).
-    if (hasLiveStageThread(card, card.stage)) return;
-    // One step at a time (D4): do not start a run while one is live.
+    // One step at a time (D4): do not start a run while one is live. The one
+    // exception is `stalled` (t3o-17): supervision has given up and nothing is
+    // running, so an EXPLICIT on-demand start is the human's retry affordance
+    // — it supersedes the stalled step (settled abandoned; its slot was
+    // already released at escalation) instead of no-opping, which would leave
+    // a stalled card with a dead thread no exit but archive → unarchive. The
+    // supersede runs BEFORE the live-stage-thread guard: the stalled step's
+    // own thread link (role = step id = stage id on a simple stage, never
+    // tombstoned at escalation) would otherwise trip that guard first, and it
+    // is unlinked here for the same reason.
     const existing = boardCardStepState(board, card.id);
-    if (existing !== null && !isBoardTerminalStepStatus(existing.status)) return;
+    const supersedeStalled = onDemand && existing !== null && existing.status === "stalled";
+    if (supersedeStalled) {
+      yield* settleStep({ card, state: existing, outcome: "abandoned" });
+      if (existing.threadId !== null) {
+        yield* dispatch({
+          type: "board.card.unlink-thread",
+          commandId: yield* commandId("unlink-stalled"),
+          cardId: card.id,
+          threadId: existing.threadId,
+          createdAt: yield* nowIso,
+        });
+      }
+      // The adopted-thread guard still applies (D7): superseding clears the
+      // stalled step's OWN link, but a live stage thread beyond it — one a
+      // human adopted — must not be trampled by a fresh spawn. The stalled
+      // step is settled either way, so that adopted conversation is now the
+      // stage's thread.
+      const adopted = card.threadLinks.some(
+        (link) =>
+          link.role === card.stage &&
+          link.tombstonedAt === null &&
+          link.threadId !== existing.threadId,
+      );
+      if (adopted) return;
+    } else {
+      // Never trample a manually adopted thread for this stage (D7).
+      if (hasLiveStageThread(card, card.stage)) return;
+      if (existing !== null && !isBoardTerminalStepStatus(existing.status)) return;
+    }
     const settings = yield* boardSettings;
     const exec = resolveBoardStageExecution(settings, card.stage);
     // Auto-kickoff fires only for an auto-executing stage; on-demand always runs.
@@ -697,6 +846,10 @@ const make = Effect.gen(function* () {
     // human-in-the-loop conversation. This is reactor policy, orthogonal to the
     // executor's "what runs next".
     const firstEntry = !completions.some((completion) => completion.stepId === card.stage);
+    // The boot pass only ever STARTS fresh work (or resumes an executor-driven
+    // continuation below); a re-entry is skipped — its clean human thread must
+    // not re-open on every server restart.
+    if (bootPass && !firstEntry) return;
     const model = resolveBoardStageModelSelection(exec.model);
     // Ask the stage executor what runs next (D15): the reactor delegates the
     // "what to execute" decision rather than computing it inline. A card
@@ -717,6 +870,34 @@ const make = Effect.gen(function* () {
       completions,
       runState: { round: 1, completedStepIds: [] },
     });
+    if (plan.kind === "complete") {
+      // The executor considers this entry already complete — a multi-step
+      // executor plans from the card's ALL-TIME completions, so a review loop
+      // that previously converged or exhausted its rounds reports `complete`
+      // forever. A re-entry drag-back or an explicit on-demand request still
+      // deserves a conversation (D7): open a clean human-in-the-loop thread on
+      // the stage's own step id, exactly as a simple-stage re-entry does.
+      // Never from the boot pass, though — a restart is not a human action.
+      if (bootPass) return;
+      yield* dispatch({
+        type: "board.card.select-step",
+        commandId: yield* commandId("select-step"),
+        cardId: card.id,
+        stepId: card.stage,
+        stepLabel: stage.label,
+        prompt: "",
+        providerInstanceId: model.instanceId,
+        model: model.model,
+        mode: exec.mode,
+        humanInLoop: true,
+        maxAttempts: exec.maxAttempts,
+        timeoutMs: exec.timeoutMs,
+        createdAt: yield* nowIso,
+      });
+      if (exec.mode === "build") yield* ensureWorktree(card);
+      yield* schedule();
+      return;
+    }
     if (plan.kind !== "run") return;
     // Mode (D5) and human-in-the-loop (D5/D6/D7) are reactor policy layered onto
     // the executor's step: a re-entry forces a clean human-in-the-loop thread
@@ -828,6 +1009,12 @@ const make = Effect.gen(function* () {
           humanInLoop,
           maxAttempts: plan.maxAttempts,
           timeoutMs: plan.timeoutMs,
+          // An intra-stage continuation carries the stage entry's running
+          // invocation total forward (t3o-17, D5): the projector keeps one
+          // step-state row per card, so without the carry each phase selection
+          // would reset the per-stage-entry ceiling and the review loop's real
+          // bound would become rounds × phases × ceiling.
+          priorInvocations: boardStageEntryInvocationCount(board, card.id),
           createdAt: yield* nowIso,
         });
         if (exec.mode === "build") yield* ensureWorktree(card);
@@ -1036,13 +1223,24 @@ const make = Effect.gen(function* () {
     const found = stepThreadCard(board, threadId);
     if (found === null) return;
     if (found.state.status !== "running" && found.state.status !== "awaiting-input") return;
+    // Only a SUCCEEDED completion hands the step to the completion handler for
+    // good. A `failed`/`blocked` completion must not disarm death detection —
+    // after a failure + recovery nudge, a retry thread that dies silently
+    // still needs to be recovered here.
     const completed = boardCardStepCompletions(board, found.card.id).some(
-      (entry) => entry.stepId === found.state.stepId,
+      (entry) => entry.stepId === found.state.stepId && entry.outcome === "succeeded",
     );
     if (completed) return; // the completion handler owns this step
     const shell = yield* snapshotQuery
       .getThreadShellById(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
+    // Another turn is already live on the thread — typically the recovery
+    // nudge `handleStepCompleted` sent for a `failed` completion moments
+    // before this turn.completed arrived. The thread is not dead; the live
+    // turn's own completion will re-run this test.
+    if (shell !== undefined && shell.session !== null && shell.session.activeTurnId !== null) {
+      if (!shell.hasPendingUserInput) return;
+    }
     if (shell !== undefined && shell.hasPendingUserInput) {
       // A proper structured question — "Input needed", not a failure, no retry
       // consumed (D13). Move (or keep) the step on the human gate. A no-op when
@@ -1179,11 +1377,51 @@ const make = Effect.gen(function* () {
   ) {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
+    if (card === undefined) return;
     const state = boardCardStepState(board, event.payload.cardId);
-    if (card === undefined || state === null || isBoardTerminalStepStatus(state.status)) return;
-    yield* settleStep({ card, state, outcome: "abandoned" });
-    // The abandoned step released its slot — offer it to whatever is queued.
-    yield* schedule();
+    if (state !== null && !isBoardTerminalStepStatus(state.status)) {
+      yield* settleStep({ card, state, outcome: "abandoned" });
+      // The abandoned step released its slot — offer it to whatever is queued.
+      yield* schedule();
+    }
+    // Reclaim the card's worktree at archive (t3o-09, D6/D15): remove it only
+    // when clean and pushed, otherwise record why it was kept — without this,
+    // every archived card leaks its worktree and `board/*` branch on disk.
+    if (card.worktree === null || card.worktree.status !== "ready" || card.worktree.path === null) {
+      return;
+    }
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const cwd = projectCwd(model, card);
+    if (cwd === null) return;
+    const reclaimed = yield* reclaimBoardCardWorktree({
+      projectCwd: cwd,
+      worktreePath: card.worktree.path,
+    }).pipe(
+      Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+      Effect.map(Option.some),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: worktree reclaim failed", {
+          cardId: card.id,
+          cause: Cause.pretty(cause),
+        }).pipe(
+          Effect.as(
+            Option.none<{
+              readonly outcome: "removed" | "blocked";
+              readonly reason: string | null;
+            }>(),
+          ),
+        ),
+      ),
+    );
+    if (Option.isNone(reclaimed)) return;
+    yield* dispatch({
+      type: "board.card.reclaim-worktree",
+      commandId: yield* commandId("reclaim-worktree"),
+      cardId: card.id,
+      outcome: reclaimed.value.outcome,
+      ...(reclaimed.value.reason === null ? {} : { reason: reclaimed.value.reason }),
+      createdAt: yield* nowIso,
+    });
   });
 
   // A card was created (D10): if it landed in an auto-executing stage, kick off
@@ -1223,6 +1461,12 @@ const make = Effect.gen(function* () {
       );
     }
     const board = yield* readBoard;
+    // Cards whose step reconcile settles as succeeded: `continueStage` may
+    // auto-advance them, and the `board.card-moved` that publishes goes into a
+    // live-only PubSub whose subscribers are PARKED until server activation
+    // (forkParked) — so their auto-kickoff must be re-derived from state at
+    // the end of this pass instead of riding the stream.
+    const advanced: BoardCard["id"][] = [];
     for (const state of boardNonTerminalStepStates(board)) {
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined) continue;
@@ -1254,6 +1498,7 @@ const make = Effect.gen(function* () {
           // stage, or resume the next round-scoped step of a multi-step loop
           // whose phase settled during downtime (t3o-16).
           yield* continueStage({ card, state });
+          advanced.push(card.id);
           break;
         case "recover":
           yield* recoverStep({ card, state });
@@ -1272,6 +1517,23 @@ const make = Effect.gen(function* () {
     // governor: re-admit what now fits, re-queue the rest. Slot accounting
     // reconciles to zero once all work drains, including after a forced restart.
     yield* schedule();
+    // Kickoff pass for the cards reconcile itself advanced: their card-moved
+    // events had no live subscriber (see `advanced` above), so the next
+    // stage's auto-kickoff is re-derived from state. `bootPass` restricts it
+    // to first entries (or executor-driven continuations) — a re-entry's
+    // clean human thread never opens as a restart side effect — and
+    // beginStageRun's own guards (autoExecute, live thread, live step) make
+    // the pass idempotent.
+    if (advanced.length > 0) {
+      const settled = yield* readBoard;
+      for (const cardId of advanced) {
+        const card = settled.cards.find((candidate) => candidate.id === cardId);
+        if (card === undefined || card.archivedAt !== null) continue;
+        const state = boardCardStepState(settled, card.id);
+        if (state !== null && !isBoardTerminalStepStatus(state.status)) continue;
+        yield* beginStageRun({ card, onDemand: false, bootPass: true });
+      }
+    }
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: reconciliation failed", { cause: Cause.pretty(cause) }),
@@ -1302,12 +1564,78 @@ const make = Effect.gen(function* () {
     }
   };
 
+  // Enforce `timeoutMs` on unattended running steps (t3o-17): recovery is
+  // otherwise edge-triggered on turn.completed, so a turn that HANGS (or whose
+  // completion event was dropped) holds its slot unsupervised forever. Overdue
+  // steps funnel into the same recovery ladder — nudge, then escalate — so a
+  // hung step is eventually landed `stalled` and its slot released. Human-in-
+  // the-loop runs are exempt (a human is the pacing, per the contracts doc).
+  const sweepTimeouts = Effect.gen(function* () {
+    const board = yield* readBoard;
+    const nowMs = Date.parse(yield* nowIso);
+    for (const state of board.stepStates ?? []) {
+      if (state.status !== "running" || state.humanInLoop) continue;
+      if (state.timeoutMs <= 0) continue;
+      // The clock runs from the LATEST life sign, using the same two OR'd
+      // progress sources as recovery (t3o-17 D2, re-pointed by t3o-18 D16): the
+      // last nudge/start, the step thread's todo list ADVANCING (`advancedAt` on
+      // `board_thread_todos`), and — checked below, only once a step already
+      // looks overdue — a fresh commit on the card's branch. Without this, a
+      // healthy hours-long turn would be nudged mid-turn every timeoutMs and
+      // marched toward the stall ceiling.
+      const todo = yield* threadTodoState(state.threadId);
+      const referenceMs = Math.max(
+        ...[state.lastNudgeAt ?? state.startedAt, todo?.advancedAt ?? null]
+          .filter((value): value is string => value != null)
+          .map((value) => Date.parse(value))
+          .filter((value) => Number.isFinite(value)),
+      );
+      if (!Number.isFinite(referenceMs) || nowMs - referenceMs <= state.timeoutMs) continue;
+      const card = board.cards.find((candidate) => candidate.id === state.cardId);
+      if (card === undefined || card.archivedAt !== null) continue;
+      const worktreePath = card.worktree?.path ?? null;
+      if (state.mode === "build" && worktreePath !== null) {
+        const committedAt = yield* latestCommitIso(worktreePath);
+        const committedMs = committedAt === null ? Number.NaN : Date.parse(committedAt);
+        if (Number.isFinite(committedMs) && nowMs - committedMs <= state.timeoutMs) continue;
+      }
+      yield* recoverStep({ card, state });
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: timeout sweep failed", { cause: Cause.pretty(cause) }),
+    ),
+  );
+
   const processInput = (input: SupervisorInput) => {
-    if (input.source === "domain") return processDomainEvent(input.event);
-    const threadId = ThreadId.make(String(input.event.threadId));
-    if (input.event.type === "turn.completed") return handleTurnCompleted(threadId);
-    if (input.event.type === "user-input.requested") return handleInputRequested(threadId);
-    return Effect.void;
+    switch (input.source) {
+      case "domain":
+        return processDomainEvent(input.event);
+      case "runtime": {
+        const threadId = ThreadId.make(String(input.event.threadId));
+        if (input.event.type === "session.started") {
+          // Only enqueued for orphans (see `start`): the session the spawn
+          // raced now exists — deliver the durable interrupt.
+          if (!orphanedThreads.delete(String(threadId))) return Effect.void;
+          return interruptOrphan(threadId);
+        }
+        if (input.event.type === "turn.completed") {
+          // An orphan whose turn ended needs no interrupt any more.
+          orphanedThreads.delete(String(threadId));
+          return handleTurnCompleted(threadId);
+        }
+        // An ordinary agent question (t3o-18, D13): re-sourced from the runtime
+        // event on the stream the reactor already consumes, so it fires for
+        // EVERY input request rather than only the ones a now-deleted board tool
+        // remembered to double-report.
+        if (input.event.type === "user-input.requested") return handleInputRequested(threadId);
+        return Effect.void;
+      }
+      case "reconcile":
+        return reconcile;
+      case "timeout-sweep":
+        return sweepTimeouts;
+    }
   };
 
   const processInputSafely = (input: SupervisorInput) =>
@@ -1317,7 +1645,7 @@ const make = Effect.gen(function* () {
           ? Effect.failCause(cause)
           : Effect.logWarning("board supervisor failed to process input", {
               source: input.source,
-              eventType: input.event.type,
+              eventType: "event" in input ? input.event.type : input.source,
               cause: Cause.pretty(cause),
             }),
       ),
@@ -1326,8 +1654,13 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const start: SupervisorReactorShape["start"] = Effect.fn("board-supervisor-start")(function* () {
-    // The server restarts mid-step: reconcile persisted step state first.
-    yield* reconcile;
+    // Subscriptions are forked first, but forkParked PARKS them until server
+    // activation — so reconcile (enqueued below, processed immediately by the
+    // unparked worker) cannot rely on the live PubSub for its own follow-
+    // through. That is why `reconcile` ends with a state-derived kickoff pass;
+    // the forked-first ordering still matters once activation opens the
+    // streams, so live events enqueue behind the reconcile item in the one
+    // sequential worker.
     yield* forkParked(
       Stream.runForEach(engine.streamDomainEvents, (event) => {
         if (
@@ -1345,17 +1678,39 @@ const make = Effect.gen(function* () {
     );
     yield* forkParked(
       Stream.runForEach(providerService.streamEvents, (event) => {
-        // `user-input.requested` rides the same stream `turn.completed` does
-        // (t3o-18, D13): one more case in an existing subscription, no new seam.
-        if (event.type !== "turn.completed" && event.type !== "user-input.requested") {
-          return Effect.void;
+        if (event.type === "turn.completed") return worker.enqueue({ source: "runtime", event });
+        // `user-input.requested` rides the same stream (t3o-18, D13): one more
+        // case in an existing subscription, no new seam. It fires for every
+        // agent question, which is what re-parks a step on the gate.
+        if (event.type === "user-input.requested") return worker.enqueue({ source: "runtime", event });
+        // session.started matters only for a thread orphaned by a rejected
+        // admit — the durable delivery point for its turn interrupt.
+        if (event.type === "session.started" && orphanedThreads.has(String(event.threadId))) {
+          return worker.enqueue({ source: "runtime", event });
         }
-        return worker.enqueue({ source: "runtime", event });
+        return Effect.void;
       }),
+    );
+    // The server restarts mid-step: reconcile persisted step state, serialised
+    // ahead of the live events now flowing into the same worker queue.
+    yield* worker.enqueue({ source: "reconcile" });
+    // Periodic timeout sweep (t3o-17): rides the worker so it never races the
+    // event handlers. 30s granularity is plenty against minutes-scale timeouts.
+    yield* forkParked(
+      Effect.forever(
+        Effect.sleep("30 seconds").pipe(
+          Effect.flatMap(() => worker.enqueue({ source: "timeout-sweep" })),
+        ),
+      ),
     );
   });
 
-  return { start, reconcile, drain: worker.drain } satisfies SupervisorReactorShape;
+  return {
+    start,
+    reconcile,
+    sweep: sweepTimeouts,
+    drain: worker.drain,
+  } satisfies SupervisorReactorShape;
 });
 
 export const SupervisorReactorLive = Layer.effect(SupervisorReactor, make);

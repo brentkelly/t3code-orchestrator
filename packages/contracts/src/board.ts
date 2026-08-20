@@ -1039,15 +1039,14 @@ export function boardNonTerminalStepStates(board: BoardState): ReadonlyArray<Boa
  * the sum of `attempt` across the card's step-state rows.
  *
  * Today the read model keeps exactly ONE step-state row per card (D4: one step
- * at a time), so this equals the live step's `attempt` — sufficient for a
- * `simple` stage, whose single step is the whole entry. It is written as a sum,
- * not a single-row read, so it stays correct if a future model (t3o-16's review
- * loop) tracks more than one step-state row per card at once. If instead that
- * loop keeps one row and advances it step to step, the running total must be
- * carried on `attempt` itself (it already does NOT reset per step, only per
- * stage entry) rather than summed here — either way the ceiling is enforced by
- * `recoveryDecision` on whatever total it is handed, which is the generic,
- * unit-tested guarantee.
+ * at a time), and the review loop advances that row step to step — so the
+ * running total is carried on `attempt` itself: an intra-stage `select-step`
+ * passes `priorInvocations` (this count at selection time) and the decider
+ * stamps `attempt = priorInvocations + 1`, while a genuine stage entry omits it
+ * and resets (D1). It is still written as a sum, not a single-row read, so it
+ * stays correct if a future model tracks more than one step-state row per card
+ * at once. Either way the ceiling is enforced by `recoveryDecision` on whatever
+ * total it is handed, which is the generic, unit-tested guarantee.
  */
 export function boardStageEntryInvocationCount(board: BoardState, cardId: BoardCardId): number {
   return (board.stepStates ?? [])
@@ -1239,9 +1238,11 @@ export const BoardCardCreateCommand = Schema.Struct({
       decider rejects the create when it exceeds `BOARD_CARD_LABELS_MAX` or
       references an unknown / tombstoned label. */
   labels: Schema.optional(Schema.Array(BoardLabelId)),
-  /** Target stage (t3o-06a). Absent lands in Backlog. The decider rejects any
-      stage outside `BOARD_CREATABLE_STAGES` — a card cannot appear
-      mid-pipeline. t3o-06 wires the create dialog's stage picker to this. */
+  /** Target stage (D10). Absent lands in the first stage. A card may be
+      created into ANY existing stage — creation and dragging follow one path;
+      Mode governs worktree/slot on entry, and the build-onward dependency
+      gate still applies. t3o-06 wires the create dialog's stage picker to
+      this. */
   stage: Schema.optional(BoardStageId),
   /** Client-computed fractional position in the target column. */
   orderKey: TrimmedNonEmptyString,
@@ -1612,6 +1613,12 @@ export const BoardCardSelectStepCommand = Schema.Struct({
   humanInLoop: Schema.Boolean,
   maxAttempts: PositiveInt,
   timeoutMs: PositiveInt,
+  /** The stage entry's step invocations BEFORE this selection (t3o-17, D5).
+      An intra-stage continuation (t3o-16's next review phase) carries the
+      running total forward so the per-stage-entry ceiling survives step
+      replacement; a genuine stage entry omits it (resets, D1). The decider
+      stamps `attempt = priorInvocations + 1` onto the fresh run row. */
+  priorInvocations: Schema.optional(NonNegativeInt),
   createdAt: IsoDateTime,
 });
 export type BoardCardSelectStepCommand = typeof BoardCardSelectStepCommand.Type;

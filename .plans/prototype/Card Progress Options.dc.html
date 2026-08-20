@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fcfcfc; --fg:#27272a; --card:#ffffff; --popover:#ffffff;
+  --muted:#fafafa; --muted-fg:#71717a; --accent:#f4f4f5;
+  --border:#e4e4e7; --input:#d4d4d8;
+  --column-bg:color-mix(in srgb,var(--fg) 4.5%,transparent);
+  --info:#3b82f6; --info-fg:#1d4ed8; --success:#10b981; --success-fg:#047857;
+  --warning:#f59e0b; --warning-fg:#b45309;
+  --shadow-xs:0 1px 2px rgb(0 0 0 / 5%);
+  --font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  --font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+a{color:var(--info-fg);text-decoration:none}
+a:hover{text-decoration:underline}
+@keyframes t3spin{to{transform:rotate(360deg)}}
+</style>
+</helmet>
+
+<section style="padding:34px 40px 20px;display:flex;flex-direction:column;gap:26px">
+
+  <div style="display:flex;flex-direction:column;gap:10px;max-width:1080px">
+    <div style="display:flex;align-items:baseline;gap:10px">
+      <span style="font:600 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:2px 7px">TURN 2</span>
+      <h1 style="margin:0;font:600 20px var(--font-sans)">1a inside the card modal</h1>
+    </div>
+    <p style="margin:0;max-width:720px;font:400 13.5px/1.65 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The list belongs to a thread, so it lives in the thread pane — pinned under the tab bar, above the transcript, one per tab. The tab carries its own count, so a second thread needs no extra chrome. Collapsed by default once a thread is running; expanded when it is awaiting input or you open it.</p>
+  </div>
+
+  <div id="2a" style="display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start">
+
+    <div style="display:flex;flex-direction:column;gap:10px;width:520px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font:600 11px var(--font-mono);color:var(--info-fg);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);border-radius:6px;padding:2px 7px">2a</span>
+        <span style="font:600 13.5px var(--font-sans)">Expanded — thread pane</span>
+      </div>
+      <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:color-mix(in srgb,var(--muted) 55%,var(--card));box-shadow:0 18px 40px -28px rgb(0 0 0 / 45%)">
+        <div style="display:flex;align-items:center;gap:8px;flex:none;height:44px;padding:0 12px 0 10px;border-bottom:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:2px;min-width:0">
+            <div style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12px var(--font-sans);box-shadow:var(--shadow-xs);cursor:pointer">
+              <span style="width:10px;height:10px;flex:none;border-radius:99px;border:1.6px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+              <span style="white-space:nowrap">Reducer cleanup</span>
+              <span style="font:500 10.5px var(--font-mono);color:var(--muted-fg)">3/5</span>
+            </div>
+            <div style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;border:1px solid transparent;border-radius:8px;color:var(--muted-fg);font:500 12px var(--font-sans);cursor:pointer">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;opacity:.7"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+              <span style="white-space:nowrap">Migration spike</span>
+              <span style="font:500 10.5px var(--font-mono)">6/6</span>
+            </div>
+            <button type="button" title="New thread on this task" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex:none;margin-left:2px;border:none;border-radius:7px;background:transparent;color:var(--muted-fg);cursor:pointer">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+            </button>
+          </div>
+        </div>
+
+        <div style="flex:none;padding:10px 12px;border-bottom:1px solid var(--border);background:var(--card)">
+          <div style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m6 9 6 6 6-6"></path></svg>
+            <span style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Todos</span>
+            <span style="font:500 11px var(--font-mono);color:var(--fg)">3/5</span>
+            <div style="display:flex;gap:3px;flex:1;min-width:60px;max-width:120px">
+              <span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--info) 70%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span>
+            </div>
+            <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">updated 40s ago</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:7px;margin-top:10px">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--success-fg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M20 6 9 17l-5-5"></path></svg>
+              <span style="font:400 12px var(--font-sans);color:var(--muted-fg);text-decoration:line-through;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Map event names to server ids</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;min-width:0">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--success-fg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M20 6 9 17l-5-5"></path></svg>
+              <span style="font:400 12px var(--font-sans);color:var(--muted-fg);text-decoration:line-through;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Snapshot the current reducer tests</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;min-width:0">
+              <span style="width:11px;height:11px;flex:none;border-radius:99px;border:1.7px solid color-mix(in srgb,var(--info) 25%,transparent);border-top-color:var(--info-fg);animation:t3spin .8s linear infinite"></span>
+              <span style="font:500 12.5px var(--font-sans);color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Collapse the client reducer</span>
+              <span style="flex:1"></span>
+              <span style="font:400 10.5px var(--font-mono);color:var(--muted-fg);flex:none">2m 10s</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;min-width:0">
+              <span style="width:11px;height:11px;flex:none;border-radius:99px;border:1.7px solid color-mix(in srgb,var(--fg) 18%,transparent)"></span>
+              <span style="font:400 12px var(--font-sans);color:color-mix(in srgb,var(--muted-fg) 80%,transparent);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Delete the optimistic path</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;min-width:0">
+              <span style="width:11px;height:11px;flex:none;border-radius:99px;border:1.7px solid color-mix(in srgb,var(--fg) 18%,transparent)"></span>
+              <span style="font:400 12px var(--font-sans);color:color-mix(in srgb,var(--muted-fg) 80%,transparent);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Re-run the replay benchmark</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px;padding:16px 16px 14px">
+          <div style="display:flex;align-items:center;gap:8px;color:var(--muted-fg)">
+            <span style="flex:1;height:1px;background:var(--border)"></span>
+            <span style="font:500 10.5px var(--font-sans);letter-spacing:.04em;text-transform:uppercase">Todo list updated</span>
+            <span style="flex:1;height:1px;background:var(--border)"></span>
+          </div>
+          <div style="display:flex;gap:9px">
+            <span style="width:18px;height:18px;flex:none;margin-top:2px;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444)"></span>
+            <div style="min-width:0;font:400 13px/1.65 var(--font-sans);color:var(--fg);text-wrap:pretty">Two reducers were duplicating the event fold. I am collapsing them into the server-authoritative path now, then the optimistic branch can go.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px;width:500px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font:600 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:2px 7px">2a</span>
+        <span style="font:600 13.5px var(--font-sans)">Collapsed — the default while running</span>
+      </div>
+      <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:color-mix(in srgb,var(--muted) 55%,var(--card))">
+        <div style="display:flex;align-items:center;gap:8px;flex:none;height:44px;padding:0 12px 0 10px;border-bottom:1px solid var(--border)">
+          <div style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12px var(--font-sans);box-shadow:var(--shadow-xs)">
+            <span style="width:10px;height:10px;flex:none;border-radius:99px;border:1.6px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+            <span style="white-space:nowrap">Reducer cleanup</span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--muted-fg)">3/5</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex:none;padding:9px 12px;border-bottom:1px solid var(--border);background:var(--card);cursor:pointer">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m9 18 6-6-6-6"></path></svg>
+          <span style="font:500 11px var(--font-mono);color:var(--fg);flex:none">3/5</span>
+          <span style="font:400 12px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Collapse the client reducer</span>
+          <span style="flex:1"></span>
+          <div style="display:flex;gap:3px;width:64px;flex:none">
+            <span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--info) 70%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:14px;padding:16px">
+          <div style="display:flex;gap:9px">
+            <span style="width:18px;height:18px;flex:none;margin-top:2px;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444)"></span>
+            <div style="min-width:0;font:400 13px/1.65 var(--font-sans);color:var(--fg);text-wrap:pretty">Collapsing the duplicate fold now.</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--card)">
+        <div style="font:600 12.5px var(--font-sans)">Behaviour</div>
+        <p style="margin:0;font:400 11.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The strip is sticky, so it stays visible while the transcript scrolls. Each change the agent makes also drops a quiet divider in the transcript, which is where the history of the list lives — the strip only ever shows current state. Collapse state is remembered per thread. When a thread finishes, the strip shows the final count and stops being expandable by default.</p>
+      </div>
+    </div>
+
+  </div>
+
+</section>
+
+<section style="padding:14px 40px 60px;display:flex;flex-direction:column;gap:26px">
+
+  <div style="display:flex;flex-direction:column;gap:10px;max-width:1080px">
+    <div style="display:flex;align-items:baseline;gap:10px">
+      <span style="font:600 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:2px 7px">TURN 1</span>
+      <h1 style="margin:0;font:600 20px var(--font-sans)">Agent todo progress on a card</h1>
+    </div>
+    <p style="margin:0;max-width:720px;font:400 13.5px/1.65 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Same four rules in all three options; only the on-card treatment differs. Rules: subcard progress wins over todo progress; a card shows one list at a time — the active thread's (running, else most recently updated); done items never get listed; multi-thread costs exactly one extra affordance and no extra height until it is opened.</p>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start">
+
+    <div id="1a" style="display:flex;flex-direction:column;gap:12px;width:344px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--muted)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font:600 11px var(--font-mono);color:var(--info-fg);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);border-radius:6px;padding:2px 7px">1a</span>
+        <span style="font:600 13.5px var(--font-sans)">Step line</span>
+      </div>
+      <p style="margin:0;font:400 12px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">One line: pips, count, current item. Reads like the plans strip already on stacked cards.</p>
+
+      <div style="display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:12px;background:var(--column-bg)">
+        <span style="font:600 10.5px var(--font-mono);letter-spacing:.04em;color:var(--muted-fg)">SINGLE THREAD</span>
+
+        <article style="border:1px solid var(--border);border-radius:10px;background:var(--card);padding:10px 11px;box-shadow:var(--shadow-xs);cursor:grab">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;font:600 10px var(--font-mono);letter-spacing:.02em;background:color-mix(in srgb,#8b5cf6 14%,transparent);color:#6d28d9">T3-195</span>
+            <span title="Thread running" style="width:11px;height:11px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+          </div>
+          <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">Persist composer drafts per worktree</div>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
+            <div style="display:flex;gap:3px">
+              <span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--info) 70%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:7px;min-width:0">
+              <span style="font:500 10.5px var(--font-mono);color:var(--fg);flex:none">4/7</span>
+              <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Key drafts by worktree id in the store</span>
+            </div>
+          </div>
+        </article>
+
+        <span style="font:600 10.5px var(--font-mono);letter-spacing:.04em;color:var(--muted-fg);margin-top:4px">TWO THREADS</span>
+
+        <article style="border:1px solid var(--border);border-radius:10px;background:var(--card);padding:10px 11px;box-shadow:var(--shadow-xs);cursor:grab">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;font:600 10px var(--font-mono);letter-spacing:.02em;background:color-mix(in srgb,#8b5cf6 14%,transparent);color:#6d28d9">T3-186</span>
+            <span title="Thread running" style="width:11px;height:11px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+          </div>
+          <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">Server-authoritative event sourcing cleanup</div>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
+            <div style="display:flex;gap:3px">
+              <span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--info) 70%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:7px;min-width:0">
+              <span style="font:500 10.5px var(--font-mono);color:var(--fg);flex:none">3/5</span>
+              <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Collapse the client reducer</span>
+              <button type="button" onClick="{{ toggleA }}" title="Show both threads" style="{{ aChipStyle }}">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+                2
+              </button>
+            </div>
+            <sc-if value="{{ aOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:5px;padding-top:2px">
+                <div style="display:flex;align-items:center;gap:6px;min-width:0">
+                  <span style="width:5px;height:5px;border-radius:99px;flex:none;background:var(--info)"></span>
+                  <span style="font:500 10.5px var(--font-sans);color:var(--fg);flex:none">Reducer cleanup</span>
+                  <span style="font:400 10.5px var(--font-mono);color:var(--muted-fg);flex:none">3/5</span>
+                  <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">running</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;min-width:0">
+                  <span style="width:5px;height:5px;border-radius:99px;flex:none;background:color-mix(in srgb,var(--fg) 25%,transparent)"></span>
+                  <span style="font:500 10.5px var(--font-sans);color:var(--fg);flex:none">Migration spike</span>
+                  <span style="font:400 10.5px var(--font-mono);color:var(--muted-fg);flex:none">6/6</span>
+                  <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">idle 2h</span>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </article>
+
+        <span style="font:600 10.5px var(--font-mono);letter-spacing:.04em;color:var(--muted-fg);margin-top:4px">HAS SUBCARDS — TODOS SUPPRESSED</span>
+
+        <article style="border:1px solid var(--border);border-radius:10px;background:var(--card);padding:10px 11px;box-shadow:var(--shadow-xs);cursor:grab">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;font:600 10px var(--font-mono);letter-spacing:.02em;background:color-mix(in srgb,#8b5cf6 14%,transparent);color:#6d28d9">T3-188</span>
+          </div>
+          <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">Kanban board mode in the workspace shell</div>
+          <div style="display:flex;align-items:center;gap:9px;margin-top:10px">
+            <div style="display:flex;gap:3px;flex:1;min-width:0">
+              <span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--info) 60%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--info) 60%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span>
+            </div>
+            <span style="display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--muted);color:var(--muted-fg);font:500 10.5px var(--font-sans)">2/6 plans
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </span>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <div id="1b" style="display:flex;flex-direction:column;gap:12px;width:344px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--muted)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font:600 11px var(--font-mono);color:var(--info-fg);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);border-radius:6px;padding:2px 7px">1b</span>
+        <span style="font:600 13.5px var(--font-sans)">Checklist peek</span>
+      </div>
+      <p style="margin:0;font:400 12px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Three rows — last done, current, next. More context per card, taller cards, fewer per screen.</p>
+
+      <div style="display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:12px;background:var(--column-bg)">
+        <span style="font:600 10.5px var(--font-mono);letter-spacing:.04em;color:var(--muted-fg)">SINGLE THREAD</span>
+
+        <article style="border:1px solid var(--border);border-radius:10px;background:var(--card);padding:10px 11px;box-shadow:var(--shadow-xs);cursor:grab">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;font:600 10px var(--font-mono);letter-spacing:.02em;background:color-mix(in srgb,#8b5cf6 14%,transparent);color:#6d28d9">T3-195</span>
+            <span title="Thread running" style="width:11px;height:11px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+            <span style="flex:1"></span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--muted-fg)">4/7</span>
+          </div>
+          <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">Persist composer drafts per worktree</div>
+          <div style="display:flex;flex-direction:column;gap:5px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:6px;min-width:0">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--success-fg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M20 6 9 17l-5-5"></path></svg>
+              <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:line-through">Read draft keys off the thread store</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;min-width:0">
+              <span style="width:9px;height:9px;flex:none;border-radius:99px;border:1.6px solid color-mix(in srgb,var(--info) 25%,transparent);border-top-color:var(--info-fg);animation:t3spin .8s linear infinite"></span>
+              <span style="font:500 11px var(--font-sans);color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Key drafts by worktree id in the store</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;min-width:0">
+              <span style="width:9px;height:9px;flex:none;border-radius:99px;border:1.6px solid color-mix(in srgb,var(--fg) 18%,transparent)"></span>
+              <span style="font:400 10.5px var(--font-sans);color:color-mix(in srgb,var(--muted-fg) 75%,transparent);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Migrate existing drafts on first load</span>
+            </div>
+          </div>
+        </article>
+
+        <span style="font:600 10.5px var(--font-mono);letter-spacing:.04em;color:var(--muted-fg);margin-top:4px">TWO THREADS</span>
+
+        <article style="border:1px solid var(--border);border-radius:10px;background:var(--card);padding:10px 11px;box-shadow:var(--shadow-xs);cursor:grab">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;font:600 10px var(--font-mono);letter-spacing:.02em;background:color-mix(in srgb,#8b5cf6 14%,transparent);color:#6d28d9">T3-186</span>
+            <span title="Thread running" style="width:11px;height:11px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+            <span style="flex:1"></span>
+            <span style="font:500 10.5px var(--font-mono);color:var(--muted-fg)">{{ bCount }}</span>
+          </div>
+          <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">Server-authoritative event sourcing cleanup</div>
+          <div style="display:flex;flex-direction:column;gap:7px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:4px">
+              <button type="button" onClick="{{ pickB0 }}" style="{{ b0Style }}">Reducer cleanup</button>
+              <button type="button" onClick="{{ pickB1 }}" style="{{ b1Style }}">Migration spike</button>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <div style="display:flex;align-items:center;gap:6px;min-width:0">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--success-fg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M20 6 9 17l-5-5"></path></svg>
+                <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:line-through">{{ bDone }}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;min-width:0">
+                <span style="{{ bCurIcon }}"></span>
+                <span style="font:500 11px var(--font-sans);color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ bCur }}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;min-width:0">
+                <span style="width:9px;height:9px;flex:none;border-radius:99px;border:1.6px solid color-mix(in srgb,var(--fg) 18%,transparent)"></span>
+                <span style="font:400 10.5px var(--font-sans);color:color-mix(in srgb,var(--muted-fg) 75%,transparent);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ bNext }}</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <span style="font:600 10.5px var(--font-mono);letter-spacing:.04em;color:var(--muted-fg);margin-top:4px">HAS SUBCARDS — TODOS SUPPRESSED</span>
+
+        <article style="border:1px solid var(--border);border-radius:10px;background:var(--card);padding:10px 11px;box-shadow:var(--shadow-xs);cursor:grab">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;font:600 10px var(--font-mono);letter-spacing:.02em;background:color-mix(in srgb,#8b5cf6 14%,transparent);color:#6d28d9">T3-188</span>
+          </div>
+          <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">Kanban board mode in the workspace shell</div>
+          <div style="display:flex;align-items:center;gap:9px;margin-top:10px">
+            <div style="display:flex;gap:3px;flex:1;min-width:0">
+              <span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--info) 60%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--info) 60%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span>
+            </div>
+            <span style="display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--muted);color:var(--muted-fg);font:500 10.5px var(--font-sans)">2/6 plans
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </span>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <div id="1c" style="display:flex;flex-direction:column;gap:12px;width:344px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--muted)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font:600 11px var(--font-mono);color:var(--info-fg);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);border-radius:6px;padding:2px 7px">1c</span>
+        <span style="font:600 13.5px var(--font-sans)">Counter only</span>
+      </div>
+      <p style="margin:0;font:400 12px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Meter and count in the meta row, no item text. Cheapest on the board; item names only in the modal or on hover.</p>
+
+      <div style="display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:12px;background:var(--column-bg)">
+        <span style="font:600 10.5px var(--font-mono);letter-spacing:.04em;color:var(--muted-fg)">SINGLE THREAD</span>
+
+        <article style="border:1px solid var(--border);border-radius:10px;background:var(--card);padding:10px 11px;box-shadow:var(--shadow-xs);cursor:grab">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;font:600 10px var(--font-mono);letter-spacing:.02em;background:color-mix(in srgb,#8b5cf6 14%,transparent);color:#6d28d9">T3-195</span>
+            <span title="Thread running" style="width:11px;height:11px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+          </div>
+          <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">Persist composer drafts per worktree</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:9px;color:var(--muted-fg)">
+            <span title="Todo list: 4 of 7 done — Key drafts by worktree id in the store" style="display:inline-flex;align-items:center;gap:5px;font:500 10.5px var(--font-sans)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"></path><path d="m3 7 2 2 4-4"></path><path d="M13 6h8"></path><path d="M13 12h8"></path><path d="M13 18h8"></path></svg>
+              4/7
+            </span>
+            <span style="width:52px;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent);overflow:hidden;flex:none"><span style="display:block;width:57%;height:3px;border-radius:2px;background:var(--success)"></span></span>
+            <span style="flex:1"></span>
+            <span style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans);color:var(--info-fg)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>
+              #298
+            </span>
+          </div>
+        </article>
+
+        <span style="font:600 10.5px var(--font-mono);letter-spacing:.04em;color:var(--muted-fg);margin-top:4px">TWO THREADS</span>
+
+        <article style="border:1px solid var(--border);border-radius:10px;background:var(--card);padding:10px 11px;box-shadow:var(--shadow-xs);cursor:grab">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;font:600 10px var(--font-mono);letter-spacing:.02em;background:color-mix(in srgb,#8b5cf6 14%,transparent);color:#6d28d9">T3-186</span>
+            <span title="Thread running" style="width:11px;height:11px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--muted-fg) 25%,transparent);border-top-color:var(--muted-fg);animation:t3spin .8s linear infinite"></span>
+          </div>
+          <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">Server-authoritative event sourcing cleanup</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:9px;color:var(--muted-fg)">
+            <span title="Reducer cleanup — 3 of 5 done (running)" style="display:inline-flex;align-items:center;gap:5px;font:500 10.5px var(--font-sans)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"></path><path d="m3 7 2 2 4-4"></path><path d="M13 6h8"></path><path d="M13 12h8"></path><path d="M13 18h8"></path></svg>
+              3/5
+            </span>
+            <span style="display:flex;flex-direction:column;gap:2px;flex:none">
+              <span style="width:52px;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent);overflow:hidden"><span style="display:block;width:60%;height:3px;border-radius:2px;background:var(--success)"></span></span>
+              <span title="Migration spike — 6 of 6 done (idle 2h)" style="width:52px;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent);overflow:hidden"><span style="display:block;width:100%;height:3px;border-radius:2px;background:color-mix(in srgb,var(--success) 45%,transparent)"></span></span>
+            </span>
+            <span title="2 threads on this card" style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+              2
+            </span>
+          </div>
+        </article>
+
+        <span style="font:600 10.5px var(--font-mono);letter-spacing:.04em;color:var(--muted-fg);margin-top:4px">HAS SUBCARDS — TODOS SUPPRESSED</span>
+
+        <article style="border:1px solid var(--border);border-radius:10px;background:var(--card);padding:10px 11px;box-shadow:var(--shadow-xs);cursor:grab">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;font:600 10px var(--font-mono);letter-spacing:.02em;background:color-mix(in srgb,#8b5cf6 14%,transparent);color:#6d28d9">T3-188</span>
+          </div>
+          <div style="font:500 13px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty">Kanban board mode in the workspace shell</div>
+          <div style="display:flex;align-items:center;gap:9px;margin-top:10px">
+            <div style="display:flex;gap:3px;flex:1;min-width:0">
+              <span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:var(--success)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--info) 60%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--info) 60%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span><span style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb,var(--fg) 12%,transparent)"></span>
+            </div>
+            <span style="display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--muted);color:var(--muted-fg);font:500 10.5px var(--font-sans)">2/6 plans
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </span>
+          </div>
+        </article>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:18px;max-width:1080px">
+    <div style="flex:1;min-width:300px;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--card)">
+      <div style="font:600 12.5px var(--font-sans);margin-bottom:7px">Which thread the card shows</div>
+      <p style="margin:0;font:400 11.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Priority: a thread awaiting input, then a running thread, then the most recently updated. Ties go to the thread you last opened, so the card keeps showing the list you were reading.</p>
+    </div>
+    <div style="flex:1;min-width:300px;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--card)">
+      <div style="font:600 12.5px var(--font-sans);margin-bottom:7px">Where the full picture lives</div>
+      <p style="margin:0;font:400 11.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The card modal already has thread tabs. Each tab gets its own todo list at the top of the transcript, so nothing on the card has to explain more than one thread.</p>
+    </div>
+    <div style="flex:1;min-width:300px;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--card)">
+      <div style="font:600 12.5px var(--font-sans);margin-bottom:7px">When the list is stale</div>
+      <p style="margin:0;font:400 11.5px/1.6 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">A stopped or idle thread's list drops to muted text with no spinner. A finished list collapses to the meta row as a single check and count, so completed cards stay quiet.</p>
+    </div>
+  </div>
+
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1160,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  state = { aOpen: false, bTab: 0 };
+  renderVals() {
+    const { aOpen, bTab } = this.state;
+    const chip = (on) =>
+      "display:inline-flex;align-items:center;gap:3px;height:18px;padding:0 5px;flex:none;border:1px solid " +
+      (on ? "color-mix(in srgb,var(--info) 45%,transparent)" : "var(--border)") +
+      ";border-radius:6px;background:" +
+      (on ? "color-mix(in srgb,var(--info) 10%,transparent)" : "var(--muted)") +
+      ";color:" + (on ? "var(--info-fg)" : "var(--muted-fg)") +
+      ";font:500 10px var(--font-sans);cursor:pointer";
+    const tab = (on) =>
+      "display:inline-flex;align-items:center;height:19px;padding:0 7px;border:1px solid " +
+      (on ? "var(--input)" : "transparent") +
+      ";border-radius:6px;background:" + (on ? "var(--card)" : "transparent") +
+      ";color:" + (on ? "var(--fg)" : "var(--muted-fg)") +
+      ";font:500 10.5px var(--font-sans);cursor:pointer;box-shadow:" + (on ? "var(--shadow-xs)" : "none");
+    const threads = [
+      { count: "3/5", done: "Map event names to server ids", cur: "Collapse the client reducer", next: "Delete the optimistic path", running: true },
+      { count: "6/6", done: "Benchmark replay on 40k events", cur: "Write up the migration order", next: "Hand back to the reducer thread", running: false },
+    ];
+    const t = threads[bTab];
+    return {
+      aOpen,
+      toggleA: (e) => { e.stopPropagation(); this.setState({ aOpen: !aOpen }); },
+      aChipStyle: chip(aOpen),
+      pickB0: (e) => { e.stopPropagation(); this.setState({ bTab: 0 }); },
+      pickB1: (e) => { e.stopPropagation(); this.setState({ bTab: 1 }); },
+      b0Style: tab(bTab === 0),
+      b1Style: tab(bTab === 1),
+      bCount: t.count,
+      bDone: t.done,
+      bCur: t.cur,
+      bNext: t.next,
+      bCurIcon: t.running
+        ? "width:9px;height:9px;flex:none;border-radius:99px;border:1.6px solid color-mix(in srgb,var(--info) 25%,transparent);border-top-color:var(--info-fg);animation:t3spin .8s linear infinite"
+        : "width:9px;height:9px;flex:none;border-radius:99px;border:1.6px solid color-mix(in srgb,var(--fg) 22%,transparent)",
+    };
+  }
+}
+
+</script>
+</body>
+</html>

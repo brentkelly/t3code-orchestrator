@@ -59,6 +59,7 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -105,6 +106,10 @@ function readTurnPlanSteps(
 }
 
 export const BOARD_CARDS_PROJECTOR_NAME = "projection.board-cards" as const;
+
+/** How many trailing activity entries a context read returns (t3o-08 hygiene);
+    outstanding `input-requested` entries are always included on top. */
+export const BOARD_CARD_ACTIVITY_TAIL_LIMIT = 50;
 
 /**
  * Spread into upstream's `ORCHESTRATION_PROJECTOR_NAMES`. Keeping board
@@ -922,24 +927,51 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // Bounded read (t3o-08 hygiene, kept through t3o-18's restructure): the log is
+  // append-only and can outgrow a useful context window, so a read returns a TAIL
+  // — the most recent entries — plus EVERY `card-input-requested` entry, since an
+  // outstanding human gate must never age out of view. The UNION dedupes rows
+  // that qualify both ways; the outer ORDER restores log order. The columns are
+  // t3o-18's structured shape (kind + typed payload + actor), not the old prose
+  // `body`, so `SELECT *` inside the subqueries stays column-aligned across both.
   const listBoardCardActivityRowsForCard = SqlSchema.findAll({
     Request: BoardCardId,
     Result: BoardCardActivityDbRow,
     execute: (cardId) => sql`
-      SELECT
-        activity_id AS "activityId",
-        card_id AS "cardId",
-        kind,
-        payload,
-        actor_kind AS "actorKind",
-        actor_name AS "actorName",
-        actor_provider_instance_id AS "actorProviderInstanceId",
-        actor_thread_id AS "actorThreadId",
-        thread_id AS "threadId",
-        created_at AS "createdAt"
-      FROM board_card_activity
-      WHERE card_id = ${cardId}
-      ORDER BY created_at ASC, activity_id ASC
+      SELECT * FROM (
+        SELECT
+          activity_id AS "activityId",
+          card_id AS "cardId",
+          kind,
+          payload,
+          actor_kind AS "actorKind",
+          actor_name AS "actorName",
+          actor_provider_instance_id AS "actorProviderInstanceId",
+          actor_thread_id AS "actorThreadId",
+          thread_id AS "threadId",
+          created_at AS "createdAt"
+        FROM board_card_activity
+        WHERE card_id = ${cardId} AND kind = 'card-input-requested'
+        UNION
+        SELECT * FROM (
+          SELECT
+            activity_id AS "activityId",
+            card_id AS "cardId",
+            kind,
+            payload,
+            actor_kind AS "actorKind",
+            actor_name AS "actorName",
+            actor_provider_instance_id AS "actorProviderInstanceId",
+            actor_thread_id AS "actorThreadId",
+            thread_id AS "threadId",
+            created_at AS "createdAt"
+          FROM board_card_activity
+          WHERE card_id = ${cardId}
+          ORDER BY created_at DESC, activity_id DESC
+          LIMIT ${BOARD_CARD_ACTIVITY_TAIL_LIMIT}
+        )
+      )
+      ORDER BY "createdAt" ASC, "activityId" ASC
     `,
   });
 
@@ -2498,28 +2530,58 @@ export function boardSnapshotQueryMethods(
 ): Partial<ProjectionSnapshotQueryShape> & BoardSnapshotQueryMethods {
   // Compiled once here — every reader below closes over the same query set.
   const queries = makeBoardCardQueries(sql);
+  // Failure isolation for the PRESENTATION overrides: these wrap queries every
+  // consumer runs (engine bootstrap, subscribeShell, HTTP snapshot), so a
+  // board SQL failure must not take the Threads view down for thread-only
+  // users — log loudly and serve the unenriched base snapshot instead. The
+  // command read model is deliberately NOT isolated: the decider decides
+  // against it, and silently substituting a board-less model would let
+  // commands validate against an empty board (e.g. re-minting an existing
+  // card) — a correctness read fails loudly.
+  const isolated = <A, E>(
+    label: string,
+    enriched: Effect.Effect<A, E>,
+    fallback: Effect.Effect<A, E>,
+  ): Effect.Effect<A, E> =>
+    enriched.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError(`board snapshot enrichment failed; serving base ${label}`, {
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.flatMap(() => fallback)),
+      ),
+    );
   return {
     // Board cards join the engine's command read model (D8).
     getCommandReadModel: () => withBoardReadModel(queries, base.getCommandReadModel()),
     // Bounded card shells + the label catalogue ride the shell snapshot
     // (D2/D7; catalogue once, t3o-06a).
     getShellSnapshot: () =>
-      withBoardCardThreads(
-        queries,
-        withBoardShellStages(
+      isolated(
+        "shell snapshot",
+        // t3o-18: the card->thread + todo array is the outermost enricher, so a
+        // failure serving it still degrades to the base snapshot like every other.
+        withBoardCardThreads(
           queries,
-          withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+          withBoardShellStages(
+            queries,
+            withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+          ),
         ),
+        base.getShellSnapshot(),
       ),
     // Archived cards ride the archive page's snapshot (t3o-13, D7), with the
     // catalogue so their label chips render like any other card's.
     getArchivedShellSnapshot: () =>
-      withBoardShellStages(
-        queries,
-        withBoardShellLabels(
+      isolated(
+        "archived shell snapshot",
+        withBoardShellStages(
           queries,
-          withBoardArchivedShellCards(queries, base.getArchivedShellSnapshot()),
+          withBoardShellLabels(
+            queries,
+            withBoardArchivedShellCards(queries, base.getArchivedShellSnapshot()),
+          ),
         ),
+        base.getArchivedShellSnapshot(),
       ),
     // Board-only detail reader for board.subscribeCard (t3o-04).
     boardCardDetail: makeBoardCardDetailLoader(queries),

@@ -611,7 +611,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         }),
         updatedAt: command.createdAt,
       };
-      return {
+      const moved: PlannedOrchestrationEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -625,6 +625,16 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           card: nextCard,
         },
       };
+      // A move across the done-role boundary changes what this card means as a
+      // DEPENDENCY (t3o-13, D5): dependents' stored `blocked` would otherwise
+      // go stale — met on entering Done, unmet again on being dragged back out
+      // — exactly the staleness the archive/unarchive paths already re-flag.
+      const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
+      const crossesDone =
+        doneStageId !== null && (card.stage === doneStageId) !== (command.toStage === doneStageId);
+      return crossesDone
+        ? [moved, ...(yield* boardDependentBlockedEvents({ board, command, changed: nextCard }))]
+        : moved;
     }
 
     case "board.card.reorder": {
@@ -1195,23 +1205,47 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
 
     case "board.card.complete-step": {
       yield* requireActiveBoardCard({ board, command });
-      // Idempotency (D4): a retried completion re-emits the FIRST recorded
-      // outcome, so the projection is a no-op upsert and no second transition
-      // can fire. The first call for a (cardId, stepId) wins; a later call's
-      // outcome/summary/payload are deliberately ignored, exactly as a raced
-      // duplicate reorder re-emits the same order key.
       const existing = boardCardStepCompletions(board, command.cardId).find(
         (completion) => completion.stepId === command.stepId,
       );
-      const completion: BoardStepCompletion = existing ?? {
-        cardId: command.cardId,
-        stepId: command.stepId,
-        outcome: command.outcome,
-        summary: command.summary,
-        payload: command.payload,
-        threadId: command.threadId,
-        completedAt: command.createdAt,
-      };
+      const current = boardCardStepState(board, command.cardId);
+      const liveMatch =
+        current !== null &&
+        current.stepId === command.stepId &&
+        !isBoardTerminalStepStatus(current.status);
+      // The stepId must be the card's live step or an already-recorded
+      // completion (an idempotent retry). Step ids are predictable, so without
+      // this an agent could pre-complete a FUTURE step and the pinned record
+      // would make `continueStage` / boot reconcile skip it as already-ran.
+      if (existing === undefined && !liveMatch) {
+        return yield* invariant(
+          command,
+          `Step '${command.stepId}' is not card '${command.cardId}''s live step${
+            current === null ? "" : ` ('${current.stepId}', ${current.status})`
+          } and has no recorded completion; complete the step you were assigned.`,
+        );
+      }
+      // Idempotency (D4), outcome-aware: a `succeeded` completion is pinned
+      // forever — a retried call re-emits it, so the projection is a no-op
+      // upsert and no second transition can fire. A `failed`/`blocked`
+      // completion is NOT pinned while the same step is live again: the
+      // recovery ladder's retry nudge explicitly asks the agent to call
+      // board_complete_step when done, so the successful retry must supersede
+      // the earlier failure (the projector upserts on (cardId, stepId)).
+      // With no live step, the recorded outcome re-emits verbatim.
+      const supersede = existing !== undefined && existing.outcome !== "succeeded" && liveMatch;
+      const completion: BoardStepCompletion =
+        existing !== undefined && !supersede
+          ? existing
+          : {
+              cardId: command.cardId,
+              stepId: command.stepId,
+              outcome: command.outcome,
+              summary: command.summary,
+              payload: command.payload,
+              threadId: command.threadId,
+              completedAt: command.createdAt,
+            };
       return {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
@@ -1340,12 +1374,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
 
     case "board.card.provision-worktree": {
       const card = yield* requireActiveBoardCard({ board, command });
-      if (card.stage !== "building") {
-        return yield* invariant(
-          command,
-          `Card '${command.cardId}' must be in 'building' to provision a worktree (D6); it is in '${card.stage}'.`,
-        );
-      }
+      // Which stages need a worktree is a settings question (any stage may
+      // resolve to `mode: "build"` — the review stage always does), and the
+      // pure decider cannot read settings (D8). The command is server-internal
+      // (BOARD_INTERNAL_COMMANDS): the reactor is its only dispatcher and
+      // gates on the stage's RESOLVED execution mode, so no stage-literal
+      // invariant is re-imposed here — it would orphan real git worktrees for
+      // build-mode stages that are not literally named 'building'.
       // Provisioning starts fresh, or retries a failed step. A worktree that
       // is already provisioning, ready or reclaimed is never re-provisioned
       // behind its own back.
@@ -1530,10 +1565,14 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         cardId: command.cardId,
         stepId: command.stepId,
         stepLabel: command.stepLabel,
-        attempt: 1,
+        // `attempt` carries the stage entry's cumulative invocation count (D1/
+        // D5): an intra-stage continuation (t3o-16's next review phase) passes
+        // `priorInvocations` so the per-stage-entry ceiling survives the row
+        // being replaced; a genuine stage entry omits it and resets to 1.
+        attempt: (command.priorInvocations ?? 0) + 1,
         // A fresh step (t3o-17): no stalls yet and no nudge to measure progress
-        // against. `attempt` resetting to 1 here is the "resets on stage entry"
-        // of D1 — a new `select-step` row per stage entry.
+        // against — consecutive stalls are per-step, unlike the carried
+        // invocation total above.
         stallCount: 0,
         lastNudgeAt: null,
         prompt: command.prompt,

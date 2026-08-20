@@ -48,14 +48,17 @@ export function requireProject(input: {
   if (project) {
     return Effect.succeed(project);
   }
-  // Name the projects that DO exist (id — title): the caller reached here with
-  // a value that is not a live project id — often a title or folder name — and
-  // the live list is what it needs to correct the call.
+  // T3o: name the projects that DO exist (id — title): the caller reached here
+  // with a value that is not a live project id — often a title or folder name
+  // from an agent — and the live list is what it needs to correct the call.
+  // Bounded to the first 10 so the message cannot grow with the project count.
+  const live = input.readModel.projects.filter((candidate) => candidate.deletedAt === null);
+  const shown = live.slice(0, 10).map((candidate) => `${candidate.id} — ${candidate.title}`);
   const available =
-    input.readModel.projects
-      .filter((candidate) => candidate.deletedAt === null)
-      .map((candidate) => `${candidate.id} — ${candidate.title}`)
-      .join("; ") || "(none)";
+    shown.length === 0
+      ? "(none)"
+      : shown.join("; ") +
+        (live.length > shown.length ? `; … and ${live.length - shown.length} more` : "");
   return Effect.fail(
     invariantError(
       input.command.type,
