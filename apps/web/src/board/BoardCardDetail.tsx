@@ -38,8 +38,8 @@ import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
+import { isBoardCardRunInFlight, resolveBoardThreadStageRestart } from "./boardCardThreadMenu";
 import { boardStageLabel } from "./boardStages";
-import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { indexBoardLabels } from "./labelColour";
 import {
   BoardCardDetailPopup,
@@ -235,25 +235,15 @@ export function BoardCardDetail({
   // The `+` menu's restart affordance (t3o-14, D1): shown only when the card's
   // current stage auto-executes, and disabled while a supervised run is in
   // flight for the card — restarting then would leave two threads owning the
-  // same step. The step-state read model is server-only, so the client reads
-  // the card shell's derived live status (working / awaiting-input / a queued
-  // build) as its in-flight proxy; an idle live thread (stopped) does NOT
-  // suppress restart (D2: the explicit path is an escape hatch).
-  const currentStageExecution = resolveBoardStageExecution(boardSettings, card.stage);
+  // same step. Both facts are derived by pure helpers (asserted in
+  // `boardCardThreadMenu.test.ts`); the in-flight proxy reads the card shell's
+  // live status since the step-state read model is server-only.
   const cardShell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
-  const supervisedRunInFlight =
-    cardShell !== undefined &&
-    (cardShell.threadState === "working" ||
-      cardShell.threadState === "waiting" ||
-      cardShell.queued);
-  const stageRestart: BoardThreadStageRestart | null = currentStageExecution.autoExecute
-    ? {
-        label: boardStageLabel(stages, card.stage),
-        disabledReason: supervisedRunInFlight
-          ? "A run is already in flight for this card — drag it out and back to restart."
-          : null,
-      }
-    : null;
+  const stageRestart = resolveBoardThreadStageRestart({
+    autoExecute: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
+    stageLabel: boardStageLabel(stages, card.stage),
+    runInFlight: isBoardCardRunInFlight(cardShell),
+  });
 
   // Restart is a server command (D2): the reactor runs the stage's configured
   // prompt through the same envelope the automatic trigger uses, so the two

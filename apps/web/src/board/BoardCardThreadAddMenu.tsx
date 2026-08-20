@@ -53,12 +53,14 @@ function MenuRow({
   readonly disabled?: boolean | undefined;
   readonly onClick: () => void;
 }) {
+  // `disabled:pointer-events-none` would swallow a native `title` tooltip, so the
+  // reason rides the always-visible `hint` sub-label instead — a disabled row is
+  // still legible about WHY it is disabled.
   return (
     <button
       className="flex w-full items-start gap-2 rounded px-1.5 py-1.5 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
       disabled={disabled}
       onClick={onClick}
-      title={disabled ? hint : undefined}
       type="button"
     >
       <span className="mt-px shrink-0 text-muted-foreground">{icon}</span>
