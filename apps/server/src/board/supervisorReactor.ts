@@ -640,6 +640,7 @@ const make = Effect.gen(function* () {
         model,
         timeoutMs: exec.timeoutMs,
         maxAttempts: exec.maxAttempts,
+        execution: exec,
       },
       completions,
       runState: { round: 1, completedStepIds: [] },
@@ -694,6 +695,95 @@ const make = Effect.gen(function* () {
       toStage: next,
       createdAt: yield* nowIso,
     });
+  });
+
+  // A step settled `succeeded`: ask the stage executor what runs NEXT before
+  // advancing the card (t3o-16). For a single-step stage the executor reports
+  // `complete` (its one step is done) and this advances exactly as before; for a
+  // multi-step stage (the review loop) it returns the next round-scoped step and
+  // this selects it, re-entering the ordinary select-step → schedule → spawn
+  // path. The reactor stays generic — it never learns which kind of stage it is
+  // driving, only what the executor says to run. A terminal loop outcome
+  // (`blocked`) leaves the card put with its completions visible (D8).
+  const continueStage = Effect.fn("board-supervisor-continueStage")(function* (input: {
+    readonly card: BoardCard;
+    readonly state: BoardCardStepState;
+  }) {
+    const { card, state } = input;
+    const board = yield* readBoard;
+    const stage = boardStageById(board, card.stage);
+    if (stage === null) return;
+    // The step in `state` just settled `succeeded`; we do not re-guard on its
+    // status (a fresh read may not yet reflect the settle). A genuine live-step
+    // race is caught by the decider's select-step invariant, whose reject the
+    // dispatch helper swallows.
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(settings, card.stage);
+    const completions = boardCardStepCompletions(board, card.id);
+    const model = resolveBoardStageModelSelection(exec.model);
+    const completedStepIds = completions
+      .filter((completion) => completion.outcome === "succeeded")
+      .map((completion) => completion.stepId);
+    const plan = stageExecutorForRole(stage.role).planNext({
+      card,
+      config: {
+        stepId: card.stage,
+        label: stage.label,
+        prompt: exec.prompt,
+        model,
+        timeoutMs: exec.timeoutMs,
+        maxAttempts: exec.maxAttempts,
+        execution: exec,
+      },
+      completions,
+      runState: { round: 1, completedStepIds },
+    });
+    switch (plan.kind) {
+      case "run": {
+        // A continuation is executor-driven, never a human re-entry: inject the
+        // planned prompt and honour the stage's own human-in-the-loop stance.
+        const humanInLoop = resolveHumanInLoop(board, settings, card, exec);
+        yield* dispatch({
+          type: "board.card.select-step",
+          commandId: yield* commandId("select-step"),
+          cardId: card.id,
+          stepId: plan.stepId,
+          stepLabel: plan.label,
+          prompt: plan.prompt,
+          providerInstanceId: plan.model.instanceId,
+          model: plan.model.model,
+          mode: exec.mode,
+          humanInLoop,
+          maxAttempts: plan.maxAttempts,
+          timeoutMs: plan.timeoutMs,
+          createdAt: yield* nowIso,
+        });
+        if (exec.mode === "build") yield* ensureWorktree(card);
+        return;
+      }
+      case "complete": {
+        // The stage is done. A successful stage may auto-advance (D8); a
+        // non-succeeded terminal outcome (a review loop that exhausted its round
+        // cap) leaves the card put, unconverged, with its findings visible.
+        if (plan.outcome === "succeeded") yield* advanceStage({ card, state });
+        return;
+      }
+      case "escalate": {
+        // The executor cannot proceed and wants a human (e.g. a phase that
+        // completed with an unreadable payload). Surface the question as a card
+        // activity and leave the card put — there is no live step to gate.
+        yield* dispatch({
+          type: "board.card.request-input",
+          commandId: yield* commandId("escalate-input"),
+          cardId: card.id,
+          activityId: BoardActivityId.make(yield* crypto.randomUUIDv4),
+          question: plan.question,
+          threadId: state.threadId,
+          createdAt: yield* nowIso,
+        });
+        return;
+      }
+    }
   });
 
   // Release the step's slot on settlement — a no-op for a plan-mode step, which
@@ -887,10 +977,12 @@ const make = Effect.gen(function* () {
     switch (completion.outcome) {
       case "succeeded":
         yield* settleStep({ card, state, outcome: "succeeded" });
-        // Auto-advance to the next stage in order on a successful unattended run
-        // (D8); the move re-triggers auto-kickoff for the next stage. Then let
-        // the freed slot flow to the queue.
-        yield* advanceStage({ card, state });
+        // Ask the stage executor what runs next (t3o-16): a single-step stage
+        // reports `complete` and this auto-advances to the next stage in order
+        // on a successful unattended run (D8), re-triggering auto-kickoff there;
+        // a multi-step stage (the review loop) selects its next round-scoped
+        // step here instead. Then let the freed slot flow to the queue.
+        yield* continueStage({ card, state });
         yield* schedule();
         return;
       case "failed":
@@ -1026,7 +1118,10 @@ const make = Effect.gen(function* () {
       switch (decision.kind) {
         case "advance":
           yield* settleStep({ card, state, outcome: "succeeded" });
-          yield* advanceStage({ card, state });
+          // Ask the executor what runs next: advance a finished single-step
+          // stage, or resume the next round-scoped step of a multi-step loop
+          // whose phase settled during downtime (t3o-16).
+          yield* continueStage({ card, state });
           break;
         case "recover":
           yield* recoverStep({ card, state });
