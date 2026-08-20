@@ -25,7 +25,6 @@
  * inventory); their owning specs are named in comments.
  */
 import {
-  BOARD_REVIEW_PHASE_LABELS,
   BoardAdjudicatePayload,
   BoardReviewPayload,
   BoardTriagePayload,
