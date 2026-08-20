@@ -1720,9 +1720,19 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardDependencyRefRows(cardId),
       queries.listBoardCardDependentRefRows(cardId),
       queries.countBoardPlansForCard(cardId),
+      queries.listBoardCardStepRows(),
     ]).pipe(
       Effect.map(
-        ([cardRow, linkRows, bodyRow, labelRows, dependencyRows, dependentRows, planCountRows]) => {
+        ([
+          cardRow,
+          linkRows,
+          bodyRow,
+          labelRows,
+          dependencyRows,
+          dependentRows,
+          planCountRows,
+          stepRows,
+        ]) => {
           if (Option.isNone(cardRow)) return null;
           const links = sortBoardCardThreadLinks(
             linkRows.map((row) => ({
@@ -1753,6 +1763,13 @@ export function makeBoardCardDetailLoader(
             }),
             dependents: dependentRows,
             hasPlan: (planCountRows[0]?.count ?? 0) > 0,
+            // The card's completions in completion order (t3o-16, D9). Filtered
+            // from the all-cards step list — the same rows the read model's
+            // `stepCompletions` slice is built from — and sorted so the modal
+            // renders review rounds in the order they landed.
+            stepCompletions: [...stepRows]
+              .filter((row) => row.cardId === cardId)
+              .sort(compareBoardStepCompletions),
           };
         },
       ),

@@ -13,6 +13,8 @@
  * card.
  */
 import {
+  BOARD_REVIEW_PHASE_IDS,
+  BOARD_REVIEW_PHASE_LABELS,
   BOARD_SEED_STAGES,
   BoardStageId,
   DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
@@ -20,11 +22,15 @@ import {
   DEFAULT_BOARD_KEY_PREFIX,
   ProviderInstanceId,
   boardStagesInOrder,
+  isBoardReviewStageExecution,
   resolveBoardProjectAccent,
   resolveBoardStageExecution,
+  type BoardReviewPhaseExecution,
+  type BoardReviewPhaseId,
   type BoardSettings,
   type BoardStageDefinition,
   type BoardStageExecution,
+  type BoardStageExecutionReview,
   type BoardState,
   type BoardWorktreeRetention,
   type EnvironmentId,
@@ -279,6 +285,11 @@ function PipelineSection({ board, update }: { board: BoardSettings; update: Upda
     update({ board: { pipeline: setBoardStageExecution(board.pipeline, stageId, patch) } });
   };
 
+  // Model-picker options for a given active selection, shared by the uniform
+  // stage card (one model) and the review card (one per phase).
+  const getModelOptions = (active: ActiveModel) =>
+    getCustomModelOptionsByInstance(settings, serverProviders, active.instanceId, active.model);
+
   const onRename = (stage: BoardStageDefinition, label: string) => {
     if (environmentId === null || label.length === 0 || label === stage.label) return;
     void renameStage({ environmentId, input: { stageId: stage.stageId, label } });
@@ -333,16 +344,32 @@ function PipelineSection({ board, update }: { board: BoardSettings; update: Upda
       <div className="flex flex-col gap-4 pt-1">
         {ordered.map((stage, index) => {
           const exec = resolveBoardStageExecution(board, stage.stageId);
+          // The one settings-side branch on stage kind (D1/D4): the review-loop
+          // member gets its bespoke card (rounds + a block per phase); every
+          // other stage gets the uniform single-step card.
+          if (isBoardReviewStageExecution(exec)) {
+            return (
+              <ReviewStageCard
+                key={stage.stageId}
+                stage={stage}
+                index={index}
+                stageCount={ordered.length}
+                exec={exec}
+                crudEnabled={crudEnabled}
+                globalDefault={globalDefault}
+                instanceEntries={instanceEntries}
+                getModelOptions={getModelOptions}
+                updateStage={updateStage}
+                onRename={(label) => onRename(stage, label)}
+                onReorder={(direction) => onReorder(stage, index, direction)}
+              />
+            );
+          }
           const active = exec.model ?? {
             instanceId: globalDefault.instanceId,
             model: globalDefault.model,
           };
-          const modelOptionsByInstance = getCustomModelOptionsByInstance(
-            settings,
-            serverProviders,
-            active.instanceId,
-            active.model,
-          );
+          const modelOptionsByInstance = getModelOptions(active);
           return (
             <StageCard
               key={stage.stageId}
@@ -377,6 +404,171 @@ type ModelSelectionState = ReturnType<typeof resolveAppModelSelectionState>;
 type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
 type ModelOptionsByInstance = ReturnType<typeof getCustomModelOptionsByInstance>;
 type ActiveModel = { instanceId: ProviderInstanceId; model: string };
+
+/**
+ * The bespoke Code review card (t3o-16, AC1/AC2). Unlike the uniform stage
+ * card, it exposes a `Rounds` cap and one block per compiled-in phase — each
+ * with its OWN prompt and model — and deliberately offers NO add / remove /
+ * reorder control and NO uniform prompt, model or mode field: the phases are a
+ * product decision, only their prompts and models are settings (D2).
+ */
+function ReviewStageCard({
+  stage,
+  index,
+  stageCount,
+  exec,
+  crudEnabled,
+  globalDefault,
+  instanceEntries,
+  getModelOptions,
+  updateStage,
+  onRename,
+  onReorder,
+}: {
+  stage: BoardStageDefinition;
+  index: number;
+  stageCount: number;
+  exec: BoardStageExecutionReview;
+  crudEnabled: boolean;
+  globalDefault: ModelSelectionState;
+  instanceEntries: InstanceEntries;
+  getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
+  updateStage: (stageId: string, patch: Partial<BoardStageExecution>) => void;
+  onRename: (label: string) => void;
+  onReorder: (direction: -1 | 1) => void;
+}) {
+  const set = (patch: Partial<BoardStageExecutionReview>) =>
+    updateStage(stage.stageId, patch as Partial<BoardStageExecution>);
+  const setPhase = (phaseId: BoardReviewPhaseId, patch: Partial<BoardReviewPhaseExecution>) =>
+    set({ phases: { ...exec.phases, [phaseId]: { ...exec.phases[phaseId], ...patch } } });
+
+  return (
+    <div className="rounded-xl border border-border/60 px-3 py-3 sm:px-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          key={`name:${stage.stageId}:${stage.label}`}
+          defaultValue={stage.label}
+          aria-label="Stage name"
+          disabled={!crudEnabled}
+          className="h-7 w-44 text-sm font-medium"
+          onBlur={(event) => onRename(event.target.value.trim())}
+        />
+        <span className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+          {STAGE_ROLE_LABELS.review}
+        </span>
+        <span className="flex-1" />
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Move stage up"
+          disabled={!crudEnabled || index === 0}
+          onClick={() => onReorder(-1)}
+        >
+          <ChevronUpIcon className="size-3.5" />
+        </Button>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Move stage down"
+          disabled={!crudEnabled || index === stageCount - 1}
+          onClick={() => onReorder(1)}
+        >
+          <ChevronDownIcon className="size-3.5" />
+        </Button>
+      </div>
+
+      <p className="mt-2 text-[13px] leading-[1.45] text-muted-foreground/80">
+        A loop, not a single step: review the worktree, triage the findings, adjudicate the fixes,
+        and repeat until a review pass raises no blocking findings or the round cap stops it. Each
+        phase runs on its own model.
+      </p>
+
+      <label className="mt-3 flex items-center justify-between gap-2 text-sm text-foreground">
+        <span>Auto execute</span>
+        <Switch
+          checked={exec.autoExecute}
+          onCheckedChange={(checked) => set({ autoExecute: Boolean(checked) })}
+          aria-label="Auto execute this stage"
+        />
+      </label>
+
+      <label className="mt-3 flex items-center justify-between gap-2 text-sm text-foreground">
+        <span>Rounds</span>
+        <Input
+          key={`rounds:${stage.stageId}`}
+          type="number"
+          min={1}
+          defaultValue={String(exec.rounds)}
+          aria-label="Review rounds"
+          className="h-7 w-20 text-sm"
+          onBlur={(event) => {
+            const rounds = parsePositiveIntInput(event.target.value, exec.rounds);
+            if (rounds !== exec.rounds) set({ rounds });
+          }}
+        />
+      </label>
+
+      <div className="mt-3 flex flex-col gap-3">
+        {BOARD_REVIEW_PHASE_IDS.map((phaseId) => {
+          const phase = exec.phases[phaseId];
+          const usesModel = phase.model !== null;
+          const active = phase.model ?? {
+            instanceId: globalDefault.instanceId,
+            model: globalDefault.model,
+          };
+          return (
+            <div key={phaseId} className="rounded-lg border border-border/50 px-3 py-2.5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {BOARD_REVIEW_PHASE_LABELS[phaseId]}
+              </p>
+              <Textarea
+                key={`phase-prompt:${stage.stageId}:${phaseId}`}
+                defaultValue={phase.prompt}
+                aria-label={`${BOARD_REVIEW_PHASE_LABELS[phaseId]} prompt`}
+                rows={3}
+                className="mt-2"
+                onBlur={(event) => {
+                  if (event.target.value !== phase.prompt)
+                    setPhase(phaseId, { prompt: event.target.value });
+                }}
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-sm text-foreground">Use a specific model</span>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {usesModel ? (
+                    <ProviderModelPicker
+                      activeInstanceId={active.instanceId}
+                      model={active.model}
+                      lockedProvider={null}
+                      instanceEntries={instanceEntries}
+                      modelOptionsByInstance={getModelOptions(active)}
+                      triggerVariant="outline"
+                      triggerAriaLabel={`${BOARD_REVIEW_PHASE_LABELS[phaseId]} model`}
+                      onInstanceModelChange={(instanceId, model) =>
+                        setPhase(phaseId, { model: { instanceId, model } })
+                      }
+                    />
+                  ) : null}
+                  <Switch
+                    checked={usesModel}
+                    onCheckedChange={(checked) =>
+                      setPhase(phaseId, {
+                        model: checked
+                          ? { instanceId: globalDefault.instanceId, model: globalDefault.model }
+                          : null,
+                      })
+                    }
+                    aria-label={`Use a specific model for the ${BOARD_REVIEW_PHASE_LABELS[phaseId]} phase`}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function StageCard({
   stage,

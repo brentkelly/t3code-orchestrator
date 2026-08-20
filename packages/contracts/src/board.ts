@@ -2630,6 +2630,15 @@ export const BoardCardDetail = Schema.Struct({
   /** Cards whose `dependsOn` names this one, archived included. Feeds the
       archive confirmation (t3o-13, D3), which counts only the live ones. */
   dependents: Schema.Array(BoardCardDependencyRef),
+  /** The card's recorded step completions with their opaque payloads (t3o-16,
+      D9). Carried on the detail so the modal can render a stage's structured
+      output — the review loop's findings, dispositions and verdicts — from the
+      same payloads the agents write, with no PR to anchor them to. Generic (any
+      stage's completions), so the projector stays role-blind; only the view
+      parses a review payload. Decodes to `[]` on legacy detail payloads. */
+  stepCompletions: Schema.Array(BoardStepCompletion).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
 
