@@ -792,6 +792,18 @@ const make = Effect.gen(function* () {
         });
         forgetThreadProgress(existing.threadId);
       }
+      // The adopted-thread guard still applies (D7): superseding clears the
+      // stalled step's OWN link, but a live stage thread beyond it — one a
+      // human adopted — must not be trampled by a fresh spawn. The stalled
+      // step is settled either way, so that adopted conversation is now the
+      // stage's thread.
+      const adopted = card.threadLinks.some(
+        (link) =>
+          link.role === card.stage &&
+          link.tombstonedAt === null &&
+          link.threadId !== existing.threadId,
+      );
+      if (adopted) return;
     } else {
       // Never trample a manually adopted thread for this stage (D7).
       if (hasLiveStageThread(card, card.stage)) return;
@@ -1514,12 +1526,29 @@ const make = Effect.gen(function* () {
     for (const state of board.stepStates ?? []) {
       if (state.status !== "running" || state.humanInLoop) continue;
       if (state.timeoutMs <= 0) continue;
-      const reference = state.lastNudgeAt ?? state.startedAt;
-      if (reference === null) continue;
-      const referenceMs = Date.parse(reference);
+      // The clock runs from the LATEST life sign, using the same two OR'd
+      // progress sources as recovery (D2): the last nudge/start, a
+      // `board_report_progress` note from the step's thread, and — checked
+      // below, only once a step already looks overdue — a fresh commit on the
+      // card's branch. Without this, a healthy hours-long turn would be
+      // nudged mid-turn every timeoutMs and marched toward the stall ceiling.
+      const reportedAt =
+        state.threadId === null ? undefined : progressAtByThread.get(String(state.threadId));
+      const referenceMs = Math.max(
+        ...[state.lastNudgeAt ?? state.startedAt, reportedAt]
+          .filter((value): value is string => value != null)
+          .map((value) => Date.parse(value))
+          .filter((value) => Number.isFinite(value)),
+      );
       if (!Number.isFinite(referenceMs) || nowMs - referenceMs <= state.timeoutMs) continue;
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined || card.archivedAt !== null) continue;
+      const worktreePath = card.worktree?.path ?? null;
+      if (state.mode === "build" && worktreePath !== null) {
+        const committedAt = yield* latestCommitIso(worktreePath);
+        const committedMs = committedAt === null ? Number.NaN : Date.parse(committedAt);
+        if (Number.isFinite(committedMs) && nowMs - committedMs <= state.timeoutMs) continue;
+      }
       yield* recoverStep({ card, state });
     }
   });
