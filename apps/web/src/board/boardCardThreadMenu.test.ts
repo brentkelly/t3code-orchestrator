@@ -10,9 +10,12 @@ import type { BoardCardShell, BoardCardThreadState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BLANK_THREAD_WARN,
   BOARD_STAGE_RESTART_IN_FLIGHT_REASON,
   isBoardCardRunInFlight,
   resolveBoardThreadStageRestart,
+  runBlankThreadCreation,
+  type BlankThreadStep,
 } from "./boardCardThreadMenu";
 
 const shell = (
@@ -75,5 +78,77 @@ describe("resolveBoardThreadStageRestart", () => {
         runInFlight: true,
       }),
     ).toEqual({ label: "Planning", disabledReason: BOARD_STAGE_RESTART_IN_FLIGHT_REASON });
+  });
+});
+
+describe("runBlankThreadCreation", () => {
+  const harness = (steps: {
+    create: BlankThreadStep;
+    link?: BlankThreadStep;
+    rollback?: BlankThreadStep;
+  }) => {
+    const calls = { create: 0, link: 0, rollback: 0 };
+    const warnings: string[] = [];
+    const run = () =>
+      runBlankThreadCreation({
+        createThread: async () => {
+          calls.create += 1;
+          return steps.create;
+        },
+        linkThread: async () => {
+          calls.link += 1;
+          return steps.link ?? "ok";
+        },
+        rollbackThread: async () => {
+          calls.rollback += 1;
+          return steps.rollback ?? "ok";
+        },
+        warn: (message) => warnings.push(message),
+      });
+    return { run, calls, warnings };
+  };
+
+  it("returns true and never rolls back when create and link both succeed", async () => {
+    const h = harness({ create: "ok", link: "ok" });
+    expect(await h.run()).toBe(true);
+    expect(h.calls.rollback).toBe(0);
+    expect(h.warnings).toEqual([]);
+  });
+
+  it("warns and stops before linking when create fails", async () => {
+    const h = harness({ create: "failed" });
+    expect(await h.run()).toBe(false);
+    expect(h.calls.link).toBe(0);
+    expect(h.warnings).toEqual([BLANK_THREAD_WARN.create]);
+  });
+
+  it("stays silent and does not link when create is interrupted", async () => {
+    const h = harness({ create: "interrupted" });
+    expect(await h.run()).toBe(false);
+    expect(h.calls.link).toBe(0);
+    expect(h.warnings).toEqual([]);
+  });
+
+  it("rolls back on a DEFINITE link failure", async () => {
+    const h = harness({ create: "ok", link: "failed", rollback: "ok" });
+    expect(await h.run()).toBe(false);
+    expect(h.calls.rollback).toBe(1);
+    expect(h.warnings).toEqual([BLANK_THREAD_WARN.link]);
+  });
+
+  it("warns twice when the rollback itself fails", async () => {
+    const h = harness({ create: "ok", link: "failed", rollback: "failed" });
+    expect(await h.run()).toBe(false);
+    expect(h.calls.rollback).toBe(1);
+    expect(h.warnings).toEqual([BLANK_THREAD_WARN.link, BLANK_THREAD_WARN.rollback]);
+  });
+
+  it("does NOT roll back an interrupted link — its server outcome is unknown", async () => {
+    // The load-bearing decision: deleting a possibly-landed link would destroy
+    // the card's thread, strictly worse than a harmless empty orphan.
+    const h = harness({ create: "ok", link: "interrupted" });
+    expect(await h.run()).toBe(false);
+    expect(h.calls.rollback).toBe(0);
+    expect(h.warnings).toEqual([]);
   });
 });

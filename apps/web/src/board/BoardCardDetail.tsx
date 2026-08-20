@@ -24,7 +24,10 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { useCallback, useMemo, useState } from "react";
@@ -38,7 +41,12 @@ import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
-import { isBoardCardRunInFlight, resolveBoardThreadStageRestart } from "./boardCardThreadMenu";
+import {
+  isBoardCardRunInFlight,
+  resolveBoardThreadStageRestart,
+  runBlankThreadCreation,
+  type BlankThreadStep,
+} from "./boardCardThreadMenu";
 import { boardStageLabel } from "./boardStages";
 import { indexBoardLabels } from "./labelColour";
 import {
@@ -262,45 +270,39 @@ export function BoardCardDetail({
   // so the pane can select it (opening its composer). Failure logs and stops.
   const createBlankThread = async (): Promise<ThreadId | null> => {
     const threadId = ThreadId.make(randomUUID());
-    const created = await createThread({
-      environmentId,
-      input: {
-        threadId,
-        projectId: card.projectId,
-        title: `${card.key} · Thread`,
-        modelSelection: resolveAppModelSelectionState(allSettings, serverProviders),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        branch: null,
-        worktreePath: null,
-      },
+    // Flatten an atom-command result to the orchestrator's tri-state: a settled
+    // failure is definite, an interrupted one has an unknown server outcome.
+    const step = (result: AtomCommandResult<unknown, unknown>): BlankThreadStep =>
+      result._tag !== "Failure"
+        ? "ok"
+        : isAtomCommandInterrupted(result)
+          ? "interrupted"
+          : "failed";
+    const ok = await runBlankThreadCreation({
+      createThread: async () =>
+        step(
+          await createThread({
+            environmentId,
+            input: {
+              threadId,
+              projectId: card.projectId,
+              title: `${card.key} · Thread`,
+              modelSelection: resolveAppModelSelectionState(allSettings, serverProviders),
+              runtimeMode: DEFAULT_RUNTIME_MODE,
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              branch: null,
+              worktreePath: null,
+            },
+          }),
+        ),
+      linkThread: async () =>
+        step(
+          await linkThread({ environmentId, input: { cardId: card.id, threadId, role: "linked" } }),
+        ),
+      rollbackThread: async () => step(await deleteThread({ environmentId, input: { threadId } })),
+      warn: (message) => console.warn(message),
     });
-    if (created._tag === "Failure") {
-      if (!isAtomCommandInterrupted(created)) {
-        console.warn("Could not create a blank thread for the card.", created);
-      }
-      return null;
-    }
-    const linked = await linkThread({
-      environmentId,
-      input: { cardId: card.id, threadId, role: "linked" },
-    });
-    if (linked._tag === "Failure") {
-      if (!isAtomCommandInterrupted(linked)) {
-        console.warn("Could not link the new thread to the card.", linked);
-      }
-      // Roll back on ANY link failure, interruption included: the thread exists
-      // server-side but never joined the card, so leaving it behind leaks an
-      // empty, unlinked thread into the Threads view. The interruption guard
-      // above only suppresses the (expected) log, not the cleanup.
-      void deleteThread({ environmentId, input: { threadId } }).then((rolledBack) => {
-        if (rolledBack._tag === "Failure" && !isAtomCommandInterrupted(rolledBack)) {
-          console.warn("Could not roll back the unlinked thread.", rolledBack);
-        }
-      });
-      return null;
-    }
-    return threadId;
+    return ok ? threadId : null;
   };
 
   return (
