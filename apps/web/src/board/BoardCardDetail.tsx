@@ -96,6 +96,7 @@ export function BoardCardDetail({
     reportFailure: false,
   });
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const createLabel = useAtomCommand(boardEnvironment.createLabel);
   const updateLabel = useAtomCommand(boardEnvironment.updateLabel);
   const deleteLabel = useAtomCommand(boardEnvironment.deleteLabel);
@@ -287,6 +288,14 @@ export function BoardCardDetail({
     if (linked._tag === "Failure") {
       if (!isAtomCommandInterrupted(linked)) {
         console.warn("Could not link the new thread to the card.", linked);
+        // The thread exists server-side but never joined the card — roll it
+        // back (best effort) so a partial failure does not leak an empty,
+        // unlinked thread into the Threads view.
+        void deleteThread({ environmentId, input: { threadId } }).then((rolledBack) => {
+          if (rolledBack._tag === "Failure" && !isAtomCommandInterrupted(rolledBack)) {
+            console.warn("Could not roll back the unlinked thread.", rolledBack);
+          }
+        });
       }
       return null;
     }
