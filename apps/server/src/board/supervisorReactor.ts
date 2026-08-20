@@ -635,6 +635,14 @@ const make = Effect.gen(function* () {
       );
     if (!admitLanded) {
       yield* slots.release(state.providerInstanceId);
+      // The spawn already started an agent turn — interrupt it so the orphan
+      // is not left burning tokens against a step the board refused to admit.
+      yield* dispatch({
+        type: "thread.turn.interrupt",
+        commandId: yield* commandId("interrupt-orphan"),
+        threadId,
+        createdAt: yield* nowIso,
+      });
       yield* dispatch({
         type: "board.card.unlink-thread",
         commandId: yield* commandId("unlink-orphan"),
