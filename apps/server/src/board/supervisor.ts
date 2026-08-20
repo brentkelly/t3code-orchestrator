@@ -18,7 +18,7 @@
  *   answer to "is its thread still alive / did it complete while we were
  *   down", decide resume / recover / advance.
  */
-import { BOARD_STAGES } from "@t3tools/contracts";
+import { BOARD_STAGES, providerQuestionMechanism } from "@t3tools/contracts";
 import type {
   BoardCard,
   BoardCardId,
@@ -31,34 +31,10 @@ import type {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 
-/**
- * The provider-specific wording for "ask through your question tool, never in
- * prose" (D5). The board assigned the step, so it knows which provider it is
- * talking to — this is the concrete payoff of envelopes over Claude-specific
- * skills. Unknown instances fall back to neutral phrasing.
- */
-export function providerQuestionMechanism(providerInstanceId: ProviderInstanceId): string {
-  const key = String(providerInstanceId).toLowerCase();
-  if (key.includes("claude") || key.includes("anthropic")) {
-    return "raise it as a Claude Code question so it surfaces as a real prompt";
-  }
-  if (key.includes("codex") || key.includes("openai")) {
-    return "raise it through Codex's ask-for-input request";
-  }
-  if (key.includes("cursor")) {
-    return "raise it through Cursor's user-input request";
-  }
-  if (key.includes("gemini") || key.includes("google")) {
-    return "raise it through Gemini's user-input request";
-  }
-  if (key.includes("grok")) {
-    return "raise it through Grok's user-input request";
-  }
-  if (key.includes("opencode")) {
-    return "raise it through OpenCode's user-input request";
-  }
-  return "raise it through your runtime's user-input request";
-}
+/** Re-exported from contracts (t3o-14): the planning spawn and the web client
+    must compose prompts with identical wording, so it moved somewhere both can
+    import. Every caller here is unchanged. */
+export { providerQuestionMechanism };
 
 export interface ComposeStepPromptInput {
   readonly card: Pick<BoardCard, "key" | "title" | "stage">;

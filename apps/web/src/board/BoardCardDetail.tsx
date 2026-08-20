@@ -11,9 +11,12 @@
 import {
   BoardCardId,
   BoardLabelId,
+  MessageId,
+  ThreadId,
   activeBoardCardThreadId,
   areBoardStagesAdjacent,
   deriveBoardCardThreadState,
+  resolveBoardPlanningStep,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
@@ -25,8 +28,17 @@ import { useCallback, useMemo, useState } from "react";
 import { Dialog } from "../components/ui/dialog";
 import { randomUUID } from "../lib/utils";
 import { boardEnvironment } from "../state/board";
+import { primaryServerProvidersAtom } from "../state/server";
 import { environmentShell } from "../state/shell";
+import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
+import { usePrimarySettings } from "../hooks/useSettings";
+import { resolveDefaultProviderModelSelection } from "../providerInstances";
+import {
+  blankThreadCreateInput,
+  canRestartBoardPlanning,
+  planningThreadTurnInput,
+} from "./boardCardThreadSpawn";
 import { indexBoardLabels } from "./labelColour";
 import {
   BoardCardDetailPopup,
@@ -80,6 +92,15 @@ export function BoardCardDetail({
   const updateLabel = useAtomCommand(boardEnvironment.updateLabel);
   const deleteLabel = useAtomCommand(boardEnvironment.deleteLabel);
   const undeleteLabel = useAtomCommand(boardEnvironment.undeleteLabel);
+  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn);
+  const createThread = useAtomCommand(threadEnvironment.create);
+
+  // Read from CURRENT settings, never from the card's `recipeSnapshot` (t3o-14,
+  // D1: planning snapshots nothing), so restarting planning always uses the
+  // prompt as it stands in Settings → Board → Pipeline right now.
+  const boardSettings = usePrimarySettings((settings) => settings.board);
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const planningStep = useMemo(() => resolveBoardPlanningStep(boardSettings), [boardSettings]);
 
   /** The settled result of any board command atom — a tagged Success/Failure
       the dispatch helpers understand. */
@@ -189,10 +210,100 @@ export function BoardCardDetail({
       ? null
       : (snapshot?.threads.find((thread) => thread.id === activeThreadId)?.branch ?? null);
 
+  /** Link a freshly created thread to this card. The thread is already running
+      by the time this fires, so a failed link leaves an orphan the supervisor
+      and `board_get_card_context` cannot resolve to a card — say exactly that,
+      rather than the generic command-rejected message `runCommand` shows, so
+      the human can adopt or clean it up. The `.catch` covers the promise
+      rejecting outright (not resolving to a `Failure` tag). */
+  const linkNewThread = (threadId: ThreadId, role: string) => {
+    void linkThread({ environmentId, input: { cardId: card.id, threadId, role } })
+      .then((linked) => {
+        if (linked._tag === "Failure") {
+          if (!isAtomCommandInterrupted(linked)) {
+            setFeedback(
+              `The thread started but could not be linked to this card, so it may not resolve its card context — ${describeBoardCommandFailure(linked)}`,
+            );
+          }
+        } else {
+          setFeedback(null);
+        }
+      })
+      .catch(() => {
+        setFeedback("The thread started but linking it to this card failed unexpectedly.");
+      });
+  };
+
+  /** Report a failed thread command (a different result type from the board
+      commands `runCommand` handles) without swallowing it. */
+  const reportThreadFailure = (result: { readonly _tag: string }) => {
+    if (!isAtomCommandInterrupted(result as never)) {
+      setFeedback(describeBoardCommandFailure(result));
+    }
+  };
+
+  // "+ → New thread — restart planning": the same thread the supervisor spawns
+  // on entry to Planning, from the CURRENT settings prompt (t3o-14, D8). Unlike
+  // the automatic spawn it does not check for an existing thread — starting a
+  // second planning pass on a card that already carries one is the point of it.
+  const onRestartPlanning = () => {
+    if (planningStep === null) return;
+    const threadId = ThreadId.make(`thread-${randomUUID()}`);
+    void startThreadTurn({
+      environmentId,
+      input: planningThreadTurnInput({
+        card,
+        step: planningStep,
+        threadId,
+        messageId: MessageId.make(`msg-${randomUUID()}`),
+        createdAt: new Date().toISOString(),
+      }),
+    }).then((started) => {
+      if (started._tag === "Failure") {
+        reportThreadFailure(started);
+        return;
+      }
+      linkNewThread(threadId, planningStep.id);
+    });
+  };
+
+  // "+ → New thread": an empty thread, already linked, for you to type into.
+  // The agent still resolves the card through `board_get_card_context` — the
+  // link is what makes that work, not the first message.
+  const onCreateBlankThread = () => {
+    const project = snapshot?.projects.find((entry) => entry.id === card.projectId) ?? null;
+    const modelSelection =
+      resolveDefaultProviderModelSelection(serverProviders, project?.defaultModelSelection) ??
+      (planningStep === null
+        ? null
+        : { instanceId: planningStep.providerInstanceId, model: planningStep.model });
+    if (modelSelection === null) {
+      setFeedback("No provider instance is configured, so a thread cannot be started.");
+      return;
+    }
+    const threadId = ThreadId.make(`thread-${randomUUID()}`);
+    void createThread({
+      environmentId,
+      input: blankThreadCreateInput({
+        card,
+        threadId,
+        modelSelection,
+        createdAt: new Date().toISOString(),
+      }),
+    }).then((created) => {
+      if (created._tag === "Failure") {
+        reportThreadFailure(created);
+        return;
+      }
+      linkNewThread(threadId, "linked");
+    });
+  };
+
   return (
     <BoardCardDetailView
       adoptableThreads={adoptableThreads}
       branch={branch}
+      canRestartPlanning={canRestartBoardPlanning(card.stage, planningStep)}
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}
@@ -217,6 +328,7 @@ export function BoardCardDetail({
         )
       }
       onClose={onClose}
+      onCreateBlankThread={onCreateBlankThread}
       onCreateLabel={(name) => {
         // Create the label, then tag this card with it in one gesture — a
         // client-generated id lets the tag reference it without a round trip,
@@ -257,6 +369,7 @@ export function BoardCardDetail({
       onRecolourLabel={(labelId, colour) =>
         runCommand(updateLabel({ environmentId, input: { labelId, colour } }))
       }
+      onRestartPlanning={onRestartPlanning}
       onRemoveDependency={(dependencyId) =>
         runCommand(
           updateCard({

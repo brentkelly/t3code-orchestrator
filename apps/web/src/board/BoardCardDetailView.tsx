@@ -139,6 +139,11 @@ export interface BoardCardDetailViewProps {
   readonly onArchiveToggle: () => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
+  /** True only in Planning, and only while the planning recipe has a step
+      (t3o-14) — gates the thread pane's "restart planning" menu item. */
+  readonly canRestartPlanning: boolean;
+  readonly onRestartPlanning: () => void;
+  readonly onCreateBlankThread: () => void;
 }
 
 export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
@@ -659,10 +664,13 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardThreadPane
                 adoptableThreads={props.adoptableThreads}
+                canRestartPlanning={props.canRestartPlanning}
                 cardKey={card.key}
                 environmentId={props.environmentId}
                 maximised={props.maximised}
+                onCreateBlankThread={props.onCreateBlankThread}
                 onLinkThread={props.onLinkThread}
+                onRestartPlanning={props.onRestartPlanning}
                 onSelectThread={setSelectedThreadId}
                 onToggleMaximised={props.onToggleMaximised}
                 onUnlinkThread={props.onUnlinkThread}

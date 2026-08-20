@@ -9,8 +9,11 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ProjectId } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   assignBoardKeyPrefix,
+  boardPlanningThreadTitle,
+  composeBoardPlanningPrompt,
   BoardCardRecipeSnapshot,
   BoardSettings,
   boardProjectAcronym,
@@ -18,10 +21,13 @@ import {
   DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_BUILD_STEP,
   DEFAULT_BOARD_KEY_PREFIX,
+  DEFAULT_BOARD_PLANNING_STEP,
   DEFAULT_BOARD_SETTINGS,
   resolveBoardKeyPrefix,
   resolveBoardProjectAccent,
+  resolveBoardPlanningStep,
   resolveBoardRecipeForStage,
+  resolveBoardStageSteps,
   type BoardResolvedRecipe,
   type BoardStep,
 } from "./board.ts";
@@ -82,10 +88,57 @@ describe("resolveBoard* helpers", () => {
       stage: "building",
       steps: [DEFAULT_BOARD_BUILD_STEP],
     });
+    // Planning ships a step too (t3o-14) — it is the prompt the planning
+    // thread opens with, editable at Settings → Board → Pipeline.
     expect(resolveBoardRecipeForStage(DEFAULT_BOARD_SETTINGS, "planning")).toEqual({
       stage: "planning",
+      steps: [DEFAULT_BOARD_PLANNING_STEP],
+    });
+    expect(resolveBoardRecipeForStage(DEFAULT_BOARD_SETTINGS, "ready")).toEqual({
+      stage: "ready",
       steps: [],
     });
+  });
+
+  it("resolves the planning step from the first step of the planning recipe", () => {
+    expect(resolveBoardPlanningStep(DEFAULT_BOARD_SETTINGS)).toEqual(DEFAULT_BOARD_PLANNING_STEP);
+    expect(resolveBoardPlanningStep(decodeSettings({ pipeline: { planning: [] } }))).toBe(null);
+  });
+
+  // The compiled-in pipeline applies PER STAGE. `withDecodingDefault` fires only
+  // when the whole `pipeline` key is absent, and settings are stripped per key —
+  // so anyone who has ever edited one stage has a pipeline containing only that
+  // stage. Defaulting per object would silently switch the other stage off for
+  // exactly the users who tuned the board.
+  it("defaults a stage the settings file has never mentioned, in both directions", () => {
+    const customBuild: BoardStep = { ...DEFAULT_BOARD_BUILD_STEP, promptTemplate: "custom" };
+    const editedBuildingOnly = decodeSettings({ pipeline: { building: [customBuild] } });
+    expect(resolveBoardStageSteps(editedBuildingOnly, "building")).toEqual([customBuild]);
+    expect(resolveBoardStageSteps(editedBuildingOnly, "planning")).toEqual([
+      DEFAULT_BOARD_PLANNING_STEP,
+    ]);
+    expect(resolveBoardPlanningStep(editedBuildingOnly)).toEqual(DEFAULT_BOARD_PLANNING_STEP);
+
+    const editedPlanningOnly = decodeSettings({
+      pipeline: { planning: [{ ...DEFAULT_BOARD_PLANNING_STEP, promptTemplate: "mine" }] },
+    });
+    expect(resolveBoardStageSteps(editedPlanningOnly, "building")).toEqual([
+      DEFAULT_BOARD_BUILD_STEP,
+    ]);
+  });
+
+  it("honours an explicitly emptied stage as off, which is how a stage is switched off", () => {
+    // An absent key means "never configured"; a stored `[]` means "I cleared it".
+    // The settings UI persists `[]` when you remove a stage's last step, so this
+    // is the difference between an upgrade default and a user's decision.
+    const off = decodeSettings({ pipeline: { planning: [], building: [] } });
+    expect(resolveBoardStageSteps(off, "planning")).toEqual([]);
+    expect(resolveBoardStageSteps(off, "building")).toEqual([]);
+    expect(resolveBoardPlanningStep(off)).toBe(null);
+  });
+
+  it("a stage with no compiled-in default resolves to no steps", () => {
+    expect(resolveBoardStageSteps(DEFAULT_BOARD_SETTINGS, "ready")).toEqual([]);
   });
 
   it("falls back to the default key prefix, or uses the configured one and accent", () => {
@@ -178,5 +231,44 @@ describe("recipe snapshot divergence (D10)", () => {
     expect(boardRecipeSnapshotDiffersFromCurrent({ stage: "review", steps: [step] }, current)).toBe(
       true,
     );
+  });
+});
+
+describe("planning prompt envelope (t3o-14)", () => {
+  const card = { key: "MW-12", title: "Auto-spawn planning threads" };
+
+  it("wraps the settings prompt with the card identity and the planning contract", () => {
+    const prompt = composeBoardPlanningPrompt({ card, step: DEFAULT_BOARD_PLANNING_STEP });
+
+    // The preamble is what makes "the agent knows its own card" true: it never
+    // passes a card id, the MCP toolkit resolves it from the calling thread.
+    expect(prompt).toContain('You are planning card MW-12 — "Auto-spawn planning threads".');
+    expect(prompt).toContain("Call board_get_card_context");
+    // The editable body rides between the two halves, verbatim.
+    expect(prompt).toContain(DEFAULT_BOARD_PLANNING_STEP.promptTemplate);
+    // The planning output is a proposal, and the human still gates the stage.
+    expect(prompt).toContain("board_propose_plans");
+    expect(prompt).toContain("do not move it yourself");
+    // NEVER the build contract: no step state exists for a planning thread, so
+    // board_complete_step would fail on an unknown stepId.
+    expect(prompt).not.toContain("board_complete_step");
+  });
+
+  it("words the question rule for the step's own provider", () => {
+    const claude = composeBoardPlanningPrompt({
+      card,
+      step: {
+        ...DEFAULT_BOARD_PLANNING_STEP,
+        providerInstanceId: ProviderInstanceId.make("claude"),
+      },
+    });
+    expect(claude).toContain("raise it as a Claude Code question");
+    expect(composeBoardPlanningPrompt({ card, step: DEFAULT_BOARD_PLANNING_STEP })).toContain(
+      "raise it through Codex's ask-for-input request",
+    );
+  });
+
+  it("titles the thread the way build threads are titled", () => {
+    expect(boardPlanningThreadTitle(card, DEFAULT_BOARD_PLANNING_STEP)).toBe("MW-12 · Plan");
   });
 });

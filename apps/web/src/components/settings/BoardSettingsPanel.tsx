@@ -18,6 +18,7 @@ import {
   ProviderInstanceId,
   resolveBoardProjectAccent,
   type BoardSettings,
+  resolveBoardStageSteps,
   type BoardStage,
   type BoardStep,
   type BoardWorktreeRetention,
@@ -238,14 +239,20 @@ function PipelineSection({
   return (
     <SettingsSection id="board-pipeline" title={anchor.title}>
       <p className="px-3 text-[13px] leading-[1.45] text-muted-foreground/80 sm:px-4">
-        Each stage runs an ordered list of steps — one short-lived agent thread per step. A card
-        snapshots its stage's recipe on entry, so edits here take effect the next time a card enters
-        the stage, never mid-flight. In this release only <strong>Building</strong> is executed; the
-        rest are stored for when later stages automate.
+        Each stage runs an ordered list of steps — one short-lived agent thread per step.{" "}
+        <strong>Building</strong> runs its whole recipe, snapshotting it on entry so edits here take
+        effect the next time a card enters the stage, never mid-flight. <strong>Planning</strong>{" "}
+        runs only the first step, and only its prompt, provider and model — it starts one thread
+        when a card arrives and leaves the rest to you, so it snapshots nothing and always uses the
+        prompt as it stands right now. Clear a stage's steps to switch it off. Later stages are
+        stored for when they automate.
       </p>
       <div className="flex flex-col gap-4 pt-1">
         {BOARD_STAGES.map((stage) => {
-          const steps = board.pipeline[stage] ?? [];
+          // The same resolver the server runs, so a stage the settings file has
+          // never mentioned shows its compiled-in default here rather than
+          // reading as "No steps" while a thread spawns anyway.
+          const steps = resolveBoardStageSteps(board, stage);
           return (
             <div key={stage} className="rounded-xl border border-border/60 px-3 py-3 sm:px-4">
               <div className="flex items-center justify-between gap-2">

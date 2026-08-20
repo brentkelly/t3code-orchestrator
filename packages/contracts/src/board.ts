@@ -370,9 +370,14 @@ export type BoardCardExternalRef = typeof BoardCardExternalRef.Type;
 // `ServerSettings.board` (`BoardSettings`, at the bottom of this file). A
 // step is one short-lived thread with one job (D4): a prompt wrapped by the
 // provider-neutral envelope (D5), pinned to a provider instance and model
-// (D11 governs concurrency per instance), with a timeout and attempt cap. For
-// the MVP only Building's recipe is executed (t3o-12); the rest are stored and
-// displayed until later stages automate.
+// (D11 governs concurrency per instance), with a timeout and attempt cap.
+//
+// Two stages execute today. Building runs its whole recipe through the step
+// machine (t3o-12): timeouts, attempt caps and recovery all apply. Planning
+// runs only the FIRST step, and only its prompt / provider / model — it spawns
+// one thread and stops, entering none of the step machine (t3o-14, D1), so
+// `timeoutMs` and `maxAttempts` are stored and ignored there. Later stages are
+// stored and displayed until they automate.
 
 export const BoardStep = Schema.Struct({
   /** Stable within its stage; identifies the step across settings edits and
@@ -2421,10 +2426,36 @@ export const DEFAULT_BOARD_STEP_MAX_ATTEMPTS = 3;
 export const DEFAULT_BOARD_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
 
 /**
- * The one stage the MVP executes (t3o-12). A compiled-in Building step makes
- * the default pipeline a working pipeline with an empty settings file (the
- * spec's third verification). Provider instance and model mirror the stock
- * text-generation default so the default step is runnable, not a placeholder.
+ * The Planning step (t3o-14). Unlike Building, Planning does NOT run through
+ * the step machine: only `promptTemplate`, `providerInstanceId` and `model`
+ * are honoured (`timeoutMs` / `maxAttempts` / any later step belong to the
+ * governor and the completion contract, which a human-paced interview must
+ * not enter — see the t3o-14 spec, D1). It lives here rather than in a skill
+ * file because a slash-command skill only exists in the repository the thread
+ * opens on: shipped in this fork it would be a no-op for a card on any other
+ * project, and for every non-Claude provider. Settings text works everywhere,
+ * and the user can edit it at Settings → Board → Pipeline.
+ */
+export const DEFAULT_BOARD_PLANNING_STEP: BoardStep = {
+  id: "plan",
+  label: "Plan",
+  promptTemplate: [
+    "Build a plan that allows us to implement the functionality requested on this card. Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.",
+    "Ask the questions one at a time.",
+    "If a question can be answered by exploring the codebase, explore the codebase instead.",
+  ].join("\n\n"),
+  providerInstanceId: DEFAULT_BOARD_PROVIDER_INSTANCE_ID,
+  model: DEFAULT_TEXT_GENERATION_MODEL,
+  timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
+  maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+};
+
+/**
+ * The one stage the MVP executes through the step machine (t3o-12). A
+ * compiled-in Building step makes the default pipeline a working pipeline with
+ * an empty settings file (the spec's third verification). Provider instance
+ * and model mirror the stock text-generation default so the default step is
+ * runnable, not a placeholder.
  */
 export const DEFAULT_BOARD_BUILD_STEP: BoardStep = {
   id: "build",
@@ -2437,11 +2468,24 @@ export const DEFAULT_BOARD_BUILD_STEP: BoardStep = {
   maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
 };
 
+/**
+ * The compiled-in pipeline. Applied PER STAGE, not per object: `withDecodingDefault`
+ * only fires when the whole `pipeline` key is absent, and `stripDefaultServerSettings`
+ * strips per key — so a user who has ever edited one stage already has a
+ * `pipeline` with only that stage in it. Defaulting per object would mean every
+ * install that ever touched the Building prompt silently loses the Planning step
+ * (and vice versa). `resolveBoardStageSteps` is the one reader that applies this,
+ * and it treats an explicitly persisted `[]` as "this stage runs nothing" — which
+ * is how a stage is switched off, and is distinguishable from an absent key.
+ */
+export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
+  planning: [DEFAULT_BOARD_PLANNING_STEP],
+  building: [DEFAULT_BOARD_BUILD_STEP],
+};
+
 export const BoardSettings = Schema.Struct({
   projects: BoardProjectSettingsMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  pipeline: BoardPipeline.pipe(
-    Schema.withDecodingDefault(Effect.succeed({ building: [DEFAULT_BOARD_BUILD_STEP] })),
-  ),
+  pipeline: BoardPipeline.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_PIPELINE))),
   concurrency: BoardConcurrencySettings.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -2510,7 +2554,142 @@ export function resolveBoardRecipeForStage(
   board: BoardSettings,
   stage: BoardStage,
 ): BoardResolvedRecipe {
-  return { stage, steps: board.pipeline[stage] ?? [] };
+  return { stage, steps: resolveBoardStageSteps(board, stage) };
+}
+
+/**
+ * A stage's steps as configured, falling back to the compiled-in default for a
+ * stage the settings file has never mentioned (see `DEFAULT_BOARD_PIPELINE`).
+ * A stored `[]` is honoured as "no steps" — clearing a stage in the settings UI
+ * persists an empty array, which is how you switch a stage off.
+ *
+ * The single reader, so the settings UI renders exactly the steps the server
+ * will run: "Planning shows No steps but a thread spawns anyway" is not a state
+ * this can reach.
+ */
+export function resolveBoardStageSteps(
+  board: BoardSettings,
+  stage: BoardStage,
+): ReadonlyArray<BoardStep> {
+  return board.pipeline[stage] ?? DEFAULT_BOARD_PIPELINE[stage] ?? [];
+}
+
+// ── Planning stage (t3o-14) ────────────────────────────────────────────
+// Planning spawns ONE thread and stops — no step state, no governor slot, no
+// worktree, no completion contract, no recovery (spec t3o-14, D1). The prompt
+// composition is pure and lives here, not in the server, because BOTH the
+// supervisor (automatic spawn on stage entry) and the web client (the card
+// thread pane's "restart planning") must produce byte-identical prompts; a
+// second implementation on the client is how those two drift apart.
+
+/**
+ * The provider-specific wording for "ask through your question tool, never in
+ * prose" (D5). The board assigned the work, so it knows which provider it is
+ * talking to — this is the concrete payoff of envelopes over Claude-specific
+ * skills. Unknown instances fall back to neutral phrasing.
+ */
+export function providerQuestionMechanism(providerInstanceId: ProviderInstanceId): string {
+  const key = String(providerInstanceId).toLowerCase();
+  if (key.includes("claude") || key.includes("anthropic")) {
+    return "raise it as a Claude Code question so it surfaces as a real prompt";
+  }
+  if (key.includes("codex") || key.includes("openai")) {
+    return "raise it through Codex's ask-for-input request";
+  }
+  if (key.includes("cursor")) {
+    return "raise it through Cursor's user-input request";
+  }
+  if (key.includes("gemini") || key.includes("google")) {
+    return "raise it through Gemini's user-input request";
+  }
+  if (key.includes("grok")) {
+    return "raise it through Grok's user-input request";
+  }
+  if (key.includes("opencode")) {
+    return "raise it through OpenCode's user-input request";
+  }
+  return "raise it through your runtime's user-input request";
+}
+
+/**
+ * The step the planning spawn runs: the FIRST step of the planning recipe, or
+ * null when the user has cleared the stage's steps in settings. Only the first
+ * is ever used — a multi-step planning recipe would need the step machine,
+ * which D1 declines to enter; the settings UI still lets you write more, and
+ * the extras are stored and ignored.
+ */
+export function resolveBoardPlanningStep(board: BoardSettings): BoardStep | null {
+  return resolveBoardStageSteps(board, "planning")[0] ?? null;
+}
+
+/**
+ * The runtime and interaction modes a planning thread opens with — stated once
+ * because the supervisor and the web client both spawn one and must produce the
+ * same kind of thread.
+ *
+ * `approval-required` is load-bearing, not a default. A planning thread runs on
+ * the project's SHARED working tree with no worktree to contain it, and it is
+ * started automatically by a card moving stage — so it must not be able to write
+ * unattended. `full-access` would map to Codex's `danger-full-access` sandbox
+ * with `approvalPolicy: "never"` (`CodexSessionRuntime.ts`), i.e. an
+ * auto-approving agent with write access to the user's real checkout, on the
+ * strength of a card brief it did not write.
+ *
+ * The cost, stated plainly because it IS the product behaviour: the agent reads
+ * SUBJECT TO APPROVAL, and the thread parks on its first tool call rather than
+ * exploring straight away. `approval-required` maps to Codex's `read-only`
+ * sandbox but also to `approvalPolicy: "untrusted"`, which gates commands and
+ * not just writes; and on Claude `canUseTool` short-circuits to `allow` only
+ * under `full-access`, so every tool — including the `board_get_card_context`
+ * the preamble tells the agent to call first — opens an approval request. So
+ * "entering Planning starts the conversation by itself" means it starts and
+ * waits for you, which is defensible for an interview you were going to sit in
+ * on anyway, and is the trade being made against unattended write access.
+ *
+ * `interactionMode: "plan"` layers Claude's real plan mode on top
+ * (`ClaudeAdapter` calls `setPermissionMode("plan")`); on providers where plan
+ * mode is prompt text only, the runtime mode above is what actually holds. The
+ * alternative to this trade is not another `RuntimeMode` literal — none of the
+ * four expresses "read freely, never write" — but narrowing the block to writes
+ * at the adapter level, which is a bigger change than this stage warrants.
+ */
+export const BOARD_PLANNING_THREAD_RUNTIME_MODE = "approval-required";
+export const BOARD_PLANNING_THREAD_INTERACTION_MODE = "plan";
+
+/** The planning thread's title, in the same `KEY · Label` shape build threads
+    use. Shared so the automatic spawn and the card pane's "restart planning"
+    cannot produce differently-titled threads. */
+export function boardPlanningThreadTitle(
+  card: Pick<BoardCard, "key">,
+  step: Pick<BoardStep, "label">,
+): string {
+  return `${card.key} · ${step.label}`;
+}
+
+/**
+ * The planning prompt: preamble + the settings `promptTemplate` + postamble,
+ * mirroring the build envelope (`composeStepPrompt`) but carrying the PLANNING
+ * contract. The postamble must never mention `board_complete_step`: no step
+ * state exists for a planning thread, so the call would fail on an unknown
+ * `stepId`. The planning output is `board_propose_plans`, and the card does not
+ * leave Planning by itself — D18 still holds, Building → Code review remains
+ * the only board-driven stage crossing.
+ */
+export function composeBoardPlanningPrompt(input: {
+  readonly card: Pick<BoardCard, "key" | "title">;
+  readonly step: BoardStep;
+}): string {
+  const { card, step } = input;
+  const preamble = [
+    `You are planning card ${card.key} — "${card.title}".`,
+    `Stage: planning.`,
+    `Call board_get_card_context for the brief, labels, dependencies and prior activity.`,
+  ].join("\n");
+  const postamble = [
+    `When you and the human have agreed a plan, record it with board_propose_plans — that is the planning output the board reads. A human moves the card to Ready; do not move it yourself.`,
+    `If you need a human decision, ${providerQuestionMechanism(step.providerInstanceId)}; never end a turn with an unanswered question in prose.`,
+  ].join("\n");
+  return `${preamble}\n\n${step.promptTemplate}\n\n${postamble}`;
 }
 
 /** The per-project key prefix as STORED, falling back to the compiled-in
