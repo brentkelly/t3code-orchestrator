@@ -89,6 +89,10 @@ export interface SupervisorReactorShape {
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   /** Reconcile every non-terminal step against the live world (boot / test). */
   readonly reconcile: Effect.Effect<void>;
+  /** One timeout-sweep pass over running unattended steps (t3o-17). In
+      production the worker runs it on a timer; exposed so tests can drive the
+      liveness clock deterministically. */
+  readonly sweep: Effect.Effect<void>;
   /** Resolves when the internal queue is empty and idle (test hook). */
   readonly drain: Effect.Effect<void>;
 }
@@ -182,6 +186,25 @@ const make = Effect.gen(function* () {
   const forgetThreadProgress = (threadId: ThreadId | null) => {
     if (threadId !== null) progressAtByThread.delete(String(threadId));
   };
+  // Threads spawned for a step whose admit was then rejected (see
+  // admitBuildCandidate): their turn must be stopped, but an interrupt fired
+  // milliseconds after spawn races provider session startup and no-ops. The
+  // set makes it durable — the runtime stream's `session.started` for an
+  // orphan re-dispatches the interrupt once a session exists to interrupt.
+  // Entries clear on interrupt or on the orphan's own turn.completed, so the
+  // set stays bounded.
+  const orphanedThreads = new Set<string>();
+  const interruptOrphan = Effect.fn("board-supervisor-interruptOrphan")(function* (
+    threadId: ThreadId,
+  ) {
+    yield* dispatch({
+      type: "thread.turn.interrupt",
+      commandId: yield* commandId("interrupt-orphan"),
+      threadId,
+      createdAt: yield* nowIso,
+    });
+  });
+
   const isAfter = (candidate: string, floor: string): boolean => {
     const a = Date.parse(candidate);
     const b = Date.parse(floor);
@@ -637,12 +660,12 @@ const make = Effect.gen(function* () {
       yield* slots.release(state.providerInstanceId);
       // The spawn already started an agent turn — interrupt it so the orphan
       // is not left burning tokens against a step the board refused to admit.
-      yield* dispatch({
-        type: "thread.turn.interrupt",
-        commandId: yield* commandId("interrupt-orphan"),
-        threadId,
-        createdAt: yield* nowIso,
-      });
+      // The immediate dispatch only lands if the provider session has already
+      // bound (a slow admit); the usual case is caught durably by the
+      // orphanedThreads set — the runtime `session.started` for this thread
+      // re-dispatches the interrupt once there is a session to interrupt.
+      orphanedThreads.add(String(threadId));
+      yield* interruptOrphan(threadId);
       yield* dispatch({
         type: "board.card.unlink-thread",
         commandId: yield* commandId("unlink-orphan"),
@@ -1559,16 +1582,31 @@ const make = Effect.gen(function* () {
       }
       yield* recoverStep({ card, state });
     }
-  });
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: timeout sweep failed", { cause: Cause.pretty(cause) }),
+    ),
+  );
 
   const processInput = (input: SupervisorInput) => {
     switch (input.source) {
       case "domain":
         return processDomainEvent(input.event);
-      case "runtime":
-        return input.event.type === "turn.completed"
-          ? handleTurnCompleted(ThreadId.make(String(input.event.threadId)))
-          : Effect.void;
+      case "runtime": {
+        const threadId = ThreadId.make(String(input.event.threadId));
+        if (input.event.type === "session.started") {
+          // Only enqueued for orphans (see `start`): the session the spawn
+          // raced now exists — deliver the durable interrupt.
+          if (!orphanedThreads.delete(String(threadId))) return Effect.void;
+          return interruptOrphan(threadId);
+        }
+        if (input.event.type === "turn.completed") {
+          // An orphan whose turn ended needs no interrupt any more.
+          orphanedThreads.delete(String(threadId));
+          return handleTurnCompleted(threadId);
+        }
+        return Effect.void;
+      }
       case "reconcile":
         return reconcile;
       case "timeout-sweep":
@@ -1618,8 +1656,13 @@ const make = Effect.gen(function* () {
     );
     yield* forkParked(
       Stream.runForEach(providerService.streamEvents, (event) => {
-        if (event.type !== "turn.completed") return Effect.void;
-        return worker.enqueue({ source: "runtime", event });
+        if (event.type === "turn.completed") return worker.enqueue({ source: "runtime", event });
+        // session.started matters only for a thread orphaned by a rejected
+        // admit — the durable delivery point for its turn interrupt.
+        if (event.type === "session.started" && orphanedThreads.has(String(event.threadId))) {
+          return worker.enqueue({ source: "runtime", event });
+        }
+        return Effect.void;
       }),
     );
     // The server restarts mid-step: reconcile persisted step state, serialised
@@ -1636,7 +1679,12 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return { start, reconcile, drain: worker.drain } satisfies SupervisorReactorShape;
+  return {
+    start,
+    reconcile,
+    sweep: sweepTimeouts,
+    drain: worker.drain,
+  } satisfies SupervisorReactorShape;
 });
 
 export const SupervisorReactorLive = Layer.effect(SupervisorReactor, make);

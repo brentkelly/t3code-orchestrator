@@ -194,12 +194,24 @@ export type Harness = {
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
 export function withGovernor(
-  input: { readonly board: BoardState; readonly settings: BoardSettings },
+  input: {
+    readonly board: BoardState;
+    readonly settings: BoardSettings;
+    /** Thread shells present BEFORE the reactor starts, so boot reconcile sees
+        the threads a seeded step-state fixture references as alive. */
+    readonly initialShells?: ReadonlyMap<string, OrchestrationThreadShell>;
+    /** What `git log -1 --format=%cI` answers in the stubbed driver — the
+        commit-liveness signal the timeout sweep reads. Defaults to "" (no
+        commit history). */
+    readonly latestCommitIso?: string;
+  },
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
     const model = yield* Ref.make(readModel(input.board));
-    const shells = yield* Ref.make<ReadonlyMap<string, OrchestrationThreadShell>>(new Map());
+    const shells = yield* Ref.make<ReadonlyMap<string, OrchestrationThreadShell>>(
+      input.initialShells ?? new Map(),
+    );
     const seq = yield* Ref.make(0);
     const domainQueue = yield* Queue.unbounded<OrchestrationEvent>();
     const runtimeQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -251,7 +263,14 @@ export function withGovernor(
     } as unknown as ServerSettingsService["Service"];
 
     const gitStub = {
-      execute: () => Effect.succeed({ stdout: "main", stderr: "", exitCode: 0 }),
+      execute: (request: { readonly args?: ReadonlyArray<string> }) =>
+        Effect.succeed({
+          // `git log -1 --format=%cI` answers the configured commit time (the
+          // sweep's commit-liveness signal); every other call answers "main".
+          stdout: request.args?.[0] === "log" ? (input.latestCommitIso ?? "") : "main",
+          stderr: "",
+          exitCode: 0,
+        }),
     } as unknown as GitVcsDriver.GitVcsDriver["Service"];
 
     const setupStub = {
