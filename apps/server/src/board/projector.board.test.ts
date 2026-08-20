@@ -372,9 +372,16 @@ describe("board projector", () => {
         cardId,
         queued: false,
       });
-      // Settling emits no shell delta — a step only leaves `queued` via
-      // admission above, never via settle.
-      assert.strictEqual(Option.isNone(boardShellStreamEvent(settledEvent)), true);
+      // A step only leaves `queued` via admission above, never via settle — but
+      // settling clears the stalled badge (t3o-17, D3): the one path a stalled
+      // step leaves without a fresh select-step is a human taking over its live
+      // thread and completing it, so settle emits card-stalled=false.
+      assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(settledEvent)), {
+        kind: "card-stalled",
+        sequence: settledEvent.sequence,
+        cardId,
+        stalled: false,
+      });
     }),
   );
 

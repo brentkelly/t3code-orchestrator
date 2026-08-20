@@ -700,6 +700,20 @@ export function boardShellStreamEvent(
         stalled: false,
       });
 
+    case "board.card-step-settled":
+      // A settled step is terminal — never stalled — so clear the badge. This
+      // covers the one path a stalled step leaves without a fresh select-step:
+      // a human takes over the stalled step's still-live thread and calls
+      // board_complete_step, settling it to `succeeded`. The clear is idempotent
+      // (already-false is a client no-op), so emitting it on the common
+      // non-stalled completion is harmless.
+      return Option.some({
+        kind: "card-stalled",
+        sequence: event.sequence,
+        cardId: event.payload.cardId,
+        stalled: false,
+      });
+
     case "board.card-progress-reported":
     case "board.card-input-requested":
     case "board.card-step-completed":
@@ -712,7 +726,6 @@ export function boardShellStreamEvent(
     // the step's thread through the existing `threadState`/`awaitingInput`
     // fields, so a step transition needs no separate shell delta.
     case "board.card-step-awaiting-input":
-    case "board.card-step-settled":
     case "board.card-step-retuned":
       // Agent write-path events are card DETAIL, not column-card shell fields
       // (D7): an agent's progress note, step completion or plan set changes
