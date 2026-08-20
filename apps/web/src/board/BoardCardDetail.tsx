@@ -288,15 +288,16 @@ export function BoardCardDetail({
     if (linked._tag === "Failure") {
       if (!isAtomCommandInterrupted(linked)) {
         console.warn("Could not link the new thread to the card.", linked);
-        // The thread exists server-side but never joined the card — roll it
-        // back (best effort) so a partial failure does not leak an empty,
-        // unlinked thread into the Threads view.
-        void deleteThread({ environmentId, input: { threadId } }).then((rolledBack) => {
-          if (rolledBack._tag === "Failure" && !isAtomCommandInterrupted(rolledBack)) {
-            console.warn("Could not roll back the unlinked thread.", rolledBack);
-          }
-        });
       }
+      // Roll back on ANY link failure, interruption included: the thread exists
+      // server-side but never joined the card, so leaving it behind leaks an
+      // empty, unlinked thread into the Threads view. The interruption guard
+      // above only suppresses the (expected) log, not the cleanup.
+      void deleteThread({ environmentId, input: { threadId } }).then((rolledBack) => {
+        if (rolledBack._tag === "Failure" && !isAtomCommandInterrupted(rolledBack)) {
+          console.warn("Could not roll back the unlinked thread.", rolledBack);
+        }
+      });
       return null;
     }
     return threadId;
