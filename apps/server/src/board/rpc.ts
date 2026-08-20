@@ -262,11 +262,14 @@ export function boardActorStamp(deps: {
  * Emitted from the SAME domain-event stream every other shell delta rides, with
  * the causing event's own `sequence`, so resume-by-sequence stays exact and a
  * client can never see a todo revision out of order with the card it belongs to.
- * Two triggers:
+ * Two triggers, and ONLY these two — the todo cache is the only thing the delta
+ * carries, so a thread event that cannot have touched it emits nothing:
  *
- * - a THREAD event whose thread is live-linked to a card — one point read on the
- *   link table's primary key, and the coalescing window upstream has already
- *   collapsed a burst of `turn.plan.updated` revisions to the latest;
+ * - a `turn.plan.updated` activity append on a thread live-linked to a card
+ *   (the only thread event the projector writes `board_thread_todos` on), so a
+ *   burst of streaming message deltas on an active linked thread no longer
+ *   triggers a per-event refetch of a list that did not change. The upstream
+ *   coalescing window still collapses a burst of plan revisions to the latest;
  * - a card's link set changing (`board.card-thread-linked` / `-unlinked`), since
  *   the set membership is what the delta carries.
  *
@@ -304,9 +307,16 @@ export function boardCardThreadsShellEvents(deps: {
       ) {
         return yield* forCard(event.payload.cardId, event.sequence);
       }
-      if (event.aggregateKind !== "thread") return [];
+      // Only a todo-changing thread event refetches. The projector writes
+      // `board_thread_todos` on exactly one thread event — a `turn.plan.updated`
+      // activity append — so every other thread event (message deltas, session
+      // status, non-plan activities) would carry an identical list and is
+      // skipped. This is the difference between one refetch per plan revision
+      // and one per streamed message chunk on a live linked thread.
+      if (event.type !== "thread.activity-appended") return [];
+      if (event.payload.activity.kind !== "turn.plan.updated") return [];
       const cardId = yield* boardMethods
-        .boardCardIdForThread(ThreadId.make(String(event.aggregateId)))
+        .boardCardIdForThread(ThreadId.make(String(event.payload.threadId)))
         .pipe(Effect.catchCause(() => Effect.succeed(null)));
       return cardId === null ? [] : yield* forCard(cardId, event.sequence);
     }).pipe(

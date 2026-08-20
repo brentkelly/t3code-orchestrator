@@ -58,6 +58,11 @@ export function BoardCardThreadTodosStrip({
   if (todo === undefined || total === 0) return null;
   const done = todo.todoDone ?? 0;
   const statuses = todo.todoStatuses ?? "";
+  // Only the FIRST in-progress item's text rides the wire (`boardThreadTodoSummary`
+  // captures `currentText` from the first `inProgress` item); a rare second
+  // in-progress item is not that text, so it renders generically rather than
+  // duplicating the first one's name.
+  const currentIndex = statuses.indexOf(BOARD_THREAD_TODO_STATUS_IN_PROGRESS);
 
   return (
     <div className="shrink-0 border-b border-border bg-card/60 px-3 py-2">
@@ -110,12 +115,13 @@ export function BoardCardThreadTodosStrip({
                       : "bg-muted-foreground/30",
                 )}
               />
-              {/* Only the in-progress item's TEXT rides the wire (D3: the strip
-                  is a summary, not a copy of the list), so the rest render as
-                  their status alone — the pip row above is the shape, and this
-                  list is where the current item is named. */}
+              {/* Only the current item's TEXT rides the wire (D3: the strip is a
+                  summary, not a copy of the list), so every other item — pending,
+                  done, or a rare second in-progress — renders by position. The
+                  pip row above is the shape; this list is where the one current
+                  item is named. */}
               <span className="min-w-0 flex-1 truncate">
-                {statuses[index] === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
+                {index === currentIndex
                   ? (todo.todoCurrent ?? `Item ${index + 1}`)
                   : `Item ${index + 1}`}
               </span>
