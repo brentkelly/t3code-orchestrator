@@ -32,6 +32,7 @@ import {
   type BoardCardQueuedShellEvent,
   type BoardCardRemovedShellEvent,
   type BoardCardShell,
+  type BoardCardStalledShellEvent,
   type BoardCardUpsertedShellEvent,
   type BoardLabel,
   type BoardLabelUpsertedShellEvent,
@@ -119,6 +120,7 @@ export type BoardShellStreamEvent =
   | BoardCardUpsertedShellEvent
   | BoardCardRemovedShellEvent
   | BoardCardQueuedShellEvent
+  | BoardCardStalledShellEvent
   | BoardLabelUpsertedShellEvent
   | BoardStageUpsertedShellEvent
   | BoardStageRemovedShellEvent;
@@ -161,7 +163,14 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.queued === event.card.queued
           ? event.card
           : { ...event.card, queued: existing.queued };
-      const card = withDerivedThreadFields(withQueued, (threadId) =>
+      // `stalled` (t3o-17, D3) is derived from step state the same way, so a
+      // card-carrying delta rests it at false too — preserve the last known
+      // value so a drag never blanks a stalled badge.
+      const withStalled =
+        existing === undefined || existing.stalled === withQueued.stalled
+          ? withQueued
+          : { ...withQueued, stalled: existing.stalled };
+      const card = withDerivedThreadFields(withStalled, (threadId) =>
         snapshot.threads.find((thread) => thread.id === threadId),
       );
       const nextCards = cards.some((entry) => entry.cardId === card.cardId)
@@ -176,6 +185,17 @@ export function applyBoardShellStreamEvent(
       const nextCards = Arr.map(cards, (card) =>
         card.cardId === event.cardId && card.queued !== event.queued
           ? { ...card, queued: event.queued }
+          : card,
+      );
+      return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
+    }
+    case "card-stalled": {
+      // The authoritative live flip of `stalled` (t3o-17, D3): recovery gave up
+      // on the card's step (→ true) or a retry / fresh run put it back to work
+      // (→ false). A no-op for a card we do not hold.
+      const nextCards = Arr.map(cards, (card) =>
+        card.cardId === event.cardId && card.stalled !== event.stalled
+          ? { ...card, stalled: event.stalled }
           : card,
       );
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };

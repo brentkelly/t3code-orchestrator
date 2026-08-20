@@ -1058,6 +1058,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         stepId: "s1",
         stepLabel: "Build",
         attempt: 1,
+        stallCount: 0,
+        lastNudgeAt: null,
         ...frozenConfig,
         threadId:
           status === "running" || status === "awaiting-input" ? ThreadId.make("thread-1") : null,
@@ -1281,6 +1283,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           stepId: "s1",
           threadId: ThreadId.make("thread-1"),
           escalateToHuman: false,
+          progressed: false,
           createdAt: NOW,
         },
         "board.card.settle-step": {

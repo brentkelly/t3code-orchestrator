@@ -20,6 +20,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   BoardStageId,
   DEFAULT_BOARD_BUILD_PROMPT,
+  DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
   DEFAULT_BOARD_STEP_TIMEOUT_MS,
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -158,6 +159,7 @@ const buildingStageExecution = (step: TestBuildStep): BoardStageExecution => ({
   autoAdvance: true,
   timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
   maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+  maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
 });
 
 /** `building` is the single build step the Building stage runs (a one-element

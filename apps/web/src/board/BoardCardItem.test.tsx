@@ -97,6 +97,34 @@ describe("BoardCardContent (D7)", () => {
     expect(gated).toContain("Blocked by 2 dependencies");
   });
 
+  it("renders a distinct stalled badge, separate from the awaiting-input treatment (t3o-17, D3)", () => {
+    const stalled = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building", { stalled: true })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    // The loud, human-needed signal — distinct from the blue "Input needed".
+    expect(stalled).toContain("Stalled");
+    expect(stalled).toContain("text-destructive-foreground");
+    expect(stalled).not.toContain("Input needed");
+
+    // A healthy question is still the blue awaiting-input treatment, never flagged
+    // as stalled (crit 8).
+    const awaiting = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building", { awaitingInput: true })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    expect(awaiting).toContain("Input needed");
+    expect(awaiting).not.toContain("Stalled");
+  });
+
   it("mutes a Done card", () => {
     const html = renderToStaticMarkup(
       <BoardCardContent

@@ -75,6 +75,7 @@ const fullyPopulatedShell = {
   hasPr: true,
   attachmentCount: 42,
   queued: true,
+  stalled: true,
   threadState: "waiting",
   awaitingInput: true,
   activeThreadId: ThreadId.make("thread-0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
@@ -318,6 +319,8 @@ describe("board card shell derivation", () => {
     // `queued` is now sourced (t3o-11) but rests at false when a producer omits
     // it — the card-carrying delta path, where step state is not in hand.
     expect(shell.queued).toBe(false);
+    // `stalled` (t3o-17, D3) rests at false the same way.
+    expect(shell.stalled).toBe(false);
     // post-MVP sub-boards and review pipeline: key-optional and absent, so
     // an unsourced field costs zero wire bytes per card.
     expect("planTotal" in shell).toBe(false);
@@ -344,6 +347,26 @@ describe("board card shell derivation", () => {
       queued: true,
     });
     expect(queued.queued).toBe(true);
+  });
+
+  it("threads a real stalled flag through makeBoardCardShell (t3o-17, D3)", () => {
+    const stalled = makeBoardCardShell({
+      cardId: BoardCardId.make("card-1"),
+      key: "T3O-1",
+      projectId: ProjectId.make("project-1"),
+      labelIds: [],
+      stage: BOARD_SEED_STAGE_IDS.building,
+      orderKey: "m",
+      title: "Card",
+      blocked: false,
+      dependencyCount: 0,
+      hasBrief: false,
+      activeThreadId: null,
+      stalled: true,
+    });
+    expect(stalled.stalled).toBe(true);
+    // A stalled card is not, by that fact, queued (distinct step-state fields).
+    expect(stalled.queued).toBe(false);
   });
 
   it("the queued flag keeps the shell within the fixed budget (t3o-11, D11)", () => {
@@ -443,7 +466,10 @@ describe("archive confirmation (t3o-13, D3)", () => {
 
   it("asks before archiving an unfinished card that live cards depend on", () => {
     expect(
-      boardCardArchiveNeedsConfirmation({ stage: BOARD_SEED_STAGE_IDS.building, dependents: [live] }),
+      boardCardArchiveNeedsConfirmation({
+        stage: BOARD_SEED_STAGE_IDS.building,
+        dependents: [live],
+      }),
     ).toBe(true);
   });
 

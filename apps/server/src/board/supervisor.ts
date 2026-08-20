@@ -99,6 +99,7 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
     : [
         `You are running unattended. Do not stop to ask permission; make every reasonable decision yourself and proceed.`,
         `When the step is finished, call board_complete_step — that is the ONLY way to complete it; ending your turn any other way is treated as a failure and recovered.`,
+        `On long-running work, call board_report_progress periodically (and commit as you go) so the supervisor can see you are making progress; without it a productive long job looks the same as a wedged one and will be escalated.`,
         `If you are truly blocked and need a human decision, ${questionMechanism}; never end a turn with an unanswered question in prose.`,
       ].join("\n");
   const bodyBlock = body.trim().length > 0 ? `${body}\n\n` : "";
@@ -106,32 +107,86 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
 }
 
 export type BoardRecoveryDecision =
-  | { readonly kind: "resume"; readonly attempt: number; readonly nudge: string }
-  | { readonly kind: "escalate"; readonly attempt: number; readonly question: string };
+  | {
+      readonly kind: "resume";
+      readonly attempt: number;
+      readonly stallCount: number;
+      readonly nudge: string;
+    }
+  | {
+      readonly kind: "escalate";
+      readonly attempt: number;
+      readonly stallCount: number;
+      readonly question: string;
+    };
 
 /**
- * How a stalled or dead step recovers (D13) — escalating and bounded. The
- * step's current `attempt` and the recipe's `maxAttempts` decide it:
+ * How a stalled or dead step recovers (t3o-17, D1/D5) — escalating and bounded,
+ * and PURE (crit 5): git and SQL stay in the reactor, which resolves the
+ * progress signal and the stage-entry invocation total and passes them in as
+ * scalars. Two ceilings decide it:
  *
- * - within budget → resume the thread with a nudge that grows an
- *   outstanding-work reminder on the second and later tries;
- * - budget exhausted → stop and ask the human (retry / switch provider / take
- *   it manually), which never loops.
+ * - **consecutive stalls** (`stallCount`, D1): the count resets on progress, so
+ *   a step that keeps inching forward never escalates however many times it is
+ *   nudged; only `maxAttempts` unproductive stops in a row does. Within budget →
+ *   resume with a nudge that grows an outstanding-work reminder on the third and
+ *   later consecutive stall;
+ * - **per-stage-entry invocations** (`stageEntryInvocations`, D5): the runaway
+ *   detector above the per-step ladder — once a stage entry's total invocations
+ *   cross `maxInvocationsPerStageEntry`, the stage stalls whatever the per-step
+ *   ladder says, so t3o-16's rounds × phases × attempts compound is bounded and
+ *   observable.
  *
- * Prevention lives in the envelope; cure lives here. Both are needed.
+ * Either ceiling crossed → escalate (the reactor lands the step in `stalled` and
+ * releases its slot); it never loops. Prevention lives in the envelope (the
+ * unattended postamble asks for progress reports); cure lives here.
  */
 export function recoveryDecision(input: {
-  readonly stepState: Pick<BoardCardStepState, "attempt" | "maxAttempts" | "stepLabel">;
+  readonly stepState: Pick<
+    BoardCardStepState,
+    "attempt" | "stallCount" | "maxAttempts" | "stepLabel"
+  >;
+  /** Resolved by the reactor (D2): a `board_report_progress` entry or a new
+      commit on the card's branch since the last nudge. Resets `stallCount`. */
+  readonly progressedSinceLastNudge: boolean;
+  /** The stage entry's total step invocations so far (D5), summed across its
+      steps by the reactor. This recovery is one more, so the ceiling is checked
+      against `stageEntryInvocations + 1`. */
+  readonly stageEntryInvocations: number;
+  readonly maxInvocationsPerStageEntry: number;
   readonly questionMechanism: string;
 }): BoardRecoveryDecision {
   const nextAttempt = input.stepState.attempt + 1;
-  if (nextAttempt > input.stepState.maxAttempts) {
+  // Progress since the last nudge forgets the prior streak, so THIS stall is
+  // the first of a new one (crit 1: two stalls with a progress note between them
+  // leave `stallCount` at 1, not 2). No progress just extends the streak.
+  const nextStallCount = (input.progressedSinceLastNudge ? 0 : input.stepState.stallCount) + 1;
+  const nextStageInvocations = input.stageEntryInvocations + 1;
+  const escalateManually = `How should I proceed: retry it again, switch to a different provider, or do you want to take it over manually?`;
+
+  // D5 ceiling first: a stage whose steps have, in total, been invoked past the
+  // ceiling is a runaway regardless of the per-step ladder — the backstop that
+  // makes the compound bound observable even when no single step wedged.
+  if (nextStageInvocations > input.maxInvocationsPerStageEntry) {
     return {
       kind: "escalate",
       attempt: nextAttempt,
+      stallCount: nextStallCount,
       question: [
-        `Step "${input.stepState.stepLabel}" has now failed ${input.stepState.maxAttempts} times without completing.`,
-        `How should I proceed: retry it again, switch to a different provider, or do you want to take it over manually?`,
+        `This stage has now run ${nextStageInvocations} agent invocations this entry without completing, past the ${input.maxInvocationsPerStageEntry} allowed for one stage entry.`,
+        escalateManually,
+      ].join(" "),
+    };
+  }
+  // D1 per-step ladder: `maxAttempts` consecutive unproductive stalls.
+  if (nextStallCount >= input.stepState.maxAttempts) {
+    return {
+      kind: "escalate",
+      attempt: nextAttempt,
+      stallCount: nextStallCount,
+      question: [
+        `Step "${input.stepState.stepLabel}" has now stalled ${nextStallCount} times in a row without making progress.`,
+        escalateManually,
       ].join(" "),
     };
   }
@@ -139,14 +194,19 @@ export function recoveryDecision(input: {
     `Your previous turn ended without calling board_complete_step, so the step is not finished.`,
     `Continue where you left off and call board_complete_step when done; if you are blocked, ${input.questionMechanism}.`,
   ];
-  if (nextAttempt >= 3) {
+  if (nextStallCount >= 3) {
     nudgeLines.splice(
       1,
       0,
       `Summarise what is still outstanding before continuing, so nothing is dropped.`,
     );
   }
-  return { kind: "resume", attempt: nextAttempt, nudge: nudgeLines.join(" ") };
+  return {
+    kind: "resume",
+    attempt: nextAttempt,
+    stallCount: nextStallCount,
+    nudge: nudgeLines.join(" "),
+  };
 }
 
 export type BoardReconcileDecision =
@@ -176,6 +236,13 @@ export function reconcileStepDecision(input: {
   readonly hasSucceeded: boolean;
 }): BoardReconcileDecision {
   if (input.hasSucceeded) return { kind: "advance" };
+  if (input.status === "stalled") {
+    // Recovery gave up here (t3o-17, D3): the step is non-terminal so boot
+    // reconciliation must keep re-reading it, but supervision does not drive it
+    // — it stops until a human acts. Leave it exactly as it is (no recover, no
+    // slot restore: a stalled step already released its slot, D4).
+    return { kind: "resume-watch" };
+  }
   if (input.status === "awaiting-input") {
     // A live pending question is intact; a gone thread means the question can
     // no longer be answered there, so recover it into a fresh escalation.

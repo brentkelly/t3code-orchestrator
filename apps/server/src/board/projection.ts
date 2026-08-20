@@ -183,6 +183,9 @@ const BoardCardStepStateDbRow = Schema.Struct({
   stepId: BoardCardStepState.fields.stepId,
   stepLabel: BoardCardStepState.fields.stepLabel,
   attempt: BoardCardStepState.fields.attempt,
+  // Stall detection counters (t3o-17, D1/D2).
+  stallCount: BoardCardStepState.fields.stallCount,
+  lastNudgeAt: BoardCardStepState.fields.lastNudgeAt,
   // Frozen execution config (D12).
   prompt: BoardCardStepState.fields.prompt,
   providerInstanceId: BoardCardStepState.fields.providerInstanceId,
@@ -849,11 +852,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: BoardCardStepStateDbRow,
     execute: (row) => sql`
       INSERT INTO board_card_step_state (
-        card_id, step_id, step_label, attempt, prompt, provider_instance_id, model, mode,
+        card_id, step_id, step_label, attempt, stall_count, last_nudge_at, prompt,
+        provider_instance_id, model, mode,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, started_at, updated_at
       )
       VALUES (
-        ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.attempt}, ${row.prompt},
+        ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.attempt}, ${row.stallCount},
+        ${row.lastNudgeAt}, ${row.prompt},
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.startedAt}, ${row.updatedAt}
       )
@@ -862,6 +867,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         step_id = excluded.step_id,
         step_label = excluded.step_label,
         attempt = excluded.attempt,
+        stall_count = excluded.stall_count,
+        last_nudge_at = excluded.last_nudge_at,
         prompt = excluded.prompt,
         provider_instance_id = excluded.provider_instance_id,
         model = excluded.model,
@@ -886,6 +893,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         step_id AS "stepId",
         step_label AS "stepLabel",
         attempt,
+        stall_count AS "stallCount",
+        last_nudge_at AS "lastNudgeAt",
         prompt,
         provider_instance_id AS "providerInstanceId",
         model,
@@ -1129,6 +1138,8 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         stepId: state.stepId,
         stepLabel: state.stepLabel,
         attempt: state.attempt,
+        stallCount: state.stallCount,
+        lastNudgeAt: state.lastNudgeAt,
         prompt: state.prompt,
         providerInstanceId: state.providerInstanceId,
         model: state.model,
@@ -1439,6 +1450,8 @@ export function loadBoardState(
               stepId: row.stepId,
               stepLabel: row.stepLabel,
               attempt: row.attempt,
+              stallCount: row.stallCount,
+              lastNudgeAt: row.lastNudgeAt,
               prompt: row.prompt,
               providerInstanceId: row.providerInstanceId,
               model: row.model,
@@ -1557,8 +1570,12 @@ export function withBoardShellCards(
       }
       const labelsByCard = groupCardLabels(cardLabelRows);
       const queuedByCard = new Set<BoardCardId>();
+      const stalledByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
+        // The second step-state field on the bounded shell (t3o-17, D3): a card
+        // is `stalled` when recovery gave up on its live step.
+        if (row.status === "stalled") stalledByCard.add(row.cardId);
       }
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
@@ -1577,6 +1594,7 @@ export function withBoardShellCards(
           archivedAt: row.archivedAt,
           activeThreadId,
           queued: queuedByCard.has(row.cardId),
+          stalled: stalledByCard.has(row.cardId),
           thread: activeThreadId === null ? null : (threadsById.get(activeThreadId) ?? null),
         });
       });

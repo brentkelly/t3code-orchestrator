@@ -24,6 +24,7 @@ import {
   boardNextStageId,
   boardNonTerminalStepStates,
   boardStageById,
+  boardStageEntryInvocationCount,
   boardStageIndex,
   boardStageWithRole,
   CommandId,
@@ -150,6 +151,80 @@ const make = Effect.gen(function* () {
     Effect.map((settings) => settings.board ?? DEFAULT_BOARD_SETTINGS),
     Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
   );
+
+  // Progress signal (t3o-17, D2). The reactor — not the pure `recoveryDecision`
+  // — resolves whether a step made progress since the last nudge, from two OR'd
+  // sources: a `board_report_progress` activity entry written by the step's
+  // thread (observed off the event stream into this watermark), or a new commit
+  // on the card's branch (read from git). A step with a live progress signal has
+  // its consecutive `stallCount` reset, so a long productive job never
+  // escalates. The watermark is best-effort in-memory state: a restart loses it,
+  // costing at most one un-reset stall, never correctness (the counters persist).
+  const progressAtByThread = new Map<string, string>();
+  const recordThreadProgress = (threadId: ThreadId | null, at: string) => {
+    if (threadId === null) return;
+    const key = String(threadId);
+    const prior = progressAtByThread.get(key);
+    if (prior === undefined || Date.parse(at) > Date.parse(prior)) progressAtByThread.set(key, at);
+  };
+  // Prune a thread's watermark once its step is done with (settled) or its
+  // thread is replaced (respawn) / abandoned (escalation) — a thread id is never
+  // revisited after that, so keeping its entry would leak the map without bound
+  // over a long-lived reactor.
+  const forgetThreadProgress = (threadId: ThreadId | null) => {
+    if (threadId !== null) progressAtByThread.delete(String(threadId));
+  };
+  const isAfter = (candidate: string, floor: string): boolean => {
+    const a = Date.parse(candidate);
+    const b = Date.parse(floor);
+    return Number.isFinite(a) && Number.isFinite(b) && a > b;
+  };
+
+  /** The latest commit time (strict ISO 8601) on the worktree's HEAD, or null on
+      any error / empty history — a new commit since the last nudge is progress
+      (D2). Best-effort: git failure never blocks recovery. */
+  const latestCommitIso = (cwd: string) =>
+    git
+      .execute({
+        operation: "boardSupervisor.progressCommit",
+        cwd,
+        args: ["log", "-1", "--format=%cI"],
+        allowNonZeroExit: true,
+      })
+      .pipe(
+        Effect.map((result): string | null => {
+          const iso = result.stdout.trim();
+          return iso.length > 0 ? iso : null;
+        }),
+        Effect.catchCause(() => Effect.succeed(null as string | null)),
+      );
+
+  /** Resolve `progressedSinceLastNudge` for a step (D2): a progress report by
+      the step's thread OR a new commit on the card's branch, both since the
+      recorded `lastNudgeAt`. The first stall has no nudge window yet, so it is
+      never counted as progress. Kept out of `recoveryDecision`, which stays pure. */
+  const resolveProgressedSinceLastNudge = Effect.fn(
+    "board-supervisor-resolveProgressedSinceLastNudge",
+  )(function* (state: BoardCardStepState, card: BoardCard) {
+    if (state.lastNudgeAt === null) return false;
+    const reportedAt =
+      state.threadId === null ? undefined : progressAtByThread.get(String(state.threadId));
+    if (reportedAt !== undefined && isAfter(reportedAt, state.lastNudgeAt)) return true;
+    // A commit counts too (D2); only a build-mode step has a worktree to inspect.
+    const worktreePath = card.worktree?.path ?? null;
+    if (state.mode !== "build" || worktreePath === null) return false;
+    const committedAt = yield* latestCommitIso(worktreePath);
+    return committedAt !== null && isAfter(committedAt, state.lastNudgeAt);
+  });
+
+  const handleProgressReported = Effect.fn("board-supervisor-handleProgressReported")(function* (
+    event: Extract<OrchestrationEvent, { type: "board.card-progress-reported" }>,
+  ) {
+    // Only a genuine progress note (not an input-request activity) counts (D2).
+    const entry = event.payload.entry;
+    if (entry.kind !== "progress") return;
+    recordThreadProgress(entry.threadId, entry.createdAt);
+  });
 
   /** The card + step the reactor is watching for a given thread, or null. */
   const stepThreadCard = (
@@ -715,6 +790,7 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     yield* releaseSlot(input.state);
+    forgetThreadProgress(input.state.threadId);
   });
 
   const recoverStep = Effect.fn("board-supervisor-recoverStep")(function* (input: {
@@ -722,15 +798,35 @@ const make = Effect.gen(function* () {
     readonly state: BoardCardStepState;
   }) {
     const questionMechanism = providerQuestionMechanism(input.state.providerInstanceId);
-    const decision = recoveryDecision({ stepState: input.state, questionMechanism });
+    // Resolve the two things the pure decision needs but must not read itself
+    // (D2/D5): the progress signal (git/activity) and the stage-entry invocation
+    // total and its ceiling (settings). `recoveryDecision` stays pure.
+    const board = yield* readBoard;
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(settings, input.card.stage);
+    const progressedSinceLastNudge = yield* resolveProgressedSinceLastNudge(
+      input.state,
+      input.card,
+    );
+    const stageEntryInvocations = boardStageEntryInvocationCount(board, input.card.id);
+    const decision = recoveryDecision({
+      stepState: input.state,
+      progressedSinceLastNudge,
+      stageEntryInvocations,
+      maxInvocationsPerStageEntry: exec.maxInvocationsPerStageEntry,
+      questionMechanism,
+    });
 
-    // Attempt budget exhausted → the D13 human gate: ask the human (retry /
-    // switch provider / take it over) as a visible card activity, and park the
-    // step on awaiting-input. Crucially do NOT drive the agent — escalation is a
-    // human decision, and sending the agent another turn would re-arm death
-    // detection (handleTurnCompleted supervises awaiting-input) and re-escalate
-    // on every turn. Not driving the agent is exactly what makes recovery
-    // "escalate and never loop": it stops here until a human acts.
+    // Recovery gives up (t3o-17, D3/D4): consecutive stalls exhausted
+    // `maxAttempts`, or the stage-entry invocation ceiling was crossed. Ask the
+    // human (retry / switch provider / take it over) as a visible card activity,
+    // and land the step in the distinct `stalled` status — loud, not the same
+    // `awaiting-input` a healthy question reaches — while RELEASING its slot: no
+    // thread is running, so a parked card must not hold capacity for a weekend.
+    // Crucially do NOT drive the agent — escalation is a human decision, and
+    // sending another turn would re-arm death detection and re-escalate every
+    // turn. Not driving the agent is what makes recovery "escalate and never
+    // loop": it stops here until a human acts.
     if (decision.kind === "escalate") {
       yield* dispatch({
         type: "board.card.request-input",
@@ -748,8 +844,15 @@ const make = Effect.gen(function* () {
         stepId: input.state.stepId,
         threadId: input.state.threadId,
         escalateToHuman: true,
+        progressed: progressedSinceLastNudge,
         createdAt: yield* nowIso,
       });
+      // Release the held slot exactly once (D4), riding the existing machinery:
+      // the pre-escalation state's `slotHeld` gates the release, and the decider
+      // has set the persisted `slotHeld` to false, so a re-run releases nothing.
+      yield* releaseSlot(input.state);
+      forgetThreadProgress(input.state.threadId);
+      yield* schedule();
       return;
     }
 
@@ -786,6 +889,8 @@ const make = Effect.gen(function* () {
             threadId: input.state.threadId,
             createdAt: yield* nowIso,
           });
+          // The dead thread is replaced; its watermark will never be read again.
+          forgetThreadProgress(input.state.threadId);
         }
         threadId = yield* spawnStepThread({
           card: input.card,
@@ -827,6 +932,7 @@ const make = Effect.gen(function* () {
       stepId: input.state.stepId,
       threadId,
       escalateToHuman: false,
+      progressed: progressedSinceLastNudge,
       createdAt: yield* nowIso,
     });
   });
@@ -1068,6 +1174,10 @@ const make = Effect.gen(function* () {
         return handleCardUpdated(event);
       case "board.card-step-completed":
         return handleStepCompleted(event);
+      case "board.card-progress-reported":
+        // Observe the progress watermark (t3o-17, D2) so recovery can reset a
+        // productive step's consecutive `stallCount`.
+        return handleProgressReported(event);
       case "board.card-input-requested":
         return handleInputRequested(event);
       case "board.card-archived":
@@ -1110,6 +1220,7 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-stage-thread-requested" &&
           event.type !== "board.card-updated" &&
           event.type !== "board.card-step-completed" &&
+          event.type !== "board.card-progress-reported" &&
           event.type !== "board.card-input-requested" &&
           event.type !== "board.card-archived"
         ) {

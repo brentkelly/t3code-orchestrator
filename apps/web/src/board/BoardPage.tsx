@@ -33,7 +33,7 @@ import {
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { getRouteApi } from "@tanstack/react-router";
-import { ArchiveIcon, PlusIcon } from "lucide-react";
+import { ArchiveIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
@@ -223,6 +223,29 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
 
   const buildColumn = buildStageId === null ? EMPTY_CARDS : (columns[buildStageId] ?? EMPTY_CARDS);
   const queueSlots = useMemo(() => boardBuildingQueueInfo(buildColumn), [buildColumn]);
+
+  // Stalled cards (t3o-17, D3): the "find every stalled card" affordance. Count
+  // them across every column, and when the `stalled` filter is on, show only
+  // the cards recovery gave up on — so a human never has to open forty cards to
+  // find the one that needs rescuing.
+  const showStalledOnly = search.stalled === true;
+  const stalledCount = useMemo(
+    () =>
+      Object.values(columns).reduce(
+        (total, cards) => total + cards.filter((card) => card.stalled).length,
+        0,
+      ),
+    [columns],
+  );
+  const visibleColumns = useMemo(() => {
+    if (!showStalledOnly) return columns;
+    return Object.fromEntries(
+      Object.entries(columns).map(([stageId, cards]) => [
+        stageId,
+        cards.filter((card) => card.stalled),
+      ]),
+    ) as typeof columns;
+  }, [columns, showStalledOnly]);
 
   // ── Drag (native HTML5, the prototype's model) ──────────────────────
   // dnd-kit's sortable transforms were incompatible with the virtualised
@@ -605,6 +628,24 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           </div>
         ) : null}
         <span className="flex-1" />
+        {showStalledOnly || stalledCount > 0 ? (
+          <Button
+            onClick={() =>
+              void navigate({
+                search: (previous) => {
+                  const { stalled: _stalled, ...rest } = previous;
+                  return showStalledOnly ? rest : { ...rest, stalled: true };
+                },
+              })
+            }
+            size="xs"
+            variant={showStalledOnly ? "secondary" : "ghost"}
+            title="Show only stalled cards — recovery gave up and a human is needed"
+          >
+            <TriangleAlertIcon />
+            {showStalledOnly ? "Stalled only" : `Stalled ${stalledCount}`}
+          </Button>
+        ) : null}
         <Button onClick={() => setArchiveOpen(true)} size="xs" variant="ghost">
           <ArchiveIcon />
           Archived
@@ -625,7 +666,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
             <BoardColumn
               accentNameFor={accentNameFor}
               addProjects={addProjects}
-              cards={columns[stage.stageId] ?? EMPTY_CARDS}
+              cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
               labelsById={labelsById}
               collapsed={isBoardColumnCollapsed(collapsedByStage, stage.stageId, index === 0)}
               draggedCardId={drag?.cardId ?? null}
