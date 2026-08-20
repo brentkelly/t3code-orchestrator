@@ -74,6 +74,7 @@ import {
   type BoardDependencyEntry,
 } from "./BoardCardFields";
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
+import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { boardStageLabel } from "./boardStages";
 import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
 
@@ -147,6 +148,14 @@ export interface BoardCardDetailViewProps {
   readonly dependencyOptions: ReadonlyArray<BoardPickerOption>;
   readonly threadLinks: ReadonlyArray<BoardDetailThreadLink>;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
+  /** The thread pane `+` menu's restart affordance (t3o-14): present only when
+      the card's current stage auto-executes, `null` otherwise. */
+  readonly stageRestart: BoardThreadStageRestart | null;
+  /** Dispatch `board.card.start-stage-thread` for the card's current stage. */
+  readonly onRestartStage: () => void;
+  /** Create a blank server thread, link it, and resolve to its id (or `null` on
+      failure) so the pane can open it. */
+  readonly onCreateBlankThread: () => Promise<ThreadId | null>;
   /** Inline feedback for the last rejected command (e.g. a dependency cycle). */
   readonly feedback: string | null;
   readonly onClose: () => void;
@@ -719,11 +728,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 cardKey={card.key}
                 environmentId={props.environmentId}
                 maximised={props.maximised}
+                onCreateBlankThread={props.onCreateBlankThread}
                 onLinkThread={props.onLinkThread}
+                onRestartStage={props.onRestartStage}
                 onSelectThread={setSelectedThreadId}
                 onToggleMaximised={props.onToggleMaximised}
                 onUnlinkThread={props.onUnlinkThread}
                 selectedThreadId={selectedThread}
+                stageRestart={props.stageRestart}
                 threadLinks={props.threadLinks}
               />
             </Suspense>
