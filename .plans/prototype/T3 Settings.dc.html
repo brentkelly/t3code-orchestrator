@@ -198,62 +198,34 @@ textarea{font-family:var(--font-sans)}
                               </button>
                             </div>
 
-                            <sc-if value="{{ r.hasPre }}" hint-placeholder-val="{{ true }}">
-                              <div style="display:flex;flex-direction:column">
-                                <button type="button" onClick="{{ r.togglePre }}" style="{{ r.preHeadStyle }}">
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect width="18" height="11" x="3" y="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                                  <span>Preamble</span>
-                                  <span style="color:var(--muted-fg);font-weight:400">system</span>
-                                  <span style="flex:1"></span>
-                                  <span style="{{ r.preCaretStyle }}">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
-                                  </span>
-                                </button>
-                                <sc-if value="{{ r.preOpen }}" hint-placeholder-val="{{ false }}">
-                                  <p style="margin:0;padding:8px 10px 10px 28px;white-space:pre-wrap;font:400 12px/1.6 var(--font-mono);color:var(--muted-fg);border-left:2px solid var(--border);margin-left:9px">{{ r.pre }}</p>
-                                </sc-if>
-                              </div>
-                            </sc-if>
+                            <div style="{{ r.docStyle }}">
+                              <sc-if value="{{ r.hasPre }}" hint-placeholder-val="{{ true }}">
+                                <div style="{{ r.preStyle }}"><span style="{{ r.pillStyle }}">System</span><span style="{{ r.sysTextStyle }}">{{ r.pre }}</span></div>
+                              </sc-if>
 
-                            <sc-if value="{{ r.editing }}" hint-placeholder-val="{{ false }}">
-                              <textarea value="{{ r.body }}" onChange="{{ r.onBody }}" rows="{{ r.rows }}" style="width:100%;padding:11px 12px;border:1px solid var(--primary);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:400 13px/1.6 var(--font-sans);outline:none;resize:vertical"></textarea>
-                            </sc-if>
-                            <sc-if value="{{ r.reading }}" hint-placeholder-val="{{ true }}">
-                              <div onClick="{{ r.edit }}" title="Click to edit" style="position:relative;cursor:text">
-                                <div style="{{ r.bodyStyle }}">{{ r.body }}</div>
-                                <sc-if value="{{ r.clipped }}" hint-placeholder-val="{{ false }}">
-                                  <div style="position:absolute;left:0;right:0;bottom:0;height:34px;pointer-events:none;background:linear-gradient(to bottom,transparent,var(--card))"></div>
-                                </sc-if>
-                              </div>
-                            </sc-if>
+                              <sc-if value="{{ r.editing }}" hint-placeholder-val="{{ false }}">
+                                <textarea value="{{ r.body }}" onChange="{{ r.onBody }}" onBlur="{{ r.blur }}" autoFocus="{{ true }}" rows="{{ r.rows }}" style="display:block;width:100%;padding:13px 14px;border:none;background:var(--card);color:var(--fg);font:400 13px/1.62 var(--font-sans);outline:none;resize:vertical"></textarea>
+                              </sc-if>
+                              <sc-if value="{{ r.reading }}" hint-placeholder-val="{{ true }}">
+                                <div onClick="{{ r.edit }}" title="Click to edit" style="{{ r.bodyStyle }}">{{ r.body }}</div>
+                              </sc-if>
+
+                              <sc-if value="{{ r.hasPost }}" hint-placeholder-val="{{ true }}">
+                                <div style="{{ r.postStyle }}"><span style="{{ r.pillStyle }}">System</span><span style="{{ r.sysTextStyle }}">{{ r.post }}</span></div>
+                              </sc-if>
+
+                              <sc-if value="{{ r.clipped }}" hint-placeholder-val="{{ false }}">
+                                <div style="position:absolute;left:0;right:0;bottom:0;height:44px;pointer-events:none;background:linear-gradient(to bottom,transparent,var(--card))"></div>
+                              </sc-if>
+                            </div>
 
                             <div style="display:flex;align-items:center;gap:14px">
                               <sc-if value="{{ r.canExpand }}" hint-placeholder-val="{{ true }}">
                                 <button type="button" onClick="{{ r.toggleBody }}" style="border:none;background:transparent;padding:0;color:var(--info-fg);font:500 12.5px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">{{ r.moreLabel }}</button>
                               </sc-if>
-                              <sc-if value="{{ r.editing }}" hint-placeholder-val="{{ false }}">
-                                <button type="button" onClick="{{ r.edit }}" style="border:none;background:transparent;padding:0;color:var(--muted-fg);font:500 12.5px var(--font-sans);cursor:pointer" style-hover="color:var(--fg)">Done</button>
-                              </sc-if>
                               <span style="flex:1"></span>
                               <span style="font:400 11.5px var(--font-mono);color:var(--muted-fg)">{{ r.count }}</span>
                             </div>
-
-                            <sc-if value="{{ r.hasPost }}" hint-placeholder-val="{{ true }}">
-                              <div style="display:flex;flex-direction:column">
-                                <button type="button" onClick="{{ r.togglePost }}" style="{{ r.postHeadStyle }}">
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect width="18" height="11" x="3" y="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                                  <span>Postamble</span>
-                                  <span style="color:var(--muted-fg);font-weight:400">system</span>
-                                  <span style="flex:1"></span>
-                                  <span style="{{ r.postCaretStyle }}">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
-                                  </span>
-                                </button>
-                                <sc-if value="{{ r.postOpen }}" hint-placeholder-val="{{ false }}">
-                                  <p style="margin:0;padding:8px 10px 10px 28px;white-space:pre-wrap;font:400 12px/1.6 var(--font-mono);color:var(--muted-fg);border-left:2px solid var(--border);margin-left:9px">{{ r.post }}</p>
-                                </sc-if>
-                              </div>
-                            </sc-if>
                           </div>
                         </div>
                       </sc-if>
@@ -393,17 +365,22 @@ class Component extends DCLogic {
     const openDefault = !!this.props.promptsOpenByDefault;
     const expanded = this.state.bodyOpen[key] == null ? openDefault : this.state.bodyOpen[key];
     const editing = !!this.state.editing[key];
-    const clipped = !expanded && !editing && text.length > 190;
+    const total = (pre || "").length + text.length + (post || "").length;
+    const clipped = !expanded && !editing && total > 260;
     const words = text.trim() ? text.trim().split(/\s+/).length : 0;
-    const caret = open => `display:inline-flex;flex:none;color:var(--muted-fg);transition:transform .16s;transform:rotate(${open ? "0deg" : "-90deg"})`;
-    const sysHead = `display:flex;align-items:center;gap:7px;width:100%;padding:6px 0;border:none;background:transparent;color:var(--muted-fg);font:500 11.5px var(--font-sans);cursor:pointer;text-align:left`;
+    const sys = side => `position:relative;padding:10px 74px 10px 14px;font:400 12px/1.6 var(--font-mono);color:var(--muted-fg);background:var(--muted);border-${side}:1px solid var(--border)`;
     return {
       isPrompt: true, label,
       rowStyle: "display:flex;padding:10px 0 12px",
-      body: text, count: words + " words",
+      body: text, count: words + " words editable",
       editing, reading: !editing, clipped,
-      bodyStyle: `white-space:pre-wrap;font:400 13px/1.62 var(--font-sans);color:var(--fg);max-height:${expanded || editing ? "none" : "62px"};overflow:hidden`,
-      canExpand: !editing && (text.length > 190 || expanded),
+      docStyle: `position:relative;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);overflow:hidden;box-shadow:var(--shadow-xs);max-height:${expanded || editing ? "none" : "210px"}`,
+      preStyle: sys("bottom"), postStyle: sys("top"),
+      sysTextStyle: "display:block;white-space:pre-wrap",
+      pillStyle: "position:absolute;top:8px;right:10px;padding:1px 7px;border:1px solid var(--border);border-radius:99px;background:var(--card);color:var(--muted-fg);font:500 10.5px var(--font-sans);letter-spacing:0.02em",
+      blur: () => this.setState(s => ({ editing: { ...s.editing, [key]: false } })),
+      bodyStyle: `padding:13px 14px;white-space:pre-wrap;font:400 13px/1.62 var(--font-sans);color:var(--fg);cursor:text`,
+      canExpand: !editing && (total > 260 || expanded),
       moreLabel: expanded ? "See less" : "See more",
       toggleBody: () => this.flag("bodyOpen", key),
       edit: () => this.flag("editing", key),
@@ -411,12 +388,7 @@ class Component extends DCLogic {
       editStyle: `display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px;border:1px solid ${editing ? "var(--primary)" : "var(--border)"};border-radius:var(--control-radius);background:transparent;color:${editing ? "var(--primary)" : "var(--muted-fg)"};font:500 12px var(--font-sans);cursor:pointer`,
       rows: Math.min(16, Math.max(4, text.split("\n").length + 2)),
       onBody: e => setText(e.target.value),
-      hasPre: !!pre, pre, preOpen: !!this.state.sysOpen[key + ":pre"],
-      togglePre: () => this.flag("sysOpen", key + ":pre"),
-      preHeadStyle: sysHead, preCaretStyle: caret(!!this.state.sysOpen[key + ":pre"]),
-      hasPost: !!post, post, postOpen: !!this.state.sysOpen[key + ":post"],
-      togglePost: () => this.flag("sysOpen", key + ":post"),
-      postHeadStyle: sysHead, postCaretStyle: caret(!!this.state.sysOpen[key + ":post"])
+      hasPre: !!pre, pre, hasPost: !!post, post
     };
   }
 
