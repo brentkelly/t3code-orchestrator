@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  PositiveInt,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
@@ -625,6 +626,62 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
         automaticGitFetchInterval: 10_000,
       });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  // Regression (board settings redesign follow-up): every board edit — a stage's
+  // model or attempt cap, a concurrency ceiling, an archive window — used to be
+  // REFUSED at the write. The sparse strip diffed these objects field by field,
+  // and the resulting partial (`{ maxAttempts: 6 }`, no `kind`; `{ archiveAfterDays: 10 }`,
+  // no `worktreeRetention`) fails the validation the writer runs before it
+  // touches the file, so the whole settings write failed and the UI silently
+  // snapped back — the model picker "not selecting" and the steppers "doing
+  // nothing" were both this.
+  it.effect("persists a board pipeline / concurrency / lifecycle edit", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const building = DEFAULT_SERVER_SETTINGS.board.pipeline.building;
+      assert.isDefined(building);
+      if (building === undefined) return;
+
+      const next = yield* serverSettings.updateSettings({
+        board: {
+          pipeline: {
+            ...DEFAULT_SERVER_SETTINGS.board.pipeline,
+            building: {
+              ...building,
+              maxAttempts: PositiveInt.make(6),
+              model: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "opus" },
+            },
+          },
+          concurrency: { globalMaxConcurrent: PositiveInt.make(7) },
+          lifecycle: { archiveAfterDays: PositiveInt.make(21) },
+        },
+      });
+
+      assert.equal(next.board.pipeline.building?.maxAttempts, 6);
+      assert.deepEqual(next.board.pipeline.building?.model, {
+        instanceId: "claudeAgent",
+        model: "opus",
+      });
+      assert.equal(next.board.concurrency.globalMaxConcurrent, 7);
+      assert.equal(next.board.lifecycle.archiveAfterDays, 21);
+
+      // The file keeps only what differs, and every surviving object is whole
+      // enough to decode on its own.
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const parsed = JSON.parse(raw) as { readonly board: Record<string, unknown> };
+      assert.deepEqual(Object.keys(parsed.board).sort(), ["concurrency", "lifecycle", "pipeline"]);
+      assert.deepEqual(Object.keys(parsed.board.pipeline as object), ["building"]);
+
+      // And it survives the restart the file exists for.
+      const reloaded = yield* decodeServerSettings(parsed);
+      assert.equal(reloaded.board.pipeline.building?.maxAttempts, 6);
+      assert.equal(reloaded.board.concurrency.globalMaxConcurrent, 7);
+      assert.equal(reloaded.board.lifecycle.archiveAfterDays, 21);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

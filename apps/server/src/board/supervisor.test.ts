@@ -12,7 +12,6 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   composeStepPrompt,
   orderBoardQueue,
-  providerQuestionMechanism,
   reconcileStepDecision,
   recoveryDecision,
   resolveBoardConcurrencyLimit,
@@ -25,9 +24,7 @@ import {
 // run, whose postamble carries the completion-contract / never-prose stance.
 const step = (overrides: Partial<ComposeStepPromptStep> = {}): ComposeStepPromptStep => ({
   stepLabel: "Build",
-  providerInstanceId: ProviderInstanceId.make("codex"),
   prompt: "Implement the brief.",
-  maxAttempts: 3,
   humanInLoop: false,
   ...overrides,
 });
@@ -37,13 +34,12 @@ describe("composeStepPrompt (D5 envelope)", () => {
     const prompt = composeStepPrompt({
       card: { key: "T3-1", title: "Ship it", stage: BoardStageId.make("building") },
       step: step(),
-      attempt: 2,
       role: "build",
     });
-    // Preamble: card key, title, stage, step, attempt N of M, context pointer.
+    // Preamble: card key, title, stage, step, context pointer.
     assert.include(prompt, "T3-1");
     assert.include(prompt, "Ship it");
-    assert.include(prompt, "attempt 2 of 3");
+    assert.include(prompt, "Step: Build.");
     assert.include(prompt, "board_get_card_context");
     // Body: the frozen step prompt verbatim.
     assert.include(prompt, "Implement the brief.");
@@ -52,22 +48,25 @@ describe("composeStepPrompt (D5 envelope)", () => {
     assert.include(prompt, "never end a turn with an unanswered question in prose");
   });
 
-  it("words the question mechanism per provider instance", () => {
-    const claudePrompt = composeStepPrompt({
+  it("words the question mechanism without naming a provider", () => {
+    const prompt = composeStepPrompt({
       card: { key: "T3-1", title: "x", stage: BoardStageId.make("building") },
-      step: step({ providerInstanceId: ProviderInstanceId.make("claude") }),
-      attempt: 1,
+      step: step(),
       role: "build",
     });
-    assert.include(claudePrompt, "Claude Code question");
-    const codexPrompt = composeStepPrompt({
-      card: { key: "T3-1", title: "x", stage: BoardStageId.make("building") },
-      step: step({ providerInstanceId: ProviderInstanceId.make("codex") }),
-      attempt: 1,
+    assert.include(prompt, "user-input request");
+    for (const vendor of ["Codex", "Claude", "Cursor", "Gemini", "Grok", "OpenCode"]) {
+      assert.notInclude(prompt, vendor);
+    }
+  });
+
+  it("carries no attempt counter: the retry ladder is supervisor bookkeeping", () => {
+    const prompt = composeStepPrompt({
+      card: { key: "T3-1", title: "Ship it", stage: BoardStageId.make("building") },
+      step: step(),
       role: "build",
     });
-    assert.include(codexPrompt, "Codex");
-    assert.notInclude(codexPrompt, "Claude Code question");
+    assert.notInclude(prompt, "attempt");
   });
 });
 
@@ -102,7 +101,6 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       hasTodoList: input.hasTodoList ?? true,
       stageEntryInvocations: input.stageEntryInvocations ?? 0,
       maxInvocationsPerStageEntry: input.maxInvocationsPerStageEntry ?? 20,
-      questionMechanism: "ask",
     });
 
   it("resumes with a nudge within budget, adding an outstanding summary on the third consecutive stall", () => {
@@ -148,26 +146,12 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     const texts = [
       composeStepPrompt({
         card: { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building },
-        step: {
-          stepLabel: "Build",
-          providerInstanceId: ProviderInstanceId.make("claude_code"),
-          prompt: "Do the work",
-          maxAttempts: 5,
-          humanInLoop: false,
-        },
-        attempt: 1,
+        step: { stepLabel: "Build", prompt: "Do the work", humanInLoop: false },
         role: "build",
       }),
       composeStepPrompt({
         card: { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building },
-        step: {
-          stepLabel: "Build",
-          providerInstanceId: ProviderInstanceId.make("claude_code"),
-          prompt: "Do the work",
-          maxAttempts: 5,
-          humanInLoop: true,
-        },
-        attempt: 1,
+        step: { stepLabel: "Build", prompt: "Do the work", humanInLoop: true },
         role: "build",
       }),
       (() => {
@@ -186,17 +170,11 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
   });
 
   it("t3o-18 D16: the unattended postamble asks for a todo list; the human-in-the-loop one does not", () => {
-    const step = {
-      stepLabel: "Build",
-      providerInstanceId: ProviderInstanceId.make("claude_code"),
-      prompt: "Do the work",
-      maxAttempts: 5,
-    };
+    const step = { stepLabel: "Build", prompt: "Do the work" };
     const card = { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building };
     const unattended = composeStepPrompt({
       card,
       step: { ...step, humanInLoop: false },
-      attempt: 1,
       role: "build",
     });
     assert.include(unattended, "todo list");
@@ -205,7 +183,6 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     const humanInLoop = composeStepPrompt({
       card,
       step: { ...step, humanInLoop: true },
-      attempt: 1,
       role: "build",
     });
     assert.notInclude(humanInLoop, "todo list");
@@ -318,15 +295,6 @@ describe("reconcileStepDecision (boot reconciliation)", () => {
     assert.deepStrictEqual(
       reconcileStepDecision({ status: "completing", threadAlive: false, hasSucceeded: false }),
       { kind: "recover" },
-    );
-  });
-});
-
-describe("providerQuestionMechanism", () => {
-  it("falls back to neutral wording for an unknown provider", () => {
-    assert.include(
-      providerQuestionMechanism(ProviderInstanceId.make("some-custom-runtime")),
-      "user-input request",
     );
   });
 });

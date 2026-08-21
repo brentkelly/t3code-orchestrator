@@ -27,7 +27,9 @@ import {
   boardStageEntryInvocationCount,
   boardStageIndex,
   CommandId,
+  BOARD_ENVELOPE_QUESTION_MECHANISM,
   DEFAULT_BOARD_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
   EMPTY_BOARD_STATE,
   isBoardTerminalStepStatus,
   MessageId,
@@ -75,7 +77,6 @@ import {
 import {
   composeStepPrompt,
   orderBoardQueue,
-  providerQuestionMechanism,
   reconcileStepDecision,
   recoveryDecision,
   resolveBoardConcurrencyLimit,
@@ -162,6 +163,25 @@ const make = Effect.gen(function* () {
   const boardSettings = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.board ?? DEFAULT_BOARD_SETTINGS),
     Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
+  );
+
+  /** What a stage with no model of its own runs on. The board has no
+      compiled-in model pair — a hardcoded one is a pair the user may not have
+      enabled — so an unset stage falls back to the app's OWN text-generation
+      selection, which is a provider instance and model the user has already
+      configured. The settings card asks for an explicit per-stage model; this
+      is only what a never-configured stage lands on. */
+  const fallbackModelSelection = serverSettings.getSettings.pipe(
+    Effect.map((settings) => ({
+      instanceId: settings.textGenerationModelSelection.instanceId,
+      model: settings.textGenerationModelSelection.model,
+    })),
+    Effect.catchCause(() =>
+      Effect.succeed({
+        instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
+        model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
+      }),
+    ),
   );
 
   // Progress signal (t3o-17 D2, re-pointed by t3o-18 D16). The reactor — not the
@@ -547,12 +567,9 @@ const make = Effect.gen(function* () {
       card,
       step: {
         stepLabel: state.stepLabel,
-        providerInstanceId: state.providerInstanceId,
         prompt: state.prompt,
-        maxAttempts: state.maxAttempts,
         humanInLoop: state.humanInLoop,
       },
-      attempt: state.attempt,
       role: boardSeedStageRole(card.stage),
     });
 
@@ -853,7 +870,7 @@ const make = Effect.gen(function* () {
     // continuation below); a re-entry is skipped — its clean human thread must
     // not re-open on every server restart.
     if (bootPass && !firstEntry) return;
-    const model = resolveBoardStageModelSelection(exec.model);
+    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
     // Ask the stage executor what runs next (D15): the reactor delegates the
     // "what to execute" decision rather than computing it inline. A card
     // entering its stage has no completed step for this run, so a simple stage
@@ -976,7 +993,7 @@ const make = Effect.gen(function* () {
     const settings = yield* boardSettings;
     const exec = resolveBoardStageExecution(settings, card.stage);
     const completions = boardCardStepCompletions(board, card.id);
-    const model = resolveBoardStageModelSelection(exec.model);
+    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
     const completedStepIds = completions
       .filter((completion) => completion.outcome === "succeeded")
       .map((completion) => completion.stepId);
@@ -1074,7 +1091,6 @@ const make = Effect.gen(function* () {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
   }) {
-    const questionMechanism = providerQuestionMechanism(input.state.providerInstanceId);
     // Resolve the two things the pure decision needs but must not read itself
     // (D2/D5): the progress signal (git/activity) and the stage-entry invocation
     // total and its ceiling (settings). `recoveryDecision` stays pure.
@@ -1093,7 +1109,6 @@ const make = Effect.gen(function* () {
       hasTodoList: todo?.hasList ?? false,
       stageEntryInvocations,
       maxInvocationsPerStageEntry: exec.maxInvocationsPerStageEntry,
-      questionMechanism,
     });
 
     // Recovery gives up (t3o-17, D3/D4): consecutive stalls exhausted
@@ -1359,10 +1374,9 @@ const make = Effect.gen(function* () {
       stage?.role === "build" ? (card.humanInLoop ?? state.humanInLoop) : state.humanInLoop;
     if (desired === state.humanInLoop) return;
     if (state.threadId !== null) {
-      const questionMechanism = providerQuestionMechanism(state.providerInstanceId);
       const text = desired
         ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`
-        : `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${questionMechanism}, and never end a turn with an unanswered question in prose.`;
+        : `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;
       yield* sendTurn({ threadId: state.threadId, text });
     }
     yield* dispatch({

@@ -216,6 +216,53 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "textGenerationModelSelection",
 ]);
 
+/**
+ * Keys whose value must be written WHOLE the moment anything inside it differs
+ * from the default.
+ *
+ * `writeSettingsAtomically` validates the sparse object against `ServerSettings`
+ * before writing it, so dropping a field is only safe when that field can be
+ * reconstructed on decode. Board's `concurrency` and `lifecycle` have plain
+ * required fields (no decoding default), so a field-wise diff of either fails
+ * validation and the ENTIRE settings write is refused — the edit is silently
+ * lost and the UI snaps back to the old value.
+ *
+ * Unlike `ATOMIC_SETTINGS_KEYS` these are still compared structurally (via the
+ * recursive strip), because `Equal.equals` on plain objects is reference
+ * equality and would call every load "changed".
+ */
+const INDIVISIBLE_SETTINGS_KEYS: ReadonlySet<string> = new Set(["concurrency", "lifecycle"]);
+
+/**
+ * Keys whose value is a MAP that may be pruned entry-wise but never diffed
+ * field-wise. `board.pipeline`'s entries are a `kind`-discriminated union, so a
+ * diff that drops `kind` (it equals the default `"simple"`) matches neither
+ * member and fails the same write-time validation. Dropping a whole entry that
+ * equals its compiled-in default is still safe — `resolveBoardStageExecution`
+ * resolves an absent seeded stage back to that default.
+ */
+const INDIVISIBLE_ENTRY_SETTINGS_KEYS: ReadonlySet<string> = new Set(["pipeline"]);
+
+/** Prune the entries of a map that match their compiled-in default, keeping
+    every surviving entry intact. */
+function stripDefaultSettingsMapEntries(current: unknown, defaults: unknown): unknown | undefined {
+  if (current === null || typeof current !== "object" || Array.isArray(current)) {
+    return stripDefaultServerSettings(current, defaults);
+  }
+  const currentRecord = current as Record<string, unknown>;
+  const defaultsRecord =
+    defaults !== null && typeof defaults === "object" && !Array.isArray(defaults)
+      ? (defaults as Record<string, unknown>)
+      : {};
+  const next: Record<string, unknown> = {};
+  for (const key of Object.keys(currentRecord)) {
+    if (stripDefaultServerSettings(currentRecord[key], defaultsRecord[key]) !== undefined) {
+      next[key] = currentRecord[key];
+    }
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
     return Equal.equals(current, defaults) ? undefined : current;
@@ -235,6 +282,15 @@ function stripDefaultServerSettings(current: unknown, defaults: unknown): unknow
       if (ATOMIC_SETTINGS_KEYS.has(key)) {
         if (!Equal.equals(currentRecord[key], defaultsRecord[key])) {
           next[key] = currentRecord[key];
+        }
+      } else if (INDIVISIBLE_SETTINGS_KEYS.has(key)) {
+        if (stripDefaultServerSettings(currentRecord[key], defaultsRecord[key]) !== undefined) {
+          next[key] = currentRecord[key];
+        }
+      } else if (INDIVISIBLE_ENTRY_SETTINGS_KEYS.has(key)) {
+        const pruned = stripDefaultSettingsMapEntries(currentRecord[key], defaultsRecord[key]);
+        if (pruned !== undefined) {
+          next[key] = pruned;
         }
       } else {
         const stripped = stripDefaultServerSettings(currentRecord[key], defaultsRecord[key]);

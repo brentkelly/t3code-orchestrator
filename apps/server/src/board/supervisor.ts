@@ -8,8 +8,7 @@
  * unit-tested without a running server (D8 in spirit: logic is pure, the
  * effectful shell is thin).
  *
- * - Prompt envelope (D5): provider-neutral preamble + body + postamble, with
- *   the question-mechanism wording chosen per provider instance.
+ * - Prompt envelope (D5): provider-neutral preamble + body + postamble.
  * - Step selection (D4): the next step of the card's recipe snapshot that has
  *   no successful completion yet.
  * - Recovery (D13): escalating nudges that never loop — resume, resume with an
@@ -18,6 +17,7 @@
  *   answer to "is its thread still alive / did it complete while we were
  *   down", decide resume / recover / advance.
  */
+import { BOARD_ENVELOPE_QUESTION_MECHANISM } from "@t3tools/contracts";
 import type {
   BoardCardId,
   BoardCardStepState,
@@ -31,7 +31,6 @@ import type {
 // import site for the decision logic.
 export {
   composeStepPrompt,
-  providerQuestionMechanism,
   type ComposeStepPromptInput,
   type ComposeStepPromptStep,
 } from "@t3tools/contracts";
@@ -101,7 +100,6 @@ export function recoveryDecision(input: {
       against `stageEntryInvocations + 1`. */
   readonly stageEntryInvocations: number;
   readonly maxInvocationsPerStageEntry: number;
-  readonly questionMechanism: string;
 }): BoardRecoveryDecision {
   const nextAttempt = input.stepState.attempt + 1;
   // Progress since the last nudge forgets the prior streak, so THIS stall is
@@ -139,7 +137,7 @@ export function recoveryDecision(input: {
   }
   const nudgeLines = [
     `Your previous turn ended without calling board_complete_step, so the step is not finished.`,
-    `Continue where you left off and call board_complete_step when done; if you are blocked, ${input.questionMechanism}.`,
+    `Continue where you left off and call board_complete_step when done; if you are blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}.`,
   ];
   // The nudge asks again, CONDITIONALLY (t3o-18, D16). Only a thread with no
   // list is asked for one — a thread already keeping one needs no reminder, and

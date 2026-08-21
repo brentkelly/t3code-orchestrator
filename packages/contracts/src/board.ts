@@ -43,7 +43,6 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { DEFAULT_TEXT_GENERATION_MODEL } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const BoardCardId = TrimmedNonEmptyString.pipe(Schema.brand("BoardCardId"));
@@ -3212,7 +3211,6 @@ export const DEFAULT_BOARD_STEP_MAX_ATTEMPTS = 5;
     attempts compound bound observable. Deliberately generous: a runaway
     detector, not a budget. */
 export const DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY = 20;
-export const DEFAULT_BOARD_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
 
 /**
  * A stage's execution config (D4), keyed by stage id in `BoardSettings.pipeline`
@@ -3766,10 +3764,16 @@ export function resolveBoardStageExecution(
   // under either key is ignored the same way a simple member under the review
   // key is.
   if (stageId === BOARD_SEED_STAGE_IDS.planning || stageId === BOARD_SEED_STAGE_IDS.building) {
+    // An ABSENT entry resolves to that stage's SEEDED config, not the empty
+    // all-defaults one: settings.json is written sparsely (every entry equal to
+    // its compiled-in default is pruned), so "Planning is missing from the map"
+    // is the normal state of a board whose Planning was never edited — and
+    // resolving it to `autoExecute: false` with an empty prompt would silently
+    // switch the seeded stage off. Mirrors the review branch above.
     const base =
       configured !== undefined && !isBoardReviewStageExecution(configured)
         ? configured
-        : DEFAULT_BOARD_STAGE_EXECUTION;
+        : (DEFAULT_BOARD_PIPELINE[stageId] as BoardStageExecutionSimple);
     const forced =
       stageId === BOARD_SEED_STAGE_IDS.planning
         ? ({ mode: "plan", humanInLoop: true, humanInLoopWithPlan: false } as const)
@@ -3779,18 +3783,23 @@ export function resolveBoardStageExecution(
   return configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
 }
 
-/** Resolve a stage config's `model` to a concrete provider-instance + model
-    pair (D12): `null` becomes the global text-generation default, so a running
-    card is unaffected by a later change to that default. */
+/**
+ * Resolve a stage config's `model` to the concrete provider-instance + model
+ * pair a spawn runs on (D12), freezing it onto the run row so a running card
+ * is unaffected by a later settings change.
+ *
+ * There is NO compiled-in board model: a stage the user has not pointed at a
+ * model falls back to `fallback`, which the caller reads off the app's own
+ * text-generation selection. A hardcoded pair (this used to be codex +
+ * `DEFAULT_TEXT_GENERATION_MODEL`) is a pair the user may not have enabled at
+ * all, so it spawned onto a model that could not run — and the settings card
+ * advertised it as "Default".
+ */
 export function resolveBoardStageModelSelection(
   model: BoardModelSelection | null,
+  fallback: BoardModelSelection,
 ): BoardModelSelection {
-  return (
-    model ?? {
-      instanceId: DEFAULT_BOARD_PROVIDER_INSTANCE_ID,
-      model: DEFAULT_TEXT_GENERATION_MODEL,
-    }
-  );
+  return model ?? fallback;
 }
 
 /** The per-project key prefix as STORED, falling back to the compiled-in

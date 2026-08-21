@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ProjectId } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   assignBoardKeyPrefix,
   BOARD_SEED_STAGE_IDS,
@@ -59,10 +60,14 @@ describe("board settings defaults", () => {
     expect(building.prompt).toBe(DEFAULT_BOARD_BUILD_PROMPT);
     expect(building.maxAttempts).toBeGreaterThan(0);
     expect(building.timeoutMs).toBeGreaterThan(0);
-    // Its `null` model resolves to a concrete, runnable instance + model (D12).
-    const selection = resolveBoardStageModelSelection(building.model);
-    expect(selection.instanceId).toBe("codex");
-    expect(selection.model.length).toBeGreaterThan(0);
+    // A stage names no model of its own out of the box: the caller supplies
+    // the fallback (the app's own text-generation selection), because the board
+    // has no compiled-in pair — one would name a model the user may not have.
+    expect(building.model).toBe(null);
+    const fallback = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "opus" };
+    expect(resolveBoardStageModelSelection(building.model, fallback)).toEqual(fallback);
+    const chosen = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-terra" };
+    expect(resolveBoardStageModelSelection(chosen, fallback)).toEqual(chosen);
   });
 });
 
@@ -113,6 +118,22 @@ describe("resolveBoard* helpers", () => {
       DEFAULT_BOARD_STAGE_EXECUTION,
     );
     expect(DEFAULT_BOARD_STAGE_EXECUTION.autoExecute).toBe(false);
+  });
+
+  it("resolves an ABSENT seeded stage to its seeded config, not the empty one", () => {
+    // settings.json is written sparsely — an entry equal to its compiled-in
+    // default is pruned — so "Planning is missing from the map" is the normal
+    // state of a board whose Planning was never edited. Resolving it to the
+    // empty all-defaults config would switch the seeded stage off the first
+    // time any OTHER stage was edited.
+    const onlyBuilding = decodeSettings({
+      pipeline: { [BOARD_SEED_STAGE_IDS.building]: DEFAULT_BOARD_PIPELINE.building },
+    });
+    for (const stageId of [BOARD_SEED_STAGE_IDS.planning, BOARD_SEED_STAGE_IDS.review] as const) {
+      const resolved = resolveBoardStageExecution(onlyBuilding, stageId);
+      expect(resolved.autoExecute).toBe(true);
+      expect(resolved.prompt).toBe(DEFAULT_BOARD_PIPELINE[stageId]?.prompt);
+    }
   });
 
   it("falls back to the default key prefix, or uses the configured one and accent", () => {

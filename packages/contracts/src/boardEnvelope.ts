@@ -16,36 +16,17 @@
  */
 import type { BoardReviewPhaseId, BoardStageRole } from "./board.ts";
 import { BOARD_REVIEW_PHASE_LABELS, reviewStepId } from "./board.ts";
-import type { ProviderInstanceId } from "./providerInstance.ts";
 
 /**
- * The provider-specific wording for "ask through your question tool, never in
- * prose" (D5). The board assigned the step, so it knows which provider it is
- * talking to — this is the concrete payoff of envelopes over Claude-specific
- * skills. Unknown instances fall back to neutral phrasing.
+ * The wording for "ask through your question tool, never in prose" (D5).
+ * Deliberately provider-NEUTRAL: the envelope is composed once and read by
+ * whichever runtime the stage happens to run on, and naming one vendor's
+ * mechanism ("Codex's ask-for-input request") is wrong for every other
+ * provider — and reads as wrong even to the one it names, when the user has
+ * pointed that stage at a different runtime.
  */
-export function providerQuestionMechanism(providerInstanceId: ProviderInstanceId): string {
-  const key = String(providerInstanceId).toLowerCase();
-  if (key.includes("claude") || key.includes("anthropic")) {
-    return "raise it as a Claude Code question so it surfaces as a real prompt";
-  }
-  if (key.includes("codex") || key.includes("openai")) {
-    return "raise it through Codex's ask-for-input request";
-  }
-  if (key.includes("cursor")) {
-    return "raise it through Cursor's user-input request";
-  }
-  if (key.includes("gemini") || key.includes("google")) {
-    return "raise it through Gemini's user-input request";
-  }
-  if (key.includes("grok")) {
-    return "raise it through Grok's user-input request";
-  }
-  if (key.includes("opencode")) {
-    return "raise it through OpenCode's user-input request";
-  }
-  return "raise it through your runtime's user-input request";
-}
+export const BOARD_ENVELOPE_QUESTION_MECHANISM =
+  "raise it through your runtime's user-input request so it surfaces as a real prompt";
 
 /** The stance-independent guard appended to every postamble: `board_move_card`
     is agent-reachable, so the envelope — not the editable prompt — forbids it.
@@ -63,9 +44,7 @@ export const BOARD_ENVELOPE_PLAN_DELIVERABLE =
     (D12) — the single step per stage (D1) replaces the old multi-step recipe. */
 export interface ComposeStepPromptStep {
   readonly stepLabel: string;
-  readonly providerInstanceId: ProviderInstanceId;
   readonly prompt: string;
-  readonly maxAttempts: number;
   /** Frozen human-in-the-loop stance (D5): governs the postamble. */
   readonly humanInLoop: boolean;
 }
@@ -73,25 +52,25 @@ export interface ComposeStepPromptStep {
 export interface ComposeStepPromptInput {
   readonly card: { readonly key: string; readonly title: string; readonly stage: string };
   readonly step: ComposeStepPromptStep;
-  readonly attempt: number;
   /** The stage's effective role: keys the deliverable postamble segment. */
   readonly role: BoardStageRole | null;
 }
 
 /** The system preamble (D5) — short by design: a pointer to
     `board_get_card_context` exists so context is pulled, not pushed.
-    `attempt` admits a string so a settings-side preview can show a
-    `{{n}}` placeholder where a run interpolates the real counter. */
+    It carries NO attempt counter: the retry ladder is supervisor bookkeeping,
+    and "attempt 3 of 5" tells an agent nothing it can act on (the reason the
+    prior attempts ended is in `board_get_card_context`, not in the number) —
+    on a human-in-the-loop stage it is not even a number the run will reach. */
 export function boardStepPreamble(
   input: Pick<ComposeStepPromptInput, "card"> & {
-    readonly step: Pick<ComposeStepPromptStep, "stepLabel" | "maxAttempts">;
-    readonly attempt: number | string;
+    readonly step: Pick<ComposeStepPromptStep, "stepLabel">;
   },
 ): string {
-  const { card, step, attempt } = input;
+  const { card, step } = input;
   return [
     `You are working card ${card.key} — "${card.title}".`,
-    `Stage: ${card.stage}. Step: ${step.stepLabel} (attempt ${attempt} of ${step.maxAttempts}).`,
+    `Stage: ${card.stage}. Step: ${step.stepLabel}.`,
     `Call board_get_card_context for the brief, plan, dependencies and prior progress.`,
   ].join("\n");
 }
@@ -102,10 +81,8 @@ export function boardStepPreamble(
     move guard. */
 export function boardStepPostamble(input: {
   readonly humanInLoop: boolean;
-  readonly providerInstanceId: ProviderInstanceId;
   readonly role: BoardStageRole | null;
 }): string {
-  const questionMechanism = providerQuestionMechanism(input.providerInstanceId);
   const stance = input.humanInLoop
     ? [
         // Human-in-the-loop envelopes carry no todo-list nudge (t3o-18 D16,
@@ -122,7 +99,7 @@ export function boardStepPostamble(input: {
         // watches the agent's own plan tool advance, so this nudges a behaviour
         // the agent already wants rather than an extra MCP call.
         `Keep a todo list current as you work (your task/plan tool) and commit as you go: the supervisor watches your list advance to tell a productive long job from a wedged one, and without it a working step looks the same as a stalled one and will be escalated.`,
-        `If you are truly blocked and need a human decision, ${questionMechanism}; never end a turn with an unanswered question in prose.`,
+        `If you are truly blocked and need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}; never end a turn with an unanswered question in prose.`,
       ];
   const deliverable = input.role === "plan" ? [BOARD_ENVELOPE_PLAN_DELIVERABLE] : [];
   return [...stance, ...deliverable, BOARD_ENVELOPE_MOVE_GUARD].join("\n");
@@ -137,7 +114,6 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
   const preamble = boardStepPreamble(input);
   const postamble = boardStepPostamble({
     humanInLoop: input.step.humanInLoop,
-    providerInstanceId: input.step.providerInstanceId,
     role: input.role,
   });
   const body = input.step.prompt;

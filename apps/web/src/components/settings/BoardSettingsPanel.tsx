@@ -291,7 +291,10 @@ function ConcurrencySection({
                 defaultValue={current ?? ""}
                 placeholder="Global"
                 aria-label={`Concurrency limit for ${id}`}
-                className="h-7.5 w-24 text-sm"
+                // `Input` styles a wrapper span, so the appearance reset that
+                // drops the browser's native spin buttons has to reach the real
+                // element through a descendant selector.
+                className="h-7.5 w-24 text-sm [&_input]:[appearance:textfield] [&_input::-webkit-inner-spin-button]:appearance-none [&_input::-webkit-outer-spin-button]:appearance-none"
                 onBlur={(event) => {
                   const raw = event.target.value.trim();
                   const value = raw.length === 0 ? null : parsePositiveIntInput(raw, current ?? 1);

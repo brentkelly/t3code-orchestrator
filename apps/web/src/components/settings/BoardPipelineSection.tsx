@@ -29,8 +29,8 @@ import {
   boardStepPreamble,
   effectiveBoardStageRole,
   isBoardReviewStageExecution,
+  ProviderInstanceId,
   resolveBoardStageExecution,
-  resolveBoardStageModelSelection,
   type BoardReviewPhaseExecution,
   type BoardReviewPhaseId,
   type BoardStageDefinition,
@@ -39,7 +39,6 @@ import {
   type BoardStageRole,
   type BoardState,
   type EnvironmentId,
-  type ProviderInstanceId,
 } from "@t3tools/contracts";
 import {
   DndContext,
@@ -77,9 +76,11 @@ import {
 } from "../../providerInstances";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { cn, randomUUID } from "../../lib/utils";
-import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { ModelPickerContent } from "../chat/ModelPickerContent";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import {
@@ -91,7 +92,7 @@ import {
   setBoardStageExecution,
 } from "./BoardSettingsPanel.logic";
 import { searchableSetting } from "./settingsSearch";
-import { SettingResetButton, SettingsSection } from "./settingsLayout";
+import { SettingsSection } from "./settingsLayout";
 
 type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
 type ModelOptionsByInstance = ReturnType<typeof getCustomModelOptionsByInstance>;
@@ -102,6 +103,11 @@ type ModelSelection = ActiveModel | null;
     real card, so the preview shows placeholders where values vary per card. */
 const PREVIEW_CARD_KEY = "{{card-key}}";
 const PREVIEW_CARD_TITLE = "{{card title}}";
+
+/** Only reached when the server reports no provider instances at all; the
+    picker then has nothing to list, and the trigger still reads "Select a
+    model". */
+const EMPTY_INSTANCE_ID = ProviderInstanceId.make("none");
 
 // ── shared row primitives ──────────────────────────────────────────────
 
@@ -128,7 +134,16 @@ function ToggleRow(props: {
 }
 
 /** The prototype's −/value/+ number control, shared by rounds, timeouts,
-    attempts and the restyled concurrency / lifecycle rows. */
+    attempts and the restyled concurrency / lifecycle rows.
+
+    The field is a plain `<input>`, not the shared `Input`: that component puts
+    the class list on a bordered wrapper span and keeps the real element out of
+    reach, so neither the stepper's own chrome nor the `appearance` reset that
+    hides the browser's native spin buttons (redundant beside −/+, and they
+    crowd the value) could be applied to it. The value is controlled with a
+    free-text draft so typing is never fought, and the draft is dropped the
+    moment −/+ writes a new value — an uncontrolled field would keep showing
+    what the user last typed. */
 export function NumberStepper(props: {
   value: number;
   min: number;
@@ -140,30 +155,39 @@ export function NumberStepper(props: {
 }) {
   const step = props.step ?? 1;
   const clamp = (value: number) => Math.max(props.min, Math.min(props.max, value));
+  const [draft, setDraft] = useState<string | null>(null);
+  const resolve = (raw: string) => clamp(parsePositiveIntInput(raw, props.value));
+  const apply = (next: number) => {
+    setDraft(null);
+    if (next !== props.value) props.onChange(next);
+  };
+  // −/+ steps off whatever is on screen, including an uncommitted draft: the
+  // buttons suppress the focus change (below), so no blur has committed it yet.
+  const nudge = (delta: number) =>
+    apply(clamp((draft === null ? props.value : resolve(draft)) + delta));
   return (
     <div className="flex h-8 shrink-0 items-center overflow-hidden rounded-lg border border-input bg-popover shadow-xs">
       <button
         type="button"
         aria-label={`Decrease ${props.ariaLabel}`}
         className="flex h-full w-8 items-center justify-center border-r border-border text-muted-foreground hover:bg-accent hover:text-foreground"
-        onClick={() => props.onChange(clamp(props.value - step))}
+        // Keep focus (and its blur-commit) where it is: blur fires before
+        // click, so letting the button steal focus would race the two handlers.
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => nudge(-step)}
       >
         <MinusIcon className="size-3.5" />
       </button>
-      <Input
-        key={`${props.ariaLabel}:${props.value}`}
+      <input
         type="number"
         inputMode="numeric"
-        defaultValue={String(props.value)}
+        value={draft ?? String(props.value)}
         aria-label={props.ariaLabel}
-        className="h-full w-14 rounded-none border-none bg-transparent text-center text-sm font-medium shadow-none focus-visible:ring-0"
-        onBlur={(event) => {
-          const next = clamp(parsePositiveIntInput(event.target.value, props.value));
-          // Write the resolved value back into the field: when it equals the
-          // current value (e.g. garbage input fell back), no re-render happens
-          // and stale text would otherwise stick on screen.
-          event.target.value = String(next);
-          props.onChange(next);
+        className="h-full w-14 [appearance:textfield] bg-transparent text-center text-sm font-medium text-foreground outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={(event) => apply(resolve(event.target.value))}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
         }}
       />
       {props.unit ? <span className="pr-2 text-xs text-muted-foreground">{props.unit}</span> : null}
@@ -171,7 +195,8 @@ export function NumberStepper(props: {
         type="button"
         aria-label={`Increase ${props.ariaLabel}`}
         className="flex h-full w-8 items-center justify-center border-l border-border text-muted-foreground hover:bg-accent hover:text-foreground"
-        onClick={() => props.onChange(clamp(props.value + step))}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => nudge(step)}
       >
         <PlusIcon className="size-3.5" />
       </button>
@@ -342,41 +367,111 @@ function PromptRow(props: {
   );
 }
 
-/** The model row: the app's instance+model picker with an explicit Default
-    (null) state. Picking a model stores an override; the reset affordance
-    clears back to Default. The Default trigger shows the pair a run actually
-    resolves null to — `resolveBoardStageModelSelection`'s compiled board
-    default, the SAME resolution the reactor freezes at stage entry — not the
-    app's global chat model, which board runs do not read. */
+/**
+ * The model row. A stage names the model it runs on EXPLICITLY — there is no
+ * "Default" state to fall into, because the board never had a default worth
+ * advertising: the old one was a compiled-in codex + `gpt-5.6-luna` pair the
+ * user may never have enabled, so "Default" named a model that could not run.
+ * An unset stage reads "Select a model" and, while the stage auto-executes,
+ * says so in the same required-field language the prompt uses.
+ *
+ * The trigger is local rather than `ProviderModelPicker`'s, which always
+ * renders a concrete model name (falling back to the instance's first option)
+ * and so cannot show "nothing picked yet". The popup is the app's own
+ * `ModelPickerContent`, so the list, search and favourites are identical.
+ */
 function ModelRow(props: {
   label: string;
   ariaLabel: string;
   selection: ModelSelection;
+  requiredMessage?: string | null;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
   onChange: (selection: ModelSelection) => void;
 }) {
-  const active = props.selection ?? resolveBoardStageModelSelection(null);
+  const [open, setOpen] = useState(false);
+  // With nothing picked the popup still needs an instance to open on: use the
+  // first available one, with an empty model so no row reads as selected.
+  const firstEntry = props.instanceEntries.find((entry) => entry.enabled && entry.isAvailable);
+  const active: ActiveModel = props.selection ?? {
+    instanceId: firstEntry?.instanceId ?? props.instanceEntries[0]?.instanceId ?? EMPTY_INSTANCE_ID,
+    model: "",
+  };
+  const modelOptions = props.getModelOptions(active);
+  const activeEntry =
+    props.selection === null
+      ? null
+      : (props.instanceEntries.find((entry) => entry.instanceId === active.instanceId) ?? null);
+  const selectedOption = modelOptions
+    .get(active.instanceId)
+    ?.find((option) => option.slug === active.model);
+  const triggerLabel =
+    props.selection === null
+      ? "Select a model"
+      : selectedOption
+        ? getTriggerDisplayModelName(selectedOption)
+        : active.model;
+
   return (
-    <div className="flex items-center justify-between gap-4 py-2">
-      <span className="text-[13.5px] text-foreground">{props.label}</span>
-      <div className="flex items-center gap-1.5">
-        {props.selection === null ? (
-          <span className="text-xs text-muted-foreground">Default</span>
-        ) : (
-          <SettingResetButton label={props.ariaLabel} onClick={() => props.onChange(null)} />
-        )}
-        <ProviderModelPicker
-          activeInstanceId={active.instanceId}
-          model={active.model}
-          lockedProvider={null}
-          instanceEntries={props.instanceEntries}
-          modelOptionsByInstance={props.getModelOptions(active)}
-          triggerVariant="outline"
-          triggerAriaLabel={props.ariaLabel}
-          onInstanceModelChange={(instanceId, model) => props.onChange({ instanceId, model })}
-        />
+    <div className="flex flex-col gap-1 py-2">
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-[13.5px] text-foreground">{props.label}</span>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger
+            render={
+              <Button
+                size="xs"
+                variant="outline"
+                aria-label={props.ariaLabel}
+                className="max-w-56 justify-between gap-1.5"
+              />
+            }
+          >
+            <span className="flex min-w-0 items-center gap-1.5">
+              {activeEntry ? (
+                <ProviderInstanceIcon
+                  driverKind={activeEntry.driverKind}
+                  displayName={activeEntry.displayName}
+                  accentColor={activeEntry.accentColor}
+                  showBadge={Boolean(activeEntry.accentColor)}
+                  className="size-4"
+                  iconClassName="size-4"
+                  indicatorBackground="var(--input)"
+                />
+              ) : null}
+              <span
+                className={cn("truncate", props.selection === null ? "text-muted-foreground" : "")}
+              >
+                {triggerLabel}
+              </span>
+            </span>
+            <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 opacity-60" />
+          </PopoverTrigger>
+          <PopoverPopup
+            align="end"
+            className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
+            viewportClassName="rounded-lg !overflow-hidden p-0"
+          >
+            <ModelPickerContent
+              activeInstanceId={active.instanceId}
+              model={active.model}
+              lockedProvider={null}
+              lockedContinuationGroupKey={null}
+              instanceEntries={props.instanceEntries}
+              modelOptionsByInstance={modelOptions}
+              terminalOpen={false}
+              onRequestClose={() => setOpen(false)}
+              onInstanceModelChange={(instanceId, model) => {
+                props.onChange({ instanceId, model });
+                setOpen(false);
+              }}
+            />
+          </PopoverPopup>
+        </Popover>
       </div>
+      {props.selection === null && props.requiredMessage ? (
+        <p className="text-xs text-destructive">{props.requiredMessage}</p>
+      ) : null}
     </div>
   );
 }
@@ -397,6 +492,68 @@ function PhaseHeader(props: { step: number; label: string }) {
 }
 
 // ── stage rows ─────────────────────────────────────────────────────────
+
+/**
+ * A stage's name: plain text that becomes a field only once you click it.
+ *
+ * Rendering every name in a permanent text box drew a border and a drop shadow
+ * around each one and reserved a fixed-width well, which shoved the role chip
+ * far off the name it labels. Text sized to its content keeps the chip beside
+ * the name, and the box appears exactly when it means something — you are
+ * typing in it.
+ */
+function StageNameField(props: {
+  label: string;
+  editable: boolean;
+  onRename: (label: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+
+  if (!editing) {
+    // Not editable: a span, so the click keeps falling through to the row's
+    // expand/collapse rather than dying on a disabled control.
+    return props.editable ? (
+      <button
+        type="button"
+        title="Click to rename"
+        className="min-w-0 shrink-0 cursor-text truncate rounded-md px-1 py-0.5 text-left text-sm font-medium text-foreground hover:bg-popover hover:inset-ring hover:inset-ring-border"
+        onClick={(event) => {
+          event.stopPropagation();
+          setEditing(true);
+        }}
+      >
+        {props.label}
+      </button>
+    ) : (
+      <span className="min-w-0 shrink-0 truncate px-1 py-0.5 text-sm font-medium text-foreground">
+        {props.label}
+      </span>
+    );
+  }
+
+  return (
+    <input
+      autoFocus
+      defaultValue={props.label}
+      aria-label="Stage name"
+      size={Math.max(8, props.label.length + 1)}
+      className="min-w-0 shrink-0 rounded-md bg-popover px-1 py-0.5 text-sm font-medium text-foreground outline-none inset-ring inset-ring-primary"
+      onClick={(event) => event.stopPropagation()}
+      onFocus={(event) => event.currentTarget.select()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") {
+          event.currentTarget.value = props.label;
+          event.currentTarget.blur();
+        }
+      }}
+      onBlur={(event) => {
+        setEditing(false);
+        props.onRename(event.target.value.trim());
+      }}
+    />
+  );
+}
 
 function StageChip(props: { text: string; tone: "auto" | "quiet" }) {
   return (
@@ -459,8 +616,8 @@ export function BoardPipelineSection() {
 
   const crudEnabled = environmentId !== null;
 
-  const updateStage = (stageId: string, patch: Partial<BoardStageExecution>) => {
-    update({ board: { pipeline: setBoardStageExecution(board.pipeline, stageId, patch) } });
+  const updateStage = (stageId: BoardStageId, patch: Partial<BoardStageExecution>) => {
+    update({ board: { pipeline: setBoardStageExecution(board, stageId, patch) } });
   };
 
   const onRename = (stage: BoardStageDefinition, label: string) => {
@@ -582,7 +739,7 @@ function StageAccordionRow(props: {
   onToggle: () => void;
   onRename: (label: string) => void;
   onDelete: () => void;
-  updateStage: (stageId: string, patch: Partial<BoardStageExecution>) => void;
+  updateStage: (stageId: BoardStageId, patch: Partial<BoardStageExecution>) => void;
 }) {
   const { stage, exec, expanded } = props;
   const role = effectiveBoardStageRole(stage);
@@ -601,7 +758,7 @@ function StageAccordionRow(props: {
           ? [{ text: `${exec.rounds} rounds`, tone: "quiet" as const }]
           : []),
         ...(exec.autoExecute && !isReview && role !== "plan"
-          ? [{ text: `${msToMinutes(exec.timeoutMs)} min`, tone: "quiet" as const }]
+          ? [{ text: `${msToMinutes(exec.timeoutMs)} min idle`, tone: "quiet" as const }]
           : []),
       ];
 
@@ -638,14 +795,11 @@ function StageAccordionRow(props: {
         <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-accent font-mono text-[11px] font-semibold text-muted-foreground">
           {props.index + 1}
         </span>
-        <Input
+        <StageNameField
           key={`name:${stage.stageId}:${stage.label}`}
-          defaultValue={stage.label}
-          aria-label="Stage name"
-          disabled={!props.crudEnabled}
-          className="-ml-1.5 h-7 w-40 border-transparent bg-transparent text-sm font-medium shadow-none hover:border-border hover:bg-popover focus-visible:border-primary focus-visible:bg-popover"
-          onClick={(event) => event.stopPropagation()}
-          onBlur={(event) => props.onRename(event.target.value.trim())}
+          label={stage.label}
+          editable={props.crudEnabled}
+          onRename={props.onRename}
         />
         {role !== null && role !== "done" ? (
           <span className="shrink-0 rounded-md bg-accent px-1.5 py-px font-mono text-[11px] font-medium text-muted-foreground">
@@ -723,7 +877,7 @@ function SimpleStageBody(props: {
   exec: Exclude<BoardStageExecution, BoardStageExecutionReview>;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
-  updateStage: (stageId: string, patch: Partial<BoardStageExecution>) => void;
+  updateStage: (stageId: BoardStageId, patch: Partial<BoardStageExecution>) => void;
 }) {
   const { stage, role, exec } = props;
   const set = (patch: Partial<BoardStageExecution>) => props.updateStage(stage.stageId, patch);
@@ -732,7 +886,6 @@ function SimpleStageBody(props: {
   // is forced human-in-the-loop, Building runs unattended (the with-plan pause
   // is retired), a roleless stage follows its own toggle.
   const previewHumanInLoop = role === "plan" ? true : role === "build" ? false : exec.humanInLoop;
-  const previewInstanceId = resolveBoardStageModelSelection(exec.model).instanceId;
   const unattended = role === "build" || (role !== "plan" && !exec.humanInLoop);
 
   return (
@@ -754,14 +907,9 @@ function SimpleStageBody(props: {
               // A run composes card.stage — the stage ID, not the label — so
               // the preview shows the same string the agent will actually see.
               card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
-              step: { stepLabel: stage.label, maxAttempts: exec.maxAttempts },
-              attempt: "{{n}}",
+              step: { stepLabel: stage.label },
             })}
-            postamble={boardStepPostamble({
-              humanInLoop: previewHumanInLoop,
-              providerInstanceId: previewInstanceId,
-              role,
-            })}
+            postamble={boardStepPostamble({ humanInLoop: previewHumanInLoop, role })}
             missingMessage={
               exec.prompt.trim().length === 0 ? "A prompt is required to auto-execute." : null
             }
@@ -771,6 +919,7 @@ function SimpleStageBody(props: {
             label="Model"
             ariaLabel="Stage model"
             selection={exec.model}
+            requiredMessage="Pick the model this stage runs on."
             instanceEntries={props.instanceEntries}
             getModelOptions={props.getModelOptions}
             onChange={(model) => set({ model })}
@@ -809,7 +958,8 @@ function SimpleStageBody(props: {
                 onChange={(checked) => set({ autoAdvance: checked })}
               />
               <NumberRow
-                label="Timeout"
+                label="Stall timeout"
+                hint="Time with no sign of life — no todo-list progress, no new commit — before the supervisor nudges the step. Not a cap on total run time: a build that keeps working never trips it."
                 stepper={
                   <NumberStepper
                     value={msToMinutes(exec.timeoutMs)}
@@ -817,13 +967,14 @@ function SimpleStageBody(props: {
                     max={240}
                     step={5}
                     unit="min"
-                    ariaLabel="Timeout in minutes"
+                    ariaLabel="Stall timeout in minutes"
                     onChange={(minutes) => set({ timeoutMs: minutesToMs(minutes) })}
                   />
                 }
               />
               <NumberRow
                 label="Attempts"
+                hint="Consecutive stalls before the step gives up and asks a human."
                 stepper={
                   <NumberStepper
                     value={exec.maxAttempts}
@@ -847,7 +998,7 @@ function ReviewStageBody(props: {
   exec: BoardStageExecutionReview;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
-  updateStage: (stageId: string, patch: Partial<BoardStageExecution>) => void;
+  updateStage: (stageId: BoardStageId, patch: Partial<BoardStageExecution>) => void;
 }) {
   const { stage, exec } = props;
   const set = (patch: Partial<BoardStageExecutionReview>) =>
@@ -904,6 +1055,7 @@ function ReviewStageBody(props: {
                   label="Model"
                   ariaLabel={`${BOARD_REVIEW_PHASE_LABELS[phaseId]} model`}
                   selection={phase.model}
+                  requiredMessage="Pick the model this phase runs on."
                   instanceEntries={props.instanceEntries}
                   getModelOptions={props.getModelOptions}
                   onChange={(model) => setPhase(phaseId, { model })}
