@@ -1074,7 +1074,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         createdAt: command.createdAt,
         updatedAt: command.createdAt,
       };
-      // A new role-holder would break "exactly one stage per role"; the three
+      // A new role-holder would break "exactly one stage per role"; the four
       // roles are seeded and never created.
       if (stage.role !== null && boardStageWithRole(board, stage.role) !== null) {
         return yield* invariant(
