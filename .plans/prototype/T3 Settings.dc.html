@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fcfcfc; --fg:#27272a; --card:#ffffff; --popover:#ffffff;
+  --muted:#fafafa; --muted-fg:#71717a; --accent:#f4f4f5; --accent-fg:#18181b;
+  --border:#e4e4e7; --input:#d4d4d8; --sidebar:#fafafa; --sidebar-row-hover:#fcfcfc;
+  --sidebar-row-selected:#ffffff; --primary:oklch(0.488 0.217 264); --primary-fg:#fff;
+  --info:#3b82f6; --info-fg:#1d4ed8; --success:#10b981; --success-fg:#047857;
+  --warning:#f59e0b; --warning-fg:#b45309; --destructive:#ef4444; --destructive-fg:#b91c1c;
+  --radius:10px; --control-radius:0.5rem;
+  --sidebar-icon-color:color-mix(in srgb,var(--muted-fg) 60%,var(--sidebar));
+  --shadow-xs:0 1px 2px rgb(0 0 0 / 5%);
+  --grain:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  --font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace;
+}
+html[data-t3-theme="dark"]{
+  color-scheme:dark;
+  --bg:#000000; --fg:#f1f3f7; --card:#18181b; --popover:#141416;
+  --muted:#0a0a0a; --muted-fg:#a3a3a3; --accent:#191a1d; --accent-fg:#f7f9ff;
+  --border:rgb(255 255 255 / 8%); --input:rgb(255 255 255 / 18%); --sidebar:#000000;
+  --sidebar-row-hover:rgb(255 255 255 / 6%); --sidebar-row-selected:rgb(255 255 255 / 8%);
+  --primary:oklch(0.588 0.217 264); --primary-fg:#fff;
+  --info-fg:#60a5fa; --success-fg:#34d399; --warning-fg:#fbbf24; --destructive-fg:#f87171;
+  --shadow-xs:none;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);
+  -webkit-font-smoothing:antialiased;background-image:var(--grain);background-size:256px 256px}
+a{color:var(--info-fg);text-decoration:none}
+a:hover{text-decoration:underline}
+input,textarea,select,button{font-family:inherit}
+input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield;appearance:textfield}
+textarea{font-family:var(--font-sans)}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgb(140 140 150 / 35%);border-radius:3px}
+</style>
+</helmet>
+
+<div style="display:flex;height:100vh;width:100%;overflow:hidden;background:var(--bg);color:var(--fg);font-size:14px">
+
+  <aside style="width:236px;min-width:236px;display:flex;flex-direction:column;background:var(--sidebar);border-right:1px solid var(--border);overflow:hidden">
+    <div style="display:flex;align-items:center;gap:8px;height:52px;flex:none;padding:0 12px;border-bottom:1px solid var(--border)">
+      <button type="button" onClick="{{ noop }}" title="Back to board" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:8px;background:transparent;color:var(--sidebar-icon-color,#9a9aa2);cursor:pointer" style-hover="background:var(--sidebar-row-hover);color:var(--fg)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+      </button>
+      <span style="font:600 14.5px var(--font-sans);letter-spacing:-0.01em">Settings</span>
+    </div>
+    <div style="flex:1;min-height:0;overflow-y:auto;padding:8px">
+      <div style="padding:6px 10px 4px;font:500 10.5px var(--font-sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)">Project</div>
+      <div style="display:flex;flex-direction:column;gap:1px">
+        <sc-for list="{{ nav }}" as="n" hint-placeholder-count="5">
+          <button type="button" onClick="{{ n.select }}" style="{{ n.style }}">
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left">{{ n.label }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+    <div style="flex:none;border-top:1px solid var(--border);padding:8px;display:flex;align-items:center;gap:6px">
+      <span style="flex:1;padding-left:4px;font:400 12px var(--font-sans);color:var(--muted-fg)">t3o-test</span>
+      <button type="button" onClick="{{ toggleTheme }}" title="Toggle theme" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;border:none;background:transparent;color:var(--sidebar-icon-color,#9a9aa2);cursor:pointer" style-hover="background:var(--sidebar-row-hover);color:var(--fg)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>
+      </button>
+    </div>
+  </aside>
+
+  <main style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">
+    <header style="display:flex;align-items:center;gap:8px;height:52px;min-height:52px;flex:none;padding:0 20px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:baseline;gap:5px;flex:none;font-size:15px;letter-spacing:-0.01em">
+        <span style="font-weight:700;color:var(--fg)">T3</span><span style="font-weight:500;color:var(--muted-fg)">Code</span>
+      </div>
+      <span style="color:var(--border)">/</span>
+      <span style="font-size:13.5px;color:var(--muted-fg)">t3o-test</span>
+      <span style="color:var(--border)">/</span>
+      <span style="font-size:13.5px;font-weight:500">Pipeline</span>
+      <div style="flex:1"></div>
+      <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ savedLabel }}</span>
+    </header>
+
+    <div style="flex:1;min-height:0;overflow-y:auto">
+      <div style="max-width:860px;margin:0 auto;padding:28px 20px 96px;display:flex;flex-direction:column;gap:34px">
+
+        <section style="display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <h1 style="margin:0;font:600 19px var(--font-sans);letter-spacing:-0.015em">Pipeline</h1>
+            <p style="margin:0;max-width:64ch;font:400 13px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Each stage runs a single agent step. A card freezes its stage config the moment it enters the stage, so edits take effect the next time a card enters, never mid-flight.</p>
+          </div>
+
+          <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-xs);overflow:hidden">
+            <sc-for list="{{ stages }}" as="s" hint-placeholder-count="6">
+              <div style="{{ s.wrapStyle }}">
+
+                <div onClick="{{ s.toggle }}" style="{{ s.headStyle }}" style-hover="background:var(--muted)">
+                  <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;flex:none;color:var(--sidebar-icon-color,#9a9aa2);cursor:grab">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.4"></circle><circle cx="15" cy="6" r="1.4"></circle><circle cx="9" cy="12" r="1.4"></circle><circle cx="15" cy="12" r="1.4"></circle><circle cx="9" cy="18" r="1.4"></circle><circle cx="15" cy="18" r="1.4"></circle></svg>
+                  </span>
+                  <span style="{{ s.numStyle }}">{{ s.num }}</span>
+                  <input type="text" value="{{ s.name }}" onChange="{{ s.rename }}" onClick="{{ s.stop }}" aria-label="Stage name" style="flex:none;width:150px;height:26px;padding:0 6px;margin-left:-6px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--fg);font:500 14px var(--font-sans);outline:none" style-hover="border-color:var(--border);background:var(--popover)" style-focus="border-color:var(--primary);background:var(--popover)">
+                  <sc-if value="{{ s.hasKey }}" hint-placeholder-val="{{ true }}">
+                    <span style="flex:none;padding:1px 6px;border-radius:6px;background:var(--accent);color:var(--muted-fg);font:500 11px var(--font-mono)">{{ s.key }}</span>
+                  </sc-if>
+                  <span style="flex:1;min-width:8px"></span>
+                  <sc-for list="{{ s.chips }}" as="c" hint-placeholder-count="2">
+                    <span style="{{ c.style }}">{{ c.text }}</span>
+                  </sc-for>
+                  <span style="{{ s.caretStyle }}">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+                  </span>
+                </div>
+
+                <sc-if value="{{ s.expanded }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:2px 20px 18px 52px;display:flex;flex-direction:column">
+                    <sc-if value="{{ s.hasNote }}" hint-placeholder-val="{{ false }}">
+                      <p style="margin:0 0 8px;max-width:62ch;font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ s.note }}</p>
+                    </sc-if>
+
+                    <sc-for list="{{ s.rows }}" as="r" hint-placeholder-count="4">
+
+                      <sc-if value="{{ r.isHeader }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex;align-items:center;gap:8px;margin:16px 0 2px">
+                          <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;border-radius:99px;border:1px solid var(--border);background:var(--muted);font:600 10.5px var(--font-mono);color:var(--muted-fg)">{{ r.step }}</span>
+                          <span style="font:600 10.5px var(--font-sans);letter-spacing:.09em;text-transform:uppercase;color:var(--fg)">{{ r.label }}</span>
+                          <span style="flex:1;height:1px;background:var(--border)"></span>
+                        </div>
+                      </sc-if>
+
+                      <sc-if value="{{ r.isToggle }}" hint-placeholder-val="{{ false }}">
+                        <div style="{{ r.rowStyle }}">
+                          <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
+                            <span style="font:400 13.5px var(--font-sans)">{{ r.label }}</span>
+                            <sc-if value="{{ r.hasHint }}" hint-placeholder-val="{{ false }}">
+                              <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ r.hint }}</span>
+                            </sc-if>
+                          </div>
+                          <button type="button" onClick="{{ r.flip }}" role="switch" style="{{ r.trackStyle }}">
+                            <span style="{{ r.knobStyle }}"></span>
+                          </button>
+                        </div>
+                      </sc-if>
+
+                      <sc-if value="{{ r.isSelect }}" hint-placeholder-val="{{ false }}">
+                        <div style="{{ r.rowStyle }}">
+                          <span style="font:400 13.5px var(--font-sans)">{{ r.label }}</span>
+                          <select value="{{ r.value }}" onChange="{{ r.onPick }}" style="height:30px;min-width:180px;padding:0 8px;border:1px solid var(--input);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);box-shadow:var(--shadow-xs);cursor:pointer">
+                            <sc-for list="{{ r.options }}" as="o" hint-placeholder-count="3">
+                              <option value="{{ o.value }}">{{ o.label }}</option>
+                            </sc-for>
+                          </select>
+                        </div>
+                      </sc-if>
+
+                      <sc-if value="{{ r.isNumber }}" hint-placeholder-val="{{ false }}">
+                        <div style="{{ r.rowStyle }}">
+                          <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
+                            <span style="font:400 13.5px var(--font-sans)">{{ r.label }}</span>
+                            <sc-if value="{{ r.hasHint }}" hint-placeholder-val="{{ false }}">
+                              <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">{{ r.hint }}</span>
+                            </sc-if>
+                          </div>
+                          <div style="display:inline-flex;align-items:center;flex:none;height:36px;border:1px solid var(--input);border-radius:var(--control-radius);background:var(--popover);box-shadow:var(--shadow-xs);overflow:hidden">
+                            <button type="button" onClick="{{ r.dec }}" aria-label="Decrease" style="display:inline-flex;align-items:center;justify-content:center;width:40px;height:100%;flex:none;border:none;border-right:1px solid var(--border);background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)" style-active="background:var(--border)">
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"></path></svg>
+                            </button>
+                            <input type="number" value="{{ r.value }}" onChange="{{ r.onNum }}" inputmode="numeric" style="width:58px;height:100%;border:none;outline:none;background:transparent;color:var(--fg);text-align:center;font:500 14px var(--font-sans)">
+                            <sc-if value="{{ r.hasUnit }}" hint-placeholder-val="{{ false }}">
+                              <span style="padding-right:8px;font:400 12px var(--font-sans);color:var(--muted-fg)">{{ r.unit }}</span>
+                            </sc-if>
+                            <button type="button" onClick="{{ r.inc }}" aria-label="Increase" style="display:inline-flex;align-items:center;justify-content:center;width:40px;height:100%;flex:none;border:none;border-left:1px solid var(--border);background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)" style-active="background:var(--border)">
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </sc-if>
+
+                      <sc-if value="{{ r.isPrompt }}" hint-placeholder-val="{{ false }}">
+                        <div style="{{ r.rowStyle }}">
+                          <div style="display:flex;flex-direction:column;gap:6px;width:100%;min-width:0">
+                            <div style="display:flex;align-items:center;gap:8px">
+                              <span style="font:400 13.5px var(--font-sans)">{{ r.label }}</span>
+                              <span style="flex:1"></span>
+                              <button type="button" onClick="{{ r.edit }}" style="{{ r.editStyle }}">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+                                {{ r.editLabel }}
+                              </button>
+                            </div>
+
+                            <sc-if value="{{ r.hasPre }}" hint-placeholder-val="{{ true }}">
+                              <div style="display:flex;flex-direction:column">
+                                <button type="button" onClick="{{ r.togglePre }}" style="{{ r.preHeadStyle }}">
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect width="18" height="11" x="3" y="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                                  <span>Preamble</span>
+                                  <span style="color:var(--muted-fg);font-weight:400">system</span>
+                                  <span style="flex:1"></span>
+                                  <span style="{{ r.preCaretStyle }}">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+                                  </span>
+                                </button>
+                                <sc-if value="{{ r.preOpen }}" hint-placeholder-val="{{ false }}">
+                                  <p style="margin:0;padding:8px 10px 10px 28px;white-space:pre-wrap;font:400 12px/1.6 var(--font-mono);color:var(--muted-fg);border-left:2px solid var(--border);margin-left:9px">{{ r.pre }}</p>
+                                </sc-if>
+                              </div>
+                            </sc-if>
+
+                            <sc-if value="{{ r.editing }}" hint-placeholder-val="{{ false }}">
+                              <textarea value="{{ r.body }}" onChange="{{ r.onBody }}" rows="{{ r.rows }}" style="width:100%;padding:11px 12px;border:1px solid var(--primary);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:400 13px/1.6 var(--font-sans);outline:none;resize:vertical"></textarea>
+                            </sc-if>
+                            <sc-if value="{{ r.reading }}" hint-placeholder-val="{{ true }}">
+                              <div onClick="{{ r.edit }}" title="Click to edit" style="position:relative;cursor:text">
+                                <div style="{{ r.bodyStyle }}">{{ r.body }}</div>
+                                <sc-if value="{{ r.clipped }}" hint-placeholder-val="{{ false }}">
+                                  <div style="position:absolute;left:0;right:0;bottom:0;height:34px;pointer-events:none;background:linear-gradient(to bottom,transparent,var(--card))"></div>
+                                </sc-if>
+                              </div>
+                            </sc-if>
+
+                            <div style="display:flex;align-items:center;gap:14px">
+                              <sc-if value="{{ r.canExpand }}" hint-placeholder-val="{{ true }}">
+                                <button type="button" onClick="{{ r.toggleBody }}" style="border:none;background:transparent;padding:0;color:var(--info-fg);font:500 12.5px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">{{ r.moreLabel }}</button>
+                              </sc-if>
+                              <sc-if value="{{ r.editing }}" hint-placeholder-val="{{ false }}">
+                                <button type="button" onClick="{{ r.edit }}" style="border:none;background:transparent;padding:0;color:var(--muted-fg);font:500 12.5px var(--font-sans);cursor:pointer" style-hover="color:var(--fg)">Done</button>
+                              </sc-if>
+                              <span style="flex:1"></span>
+                              <span style="font:400 11.5px var(--font-mono);color:var(--muted-fg)">{{ r.count }}</span>
+                            </div>
+
+                            <sc-if value="{{ r.hasPost }}" hint-placeholder-val="{{ true }}">
+                              <div style="display:flex;flex-direction:column">
+                                <button type="button" onClick="{{ r.togglePost }}" style="{{ r.postHeadStyle }}">
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect width="18" height="11" x="3" y="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                                  <span>Postamble</span>
+                                  <span style="color:var(--muted-fg);font-weight:400">system</span>
+                                  <span style="flex:1"></span>
+                                  <span style="{{ r.postCaretStyle }}">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+                                  </span>
+                                </button>
+                                <sc-if value="{{ r.postOpen }}" hint-placeholder-val="{{ false }}">
+                                  <p style="margin:0;padding:8px 10px 10px 28px;white-space:pre-wrap;font:400 12px/1.6 var(--font-mono);color:var(--muted-fg);border-left:2px solid var(--border);margin-left:9px">{{ r.post }}</p>
+                                </sc-if>
+                              </div>
+                            </sc-if>
+                          </div>
+                        </div>
+                      </sc-if>
+
+                    </sc-for>
+
+                    <div style="display:flex;align-items:center;gap:10px;padding-top:14px">
+                      <button type="button" onClick="{{ s.remove }}" style="display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;border:1px solid var(--border);border-radius:var(--control-radius);background:transparent;color:var(--destructive-fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="background:color-mix(in srgb,var(--destructive) 8%,transparent)">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+                        Remove stage
+                      </button>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+
+            <button type="button" onClick="{{ addStage }}" style="display:flex;align-items:center;gap:7px;padding:12px 20px;border:none;background:transparent;color:var(--muted-fg);font:500 13px var(--font-sans);cursor:pointer;text-align:left" style-hover="background:var(--muted);color:var(--fg)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+              Add stage
+            </button>
+          </div>
+        </section>
+
+        <section id="cardkeys" style="display:flex;flex-direction:column;gap:14px;order:-1">
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <h2 style="margin:0;font:600 15px var(--font-sans);letter-spacing:-0.01em">Card keys and colour</h2>
+            <p style="margin:0;max-width:64ch;font:400 13px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The prefix for this project's card keys (e.g. T3 → T3-42) and the colour its cards show on the board.</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-xs)">
+            <span style="width:8px;height:8px;flex:none;border-radius:99px;background:var(--success)"></span>
+            <span style="flex:1;min-width:0;font:500 13.5px var(--font-sans)">t3o-test</span>
+            <input type="text" value="{{ prefix }}" onChange="{{ onPrefix }}" placeholder="CARD" style="width:92px;height:30px;padding:0 10px;border:1px solid var(--input);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:500 13px var(--font-mono);text-transform:uppercase;outline:none;box-shadow:var(--shadow-xs)">
+            <select value="{{ colour }}" onChange="{{ onColour }}" style="height:30px;min-width:120px;padding:0 8px;border:1px solid var(--input);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);box-shadow:var(--shadow-xs);cursor:pointer">
+              <sc-for list="{{ colours }}" as="c" hint-placeholder-count="4">
+                <option value="{{ c.value }}">{{ c.label }}</option>
+              </sc-for>
+            </select>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;promptsOpenByDefault&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;showStageChips&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;comfortable&quot;,&quot;compact&quot;],&quot;default&quot;:&quot;comfortable&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const PRE_BUILD = "Card T3-42 “Board settings redesign” in t3o-test.\nStage 4 of 6 · Building. The card brief, the agreed plan and the worktree branch are attached.\nTools: worktree, run_checks, board_ask, board_complete.";
+const POST_BUILD = "When you are done, run the project's checks one final time, summarise what changed in two or three sentences, and record completion with board_complete. Do not move the card yourself.";
+const PRE_REVIEW = "Card T3-42 in t3o-test. Stage 5 of 6 · Code review, round 2 of 5.\nThe reviewed SHA, the base ref and every earlier finding are attached.";
+
+class Component extends DCLogic {
+  state = {
+    theme: "light",
+    section: "Pipeline",
+    prefix: "CARD",
+    colour: "auto",
+    open: "review",
+    bodyOpen: {},
+    editing: {},
+    sysOpen: {},
+    stages: [
+      { id: "backlog", name: "Backlog", key: "", auto: false },
+      { id: "sprint", name: "Sprint", key: "", auto: false },
+      { id: "planning", name: "Planning", key: "plan", auto: true, mode: "Plan", useModel: false, model: "claude-opus-4",
+        prompt: "Build a plan that allows us to implement the functionality requested on this card. Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.\n\nAsk the questions one at a time.\n\nIf a question can be answered by exploring the codebase, explore the codebase instead.\n\nWhen we have agreed a plan, record it with board_propose_plans. Do not move the card yourself.",
+        pre: "Card T3-42 “Board settings redesign” in t3o-test.\nStage 3 of 6 · Planning. The card brief and the repository are attached.\nTools: worktree (read-only), board_propose_plans, board_ask.", post: "" },
+      { id: "building", name: "Building", key: "build", auto: true, mode: "Build", useModel: false, model: "claude-sonnet-4",
+        prompt: "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.",
+        pre: PRE_BUILD, post: POST_BUILD,
+        pausePlan: false, pauseNoPlan: true, advance: true, timeout: 30, attempts: 5 },
+      { id: "review", name: "Code review", key: "review", auto: true, loop: true, rounds: 5,
+        note: "A loop, not a single step: review the worktree, triage the findings, adjudicate the fixes, and repeat until a review pass raises no blocking findings or the round cap stops it. Each phase runs on its own model.",
+        phases: [
+          { id: "rev", label: "Review", useModel: false, model: "claude-opus-4",
+            prompt: "Review the changes on this card's branch against its base ref as a fresh-eyes senior engineer. Diff the worktree and read every changed file. Report each problem as a finding: a stable id, a severity of critical, improvement or nitpick, the file and line, a short title and a detailed explanation. Critical and improvement findings block; nitpicks do not. If the change raises no blocking findings, say so explicitly.",
+            pre: PRE_REVIEW, post: "Record every finding with board_record_findings before you finish. Do not fix anything in this phase." },
+          { id: "tri", label: "Triage", useModel: false, model: "claude-sonnet-4",
+            prompt: "For each blocking finding, either FIX it in the worktree or REJECT it with a clear, specific reason. Make the smallest correct change and run the project's checks before finishing. Record one disposition per finding: action fixed or rejected, with a note.",
+            pre: "Card T3-42 · Code review round 2, triage phase. The findings from this round's review are attached with the worktree.", post: "" },
+          { id: "adj", label: "Adjudicate", useModel: false, model: "claude-opus-4",
+            prompt: "For each finding, rule on the triage. Scope yourself to exactly what changed between the reviewed SHA and the fixed SHA. Verify whether a claimed fix actually holds and whether a rejection is justified. Record one verdict per finding: fix-upheld, fix-incomplete, fix-absent, rejection-justified or rejection-unjustified, with a note. You cannot see problems a fix introduced; only the next review can.",
+            pre: "", post: "Record one verdict per finding, then stop. The loop decides whether another round runs." }
+        ] },
+      { id: "done", name: "Done", key: "", auto: false }
+    ]
+  };
+
+  componentDidMount() { document.documentElement.dataset.t3Theme = this.state.theme; }
+  toggleTheme = () => this.setState(s => {
+    const theme = s.theme === "light" ? "dark" : "light";
+    document.documentElement.dataset.t3Theme = theme;
+    return { theme };
+  });
+
+  patch(id, k, v) {
+    this.setState(s => ({ stages: s.stages.map(st => st.id === id ? { ...st, [k]: v } : st) }));
+  }
+  patchPhase(id, pid, k, v) {
+    this.setState(s => ({ stages: s.stages.map(st => st.id !== id ? st : { ...st, phases: st.phases.map(p => p.id === pid ? { ...p, [k]: v } : p) }) }));
+  }
+  flag(bucket, key) {
+    this.setState(s => ({ [bucket]: { ...s[bucket], [key]: !s[bucket][key] } }));
+  }
+
+  toggleRow(label, on, flip, hint) {
+    const dense = this.props.density === "compact";
+    return {
+      isToggle: true, label, hint, hasHint: !!hint, flip,
+      rowStyle: `display:flex;align-items:center;justify-content:space-between;gap:16px;padding:${dense ? "6px" : "9px"} 0`,
+      trackStyle: `position:relative;width:40px;height:22px;flex:none;padding:0;border:none;border-radius:99px;cursor:pointer;transition:background .16s;background:${on ? "var(--primary)" : "color-mix(in srgb,var(--fg) 16%,transparent)"}`,
+      knobStyle: `position:absolute;top:3px;left:${on ? "21px" : "3px"};width:16px;height:16px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgb(0 0 0 / 25%);transition:left .16s`
+    };
+  }
+  selectRow(label, value, options, onPick) {
+    const dense = this.props.density === "compact";
+    return {
+      isSelect: true, label, value, onPick,
+      options: options.map(o => ({ value: o, label: o })),
+      rowStyle: `display:flex;align-items:center;justify-content:space-between;gap:16px;padding:${dense ? "5px" : "7px"} 0`
+    };
+  }
+  numberRow(label, value, set, opts) {
+    const o = opts || {};
+    const min = o.min == null ? 0 : o.min, max = o.max == null ? 999 : o.max, step = o.step || 1;
+    const clamp = v => Math.max(min, Math.min(max, v));
+    const dense = this.props.density === "compact";
+    return {
+      isNumber: true, label, value, hint: o.hint, hasHint: !!o.hint, unit: o.unit, hasUnit: !!o.unit,
+      dec: () => set(clamp(value - step)), inc: () => set(clamp(value + step)),
+      onNum: e => { const n = parseInt(e.target.value, 10); if (!isNaN(n)) set(clamp(n)); },
+      rowStyle: `display:flex;align-items:center;justify-content:space-between;gap:16px;padding:${dense ? "6px" : "8px"} 0`
+    };
+  }
+  promptRow(label, key, text, setText, pre, post) {
+    const openDefault = !!this.props.promptsOpenByDefault;
+    const expanded = this.state.bodyOpen[key] == null ? openDefault : this.state.bodyOpen[key];
+    const editing = !!this.state.editing[key];
+    const clipped = !expanded && !editing && text.length > 190;
+    const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+    const caret = open => `display:inline-flex;flex:none;color:var(--muted-fg);transition:transform .16s;transform:rotate(${open ? "0deg" : "-90deg"})`;
+    const sysHead = `display:flex;align-items:center;gap:7px;width:100%;padding:6px 0;border:none;background:transparent;color:var(--muted-fg);font:500 11.5px var(--font-sans);cursor:pointer;text-align:left`;
+    return {
+      isPrompt: true, label,
+      rowStyle: "display:flex;padding:10px 0 12px",
+      body: text, count: words + " words",
+      editing, reading: !editing, clipped,
+      bodyStyle: `white-space:pre-wrap;font:400 13px/1.62 var(--font-sans);color:var(--fg);max-height:${expanded || editing ? "none" : "62px"};overflow:hidden`,
+      canExpand: !editing && (text.length > 190 || expanded),
+      moreLabel: expanded ? "See less" : "See more",
+      toggleBody: () => this.flag("bodyOpen", key),
+      edit: () => this.flag("editing", key),
+      editLabel: editing ? "Editing" : "Edit",
+      editStyle: `display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px;border:1px solid ${editing ? "var(--primary)" : "var(--border)"};border-radius:var(--control-radius);background:transparent;color:${editing ? "var(--primary)" : "var(--muted-fg)"};font:500 12px var(--font-sans);cursor:pointer`,
+      rows: Math.min(16, Math.max(4, text.split("\n").length + 2)),
+      onBody: e => setText(e.target.value),
+      hasPre: !!pre, pre, preOpen: !!this.state.sysOpen[key + ":pre"],
+      togglePre: () => this.flag("sysOpen", key + ":pre"),
+      preHeadStyle: sysHead, preCaretStyle: caret(!!this.state.sysOpen[key + ":pre"]),
+      hasPost: !!post, post, postOpen: !!this.state.sysOpen[key + ":post"],
+      togglePost: () => this.flag("sysOpen", key + ":post"),
+      postHeadStyle: sysHead, postCaretStyle: caret(!!this.state.sysOpen[key + ":post"])
+    };
+  }
+
+  stageRows(s) {
+    const rows = [this.toggleRow("Auto execute", s.auto, () => this.patch(s.id, "auto", !s.auto),
+      s.auto ? null : "Cards rest here until a human moves them on.")];
+    if (!s.auto) return rows;
+    if (s.loop) {
+      rows.push(this.numberRow("Rounds", s.rounds, v => this.patch(s.id, "rounds", v), { min: 1, max: 20, hint: "Stops early on a clean review pass." }));
+      s.phases.forEach((p, i) => {
+        rows.push({ isHeader: true, label: p.label, step: i + 1 });
+        rows.push(this.promptRow("Prompt", s.id + ":" + p.id, p.prompt, v => this.patchPhase(s.id, p.id, "prompt", v), p.pre, p.post));
+        rows.push(this.selectRow("Model", p.model, this.models, e => this.patchPhase(s.id, p.id, "model", e.target.value)));
+      });
+      return rows;
+    }
+    rows.push(this.promptRow("Prompt", s.id, s.prompt, v => this.patch(s.id, "prompt", v), s.pre, s.post));
+    rows.push(this.selectRow("Model", s.model, this.models, e => this.patch(s.id, "model", e.target.value)));
+    if (s.pausePlan !== undefined) {
+      rows.push(this.toggleRow("Pause for a human when no plan exists", s.pauseNoPlan, () => this.patch(s.id, "pauseNoPlan", !s.pauseNoPlan)));
+      rows.push(this.toggleRow("Auto advance to the next stage", s.advance, () => this.patch(s.id, "advance", !s.advance)));
+      rows.push(this.numberRow("Timeout", s.timeout, v => this.patch(s.id, "timeout", v), { min: 5, max: 240, step: 5, unit: "min" }));
+      rows.push(this.numberRow("Attempts", s.attempts, v => this.patch(s.id, "attempts", v), { min: 1, max: 20 }));
+    }
+    return rows;
+  }
+
+  chip(text, tone) {
+    const map = {
+      auto: "background:color-mix(in srgb,var(--primary) 12%,transparent);color:var(--primary);border-color:transparent",
+      quiet: "background:transparent;color:var(--muted-fg);border-color:var(--border)"
+    };
+    return { text, style: `flex:none;padding:1px 7px;border:1px solid var(--border);border-radius:99px;font:500 11px var(--font-sans);${map[tone] || map.quiet}` };
+  }
+
+  renderVals() {
+    this.models = ["claude-opus-4", "claude-sonnet-4", "claude-haiku-4", "gpt-5-codex"];
+    const open = this.state.open;
+    const stages = this.state.stages.map((s, i) => {
+      const expanded = open === s.id;
+      const chips = [];
+      if (this.props.showStageChips !== false) {
+        chips.push(s.auto ? this.chip("Auto", "auto") : this.chip("Manual", "quiet"));
+        if (s.auto && s.loop) chips.push(this.chip(s.rounds + " rounds", "quiet"));
+        if (s.auto && s.timeout) chips.push(this.chip(s.timeout + " min", "quiet"));
+      }
+      return {
+        id: s.id, name: s.name, key: s.key, hasKey: !!s.key, num: i + 1, expanded,
+        note: s.note || "", hasNote: !!s.note && expanded,
+        chips: expanded ? [] : chips,
+        wrapStyle: `border-bottom:1px solid var(--border);background:${expanded ? "var(--card)" : "transparent"}`,
+        headStyle: `display:flex;align-items:center;gap:10px;padding:13px 20px;cursor:pointer;background:${expanded ? "var(--muted)" : "transparent"}`,
+        numStyle: `display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;flex:none;border-radius:6px;background:var(--accent);color:var(--muted-fg);font:600 11px var(--font-mono)`,
+        caretStyle: `display:inline-flex;flex:none;color:var(--muted-fg);transition:transform .18s;transform:rotate(${expanded ? "180deg" : "0deg"})`,
+        rename: e => this.patch(s.id, "name", e.target.value),
+        stop: e => e.stopPropagation(),
+        toggle: () => this.setState(st => ({ open: st.open === s.id ? null : s.id })),
+        remove: () => this.setState(st => ({ stages: st.stages.filter(x => x.id !== s.id), open: null })),
+        rows: expanded ? this.stageRows(s) : []
+      };
+    });
+    return {
+      noop: () => {}, toggleTheme: this.toggleTheme, stages,
+      savedLabel: "Saved just now",
+      prefix: this.state.prefix, onPrefix: e => this.setState({ prefix: e.target.value }),
+      colour: this.state.colour, onColour: e => this.setState({ colour: e.target.value }),
+      colours: ["auto", "violet", "blue", "emerald", "amber", "rose"].map(c => ({ value: c, label: c[0].toUpperCase() + c.slice(1) })),
+      nav: ["General", "Card keys and colour", "Pipeline", "Scripts", "Danger zone"].map(label => ({
+        label, select: () => this.setState({ section: label }),
+        style: `display:flex;align-items:center;gap:8px;height:30px;padding:6px 10px;border:none;border-radius:8px;cursor:pointer;font:500 13.5px var(--font-sans);text-align:left;background:${this.state.section === label ? "var(--sidebar-row-selected)" : "transparent"};box-shadow:${this.state.section === label ? "var(--shadow-xs)" : "none"};color:${this.state.section === label ? "var(--fg)" : "var(--muted-fg)"}`
+      })),
+      addStage: () => this.setState(s => {
+        const id = "stage" + (s.stages.length + 1);
+        return { stages: [...s.stages.slice(0, -1), { id, name: "New stage", key: "", auto: false }, s.stages[s.stages.length - 1]], open: id };
+      })
+    };
+  }
+}
+
+</script>
+</body>
+</html>
