@@ -48,9 +48,11 @@ export function providerQuestionMechanism(providerInstanceId: ProviderInstanceId
 }
 
 /** The stance-independent guard appended to every postamble: `board_move_card`
-    is agent-reachable, so the envelope — not the editable prompt — forbids it. */
+    is agent-reachable, so the envelope — not the editable prompt — forbids it.
+    Worded to hold on every stance: an auto-advancing stage moves the card
+    itself, a paused or manual one waits for a human. */
 export const BOARD_ENVELOPE_MOVE_GUARD =
-  "Never move the card between stages yourself; the board advances it.";
+  "Never move the card between stages yourself; complete your step and the board or a human moves it on.";
 
 /** The `plan` role's deliverable contract (role-keyed so a user rewrite of the
     editable Planning prompt cannot break the plan pipeline). */
@@ -77,10 +79,13 @@ export interface ComposeStepPromptInput {
 }
 
 /** The system preamble (D5) — short by design: a pointer to
-    `board_get_card_context` exists so context is pulled, not pushed. */
+    `board_get_card_context` exists so context is pulled, not pushed.
+    `attempt` admits a string so a settings-side preview can show a
+    `{{n}}` placeholder where a run interpolates the real counter. */
 export function boardStepPreamble(
-  input: Pick<ComposeStepPromptInput, "card" | "attempt"> & {
+  input: Pick<ComposeStepPromptInput, "card"> & {
     readonly step: Pick<ComposeStepPromptStep, "stepLabel" | "maxAttempts">;
+    readonly attempt: number | string;
   },
 ): string {
   const { card, step, attempt } = input;

@@ -30,6 +30,7 @@ import {
   effectiveBoardStageRole,
   isBoardReviewStageExecution,
   resolveBoardStageExecution,
+  resolveBoardStageModelSelection,
   type BoardReviewPhaseExecution,
   type BoardReviewPhaseId,
   type BoardStageDefinition,
@@ -62,7 +63,7 @@ import {
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -74,10 +75,7 @@ import {
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
-import {
-  getCustomModelOptionsByInstance,
-  resolveAppModelSelectionState,
-} from "../../modelSelection";
+import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { cn, randomUUID } from "../../lib/utils";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
@@ -85,6 +83,8 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import {
+  BOARD_STEP_MAX_ATTEMPTS_MAX,
+  BOARD_STEP_TIMEOUT_MIN_MINUTES,
   minutesToMs,
   msToMinutes,
   parsePositiveIntInput,
@@ -93,7 +93,6 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { SettingResetButton, SettingsSection } from "./settingsLayout";
 
-type ModelSelectionState = ReturnType<typeof resolveAppModelSelectionState>;
 type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
 type ModelOptionsByInstance = ReturnType<typeof getCustomModelOptionsByInstance>;
 type ActiveModel = { instanceId: ProviderInstanceId; model: string };
@@ -159,8 +158,12 @@ export function NumberStepper(props: {
         aria-label={props.ariaLabel}
         className="h-full w-14 rounded-none border-none bg-transparent text-center text-sm font-medium shadow-none focus-visible:ring-0"
         onBlur={(event) => {
-          const parsed = parsePositiveIntInput(event.target.value, props.value);
-          props.onChange(clamp(parsed));
+          const next = clamp(parsePositiveIntInput(event.target.value, props.value));
+          // Write the resolved value back into the field: when it equals the
+          // current value (e.g. garbage input fell back), no re-render happens
+          // and stale text would otherwise stick on screen.
+          event.target.value = String(next);
+          props.onChange(next);
         }}
       />
       {props.unit ? <span className="pr-2 text-xs text-muted-foreground">{props.unit}</span> : null}
@@ -231,7 +234,19 @@ function PromptRow(props: {
 }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const clipped = !expanded && !editing && props.value.length > 190;
+  // Clipping is MEASURED, not guessed from character count: a short prompt
+  // with many lines overflows the clamp just as a long single-line one does,
+  // and a silent cut with no fade or "See more" would hide content.
+  const readViewRef = useRef<HTMLDivElement | null>(null);
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    const element = readViewRef.current;
+    if (element === null || editing || expanded) {
+      setClipped(false);
+      return;
+    }
+    setClipped(element.scrollHeight > element.clientHeight + 1);
+  }, [props.value, editing, expanded]);
   const words = props.value.trim().length > 0 ? props.value.trim().split(/\s+/).length : 0;
   return (
     <div className="flex flex-col gap-1.5 py-2">
@@ -278,6 +293,7 @@ function PromptRow(props: {
           onClick={() => setEditing(true)}
         >
           <div
+            ref={readViewRef}
             className={cn(
               "whitespace-pre-wrap text-[13px] leading-relaxed text-foreground",
               expanded ? "" : "max-h-16 overflow-hidden",
@@ -296,7 +312,7 @@ function PromptRow(props: {
       )}
 
       <div className="flex items-center gap-3">
-        {!editing && (props.value.length > 190 || expanded) ? (
+        {!editing && (clipped || expanded) ? (
           <button
             type="button"
             className="text-xs font-medium text-info-foreground hover:underline"
@@ -327,21 +343,20 @@ function PromptRow(props: {
 }
 
 /** The model row: the app's instance+model picker with an explicit Default
-    (null → follows the global text-generation model) state. Picking a model
-    stores an override; the reset affordance clears back to Default. */
+    (null) state. Picking a model stores an override; the reset affordance
+    clears back to Default. The Default trigger shows the pair a run actually
+    resolves null to — `resolveBoardStageModelSelection`'s compiled board
+    default, the SAME resolution the reactor freezes at stage entry — not the
+    app's global chat model, which board runs do not read. */
 function ModelRow(props: {
   label: string;
   ariaLabel: string;
   selection: ModelSelection;
-  globalDefault: ModelSelectionState;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
   onChange: (selection: ModelSelection) => void;
 }) {
-  const active = props.selection ?? {
-    instanceId: props.globalDefault.instanceId,
-    model: props.globalDefault.model,
-  };
+  const active = props.selection ?? resolveBoardStageModelSelection(null);
   return (
     <div className="flex items-center justify-between gap-4 py-2">
       <span className="text-[13.5px] text-foreground">{props.label}</span>
@@ -436,7 +451,6 @@ export function BoardPipelineSection() {
   // ProviderModelPicker context (shared across every stage row).
   const settings = usePrimarySettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const globalDefault = resolveAppModelSelectionState(settings, serverProviders);
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
   );
@@ -531,7 +545,6 @@ export function BoardPipelineSection() {
                 exec={resolveBoardStageExecution(board, stage.stageId)}
                 expanded={openStageId === stage.stageId}
                 crudEnabled={crudEnabled}
-                globalDefault={globalDefault}
                 instanceEntries={instanceEntries}
                 getModelOptions={getModelOptions}
                 onToggle={() =>
@@ -564,7 +577,6 @@ function StageAccordionRow(props: {
   exec: BoardStageExecution;
   expanded: boolean;
   crudEnabled: boolean;
-  globalDefault: ModelSelectionState;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
   onToggle: () => void;
@@ -666,7 +678,6 @@ function StageAccordionRow(props: {
             <ReviewStageBody
               stage={stage}
               exec={exec}
-              globalDefault={props.globalDefault}
               instanceEntries={props.instanceEntries}
               getModelOptions={props.getModelOptions}
               updateStage={props.updateStage}
@@ -676,7 +687,6 @@ function StageAccordionRow(props: {
               stage={stage}
               role={role}
               exec={exec}
-              globalDefault={props.globalDefault}
               instanceEntries={props.instanceEntries}
               getModelOptions={props.getModelOptions}
               updateStage={props.updateStage}
@@ -711,7 +721,6 @@ function SimpleStageBody(props: {
   stage: BoardStageDefinition;
   role: BoardStageRole | null;
   exec: Exclude<BoardStageExecution, BoardStageExecutionReview>;
-  globalDefault: ModelSelectionState;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
   updateStage: (stageId: string, patch: Partial<BoardStageExecution>) => void;
@@ -723,7 +732,7 @@ function SimpleStageBody(props: {
   // is forced human-in-the-loop, Building runs unattended (the with-plan pause
   // is retired), a roleless stage follows its own toggle.
   const previewHumanInLoop = role === "plan" ? true : role === "build" ? false : exec.humanInLoop;
-  const previewInstanceId = exec.model?.instanceId ?? props.globalDefault.instanceId;
+  const previewInstanceId = resolveBoardStageModelSelection(exec.model).instanceId;
   const unattended = role === "build" || (role !== "plan" && !exec.humanInLoop);
 
   return (
@@ -744,7 +753,7 @@ function SimpleStageBody(props: {
             preamble={boardStepPreamble({
               card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.label },
               step: { stepLabel: stage.label, maxAttempts: exec.maxAttempts },
-              attempt: 1,
+              attempt: "{{n}}",
             })}
             postamble={boardStepPostamble({
               humanInLoop: previewHumanInLoop,
@@ -760,7 +769,6 @@ function SimpleStageBody(props: {
             label="Model"
             ariaLabel="Stage model"
             selection={exec.model}
-            globalDefault={props.globalDefault}
             instanceEntries={props.instanceEntries}
             getModelOptions={props.getModelOptions}
             onChange={(model) => set({ model })}
@@ -803,7 +811,7 @@ function SimpleStageBody(props: {
                 stepper={
                   <NumberStepper
                     value={msToMinutes(exec.timeoutMs)}
-                    min={5}
+                    min={BOARD_STEP_TIMEOUT_MIN_MINUTES}
                     max={240}
                     step={5}
                     unit="min"
@@ -818,7 +826,7 @@ function SimpleStageBody(props: {
                   <NumberStepper
                     value={exec.maxAttempts}
                     min={1}
-                    max={20}
+                    max={BOARD_STEP_MAX_ATTEMPTS_MAX}
                     ariaLabel="Max attempts"
                     onChange={(maxAttempts) => set({ maxAttempts })}
                   />
@@ -835,7 +843,6 @@ function SimpleStageBody(props: {
 function ReviewStageBody(props: {
   stage: BoardStageDefinition;
   exec: BoardStageExecutionReview;
-  globalDefault: ModelSelectionState;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
   updateStage: (stageId: string, patch: Partial<BoardStageExecution>) => void;
@@ -895,7 +902,6 @@ function ReviewStageBody(props: {
                   label="Model"
                   ariaLabel={`${BOARD_REVIEW_PHASE_LABELS[phaseId]} model`}
                   selection={phase.model}
-                  globalDefault={props.globalDefault}
                   instanceEntries={props.instanceEntries}
                   getModelOptions={props.getModelOptions}
                   onChange={(model) => setPhase(phaseId, { model })}
