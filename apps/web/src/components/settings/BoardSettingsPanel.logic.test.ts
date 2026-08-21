@@ -1,7 +1,14 @@
 import {
+  BOARD_SEED_STAGE_IDS,
+  BoardStageId,
+  DEFAULT_BOARD_PIPELINE,
+  DEFAULT_BOARD_SETTINGS,
   DEFAULT_BOARD_STAGE_EXECUTION,
+  isBoardReviewStageExecution,
   ProviderInstanceId,
   type BoardProjectSettings,
+  type BoardSettings,
+  type BoardStageExecution,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -33,24 +40,53 @@ describe("number parsing", () => {
 });
 
 describe("stage execution mutations", () => {
-  it("materialises a full entry from defaults when editing a never-configured stage", () => {
-    // Editing one field of a stage absent from the map starts from the
-    // all-defaults config and produces a complete entry (t3o-15).
-    const next = setBoardStageExecution({}, "building", { autoExecute: true });
-    expect(next.building).toEqual({ ...DEFAULT_BOARD_STAGE_EXECUTION, autoExecute: true });
+  const boardWith = (pipeline: Record<string, BoardStageExecution>): BoardSettings => ({
+    ...DEFAULT_BOARD_SETTINGS,
+    pipeline,
+  });
+  const CUSTOM = BoardStageId.make("2f6c9c2a-custom");
+
+  it("materialises a full entry from the RESOLVED config of a never-configured stage", () => {
+    // Editing one field of a stage absent from the map starts from what that
+    // stage resolves to — its seeded config for a seeded stage, the empty
+    // all-defaults one for a custom stage — and produces a complete entry.
+    const custom = setBoardStageExecution(boardWith({}), CUSTOM, { autoExecute: true });
+    expect(custom[CUSTOM]).toEqual({ ...DEFAULT_BOARD_STAGE_EXECUTION, autoExecute: true });
+
+    const building = setBoardStageExecution(boardWith({}), BOARD_SEED_STAGE_IDS.building, {
+      maxAttempts: 9,
+    });
+    expect(building[BOARD_SEED_STAGE_IDS.building]).toEqual({
+      ...DEFAULT_BOARD_PIPELINE[BOARD_SEED_STAGE_IDS.building],
+      maxAttempts: 9,
+    });
+  });
+
+  it("keeps an absent review stage a REVIEW member, rounds and phases intact", () => {
+    // The regression this guards: starting from the all-defaults SIMPLE config
+    // produced a `kind: "simple"` entry, and the patch encoder then dropped the
+    // `rounds` / `phases` that make the stage a review loop at all.
+    const next = setBoardStageExecution(boardWith({}), BOARD_SEED_STAGE_IDS.review, { rounds: 6 });
+    const review = next[BOARD_SEED_STAGE_IDS.review];
+    expect(review?.kind).toBe("review");
+    expect(review).toMatchObject({ rounds: 6 });
+    expect(isBoardReviewStageExecution(review!) && review.phases.triage.prompt.length > 0).toBe(
+      true,
+    );
   });
 
   it("patches one field without mutating the input, keyed by stage id", () => {
-    const pipeline = { building: { ...DEFAULT_BOARD_STAGE_EXECUTION, prompt: "old" } };
-    const edited = setBoardStageExecution(pipeline, "building", { prompt: "new" });
-    expect(edited.building!.prompt).toBe("new");
-    expect(pipeline.building.prompt).toBe("old"); // original untouched
+    const pipeline = { [CUSTOM]: { ...DEFAULT_BOARD_STAGE_EXECUTION, prompt: "old" } };
+    const edited = setBoardStageExecution(boardWith(pipeline), CUSTOM, { prompt: "new" });
+    expect(edited[CUSTOM]!.prompt).toBe("new");
+    expect(pipeline[CUSTOM]!.prompt).toBe("old"); // original untouched
 
     // A different stage id gets its own entry; existing ones are preserved, so
     // a rename (a new key) never orphans another stage's config.
-    const withReview = setBoardStageExecution(edited, "review", { maxAttempts: 3 });
-    expect(withReview.review!.maxAttempts).toBe(3);
-    expect(withReview.building!.prompt).toBe("new");
+    const other = BoardStageId.make("9a1b-other");
+    const withOther = setBoardStageExecution(boardWith(edited), other, { maxAttempts: 3 });
+    expect(withOther[other]!.maxAttempts).toBe(3);
+    expect(withOther[CUSTOM]!.prompt).toBe("new");
   });
 });
 

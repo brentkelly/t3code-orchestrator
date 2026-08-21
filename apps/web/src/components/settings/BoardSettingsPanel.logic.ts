@@ -5,9 +5,11 @@
  * unit-tested directly.
  */
 import {
-  DEFAULT_BOARD_STAGE_EXECUTION,
+  resolveBoardStageExecution,
   type BoardProjectSettings,
+  type BoardSettings,
   type BoardStageExecution,
+  type BoardStageId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 
@@ -34,21 +36,28 @@ export function parsePositiveIntInput(value: string, fallback: number): number {
 
 /**
  * Apply a stage-execution change and return the next `pipeline` map (t3o-15).
- * A stage absent from the map starts from the all-defaults config, so editing
- * one field of a never-configured stage materialises a complete entry. The map
- * is keyed by stage id, so a rename never orphans it (D4).
+ * The map is keyed by stage id, so a rename never orphans it (D4).
+ *
+ * A stage absent from the map starts from what `resolveBoardStageExecution`
+ * RESOLVES it to, not the empty all-defaults config — that is the config the
+ * user is editing on screen, and it is also the only base that keeps a review
+ * stage a review member. Starting from the all-defaults simple config instead
+ * turned "Code review: rounds 6" into a `kind: "simple"` entry whose `rounds`
+ * and `phases` the patch encoder then dropped on the floor, silently retiring
+ * the review loop. Absent entries are the NORMAL case: settings.json prunes
+ * every entry that still equals its compiled-in default.
  */
 export function setBoardStageExecution(
-  pipeline: Readonly<Record<string, BoardStageExecution>>,
-  stageId: string,
+  board: BoardSettings,
+  stageId: BoardStageId,
   patch: Partial<BoardStageExecution>,
 ): Record<string, BoardStageExecution> {
-  const current = pipeline[stageId] ?? DEFAULT_BOARD_STAGE_EXECUTION;
+  const current = resolveBoardStageExecution(board, stageId);
   // `current` is a discriminated-union member and `patch` a partial of the same
   // member (the caller never crosses `kind`), so the field-wise merge stays
   // within one member; the cast re-narrows what a spread over a union widens.
   const next = { ...current, ...patch } as BoardStageExecution;
-  return { ...pipeline, [stageId]: next };
+  return { ...board.pipeline, [stageId]: next };
 }
 
 /**

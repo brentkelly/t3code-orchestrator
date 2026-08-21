@@ -20,6 +20,7 @@ import {
 import {
   BOARD_ENVELOPE_MOVE_GUARD,
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
+  BOARD_ENVELOPE_QUESTION_MECHANISM,
   boardReviewPhasePreamble,
   boardReviewPhaseProtocol,
   boardStepPostamble,
@@ -27,10 +28,6 @@ import {
   composeBoardReviewPhasePrompt,
   composeStepPrompt,
 } from "./boardEnvelope.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
-
-const CODEX = ProviderInstanceId.make("codex");
-
 const promptFor = (input: {
   readonly role: "plan" | "build" | null;
   readonly humanInLoop: boolean;
@@ -40,12 +37,9 @@ const promptFor = (input: {
     card: { key: "T3-1", title: "Ship it", stage: "planning" },
     step: {
       stepLabel: "Planning",
-      providerInstanceId: CODEX,
       prompt: input.prompt ?? "Whatever the user typed.",
-      maxAttempts: 3,
       humanInLoop: input.humanInLoop,
     },
-    attempt: 1,
     role: input.role,
   });
 
@@ -68,24 +62,24 @@ describe("boardStepPostamble (envelope split)", () => {
   });
 
   it("keeps the stance split: unattended never-prose vs question-friendly", () => {
-    const unattended = boardStepPostamble({
-      humanInLoop: false,
-      providerInstanceId: CODEX,
-      role: null,
-    });
+    const unattended = boardStepPostamble({ humanInLoop: false, role: null });
     expect(unattended).toContain("running unattended");
     expect(unattended).toContain("never end a turn with an unanswered question in prose");
-    const hitl = boardStepPostamble({ humanInLoop: true, providerInstanceId: CODEX, role: null });
+    const hitl = boardStepPostamble({ humanInLoop: true, role: null });
     expect(hitl).toContain("human-in-the-loop");
     expect(hitl).not.toContain("running unattended");
   });
 
+  it("names no provider: the question mechanism is neutral wording every runtime can follow", () => {
+    const postamble = boardStepPostamble({ humanInLoop: false, role: null });
+    expect(postamble).toContain(BOARD_ENVELOPE_QUESTION_MECHANISM);
+    for (const vendor of ["Codex", "Claude", "Cursor", "Gemini", "Grok", "OpenCode"]) {
+      expect(postamble).not.toContain(vendor);
+    }
+  });
+
   it("orders the plan deliverable before the move guard", () => {
-    const postamble = boardStepPostamble({
-      humanInLoop: true,
-      providerInstanceId: CODEX,
-      role: "plan",
-    });
+    const postamble = boardStepPostamble({ humanInLoop: true, role: "plan" });
     expect(postamble.indexOf(BOARD_ENVELOPE_PLAN_DELIVERABLE)).toBeGreaterThan(-1);
     expect(postamble.indexOf(BOARD_ENVELOPE_PLAN_DELIVERABLE)).toBeLessThan(
       postamble.indexOf(BOARD_ENVELOPE_MOVE_GUARD),
@@ -97,12 +91,19 @@ describe("boardStepPreamble", () => {
   it("orients on the card and points at board_get_card_context", () => {
     const preamble = boardStepPreamble({
       card: { key: "T3-9", title: "A card", stage: "building" },
-      step: { stepLabel: "Build", maxAttempts: 5 },
-      attempt: 2,
+      step: { stepLabel: "Build" },
     });
     expect(preamble).toContain("T3-9");
-    expect(preamble).toContain("attempt 2 of 5");
+    expect(preamble).toContain("Step: Build.");
     expect(preamble).toContain("board_get_card_context");
+  });
+
+  it("carries no attempt counter — the retry ladder is supervisor bookkeeping", () => {
+    const preamble = boardStepPreamble({
+      card: { key: "T3-9", title: "A card", stage: "building" },
+      step: { stepLabel: "Build" },
+    });
+    expect(preamble).not.toContain("attempt");
   });
 });
 
