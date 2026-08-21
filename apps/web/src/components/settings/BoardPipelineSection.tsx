@@ -751,7 +751,9 @@ function SimpleStageBody(props: {
             label="Prompt"
             value={exec.prompt}
             preamble={boardStepPreamble({
-              card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.label },
+              // A run composes card.stage — the stage ID, not the label — so
+              // the preview shows the same string the agent will actually see.
+              card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
               step: { stepLabel: stage.label, maxAttempts: exec.maxAttempts },
               attempt: "{{n}}",
             })}
