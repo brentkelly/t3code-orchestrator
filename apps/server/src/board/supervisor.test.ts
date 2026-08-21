@@ -38,6 +38,7 @@ describe("composeStepPrompt (D5 envelope)", () => {
       card: { key: "T3-1", title: "Ship it", stage: BoardStageId.make("building") },
       step: step(),
       attempt: 2,
+      role: "build",
     });
     // Preamble: card key, title, stage, step, attempt N of M, context pointer.
     assert.include(prompt, "T3-1");
@@ -56,12 +57,14 @@ describe("composeStepPrompt (D5 envelope)", () => {
       card: { key: "T3-1", title: "x", stage: BoardStageId.make("building") },
       step: step({ providerInstanceId: ProviderInstanceId.make("claude") }),
       attempt: 1,
+      role: "build",
     });
     assert.include(claudePrompt, "Claude Code question");
     const codexPrompt = composeStepPrompt({
       card: { key: "T3-1", title: "x", stage: BoardStageId.make("building") },
       step: step({ providerInstanceId: ProviderInstanceId.make("codex") }),
       attempt: 1,
+      role: "build",
     });
     assert.include(codexPrompt, "Codex");
     assert.notInclude(codexPrompt, "Claude Code question");
@@ -153,6 +156,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
           humanInLoop: false,
         },
         attempt: 1,
+        role: "build",
       }),
       composeStepPrompt({
         card: { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building },
@@ -164,6 +168,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
           humanInLoop: true,
         },
         attempt: 1,
+        role: "build",
       }),
       (() => {
         const resumed = decide({ stallCount: 0, hasTodoList: false });
@@ -192,6 +197,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       card,
       step: { ...step, humanInLoop: false },
       attempt: 1,
+      role: "build",
     });
     assert.include(unattended, "todo list");
     // AC 25: nagging a conversational turn into a todo list for a one-line
@@ -200,6 +206,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       card,
       step: { ...step, humanInLoop: true },
       attempt: 1,
+      role: "build",
     });
     assert.notInclude(humanInLoop, "todo list");
   });

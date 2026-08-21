@@ -20,6 +20,7 @@
 import {
   BOARD_REVIEW_PHASE_LABELS,
   BoardReviewPayload,
+  composeBoardReviewPhasePrompt,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
   isBoardReviewBlockingSeverity,
   isBoardReviewStageExecution,
@@ -117,7 +118,12 @@ export function reviewLoopDecision(input: {
       round,
       stepId: reviewStepId(phase, round),
       label: `${BOARD_REVIEW_PHASE_LABELS[phase]} · round ${round}`,
-      prompt: composePhasePrompt({ phase, round, phaseConfig, review }),
+      prompt: composeBoardReviewPhasePrompt({
+        phase,
+        round,
+        rounds: review.rounds,
+        prompt: phaseConfig.prompt,
+      }),
       model: resolvePhaseModel(phaseConfig, config.model),
       timeoutMs: phaseConfig.timeoutMs,
       maxAttempts: phaseConfig.maxAttempts,
@@ -157,62 +163,10 @@ export function reviewLoopDecision(input: {
   return { kind: "complete", outcome: "blocked" };
 }
 
-/**
- * Compose the phase's agent prompt (D6/D7). The executor owns the loop protocol
- * — the round-scoped step id, the payload shape, how to read priors — and wraps
- * the user's per-phase prompt with it. Pure: it names the `git` commands but
- * never runs them; the agent does, in its worktree.
- */
-function composePhasePrompt(input: {
-  readonly phase: BoardReviewPhaseId;
-  readonly round: number;
-  readonly phaseConfig: BoardReviewPhaseExecution;
-  readonly review: BoardStageExecutionReview;
-}): string {
-  const { phase, round, phaseConfig, review } = input;
-  const stepId = reviewStepId(phase, round);
-  const priorContext =
-    round > 1 || phase !== "review"
-      ? "Call board_get_card_context first and read the `steps` payloads: they carry every prior phase's findings, dispositions and verdicts for this card. "
-      : "";
-  const base = phaseConfig.prompt.trim().length > 0 ? phaseConfig.prompt.trim() : "";
-
-  const protocol = (() => {
-    switch (phase) {
-      case "review":
-        return [
-          "Diff this card's branch against its base ref (its worktree base) and review only what changed.",
-          "Record the exact commit you reviewed as `reviewedSha`.",
-          "Report every problem as a finding with a stable `id`, a `severity` of `critical`, `improvement` or `nitpick`, the `file` and `line`, a `title` and a `detail`.",
-          "Critical and improvement findings block the round; nitpicks never do — if there are no blocking findings the loop ends here.",
-          `Complete this step by calling board_complete_step with stepId "${stepId}", a succeeded outcome, and a JSON payload { reviewedSha, findings: [...] }.`,
-          "If you cannot produce a valid findings payload, complete the step with outcome failed instead — never complete succeeded with an empty or malformed payload.",
-        ].join(" ");
-      case "triage":
-        return [
-          "For each blocking finding from this round's review, either FIX it in the worktree or REJECT it with a specific reason.",
-          "Make the smallest correct change and run the project's checks before finishing.",
-          "Record the commit you produced as `fixedSha`.",
-          `Complete this step by calling board_complete_step with stepId "${stepId}", a succeeded outcome, and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }.`,
-        ].join(" ");
-      case "adjudicate":
-        return [
-          "Rule on this round's triage. Scope yourself to exactly what changed between the review's `reviewedSha` and the triage's `fixedSha`.",
-          "For each finding, decide whether a claimed fix holds and whether a rejection is justified.",
-          "You cannot see problems a fix introduced — only the next review can — so do not re-review the whole branch.",
-          `Complete this step by calling board_complete_step with stepId "${stepId}", a succeeded outcome, and a JSON payload { verdicts: [{ findingId, verdict, note }] } where verdict is one of fix-upheld, fix-incomplete, fix-absent, rejection-justified, rejection-unjustified.`,
-        ].join(" ");
-    }
-  })();
-
-  return [
-    `Code review — ${BOARD_REVIEW_PHASE_LABELS[phase]}, round ${round} of up to ${review.rounds}.`,
-    priorContext + base,
-    protocol,
-  ]
-    .filter((part) => part.trim().length > 0)
-    .join("\n\n");
-}
+// The phase prompt composition (D6/D7) — round header, prior-payload pointer,
+// the user's per-phase intent, then the loop protocol — lives in contracts
+// (`boardEnvelope.ts`, `composeBoardReviewPhasePrompt`) so the settings UI
+// shows each phase exactly the system text that wraps its editable prompt.
 
 /**
  * The review-loop executor (D1). Resolves the review-loop config from the
