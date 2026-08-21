@@ -280,12 +280,13 @@ export const BoardStageId = TrimmedNonEmptyString.pipe(Schema.brand("BoardStageI
 export type BoardStageId = typeof BoardStageId.Type;
 
 /**
- * The three product roles (D3). Exactly one stage holds each; every other
- * stage carries a null role. Dependency blocking (`build`), the review loop
+ * The four product roles (D3). Exactly one stage holds each; every other
+ * stage carries a null role. Plan-mode forcing and the plan deliverable
+ * contract (`plan`), dependency blocking (`build`), the review loop
  * (`review`) and archival / dependency satisfaction (`done`) key on the role,
  * never on a stage name.
  */
-export const BoardStageRole = Schema.Literals(["build", "review", "done"]);
+export const BoardStageRole = Schema.Literals(["plan", "build", "review", "done"]);
 export type BoardStageRole = typeof BoardStageRole.Type;
 
 /**
@@ -343,7 +344,7 @@ const BOARD_SEED_STAGE_SHAPES: ReadonlyArray<{
 }> = [
   { stageId: BOARD_SEED_STAGE_IDS.backlog, label: "Backlog", role: null, orderKey: "b" },
   { stageId: BOARD_SEED_STAGE_IDS.sprint, label: "Sprint", role: null, orderKey: "d" },
-  { stageId: BOARD_SEED_STAGE_IDS.planning, label: "Planning", role: null, orderKey: "f" },
+  { stageId: BOARD_SEED_STAGE_IDS.planning, label: "Planning", role: "plan", orderKey: "f" },
   { stageId: BOARD_SEED_STAGE_IDS.ready, label: "Ready", role: null, orderKey: "h" },
   { stageId: BOARD_SEED_STAGE_IDS.building, label: "Building", role: "build", orderKey: "j" },
   { stageId: BOARD_SEED_STAGE_IDS.review, label: "Code review", role: "review", orderKey: "l" },
@@ -377,12 +378,48 @@ export function boardStagesAreSeedOnly(stages: ReadonlyArray<BoardStageDefinitio
     return (
       stage.stageId === seed.stageId &&
       stage.label === seed.label &&
-      stage.role === seed.role &&
+      // A table seeded before the `plan` role existed carries Planning with a
+      // null role; treat it as untouched so rehydration falls back to the
+      // compiled seeds (which now carry the role) instead of pinning the
+      // legacy shape forever.
+      (stage.role === seed.role ||
+        (stage.stageId === BOARD_SEED_STAGE_IDS.planning && stage.role === null)) &&
       stage.orderKey === seed.orderKey &&
       stage.createdAt === seed.createdAt &&
       stage.updatedAt === seed.updatedAt
     );
   });
+}
+
+/** The role a seeded stage id implies. Roles are seeded, never created (the
+    decider rejects a second holder), so a stage id ↔ role mapping is exact:
+    custom stages get UUID ids and a null role. */
+export function boardSeedStageRole(stageId: string): BoardStageRole | null {
+  switch (stageId) {
+    case BOARD_SEED_STAGE_IDS.planning:
+      return "plan";
+    case BOARD_SEED_STAGE_IDS.building:
+      return "build";
+    case BOARD_SEED_STAGE_IDS.review:
+      return "review";
+    case BOARD_SEED_STAGE_IDS.done:
+      return "done";
+    default:
+      return null;
+  }
+}
+
+/**
+ * A stage's effective role. The `plan` role postdates persisted stage lists
+ * and event payloads that carry Planning with a null role, so every reader
+ * that keys behavior on a role — delete guards, role uniqueness, envelope
+ * segments, the settings card — resolves through this helper rather than the
+ * raw field.
+ */
+export function effectiveBoardStageRole(
+  stage: Pick<BoardStageDefinition, "stageId" | "role">,
+): BoardStageRole | null {
+  return stage.role ?? boardSeedStageRole(stage.stageId);
 }
 
 // ── Card pieces ────────────────────────────────────────────────────────
@@ -1142,12 +1179,14 @@ export function areBoardStagesAdjacent(
   return Math.abs(indexA - indexB) === 1;
 }
 
-/** The single stage holding a product role (D3), or null. */
+/** The single stage holding a product role (D3), or null. Matches on the
+    EFFECTIVE role so a legacy stage list (Planning seeded before the `plan`
+    role existed, role null) still reports its holder. */
 export function boardStageWithRole(
   board: BoardState,
   role: BoardStageRole,
 ): BoardStageDefinition | null {
-  return boardStages(board).find((stage) => stage.role === role) ?? null;
+  return boardStages(board).find((stage) => effectiveBoardStageRole(stage) === role) ?? null;
 }
 
 /** The stage immediately after `stageId` in board order, or null when it is
@@ -3332,14 +3371,26 @@ export function parseReviewStepId(
 export const DEFAULT_BOARD_REVIEW_ROUNDS = 5;
 
 /** Default per-phase prompts (D2), ported from the `pullrequest-review` /
-    `pullrequest-rereview` skills. The `ReviewLoopExecutor` wraps these with the
-    loop protocol (round-scoped step ids, worktree diff, payload shape); these
-    carry the per-phase intent a user then edits. */
+    `pullrequest-rereview` skills and slimmed to per-phase INTENT only: the
+    `ReviewLoopExecutor` force-appends the loop protocol (round-scoped step
+    ids, worktree diff, payload shape, severity vocabulary), so repeating the
+    mechanics here would only drift from it. These carry the reviewer /
+    triager / adjudicator persona a user then edits. */
 export const DEFAULT_BOARD_REVIEW_PHASE_PROMPT =
-  "Review the changes on this card's branch against its base ref as a fresh-eyes senior engineer. Diff the worktree and read every changed file. Report each problem as a finding: a stable id, a severity of critical, improvement or nitpick, the file and line, a short title and a detailed explanation. Critical and improvement findings block; nitpicks do not. If the change raises no blocking findings, say so explicitly.";
+  "Review the changes on this card's branch against its base ref as a fresh-eyes senior engineer. Diff the worktree and read every changed file. If the change raises no blocking findings, say so explicitly.";
 export const DEFAULT_BOARD_TRIAGE_PHASE_PROMPT =
-  "For each blocking finding, either FIX it in the worktree or REJECT it with a clear, specific reason. Make the smallest correct change and run the project's checks before finishing. Record one disposition per finding: action fixed or rejected, with a note.";
+  "For each blocking finding, either fix it in the worktree or reject it with a clear, specific reason. Make the smallest correct change and run the project's checks before finishing.";
 export const DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT =
+  "Rule on each finding's triage as a skeptical adjudicator: verify whether a claimed fix actually holds and whether a rejection is justified.";
+
+/** The pre-split phase defaults, verbatim — a stored prompt exactly matching
+    one of these predates the envelope split (its protocol sentences are now
+    force-appended) and is upgraded to the slimmed default at resolution. */
+const LEGACY_BOARD_REVIEW_PHASE_PROMPT =
+  "Review the changes on this card's branch against its base ref as a fresh-eyes senior engineer. Diff the worktree and read every changed file. Report each problem as a finding: a stable id, a severity of critical, improvement or nitpick, the file and line, a short title and a detailed explanation. Critical and improvement findings block; nitpicks do not. If the change raises no blocking findings, say so explicitly.";
+const LEGACY_BOARD_TRIAGE_PHASE_PROMPT =
+  "For each blocking finding, either FIX it in the worktree or REJECT it with a clear, specific reason. Make the smallest correct change and run the project's checks before finishing. Record one disposition per finding: action fixed or rejected, with a note.";
+const LEGACY_BOARD_ADJUDICATE_PHASE_PROMPT =
   "For each finding, rule on the triage. Scope yourself to exactly what changed between the reviewed SHA and the fixed SHA. Verify whether a claimed fix actually holds and whether a rejection is justified. Record one verdict per finding: fix-upheld, fix-incomplete, fix-absent, rejection-justified or rejection-unjustified, with a note. You cannot see problems a fix introduced; only the next review can.";
 
 /** A single review phase's execution config (D2): its own prompt and its own
@@ -3501,20 +3552,56 @@ export const DEFAULT_BOARD_REVIEW_STAGE_EXECUTION: BoardStageExecutionReview = S
   BoardStageExecution,
 )({ kind: "review" }) as BoardStageExecutionReview;
 
-/** The Building prompt carried today by `DEFAULT_BOARD_BUILD_STEP` (D4). */
+/** The Building prompt (D4), intent only: completion / question mechanics are
+    force-appended by the prompt envelope (`composeStepPrompt`), never carried
+    in the editable body. */
 export const DEFAULT_BOARD_BUILD_PROMPT =
-  "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.";
+  "Implement the card's brief on its branch. Run the project's checks until they pass.";
 
-/** The planning prompt drafted for the superseded planning spawner (D4),
-    verbatim. The `board_propose_plans` instruction lives in the prompt, not the
-    envelope (D5), so a user-invented stage can do the same. */
+/** The Planning prompt (D4), intent only: the `board_propose_plans`
+    deliverable contract is force-appended by the envelope's `plan`-role
+    postamble segment, so rewriting this prompt cannot break the plan
+    pipeline. */
 export const DEFAULT_BOARD_PLANNING_PROMPT = `Build a plan that allows us to implement the functionality requested on this card. Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+
+Ask the questions one at a time.
+
+If a question can be answered by exploring the codebase, explore the codebase instead.`;
+
+/** The pre-split Building / Planning defaults, verbatim (see the legacy phase
+    prompts above for the rule). */
+const LEGACY_BOARD_BUILD_PROMPT =
+  "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.";
+const LEGACY_BOARD_PLANNING_PROMPT = `Build a plan that allows us to implement the functionality requested on this card. Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
 
 Ask the questions one at a time.
 
 If a question can be answered by exploring the codebase, explore the codebase instead.
 
 When we have agreed a plan, record it with board_propose_plans. Do not move the card yourself.`;
+
+const LEGACY_BOARD_PROMPT_UPGRADES: ReadonlyArray<readonly [legacy: string, current: string]> = [
+  [LEGACY_BOARD_BUILD_PROMPT, DEFAULT_BOARD_BUILD_PROMPT],
+  [LEGACY_BOARD_PLANNING_PROMPT, DEFAULT_BOARD_PLANNING_PROMPT],
+  [LEGACY_BOARD_REVIEW_PHASE_PROMPT, DEFAULT_BOARD_REVIEW_PHASE_PROMPT],
+  [LEGACY_BOARD_TRIAGE_PHASE_PROMPT, DEFAULT_BOARD_TRIAGE_PHASE_PROMPT],
+  [LEGACY_BOARD_ADJUDICATE_PHASE_PROMPT, DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT],
+];
+
+/**
+ * Upgrade a stored prompt that still IS a pre-envelope-split default,
+ * verbatim (modulo surrounding whitespace), to the slimmed current default —
+ * its stripped sentences are force-appended by the envelope now, so leaving
+ * it would duplicate them in every run. An edited prompt never matches and is
+ * returned untouched.
+ */
+export function upgradeLegacyBoardPrompt(prompt: string): string {
+  const trimmed = prompt.trim();
+  for (const [legacy, current] of LEGACY_BOARD_PROMPT_UPGRADES) {
+    if (trimmed === legacy) return current;
+  }
+  return prompt;
+}
 
 /**
  * Two stages ship with `Auto execute` on so an empty settings file is a working
@@ -3651,7 +3738,43 @@ export function resolveBoardStageExecution(
       configured !== undefined && isBoardReviewStageExecution(configured)
         ? configured
         : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
-    return { ...base, mode: "build", humanInLoop: false };
+    return {
+      ...base,
+      mode: "build",
+      humanInLoop: false,
+      phases: {
+        review: {
+          ...base.phases.review,
+          prompt: upgradeLegacyBoardPrompt(base.phases.review.prompt),
+        },
+        triage: {
+          ...base.phases.triage,
+          prompt: upgradeLegacyBoardPrompt(base.phases.triage.prompt),
+        },
+        adjudicate: {
+          ...base.phases.adjudicate,
+          prompt: upgradeLegacyBoardPrompt(base.phases.adjudicate.prompt),
+        },
+      },
+    };
+  }
+  // The plan / build role holders (seeded ids — roles are never created, so
+  // the id ↔ role mapping is exact) get their invariants FORCED at the same
+  // single resolution point: Planning always runs read-only and
+  // human-in-the-loop, Building always runs in build mode, and the retired
+  // "pause when a plan exists" stance is always off. A review member stored
+  // under either key is ignored the same way a simple member under the review
+  // key is.
+  if (stageId === BOARD_SEED_STAGE_IDS.planning || stageId === BOARD_SEED_STAGE_IDS.building) {
+    const base =
+      configured !== undefined && !isBoardReviewStageExecution(configured)
+        ? configured
+        : DEFAULT_BOARD_STAGE_EXECUTION;
+    const forced =
+      stageId === BOARD_SEED_STAGE_IDS.planning
+        ? ({ mode: "plan", humanInLoop: true, humanInLoopWithPlan: false } as const)
+        : ({ mode: "build", humanInLoopWithPlan: false } as const);
+    return { ...base, ...forced, prompt: upgradeLegacyBoardPrompt(base.prompt) };
   }
   return configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
 }

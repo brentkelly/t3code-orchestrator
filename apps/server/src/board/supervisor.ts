@@ -19,111 +19,22 @@
  *   down", decide resume / recover / advance.
  */
 import type {
-  BoardCard,
   BoardCardId,
   BoardCardStepState,
   BoardConcurrencySettings,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 
-/**
- * The provider-specific wording for "ask through your question tool, never in
- * prose" (D5). The board assigned the step, so it knows which provider it is
- * talking to — this is the concrete payoff of envelopes over Claude-specific
- * skills. Unknown instances fall back to neutral phrasing.
- */
-export function providerQuestionMechanism(providerInstanceId: ProviderInstanceId): string {
-  const key = String(providerInstanceId).toLowerCase();
-  if (key.includes("claude") || key.includes("anthropic")) {
-    return "raise it as a Claude Code question so it surfaces as a real prompt";
-  }
-  if (key.includes("codex") || key.includes("openai")) {
-    return "raise it through Codex's ask-for-input request";
-  }
-  if (key.includes("cursor")) {
-    return "raise it through Cursor's user-input request";
-  }
-  if (key.includes("gemini") || key.includes("google")) {
-    return "raise it through Gemini's user-input request";
-  }
-  if (key.includes("grok")) {
-    return "raise it through Grok's user-input request";
-  }
-  if (key.includes("opencode")) {
-    return "raise it through OpenCode's user-input request";
-  }
-  return "raise it through your runtime's user-input request";
-}
-
-/** The frozen execution config a spawn needs, read off the step-state run row
-    (D12) — the single step per stage (D1) replaces the old multi-step recipe. */
-export interface ComposeStepPromptStep {
-  readonly stepLabel: string;
-  readonly providerInstanceId: ProviderInstanceId;
-  readonly prompt: string;
-  readonly maxAttempts: number;
-  /** Frozen human-in-the-loop stance (D5): governs the postamble. */
-  readonly humanInLoop: boolean;
-}
-
-export interface ComposeStepPromptInput {
-  readonly card: Pick<BoardCard, "key" | "title" | "stage">;
-  readonly step: ComposeStepPromptStep;
-  readonly attempt: number;
-}
-
-/**
- * The full step prompt (D5): preamble + body + postamble. The preamble is
- * short by design — a pointer to `board_get_card_context` exists so context is
- * pulled, not pushed. The postamble branches on human-in-the-loop (D5): an
- * unattended run carries the `/unattended` stance (`board_complete_step` is the
- * only way to finish, never end a turn with an unanswered question in prose); a
- * human-in-the-loop run is question-friendly (ask me directly, a turn that ends
- * waiting is fine). An empty body is a re-entry (D7) — a clean conversational
- * thread with just the orientation and the human-in-the-loop stance.
- */
-export function composeStepPrompt(input: ComposeStepPromptInput): string {
-  const { card, step, attempt } = input;
-  const questionMechanism = providerQuestionMechanism(step.providerInstanceId);
-  const preamble = [
-    `You are working card ${card.key} — "${card.title}".`,
-    `Stage: ${card.stage}. Step: ${step.stepLabel} (attempt ${attempt} of ${step.maxAttempts}).`,
-    `Call board_get_card_context for the brief, plan, dependencies and prior progress.`,
-  ].join("\n");
-  const body = step.prompt;
-  const postamble = step.humanInLoop
-    ? [
-        // Human-in-the-loop envelopes are UNCHANGED by t3o-18 (D16), preserving
-        // t3o-17 AC 6's asymmetry: these steps are not stall-supervised and the
-        // human is already in the conversation, so nagging a conversational turn
-        // into producing a todo list for a one-line answer is noise. If such an
-        // agent writes a list anyway it renders on the card like any other.
-        `This is a human-in-the-loop run: ask me anything you need directly, and it is fine to end a turn waiting on my answer.`,
-        `When the work is done, call board_complete_step to finish the step.`,
-      ].join("\n")
-    : [
-        `You are running unattended. Do not stop to ask permission; make every reasonable decision yourself and proceed.`,
-        `When the step is finished, call board_complete_step — that is the ONLY way to complete it; ending your turn any other way is treated as a failure and recovered.`,
-        // t3o-18 D16 REPLACES t3o-17's `board_report_progress` line rather than
-        // joining it: leaving a dangling instruction that names a deleted tool is
-        // a defect, not a leftover. The requirement itself is kept and
-        // re-pointed, because t3o-17 D2's argument survives the substitution
-        // intact — a short step, or a provider in a mode that produces no plan,
-        // emits no `turn.plan.updated` at all, and assuming agents always keep a
-        // list would reopen exactly the hole t3o-17 identified.
-        //
-        // The compliance cost is LOWER than what it replaces. `board_report_progress`
-        // was an extra MCP call that did nothing for the agent, so it was pure
-        // overhead the model had every incentive to drop. A todo list is the
-        // model's own working memory — every supported provider ships the tool and
-        // uses it unprompted on non-trivial work — so this nudges a behaviour the
-        // agent already wants.
-        `Keep a todo list current as you work (your task/plan tool) and commit as you go: the supervisor watches your list advance to tell a productive long job from a wedged one, and without it a working step looks the same as a stalled one and will be escalated.`,
-        `If you are truly blocked and need a human decision, ${questionMechanism}; never end a turn with an unanswered question in prose.`,
-      ].join("\n");
-  const bodyBlock = body.trim().length > 0 ? `${body}\n\n` : "";
-  return `${preamble}\n\n${bodyBlock}${postamble}`;
-}
+// The prompt envelope (D5) moved to contracts (`boardEnvelope.ts`) so the
+// settings UI renders exactly the text that wraps a stage's editable prompt;
+// re-exported here so the reactor and the supervisor tests keep their one
+// import site for the decision logic.
+export {
+  composeStepPrompt,
+  providerQuestionMechanism,
+  type ComposeStepPromptInput,
+  type ComposeStepPromptStep,
+} from "@t3tools/contracts";
 
 export type BoardRecoveryDecision =
   | {

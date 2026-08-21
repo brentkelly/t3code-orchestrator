@@ -22,10 +22,10 @@ import {
   boardCardStepState,
   boardNextStageId,
   boardNonTerminalStepStates,
+  boardSeedStageRole,
   boardStageById,
   boardStageEntryInvocationCount,
   boardStageIndex,
-  boardStageWithRole,
   CommandId,
   DEFAULT_BOARD_SETTINGS,
   EMPTY_BOARD_STATE,
@@ -539,7 +539,9 @@ const make = Effect.gen(function* () {
       ? Effect.succeed(true)
       : snapshotQuery.getThreadShellById(threadId).pipe(Effect.map(Option.isNone));
 
-  /** The prompt for a step's run, composed from the frozen run row (D12). */
+  /** The prompt for a step's run, composed from the frozen run row (D12). The
+      role keys the envelope's deliverable postamble segment; roles are seeded,
+      never created, so the card's stage id resolves it without a board read. */
   const stepPromptFor = (card: BoardCard, state: BoardCardStepState): string =>
     composeStepPrompt({
       card,
@@ -551,6 +553,7 @@ const make = Effect.gen(function* () {
         humanInLoop: state.humanInLoop,
       },
       attempt: state.attempt,
+      role: boardSeedStageRole(card.stage),
     });
 
   // Offer one build-mode step to the governor: acquire a slot under the resolved
@@ -1682,7 +1685,8 @@ const make = Effect.gen(function* () {
         // `user-input.requested` rides the same stream (t3o-18, D13): one more
         // case in an existing subscription, no new seam. It fires for every
         // agent question, which is what re-parks a step on the gate.
-        if (event.type === "user-input.requested") return worker.enqueue({ source: "runtime", event });
+        if (event.type === "user-input.requested")
+          return worker.enqueue({ source: "runtime", event });
         // session.started matters only for a thread orphaned by a rejected
         // admit — the durable delivery point for its turn interrupt.
         if (event.type === "session.started" && orphanedThreads.has(String(event.threadId))) {

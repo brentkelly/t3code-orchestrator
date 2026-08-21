@@ -30,13 +30,13 @@ import {
   boardLabelCatalogue,
   boardPlanId,
   boardStageById,
-  boardStageIndex,
   boardStages,
   boardStagesInOrder,
   boardStageWithRole,
   compareBoardStages,
   DEFAULT_BOARD_KEY_PREFIX,
   deriveBoardCardBlocked,
+  effectiveBoardStageRole,
   EMPTY_BOARD_STATE,
   EventId,
   isBoardCommand,
@@ -1074,7 +1074,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         createdAt: command.createdAt,
         updatedAt: command.createdAt,
       };
-      // A new role-holder would break "exactly one stage per role"; the three
+      // A new role-holder would break "exactly one stage per role"; the four
       // roles are seeded and never created.
       if (stage.role !== null && boardStageWithRole(board, stage.role) !== null) {
         return yield* invariant(
@@ -1177,10 +1177,14 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       if (stage === null) {
         return yield* invariant(command, `Stage '${command.stageId}' does not exist.`);
       }
-      if (stage.role !== null) {
+      // Effective role (not the raw field): a legacy stage list carries
+      // Planning with a null role, and the plan pipeline must not lose its
+      // stage on such a board.
+      const heldRole = effectiveBoardStageRole(stage);
+      if (heldRole !== null) {
         return yield* invariant(
           command,
-          `Stage '${stage.label}' holds the '${stage.role}' role and cannot be deleted.`,
+          `Stage '${stage.label}' holds the '${heldRole}' role and cannot be deleted.`,
         );
       }
       // Refused if the stage holds ANY card, archived included (D9). The error

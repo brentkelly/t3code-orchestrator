@@ -202,3 +202,61 @@ describe("stage execution resolution reflects edits (D4)", () => {
     expect(after).not.toEqual(before);
   });
 });
+
+describe("role-holder invariants forced at resolution (settings redesign)", () => {
+  it("Planning always resolves plan-mode + human-in-the-loop, whatever is stored", () => {
+    const edited = decodeSettings({
+      pipeline: {
+        [BOARD_SEED_STAGE_IDS.planning]: {
+          autoExecute: true,
+          prompt: "custom",
+          mode: "build",
+          humanInLoop: false,
+          humanInLoopWithPlan: true,
+        },
+      },
+    });
+    const resolved = resolveBoardStageExecution(edited, BOARD_SEED_STAGE_IDS.planning);
+    expect(resolved.mode).toBe("plan");
+    expect(resolved.humanInLoop).toBe(true);
+    expect(resolved.humanInLoopWithPlan).toBe(false);
+    expect(resolved.prompt).toBe("custom");
+  });
+
+  it("Building always resolves build-mode with the with-plan pause off", () => {
+    const edited = decodeSettings({
+      pipeline: {
+        [BOARD_SEED_STAGE_IDS.building]: {
+          autoExecute: true,
+          prompt: "custom",
+          mode: "plan",
+          humanInLoopWithPlan: true,
+        },
+      },
+    });
+    const resolved = resolveBoardStageExecution(edited, BOARD_SEED_STAGE_IDS.building);
+    expect(resolved.mode).toBe("build");
+    expect(resolved.humanInLoopWithPlan).toBe(false);
+  });
+
+  it("upgrades a stored pre-split default prompt to the slimmed default at resolution", () => {
+    const legacy =
+      "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.";
+    const edited = decodeSettings({
+      pipeline: {
+        [BOARD_SEED_STAGE_IDS.building]: { autoExecute: true, prompt: legacy, mode: "build" },
+      },
+    });
+    const resolved = resolveBoardStageExecution(edited, BOARD_SEED_STAGE_IDS.building);
+    expect(resolved.prompt).toBe(DEFAULT_BOARD_BUILD_PROMPT);
+  });
+
+  it("a review member stored under a role-holder key is ignored, like a simple member under the review key", () => {
+    const edited = decodeSettings({
+      pipeline: { [BOARD_SEED_STAGE_IDS.planning]: { kind: "review" } },
+    });
+    const resolved = resolveBoardStageExecution(edited, BOARD_SEED_STAGE_IDS.planning);
+    expect(resolved.kind).toBe("simple");
+    expect(resolved.mode).toBe("plan");
+  });
+});
