@@ -42,7 +42,6 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import {
   normalizeKeyPrefixInput,
-  parsePositiveIntInput,
   setBoardInstanceConcurrency,
   setBoardProjectSetting,
 } from "./BoardSettingsPanel.logic";
@@ -276,28 +275,25 @@ function ConcurrencySection({
         />
         <div className="h-px bg-border" />
         <p className="pt-1 text-xs text-muted-foreground">
-          Optionally cap concurrent steps for a specific provider instance. Blank uses the global
-          limit.
+          Optionally cap concurrent steps for a specific provider instance. Clear a value to fall
+          back to the global limit.
         </p>
         {instanceIds.map((id) => {
           const current = board.concurrency.perInstance[ProviderInstanceId.make(id)];
           return (
-            <div key={id} className="flex items-center justify-between gap-4 py-1">
+            <div key={id} className="flex items-center justify-between gap-4 py-1.5">
               <span className="min-w-0 flex-1 truncate text-[13.5px] text-foreground">{id}</span>
-              <Input
-                key={`perInstance:${id}:${current ?? ""}`}
-                type="number"
+              <NumberStepper
+                nullable
+                value={current ?? null}
                 min={1}
-                defaultValue={current ?? ""}
+                max={99}
+                // Unset means "follow the global limit", so that is both what
+                // the field reads and where −/+ start counting from.
                 placeholder="Global"
-                aria-label={`Concurrency limit for ${id}`}
-                // `Input` styles a wrapper span, so the appearance reset that
-                // drops the browser's native spin buttons has to reach the real
-                // element through a descendant selector.
-                className="h-7.5 w-24 text-sm [&_input]:[appearance:textfield] [&_input::-webkit-inner-spin-button]:appearance-none [&_input::-webkit-outer-spin-button]:appearance-none"
-                onBlur={(event) => {
-                  const raw = event.target.value.trim();
-                  const value = raw.length === 0 ? null : parsePositiveIntInput(raw, current ?? 1);
+                stepFrom={board.concurrency.globalMaxConcurrent}
+                ariaLabel={`Concurrency limit for ${id}`}
+                onChange={(value) => {
                   update({
                     board: {
                       concurrency: {

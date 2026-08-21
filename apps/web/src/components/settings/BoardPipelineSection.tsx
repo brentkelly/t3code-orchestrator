@@ -56,7 +56,6 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   ChevronDownIcon,
   GripVerticalIcon,
-  LockIcon,
   MinusIcon,
   PencilIcon,
   PlusIcon,
@@ -134,7 +133,7 @@ function ToggleRow(props: {
 }
 
 /** The prototype's −/value/+ number control, shared by rounds, timeouts,
-    attempts and the restyled concurrency / lifecycle rows.
+    attempts and the concurrency rows.
 
     The field is a plain `<input>`, not the shared `Input`: that component puts
     the class list on a bordered wrapper span and keeps the real element out of
@@ -143,28 +142,54 @@ function ToggleRow(props: {
     crowd the value) could be applied to it. The value is controlled with a
     free-text draft so typing is never fought, and the draft is dropped the
     moment −/+ writes a new value — an uncontrolled field would keep showing
-    what the user last typed. */
-export function NumberStepper(props: {
-  value: number;
+    what the user last typed.
+
+    A `nullable` stepper also carries an unset state — per-instance concurrency
+    means "no override", not zero — shown as `placeholder` and reached by
+    clearing the field. −/+ never lands back on it: from unset they step off
+    `stepFrom`, the value the unset state actually resolves to (the global
+    limit), so the first nudge continues from what the user sees rather than
+    from the minimum. */
+type NumberStepperCommon = {
   min: number;
   max: number;
   step?: number;
   unit?: string;
   ariaLabel: string;
-  onChange: (value: number) => void;
-}) {
+};
+type NumberStepperProps = NumberStepperCommon &
+  (
+    | { nullable?: false; value: number; onChange: (value: number) => void }
+    | {
+        nullable: true;
+        value: number | null;
+        placeholder: string;
+        stepFrom: number;
+        onChange: (value: number | null) => void;
+      }
+  );
+
+export function NumberStepper(props: NumberStepperProps) {
   const step = props.step ?? 1;
   const clamp = (value: number) => Math.max(props.min, Math.min(props.max, value));
   const [draft, setDraft] = useState<string | null>(null);
-  const resolve = (raw: string) => clamp(parsePositiveIntInput(raw, props.value));
-  const apply = (next: number) => {
+  const stepFrom = props.nullable ? props.stepFrom : props.value;
+  const resolve = (raw: string): number | null =>
+    props.nullable && raw.trim().length === 0
+      ? null
+      : clamp(parsePositiveIntInput(raw, props.value ?? stepFrom));
+  const apply = (next: number | null) => {
     setDraft(null);
-    if (next !== props.value) props.onChange(next);
+    if (next === props.value) return;
+    if (props.nullable) props.onChange(next);
+    else if (next !== null) props.onChange(next);
   };
   // −/+ steps off whatever is on screen, including an uncommitted draft: the
   // buttons suppress the focus change (below), so no blur has committed it yet.
-  const nudge = (delta: number) =>
-    apply(clamp((draft === null ? props.value : resolve(draft)) + delta));
+  const nudge = (delta: number) => {
+    const shown = draft === null ? props.value : resolve(draft);
+    apply(clamp((shown ?? stepFrom) + delta));
+  };
   return (
     <div className="flex h-8 shrink-0 items-center overflow-hidden rounded-lg border border-input bg-popover shadow-xs">
       <button
@@ -181,9 +206,10 @@ export function NumberStepper(props: {
       <input
         type="number"
         inputMode="numeric"
-        value={draft ?? String(props.value)}
+        value={draft ?? (props.value === null ? "" : String(props.value))}
+        placeholder={props.nullable ? props.placeholder : undefined}
         aria-label={props.ariaLabel}
-        className="h-full w-14 [appearance:textfield] bg-transparent text-center text-sm font-medium text-foreground outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        className="h-full w-14 [appearance:textfield] bg-transparent text-center text-sm font-medium text-foreground outline-none placeholder:font-normal placeholder:text-muted-foreground [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         onChange={(event) => setDraft(event.target.value)}
         onBlur={(event) => apply(resolve(event.target.value))}
         onKeyDown={(event) => {
@@ -216,38 +242,44 @@ function NumberRow(props: { label: string; hint?: string; stepper: ReactNode }) 
   );
 }
 
-/** A collapsible, read-only system prompt block (lock + "system" tag): the
-    envelope text the server composes around the editable prompt. */
-function SystemPromptDisclosure(props: { label: string; text: string }) {
-  const [open, setOpen] = useState(false);
+/** One side of the system envelope, rendered inline above or below the
+    editable body: the text the server composes around the prompt, tagged
+    "System" so it reads as chrome rather than something the user can type in.
+    Empty envelopes (a phase with no postamble, say) render nothing at all
+    rather than an empty grey band. */
+function SystemEnvelope(props: { text: string; edge: "top" | "bottom"; label: string }) {
+  if (props.text.trim().length === 0) return null;
   return (
-    <div className="flex flex-col">
-      <button
-        type="button"
-        className="flex w-full items-center gap-1.5 py-1.5 text-left text-[11.5px] font-medium text-muted-foreground hover:text-foreground"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <LockIcon className="size-3 shrink-0" />
-        <span>{props.label}</span>
-        <span className="font-normal text-muted-foreground/70">system</span>
-        <span className="flex-1" />
-        <ChevronDownIcon
-          className={cn("size-3.5 shrink-0 transition-transform", open ? "" : "-rotate-90")}
-        />
-      </button>
-      {open ? (
-        <p className="my-0 ml-[5px] whitespace-pre-wrap border-l-2 border-border py-1 pl-4 pr-2 font-mono text-xs leading-relaxed text-muted-foreground">
-          {props.text}
-        </p>
-      ) : null}
+    <div
+      className={cn(
+        "relative bg-muted py-2.5 pr-[74px] pl-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground",
+        props.edge === "bottom" ? "border-b border-border" : "border-t border-border",
+      )}
+      // A named note, not bare text: the visible "System" pill says what the
+      // band is, and the role gives the name somewhere valid to live for a
+      // screen reader that lands here between the prompt's two halves.
+      role="note"
+      aria-label={`${props.label} (system)`}
+    >
+      {props.text}
+      <span className="absolute top-2 right-2.5 rounded-full border border-border bg-card px-1.5 py-px font-sans text-[10.5px] font-medium text-muted-foreground">
+        System
+      </span>
     </div>
   );
 }
 
-/** The prompt row: system preamble, the editable body (read view clamps to a
-    few lines with a fade + "See more"; Edit swaps in a textarea), the system
-    postamble, and a word count. */
+/**
+ * The prompt row, laid out as the single document a run actually sends:
+ * system preamble, the editable body, system postamble — one bordered card,
+ * read top to bottom, so the envelope is visible in place instead of hidden
+ * behind a disclosure the user has to open to see what wraps their words.
+ *
+ * The body is the only editable band: clicking it (or Edit) swaps in a
+ * textarea, blur commits. The whole document clamps to a few hundred pixels
+ * with a fade + "See more" so a long envelope cannot push the rest of the
+ * stage off screen.
+ */
 function PromptRow(props: {
   id: string;
   label: string;
@@ -261,80 +293,94 @@ function PromptRow(props: {
   const [expanded, setExpanded] = useState(false);
   // Clipping is MEASURED, not guessed from character count: a short prompt
   // with many lines overflows the clamp just as a long single-line one does,
-  // and a silent cut with no fade or "See more" would hide content.
-  const readViewRef = useRef<HTMLDivElement | null>(null);
+  // and a silent cut with no fade or "See more" would hide content. The
+  // measurement is on the document, not the body, because the envelope shares
+  // the same clamp.
+  const documentRef = useRef<HTMLDivElement | null>(null);
   const [clipped, setClipped] = useState(false);
+  const clamped = !editing && !expanded;
   useLayoutEffect(() => {
-    const element = readViewRef.current;
-    if (element === null || editing || expanded) {
+    const element = documentRef.current;
+    if (element === null || !clamped) {
       setClipped(false);
       return;
     }
     setClipped(element.scrollHeight > element.clientHeight + 1);
-  }, [props.value, editing, expanded]);
+  }, [props.value, props.preamble, props.postamble, clamped]);
   const words = props.value.trim().length > 0 ? props.value.trim().split(/\s+/).length : 0;
   return (
     <div className="flex flex-col gap-1.5 py-2">
       <div className="flex items-center gap-2">
         <span className="text-[13.5px] text-foreground">{props.label}</span>
         <span className="flex-1" />
-        <Button
-          size="xs"
-          variant={editing ? "outline" : "ghost"}
-          className={cn(
-            "h-6 gap-1 px-2 text-xs",
-            editing ? "border-primary text-primary" : "text-muted-foreground",
-          )}
-          aria-label={
-            editing
-              ? `Stop editing ${props.label.toLowerCase()}`
-              : `Edit ${props.label.toLowerCase()}`
-          }
-          onClick={() => setEditing((current) => !current)}
-        >
-          <PencilIcon className="size-3" />
-          {editing ? "Editing" : "Edit"}
-        </Button>
+        {editing ? (
+          // A label, not a button: clicking anywhere outside the textarea is
+          // what ends editing, and a button here would be caught by that same
+          // blur and then re-enter editing on its own click.
+          <span className="flex h-6 items-center gap-1 rounded-md border border-primary px-2 text-xs font-medium text-primary">
+            <PencilIcon className="size-3" />
+            Editing
+          </span>
+        ) : (
+          <Button
+            size="xs"
+            variant="ghost"
+            className="h-6 gap-1 px-2 text-xs text-muted-foreground"
+            aria-label={`Edit ${props.label.toLowerCase()}`}
+            onClick={() => setEditing(true)}
+          >
+            <PencilIcon className="size-3" />
+            Edit
+          </Button>
+        )}
       </div>
 
-      <SystemPromptDisclosure label="Preamble" text={props.preamble} />
+      <div
+        ref={documentRef}
+        className={cn(
+          "relative flex flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xs",
+          clamped ? "max-h-52" : "",
+        )}
+      >
+        <SystemEnvelope text={props.preamble} edge="bottom" label="Preamble" />
 
-      {editing ? (
-        <Textarea
-          key={`prompt:${props.id}`}
-          defaultValue={props.value}
-          aria-label={`${props.label} text`}
-          rows={Math.min(16, Math.max(4, props.value.split("\n").length + 2))}
-          className="border-primary"
-          onBlur={(event) => {
-            if (event.target.value !== props.value) props.onChange(event.target.value);
-          }}
-        />
-      ) : (
-        <button
-          type="button"
-          className="relative cursor-text text-left"
-          title="Click to edit"
-          onClick={() => setEditing(true)}
-        >
-          <div
-            ref={readViewRef}
-            className={cn(
-              "whitespace-pre-wrap text-[13px] leading-relaxed text-foreground",
-              expanded ? "" : "max-h-16 overflow-hidden",
-            )}
+        {editing ? (
+          <Textarea
+            key={`prompt:${props.id}`}
+            unstyled
+            defaultValue={props.value}
+            aria-label={`${props.label} text`}
+            autoFocus
+            rows={Math.min(16, Math.max(4, props.value.split("\n").length + 2))}
+            className="block w-full [&_textarea]:resize-y [&_textarea]:bg-card [&_textarea]:px-3.5 [&_textarea]:py-3 [&_textarea]:text-[13px] [&_textarea]:leading-relaxed [&_textarea]:text-foreground"
+            // Clicking away IS "done": blur commits the text and closes the
+            // editor, so there is nothing left for a Done button to do.
+            onBlur={(event) => {
+              if (event.target.value !== props.value) props.onChange(event.target.value);
+              setEditing(false);
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="block w-full cursor-text px-3.5 py-3 text-left text-[13px] leading-relaxed whitespace-pre-wrap text-foreground"
+            title="Click to edit"
+            onClick={() => setEditing(true)}
           >
             {props.value.trim().length > 0 ? (
               props.value
             ) : (
               <span className="text-muted-foreground/70">No prompt yet — click to write one.</span>
             )}
-          </div>
-          {clipped ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-linear-to-b from-transparent to-card" />
-          ) : null}
-        </button>
-      )}
+          </button>
+        )}
+
+        <SystemEnvelope text={props.postamble} edge="top" label="Postamble" />
+
+        {clipped ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-11 bg-linear-to-b from-transparent to-card" />
+        ) : null}
+      </div>
 
       <div className="flex items-center gap-3">
         {!editing && (clipped || expanded) ? (
@@ -346,23 +392,12 @@ function PromptRow(props: {
             {expanded ? "See less" : "See more"}
           </button>
         ) : null}
-        {editing ? (
-          <button
-            type="button"
-            className="text-xs font-medium text-muted-foreground hover:text-foreground"
-            onClick={() => setEditing(false)}
-          >
-            Done
-          </button>
-        ) : null}
         <span className="flex-1" />
-        <span className="font-mono text-[11px] text-muted-foreground">{words} words</span>
+        <span className="font-mono text-[11px] text-muted-foreground">{words} words editable</span>
       </div>
       {props.missingMessage ? (
         <p className="text-xs text-destructive">{props.missingMessage}</p>
       ) : null}
-
-      <SystemPromptDisclosure label="Postamble" text={props.postamble} />
     </div>
   );
 }
