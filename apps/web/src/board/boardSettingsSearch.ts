@@ -11,7 +11,7 @@
 import type { SettingsSearchItem } from "../components/settings/settingsSearch";
 
 export const BOARD_SETTINGS_SEARCH_ITEMS = [
-  { id: "board-projects", title: "Project card keys and colours", to: "/settings/board" },
+  { id: "board-projects", title: "Card keys and colour", to: "/settings/board" },
   {
     id: "board-key-prefix",
     title: "Card key prefix",
@@ -24,7 +24,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     targetId: "board-projects",
   },
-  { id: "board-pipeline", title: "Pipeline recipe", to: "/settings/board" },
+  { id: "board-pipeline", title: "Pipeline", to: "/settings/board" },
   { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
   {
     id: "board-archive-window",
