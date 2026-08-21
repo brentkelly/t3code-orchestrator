@@ -20,18 +20,38 @@ export const BOARD_UI_STATE_STORAGE_KEY = "t3code:board-ui:v1";
 export type WorkspaceMode = "threads" | "board";
 
 /**
- * Which workspace mode an href belongs to. The board surface lives under
- * `/board` (optionally with `?project`/`?card`); every other location —
- * threads, drafts, the root — is a threads-surface location.
+ * Full-surface routes that are not a workspace location at all: settings
+ * (which replaces the whole workspace, tabs included) and the auth flow.
+ *
+ * They must never be filed as a mode's last location. `/settings/general`
+ * recorded under `threads` stranded the workspace: clicking Threads reopened
+ * settings, and Back out of settings landed on the board, leaving no way to
+ * reach a thread.
+ */
+const NON_WORKSPACE_ROOTS = ["/settings", "/pair", "/connect"];
+
+/** The path part of an in-app href, without `?search` or `#hash`. */
+function pathnameOf(href: string): string {
+  const boundary = href.search(/[?#]/);
+  return boundary === -1 ? href : href.slice(0, boundary);
+}
+
+/**
+ * Which workspace mode an href belongs to, or `null` when it belongs to
+ * neither. The board surface lives under `/board` (optionally with
+ * `?project`/`?card`); threads, drafts and the root are threads-surface
+ * locations; settings and the auth flow are not workspace locations.
  *
  * This is the single source of truth for classifying a location, used both to
  * guard `recordModeLocation` against cross-mode writes and to sanitise
  * persisted state. Keeping it in one place stops the two from drifting.
  */
-export function modeForHref(href: string): WorkspaceMode {
-  return href === "/board" || href.startsWith("/board?") || href.startsWith("/board/")
-    ? "board"
-    : "threads";
+export function modeForHref(href: string): WorkspaceMode | null {
+  const pathname = pathnameOf(href);
+  if (NON_WORKSPACE_ROOTS.some((root) => pathname === root || pathname.startsWith(`${root}/`))) {
+    return null;
+  }
+  return pathname === "/board" || pathname.startsWith("/board/") ? "board" : "threads";
 }
 
 interface BoardUiState {
@@ -72,9 +92,11 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
   for (const mode of ["threads", "board"] as const) {
     const href = candidate.lastLocationByMode?.[mode];
     // Must be an in-app path AND belong to the mode it is filed under. The
-    // second check repairs stores poisoned by the pre-guard bug where a
-    // board→thread transition recorded a thread href under `board`, which
-    // then sent every Board click back to that thread.
+    // second check repairs stores poisoned by the pre-guard bugs: a
+    // board→thread transition recording a thread href under `board` (which
+    // sent every Board click back to that thread), and a workspace→settings
+    // transition recording `/settings/...` under `threads` (which sent every
+    // Threads click into settings).
     if (typeof href === "string" && href.startsWith("/") && modeForHref(href) === mode) {
       lastLocationByMode[mode] = href;
     }
@@ -104,10 +126,12 @@ export const useBoardUiStore = create<BoardUiStore>()(
         set((state) => {
           // The mounting surface fixes `mode`, but the router location updates
           // the instant a navigation starts — before the old surface unmounts.
-          // Without this guard the still-mounted Board tab records the incoming
-          // thread href under `board` during a board→thread transition, and
-          // every later Board click jumps back to that thread. Only file a
-          // location under the mode it actually belongs to.
+          // Without this guard the still-mounted tab records the incoming href
+          // under its own mode: a board→thread transition filed a thread href
+          // under `board`, and a threads→settings transition filed
+          // `/settings/...` under `threads`. Only file a location under the
+          // mode it actually belongs to, and never file a non-workspace
+          // location (`modeForHref` returns null) under either.
           if (modeForHref(href) !== mode) return state;
           return state.mode === mode && state.lastLocationByMode[mode] === href
             ? state

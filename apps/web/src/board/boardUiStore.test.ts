@@ -81,6 +81,18 @@ describe("migratePersistedBoardUiState", () => {
     });
     expect(migrated.lastLocationByMode.threads).toBeUndefined();
   });
+
+  it("repairs a store poisoned with a settings href under threads", () => {
+    // The persisted shape that made the Threads tab reopen settings, leaving
+    // no route back to a thread.
+    const migrated = migratePersistedBoardUiState({
+      mode: "threads",
+      lastLocationByMode: { threads: "/settings/general", board: "/board" },
+      collapsedByStage: {},
+    });
+    expect(migrated.lastLocationByMode.threads).toBeUndefined();
+    expect(migrated.lastLocationByMode.board).toBe("/board");
+  });
 });
 
 describe("modeForHref", () => {
@@ -90,12 +102,24 @@ describe("modeForHref", () => {
     expect(modeForHref("/board/anything")).toBe("board");
   });
 
-  it("classifies everything else as threads", () => {
+  it("classifies workspace locations outside /board as threads", () => {
     expect(modeForHref("/")).toBe("threads");
     expect(modeForHref("/env-1/thread-1")).toBe("threads");
     expect(modeForHref("/draft/d1")).toBe("threads");
     // A path that merely starts with the letters "board" is not the board route.
     expect(modeForHref("/boardroom")).toBe("threads");
+  });
+
+  it("classifies non-workspace surfaces as neither mode", () => {
+    // Settings replaces the whole workspace, tabs included, so it is not a
+    // location either mode can return to.
+    expect(modeForHref("/settings")).toBeNull();
+    expect(modeForHref("/settings/general")).toBeNull();
+    expect(modeForHref("/settings/board")).toBeNull();
+    expect(modeForHref("/pair")).toBeNull();
+    expect(modeForHref("/connect")).toBeNull();
+    // Same prefix rule as /board: a longer word is a different route.
+    expect(modeForHref("/settingsish")).toBe("threads");
   });
 });
 
@@ -112,5 +136,14 @@ describe("recordModeLocation", () => {
     // the incoming thread href while its mode prop is still "board".
     useBoardUiStore.getState().recordModeLocation("board", "/env-1/thread-1");
     expect(useBoardUiStore.getState().lastLocationByMode.board).toBeUndefined();
+  });
+
+  it("refuses to file a settings href under threads, keeping the last thread", () => {
+    resetStore();
+    useBoardUiStore.getState().recordModeLocation("threads", "/env-1/thread-1");
+    // Opening settings updates the router location before ChatView unmounts,
+    // so the still-mounted threads tab sees "/settings/general".
+    useBoardUiStore.getState().recordModeLocation("threads", "/settings/general");
+    expect(useBoardUiStore.getState().lastLocationByMode.threads).toBe("/env-1/thread-1");
   });
 });

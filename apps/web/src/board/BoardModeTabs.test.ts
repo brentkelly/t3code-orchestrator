@@ -104,6 +104,19 @@ describe("navigateToMode", () => {
     expect(router.state.location.pathname).toBe("/board");
   });
 
+  it("ignores a stored settings location and lands on the threads root", async () => {
+    // The reported trap: `/settings/general` had been stored under `threads`,
+    // so clicking Threads reopened settings and Back from settings went to the
+    // board — no way to reach a thread.
+    const router = makeRouter("/board");
+    await router.load();
+
+    navigateToMode(router, "board", "threads", { threads: "/settings/general" });
+    await flush();
+
+    expect(router.state.location.pathname).toBe("/");
+  });
+
   it("is a no-op when the target mode is already active", async () => {
     const router = makeRouter("/board");
     await router.load();

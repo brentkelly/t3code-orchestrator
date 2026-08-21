@@ -26,8 +26,11 @@ import { modeForHref, useBoardUiStore, type WorkspaceMode } from "./boardUiStore
  *    the tab click silently did nothing.
  *  - Only honour a stored location that belongs to `target`. A store poisoned
  *    with a thread href under `board` would otherwise send a Board click to
- *    that thread. `modeForHref` is the guard; the store sanitises too, but
- *    this keeps navigation correct even before the store re-hydrates.
+ *    that thread, and one poisoned with `/settings/...` under `threads` would
+ *    send a Threads click into settings. `modeForHref` is the guard — it
+ *    returns null for non-workspace routes like settings, so those never match
+ *    a target. The store sanitises too, but this keeps navigation correct even
+ *    before the store re-hydrates.
  *
  * Extracted from the component so it can be regression tested against a real
  * router without a DOM. See BoardModeTabs.test.ts.
