@@ -31,6 +31,7 @@ import {
   BoardCardThreadLink,
   BoardCardThreadShell,
   boardThreadTodoSummary,
+  boardRunLabel,
   BoardLabel,
   BoardLabelId,
   boardLabelsAreSeedOnly,
@@ -296,6 +297,16 @@ const BoardCardStepDbRow = Schema.Struct({
 });
 type BoardCardStepDbRow = typeof BoardCardStepDbRow.Type;
 
+/** The rail's name for a step-scoped activity row. `stepLabel` is `optionalKey`
+    on the payload, so an unnameable run omits the key rather than setting it to
+    undefined. */
+const boardActivityStepLabel = (
+  state: Pick<BoardCardStepState, "stepLabel" | "stageLabel">,
+): { readonly stepLabel?: string } => {
+  const label = boardRunLabel(state);
+  return label === null ? {} : { stepLabel: label };
+};
+
 // Live per-card step state (t3o-10). One row per card. `slotHeld` travels as
 // 0/1 (SQLite has no boolean), like `locked` below. Rehydrates the read-model
 // slice `BoardState.stepStates`.
@@ -303,6 +314,7 @@ const BoardCardStepStateDbRow = Schema.Struct({
   cardId: BoardCardStepState.fields.cardId,
   stepId: BoardCardStepState.fields.stepId,
   stepLabel: BoardCardStepState.fields.stepLabel,
+  stageLabel: BoardCardStepState.fields.stageLabel,
   attempt: BoardCardStepState.fields.attempt,
   // Stall detection counters (t3o-17, D1/D2).
   stallCount: BoardCardStepState.fields.stallCount,
@@ -1168,12 +1180,12 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: BoardCardStepStateDbRow,
     execute: (row) => sql`
       INSERT INTO board_card_step_state (
-        card_id, step_id, step_label, attempt, stall_count, last_nudge_at, prompt,
+        card_id, step_id, step_label, stage_label, attempt, stall_count, last_nudge_at, prompt,
         provider_instance_id, model, mode,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, started_at, updated_at
       )
       VALUES (
-        ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.attempt}, ${row.stallCount},
+        ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.stageLabel}, ${row.attempt}, ${row.stallCount},
         ${row.lastNudgeAt}, ${row.prompt},
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.startedAt}, ${row.updatedAt}
@@ -1182,6 +1194,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       DO UPDATE SET
         step_id = excluded.step_id,
         step_label = excluded.step_label,
+        stage_label = excluded.stage_label,
         attempt = excluded.attempt,
         stall_count = excluded.stall_count,
         last_nudge_at = excluded.last_nudge_at,
@@ -1208,6 +1221,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id AS "cardId",
         step_id AS "stepId",
         step_label AS "stepLabel",
+        stage_label AS "stageLabel",
         attempt,
         stall_count AS "stallCount",
         last_nudge_at AS "lastNudgeAt",
@@ -1568,6 +1582,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         cardId: state.cardId,
         stepId: state.stepId,
         stepLabel: state.stepLabel,
+        stageLabel: state.stageLabel,
         attempt: state.attempt,
         stallCount: state.stallCount,
         lastNudgeAt: state.lastNudgeAt,
@@ -1834,7 +1849,11 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
           kind: "card-input-requested",
           payload: {
             stepId: event.payload.state.stepId,
-            stepLabel: event.payload.state.stepLabel,
+            // `stepLabel` is null on a stage with no steps (t3o-19, D4), so
+            // the rail names the STAGE instead — "asked for input on Planning"
+            // rather than dropping the name. The key is `optionalKey`, so when
+            // neither name exists it is omitted rather than set to undefined.
+            ...boardActivityStepLabel(event.payload.state),
           },
           threadId: event.payload.state.threadId,
         });
@@ -2005,6 +2024,7 @@ export function loadBoardState(
               cardId: row.cardId,
               stepId: row.stepId,
               stepLabel: row.stepLabel,
+              stageLabel: row.stageLabel,
               attempt: row.attempt,
               stallCount: row.stallCount,
               lastNudgeAt: row.lastNudgeAt,

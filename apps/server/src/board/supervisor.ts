@@ -74,7 +74,7 @@ export type BoardRecoveryDecision =
 export function recoveryDecision(input: {
   readonly stepState: Pick<
     BoardCardStepState,
-    "attempt" | "stallCount" | "maxAttempts" | "stepLabel"
+    "attempt" | "stallCount" | "maxAttempts" | "stepLabel" | "stageLabel"
   >;
   /** Resolved by the reactor (t3o-17 D2, re-pointed by t3o-18 D16): the step
       thread's TODO LIST advanced — a `turn.plan.updated` whose done count rose or
@@ -130,13 +130,18 @@ export function recoveryDecision(input: {
       attempt: nextAttempt,
       stallCount: nextStallCount,
       question: [
-        `Step "${input.stepState.stepLabel}" has now stalled ${nextStallCount} times in a row without making progress.`,
+        // Named as a step only when the stage HAS steps (t3o-19, D4): on every
+        // other stage `stepLabel` is null and the escalation names the stage,
+        // which is what a human reading the card recognises anyway.
+        input.stepState.stepLabel === null
+          ? `Stage "${input.stepState.stageLabel}" has now stalled ${nextStallCount} times in a row without making progress.`
+          : `Step "${input.stepState.stepLabel}" has now stalled ${nextStallCount} times in a row without making progress.`,
         escalateManually,
       ].join(" "),
     };
   }
   const nudgeLines = [
-    `Your previous turn ended without calling board_complete_step, so the step is not finished.`,
+    `Your previous turn ended without calling board_complete_step, so your work is not finished.`,
     `Continue where you left off and call board_complete_step when done; if you are blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}.`,
   ];
   // The nudge asks again, CONDITIONALLY (t3o-18, D16). Only a thread with no
@@ -145,7 +150,7 @@ export function recoveryDecision(input: {
   // right thing.
   if (!input.hasTodoList) {
     nudgeLines.push(
-      `You are not keeping a todo list: write one now (your task/plan tool) and work through it, so progress is visible and this step is not escalated as stalled.`,
+      `You are not keeping a todo list: write one now (your task/plan tool) and work through it, so progress is visible and this run is not escalated as stalled.`,
     );
   }
   if (nextStallCount >= 3) {

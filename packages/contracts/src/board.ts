@@ -760,9 +760,21 @@ export const BoardCardStepState = Schema.Struct({
       keyed `(cardId, stepId)` records that this card has run this stage's step
       — the first-entry-vs-re-entry signal (D7). */
   stepId: TrimmedNonEmptyString,
-  /** The step's human label, carried so a card can render "which step" without
-      re-resolving the stage config. */
-  stepLabel: TrimmedNonEmptyString,
+  /** The step's human label, or NULL when this stage has no steps (t3o-19,
+      D4) — which is every stage but the review loop, where the single step's
+      label was just the stage label and rendering it produced
+      `Stage: planning. Step: Planning.`. The presence of this label IS the
+      "does this stage have steps" signal; there is no separate flag, so a
+      future sequence executor gets correct prompts by construction.
+      Carried so a card can render "which step" without re-resolving the stage
+      config; readers fall back to `stageLabel`. */
+  stepLabel: Schema.NullOr(TrimmedNonEmptyString),
+  /** The stage's human label, frozen at stage entry (t3o-19, D5) so the
+      preamble and every `stepLabel` reader resolve a name without a board
+      read. NULL on a row written before the freeze — history is never
+      rewritten (D7), so legacy rows keep their non-null `stepLabel` and read
+      exactly as they did. */
+  stageLabel: Schema.NullOr(TrimmedNonEmptyString),
   /** Cumulative invocation count of this step this stage entry, 1-based;
       recovery increments it and it never resets within the entry (t3o-17, D1).
       Kept for display ("attempt 7") and for the per-stage-entry invocation
@@ -1051,6 +1063,22 @@ export function boardCardStepCompletions(
   cardId: BoardCardId,
 ): ReadonlyArray<BoardStepCompletion> {
   return (board.stepCompletions ?? []).filter((completion) => completion.cardId === cardId);
+}
+
+/**
+ * What to call a card's current run in the UI and in operator-facing text
+ * (t3o-19, D4/D5): its step's label when the stage HAS steps, the stage's label
+ * otherwise, and null on a legacy row that froze neither.
+ *
+ * Named once because three readers share the rule — the run thread's title, the
+ * activity rail's input-requested row, and the settings/detail views — and a
+ * reader that resolved it differently would show a card two different names for
+ * the same run.
+ */
+export function boardRunLabel(
+  state: Pick<BoardCardStepState, "stepLabel" | "stageLabel">,
+): string | null {
+  return state.stepLabel ?? state.stageLabel;
 }
 
 /** A card's live step state (t3o-10), or null when the card has no step
@@ -1639,7 +1667,10 @@ export const BoardCardSelectStepCommand = Schema.Struct({
   cardId: BoardCardId,
   /** The stage's single step id (D1), equal to the stage id. */
   stepId: TrimmedNonEmptyString,
-  stepLabel: TrimmedNonEmptyString,
+  /** Null when the stage has no steps (t3o-19, D4). */
+  stepLabel: Schema.NullOr(TrimmedNonEmptyString),
+  /** The stage's label, frozen for the run (t3o-19, D5). */
+  stageLabel: Schema.NullOr(TrimmedNonEmptyString),
   // ── Frozen execution config resolved on stage entry (D12) ────────────
   // The reactor resolves these server-side (the pure decider cannot read
   // settings, D8) and the decider stamps them onto the step-state row, so

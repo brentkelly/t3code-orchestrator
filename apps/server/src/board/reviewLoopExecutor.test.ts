@@ -42,7 +42,7 @@ const config = (
   execution: BoardStageExecutionReview = DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
 ): BoardStageExecutorConfig => ({
   stepId: "review",
-  label: "Code review",
+  stageLabel: "Code review",
   prompt: "",
   model: globalModel,
   timeoutMs: 600_000,
