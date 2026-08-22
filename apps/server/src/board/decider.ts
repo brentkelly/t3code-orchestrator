@@ -1569,6 +1569,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         cardId: command.cardId,
         stepId: command.stepId,
         stepLabel: command.stepLabel,
+        stageLabel: command.stageLabel,
         // `attempt` carries the stage entry's cumulative invocation count (D1/
         // D5): an intra-stage continuation (t3o-16's next review phase) passes
         // `priorInvocations` so the per-stage-entry ceiling survives the row

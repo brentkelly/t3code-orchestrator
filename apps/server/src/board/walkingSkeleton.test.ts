@@ -182,6 +182,99 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
       }),
   );
 
+  // t3o-19 AC 12. `step_label` became nullable and `stage_label` was added, and
+  // migration 020 deliberately does NOT rewrite history (D7): a pre-020 row
+  // keeps its non-null label. That is only safe if BOTH shapes survive the
+  // round trip identically — a projector that coerced one of them would make a
+  // table rehydration diverge from a from-empty replay, which is the invariant
+  // the whole board read model rests on.
+  it.effect("rehydration equals replay for both stepped and unstepped run rows", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      const frozen = {
+        prompt: "Do the work.",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+        mode: "plan",
+        humanInLoop: false,
+        maxAttempts: 3,
+        timeoutMs: 60_000,
+        createdAt,
+      } as const;
+
+      for (const [suffix, title] of [
+        ["unstepped", "Unstepped card"],
+        ["stepped", "Stepped card"],
+        ["legacy", "Legacy card"],
+      ] as const) {
+        yield* engine.dispatch({
+          type: "board.card.create",
+          commandId: CommandId.make(`cmd-card-${suffix}`),
+          cardId: BoardCardId.make(`card-${suffix}`),
+          projectId,
+          title,
+          orderKey: `order-${suffix}`,
+          createdAt,
+        });
+      }
+
+      // Post-t3o-19 shape: a stage with no steps.
+      yield* engine.dispatch({
+        type: "board.card.select-step",
+        commandId: CommandId.make("cmd-select-unstepped"),
+        cardId: BoardCardId.make("card-unstepped"),
+        stepId: "planning",
+        stepLabel: null,
+        stageLabel: "Planning",
+        ...frozen,
+      });
+      // Post-t3o-19 shape: the review loop, which genuinely has steps.
+      yield* engine.dispatch({
+        type: "board.card.select-step",
+        commandId: CommandId.make("cmd-select-stepped"),
+        cardId: BoardCardId.make("card-stepped"),
+        stepId: "review@1",
+        stepLabel: "Review · round 1",
+        stageLabel: "Code review",
+        ...frozen,
+      });
+      // The shape migration 020 leaves behind: a label, but no frozen stage
+      // label, because the row predates the freeze.
+      yield* engine.dispatch({
+        type: "board.card.select-step",
+        commandId: CommandId.make("cmd-select-legacy"),
+        cardId: BoardCardId.make("card-legacy"),
+        stepId: "building",
+        stepLabel: "Building",
+        stageLabel: null,
+        ...frozen,
+      });
+
+      const rehydrated = yield* snapshotQuery.getCommandReadModel();
+      const labels = (rehydrated.board?.stepStates ?? []).map((state) => ({
+        stepId: state.stepId,
+        stepLabel: state.stepLabel,
+        stageLabel: state.stageLabel,
+      }));
+      assert.includeDeepMembers(labels, [
+        { stepId: "planning", stepLabel: null, stageLabel: "Planning" },
+        { stepId: "review@1", stepLabel: "Review · round 1", stageLabel: "Code review" },
+        { stepId: "building", stepLabel: "Building", stageLabel: null },
+      ]);
+
+      const events: OrchestrationEvent[] = Array.from(
+        yield* Stream.runCollect(engine.readEvents(0)),
+      );
+      let replayed = createEmptyReadModel(createdAt);
+      for (const event of events) {
+        replayed = yield* projectEvent(replayed, event);
+      }
+      assert.deepStrictEqual(replayed.board?.stepStates, rehydrated.board?.stepStates);
+    }),
+  );
+
   // Labels round-trip through the join table and the shell, and a from-empty
   // replay reproduces them identically (t3o-06a). The decider sees the seeded
   // catalogue (the migration seeds it), so a create tagged with the feature

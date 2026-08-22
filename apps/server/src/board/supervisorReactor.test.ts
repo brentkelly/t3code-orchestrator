@@ -80,6 +80,7 @@ const runningState: BoardCardStepState = {
   cardId,
   stepId,
   stepLabel: "Build",
+  stageLabel: "Building",
   attempt: 1,
   stallCount: 0,
   lastNudgeAt: null,

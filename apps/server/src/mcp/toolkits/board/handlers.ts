@@ -14,7 +14,9 @@ import {
   boardAppendOrderKey,
   boardCardPlans,
   boardCardStepCompletions,
+  boardCardStepState,
   boardLabelCatalogue,
+  isBoardTerminalStepStatus,
   boardPlanId,
   BoardCardId,
   CommandId,
@@ -180,6 +182,52 @@ const requireCallerCard = (
         }),
       )
     : Effect.succeed(card);
+};
+
+/**
+ * Which step a completion applies to (t3o-19, D3).
+ *
+ * An explicit id is passed straight through — the decider still validates it
+ * against the card's live step and its recorded completions, so an id for
+ * someone else's step, or for a step that never ran, is rejected exactly as
+ * before.
+ *
+ * An OMITTED id resolves to the caller's own live step. The thread scope is
+ * the point: `board_card_step_state` holds one row per card, so resolving by
+ * card alone would let a late retry — sent after the board settled this step
+ * and started the next stage's — complete work the caller never did. Matching
+ * `thread_id` means a caller that is no longer the live step's thread gets a
+ * rejection instead, and the rejection names the recorded outcome so a
+ * confused agent can see its earlier call already landed.
+ */
+const resolveCompletionStepId = (
+  board: BoardState,
+  card: BoardCard,
+  scope: McpInvocationScope,
+  stepId: string | undefined,
+): Effect.Effect<string, BoardToolError> => {
+  if (stepId !== undefined) return Effect.succeed(stepId);
+  const state = boardCardStepState(board, card.id);
+  if (
+    state !== null &&
+    state.threadId === scope.threadId &&
+    !isBoardTerminalStepStatus(state.status)
+  ) {
+    return Effect.succeed(state.stepId);
+  }
+  const settled = boardCardStepCompletions(board, card.id).filter(
+    (completion) => completion.threadId === scope.threadId,
+  );
+  const last = settled[settled.length - 1];
+  return Effect.fail(
+    new BoardToolError({
+      code: "invalid-input",
+      message:
+        last === undefined
+          ? `This thread has no work in progress on card '${card.key}', so there is nothing to complete. If your prompt gave you a stepId, pass it explicitly.`
+          : `This thread's work on card '${card.key}' is already settled ('${last.stepId}', ${last.outcome}), so there is nothing to complete. Do not complete work you were not assigned.`,
+    }),
+  );
 };
 
 /** Resolve label NAMES against the live catalogue to ids; an unknown name is
@@ -369,6 +417,21 @@ export const boardHandlers = {
         brief: detail?.brief ?? null,
         dependencies,
         steps: boardCardStepCompletions(board, card.id),
+        currentStep: (() => {
+          // The live step, the half of the orientation contract `steps` never
+          // carried (t3o-19). A settled row is not "current": once the work is
+          // terminal there is nothing assigned, and reporting it would invite
+          // an agent to complete an id the decider will reject.
+          const state = boardCardStepState(board, card.id);
+          if (state === null || isBoardTerminalStepStatus(state.status)) return null;
+          return {
+            stepId: state.stepId,
+            label: state.stepLabel,
+            stageLabel: state.stageLabel,
+            status: state.status,
+            attempt: state.attempt,
+          };
+        })(),
         plans: boardCardPlans(board, card.id),
         activity,
         threads,
@@ -380,10 +443,22 @@ export const boardHandlers = {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
       const card = yield* requireCallerCard(board, deps.scope);
+      // Resolve an omitted stepId to the caller's own live step (t3o-19, D3).
+      // Only a stage that runs several steps ever tells an agent an id, so on
+      // every other stage the agent has none to pass — and used to have to
+      // infer one from the stage line in its preamble.
+      //
+      // Scoped to the CALLING THREAD, not just the card: if this card has
+      // already advanced and started new work, the caller's thread is no
+      // longer the live step's thread, so a late retry is rejected here
+      // instead of silently completing the next stage's step. Resolving
+      // server-side also makes the "pre-complete a future step" case the
+      // decider guards against unreachable rather than merely rejected.
+      const stepId = yield* resolveCompletionStepId(board, card, deps.scope, input.stepId);
       // Idempotency is decided in the decider (re-emit the first outcome); the
       // pre-read here is only to tell the agent its retry was a no-op.
       const existing = boardCardStepCompletions(board, card.id).find(
-        (completion) => completion.stepId === input.stepId,
+        (completion) => completion.stepId === stepId,
       );
       // The agent's structured payload is stored verbatim as an opaque JSON
       // string (D8: carried through unread), so a schema codec would add
@@ -403,14 +478,14 @@ export const boardHandlers = {
       if (utf8ByteLength(input.summary) > BOARD_STEP_SUMMARY_MAX_BYTES) {
         return yield* new BoardToolError({
           code: "invalid-input",
-          message: `The summary is ${utf8ByteLength(input.summary)} bytes, over the ${BOARD_STEP_SUMMARY_MAX_BYTES}-byte cap. Summarise in a few sentences; details belong in board_report_progress notes or the payload.`,
+          message: `The summary is ${utf8ByteLength(input.summary)} bytes, over the ${BOARD_STEP_SUMMARY_MAX_BYTES}-byte cap. Summarise in a few sentences; details belong in the payload.`,
         });
       }
       const command: BoardCardCompleteStepCommand = {
         type: "board.card.complete-step",
         commandId: yield* mintCommandId,
         cardId: card.id,
-        stepId: input.stepId,
+        stepId,
         outcome: input.outcome,
         summary: input.summary,
         payload,
@@ -419,7 +494,7 @@ export const boardHandlers = {
       };
       yield* dispatch(deps, command);
       return {
-        stepId: input.stepId,
+        stepId,
         outcome: existing?.outcome ?? input.outcome,
         alreadyCompleted: existing !== undefined,
       };

@@ -48,8 +48,11 @@ export interface BoardStageExecutorConfig {
   /** The stage's single step id (D1) — the stage id itself. A multi-step
       executor (t3o-16) mints its own round-scoped step ids and ignores this. */
   readonly stepId: string;
-  /** The step's display label — the stage's label. */
-  readonly label: string;
+  /** The stage's display label. A single-step executor plans a run with NO
+      step identity (t3o-19, D4), so this is the STAGE's name, not a step's;
+      it is frozen onto the run row as `stageLabel` and is what the preamble
+      prints. A multi-step executor mints its own per-step labels. */
+  readonly stageLabel: string;
   readonly prompt: string;
   readonly model: BoardModelSelection;
   readonly timeoutMs: number;
@@ -84,7 +87,14 @@ export type BoardStagePlan =
       readonly kind: "run";
       readonly round: number;
       readonly stepId: string;
-      readonly label: string;
+      /** The step's label, or NULL when this stage has no steps (t3o-19, D4).
+          `SimpleStageExecutor` always returns null — its stage runs one step
+          whose label would only ever repeat the stage's, which is what put
+          `Stage: planning. Step: Planning.` into every prompt. The review loop
+          returns a real label, and so would a future sequence executor: the
+          presence of the label IS the "stepped" signal, so neither the
+          envelope nor the reactor needs a flag to keep in sync. */
+      readonly stepLabel: string | null;
       readonly prompt: string;
       readonly model: BoardModelSelection;
       readonly timeoutMs: number;
@@ -126,7 +136,9 @@ export const SimpleStageExecutor: BoardStageExecutor = {
       kind: "run",
       round: runState.round,
       stepId: config.stepId,
-      label: config.label,
+      // No step identity: this stage has exactly one step and naming it would
+      // just echo the stage (t3o-19, D4).
+      stepLabel: null,
       prompt: config.prompt,
       model: config.model,
       timeoutMs: config.timeoutMs,
