@@ -22,6 +22,9 @@ import {
   BOARD_REVIEW_PHASE_LABELS,
   BOARD_SEED_STAGES,
   BoardStageId,
+  DEFAULT_BOARD_BUILD_PROMPT,
+  DEFAULT_BOARD_PLANNING_PROMPT,
+  DEFAULT_BOARD_REVIEW_PHASES,
   boardReviewPhasePreamble,
   boardReviewPhaseProtocol,
   reviewStepId,
@@ -61,9 +64,11 @@ import {
   MinusIcon,
   PencilIcon,
   PlusIcon,
+  RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -272,20 +277,72 @@ function SystemEnvelope(props: { text: string; edge: "top" | "bottom"; label: st
 }
 
 /**
+ * The confirm dialog for resetting a prompt back to its shipped default —
+ * portalled to `document.body` so a dragging stage row's transform (which
+ * would trap a `position: fixed` overlay) cannot clip it. Every interaction
+ * calls `preventDefault` on mousedown so the editing textarea beneath keeps
+ * focus: a blur there would commit-and-close the editor mid-reset.
+ */
+function ResetPromptDialog(props: { onCancel: () => void; onConfirm: () => void }) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Reset this prompt to the default?"
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      <button
+        type="button"
+        aria-label="Cancel"
+        className="absolute inset-0 cursor-default bg-black/40"
+        onClick={props.onCancel}
+      />
+      <div className="relative z-10 w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-lg">
+        <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-foreground">
+          Reset this prompt to the default?
+        </h3>
+        <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
+          Your edits to this prompt will be replaced by the shipped default text. This cannot be
+          undone.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={props.onCancel}>
+            Cancel
+          </Button>
+          <Button size="sm" variant="destructive" onClick={props.onConfirm}>
+            Reset prompt
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/**
  * The prompt row, laid out as the single document a run actually sends:
  * system preamble, the editable body, system postamble — one bordered card,
  * read top to bottom, so the envelope is visible in place instead of hidden
  * behind a disclosure the user has to open to see what wraps their words.
  *
  * The body is the only editable band: clicking it (or Edit) swaps in a
- * textarea, blur commits. The whole document clamps to a few hundred pixels
- * with a fade + "See more" so a long envelope cannot push the rest of the
- * stage off screen.
+ * textarea. While editing, the text is a local `draft` committed to the store
+ * on blur — the same commit-on-blur pattern the number steppers use — so
+ * typing never writes settings per keystroke and Reset can rewrite the field
+ * in place without a remount race. The whole document clamps to a few hundred
+ * pixels with a fade + "See more" so a long envelope cannot push the rest of
+ * the stage off screen.
+ *
+ * When `defaultValue` is given, a prompt that differs from it is "Modified":
+ * the badge shows while reading, and while editing it becomes a Reset control
+ * (confirmed by a modal, since a reset discards the user's prompt text).
  */
 function PromptRow(props: {
   id: string;
   label: string;
   value: string;
+  defaultValue?: string | undefined;
   preamble: string;
   postamble: string;
   missingMessage?: string | null;
@@ -293,6 +350,8 @@ function PromptRow(props: {
 }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
   // Clipping is MEASURED, not guessed from character count: a short prompt
   // with many lines overflows the clamp just as a long single-line one does,
   // and a silent cut with no fade or "See more" would hide content. The
@@ -309,31 +368,77 @@ function PromptRow(props: {
     }
     setClipped(element.scrollHeight > element.clientHeight + 1);
   }, [props.value, props.preamble, props.postamble, clamped]);
-  const words = props.value.trim().length > 0 ? props.value.trim().split(/\s+/).length : 0;
+
+  // The live text: the draft while editing, the stored value otherwise, so
+  // "Modified" tracks what is on screen — after a reset the draft equals the
+  // default and the affordance disappears without leaving edit mode.
+  const current = draft ?? props.value;
+  const modified = props.defaultValue !== undefined && current !== props.defaultValue;
+  const words = current.trim().length > 0 ? current.trim().split(/\s+/).length : 0;
+
+  const startEditing = () => {
+    setDraft(props.value);
+    setEditing(true);
+  };
+  const commit = () => {
+    if (draft !== null && draft !== props.value) props.onChange(draft);
+    setDraft(null);
+    setEditing(false);
+  };
+  const confirmResetNow = () => {
+    const next = props.defaultValue ?? "";
+    setDraft(next);
+    if (next !== props.value) props.onChange(next);
+    setConfirmReset(false);
+  };
+
   return (
     <div className="flex flex-col gap-1.5 py-2">
       <div className="flex items-center gap-2">
         <span className="text-[13.5px] text-foreground">{props.label}</span>
         <span className="flex-1" />
         {editing ? (
-          // A label, not a button: clicking anywhere outside the textarea is
-          // what ends editing, and a button here would be caught by that same
-          // blur and then re-enter editing on its own click.
-          <span className="flex h-6 items-center gap-1 rounded-md border border-primary px-2 text-xs font-medium text-primary">
-            <PencilIcon className="size-3" />
-            Editing
-          </span>
+          <>
+            {modified ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="h-6 gap-1 px-2 text-xs text-muted-foreground"
+                aria-label={`Reset ${props.label.toLowerCase()} to default`}
+                title="Restore the default prompt"
+                // Suppress the textarea's blur so opening the confirm modal
+                // does not commit-and-close the editor before the click lands.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => setConfirmReset(true)}
+              >
+                <RotateCcwIcon className="size-3" />
+                Reset
+              </Button>
+            ) : null}
+            {/* A label, not a button: clicking anywhere outside the textarea is
+                what ends editing, and a button here would be caught by that
+                same blur and then re-enter editing on its own click. */}
+            <span className="flex h-6 items-center gap-1 rounded-md border border-primary px-2 text-xs font-medium text-primary">
+              <PencilIcon className="size-3" />
+              Editing
+            </span>
+          </>
         ) : (
-          <Button
-            size="xs"
-            variant="ghost"
-            className="h-6 gap-1 px-2 text-xs text-muted-foreground"
-            aria-label={`Edit ${props.label.toLowerCase()}`}
-            onClick={() => setEditing(true)}
-          >
-            <PencilIcon className="size-3" />
-            Edit
-          </Button>
+          <>
+            {modified ? (
+              <span className="font-mono text-[11px] text-muted-foreground">Modified</span>
+            ) : null}
+            <Button
+              size="xs"
+              variant="ghost"
+              className="h-6 gap-1 px-2 text-xs text-muted-foreground"
+              aria-label={`Edit ${props.label.toLowerCase()}`}
+              onClick={startEditing}
+            >
+              <PencilIcon className="size-3" />
+              Edit
+            </Button>
+          </>
         )}
       </div>
 
@@ -350,24 +455,22 @@ function PromptRow(props: {
           <Textarea
             key={`prompt:${props.id}`}
             unstyled
-            defaultValue={props.value}
+            value={current}
             aria-label={`${props.label} text`}
             autoFocus
-            rows={Math.min(16, Math.max(4, props.value.split("\n").length + 2))}
+            rows={Math.min(16, Math.max(4, current.split("\n").length + 2))}
             className="block w-full [&_textarea]:resize-y [&_textarea]:bg-card [&_textarea]:px-3.5 [&_textarea]:py-3 [&_textarea]:text-[13px] [&_textarea]:leading-relaxed [&_textarea]:text-foreground"
+            onChange={(event) => setDraft(event.target.value)}
             // Clicking away IS "done": blur commits the text and closes the
             // editor, so there is nothing left for a Done button to do.
-            onBlur={(event) => {
-              if (event.target.value !== props.value) props.onChange(event.target.value);
-              setEditing(false);
-            }}
+            onBlur={commit}
           />
         ) : (
           <button
             type="button"
             className="block w-full cursor-text px-3.5 py-3 text-left text-[13px] leading-relaxed whitespace-pre-wrap text-foreground"
             title="Click to edit"
-            onClick={() => setEditing(true)}
+            onClick={startEditing}
           >
             {props.value.trim().length > 0 ? (
               props.value
@@ -389,7 +492,7 @@ function PromptRow(props: {
           <button
             type="button"
             className="text-xs font-medium text-info-foreground hover:underline"
-            onClick={() => setExpanded((current) => !current)}
+            onClick={() => setExpanded((value) => !value)}
           >
             {expanded ? "See less" : "See more"}
           </button>
@@ -399,6 +502,10 @@ function PromptRow(props: {
       </div>
       {props.missingMessage ? (
         <p className="text-xs text-destructive">{props.missingMessage}</p>
+      ) : null}
+
+      {confirmReset ? (
+        <ResetPromptDialog onCancel={() => setConfirmReset(false)} onConfirm={confirmResetNow} />
       ) : null}
     </div>
   );
@@ -941,6 +1048,13 @@ function SimpleStageBody(props: {
             id={stage.stageId}
             label="Prompt"
             value={exec.prompt}
+            defaultValue={
+              role === "build"
+                ? DEFAULT_BOARD_BUILD_PROMPT
+                : role === "plan"
+                  ? DEFAULT_BOARD_PLANNING_PROMPT
+                  : undefined
+            }
             preamble={boardStepPreamble({
               card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
               stageLabel: stage.label,
@@ -1087,6 +1201,7 @@ function ReviewStageBody(props: {
                   id={`${stage.stageId}:${phaseId}`}
                   label="Prompt"
                   value={phase.prompt}
+                  defaultValue={DEFAULT_BOARD_REVIEW_PHASES[phaseId].prompt}
                   // A review phase's real run is the step envelope wrapped
                   // around the phase envelope (the executor composes the phase
                   // prompt, and the reactor then wraps THAT). The preview
