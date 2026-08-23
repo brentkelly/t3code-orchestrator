@@ -68,7 +68,6 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -82,6 +81,15 @@ import {
 } from "../../providerInstances";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { cn, randomUUID } from "../../lib/utils";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { ModelPickerContent } from "../chat/ModelPickerContent";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
@@ -277,50 +285,6 @@ function SystemEnvelope(props: { text: string; edge: "top" | "bottom"; label: st
 }
 
 /**
- * The confirm dialog for resetting a prompt back to its shipped default —
- * portalled to `document.body` so a dragging stage row's transform (which
- * would trap a `position: fixed` overlay) cannot clip it. Every interaction
- * calls `preventDefault` on mousedown so the editing textarea beneath keeps
- * focus: a blur there would commit-and-close the editor mid-reset.
- */
-function ResetPromptDialog(props: { onCancel: () => void; onConfirm: () => void }) {
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Reset this prompt to the default?"
-      onMouseDown={(event) => event.preventDefault()}
-    >
-      <button
-        type="button"
-        aria-label="Cancel"
-        className="absolute inset-0 cursor-default bg-black/40"
-        onClick={props.onCancel}
-      />
-      <div className="relative z-10 w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-lg">
-        <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-foreground">
-          Reset this prompt to the default?
-        </h3>
-        <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
-          Your edits to this prompt will be replaced by the shipped default text. This cannot be
-          undone.
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <Button size="sm" variant="outline" onClick={props.onCancel}>
-            Cancel
-          </Button>
-          <Button size="sm" variant="destructive" onClick={props.onConfirm}>
-            Reset prompt
-          </Button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-/**
  * The prompt row, laid out as the single document a run actually sends:
  * system preamble, the editable body, system postamble — one bordered card,
  * read top to bottom, so the envelope is visible in place instead of hidden
@@ -352,6 +316,14 @@ function PromptRow(props: {
   const [expanded, setExpanded] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
+  // Mirrors `confirmReset` synchronously: opening the reset dialog moves focus
+  // into it, blurring the textarea — the blur handler reads this ref to keep
+  // that from committing-and-closing the editor mid-reset.
+  const confirmResetOpenRef = useRef(false);
+  const setResetOpen = (open: boolean) => {
+    confirmResetOpenRef.current = open;
+    setConfirmReset(open);
+  };
   // Clipping is MEASURED, not guessed from character count: a short prompt
   // with many lines overflows the clamp just as a long single-line one does,
   // and a silent cut with no fade or "See more" would hide content. The
@@ -389,7 +361,7 @@ function PromptRow(props: {
     const next = props.defaultValue ?? "";
     setDraft(next);
     if (next !== props.value) props.onChange(next);
-    setConfirmReset(false);
+    setResetOpen(false);
   };
 
   return (
@@ -409,7 +381,7 @@ function PromptRow(props: {
                 // Suppress the textarea's blur so opening the confirm modal
                 // does not commit-and-close the editor before the click lands.
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => setConfirmReset(true)}
+                onClick={() => setResetOpen(true)}
               >
                 <RotateCcwIcon className="size-3" />
                 Reset
@@ -462,8 +434,13 @@ function PromptRow(props: {
             className="block w-full [&_textarea]:resize-y [&_textarea]:bg-card [&_textarea]:px-3.5 [&_textarea]:py-3 [&_textarea]:text-[13px] [&_textarea]:leading-relaxed [&_textarea]:text-foreground"
             onChange={(event) => setDraft(event.target.value)}
             // Clicking away IS "done": blur commits the text and closes the
-            // editor, so there is nothing left for a Done button to do.
-            onBlur={commit}
+            // editor, so there is nothing left for a Done button to do. A blur
+            // caused by opening the reset dialog is exempt (it keeps focus
+            // logically in the editor), so a reset never closes the editor.
+            onBlur={() => {
+              if (confirmResetOpenRef.current) return;
+              commit();
+            }}
           />
         ) : (
           <button
@@ -504,9 +481,28 @@ function PromptRow(props: {
         <p className="text-xs text-destructive">{props.missingMessage}</p>
       ) : null}
 
-      {confirmReset ? (
-        <ResetPromptDialog onCancel={() => setConfirmReset(false)} onConfirm={confirmResetNow} />
-      ) : null}
+      {/* base-ui traps focus, closes on Escape, and restores focus to the
+          textarea on close, so a reset is keyboard-reachable and leaves the
+          editor open. */}
+      <AlertDialog open={confirmReset} onOpenChange={setResetOpen}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset this prompt to the default?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your edits to this prompt will be replaced by the shipped default text. This cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button variant="destructive" onClick={confirmResetNow}>
+              Reset prompt
+            </Button>
+            <AlertDialogClose autoFocus render={<Button variant="outline" />}>
+              Cancel
+            </AlertDialogClose>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </div>
   );
 }
