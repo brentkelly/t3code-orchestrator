@@ -88,7 +88,14 @@ it.effect("D18: approving a plan (→ Ready) starts no build — Ready is a rest
         // "Approve plan" is the Planning → Ready human gate. The supervisor
         // reacts only to a move INTO Building, so this must select no step and
         // hold no slot: a plan can be approved without a single build starting.
-        yield* pumpDomain(cardMoved(makeBoardCard({ id: "card-1", stage: "ready", orderKey: "m" }), "planning", "ready", 1));
+        yield* pumpDomain(
+          cardMoved(
+            makeBoardCard({ id: "card-1", stage: "ready", orderKey: "m" }),
+            "planning",
+            "ready",
+            1,
+          ),
+        );
         assert.strictEqual(stepStatus(yield* board, id), null);
         assert.strictEqual(yield* slots.heldTotal, 0);
       }),

@@ -187,18 +187,29 @@ const requireCallerCard = (
 /**
  * Which step a completion applies to (t3o-19, D3).
  *
- * An explicit id is passed straight through — the decider still validates it
- * against the card's live step and its recorded completions, so an id for
- * someone else's step, or for a step that never ran, is rejected exactly as
- * before.
+ * The board resolves the caller's own work so an agent never has to name a
+ * step it was never told the id of — which is what every stage but the review
+ * loop was silently relying on the stage line to leak.
  *
- * An OMITTED id resolves to the caller's own live step. The thread scope is
- * the point: `board_card_step_state` holds one row per card, so resolving by
- * card alone would let a late retry — sent after the board settled this step
- * and started the next stage's — complete work the caller never did. Matching
- * `thread_id` means a caller that is no longer the live step's thread gets a
- * rejection instead, and the rejection names the recorded outcome so a
- * confused agent can see its earlier call already landed.
+ * Three cases, in order:
+ *
+ * 1. The caller owns the card's LIVE step → that step. The thread match is the
+ *    point: `resolveBoardCardForThread` resolves a card from ANY non-tombstoned
+ *    link, so a sibling thread on the same card must not be able to settle a run
+ *    it did not perform.
+ * 2. The caller has a SETTLED completion of its own on this card → that step,
+ *    which lands on the decider's idempotent path and re-returns the recorded
+ *    outcome. The supervisor settles the run row the instant it sees the first
+ *    completion (`handleStepCompleted`), so a retry almost always arrives after
+ *    the step is terminal; without this case the omitted-`stepId` shape the tool
+ *    now recommends would be LESS retry-safe than passing an id explicitly.
+ * 3. Neither → reject. Nothing of the caller's is outstanding, and guessing
+ *    would mean completing work it never did.
+ *
+ * An explicit `stepId` is passed through, but is still refused when it names the
+ * live step of a DIFFERENT thread (same reasoning as case 1). Everything else
+ * about it — an id for a step that never ran, an id belonging to another card —
+ * the decider validates, exactly as before.
  */
 const resolveCompletionStepId = (
   board: BoardState,
@@ -206,26 +217,46 @@ const resolveCompletionStepId = (
   scope: McpInvocationScope,
   stepId: string | undefined,
 ): Effect.Effect<string, BoardToolError> => {
-  if (stepId !== undefined) return Effect.succeed(stepId);
   const state = boardCardStepState(board, card.id);
-  if (
-    state !== null &&
-    state.threadId === scope.threadId &&
-    !isBoardTerminalStepStatus(state.status)
-  ) {
-    return Effect.succeed(state.stepId);
-  }
-  const settled = boardCardStepCompletions(board, card.id).filter(
+  const liveForCaller =
+    state !== null && !isBoardTerminalStepStatus(state.status) && state.threadId === scope.threadId;
+  const ownCompletions = boardCardStepCompletions(board, card.id).filter(
     (completion) => completion.threadId === scope.threadId,
   );
-  const last = settled[settled.length - 1];
+
+  if (stepId !== undefined) {
+    // Someone else's live step, and not a replay of the caller's own recorded
+    // completion — refuse before the command is minted.
+    const liveForOther =
+      state !== null &&
+      !isBoardTerminalStepStatus(state.status) &&
+      state.stepId === stepId &&
+      state.threadId !== null &&
+      state.threadId !== scope.threadId;
+    const isOwnCompletion = ownCompletions.some((completion) => completion.stepId === stepId);
+    if (liveForOther && !isOwnCompletion) {
+      return Effect.fail(
+        new BoardToolError({
+          code: "invalid-input",
+          message: `Step '${stepId}' on card '${card.key}' is being run by another thread. Complete only the work you were assigned; omit stepId and the board will resolve yours.`,
+        }),
+      );
+    }
+    return Effect.succeed(stepId);
+  }
+
+  if (liveForCaller) return Effect.succeed(state.stepId);
+
+  const last = ownCompletions[ownCompletions.length - 1];
+  // A retry after the supervisor settled the step: re-report the SAME step, so
+  // the decider re-emits the recorded outcome instead of the caller being told
+  // its completed work does not exist.
+  if (last !== undefined) return Effect.succeed(last.stepId);
+
   return Effect.fail(
     new BoardToolError({
       code: "invalid-input",
-      message:
-        last === undefined
-          ? `This thread has no work in progress on card '${card.key}', so there is nothing to complete. If your prompt gave you a stepId, pass it explicitly.`
-          : `This thread's work on card '${card.key}' is already settled ('${last.stepId}', ${last.outcome}), so there is nothing to complete. Do not complete work you were not assigned.`,
+      message: `This thread has no work in progress on card '${card.key}', so there is nothing to complete. If your prompt gave you a stepId, pass it explicitly.`,
     }),
   );
 };

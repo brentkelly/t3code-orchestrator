@@ -17,7 +17,7 @@
  *   answer to "is its thread still alive / did it complete while we were
  *   down", decide resume / recover / advance.
  */
-import { BOARD_ENVELOPE_QUESTION_MECHANISM } from "@t3tools/contracts";
+import { BOARD_ENVELOPE_QUESTION_MECHANISM, boardRunLabel } from "@t3tools/contracts";
 import type {
   BoardCardId,
   BoardCardStepState,
@@ -71,6 +71,13 @@ export type BoardRecoveryDecision =
  * unattended postamble asks the agent to keep a todo list current, t3o-18 D16);
  * cure lives here.
  */
+/** How the escalation names the run that stalled (t3o-19, D4/D5). */
+function stalledSubject(stepState: Pick<BoardCardStepState, "stepLabel" | "stageLabel">): string {
+  if (stepState.stepLabel !== null) return `Step "${stepState.stepLabel}"`;
+  const stage = boardRunLabel(stepState);
+  return stage === null ? "This stage" : `Stage "${stage}"`;
+}
+
 export function recoveryDecision(input: {
   readonly stepState: Pick<
     BoardCardStepState,
@@ -132,10 +139,10 @@ export function recoveryDecision(input: {
       question: [
         // Named as a step only when the stage HAS steps (t3o-19, D4): on every
         // other stage `stepLabel` is null and the escalation names the stage,
-        // which is what a human reading the card recognises anyway.
-        input.stepState.stepLabel === null
-          ? `Stage "${input.stepState.stageLabel}" has now stalled ${nextStallCount} times in a row without making progress.`
-          : `Step "${input.stepState.stepLabel}" has now stalled ${nextStallCount} times in a row without making progress.`,
+        // which is what a human reading the card recognises anyway. A row that
+        // froze neither name (pre-020) is described without one rather than
+        // quoting a literal "null" at the human being escalated to.
+        `${stalledSubject(input.stepState)} has now stalled ${nextStallCount} times in a row without making progress.`,
         escalateManually,
       ].join(" "),
     };

@@ -281,7 +281,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/ws.ts`                                                | `t3o-02`     | Import board shell-delta mapper + predicate                                               | one-line append (import)                                                 |
 | `apps/server/src/ws.ts`                                                | `t3o-02a`    | Board events become card shell deltas in `toShellStreamEvent`                             | predicate delegation in `default`, before the thread-aggregate check     |
 | `apps/server/src/ws.ts`                                                | `t3o-18`     | `toShellStreamEvents` fans one event to N deltas (board `card-threads`)                   | one-line wrapper delegating to a board-owned mapper                      |
-| `apps/server/src/ws.ts`                                                | `t3o-18`     | Human actor stamped on board commands before `dispatchCommand` dispatches                 | one-line delegation to a board-owned stamp (D11)                        |
+| `apps/server/src/ws.ts`                                                | `t3o-18`     | Human actor stamped on board commands before `dispatchCommand` dispatches                 | one-line delegation to a board-owned stamp (D11)                         |
 | `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`     | Import `BoardModeTabs`                                                                    | one-line append (import)                                                 |
 | `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`     | Threads/Board mode tabs before the breadcrumb (D1 shell tab)                              | one-line append (delegating element)                                     |
 | `apps/web/src/components/NoActiveThreadState.tsx`                      | `t3o-05`     | Import `BoardModeTabs`                                                                    | one-line append (import)                                                 |
@@ -333,7 +333,6 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Import the supervisor reactor tag                                                         | one-line append (import)                                                 |
 | `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Resolve the supervisor reactor in the startup effect                                      | one-line append (`yield*` the tag)                                       |
 | `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Start the supervisor reactor in the `reactors.start` phase                                | one-line append (start call)                                             |
-
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
 (5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the

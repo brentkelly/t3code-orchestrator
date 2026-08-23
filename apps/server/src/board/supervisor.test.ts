@@ -163,6 +163,20 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       assert.include(unstepped.question, 'Stage "Building"');
       assert.notInclude(unstepped.question, "Step");
     }
+    // A pre-020 row froze neither name. The human being escalated to should
+    // not be shown `Stage "null"`.
+    const unnamed = recoveryDecision({
+      stepState: { attempt: 5, stallCount: 4, maxAttempts: 5, stepLabel: null, stageLabel: null },
+      progressedSinceLastNudge: false,
+      hasTodoList: true,
+      stageEntryInvocations: 0,
+      maxInvocationsPerStageEntry: 20,
+    });
+    assert.strictEqual(unnamed.kind, "escalate");
+    if (unnamed.kind === "escalate") {
+      assert.include(unnamed.question, "This stage has now stalled");
+      assert.notInclude(unnamed.question, "null");
+    }
     const stepped = recoveryDecision({
       stepState: {
         attempt: 5,

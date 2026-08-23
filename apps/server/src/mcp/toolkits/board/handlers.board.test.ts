@@ -380,7 +380,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  it.effect("rejects an omitted stepId once the caller's own work has settled", () =>
+  it.effect("an omitted stepId stays retry-safe after the supervisor settles the step", () =>
     Effect.gen(function* () {
       yield* seed();
       const own = yield* seedOwnCard("settled");
@@ -388,20 +388,109 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* boardHandlers
         .board_complete_step({ outcome: "succeeded", summary: "Built it" })
         .pipe(withScope(own.ownThread));
+      // What the reactor does the moment it sees the completion — so in
+      // production a retry almost always arrives against a TERMINAL run row.
+      // The omitted-stepId shape the tool recommends must not be less
+      // retry-safe than passing the id explicitly.
       yield* settleStep({ ownCard: own.ownCard, suffix: "settled" });
-      // The thread-scoped resolve is what stops a late retry completing
-      // whatever the board started NEXT: with its own work settled the caller
-      // no longer owns a live step, so it is told so rather than silently
-      // completing another stage's.
-      const failure = yield* Effect.flip(
-        boardHandlers
-          .board_complete_step({ outcome: "succeeded", summary: "Built it again" })
-          .pipe(withScope(own.ownThread)),
-      );
-      assert.strictEqual(failure.code, "invalid-input");
-      assert.include(failure.message, "already settled");
+
+      const retry = yield* boardHandlers
+        .board_complete_step({ outcome: "failed", summary: "Contradiction" })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(retry.stepId, "building");
+      assert.strictEqual(retry.alreadyCompleted, true);
+      assert.strictEqual(retry.outcome, "succeeded");
       const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
       assert.strictEqual(context.steps.length, 1);
+    }),
+  );
+
+  it.effect("rejects an omitted stepId from a thread that has never worked the card", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("sibling-idle");
+      yield* startStep({ ...own, suffix: "sibling-idle" });
+      // A second thread linked to the same card — an adopted conversation, say.
+      // It owns no run, so it has nothing to complete.
+      const engine = yield* OrchestrationEngineService;
+      const sibling = ThreadId.make("thread-other-idle");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-other-idle"),
+        threadId: sibling,
+        projectId: ProjectId.make("project-sibling-idle"),
+        title: "Sibling",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.link-thread",
+        commandId: CommandId.make("cmd-link-other-idle"),
+        cardId: own.ownCard,
+        threadId: sibling,
+        role: "planning",
+        createdAt: t0,
+      });
+
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_complete_step({ outcome: "succeeded", summary: "Not mine" })
+          .pipe(withScope(sibling)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "no work in progress");
+      // And the real owner's run is untouched.
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.currentStep?.stepId, "building");
+      assert.strictEqual(context.steps.length, 0);
+    }),
+  );
+
+  it.effect("refuses an explicit stepId naming another thread's live step", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("sibling-explicit");
+      yield* startStep({ ...own, suffix: "sibling-explicit" });
+      const engine = yield* OrchestrationEngineService;
+      const sibling = ThreadId.make("thread-other-explicit");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-other-explicit"),
+        threadId: sibling,
+        projectId: ProjectId.make("project-sibling-explicit"),
+        title: "Sibling",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.link-thread",
+        commandId: CommandId.make("cmd-link-other-explicit"),
+        cardId: own.ownCard,
+        threadId: sibling,
+        role: "planning",
+        createdAt: t0,
+      });
+
+      // `currentStep` hands every linked thread the live step id, and step ids
+      // are predictable anyway — so knowing the id must not be enough to settle
+      // a run you did not perform.
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_complete_step({ stepId: "building", outcome: "succeeded", summary: "Not mine" })
+          .pipe(withScope(sibling)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "another thread");
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 0);
     }),
   );
 

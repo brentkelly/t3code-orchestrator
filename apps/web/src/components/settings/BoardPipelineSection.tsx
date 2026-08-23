@@ -25,6 +25,7 @@ import {
   boardReviewPhasePreamble,
   boardReviewPhaseProtocol,
   reviewStepId,
+  reviewStepLabel,
   boardStagesInOrder,
   boardStepPostamble,
   boardStepPreamble,
@@ -102,10 +103,6 @@ type ModelSelection = ActiveModel | null;
 /** The stand-in card identity for envelope previews: a run interpolates the
     real card, so the preview shows placeholders where values vary per card. */
 const PREVIEW_CARD_KEY = "{{card-key}}";
-/** The step label `ReviewLoopExecutor` mints for round 1, mirrored here so the
-    settings preview shows the same step identity a real run carries. */
-const reviewPreviewStepLabel = (phase: BoardReviewPhaseId): string =>
-  `${BOARD_REVIEW_PHASE_LABELS[phase]} · round 1`;
 const PREVIEW_CARD_TITLE = "{{card title}}";
 
 /** Only reached when the server reports no provider instances at all; the
@@ -1105,7 +1102,7 @@ function ReviewStageBody(props: {
                         stage: stage.stageId,
                       },
                       stageLabel: stage.label,
-                      step: { stepLabel: reviewPreviewStepLabel(phaseId) },
+                      step: { stepLabel: reviewStepLabel(phaseId, 1) },
                     }),
                     boardReviewPhasePreamble({ phase: phaseId, round: 1, rounds: exec.rounds }),
                   ].join("\n\n")}
@@ -1119,7 +1116,7 @@ function ReviewStageBody(props: {
                       role: "review",
                       step: {
                         stepId: reviewStepId(phaseId, 1),
-                        stepLabel: reviewPreviewStepLabel(phaseId),
+                        stepLabel: reviewStepLabel(phaseId, 1),
                       },
                     }),
                   ].join("\n\n")}
