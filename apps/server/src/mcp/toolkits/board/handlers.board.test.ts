@@ -508,6 +508,116 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("a stale thread cannot supersede a re-entered stage's new run", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("reentry");
+      yield* startStep({ ...own, suffix: "reentry" });
+      // The first attempt fails, and the supervisor settles the run row.
+      yield* boardHandlers
+        .board_complete_step({ outcome: "failed", summary: "Could not finish" })
+        .pipe(withScope(own.ownThread));
+      const engine = yield* OrchestrationEngineService;
+      yield* engine.dispatch({
+        type: "board.card.settle-step",
+        commandId: CommandId.make("cmd-settle-reentry"),
+        cardId: own.ownCard,
+        stepId: "building",
+        outcome: "failed",
+        createdAt: t0,
+      });
+
+      // The card re-enters the stage under a NEW thread. Step ids repeat across
+      // stage entries, so the stale thread's own recorded completion carries the
+      // very id that is live again.
+      const retryThread = ThreadId.make("thread-reentry-2");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-reentry-2"),
+        threadId: retryThread,
+        projectId: ProjectId.make("project-reentry"),
+        title: "Retry thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.link-thread",
+        commandId: CommandId.make("cmd-link-reentry-2"),
+        cardId: own.ownCard,
+        threadId: retryThread,
+        role: "building",
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.select-step",
+        commandId: CommandId.make("cmd-select-reentry-2"),
+        cardId: own.ownCard,
+        stepId: "building",
+        stepLabel: null,
+        stageLabel: "Building",
+        prompt: "",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+        mode: "plan",
+        humanInLoop: false,
+        maxAttempts: 3,
+        timeoutMs: 60_000,
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.admit-step",
+        commandId: CommandId.make("cmd-admit-reentry-2"),
+        cardId: own.ownCard,
+        stepId: "building",
+        admitted: true,
+        threadId: retryThread,
+        createdAt: t0,
+      });
+
+      // The stale thread retries with NO stepId. Resolving to its own last
+      // completion would hand it `building` — which the decider's supersede
+      // rule would then write over the new thread's live run.
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_complete_step({ outcome: "succeeded", summary: "Actually I finished" })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "another thread");
+      // The ledger still records the original failure, unsuperseded.
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(retryThread));
+      assert.strictEqual(context.steps.length, 1);
+      assert.strictEqual(context.steps[0]?.outcome, "failed");
+    }),
+  );
+
+  it.effect("a recovery retry reports its NEW outcome, not the superseded one", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("supersede");
+      yield* startStep({ ...own, suffix: "supersede" });
+      yield* boardHandlers
+        .board_complete_step({ outcome: "failed", summary: "First attempt failed" })
+        .pipe(withScope(own.ownThread));
+
+      // The recovery ladder nudges the SAME thread on the SAME live step; the
+      // decider supersedes a non-succeeded completion here, so the reply must
+      // not tell the agent its success was a no-op that stayed `failed`.
+      const retry = yield* boardHandlers
+        .board_complete_step({ outcome: "succeeded", summary: "Finished after the nudge" })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(retry.outcome, "succeeded");
+      assert.strictEqual(retry.alreadyCompleted, false);
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 1);
+      assert.strictEqual(context.steps[0]?.outcome, "succeeded");
+    }),
+  );
+
   it.effect("board_get_card_context reports the live step, and null once it settles", () =>
     Effect.gen(function* () {
       yield* seed();
@@ -519,7 +629,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const running = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
       assert.strictEqual(running.currentStep?.stepId, "building");
       // Null label: Building has no steps, so there is no step to name.
-      assert.strictEqual(running.currentStep?.label, null);
+      assert.strictEqual(running.currentStep?.stepLabel, null);
       assert.strictEqual(running.currentStep?.stageLabel, "Building");
       // `steps` stays history — the live step is NOT folded into it.
       assert.strictEqual(running.steps.length, 0);

@@ -97,12 +97,12 @@ const BoardCardContext = Schema.Struct({
       `steps` is history, so an agent had no way to learn what it was assigned
       and inferred its own step id from the stage line. `stepId` is what
       `board_complete_step` expects, and is only worth passing on a stage that
-      HAS steps — `label` is null on every other stage. */
+      HAS steps — `stepLabel` is null on every other stage. */
   currentStep: Schema.NullOr(
     Schema.Struct({
       stepId: TrimmedNonEmptyString,
       /** The step's label, or null when this stage has no steps. */
-      label: Schema.NullOr(TrimmedNonEmptyString),
+      stepLabel: Schema.NullOr(TrimmedNonEmptyString),
       /** The stage's label. */
       stageLabel: Schema.NullOr(TrimmedNonEmptyString),
       status: BoardStepStatus,

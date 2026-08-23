@@ -218,47 +218,49 @@ const resolveCompletionStepId = (
   stepId: string | undefined,
 ): Effect.Effect<string, BoardToolError> => {
   const state = boardCardStepState(board, card.id);
-  const liveForCaller =
-    state !== null && !isBoardTerminalStepStatus(state.status) && state.threadId === scope.threadId;
+  const live = state !== null && !isBoardTerminalStepStatus(state.status) ? state : null;
   const ownCompletions = boardCardStepCompletions(board, card.id).filter(
     (completion) => completion.threadId === scope.threadId,
   );
 
-  if (stepId !== undefined) {
-    // Someone else's live step, and not a replay of the caller's own recorded
-    // completion — refuse before the command is minted.
-    const liveForOther =
-      state !== null &&
-      !isBoardTerminalStepStatus(state.status) &&
-      state.stepId === stepId &&
-      state.threadId !== null &&
-      state.threadId !== scope.threadId;
-    const isOwnCompletion = ownCompletions.some((completion) => completion.stepId === stepId);
-    if (liveForOther && !isOwnCompletion) {
-      return Effect.fail(
-        new BoardToolError({
-          code: "invalid-input",
-          message: `Step '${stepId}' on card '${card.key}' is being run by another thread. Complete only the work you were assigned; omit stepId and the board will resolve yours.`,
-        }),
-      );
-    }
-    return Effect.succeed(stepId);
+  const candidate =
+    stepId !== undefined
+      ? stepId
+      : live !== null && live.threadId === scope.threadId
+        ? live.stepId
+        : ownCompletions[ownCompletions.length - 1]?.stepId;
+
+  if (candidate === undefined) {
+    return Effect.fail(
+      new BoardToolError({
+        code: "invalid-input",
+        message: `This thread has no work in progress on card '${card.key}', so there is nothing to complete. If your prompt gave you a stepId, pass it explicitly.`,
+      }),
+    );
   }
 
-  if (liveForCaller) return Effect.succeed(state.stepId);
+  // The guard runs on the RESOLVED id, whichever way it was resolved. Applying
+  // it only to the explicit branch left the fallback open: step ids repeat
+  // across stage entries, so a stale thread whose own recorded completion is
+  // `building`/failed would resolve to `building` again — and if the card has
+  // since re-entered Building under a NEW thread, the decider's supersede rule
+  // (`existing.outcome !== "succeeded" && liveMatch`) would overwrite that
+  // thread's live run with the stale thread's outcome.
+  if (
+    live !== null &&
+    live.stepId === candidate &&
+    live.threadId !== null &&
+    live.threadId !== scope.threadId
+  ) {
+    return Effect.fail(
+      new BoardToolError({
+        code: "invalid-input",
+        message: `Step '${candidate}' on card '${card.key}' is being run by another thread. Complete only the work you were assigned; omit stepId and the board will resolve yours.`,
+      }),
+    );
+  }
 
-  const last = ownCompletions[ownCompletions.length - 1];
-  // A retry after the supervisor settled the step: re-report the SAME step, so
-  // the decider re-emits the recorded outcome instead of the caller being told
-  // its completed work does not exist.
-  if (last !== undefined) return Effect.succeed(last.stepId);
-
-  return Effect.fail(
-    new BoardToolError({
-      code: "invalid-input",
-      message: `This thread has no work in progress on card '${card.key}', so there is nothing to complete. If your prompt gave you a stepId, pass it explicitly.`,
-    }),
-  );
+  return Effect.succeed(candidate);
 };
 
 /** Resolve label NAMES against the live catalogue to ids; an unknown name is
@@ -457,7 +459,7 @@ export const boardHandlers = {
           if (state === null || isBoardTerminalStepStatus(state.status)) return null;
           return {
             stepId: state.stepId,
-            label: state.stepLabel,
+            stepLabel: state.stepLabel,
             stageLabel: state.stageLabel,
             status: state.status,
             attempt: state.attempt,
@@ -491,6 +493,19 @@ export const boardHandlers = {
       const existing = boardCardStepCompletions(board, card.id).find(
         (completion) => completion.stepId === stepId,
       );
+      // ...except on the recovery-retry path, where it is NOT a no-op. The
+      // decider supersedes a non-succeeded completion while the same step is
+      // live again (that is how a nudged agent reports success after a failed
+      // attempt), so mirroring its rule here keeps the reply from telling the
+      // agent "already completed: failed" about a call the board just recorded
+      // as succeeded.
+      const liveState = boardCardStepState(board, card.id);
+      const supersedes =
+        existing !== undefined &&
+        existing.outcome !== "succeeded" &&
+        liveState !== null &&
+        liveState.stepId === stepId &&
+        !isBoardTerminalStepStatus(liveState.status);
       // The agent's structured payload is stored verbatim as an opaque JSON
       // string (D8: carried through unread), so a schema codec would add
       // nothing over a plain stringify.
@@ -526,8 +541,8 @@ export const boardHandlers = {
       yield* dispatch(deps, command);
       return {
         stepId,
-        outcome: existing?.outcome ?? input.outcome,
-        alreadyCompleted: existing !== undefined,
+        outcome: supersedes ? input.outcome : (existing?.outcome ?? input.outcome),
+        alreadyCompleted: existing !== undefined && !supersedes,
       };
     }),
 

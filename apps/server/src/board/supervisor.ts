@@ -17,7 +17,7 @@
  *   answer to "is its thread still alive / did it complete while we were
  *   down", decide resume / recover / advance.
  */
-import { BOARD_ENVELOPE_QUESTION_MECHANISM, boardRunLabel } from "@t3tools/contracts";
+import { BOARD_ENVELOPE_QUESTION_MECHANISM } from "@t3tools/contracts";
 import type {
   BoardCardId,
   BoardCardStepState,
@@ -49,6 +49,16 @@ export type BoardRecoveryDecision =
       readonly question: string;
     };
 
+/** How the escalation names the run that stalled (t3o-19, D4/D5): its step when
+    the stage HAS steps, otherwise the stage, and neither when the row froze no
+    name at all (pre-020) — nobody should be escalated to about `Stage "null"`.
+    Reads `stageLabel` directly rather than going through `boardRunLabel`, which
+    on this branch could only ever return it. */
+function stalledSubject(stepState: Pick<BoardCardStepState, "stepLabel" | "stageLabel">): string {
+  if (stepState.stepLabel !== null) return `Step "${stepState.stepLabel}"`;
+  return stepState.stageLabel === null ? "This stage" : `Stage "${stepState.stageLabel}"`;
+}
+
 /**
  * How a stalled or dead step recovers (t3o-17, D1/D5) — escalating and bounded,
  * and PURE (crit 5): git and SQL stay in the reactor, which resolves the
@@ -71,13 +81,6 @@ export type BoardRecoveryDecision =
  * unattended postamble asks the agent to keep a todo list current, t3o-18 D16);
  * cure lives here.
  */
-/** How the escalation names the run that stalled (t3o-19, D4/D5). */
-function stalledSubject(stepState: Pick<BoardCardStepState, "stepLabel" | "stageLabel">): string {
-  if (stepState.stepLabel !== null) return `Step "${stepState.stepLabel}"`;
-  const stage = boardRunLabel(stepState);
-  return stage === null ? "This stage" : `Stage "${stage}"`;
-}
-
 export function recoveryDecision(input: {
   readonly stepState: Pick<
     BoardCardStepState,
