@@ -3,7 +3,7 @@
  * split out of the editable prompts. These lock the split's contract: the
  * completion / question / deliverable / move-guard protocol survives ANY edit
  * to the editable prompt, the `plan` role carries the `board_propose_plans`
- * deliverable, and a stored pre-split default upgrades to the slimmed one.
+ * deliverable, and the editable defaults carry intent only.
  */
 import { describe, expect, it } from "vite-plus/test";
 
@@ -16,7 +16,6 @@ import {
   DEFAULT_BOARD_PLANNING_PROMPT,
   DEFAULT_BOARD_REVIEW_PHASE_PROMPT,
   effectiveBoardStageRole,
-  upgradeLegacyBoardPrompt,
 } from "./board.ts";
 import {
   BOARD_ENVELOPE_MOVE_GUARD,
@@ -269,22 +268,8 @@ describe("boardRunLabel (t3o-19 AC 11)", () => {
   });
 });
 
-describe("upgradeLegacyBoardPrompt", () => {
-  it("upgrades a stored pre-split default, verbatim or whitespace-padded, to the slimmed default", () => {
-    const legacyBuild =
-      "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.";
-    expect(upgradeLegacyBoardPrompt(legacyBuild)).toBe(DEFAULT_BOARD_BUILD_PROMPT);
-    expect(upgradeLegacyBoardPrompt(`  ${legacyBuild}\n`)).toBe(DEFAULT_BOARD_BUILD_PROMPT);
-  });
-
-  it("leaves an edited prompt untouched", () => {
-    expect(upgradeLegacyBoardPrompt("My own build prompt.")).toBe("My own build prompt.");
-    expect(upgradeLegacyBoardPrompt(DEFAULT_BOARD_PLANNING_PROMPT)).toBe(
-      DEFAULT_BOARD_PLANNING_PROMPT,
-    );
-  });
-
-  it("the current defaults no longer carry the force-appended contract sentences", () => {
+describe("default prompts carry intent only", () => {
+  it("do not carry the force-appended contract sentences", () => {
     expect(DEFAULT_BOARD_BUILD_PROMPT).not.toContain("completion tool");
     expect(DEFAULT_BOARD_PLANNING_PROMPT).not.toContain("board_propose_plans");
     expect(DEFAULT_BOARD_REVIEW_PHASE_PROMPT).not.toContain("severity");

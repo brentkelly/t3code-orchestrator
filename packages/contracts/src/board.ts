@@ -3431,16 +3431,6 @@ export const DEFAULT_BOARD_TRIAGE_PHASE_PROMPT =
 export const DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT =
   "Rule on each finding's triage as a skeptical adjudicator: verify whether a claimed fix actually holds and whether a rejection is justified.";
 
-/** The pre-split phase defaults, verbatim — a stored prompt exactly matching
-    one of these predates the envelope split (its protocol sentences are now
-    force-appended) and is upgraded to the slimmed default at resolution. */
-const LEGACY_BOARD_REVIEW_PHASE_PROMPT =
-  "Review the changes on this card's branch against its base ref as a fresh-eyes senior engineer. Diff the worktree and read every changed file. Report each problem as a finding: a stable id, a severity of critical, improvement or nitpick, the file and line, a short title and a detailed explanation. Critical and improvement findings block; nitpicks do not. If the change raises no blocking findings, say so explicitly.";
-const LEGACY_BOARD_TRIAGE_PHASE_PROMPT =
-  "For each blocking finding, either FIX it in the worktree or REJECT it with a clear, specific reason. Make the smallest correct change and run the project's checks before finishing. Record one disposition per finding: action fixed or rejected, with a note.";
-const LEGACY_BOARD_ADJUDICATE_PHASE_PROMPT =
-  "For each finding, rule on the triage. Scope yourself to exactly what changed between the reviewed SHA and the fixed SHA. Verify whether a claimed fix actually holds and whether a rejection is justified. Record one verdict per finding: fix-upheld, fix-incomplete, fix-absent, rejection-justified or rejection-unjustified, with a note. You cannot see problems a fix introduced; only the next review can.";
-
 /** A single review phase's execution config (D2): its own prompt and its own
     model, so a thorough reviewer can pair with a cheap triager. `model` null
     runs the phase on the global text-generation model (resolved at run). */
@@ -3604,7 +3594,7 @@ export const DEFAULT_BOARD_REVIEW_STAGE_EXECUTION: BoardStageExecutionReview = S
     force-appended by the prompt envelope (`composeStepPrompt`), never carried
     in the editable body. */
 export const DEFAULT_BOARD_BUILD_PROMPT =
-  "Implement the card's brief on its branch. Run the project's checks until they pass.";
+  "Implement the card's brief on its branch, following its plan. Keep the work focused on what the card asks for — don't fold in unrelated changes. Prove your work with tests: write comprehensive tests for the behaviour you add. For any bug, first write a failing test that reproduces it, then fix the code until that test passes. Run the project's checks and fix what they catch until they pass. If the plan is wrong or missing something you need, say so instead of quietly working around it.";
 
 /** The Planning prompt (D4), intent only: the `board_propose_plans`
     deliverable contract is force-appended by the envelope's `plan`-role
@@ -3615,41 +3605,6 @@ export const DEFAULT_BOARD_PLANNING_PROMPT = `Build a plan that allows us to imp
 Ask the questions one at a time.
 
 If a question can be answered by exploring the codebase, explore the codebase instead.`;
-
-/** The pre-split Building / Planning defaults, verbatim (see the legacy phase
-    prompts above for the rule). */
-const LEGACY_BOARD_BUILD_PROMPT =
-  "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.";
-const LEGACY_BOARD_PLANNING_PROMPT = `Build a plan that allows us to implement the functionality requested on this card. Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
-
-Ask the questions one at a time.
-
-If a question can be answered by exploring the codebase, explore the codebase instead.
-
-When we have agreed a plan, record it with board_propose_plans. Do not move the card yourself.`;
-
-const LEGACY_BOARD_PROMPT_UPGRADES: ReadonlyArray<readonly [legacy: string, current: string]> = [
-  [LEGACY_BOARD_BUILD_PROMPT, DEFAULT_BOARD_BUILD_PROMPT],
-  [LEGACY_BOARD_PLANNING_PROMPT, DEFAULT_BOARD_PLANNING_PROMPT],
-  [LEGACY_BOARD_REVIEW_PHASE_PROMPT, DEFAULT_BOARD_REVIEW_PHASE_PROMPT],
-  [LEGACY_BOARD_TRIAGE_PHASE_PROMPT, DEFAULT_BOARD_TRIAGE_PHASE_PROMPT],
-  [LEGACY_BOARD_ADJUDICATE_PHASE_PROMPT, DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT],
-];
-
-/**
- * Upgrade a stored prompt that still IS a pre-envelope-split default,
- * verbatim (modulo surrounding whitespace), to the slimmed current default —
- * its stripped sentences are force-appended by the envelope now, so leaving
- * it would duplicate them in every run. An edited prompt never matches and is
- * returned untouched.
- */
-export function upgradeLegacyBoardPrompt(prompt: string): string {
-  const trimmed = prompt.trim();
-  for (const [legacy, current] of LEGACY_BOARD_PROMPT_UPGRADES) {
-    if (trimmed === legacy) return current;
-  }
-  return prompt;
-}
 
 /**
  * Two stages ship with `Auto execute` on so an empty settings file is a working
@@ -3786,25 +3741,7 @@ export function resolveBoardStageExecution(
       configured !== undefined && isBoardReviewStageExecution(configured)
         ? configured
         : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
-    return {
-      ...base,
-      mode: "build",
-      humanInLoop: false,
-      phases: {
-        review: {
-          ...base.phases.review,
-          prompt: upgradeLegacyBoardPrompt(base.phases.review.prompt),
-        },
-        triage: {
-          ...base.phases.triage,
-          prompt: upgradeLegacyBoardPrompt(base.phases.triage.prompt),
-        },
-        adjudicate: {
-          ...base.phases.adjudicate,
-          prompt: upgradeLegacyBoardPrompt(base.phases.adjudicate.prompt),
-        },
-      },
-    };
+    return { ...base, mode: "build", humanInLoop: false };
   }
   // The plan / build role holders (seeded ids — roles are never created, so
   // the id ↔ role mapping is exact) get their invariants FORCED at the same
@@ -3828,7 +3765,7 @@ export function resolveBoardStageExecution(
       stageId === BOARD_SEED_STAGE_IDS.planning
         ? ({ mode: "plan", humanInLoop: true, humanInLoopWithPlan: false } as const)
         : ({ mode: "build", humanInLoopWithPlan: false } as const);
-    return { ...base, ...forced, prompt: upgradeLegacyBoardPrompt(base.prompt) };
+    return { ...base, ...forced };
   }
   return configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
 }

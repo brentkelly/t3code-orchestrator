@@ -260,18 +260,6 @@ describe("role-holder invariants forced at resolution (settings redesign)", () =
     expect(resolved.humanInLoopWithPlan).toBe(false);
   });
 
-  it("upgrades a stored pre-split default prompt to the slimmed default at resolution", () => {
-    const legacy =
-      "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.";
-    const edited = decodeSettings({
-      pipeline: {
-        [BOARD_SEED_STAGE_IDS.building]: { autoExecute: true, prompt: legacy, mode: "build" },
-      },
-    });
-    const resolved = resolveBoardStageExecution(edited, BOARD_SEED_STAGE_IDS.building);
-    expect(resolved.prompt).toBe(DEFAULT_BOARD_BUILD_PROMPT);
-  });
-
   it("a review member stored under a role-holder key is ignored, like a simple member under the review key", () => {
     const edited = decodeSettings({
       pipeline: { [BOARD_SEED_STAGE_IDS.planning]: { kind: "review" } },
