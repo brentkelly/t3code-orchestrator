@@ -34,6 +34,7 @@ import type {
   BoardStageRole,
   BoardStepCompletion,
   BoardStepOutcome,
+  RuntimeMode,
 } from "@t3tools/contracts";
 
 import { ReviewLoopExecutor } from "./reviewLoopExecutor.ts";
@@ -55,6 +56,9 @@ export interface BoardStageExecutorConfig {
   readonly stageLabel: string;
   readonly prompt: string;
   readonly model: BoardModelSelection;
+  /** The resolved agent authority for the run (t3o-21). The reactor resolves
+      it (never derives it from `mode`) and freezes it onto the run row. */
+  readonly runtimeMode: RuntimeMode;
   readonly timeoutMs: number;
   readonly maxAttempts: number;
   /**
@@ -97,6 +101,10 @@ export type BoardStagePlan =
       readonly stepLabel: string | null;
       readonly prompt: string;
       readonly model: BoardModelSelection;
+      /** The agent authority this step runs under (t3o-21). A single-step
+          executor echoes the stage config; the review loop resolves it
+          per phase. */
+      readonly runtimeMode: RuntimeMode;
       readonly timeoutMs: number;
       readonly maxAttempts: number;
     }
@@ -141,6 +149,7 @@ export const SimpleStageExecutor: BoardStageExecutor = {
       stepLabel: null,
       prompt: config.prompt,
       model: config.model,
+      runtimeMode: config.runtimeMode,
       timeoutMs: config.timeoutMs,
       maxAttempts: config.maxAttempts,
     };

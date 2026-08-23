@@ -22,6 +22,7 @@ import {
   BoardReviewPayload,
   composeBoardReviewPhasePrompt,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
+  effectiveBoardRuntimeMode,
   isBoardReviewBlockingSeverity,
   isBoardReviewStageExecution,
   parseReviewStepId,
@@ -129,6 +130,9 @@ export function reviewLoopDecision(input: {
         prompt: phaseConfig.prompt,
       }),
       model: resolvePhaseModel(phaseConfig, config.model),
+      // The review stage is always build-mode (resolveBoardStageExecution forces
+      // it), so an unset phase access level defaults to `auto` (t3o-21).
+      runtimeMode: effectiveBoardRuntimeMode(phaseConfig.runtimeMode, "build"),
       timeoutMs: phaseConfig.timeoutMs,
       maxAttempts: phaseConfig.maxAttempts,
     };

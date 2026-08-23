@@ -51,13 +51,21 @@ describe("stage execution mutations", () => {
     // stage resolves to — its seeded config for a seeded stage, the empty
     // all-defaults one for a custom stage — and produces a complete entry.
     const custom = setBoardStageExecution(boardWith({}), CUSTOM, { autoExecute: true });
-    expect(custom[CUSTOM]).toEqual({ ...DEFAULT_BOARD_STAGE_EXECUTION, autoExecute: true });
+    // The resolved config now carries the effective access level (t3o-21): a
+    // custom stage is plan-mode by default, so `approval-required`.
+    expect(custom[CUSTOM]).toEqual({
+      ...DEFAULT_BOARD_STAGE_EXECUTION,
+      runtimeMode: "approval-required",
+      autoExecute: true,
+    });
 
     const building = setBoardStageExecution(boardWith({}), BOARD_SEED_STAGE_IDS.building, {
       maxAttempts: 9,
     });
+    // Building is build-mode → resolves to `auto` (never the old full-access).
     expect(building[BOARD_SEED_STAGE_IDS.building]).toEqual({
       ...DEFAULT_BOARD_PIPELINE[BOARD_SEED_STAGE_IDS.building],
+      runtimeMode: "auto",
       maxAttempts: 9,
     });
   });

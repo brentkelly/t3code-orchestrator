@@ -32,6 +32,7 @@ import {
   boardStagesInOrder,
   boardStepPostamble,
   boardStepPreamble,
+  effectiveBoardRuntimeMode,
   effectiveBoardStageRole,
   isBoardReviewStageExecution,
   ProviderInstanceId,
@@ -42,6 +43,8 @@ import {
   type BoardStageExecution,
   type BoardStageExecutionReview,
   type BoardStageRole,
+  type ProviderOptionSelection,
+  type RuntimeMode,
   type BoardState,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -90,7 +93,9 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { AccessLevelPicker } from "../chat/AccessLevelPicker";
 import { ModelPickerContent } from "../chat/ModelPickerContent";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
@@ -528,6 +533,14 @@ function ModelRow(props: {
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
   onChange: (selection: ModelSelection) => void;
+  /** Reasoning/effort selections for the chosen model, and the setter (t3o-21).
+      Rendered as the composer's TraitsPicker; hidden when no model is picked. */
+  modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
+  onModelOptionsChange: (options: ReadonlyArray<ProviderOptionSelection> | undefined) => void;
+  /** The stage/phase agent authority (t3o-21) — the user's, on the same row as
+      the model, exactly like the chat composer. */
+  runtimeMode: RuntimeMode;
+  onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const [open, setOpen] = useState(false);
   // With nothing picked the popup still needs an instance to open on: use the
@@ -556,58 +569,83 @@ function ModelRow(props: {
     <div className="flex flex-col gap-1 py-2">
       <div className="flex items-center justify-between gap-4">
         <span className="text-[13.5px] text-foreground">{props.label}</span>
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger
-            render={
-              <Button
-                size="xs"
-                variant="outline"
-                aria-label={props.ariaLabel}
-                className="max-w-56 justify-between gap-1.5"
-              />
-            }
-          >
-            <span className="flex min-w-0 items-center gap-1.5">
-              {activeEntry ? (
-                <ProviderInstanceIcon
-                  driverKind={activeEntry.driverKind}
-                  displayName={activeEntry.displayName}
-                  accentColor={activeEntry.accentColor}
-                  showBadge={Boolean(activeEntry.accentColor)}
-                  className="size-4"
-                  iconClassName="size-4"
-                  indicatorBackground="var(--input)"
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger
+              render={
+                <Button
+                  size="xs"
+                  variant="outline"
+                  aria-label={props.ariaLabel}
+                  className="max-w-56 justify-between gap-1.5"
                 />
-              ) : null}
-              <span
-                className={cn("truncate", props.selection === null ? "text-muted-foreground" : "")}
-              >
-                {triggerLabel}
+              }
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                {activeEntry ? (
+                  <ProviderInstanceIcon
+                    driverKind={activeEntry.driverKind}
+                    displayName={activeEntry.displayName}
+                    accentColor={activeEntry.accentColor}
+                    showBadge={Boolean(activeEntry.accentColor)}
+                    className="size-4"
+                    iconClassName="size-4"
+                    indicatorBackground="var(--input)"
+                  />
+                ) : null}
+                <span
+                  className={cn(
+                    "truncate",
+                    props.selection === null ? "text-muted-foreground" : "",
+                  )}
+                >
+                  {triggerLabel}
+                </span>
               </span>
-            </span>
-            <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 opacity-60" />
-          </PopoverTrigger>
-          <PopoverPopup
-            align="end"
-            className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
-            viewportClassName="rounded-lg !overflow-hidden p-0"
-          >
-            <ModelPickerContent
-              activeInstanceId={active.instanceId}
+              <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 opacity-60" />
+            </PopoverTrigger>
+            <PopoverPopup
+              align="end"
+              className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
+              viewportClassName="rounded-lg !overflow-hidden p-0"
+            >
+              <ModelPickerContent
+                activeInstanceId={active.instanceId}
+                model={active.model}
+                lockedProvider={null}
+                lockedContinuationGroupKey={null}
+                instanceEntries={props.instanceEntries}
+                modelOptionsByInstance={modelOptions}
+                terminalOpen={false}
+                onRequestClose={() => setOpen(false)}
+                onInstanceModelChange={(instanceId, model) => {
+                  props.onChange({ instanceId, model });
+                  setOpen(false);
+                }}
+              />
+            </PopoverPopup>
+          </Popover>
+          {props.selection !== null && activeEntry !== null ? (
+            <TraitsPicker
+              provider={activeEntry.driverKind}
+              models={activeEntry.models}
               model={active.model}
-              lockedProvider={null}
-              lockedContinuationGroupKey={null}
-              instanceEntries={props.instanceEntries}
-              modelOptionsByInstance={modelOptions}
-              terminalOpen={false}
-              onRequestClose={() => setOpen(false)}
-              onInstanceModelChange={(instanceId, model) => {
-                props.onChange({ instanceId, model });
-                setOpen(false);
-              }}
+              prompt=""
+              onPromptChange={() => {}}
+              modelOptions={props.modelOptions}
+              allowPromptInjectedEffort={false}
+              triggerVariant="outline"
+              triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+              onModelOptionsChange={props.onModelOptionsChange}
             />
-          </PopoverPopup>
-        </Popover>
+          ) : null}
+          <AccessLevelPicker
+            value={props.runtimeMode}
+            onChange={props.onRuntimeModeChange}
+            ariaLabel={`${props.ariaLabel} access level`}
+            triggerClassName="rounded-lg border border-input bg-popover shadow-xs"
+          />
+        </div>
       </div>
       {props.selection === null && props.requiredMessage ? (
         <p className="text-xs text-destructive">{props.requiredMessage}</p>
@@ -1077,6 +1115,18 @@ function SimpleStageBody(props: {
             instanceEntries={props.instanceEntries}
             getModelOptions={props.getModelOptions}
             onChange={(model) => set({ model })}
+            modelOptions={exec.model?.options}
+            onModelOptionsChange={(options) => {
+              if (exec.model === null) return;
+              set({
+                model:
+                  options === undefined
+                    ? { instanceId: exec.model.instanceId, model: exec.model.model }
+                    : { instanceId: exec.model.instanceId, model: exec.model.model, options },
+              });
+            }}
+            runtimeMode={effectiveBoardRuntimeMode(exec.runtimeMode, exec.mode)}
+            onRuntimeModeChange={(runtimeMode) => set({ runtimeMode })}
           />
           {role === null || role === "done" ? (
             <ToggleRow
@@ -1241,6 +1291,22 @@ function ReviewStageBody(props: {
                   instanceEntries={props.instanceEntries}
                   getModelOptions={props.getModelOptions}
                   onChange={(model) => setPhase(phaseId, { model })}
+                  modelOptions={phase.model?.options}
+                  onModelOptionsChange={(options) => {
+                    if (phase.model === null) return;
+                    setPhase(phaseId, {
+                      model:
+                        options === undefined
+                          ? { instanceId: phase.model.instanceId, model: phase.model.model }
+                          : {
+                              instanceId: phase.model.instanceId,
+                              model: phase.model.model,
+                              options,
+                            },
+                    });
+                  }}
+                  runtimeMode={effectiveBoardRuntimeMode(phase.runtimeMode, "build")}
+                  onRuntimeModeChange={(runtimeMode) => setPhase(phaseId, { runtimeMode })}
                 />
               </div>
             );

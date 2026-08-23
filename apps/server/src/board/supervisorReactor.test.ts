@@ -88,6 +88,7 @@ const runningState: BoardCardStepState = {
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
   mode: "build",
+  runtimeMode: "auto",
   humanInLoop: false,
   maxAttempts: 3,
   timeoutMs: 1000,
@@ -127,10 +128,10 @@ const aliveShell: OrchestrationThreadShell = {
 
 /** Run `reconcile` against stub services and return the dispatched command
     types. `threadShells` maps a thread id to its shell; an absent id is "gone". */
-function reconcileCommands(input: {
+function reconcileCommandObjects(input: {
   readonly board: BoardState;
   readonly threadShells?: ReadonlyMap<string, OrchestrationThreadShell>;
-}): Effect.Effect<ReadonlyArray<string>> {
+}): Effect.Effect<ReadonlyArray<OrchestrationCommand>> {
   const shells = input.threadShells ?? new Map<string, OrchestrationThreadShell>();
   return Effect.gen(function* () {
     const recorded = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
@@ -183,9 +184,18 @@ function reconcileCommands(input: {
       const reactor = yield* SupervisorReactor;
       yield* reactor.reconcile;
       const commands = yield* Ref.get(recorded);
-      return commands.map((command) => command.type);
+      return commands;
     }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provide(deps))));
   }).pipe(Effect.provide(NodeServices.layer));
+}
+
+function reconcileCommands(input: {
+  readonly board: BoardState;
+  readonly threadShells?: ReadonlyMap<string, OrchestrationThreadShell>;
+}): Effect.Effect<ReadonlyArray<string>> {
+  return reconcileCommandObjects(input).pipe(
+    Effect.map((commands) => commands.map((command) => command.type)),
+  );
 }
 
 it.effect("boot: a running step whose thread is gone is recovered (respawned)", () =>
@@ -198,6 +208,21 @@ it.effect("boot: a running step whose thread is gone is recovered (respawned)", 
     // A gone thread is respawned, not nudged into the void.
     assert.include(types, "thread.turn.start");
     assert.include(types, "board.card.link-thread");
+  }),
+);
+
+it.effect("respawn freezes the user-chosen access level, never forcing full-access (t3o-21)", () =>
+  Effect.gen(function* () {
+    // The run row was frozen at `auto` (a build-mode step no longer implies
+    // full-access). The respawn must carry that posture verbatim.
+    const commands = yield* reconcileCommandObjects({
+      board: { cards: [card], stepStates: [runningState], nextCardNumberByProject: {} },
+      // no shell for thread-1 → gone → respawn
+    });
+    const turnStart = commands.find((command) => command.type === "thread.turn.start");
+    assert.isDefined(turnStart);
+    assert.strictEqual((turnStart as { runtimeMode?: string }).runtimeMode, "auto");
+    assert.notStrictEqual((turnStart as { runtimeMode?: string }).runtimeMode, "full-access");
   }),
 );
 

@@ -663,7 +663,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.equal(next.board.pipeline.building?.maxAttempts, 6);
       assert.deepEqual(next.board.pipeline.building?.model, {
-        instanceId: "claudeAgent",
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "opus",
       });
       assert.equal(next.board.concurrency.globalMaxConcurrent, 7);

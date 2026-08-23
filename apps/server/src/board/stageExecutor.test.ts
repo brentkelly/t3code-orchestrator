@@ -35,6 +35,7 @@ const config = (overrides: Partial<BoardStageExecutorConfig> = {}): BoardStageEx
   model,
   timeoutMs: 600_000,
   maxAttempts: 3,
+  runtimeMode: "auto",
   execution: DEFAULT_BOARD_STAGE_EXECUTION,
   ...overrides,
 });
@@ -59,6 +60,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       stepLabel: null,
       prompt: "Implement the card's brief.",
       model,
+      runtimeMode: "auto",
       timeoutMs: 600_000,
       maxAttempts: 3,
     });
@@ -133,6 +135,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       stepLabel: null,
       prompt: "Assess it.",
       model,
+      runtimeMode: "auto",
       timeoutMs: 600_000,
       maxAttempts: 1,
     });

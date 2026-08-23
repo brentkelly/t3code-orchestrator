@@ -34,6 +34,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 
 import { AuthOrchestrationReadScope, EnvironmentAuthorizationError } from "./auth.ts";
+import { DEFAULT_RUNTIME_MODE, ProviderOptionSelections, RuntimeMode } from "./model.ts";
 import {
   CommandId,
   IsoDateTime,
@@ -489,6 +490,11 @@ export type BoardCardExternalRef = typeof BoardCardExternalRef.Type;
 export const BoardModelSelection = Schema.Struct({
   instanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
+  /** Reasoning/effort and other per-model option selections (t3o-21), mirroring
+      `ModelSelection.options` so `createModelSelection(instanceId, model,
+      options)` round-trips. Optional: a stage that never set an effort has no
+      key, and the option vocabulary is per-model (resolved in the picker). */
+  options: Schema.optional(ProviderOptionSelections),
 });
 export type BoardModelSelection = typeof BoardModelSelection.Type;
 
@@ -820,9 +826,24 @@ export const BoardCardStepState = Schema.Struct({
   /** The resolved model, concrete — a null stage `model` was resolved to the
       global default here, so a later default change never moves a running card. */
   model: TrimmedNonEmptyString,
+  /** The resolved model option selections (reasoning/effort), frozen at stage
+      entry (t3o-21). Optional: a stage that set no effort has no key. Passed
+      into the spawned thread's `modelSelection.options`. */
+  modelOptions: Schema.optional(ProviderOptionSelections),
   /** Mode governs resources (D5): `plan` holds no worktree and no slot; `build`
       provisions a worktree and holds a slot. */
   mode: BoardStageMode,
+  /** The resolved agent authority posture, frozen at stage entry (t3o-21) so a
+      settings edit mid-flight cannot change a live agent's authority. The
+      reactor reads this instead of deriving the posture from `mode`. A DECODING
+      DEFAULT because this struct is a replayed event payload: rows written
+      before t3o-21 have no key and must rehydrate — they resolve to the old
+      behaviour (`full-access` for a `build` run, `approval-required` otherwise)
+      via `boardStepRuntimeMode`, applied by the reactor, not here. The stored
+      default is the safe least-authority value. */
+  runtimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("approval-required" as const)),
+  ),
   /** Whether this run is human-in-the-loop (D5/D6): the frozen resolution of
       the stage's / card's human-in-the-loop setting. Governs the prompt
       postamble, drop monitoring and auto-advance eligibility. */
@@ -1690,6 +1711,14 @@ export const BoardCardSelectStepCommand = Schema.Struct({
   prompt: Schema.String,
   providerInstanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
+  /** The resolved agent authority for the run (t3o-21). Decoding-defaulted for
+      replay of pre-t3o-21 select-step events, which carry no key. */
+  runtimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("approval-required" as const)),
+  ),
+  /** The resolved model option selections (reasoning/effort), frozen for the
+      run (t3o-21). Optional. */
+  modelOptions: Schema.optional(ProviderOptionSelections),
   mode: BoardStageMode,
   humanInLoop: Schema.Boolean,
   maxAttempts: PositiveInt,
@@ -3437,6 +3466,12 @@ export const DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT =
 export const BoardReviewPhaseExecution = Schema.Struct({
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** The agent authority posture this review phase runs under (t3o-21). The user
+      owns it; the board never forces it. UNSET (optional, no key) means "use
+      the mode-based default" — `resolveBoardStageExecution` fills it: `auto`
+      for a build-mode stage, `approval-required` otherwise. A value the user
+      picked is honoured verbatim. */
+  runtimeMode: Schema.optional(RuntimeMode),
   timeoutMs: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
   ),
@@ -3473,6 +3508,12 @@ export const BoardStageExecutionSimple = Schema.Struct({
   autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** The agent authority posture this stage runs under (t3o-21). The user
+      owns it; the board never forces it. UNSET (optional, no key) means "use
+      the mode-based default" — `resolveBoardStageExecution` fills it: `auto`
+      for a build-mode stage, `approval-required` otherwise. A value the user
+      picked is honoured verbatim. */
+  runtimeMode: Schema.optional(RuntimeMode),
   mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("plan" as const))),
   humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   humanInLoopWithPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -3510,6 +3551,12 @@ export const BoardStageExecutionReview = Schema.Struct({
   autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** The agent authority posture this stage's top-level default runs under (t3o-21). The user
+      owns it; the board never forces it. UNSET (optional, no key) means "use
+      the mode-based default" — `resolveBoardStageExecution` fills it: `auto`
+      for a build-mode stage, `approval-required` otherwise. A value the user
+      picked is honoured verbatim. */
+  runtimeMode: Schema.optional(RuntimeMode),
   mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("build" as const))),
   humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   humanInLoopWithPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -3725,10 +3772,27 @@ export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
  * edits. This keys on the fixed compiled-in stage id, not on a role lookup — the
  * resolver has no stage definitions — so it is not a dispatch on `stage.role`.
  */
+/**
+ * The effective agent authority for a stage (t3o-21): honour a value the user
+ * picked, otherwise default by mode — `auto` for a build-mode stage (writes in
+ * its own worktree, approves routine actions, still asks for anything beyond),
+ * `approval-required` for a plan-mode stage (runs in the SHARED project root,
+ * so least authority). The board NEVER forces `full-access`; the old
+ * `mode === "build" ? "full-access" : "approval-required"` in the reactor is
+ * replaced by this. The same helper resolves each review phase (always
+ * build-mode → defaults to `auto`).
+ */
+export function effectiveBoardRuntimeMode(
+  runtimeMode: RuntimeMode | undefined,
+  mode: BoardStageMode,
+): RuntimeMode {
+  return runtimeMode ?? (mode === "build" ? "auto" : "approval-required");
+}
+
 export function resolveBoardStageExecution(
   board: BoardSettings,
   stageId: BoardStageId,
-): BoardStageExecution {
+): BoardStageExecution & { readonly runtimeMode: RuntimeMode } {
   const configured = board.pipeline[stageId];
   if (stageId === BOARD_SEED_STAGE_IDS.review) {
     // Coerce absent / legacy-simple entries to the review default, then FORCE
@@ -3741,7 +3805,12 @@ export function resolveBoardStageExecution(
       configured !== undefined && isBoardReviewStageExecution(configured)
         ? configured
         : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
-    return { ...base, mode: "build", humanInLoop: false };
+    return {
+      ...base,
+      mode: "build",
+      humanInLoop: false,
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+    };
   }
   // The plan / build role holders (seeded ids — roles are never created, so
   // the id ↔ role mapping is exact) get their invariants FORCED at the same
@@ -3765,9 +3834,17 @@ export function resolveBoardStageExecution(
       stageId === BOARD_SEED_STAGE_IDS.planning
         ? ({ mode: "plan", humanInLoop: true, humanInLoopWithPlan: false } as const)
         : ({ mode: "build", humanInLoopWithPlan: false } as const);
-    return { ...base, ...forced };
+    return {
+      ...base,
+      ...forced,
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, forced.mode),
+    };
   }
-  return configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
+  const resolved = configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
+  return {
+    ...resolved,
+    runtimeMode: effectiveBoardRuntimeMode(resolved.runtimeMode, resolved.mode),
+  };
 }
 
 /**

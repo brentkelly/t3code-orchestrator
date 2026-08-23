@@ -27,6 +27,7 @@ const frozenConfig = {
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
   mode: "build" as const,
+  runtimeMode: "auto" as const,
   humanInLoop: false,
   maxAttempts: 3,
   timeoutMs: 1000,

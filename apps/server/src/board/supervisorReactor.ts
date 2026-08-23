@@ -483,8 +483,13 @@ const make = Effect.gen(function* () {
       readonly stageLabel: string | null;
       readonly providerInstanceId: BoardCardStepState["providerInstanceId"];
       readonly model: string;
-      /** Frozen run-row mode (D5/D12): governs the runtime write posture. */
+      /** Frozen run-row mode (D5/D12): governs resources (worktree + slot). */
       readonly mode: BoardCardStepState["mode"];
+      /** Frozen run-row agent authority (t3o-21): the user-chosen posture, read
+          verbatim — the board never derives it from `mode`. */
+      readonly runtimeMode: BoardCardStepState["runtimeMode"];
+      /** Frozen run-row model options (reasoning/effort, t3o-21). */
+      readonly modelOptions: BoardCardStepState["modelOptions"];
     };
     /** Where the thread runs: the card's worktree for a `build`-mode step, the
         project workspace root for a `plan`-mode step (no worktree, D5). */
@@ -499,14 +504,13 @@ const make = Effect.gen(function* () {
     const { card, step } = input;
     const threadId = yield* freshThreadId;
     const createdAt = yield* nowIso;
-    // Mode governs the write posture (D5): a `build` step owns an isolated
-    // worktree and runs full-access; a `plan` step runs in the SHARED project
-    // root with no worktree, so it takes the least-privileged posture — every
-    // edit gated behind approval — to honour the read-only contract and keep a
-    // planning agent from dirtying the shared checkout. Tool access stays
-    // `interactionMode: "default"` either way (the plan prompt needs its MCP
-    // write tools; that is a separate axis from filesystem writes).
-    const runtimeMode = step.mode === "build" ? "full-access" : "approval-required";
+    // The agent authority is the USER's choice, frozen onto the run row at
+    // stage entry (t3o-21) and read verbatim here — the board no longer forces
+    // `full-access` on build-mode steps (a security defect). If the chosen
+    // posture asks for approval on a command, the run surfaces as "Input
+    // needed" and continues once a human approves. Tool access stays
+    // `interactionMode: "default"` (the MCP write tools are a separate axis).
+    const runtimeMode = step.runtimeMode;
     yield* dispatch({
       type: "thread.turn.start",
       commandId: yield* commandId("spawn-turn"),
@@ -523,7 +527,11 @@ const make = Effect.gen(function* () {
         createThread: {
           projectId: card.projectId,
           title: `${card.key} · ${boardRunLabel(step) ?? card.stage}`,
-          modelSelection: { instanceId: step.providerInstanceId, model: step.model },
+          modelSelection: {
+            instanceId: step.providerInstanceId,
+            model: step.model,
+            ...(step.modelOptions === undefined ? {} : { options: step.modelOptions }),
+          },
           runtimeMode,
           interactionMode: "default",
           branch: input.branch,
@@ -649,6 +657,8 @@ const make = Effect.gen(function* () {
         providerInstanceId: state.providerInstanceId,
         model: state.model,
         mode: state.mode,
+        runtimeMode: state.runtimeMode,
+        modelOptions: state.modelOptions,
       },
       worktreePath: input.worktreePath,
       branch: card.worktree?.branch ?? null,
@@ -726,6 +736,8 @@ const make = Effect.gen(function* () {
         providerInstanceId: state.providerInstanceId,
         model: state.model,
         mode: state.mode,
+        runtimeMode: state.runtimeMode,
+        modelOptions: state.modelOptions,
       },
       worktreePath: cwd,
       branch: null,
@@ -893,6 +905,7 @@ const make = Effect.gen(function* () {
         model,
         timeoutMs: exec.timeoutMs,
         maxAttempts: exec.maxAttempts,
+        runtimeMode: exec.runtimeMode,
         execution: exec,
       },
       completions,
@@ -919,6 +932,8 @@ const make = Effect.gen(function* () {
         prompt: "",
         providerInstanceId: model.instanceId,
         model: model.model,
+        runtimeMode: exec.runtimeMode,
+        ...(model.options === undefined ? {} : { modelOptions: model.options }),
         mode: exec.mode,
         humanInLoop: true,
         maxAttempts: exec.maxAttempts,
@@ -945,6 +960,8 @@ const make = Effect.gen(function* () {
       prompt,
       providerInstanceId: plan.model.instanceId,
       model: plan.model.model,
+      runtimeMode: plan.runtimeMode,
+      ...(plan.model.options === undefined ? {} : { modelOptions: plan.model.options }),
       mode: exec.mode,
       humanInLoop,
       maxAttempts: plan.maxAttempts,
@@ -1018,6 +1035,7 @@ const make = Effect.gen(function* () {
         model,
         timeoutMs: exec.timeoutMs,
         maxAttempts: exec.maxAttempts,
+        runtimeMode: exec.runtimeMode,
         execution: exec,
       },
       completions,
@@ -1038,6 +1056,8 @@ const make = Effect.gen(function* () {
           prompt: plan.prompt,
           providerInstanceId: plan.model.instanceId,
           model: plan.model.model,
+          runtimeMode: plan.runtimeMode,
+          ...(plan.model.options === undefined ? {} : { modelOptions: plan.model.options }),
           mode: exec.mode,
           humanInLoop,
           maxAttempts: plan.maxAttempts,
@@ -1207,6 +1227,8 @@ const make = Effect.gen(function* () {
             providerInstanceId: input.state.providerInstanceId,
             model: input.state.model,
             mode: input.state.mode,
+            runtimeMode: input.state.runtimeMode,
+            modelOptions: input.state.modelOptions,
           },
           worktreePath: respawnTarget.worktreePath,
           branch: respawnTarget.branch,

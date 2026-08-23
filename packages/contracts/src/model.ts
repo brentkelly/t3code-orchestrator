@@ -93,6 +93,22 @@ export const ProviderOptionSelections = Schema.Union([
 ]);
 export type ProviderOptionSelections = typeof ProviderOptionSelections.Type;
 
+/**
+ * The agent authority posture a run is spawned under. Defined here in the leaf
+ * `model.ts` (which imports neither `orchestration.ts` nor `board.ts`) so BOTH
+ * can reference it without a module cycle — `board.ts` needs it for per-stage
+ * access levels (t3o-21) and cannot import `orchestration.ts`. Re-exported from
+ * `orchestration.ts` for its existing importers.
+ */
+export const RuntimeMode = Schema.Literals([
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+]);
+export type RuntimeMode = typeof RuntimeMode.Type;
+export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+
 function coerceLegacyOptionsObjectToArray(
   record: Record<string, unknown>,
 ): ReadonlyArray<ProviderOptionSelection> {

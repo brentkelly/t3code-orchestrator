@@ -1583,6 +1583,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         prompt: command.prompt,
         providerInstanceId: command.providerInstanceId,
         model: command.model,
+        runtimeMode: command.runtimeMode,
+        ...(command.modelOptions === undefined ? {} : { modelOptions: command.modelOptions }),
         mode: command.mode,
         humanInLoop: command.humanInLoop,
         maxAttempts: command.maxAttempts,

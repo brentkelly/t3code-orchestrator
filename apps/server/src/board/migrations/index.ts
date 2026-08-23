@@ -36,6 +36,7 @@ import Migration017 from "./017_BoardThreadTodos.ts";
 import Migration018 from "./018_BoardCardActivityStructured.ts";
 import Migration019 from "./019_BoardStagePlanRole.ts";
 import Migration020 from "./020_BoardCardStepStateLabels.ts";
+import Migration021 from "./021_BoardCardStepStateRuntimeMode.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -64,6 +65,7 @@ export const BOARD_MIGRATIONS = [
   [18, "BoardCardActivityStructured", Migration018],
   [19, "BoardStagePlanRole", Migration019],
   [20, "BoardCardStepStateLabels", Migration020],
+  [21, "BoardCardStepStateRuntimeMode", Migration021],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(

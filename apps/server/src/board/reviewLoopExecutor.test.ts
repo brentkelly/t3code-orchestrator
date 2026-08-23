@@ -47,6 +47,7 @@ const config = (
   model: globalModel,
   timeoutMs: 600_000,
   maxAttempts: 3,
+  runtimeMode: "auto",
   execution,
 });
 

@@ -198,6 +198,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         providerInstanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
         mode: "plan",
+        runtimeMode: "auto",
         humanInLoop: false,
         maxAttempts: 3,
         timeoutMs: 60_000,

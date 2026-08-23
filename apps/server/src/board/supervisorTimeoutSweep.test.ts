@@ -52,6 +52,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
   mode: "build",
+  runtimeMode: "auto",
   humanInLoop: false,
   maxAttempts: 3,
   timeoutMs: 60_000,

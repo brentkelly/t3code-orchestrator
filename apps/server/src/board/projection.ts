@@ -59,6 +59,8 @@ import {
   IsoDateTime,
   ProjectId,
   ThreadId,
+  RuntimeMode,
+  type ProviderOptionSelections,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -310,6 +312,21 @@ const boardActivityStepLabel = (
 // Live per-card step state (t3o-10). One row per card. `slotHeld` travels as
 // 0/1 (SQLite has no boolean), like `locked` below. Rehydrates the read-model
 // slice `BoardState.stepStates`.
+/** Decode a stored `model_options` JSON string back to the partial object the
+    step-state map spreads (t3o-21). Carried verbatim like the completion
+    payload: we wrote it with `JSON.stringify` of a valid selection, so a
+    successful parse of an array is trusted; anything else yields no options
+    rather than a decode failure that would break rehydration. */
+function stepModelOptionsPatch(raw: string | null): { modelOptions?: ProviderOptionSelections } {
+  if (raw === null) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? { modelOptions: parsed as ProviderOptionSelections } : {};
+  } catch {
+    return {};
+  }
+}
+
 const BoardCardStepStateDbRow = Schema.Struct({
   cardId: BoardCardStepState.fields.cardId,
   stepId: BoardCardStepState.fields.stepId,
@@ -324,6 +341,12 @@ const BoardCardStepStateDbRow = Schema.Struct({
   providerInstanceId: BoardCardStepState.fields.providerInstanceId,
   model: BoardCardStepState.fields.model,
   mode: BoardCardStepState.fields.mode,
+  // NULLABLE in the DB: rows written before migration 021 have no value. The
+  // projection resolves a null to the pre-t3o-21 behaviour (t3o-21).
+  runtimeMode: Schema.NullOr(RuntimeMode),
+  // JSON-encoded ProviderOptionSelections, or null. Carried verbatim like the
+  // completion `payload` (t3o-21).
+  modelOptions: Schema.NullOr(Schema.String),
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -1181,13 +1204,14 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     execute: (row) => sql`
       INSERT INTO board_card_step_state (
         card_id, step_id, step_label, stage_label, attempt, stall_count, last_nudge_at, prompt,
-        provider_instance_id, model, mode,
+        provider_instance_id, model, mode, runtime_mode, model_options,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, started_at, updated_at
       )
       VALUES (
         ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.stageLabel}, ${row.attempt}, ${row.stallCount},
         ${row.lastNudgeAt}, ${row.prompt},
-        ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.humanInLoop}, ${row.maxAttempts},
+        ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
+        ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.startedAt}, ${row.updatedAt}
       )
       ON CONFLICT (card_id)
@@ -1202,6 +1226,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         provider_instance_id = excluded.provider_instance_id,
         model = excluded.model,
         mode = excluded.mode,
+        runtime_mode = excluded.runtime_mode,
+        model_options = excluded.model_options,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -1229,6 +1255,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         provider_instance_id AS "providerInstanceId",
         model,
         mode,
+        runtime_mode AS "runtimeMode",
+        model_options AS "modelOptions",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -1590,6 +1618,8 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         providerInstanceId: state.providerInstanceId,
         model: state.model,
         mode: state.mode,
+        runtimeMode: state.runtimeMode,
+        modelOptions: state.modelOptions === undefined ? null : JSON.stringify(state.modelOptions),
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -2032,6 +2062,11 @@ export function loadBoardState(
               providerInstanceId: row.providerInstanceId,
               model: row.model,
               mode: row.mode,
+              // A null runtime_mode is a pre-t3o-21 row: resolve to the old
+              // behaviour so a card mid-stage at deploy keeps its authority.
+              runtimeMode:
+                row.runtimeMode ?? (row.mode === "build" ? "full-access" : "approval-required"),
+              ...stepModelOptionsPatch(row.modelOptions),
               humanInLoop: row.humanInLoop !== 0,
               maxAttempts: row.maxAttempts,
               timeoutMs: row.timeoutMs,
