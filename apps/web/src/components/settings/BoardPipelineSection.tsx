@@ -24,6 +24,8 @@ import {
   BoardStageId,
   boardReviewPhasePreamble,
   boardReviewPhaseProtocol,
+  reviewStepId,
+  reviewStepLabel,
   boardStagesInOrder,
   boardStepPostamble,
   boardStepPreamble,
@@ -710,8 +712,9 @@ export function BoardPipelineSection() {
   return (
     <SettingsSection id="board-pipeline" title={anchor.title}>
       <p className="max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
-        Each stage runs a single agent step. A card freezes its stage config the moment it enters
-        the stage, so edits take effect the next time a card enters, never mid-flight.
+        Each stage runs one agent, except code review, which runs a review loop. A card freezes its
+        stage config the moment it enters the stage, so edits take effect the next time a card
+        enters, never mid-flight.
       </p>
       {!crudEnabled ? (
         <p className="px-3 text-xs text-muted-foreground/70 sm:px-4">
@@ -939,12 +942,18 @@ function SimpleStageBody(props: {
             label="Prompt"
             value={exec.prompt}
             preamble={boardStepPreamble({
-              // A run composes card.stage — the stage ID, not the label — so
-              // the preview shows the same string the agent will actually see.
               card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
-              step: { stepLabel: stage.label },
+              stageLabel: stage.label,
+              // This stage runs one step, so the run carries no step identity
+              // (t3o-19, D4) and the preview shows no `Step:` line — exactly
+              // what the agent will see.
+              step: { stepLabel: null },
             })}
-            postamble={boardStepPostamble({ humanInLoop: previewHumanInLoop, role })}
+            postamble={boardStepPostamble({
+              humanInLoop: previewHumanInLoop,
+              role,
+              step: { stepId: stage.stageId, stepLabel: null },
+            })}
             missingMessage={
               exec.prompt.trim().length === 0 ? "A prompt is required to auto-execute." : null
             }
@@ -1078,12 +1087,39 @@ function ReviewStageBody(props: {
                   id={`${stage.stageId}:${phaseId}`}
                   label="Prompt"
                   value={phase.prompt}
-                  preamble={boardReviewPhasePreamble({
-                    phase: phaseId,
-                    round: 1,
-                    rounds: exec.rounds,
-                  })}
-                  postamble={boardReviewPhaseProtocol({ phase: phaseId, round: 1 })}
+                  // A review phase's real run is the step envelope wrapped
+                  // around the phase envelope (the executor composes the phase
+                  // prompt, and the reactor then wraps THAT). The preview
+                  // reproduces both layers so the user sees the whole thing —
+                  // and since t3o-19 D6 moved the completion sentence out of
+                  // the protocol and into the postamble, showing only the
+                  // phase layer would hide the completion contract entirely.
+                  preamble={[
+                    boardStepPreamble({
+                      card: {
+                        key: PREVIEW_CARD_KEY,
+                        title: PREVIEW_CARD_TITLE,
+                        stage: stage.stageId,
+                      },
+                      stageLabel: stage.label,
+                      step: { stepLabel: reviewStepLabel(phaseId, 1) },
+                    }),
+                    boardReviewPhasePreamble({ phase: phaseId, round: 1, rounds: exec.rounds }),
+                  ].join("\n\n")}
+                  postamble={[
+                    boardReviewPhaseProtocol({ phase: phaseId, round: 1 }),
+                    boardStepPostamble({
+                      // The review stage's role is fixed — `resolveBoardStageExecution`
+                      // coerces this stage to the review member — and the loop
+                      // always runs unattended (D2/D6).
+                      humanInLoop: false,
+                      role: "review",
+                      step: {
+                        stepId: reviewStepId(phaseId, 1),
+                        stepLabel: reviewStepLabel(phaseId, 1),
+                      },
+                    }),
+                  ].join("\n\n")}
                   onChange={(prompt) => setPhase(phaseId, { prompt })}
                 />
                 <ModelRow

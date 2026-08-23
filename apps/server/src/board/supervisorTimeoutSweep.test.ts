@@ -44,6 +44,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   cardId,
   stepId: "building",
   stepLabel: "Building",
+  stageLabel: "Building",
   attempt: 1,
   stallCount: 0,
   lastNudgeAt: null,

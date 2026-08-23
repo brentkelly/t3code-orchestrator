@@ -11,6 +11,10 @@
  * call it, and what happens if it is not called — especially
  * `board_complete_step`, whose omission is indistinguishable from the agent
  * dying.
+ *
+ * They speak of STEPS only where steps exist (t3o-19, D1): every stage but the
+ * review loop runs exactly one, so an agent there is told about its work, not
+ * about a step it was never given an id for.
  */
 import {
   BoardCard,
@@ -23,6 +27,7 @@ import {
   BoardStageId,
   BoardStepCompletion,
   BoardStepOutcome,
+  BoardStepStatus,
   ProjectId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -84,8 +89,26 @@ const BoardCardContext = Schema.Struct({
   card: BoardCard,
   brief: Schema.NullOr(Schema.String),
   dependencies: Schema.Array(BoardCardContextDependency),
-  /** Prior step completions on this card, in order. */
+  /** Prior step completions on this card, in order. HISTORY ONLY — the work
+      the caller is assigned right now is `currentStep` (t3o-19). */
   steps: Schema.Array(BoardStepCompletion),
+  /** The work running on this card right now, or null when nothing is running
+      (t3o-19). This is the half of the orientation contract that was missing:
+      `steps` is history, so an agent had no way to learn what it was assigned
+      and inferred its own step id from the stage line. `stepId` is what
+      `board_complete_step` expects, and is only worth passing on a stage that
+      HAS steps — `stepLabel` is null on every other stage. */
+  currentStep: Schema.NullOr(
+    Schema.Struct({
+      stepId: TrimmedNonEmptyString,
+      /** The step's label, or null when this stage has no steps. */
+      stepLabel: Schema.NullOr(TrimmedNonEmptyString),
+      /** The stage's label. */
+      stageLabel: Schema.NullOr(TrimmedNonEmptyString),
+      status: BoardStepStatus,
+      attempt: Schema.Number,
+    }),
+  ),
   /** Proposed plans on this card, in order (metadata only; fetch a body with
       board_get_plan). */
   plans: Schema.Array(BoardPlan),
@@ -139,7 +162,7 @@ const NoParameters = Schema.Record(Schema.String, Schema.Never);
 
 export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
   description:
-    "Pull everything you need to work on your card: its title, brief, stage, dependency states, prior steps and their outcomes, proposed plans, its recent activity, and the current todo list of every thread working on it. Activity is truncated to the most recent entries, so treat it as a tail, not the full history; the per-thread todo lists are how you pick up where you (or another thread on this card) left off. Call this first when you start a step, and again whenever you need to re-orient. Your card is resolved from your thread — you never pass a card id. Fails if your thread is not linked to a card.",
+    "Pull everything you need to work on your card: its title, brief, stage, dependency states, the work assigned right now, prior work and its outcomes, proposed plans, its recent activity, and the current todo list of every thread working on it. Activity is truncated to the most recent entries, so treat it as a tail, not the full history; the per-thread todo lists are how you pick up where you (or another thread on this card) left off. Call this first when you start work, and again whenever you need to re-orient. Your card is resolved from your thread — you never pass a card id. Fails if your thread is not linked to a card.",
   parameters: NoParameters,
   success: BoardCardContext,
   failure: BoardToolError,
@@ -151,9 +174,11 @@ export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
 
 export const BoardCompleteStepTool = Tool.make("board_complete_step", {
   description:
-    "Report that your assigned step is finished. THIS IS THE COMPLETION CONTRACT: the board considers a step done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your step will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary (max 2 KiB) and optional structured payload (max 16 KiB serialised). The stepId must be the step you were assigned — completing any other step is rejected. Retry-safe: a repeat call with the same stepId re-returns a recorded 'succeeded' outcome unchanged; after a 'failed' or 'blocked' report, a later call on the live step records your new outcome (that is how a recovered retry reports success). Your card is resolved from your thread.",
+    "Report that your work on this stage is finished. THIS IS THE COMPLETION CONTRACT: the board considers the work done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your work will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary (max 2 KiB) and optional structured payload (max 16 KiB serialised). OMIT stepId: the board resolves the work you were assigned from your own thread. Pass one only if your prompt explicitly gave you a stepId — stages that run several steps, such as the code review loop, always do — and then pass exactly that string; any other value is rejected. Retry-safe: a repeat call with the same stepId re-returns a recorded 'succeeded' outcome unchanged; after a 'failed' or 'blocked' report, a later call on the live step records your new outcome (that is how a recovered retry reports success). Your card is resolved from your thread.",
   parameters: Schema.Struct({
-    stepId: TrimmedNonEmptyString,
+    /** Omitted means "the live step of my thread" (t3o-19, D3). Only a stage
+        that runs several steps states one, and only then is it passed back. */
+    stepId: Schema.optional(TrimmedNonEmptyString),
     outcome: BoardStepOutcome,
     summary: TrimmedNonEmptyString,
     /** Optional structured result, stored verbatim. */
@@ -168,7 +193,7 @@ export const BoardCompleteStepTool = Tool.make("board_complete_step", {
   }),
   failure: BoardToolError,
   dependencies,
-}).annotate(Tool.Title, "Complete board step");
+}).annotate(Tool.Title, "Complete board work");
 
 // `board_report_progress` and `board_request_input` were DELETED by t3o-18
 // (D13).

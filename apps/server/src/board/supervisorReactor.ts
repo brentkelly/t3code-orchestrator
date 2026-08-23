@@ -20,6 +20,7 @@ import {
   boardCardPlans,
   boardCardStepCompletions,
   boardCardStepState,
+  boardRunLabel,
   boardNextStageId,
   boardNonTerminalStepStates,
   boardSeedStageRole,
@@ -476,7 +477,10 @@ const make = Effect.gen(function* () {
     /** The frozen run-row fields a spawn needs (D12). */
     readonly step: {
       readonly stepId: string;
-      readonly stepLabel: string;
+      /** Null on a stage with no steps (t3o-19, D4); the title falls back to
+          the frozen stage label. */
+      readonly stepLabel: string | null;
+      readonly stageLabel: string | null;
       readonly providerInstanceId: BoardCardStepState["providerInstanceId"];
       readonly model: string;
       /** Frozen run-row mode (D5/D12): governs the runtime write posture. */
@@ -518,7 +522,7 @@ const make = Effect.gen(function* () {
       bootstrap: {
         createThread: {
           projectId: card.projectId,
-          title: `${card.key} · ${step.stepLabel}`,
+          title: `${card.key} · ${boardRunLabel(step) ?? card.stage}`,
           modelSelection: { instanceId: step.providerInstanceId, model: step.model },
           runtimeMode,
           interactionMode: "default",
@@ -565,7 +569,9 @@ const make = Effect.gen(function* () {
   const stepPromptFor = (card: BoardCard, state: BoardCardStepState): string =>
     composeStepPrompt({
       card,
+      stageLabel: state.stageLabel,
       step: {
+        stepId: state.stepId,
         stepLabel: state.stepLabel,
         prompt: state.prompt,
         humanInLoop: state.humanInLoop,
@@ -639,6 +645,7 @@ const make = Effect.gen(function* () {
       step: {
         stepId: state.stepId,
         stepLabel: state.stepLabel,
+        stageLabel: state.stageLabel,
         providerInstanceId: state.providerInstanceId,
         model: state.model,
         mode: state.mode,
@@ -715,6 +722,7 @@ const make = Effect.gen(function* () {
       step: {
         stepId: state.stepId,
         stepLabel: state.stepLabel,
+        stageLabel: state.stageLabel,
         providerInstanceId: state.providerInstanceId,
         model: state.model,
         mode: state.mode,
@@ -880,7 +888,7 @@ const make = Effect.gen(function* () {
       card,
       config: {
         stepId: card.stage,
-        label: stage.label,
+        stageLabel: stage.label,
         prompt: exec.prompt,
         model,
         timeoutMs: exec.timeoutMs,
@@ -904,7 +912,10 @@ const make = Effect.gen(function* () {
         commandId: yield* commandId("select-step"),
         cardId: card.id,
         stepId: card.stage,
-        stepLabel: stage.label,
+        // A re-entry conversation on the stage's own step: no step identity
+        // (t3o-19, D4), just the stage's name.
+        stepLabel: null,
+        stageLabel: stage.label,
         prompt: "",
         providerInstanceId: model.instanceId,
         model: model.model,
@@ -929,7 +940,8 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId("select-step"),
       cardId: card.id,
       stepId: plan.stepId,
-      stepLabel: plan.label,
+      stepLabel: plan.stepLabel,
+      stageLabel: stage.label,
       prompt,
       providerInstanceId: plan.model.instanceId,
       model: plan.model.model,
@@ -1001,7 +1013,7 @@ const make = Effect.gen(function* () {
       card,
       config: {
         stepId: card.stage,
-        label: stage.label,
+        stageLabel: stage.label,
         prompt: exec.prompt,
         model,
         timeoutMs: exec.timeoutMs,
@@ -1021,7 +1033,8 @@ const make = Effect.gen(function* () {
           commandId: yield* commandId("select-step"),
           cardId: card.id,
           stepId: plan.stepId,
-          stepLabel: plan.label,
+          stepLabel: plan.stepLabel,
+          stageLabel: stage.label,
           prompt: plan.prompt,
           providerInstanceId: plan.model.instanceId,
           model: plan.model.model,
@@ -1190,6 +1203,7 @@ const make = Effect.gen(function* () {
           step: {
             stepId: input.state.stepId,
             stepLabel: input.state.stepLabel,
+            stageLabel: input.state.stageLabel,
             providerInstanceId: input.state.providerInstanceId,
             model: input.state.model,
             mode: input.state.mode,

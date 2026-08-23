@@ -274,7 +274,12 @@ export function withGovernor(
         return Effect.succeed(
           todo === undefined
             ? null
-            : { hasList: todo.hasList, doneCount: 0, totalCount: todo.hasList ? 1 : 0, advancedAt: todo.advancedAt },
+            : {
+                hasList: todo.hasList,
+                doneCount: 0,
+                totalCount: todo.hasList ? 1 : 0,
+                advancedAt: todo.advancedAt,
+              },
         );
       },
       boardSweepThreadTodos: () => Effect.void,

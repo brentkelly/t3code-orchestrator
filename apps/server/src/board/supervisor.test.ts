@@ -19,11 +19,13 @@ import {
   type ComposeStepPromptStep,
 } from "./supervisor.ts";
 
-// The frozen run-row fields a spawn needs (t3o-15, D12) — the single step per
-// stage replaces the old multi-step recipe. `humanInLoop` false is an unattended
-// run, whose postamble carries the completion-contract / never-prose stance.
+// The frozen run-row fields a spawn needs (t3o-15, D12). `humanInLoop` false is
+// an unattended run, whose postamble carries the completion-contract /
+// never-prose stance. `stepLabel` defaults to NULL because Building — like
+// every stage but the review loop — has no steps (t3o-19, D4).
 const step = (overrides: Partial<ComposeStepPromptStep> = {}): ComposeStepPromptStep => ({
-  stepLabel: "Build",
+  stepId: "building",
+  stepLabel: null,
   prompt: "Implement the brief.",
   humanInLoop: false,
   ...overrides,
@@ -33,13 +35,16 @@ describe("composeStepPrompt (D5 envelope)", () => {
   it("has preamble (card context), body (template) and postamble (completion contract)", () => {
     const prompt = composeStepPrompt({
       card: { key: "T3-1", title: "Ship it", stage: BoardStageId.make("building") },
+      stageLabel: "Building",
       step: step(),
       role: "build",
     });
-    // Preamble: card key, title, stage, step, context pointer.
+    // Preamble: card key, title, stage, context pointer. No step line —
+    // Building has no steps (t3o-19, D4).
     assert.include(prompt, "T3-1");
     assert.include(prompt, "Ship it");
-    assert.include(prompt, "Step: Build.");
+    assert.include(prompt, "Stage: Building.");
+    assert.notInclude(prompt, "Step:");
     assert.include(prompt, "board_get_card_context");
     // Body: the frozen step prompt verbatim.
     assert.include(prompt, "Implement the brief.");
@@ -51,6 +56,7 @@ describe("composeStepPrompt (D5 envelope)", () => {
   it("words the question mechanism without naming a provider", () => {
     const prompt = composeStepPrompt({
       card: { key: "T3-1", title: "x", stage: BoardStageId.make("building") },
+      stageLabel: "Building",
       step: step(),
       role: "build",
     });
@@ -63,6 +69,7 @@ describe("composeStepPrompt (D5 envelope)", () => {
   it("carries no attempt counter: the retry ladder is supervisor bookkeeping", () => {
     const prompt = composeStepPrompt({
       card: { key: "T3-1", title: "Ship it", stage: BoardStageId.make("building") },
+      stageLabel: "Building",
       step: step(),
       role: "build",
     });
@@ -93,8 +100,12 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
         attempt: input.attempt ?? input.stallCount + 1,
         stallCount: input.stallCount,
         maxAttempts: input.maxAttempts ?? 5,
-        stepLabel: "Build",
-      } satisfies Pick<BoardCardStepState, "attempt" | "stallCount" | "maxAttempts" | "stepLabel">,
+        stepLabel: null,
+        stageLabel: "Building",
+      } satisfies Pick<
+        BoardCardStepState,
+        "attempt" | "stallCount" | "maxAttempts" | "stepLabel" | "stageLabel"
+      >,
       progressedSinceLastNudge: input.progressedSinceLastNudge ?? false,
       // t3o-18 D16: default to "the thread keeps a list", so the todo-specific
       // assertions below are the only ones that see the extra nudge line.
@@ -142,16 +153,61 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     if (withList.kind === "resume") assert.notInclude(withList.nudge, "write one");
   });
 
+  // t3o-19 AC 11: the escalation a human reads names the STEP only when the
+  // stage has steps. On every other stage `stepLabel` is null and naming a
+  // step would invent one.
+  it("names the stage, not a step, when the stage has no steps", () => {
+    const unstepped = decide({ stallCount: 4 });
+    assert.strictEqual(unstepped.kind, "escalate");
+    if (unstepped.kind === "escalate") {
+      assert.include(unstepped.question, 'Stage "Building"');
+      assert.notInclude(unstepped.question, "Step");
+    }
+    // A pre-020 row froze neither name. The human being escalated to should
+    // not be shown `Stage "null"`.
+    const unnamed = recoveryDecision({
+      stepState: { attempt: 5, stallCount: 4, maxAttempts: 5, stepLabel: null, stageLabel: null },
+      progressedSinceLastNudge: false,
+      hasTodoList: true,
+      stageEntryInvocations: 0,
+      maxInvocationsPerStageEntry: 20,
+    });
+    assert.strictEqual(unnamed.kind, "escalate");
+    if (unnamed.kind === "escalate") {
+      assert.include(unnamed.question, "This stage has now stalled");
+      assert.notInclude(unnamed.question, "null");
+    }
+    const stepped = recoveryDecision({
+      stepState: {
+        attempt: 5,
+        stallCount: 4,
+        maxAttempts: 5,
+        stepLabel: "Review · round 1",
+        stageLabel: "Code review",
+      },
+      progressedSinceLastNudge: false,
+      hasTodoList: true,
+      stageEntryInvocations: 0,
+      maxInvocationsPerStageEntry: 20,
+    });
+    assert.strictEqual(stepped.kind, "escalate");
+    if (stepped.kind === "escalate") {
+      assert.include(stepped.question, 'Step "Review · round 1"');
+    }
+  });
+
   it("t3o-18 D16: no envelope, nudge or escalation names a deleted tool", () => {
     const texts = [
       composeStepPrompt({
         card: { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building },
-        step: { stepLabel: "Build", prompt: "Do the work", humanInLoop: false },
+        stageLabel: "Building",
+        step: { stepId: "building", stepLabel: null, prompt: "Do the work", humanInLoop: false },
         role: "build",
       }),
       composeStepPrompt({
         card: { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building },
-        step: { stepLabel: "Build", prompt: "Do the work", humanInLoop: true },
+        stageLabel: "Building",
+        step: { stepId: "building", stepLabel: null, prompt: "Do the work", humanInLoop: true },
         role: "build",
       }),
       (() => {
@@ -170,10 +226,11 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
   });
 
   it("t3o-18 D16: the unattended postamble asks for a todo list; the human-in-the-loop one does not", () => {
-    const step = { stepLabel: "Build", prompt: "Do the work" };
+    const step = { stepId: "building", stepLabel: null, prompt: "Do the work" };
     const card = { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building };
     const unattended = composeStepPrompt({
       card,
+      stageLabel: "Building",
       step: { ...step, humanInLoop: false },
       role: "build",
     });
@@ -182,6 +239,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     // answer is noise, and these steps are not stall-supervised anyway.
     const humanInLoop = composeStepPrompt({
       card,
+      stageLabel: "Building",
       step: { ...step, humanInLoop: true },
       role: "build",
     });

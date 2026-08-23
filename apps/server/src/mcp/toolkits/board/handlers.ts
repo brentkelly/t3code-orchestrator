@@ -14,7 +14,9 @@ import {
   boardAppendOrderKey,
   boardCardPlans,
   boardCardStepCompletions,
+  boardCardStepState,
   boardLabelCatalogue,
+  isBoardTerminalStepStatus,
   boardPlanId,
   BoardCardId,
   CommandId,
@@ -180,6 +182,85 @@ const requireCallerCard = (
         }),
       )
     : Effect.succeed(card);
+};
+
+/**
+ * Which step a completion applies to (t3o-19, D3).
+ *
+ * The board resolves the caller's own work so an agent never has to name a
+ * step it was never told the id of — which is what every stage but the review
+ * loop was silently relying on the stage line to leak.
+ *
+ * Three cases, in order:
+ *
+ * 1. The caller owns the card's LIVE step → that step. The thread match is the
+ *    point: `resolveBoardCardForThread` resolves a card from ANY non-tombstoned
+ *    link, so a sibling thread on the same card must not be able to settle a run
+ *    it did not perform.
+ * 2. The caller has a SETTLED completion of its own on this card → that step,
+ *    which lands on the decider's idempotent path and re-returns the recorded
+ *    outcome. The supervisor settles the run row the instant it sees the first
+ *    completion (`handleStepCompleted`), so a retry almost always arrives after
+ *    the step is terminal; without this case the omitted-`stepId` shape the tool
+ *    now recommends would be LESS retry-safe than passing an id explicitly.
+ * 3. Neither → reject. Nothing of the caller's is outstanding, and guessing
+ *    would mean completing work it never did.
+ *
+ * An explicit `stepId` is passed through, but is still refused when it names the
+ * live step of a DIFFERENT thread (same reasoning as case 1). Everything else
+ * about it — an id for a step that never ran, an id belonging to another card —
+ * the decider validates, exactly as before.
+ */
+const resolveCompletionStepId = (
+  board: BoardState,
+  card: BoardCard,
+  scope: McpInvocationScope,
+  stepId: string | undefined,
+): Effect.Effect<string, BoardToolError> => {
+  const state = boardCardStepState(board, card.id);
+  const live = state !== null && !isBoardTerminalStepStatus(state.status) ? state : null;
+  const ownCompletions = boardCardStepCompletions(board, card.id).filter(
+    (completion) => completion.threadId === scope.threadId,
+  );
+
+  const candidate =
+    stepId !== undefined
+      ? stepId
+      : live !== null && live.threadId === scope.threadId
+        ? live.stepId
+        : ownCompletions[ownCompletions.length - 1]?.stepId;
+
+  if (candidate === undefined) {
+    return Effect.fail(
+      new BoardToolError({
+        code: "invalid-input",
+        message: `This thread has no work in progress on card '${card.key}', so there is nothing to complete. If your prompt gave you a stepId, pass it explicitly.`,
+      }),
+    );
+  }
+
+  // The guard runs on the RESOLVED id, whichever way it was resolved. Applying
+  // it only to the explicit branch left the fallback open: step ids repeat
+  // across stage entries, so a stale thread whose own recorded completion is
+  // `building`/failed would resolve to `building` again — and if the card has
+  // since re-entered Building under a NEW thread, the decider's supersede rule
+  // (`existing.outcome !== "succeeded" && liveMatch`) would overwrite that
+  // thread's live run with the stale thread's outcome.
+  if (
+    live !== null &&
+    live.stepId === candidate &&
+    live.threadId !== null &&
+    live.threadId !== scope.threadId
+  ) {
+    return Effect.fail(
+      new BoardToolError({
+        code: "invalid-input",
+        message: `Step '${candidate}' on card '${card.key}' is being run by another thread. Complete only the work you were assigned; omit stepId and the board will resolve yours.`,
+      }),
+    );
+  }
+
+  return Effect.succeed(candidate);
 };
 
 /** Resolve label NAMES against the live catalogue to ids; an unknown name is
@@ -369,6 +450,21 @@ export const boardHandlers = {
         brief: detail?.brief ?? null,
         dependencies,
         steps: boardCardStepCompletions(board, card.id),
+        currentStep: (() => {
+          // The live step, the half of the orientation contract `steps` never
+          // carried (t3o-19). A settled row is not "current": once the work is
+          // terminal there is nothing assigned, and reporting it would invite
+          // an agent to complete an id the decider will reject.
+          const state = boardCardStepState(board, card.id);
+          if (state === null || isBoardTerminalStepStatus(state.status)) return null;
+          return {
+            stepId: state.stepId,
+            stepLabel: state.stepLabel,
+            stageLabel: state.stageLabel,
+            status: state.status,
+            attempt: state.attempt,
+          };
+        })(),
         plans: boardCardPlans(board, card.id),
         activity,
         threads,
@@ -380,11 +476,36 @@ export const boardHandlers = {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
       const card = yield* requireCallerCard(board, deps.scope);
+      // Resolve an omitted stepId to the caller's own live step (t3o-19, D3).
+      // Only a stage that runs several steps ever tells an agent an id, so on
+      // every other stage the agent has none to pass — and used to have to
+      // infer one from the stage line in its preamble.
+      //
+      // Scoped to the CALLING THREAD, not just the card: if this card has
+      // already advanced and started new work, the caller's thread is no
+      // longer the live step's thread, so a late retry is rejected here
+      // instead of silently completing the next stage's step. Resolving
+      // server-side also makes the "pre-complete a future step" case the
+      // decider guards against unreachable rather than merely rejected.
+      const stepId = yield* resolveCompletionStepId(board, card, deps.scope, input.stepId);
       // Idempotency is decided in the decider (re-emit the first outcome); the
       // pre-read here is only to tell the agent its retry was a no-op.
       const existing = boardCardStepCompletions(board, card.id).find(
-        (completion) => completion.stepId === input.stepId,
+        (completion) => completion.stepId === stepId,
       );
+      // ...except on the recovery-retry path, where it is NOT a no-op. The
+      // decider supersedes a non-succeeded completion while the same step is
+      // live again (that is how a nudged agent reports success after a failed
+      // attempt), so mirroring its rule here keeps the reply from telling the
+      // agent "already completed: failed" about a call the board just recorded
+      // as succeeded.
+      const liveState = boardCardStepState(board, card.id);
+      const supersedes =
+        existing !== undefined &&
+        existing.outcome !== "succeeded" &&
+        liveState !== null &&
+        liveState.stepId === stepId &&
+        !isBoardTerminalStepStatus(liveState.status);
       // The agent's structured payload is stored verbatim as an opaque JSON
       // string (D8: carried through unread), so a schema codec would add
       // nothing over a plain stringify.
@@ -403,14 +524,14 @@ export const boardHandlers = {
       if (utf8ByteLength(input.summary) > BOARD_STEP_SUMMARY_MAX_BYTES) {
         return yield* new BoardToolError({
           code: "invalid-input",
-          message: `The summary is ${utf8ByteLength(input.summary)} bytes, over the ${BOARD_STEP_SUMMARY_MAX_BYTES}-byte cap. Summarise in a few sentences; details belong in board_report_progress notes or the payload.`,
+          message: `The summary is ${utf8ByteLength(input.summary)} bytes, over the ${BOARD_STEP_SUMMARY_MAX_BYTES}-byte cap. Summarise in a few sentences; details belong in the payload.`,
         });
       }
       const command: BoardCardCompleteStepCommand = {
         type: "board.card.complete-step",
         commandId: yield* mintCommandId,
         cardId: card.id,
-        stepId: input.stepId,
+        stepId,
         outcome: input.outcome,
         summary: input.summary,
         payload,
@@ -419,9 +540,9 @@ export const boardHandlers = {
       };
       yield* dispatch(deps, command);
       return {
-        stepId: input.stepId,
-        outcome: existing?.outcome ?? input.outcome,
-        alreadyCompleted: existing !== undefined,
+        stepId,
+        outcome: supersedes ? input.outcome : (existing?.outcome ?? input.outcome),
+        alreadyCompleted: existing !== undefined && !supersedes,
       };
     }),
 

@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BoardCardStepState,
   BOARD_CARD_LABELS_MAX,
   BOARD_THREAD_TODO_CURRENT_MAX_BYTES,
   BOARD_THREAD_TODO_ITEMS_MAX,
@@ -571,5 +572,57 @@ describe("deriveBoardCardThreadState aggregates across live threads (t3o-18, D7)
   it("still accepts a single thread, so every pre-t3o-18 caller is unchanged", () => {
     expect(deriveBoardCardThreadState(waiting).threadState).toBe("waiting");
     expect(deriveBoardCardThreadState(null).threadState).toBe("none");
+  });
+});
+
+describe("BoardCardStepState decoding (t3o-19 D7)", () => {
+  // The event log is replayed through `Schema.decodeUnknownEffect`, so a
+  // `board.card-step-selected` payload written before t3o-19 — which has no
+  // `stageLabel` KEY at all — must still decode. A required-but-nullable field
+  // would reject it, and D7's "replay equals rehydration" would hold for the
+  // projection tables while silently breaking for the log.
+  const legacyPayload = {
+    cardId: "card-1",
+    stepId: "building",
+    stepLabel: "Building",
+    attempt: 1,
+    stallCount: 0,
+    lastNudgeAt: null,
+    prompt: "Implement the brief.",
+    providerInstanceId: "codex",
+    model: "gpt-5-codex",
+    mode: "build",
+    humanInLoop: false,
+    maxAttempts: 3,
+    timeoutMs: 600_000,
+    threadId: null,
+    status: "pending",
+    slotHeld: false,
+    startedAt: null,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  it("decodes a pre-t3o-19 payload that carries no stageLabel key", () => {
+    const decoded = Schema.decodeUnknownSync(BoardCardStepState)(legacyPayload);
+    expect(decoded.stageLabel).toBe(null);
+    expect(decoded.stepLabel).toBe("Building");
+  });
+
+  it("still decodes a post-t3o-19 payload, stepped or unstepped", () => {
+    const unstepped = Schema.decodeUnknownSync(BoardCardStepState)({
+      ...legacyPayload,
+      stepLabel: null,
+      stageLabel: "Planning",
+    });
+    expect(unstepped.stepLabel).toBe(null);
+    expect(unstepped.stageLabel).toBe("Planning");
+
+    const stepped = Schema.decodeUnknownSync(BoardCardStepState)({
+      ...legacyPayload,
+      stepId: "review@1",
+      stepLabel: "Review · round 1",
+      stageLabel: "Code review",
+    });
+    expect(stepped.stepLabel).toBe("Review · round 1");
   });
 });

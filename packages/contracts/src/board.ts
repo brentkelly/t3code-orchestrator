@@ -760,9 +760,30 @@ export const BoardCardStepState = Schema.Struct({
       keyed `(cardId, stepId)` records that this card has run this stage's step
       — the first-entry-vs-re-entry signal (D7). */
   stepId: TrimmedNonEmptyString,
-  /** The step's human label, carried so a card can render "which step" without
-      re-resolving the stage config. */
-  stepLabel: TrimmedNonEmptyString,
+  /** The step's human label, or NULL when this stage has no steps (t3o-19,
+      D4) — which is every stage but the review loop, where the single step's
+      label was just the stage label and rendering it produced
+      `Stage: planning. Step: Planning.`. The presence of this label IS the
+      "does this stage have steps" signal; there is no separate flag, so a
+      future sequence executor gets correct prompts by construction.
+      Carried so a card can render "which step" without re-resolving the stage
+      config; readers fall back to `stageLabel`. */
+  stepLabel: Schema.NullOr(TrimmedNonEmptyString),
+  /** The stage's human label, frozen at stage entry (t3o-19, D5) so the
+      preamble and every `stepLabel` reader resolve a name without a board
+      read. NULL on a row written before the freeze — history is never
+      rewritten (D7), so legacy rows keep their non-null `stepLabel` and read
+      exactly as they did.
+
+      A DECODING DEFAULT, not a plain nullable: this struct is the payload of
+      `board.card-step-selected`, and the event log is replayed through
+      `Schema.decodeUnknownEffect` on read. An event written before t3o-19 has
+      no `stageLabel` KEY, which a required-but-nullable field rejects — so
+      without this, D7's "replay equals rehydration" would hold for the table
+      and break for the log. */
+  stageLabel: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Cumulative invocation count of this step this stage entry, 1-based;
       recovery increments it and it never resets within the entry (t3o-17, D1).
       Kept for display ("attempt 7") and for the per-stage-entry invocation
@@ -1051,6 +1072,22 @@ export function boardCardStepCompletions(
   cardId: BoardCardId,
 ): ReadonlyArray<BoardStepCompletion> {
   return (board.stepCompletions ?? []).filter((completion) => completion.cardId === cardId);
+}
+
+/**
+ * What to call a card's current run in the UI and in operator-facing text
+ * (t3o-19, D4/D5): its step's label when the stage HAS steps, the stage's label
+ * otherwise, and null on a legacy row that froze neither.
+ *
+ * Named once because three readers share the rule — the run thread's title, the
+ * activity rail's input-requested row, and the settings/detail views — and a
+ * reader that resolved it differently would show a card two different names for
+ * the same run.
+ */
+export function boardRunLabel(
+  state: Pick<BoardCardStepState, "stepLabel" | "stageLabel">,
+): string | null {
+  return state.stepLabel ?? state.stageLabel;
 }
 
 /** A card's live step state (t3o-10), or null when the card has no step
@@ -1639,7 +1676,13 @@ export const BoardCardSelectStepCommand = Schema.Struct({
   cardId: BoardCardId,
   /** The stage's single step id (D1), equal to the stage id. */
   stepId: TrimmedNonEmptyString,
-  stepLabel: TrimmedNonEmptyString,
+  /** Null when the stage has no steps (t3o-19, D4). */
+  stepLabel: Schema.NullOr(TrimmedNonEmptyString),
+  /** The stage's label, frozen for the run (t3o-19, D5). Decoding-defaulted
+      for the same replay reason as `BoardCardStepState.stageLabel`. */
+  stageLabel: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   // ── Frozen execution config resolved on stage entry (D12) ────────────
   // The reactor resolves these server-side (the pure decider cannot read
   // settings, D8) and the decider stamps them onto the step-state row, so
@@ -3354,6 +3397,13 @@ const BOARD_REVIEW_STEP_ID = /^(review|triage|adjudicate)@(\d+)$/;
     reader's view of loop progress can never drift. */
 export function reviewStepId(phase: BoardReviewPhaseId, round: number): string {
   return `${phase}@${round}`;
+}
+
+/** The step label `ReviewLoopExecutor` mints for a phase/round. Lives beside
+    `reviewStepId` so the executor and the settings preview — which must show
+    the user the same identity a real run carries — cannot drift. */
+export function reviewStepLabel(phase: BoardReviewPhaseId, round: number): string {
+  return `${BOARD_REVIEW_PHASE_LABELS[phase]} · round ${round}`;
 }
 
 export function parseReviewStepId(

@@ -26,6 +26,7 @@ import {
   isBoardReviewStageExecution,
   parseReviewStepId,
   reviewStepId,
+  reviewStepLabel,
   type BoardModelSelection,
   type BoardReviewPhaseExecution,
   type BoardReviewPhaseId,
@@ -117,7 +118,10 @@ export function reviewLoopDecision(input: {
       kind: "run",
       round,
       stepId: reviewStepId(phase, round),
-      label: `${BOARD_REVIEW_PHASE_LABELS[phase]} · round ${round}`,
+      // A genuine step identity (t3o-19, D4): the review loop is the one stage
+      // that runs several, so its prompts keep the full step vocabulary and
+      // state the step id outright.
+      stepLabel: reviewStepLabel(phase, round),
       prompt: composeBoardReviewPhasePrompt({
         phase,
         round,

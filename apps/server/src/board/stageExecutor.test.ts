@@ -30,7 +30,7 @@ const model: BoardModelSelection = {
 
 const config = (overrides: Partial<BoardStageExecutorConfig> = {}): BoardStageExecutorConfig => ({
   stepId: "building",
-  label: "Building",
+  stageLabel: "Building",
   prompt: "Implement the card's brief.",
   model,
   timeoutMs: 600_000,
@@ -54,7 +54,9 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       kind: "run",
       round: 1,
       stepId: "building",
-      label: "Building",
+      // No step identity (t3o-19, D4): the stage runs one step, so naming it
+      // would just echo the stage.
+      stepLabel: null,
       prompt: "Implement the card's brief.",
       model,
       timeoutMs: 600_000,
@@ -112,7 +114,12 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
   it("passes the config's step id, label, prompt and model through unchanged", () => {
     const plan = SimpleStageExecutor.planNext({
       card,
-      config: config({ stepId: "triage", label: "Triage", prompt: "Assess it.", maxAttempts: 1 }),
+      config: config({
+        stepId: "triage",
+        stageLabel: "Triage",
+        prompt: "Assess it.",
+        maxAttempts: 1,
+      }),
       completions: [],
       runState: { round: 2, completedStepIds: [] },
     });
@@ -121,7 +128,9 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       kind: "run",
       round: 2,
       stepId: "triage",
-      label: "Triage",
+      // A single-step stage plans NO step identity (t3o-19, D4) — the stage's
+      // own label would only echo itself in the prompt.
+      stepLabel: null,
       prompt: "Assess it.",
       model,
       timeoutMs: 600_000,
