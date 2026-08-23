@@ -196,7 +196,7 @@ textarea{font-family:var(--font-sans)}
                                 <span style="font:400 11.5px var(--font-mono);color:var(--muted-fg)">Modified</span>
                               </sc-if>
                               <sc-if value="{{ r.showReset }}" hint-placeholder-val="{{ false }}">
-                                <button type="button" onClick="{{ r.reset }}" title="Restore the default prompt" style="{{ r.resetStyle }}" style-hover="background:var(--accent);color:var(--fg)">
+                                <button type="button" onMouseDown="{{ r.holdEdit }}" onClick="{{ r.reset }}" title="Restore the default prompt" style="{{ r.resetStyle }}" style-hover="background:var(--accent);color:var(--fg)">
                                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg>
                                   Reset
                                 </button>
@@ -420,6 +420,7 @@ class Component extends DCLogic {
       editLabel: editing ? "Editing" : "Edit",
       modified: !isDefault && !editing,
       showReset: !isDefault && editing,
+      holdEdit: e => e.preventDefault(),
       reset: () => this.setState({ confirmReset: { key, label, apply: () => setText(this.defaults[key]) } }),
       resetStyle: "display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px;border:1px solid var(--border);border-radius:var(--control-radius);background:transparent;color:var(--muted-fg);font:500 12px var(--font-sans);cursor:pointer",
       editStyle: `display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px;border:1px solid ${editing ? "var(--primary)" : "var(--border)"};border-radius:var(--control-radius);background:transparent;color:${editing ? "var(--primary)" : "var(--muted-fg)"};font:500 12px var(--font-sans);cursor:pointer`,
