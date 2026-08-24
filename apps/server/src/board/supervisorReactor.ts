@@ -1122,17 +1122,6 @@ const make = Effect.gen(function* () {
     // dispatch helper swallows.
     const settings = yield* boardSettings;
     const exec = resolveBoardStageExecution(settings, card.stage);
-    // A completion only auto-continues a stage that AUTO-EXECUTES. A completed
-    // step is normally the card's current stage's own step, but if the card was
-    // dragged to a different column while a step was still in flight and that
-    // step later finishes, `card.stage` is now the DESTINATION — and the simple
-    // executor, seeing no completion for it, would select a fresh step and spawn
-    // a thread there. That is how a finished Planning run, on a card already
-    // moved to the manual Sprint column, once spawned a spurious Sprint thread
-    // on the app's fallback provider. The move handler now abandons such
-    // leftovers before they can complete; this is the second lock, and it also
-    // means a manual stage never auto-spawns off a completion by any route.
-    if (!exec.autoExecute) return;
     const completions = boardCardStepCompletions(board, card.id);
     const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
     const completedStepIds = completions
@@ -1155,6 +1144,18 @@ const make = Effect.gen(function* () {
     });
     switch (plan.kind) {
       case "run": {
+        // Only auto-EXECUTE a stage that opts into it. A completed step is
+        // normally the card's current stage's own, but if the card was dragged
+        // to another column while a step was still in flight and that step later
+        // finishes, `card.stage` is now the DESTINATION — and the simple
+        // executor, seeing no completion for it, plans a fresh `run`. That is
+        // how a finished Planning run, on a card already moved to the manual
+        // Sprint column, once spawned a spurious Sprint thread on the app's
+        // fallback provider. The move handler now abandons such leftovers before
+        // they complete; this is the second lock. Gating only the `run` arm (not
+        // the whole continuation) leaves a manual stage's `complete` → auto-
+        // advance path intact — this blocks a spurious SPAWN, not a crossing.
+        if (!exec.autoExecute) return;
         // A continuation is executor-driven, never a human re-entry: inject the
         // planned prompt and honour the stage's own human-in-the-loop stance.
         const humanInLoop = resolveHumanInLoop(board, settings, card, exec);
