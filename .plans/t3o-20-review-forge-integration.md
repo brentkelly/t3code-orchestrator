@@ -78,6 +78,26 @@ GitHub remote blocks with a clear reason rather than silently degrading to the l
   naturally re-derives (see D5 — v1 reads human replies on existing threads; net-new human
   findings ride the next fresh review).
 
+## Revision — prompt/system rebalance (supersedes parts of D3/D5/D7)
+
+After review, the prompt/system split was corrected to give the user real
+control. The guiding rule: **only genuinely t3o-specific tool briefing is forced;
+everything else lives in the user-editable phase prompt.**
+
+- The **editable default prompts** now carry the full core of each phase: the
+  persona, the **untrusted-input/safety stance** (a user can reword it), reading
+  the surrounding code, what each severity means, and the whole PR workflow —
+  ensure a PR exists, post findings as inline comments, reply on threads, post
+  verdicts, read human comments back in.
+- The **forced protocol** (`boardReviewPhaseProtocol`) is now ONLY the machine
+  payload contract the executor parses to gate convergence
+  (`{reviewedSha, findings[...]}` / `{fixedSha, dispositions[...]}` /
+  `{verdicts[...]}` + the critical/improvement-block rule). Nothing else.
+- **Dropped:** the `BOARD_REVIEW_UNTRUSTED_INPUT` forced constant (D7 — safety is
+  now editable), and the `<!-- t3o-finding:<id> -->` marker + `commentId` finding
+  field (D3). Phases track threads via the PR's own comment structure, exactly as
+  the `/pullrequest*` prototype does — no hidden markers needed.
+
 ## Design decisions
 
 ### D1 — GitHub-mandatory; PR opened at stage entry, or the card blocks
