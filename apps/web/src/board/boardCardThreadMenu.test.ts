@@ -12,6 +12,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   BLANK_THREAD_WARN,
   BOARD_STAGE_RESTART_IN_FLIGHT_REASON,
+  boardStageLabelMidSentence,
   isBoardCardRunInFlight,
   resolveBoardThreadStageRestart,
   runBlankThreadCreation,
@@ -158,5 +159,24 @@ describe("runBlankThreadCreation", () => {
     expect(await h.run()).toBe(false);
     expect(h.calls.rollback).toBe(0);
     expect(h.warnings).toEqual([]);
+  });
+});
+
+describe("boardStageLabelMidSentence", () => {
+  it("de-capitalises an ordinary capitalised label", () => {
+    expect(boardStageLabelMidSentence("Planning")).toBe("planning");
+    expect(boardStageLabelMidSentence("Code review")).toBe("code review");
+    expect(boardStageLabelMidSentence("Ready for merge")).toBe("ready for merge");
+  });
+
+  it("leaves a label that is not a capitalised word alone", () => {
+    // Stage labels are user-editable, so an acronym or an already-lowercase
+    // name must survive unchanged — "restart qa" reads as a typo, not a
+    // sentence.
+    expect(boardStageLabelMidSentence("QA")).toBe("QA");
+    expect(boardStageLabelMidSentence("PR Review")).toBe("PR Review");
+    expect(boardStageLabelMidSentence("UAT")).toBe("UAT");
+    expect(boardStageLabelMidSentence("planning")).toBe("planning");
+    expect(boardStageLabelMidSentence("")).toBe("");
   });
 });

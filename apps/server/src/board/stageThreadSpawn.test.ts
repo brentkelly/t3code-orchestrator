@@ -18,9 +18,11 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
+  buildingCard,
   cardMoved,
   codexStep,
   makeBoardCard,
+  movedToBuilding,
   settingsWith,
   stepStatus,
   withGovernor,
@@ -115,4 +117,33 @@ it.effect(
           );
         }),
     ),
+);
+
+it.effect("a build-mode spawn failure gives the slot back, so the next card still runs", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("card-a", "a"), buildingCard("card-b", "b")],
+        nextCardNumberByProject: {},
+      },
+      // One slot for both cards: if the refused spawn kept it, card-b could
+      // never start — a permanent under-capacity leak that no assertion
+      // elsewhere would catch.
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+      rejectThreadCreate: true,
+    },
+    ({ slots, pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(buildingCard("card-a", "a"), 1));
+
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("card-a")), "stalled");
+        assert.strictEqual(yield* slots.heldTotal, 0, "the acquired slot came back");
+
+        // The ceiling is free again, so the second card is offered the slot and
+        // fails the same way — it is never held behind a phantom run.
+        yield* pumpDomain(movedToBuilding(buildingCard("card-b", "b"), 2));
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("card-b")), "stalled");
+        assert.strictEqual(yield* slots.heldTotal, 0);
+      }),
+  ),
 );

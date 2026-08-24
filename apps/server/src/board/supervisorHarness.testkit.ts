@@ -272,7 +272,14 @@ export function withGovernor(
     // thread), and a double that quietly accepted it hid a spawn path which
     // created no thread at all — every board run failed in production while the
     // suite stayed green.
-    const threads = yield* Ref.make<ReadonlySet<string>>(new Set());
+    // Seeded from the fixture's shells, not empty: `initialShells` IS the set of
+    // threads that exist before the reactor starts (a seeded step-state row's
+    // thread), so a nudge sent to one must be accepted here. Starting empty
+    // would have the double deny a turn the real engine allows — the same
+    // double-vs-reality gap this invariant exists to close.
+    const threads = yield* Ref.make<ReadonlySet<string>>(
+      new Set(input.initialShells === undefined ? [] : [...input.initialShells.keys()]),
+    );
     const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
     const dispatchThreadCommand = (command: OrchestrationCommand) =>
       Effect.gen(function* () {

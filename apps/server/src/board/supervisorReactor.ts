@@ -169,10 +169,17 @@ const make = Effect.gen(function* () {
     engine.dispatch(command).pipe(
       Effect.as(true),
       Effect.catchCause((cause) =>
-        Effect.logWarning("board supervisor dispatch failed", {
-          commandType: (command as { readonly type?: string }).type,
-          cause: Cause.pretty(cause),
-        }).pipe(Effect.as(false)),
+        // An interrupt-only cause is a teardown, not a rejection: the command's
+        // fate is unknown, so reporting "did not land" would have the caller
+        // compensate — delete a thread that may exist, stall a step on a server
+        // that is merely shutting down. Re-interrupt instead, mirroring the WS
+        // bootstrap path's own guard.
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("board supervisor dispatch failed", {
+              commandType: (command as { readonly type?: string }).type,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(false)),
       ),
     );
 
@@ -632,6 +639,11 @@ const make = Effect.gen(function* () {
         progressed: false,
         createdAt: yield* nowIso,
       });
+      // Escalation releases the step's slot exactly as the recovery escalation
+      // does (D4), gated on the PERSISTED `slotHeld`: a step that reached this
+      // through recovery holds one, a step that never got admitted does not
+      // (its caller releases the slot it had just acquired itself).
+      yield* releaseSlot(input.state);
     },
   );
 
@@ -1320,13 +1332,20 @@ const make = Effect.gen(function* () {
           runSetup: false,
           text: decision.nudge,
         });
-        // A respawn that produced no thread sent nothing: fall through to the
-        // "cannot recover" arm below rather than burn an attempt and point the
-        // step at a thread that does not exist.
-        if (respawned !== null) {
-          threadId = respawned;
-          acted = true;
+        // A respawn that produced no thread sent nothing. Escalating here is
+        // what keeps the failure visible: the `!acted` arm below leaves the
+        // step `running` against the thread this recovery just tombstoned, so
+        // the timeout sweep would re-enter every `timeoutMs` forever — no
+        // attempt consumed, a build step's slot held throughout, and nothing
+        // the human can see or restart (the phantom-running state this whole
+        // change exists to eliminate).
+        if (respawned === null) {
+          yield* escalateSpawnFailure({ card: input.card, state: input.state });
+          yield* schedule();
+          return;
         }
+        threadId = respawned;
+        acted = true;
       }
     } else if (input.state.threadId !== null) {
       yield* sendTurn({

@@ -7,7 +7,7 @@
  * board column never updated.
  */
 import type { OrchestrationEvent } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { assert, describe, it } from "@effect/vitest";
 
 import { coalesceShellWindow } from "./shellCoalesce.ts";
 
@@ -29,11 +29,10 @@ describe("coalesceShellWindow", () => {
       cardEvent(3, "board.card-step-admitted"),
     ]);
 
-    expect(survivors.map((survivor) => survivor.type)).toEqual([
-      "board.card-moved",
-      "board.card-step-selected",
-      "board.card-step-admitted",
-    ]);
+    assert.deepStrictEqual(
+      survivors.map((survivor) => survivor.type),
+      ["board.card-moved", "board.card-step-selected", "board.card-step-admitted"],
+    );
   });
 
   it("collapses repeats of one board event type on one card, keeping the last", () => {
@@ -43,7 +42,10 @@ describe("coalesceShellWindow", () => {
       cardEvent(3, "board.card-moved"),
     ]);
 
-    expect(survivors.map((survivor) => survivor.sequence)).toEqual([2, 3]);
+    assert.deepStrictEqual(
+      survivors.map((survivor) => survivor.sequence),
+      [2, 3],
+    );
   });
 
   it("keeps board events of different cards apart", () => {
@@ -52,7 +54,7 @@ describe("coalesceShellWindow", () => {
       cardEvent(2, "board.card-moved", "card-2"),
     ]);
 
-    expect(survivors).toHaveLength(2);
+    assert.strictEqual(survivors.length, 2);
   });
 
   it("still collapses a thread's burst to its last event — those deltas refetch", () => {
@@ -77,7 +79,10 @@ describe("coalesceShellWindow", () => {
       }),
     ]);
 
-    expect(survivors.map((survivor) => survivor.sequence)).toEqual([3]);
+    assert.deepStrictEqual(
+      survivors.map((survivor) => survivor.sequence),
+      [3],
+    );
   });
 
   it("returns survivors in ascending sequence order", () => {
@@ -87,6 +92,9 @@ describe("coalesceShellWindow", () => {
       cardEvent(9, "board.card-updated", "card-1"),
     ]);
 
-    expect(survivors.map((survivor) => survivor.sequence)).toEqual([1, 5, 9]);
+    assert.deepStrictEqual(
+      survivors.map((survivor) => survivor.sequence),
+      [1, 5, 9],
+    );
   });
 });

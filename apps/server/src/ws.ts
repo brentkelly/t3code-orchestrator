@@ -695,18 +695,17 @@ const makeWsRpcLayer = (
           ),
         );
 
-      // Turn a batch of domain events into shell stream items, coalescing by
-      // aggregate first. `toShellStreamEvent` re-reads the *current* projected
-      // shell for an aggregate, so within a batch only the latest event per
-      // aggregate matters: a burst of streaming `thread.message-sent` deltas for
-      // one thread collapses into a single shell refetch, and an unrelated
-      // `thread.created` in the same batch is never stuck behind those DB reads.
+      // Turn a batch of domain events into shell stream items, coalescing first.
+      // Collapsing is what keeps a burst of streaming `thread.message-sent`
+      // deltas from serializing the stream behind one DB read each, and keeps an
+      // unrelated `thread.created` in the same batch from queuing behind them.
+      // WHICH events may collapse into which is a rule of its own — see
+      // `coalesceShellWindow`; it is not simply "the last event per aggregate".
       //
-      // Input events arrive in ascending sequence; we keep the last (highest
-      // sequence) event per aggregate, then re-sort ascending before emitting so
-      // the client — which applies shell items strictly by increasing sequence
-      // and drops any `sequence <= snapshotSequence` — never skips a coalesced
-      // item. The refetch runs with bounded concurrency (order-preserving).
+      // Survivors come back in ascending sequence order, so the client — which
+      // applies shell items strictly by increasing sequence and drops any
+      // `sequence <= snapshotSequence` — never skips a coalesced item. The
+      // refetch runs with bounded concurrency (order-preserving).
       const SHELL_REFETCH_CONCURRENCY = 8;
       const coalesceShellEvents = (
         events: ReadonlyArray<OrchestrationEvent>,
@@ -715,9 +714,6 @@ const makeWsRpcLayer = (
           if (events.length === 0) {
             return [];
           }
-          // Which events subsume which is a rule of its own (board deltas are
-          // payload-derived, so they do NOT collapse per aggregate) — see
-          // `coalesceShellWindow`.
           const survivors = coalesceShellWindow(events);
           const shellEvents = yield* Effect.forEach(survivors, toShellStreamEvents, {
             concurrency: SHELL_REFETCH_CONCURRENCY,
