@@ -1648,6 +1648,14 @@ const make = Effect.gen(function* () {
           threadId: existing.threadId,
           createdAt: yield* nowIso,
         });
+        // Stop the abandoned thread's turn: a leftover step can be genuinely
+        // mid-flight (a stuck-running provider, or a build run the human dragged
+        // away from), and settling the row does not touch the agent. Left alone
+        // it keeps burning provider capacity and — for a build-mode leftover —
+        // keeps writing the worktree while the destination stage spawns a second
+        // thread, breaking the one-writer invariant. Best-effort, like every
+        // other orphan interrupt (the dispatch helper swallows a reject).
+        yield* interruptOrphan(existing.threadId);
         // Reflect the unlink onto the card handed to the kickoff: `beginStageRun`
         // reads the links to decide whether a live stage thread already exists,
         // and the leftover link we just tombstoned (its role is the old step id

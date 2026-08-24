@@ -213,7 +213,7 @@ it.effect("a card moved into Planning while a leftover step lingers still gets a
         globalMaxConcurrent: 3,
       }),
     },
-    ({ pumpDomain, board }) =>
+    ({ pumpDomain, board, commands }) =>
       Effect.gen(function* () {
         yield* pumpDomain(
           cardMoved(
@@ -239,6 +239,17 @@ it.effect("a card moved into Planning while a leftover step lingers still gets a
             (link) => link.threadId === state?.threadId && link.tombstonedAt === null,
           ),
           "the spawned thread is linked to the card",
+        );
+        // The abandoned leftover thread's turn is interrupted, not left running
+        // on against a step the card has moved past (wasted capacity, and for a
+        // build-mode leftover a second writer on the worktree).
+        assert.isDefined(
+          (yield* commands).find(
+            (command) =>
+              command.type === "thread.turn.interrupt" &&
+              command.threadId === ThreadId.make("thread-dead-old"),
+          ),
+          "the abandoned leftover turn is interrupted",
         );
       }),
   ),
