@@ -106,7 +106,7 @@ export function boardStepPreamble(
   const { card, step } = input;
   const stage = input.stageLabel ?? card.stage;
   return [
-    `You are working card ${card.key} — "${card.title}".`,
+    `You are working card ${card.key}, titled "${card.title}".`,
     step.stepLabel === null ? `Stage: ${stage}.` : `Stage: ${stage}. Step: ${step.stepLabel}.`,
     `Call board_get_card_context for the brief, plan, dependencies and prior progress.`,
   ].join("\n");
@@ -136,8 +136,8 @@ export function boardStepPostamble(input: {
     : [
         `You are running unattended. Do not stop to ask permission; make every reasonable decision yourself and proceed.`,
         step.stepLabel === null
-          ? `When the work is done, call ${call} — that is the ONLY way to finish; ending your turn any other way is treated as a failure and recovered.`
-          : `When this step is finished, call ${call} — that is the ONLY way to finish; ending your turn any other way is treated as a failure and recovered.`,
+          ? `When the work is done, call ${call}. That is the ONLY way to finish; ending your turn any other way is treated as a failure and recovered.`
+          : `When this step is finished, call ${call}. That is the ONLY way to finish; ending your turn any other way is treated as a failure and recovered.`,
         // The todo-list line (t3o-18 D16) replaced t3o-17's
         // `board_report_progress` instruction: the supervisor's progress signal
         // watches the agent's own plan tool advance, so this nudges a behaviour
@@ -175,7 +175,7 @@ export function boardReviewPhasePreamble(input: {
   readonly rounds: number;
 }): string {
   const { phase, round, rounds } = input;
-  const header = `Code review — ${BOARD_REVIEW_PHASE_LABELS[phase]}, round ${round} of up to ${rounds}.`;
+  const header = `Code review, ${BOARD_REVIEW_PHASE_LABELS[phase]} phase, round ${round} of up to ${rounds}.`;
   const priorContext =
     round > 1 || phase !== "review"
       ? "Call board_get_card_context first and read the `steps` payloads: they carry every prior phase's findings, dispositions and verdicts for this card."
@@ -199,8 +199,8 @@ export function boardReviewPhaseProtocol(input: {
     case "review":
       return [
         "To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail }] }, where `severity` is `critical`, `improvement` or `nitpick`.",
-        "Critical and improvement findings block the round; nitpicks never do — a round with no blocking findings ends the loop.",
-        "If you cannot produce a valid findings payload, complete with outcome failed instead — never complete succeeded with an empty or malformed payload.",
+        "Critical and improvement findings block the round; nitpicks never do. A round with no blocking findings ends the loop.",
+        "If you cannot produce a valid findings payload, complete with outcome failed instead. Never complete succeeded with an empty or malformed payload.",
       ].join(" ");
     case "triage":
       return 'To finish this phase, complete with a succeeded outcome and a JSON payload { fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }.';
