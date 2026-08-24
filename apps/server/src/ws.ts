@@ -71,6 +71,7 @@ import {
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+import { coalesceShellWindow } from "./orchestration/shellCoalesce.ts";
 // T3o: board events map to card shell deltas in the board module.
 import { boardShellStreamEvent, isBoardEvent } from "./board/projector.ts";
 // T3o: board RPC handlers live in the board module (t3o-04); the actor stamp and
@@ -714,13 +715,10 @@ const makeWsRpcLayer = (
           if (events.length === 0) {
             return [];
           }
-          const latestByAggregate = new Map<string, OrchestrationEvent>();
-          for (const event of events) {
-            latestByAggregate.set(`${event.aggregateKind}:${event.aggregateId}`, event);
-          }
-          const survivors = Array.from(latestByAggregate.values()).sort(
-            (left, right) => left.sequence - right.sequence,
-          );
+          // Which events subsume which is a rule of its own (board deltas are
+          // payload-derived, so they do NOT collapse per aggregate) — see
+          // `coalesceShellWindow`.
+          const survivors = coalesceShellWindow(events);
           const shellEvents = yield* Effect.forEach(survivors, toShellStreamEvents, {
             concurrency: SHELL_REFETCH_CONCURRENCY,
           });
