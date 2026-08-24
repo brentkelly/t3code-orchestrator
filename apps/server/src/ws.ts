@@ -702,10 +702,14 @@ const makeWsRpcLayer = (
       // WHICH events may collapse into which is a rule of its own — see
       // `coalesceShellWindow`; it is not simply "the last event per aggregate".
       //
-      // Survivors come back in ascending sequence order, so the client — which
-      // applies shell items strictly by increasing sequence and drops any
-      // `sequence <= snapshotSequence` — never skips a coalesced item. The
-      // refetch runs with bounded concurrency (order-preserving).
+      // Survivors come back in ascending sequence order, which is what the
+      // client's strictly-increasing guard (`sequence <= snapshotSequence` is
+      // dropped) requires of coalescing: no survivor is stranded behind one
+      // already applied. That guard is per ITEM, not per event, so two deltas
+      // mapped from ONE event share its sequence and the client keeps only the
+      // first — a known gap in the sibling `card-threads` delta, not something
+      // coalescing introduces. The refetch runs with bounded concurrency
+      // (order-preserving).
       const SHELL_REFETCH_CONCURRENCY = 8;
       const coalesceShellEvents = (
         events: ReadonlyArray<OrchestrationEvent>,

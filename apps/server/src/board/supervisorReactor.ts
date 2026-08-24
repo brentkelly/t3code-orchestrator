@@ -813,9 +813,13 @@ const make = Effect.gen(function* () {
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
     if (cwd === null) {
+      // Same wedge as a refused spawn, so the same exit: left `pending`, the
+      // step would be re-offered and re-logged at every boundary forever with
+      // nothing the human can see or restart.
       yield* Effect.logWarning("board supervisor: no project cwd for plan-mode step", {
         cardId: card.id,
       });
+      yield* escalateSpawnFailure({ card, state });
       return;
     }
     const threadId = yield* spawnStepThread({

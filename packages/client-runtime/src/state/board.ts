@@ -219,11 +219,21 @@ export function applyBoardShellStreamEvent(
       // The authoritative live flip of `stalled` (t3o-17, D3): recovery gave up
       // on the card's step (→ true) or a retry / fresh run put it back to work
       // (→ false). A no-op for a card we do not hold.
-      const nextCards = Arr.map(cards, (card) =>
-        card.cardId === event.cardId && card.stalled !== event.stalled
-          ? { ...card, stalled: event.stalled }
-          : card,
-      );
+      //
+      // Raising `stalled` also clears `queued`: both badges are views of ONE
+      // step status, so they are mutually exclusive at the source — a stalled
+      // step is not waiting for a slot. Without this, a step that escalates
+      // straight out of `queued` (its slot was granted but the spawn was
+      // refused) keeps a queue badge no later delta clears, and it goes on
+      // occupying a displayed queue position for every card behind it until a
+      // reconnect re-derives the shell.
+      const nextCards = Arr.map(cards, (card) => {
+        if (card.cardId !== event.cardId) return card;
+        const queued = event.stalled ? false : card.queued;
+        return card.stalled === event.stalled && card.queued === queued
+          ? card
+          : { ...card, stalled: event.stalled, queued };
+      });
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
     }
     case "card-threads": {

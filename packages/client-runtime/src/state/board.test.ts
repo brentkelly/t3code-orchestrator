@@ -167,6 +167,42 @@ describe("board shell reducer", () => {
     expect(cleared.cards?.[0]?.stalled).toBe(false);
   });
 
+  it("a card that stalls out of the queue drops its queue badge with it", () => {
+    // Both badges are views of one step status, so they cannot both be true.
+    // A step whose slot was granted but whose spawn was refused escalates
+    // straight from `queued` to `stalled`, and no later delta clears the queue
+    // badge — it would otherwise hold a displayed queue position until reconnect.
+    const queued = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
+      { kind: "card-queued", sequence: 2, cardId: BoardCardId.make("card-1"), queued: true },
+    );
+    expect(queued.cards?.[0]?.queued).toBe(true);
+    const stalled = applyShellStreamEvent(queued, {
+      kind: "card-stalled",
+      sequence: 3,
+      cardId: BoardCardId.make("card-1"),
+      stalled: true,
+    });
+    expect(stalled.cards?.[0]?.stalled).toBe(true);
+    expect(stalled.cards?.[0]?.queued).toBe(false);
+  });
+
+  it("clearing the stalled badge leaves the queue badge alone", () => {
+    // The clear rides a fresh select-step / settle, neither of which says
+    // anything about the queue — only `card-queued` and an admit do.
+    const queued = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
+      { kind: "card-queued", sequence: 2, cardId: BoardCardId.make("card-1"), queued: true },
+    );
+    const cleared = applyShellStreamEvent(queued, {
+      kind: "card-stalled",
+      sequence: 3,
+      cardId: BoardCardId.make("card-1"),
+      stalled: false,
+    });
+    expect(cleared.cards?.[0]?.queued).toBe(true);
+  });
+
   it("a card-carrying upsert preserves the stalled badge — a drag never blanks it (t3o-17)", () => {
     const stalled = applyShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),

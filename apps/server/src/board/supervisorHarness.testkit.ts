@@ -37,6 +37,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type OrchestrationThread,
   type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
@@ -122,6 +123,34 @@ export const makeBoardCard = (input: {
     admits the step. */
 export const buildingCard = (id: string, orderKey: string): BoardCard =>
   makeBoardCard({ id, stage: "building", orderKey, worktree: readyWorktree(id) });
+
+/** The read-model row a `thread.create` produces — only the fields the board
+    decider reads (existence, `deletedAt`) carry meaning; the rest is inert
+    filler so the row satisfies `OrchestrationThread`. */
+const threadRow = (
+  command: Extract<OrchestrationCommand, { readonly type: "thread.create" }>,
+): OrchestrationThread => ({
+  id: command.threadId,
+  projectId: command.projectId,
+  title: command.title,
+  modelSelection: command.modelSelection,
+  runtimeMode: command.runtimeMode,
+  interactionMode: command.interactionMode,
+  branch: command.branch,
+  worktreePath: command.worktreePath,
+  latestTurn: null,
+  createdAt: command.createdAt,
+  updatedAt: command.createdAt,
+  archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  deletedAt: null,
+  messages: [],
+  proposedPlans: [],
+  activities: [],
+  checkpoints: [],
+  session: null,
+});
 
 export const readModel = (board: BoardState): OrchestrationReadModel => ({
   snapshotSequence: 0,
@@ -290,6 +319,15 @@ export function withGovernor(
             );
           }
           yield* Ref.update(threads, (current) => new Set(current).add(String(command.threadId)));
+          // The board decider reads `readModel.threads` to decide whether a
+          // thread may be linked to a card, so a created thread has to land in
+          // the model too — otherwise every spawn's link-thread is refused here
+          // while it lands in production, and a test asserting the card's links
+          // could never pass.
+          yield* Ref.update(model, (current) => ({
+            ...current,
+            threads: [...current.threads, threadRow(command)],
+          }));
           return;
         }
         if (command.type === "thread.delete") {
@@ -298,6 +336,10 @@ export function withGovernor(
             next.delete(String(command.threadId));
             return next;
           });
+          yield* Ref.update(model, (current) => ({
+            ...current,
+            threads: current.threads.filter((thread) => thread.id !== command.threadId),
+          }));
           return;
         }
         if (command.type !== "thread.turn.start") return;

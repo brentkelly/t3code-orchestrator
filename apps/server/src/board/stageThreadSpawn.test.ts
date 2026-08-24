@@ -75,11 +75,15 @@ it.effect("a card dropped into an auto-executing stage gets a thread of its own"
           dispatched.indexOf(turn!),
           "create precedes the turn",
         );
-        // The link is what puts the thread on the card in the UI; it can only
-        // land for a thread that exists.
+        // The link is what puts the thread on the card in the UI, and it is
+        // asserted through the read model rather than the dispatch log: a
+        // link-thread the decider REJECTED still appears in `commands` (the
+        // reactor's dispatch helper swallows the rejection), which is the exact
+        // failure this file exists to catch.
+        const linked = (yield* board).cards.find((entry) => entry.id === cardId);
         assert.isDefined(
-          dispatched.find(
-            (command) => command.type === "board.card.link-thread" && command.threadId === threadId,
+          linked?.threadLinks.find(
+            (link) => link.threadId === threadId && link.tombstonedAt === null,
           ),
           "the spawned thread is linked to the card",
         );

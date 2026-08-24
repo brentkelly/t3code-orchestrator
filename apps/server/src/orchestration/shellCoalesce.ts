@@ -19,9 +19,7 @@
  *   subscription) did. Board events therefore collapse per EVENT TYPE, so each
  *   kind of delta survives and only genuine repeats of one kind collapse.
  */
-import type { OrchestrationEvent } from "@t3tools/contracts";
-
-import { isBoardEvent } from "../board/projector.ts";
+import { isBoardEvent, type OrchestrationEvent } from "@t3tools/contracts";
 
 export function shellCoalesceKey(event: OrchestrationEvent): string {
   return isBoardEvent(event)
