@@ -37,6 +37,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type OrchestrationThread,
   type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
@@ -123,6 +124,34 @@ export const makeBoardCard = (input: {
 export const buildingCard = (id: string, orderKey: string): BoardCard =>
   makeBoardCard({ id, stage: "building", orderKey, worktree: readyWorktree(id) });
 
+/** The read-model row a `thread.create` produces — only the fields the board
+    decider reads (existence, `deletedAt`) carry meaning; the rest is inert
+    filler so the row satisfies `OrchestrationThread`. */
+const threadRow = (
+  command: Extract<OrchestrationCommand, { readonly type: "thread.create" }>,
+): OrchestrationThread => ({
+  id: command.threadId,
+  projectId: command.projectId,
+  title: command.title,
+  modelSelection: command.modelSelection,
+  runtimeMode: command.runtimeMode,
+  interactionMode: command.interactionMode,
+  branch: command.branch,
+  worktreePath: command.worktreePath,
+  latestTurn: null,
+  createdAt: command.createdAt,
+  updatedAt: command.createdAt,
+  archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  deletedAt: null,
+  messages: [],
+  proposedPlans: [],
+  activities: [],
+  checkpoints: [],
+  session: null,
+});
+
 export const readModel = (board: BoardState): OrchestrationReadModel => ({
   snapshotSequence: 0,
   projects: [
@@ -162,6 +191,24 @@ const buildingStageExecution = (step: TestBuildStep): BoardStageExecution => ({
   maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
 });
 
+/** The Planning stage configured to auto-execute (t3o-15): `plan` mode, so its
+    run holds no concurrency slot and needs no worktree — the shape a card
+    dropped into an auto-executing Planning column runs under. */
+const planningStageExecution = (step: TestBuildStep): BoardStageExecution => ({
+  kind: "simple",
+  autoExecute: true,
+  prompt: step.prompt,
+  model: { instanceId: step.providerInstanceId, model: DEFAULT_TEXT_GENERATION_MODEL },
+  mode: "plan",
+  humanInLoop: false,
+  humanInLoopWithPlan: false,
+  humanInLoopWithoutPlan: false,
+  autoAdvance: false,
+  timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
+  maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+  maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
+});
+
 /** `building` is the single build step the Building stage runs (a one-element
     array in every caller, mirroring the retired single-step recipe). It is
     folded into the Building stage's execution config keyed by the Building stage
@@ -170,10 +217,16 @@ export const settingsWith = (input: {
   readonly building: ReadonlyArray<TestBuildStep>;
   readonly globalMaxConcurrent: number;
   readonly perInstance?: Record<string, number | null>;
+  /** Pass a step to make Planning auto-execute too — the plan-mode counterpart
+      of `building`, for the suites that drive a card into Planning. */
+  readonly planning?: TestBuildStep;
 }): BoardSettings => ({
   projects: {},
   pipeline: {
     [BOARD_SEED_STAGE_IDS.building]: buildingStageExecution(input.building[0]!),
+    ...(input.planning === undefined
+      ? {}
+      : { [BOARD_SEED_STAGE_IDS.planning]: planningStageExecution(input.planning) }),
   },
   concurrency: {
     perInstance: input.perInstance ?? {},
@@ -190,6 +243,10 @@ export type Harness = {
   readonly pumpDomain: (event: OrchestrationEvent) => Effect.Effect<void>;
   readonly pumpRuntime: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   readonly board: Effect.Effect<BoardState>;
+  /** Every command the reactor dispatched, in order — including the non-board
+      ones the engine double otherwise treats as no-ops, so a test can assert
+      HOW a thread was spawned, not just that a step went running. */
+  readonly commands: Effect.Effect<ReadonlyArray<OrchestrationCommand>>;
 };
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
@@ -204,6 +261,9 @@ export function withGovernor(
         commit-liveness signal the timeout sweep reads. Defaults to "" (no
         commit history). */
     readonly latestCommitIso?: string;
+    /** Reject every `thread.create`, so a test can drive the spawn-failure path
+        (a thread the engine refuses to create) without a provider double. */
+    readonly rejectThreadCreate?: boolean;
     /** The cached todo state per thread id (t3o-18): the reactor reads
         `advancedAt` for the stall-reset / timeout-liveness signal and `hasList`
         for the recovery nudge. Absent threads answer "no list". */
@@ -235,17 +295,81 @@ export function withGovernor(
         }
       });
 
+    // The thread aggregate is not modelled here, but its ONE invariant that the
+    // board depends on is: a turn cannot start on a thread that was never
+    // created. The real engine rejects that (`thread.turn.start` requires the
+    // thread), and a double that quietly accepted it hid a spawn path which
+    // created no thread at all — every board run failed in production while the
+    // suite stayed green.
+    // Seeded from the fixture's shells, not empty: `initialShells` IS the set of
+    // threads that exist before the reactor starts (a seeded step-state row's
+    // thread), so a nudge sent to one must be accepted here. Starting empty
+    // would have the double deny a turn the real engine allows — the same
+    // double-vs-reality gap this invariant exists to close.
+    const threads = yield* Ref.make<ReadonlySet<string>>(
+      new Set(input.initialShells === undefined ? [] : [...input.initialShells.keys()]),
+    );
+    const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
+    const dispatchThreadCommand = (command: OrchestrationCommand) =>
+      Effect.gen(function* () {
+        if (command.type === "thread.create") {
+          if (input.rejectThreadCreate === true) {
+            return yield* Effect.fail(
+              new Error(`Refusing to create thread '${String(command.threadId)}'.`),
+            );
+          }
+          yield* Ref.update(threads, (current) => new Set(current).add(String(command.threadId)));
+          // The board decider reads `readModel.threads` to decide whether a
+          // thread may be linked to a card, so a created thread has to land in
+          // the model too — otherwise every spawn's link-thread is refused here
+          // while it lands in production, and a test asserting the card's links
+          // could never pass.
+          yield* Ref.update(model, (current) => ({
+            ...current,
+            threads: [...current.threads, threadRow(command)],
+          }));
+          return;
+        }
+        if (command.type === "thread.delete") {
+          yield* Ref.update(threads, (current) => {
+            const next = new Set(current);
+            next.delete(String(command.threadId));
+            return next;
+          });
+          yield* Ref.update(model, (current) => ({
+            ...current,
+            threads: current.threads.filter((thread) => thread.id !== command.threadId),
+          }));
+          return;
+        }
+        if (command.type !== "thread.turn.start") return;
+        const known = yield* Ref.get(threads).pipe(
+          Effect.map((current) => current.has(String(command.threadId))),
+        );
+        if (known) return;
+        return yield* Effect.fail(
+          new Error(
+            `Thread '${String(command.threadId)}' does not exist for command '${command.type}'.`,
+          ),
+        );
+      });
+
     const engineStub = {
       dispatch: (command: OrchestrationCommand) =>
-        (isBoardCommand(command)
-          ? Ref.get(model).pipe(
-              Effect.flatMap((rm) => decideBoardCommand({ command, readModel: rm })),
-              Effect.flatMap((decided) =>
-                Effect.forEach(boardDecidedEvents(decided), applyDecided, { discard: true }),
-              ),
-            )
-          : Effect.void
-        ).pipe(Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence }))))),
+        Ref.update(commands, (current) => [...current, command])
+          .pipe(
+            Effect.andThen(
+              isBoardCommand(command)
+                ? Ref.get(model).pipe(
+                    Effect.flatMap((rm) => decideBoardCommand({ command, readModel: rm })),
+                    Effect.flatMap((decided) =>
+                      Effect.forEach(boardDecidedEvents(decided), applyDecided, { discard: true }),
+                    ),
+                  )
+                : dispatchThreadCommand(command),
+            ),
+          )
+          .pipe(Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence }))))),
       streamDomainEvents: Stream.fromQueue(domainQueue),
       latestSequence: Ref.get(seq),
     } as unknown as OrchestrationEngineService["Service"];
@@ -363,6 +487,7 @@ export function withGovernor(
               (m) => m.board ?? ({ cards: [], nextCardNumberByProject: {} } satisfies BoardState),
             ),
           ),
+          commands: Ref.get(commands),
         });
       }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
     );

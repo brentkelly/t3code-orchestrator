@@ -33,6 +33,19 @@ export function isBoardCardRunInFlight(
 }
 
 /**
+ * A stage label as it reads MID-SENTENCE ("New thread — restart planning").
+ * Stage labels are user-editable, so this cannot simply lowercase: `QA`,
+ * `PR Review` and `UAT` are names, not sentence-case words, and lowercasing
+ * them mangles them. Only a label that starts uppercase-then-lowercase — an
+ * ordinary capitalised word — is de-capitalised, and only its first character,
+ * so "Code review" reads "code review" while "QA" stays "QA". `toLowerCase`
+ * (not `toLocaleLowerCase`) keeps the result independent of the host locale.
+ */
+export function boardStageLabelMidSentence(label: string): string {
+  return /^\p{Lu}\p{Ll}/u.test(label) ? label.charAt(0).toLowerCase() + label.slice(1) : label;
+}
+
+/**
  * The `+` menu's restart affordance (t3o-14 D1/D4): `null` when the current
  * stage does not auto-execute (the item is absent, not disabled); otherwise the
  * stage label plus a disabled reason that is non-null exactly while a supervised

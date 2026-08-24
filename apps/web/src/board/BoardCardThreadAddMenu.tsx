@@ -4,6 +4,7 @@
  * Three actions, one popover:
  *
  *   Auto-executing stage:  New thread — restart <stage label>   (board.card.start-stage-thread)
+ *                          (the stage name reads mid-sentence, so de-capitalised)
  *                          New blank thread
  *                          Adopt an existing thread…
  *
@@ -27,13 +28,16 @@ import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { boardStageLabelMidSentence } from "./boardCardThreadMenu";
 import { BoardPickerSearchBody, type BoardPickerOption } from "./BoardSearchAddPicker";
 
 /**
  * The restart affordance's state, or `null` when the current stage does not
  * auto-execute (the item is absent, not disabled — D4). `label` names the stage
- * ("restart Planning"); a non-null `disabledReason` disables the item and gives
- * the tooltip / hint the reason a supervised run in flight blocks a restart.
+ * mid-sentence, so it renders de-capitalised ("restart planning") — see
+ * `boardStageLabelMidSentence`; a non-null
+ * `disabledReason` disables the item and gives the tooltip / hint the reason a
+ * supervised run in flight blocks a restart.
  */
 export interface BoardThreadStageRestart {
   readonly label: string;
@@ -114,7 +118,7 @@ export function BoardCardThreadAddMenuBody({
           hint={stageRestart.disabledReason ?? undefined}
           icon={<RotateCwIcon className="size-3.5" />}
           onClick={onRestartStage}
-          title={`New thread — restart ${stageRestart.label}`}
+          title={`New thread — restart ${boardStageLabelMidSentence(stageRestart.label)}`}
         />
       ) : null}
       <MenuRow

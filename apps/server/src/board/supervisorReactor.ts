@@ -161,6 +161,28 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** `dispatch`, but the caller learns whether the command LANDED. The plain
+      helper above swallows a rejection, which is right for best-effort writes
+      and wrong for the two commands a spawn is built from: a thread that was
+      never created must not be recorded as the step's running thread. */
+  const dispatchLanded = (command: Parameters<typeof engine.dispatch>[0]) =>
+    engine.dispatch(command).pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) =>
+        // An interrupt-only cause is a teardown, not a rejection: the command's
+        // fate is unknown, so reporting "did not land" would have the caller
+        // compensate — delete a thread that may exist, stall a step on a server
+        // that is merely shutting down. Re-interrupt instead, mirroring the WS
+        // bootstrap path's own guard.
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("board supervisor dispatch failed", {
+              commandType: (command as { readonly type?: string }).type,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(false)),
+      ),
+    );
+
   const boardSettings = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.board ?? DEFAULT_BOARD_SETTINGS),
     Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
@@ -518,7 +540,31 @@ const make = Effect.gen(function* () {
     // needed" and continues once a human approves. Tool access stays
     // `interactionMode: "default"` (the MCP write tools are a separate axis).
     const runtimeMode = step.runtimeMode;
-    yield* dispatch({
+    // The thread is created with its OWN command first. `thread.turn.start`
+    // carries a `bootstrap.createThread` block, but that block is interpreted
+    // by the WebSocket dispatch path (`dispatchBootstrapTurnStart` in ws.ts),
+    // NOT by the engine — a server-side dispatch straight into the engine is
+    // decided as an ordinary turn start and rejected: "thread does not exist".
+    // The board dispatches in-process, so it creates the thread itself.
+    const created = yield* dispatchLanded({
+      type: "thread.create",
+      commandId: yield* commandId("spawn-thread"),
+      threadId,
+      projectId: card.projectId,
+      title: `${card.key} · ${boardRunLabel(step) ?? card.stage}`,
+      modelSelection: {
+        instanceId: step.providerInstanceId,
+        model: step.model,
+        ...(step.modelOptions === undefined ? {} : { options: step.modelOptions }),
+      },
+      runtimeMode,
+      interactionMode: "default",
+      branch: input.branch,
+      worktreePath: input.worktreePath,
+      createdAt,
+    });
+    if (!created) return null;
+    const started = yield* dispatchLanded({
       type: "thread.turn.start",
       commandId: yield* commandId("spawn-turn"),
       threadId,
@@ -530,24 +576,19 @@ const make = Effect.gen(function* () {
       },
       runtimeMode,
       interactionMode: "default",
-      bootstrap: {
-        createThread: {
-          projectId: card.projectId,
-          title: `${card.key} · ${boardRunLabel(step) ?? card.stage}`,
-          modelSelection: {
-            instanceId: step.providerInstanceId,
-            model: step.model,
-            ...(step.modelOptions === undefined ? {} : { options: step.modelOptions }),
-          },
-          runtimeMode,
-          interactionMode: "default",
-          branch: input.branch,
-          worktreePath: input.worktreePath,
-          createdAt,
-        },
-      },
       createdAt,
     });
+    if (!started) {
+      // The thread exists but will never run a turn. Delete it rather than
+      // leave an empty thread in the sidebar for a run that never started —
+      // the same cleanup the WS bootstrap path performs.
+      yield* dispatch({
+        type: "thread.delete",
+        commandId: yield* commandId("spawn-cleanup"),
+        threadId,
+      });
+      return null;
+    }
     yield* dispatch({
       type: "board.card.link-thread",
       commandId: yield* commandId("link-thread"),
@@ -570,6 +611,41 @@ const make = Effect.gen(function* () {
     }
     return threadId;
   });
+
+  /**
+   * A spawn that produced no thread (the create or its first turn was
+   * rejected). Nothing is running, so the step must NOT be admitted as
+   * `running` against a thread that does not exist: that phantom state reads as
+   * a live run, so every later kickoff — a drag back in, the card's "+ →
+   * restart" — hits the one-step-at-a-time guard and silently does nothing.
+   *
+   * Land it in `stalled` instead, the same status recovery escalates to: the
+   * card shows the loud badge, and an on-demand restart explicitly supersedes a
+   * stalled step, so the human has a way back.
+   */
+  const escalateSpawnFailure = Effect.fn("board-supervisor-escalateSpawnFailure")(
+    function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
+      yield* Effect.logWarning("board supervisor: could not spawn a thread for the step", {
+        cardId: input.card.id,
+        stepId: input.state.stepId,
+      });
+      yield* dispatch({
+        type: "board.card.recover-step",
+        commandId: yield* commandId("spawn-failed"),
+        cardId: input.card.id,
+        stepId: input.state.stepId,
+        threadId: null,
+        escalateToHuman: true,
+        progressed: false,
+        createdAt: yield* nowIso,
+      });
+      // Escalation releases the step's slot exactly as the recovery escalation
+      // does (D4), gated on the PERSISTED `slotHeld`: a step that reached this
+      // through recovery holds one, a step that never got admitted does not
+      // (its caller releases the slot it had just acquired itself).
+      yield* releaseSlot(input.state);
+    },
+  );
 
   // Whether a step's thread is gone (deleted or never present) — recovery must
   // respawn rather than nudge a thread that no longer exists.
@@ -672,6 +748,14 @@ const make = Effect.gen(function* () {
       runSetup: true,
       text: stepPromptFor(card, state),
     });
+    if (threadId === null) {
+      // No thread was created, so release the slot this candidate just acquired
+      // (the persisted `slotHeld` is still false — admit-step never ran — so
+      // `releaseSlot` would decline it) and escalate rather than admit.
+      yield* slots.release(state.providerInstanceId);
+      yield* escalateSpawnFailure({ card, state });
+      return;
+    }
     // Observe the admit dispatch (the generic `dispatch` helper swallows
     // rejections): if admit-step does not land, the persisted `slotHeld` stays
     // false and the settle path can never release the slot just acquired — a
@@ -729,9 +813,13 @@ const make = Effect.gen(function* () {
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
     if (cwd === null) {
+      // Same wedge as a refused spawn, so the same exit: left `pending`, the
+      // step would be re-offered and re-logged at every boundary forever with
+      // nothing the human can see or restart.
       yield* Effect.logWarning("board supervisor: no project cwd for plan-mode step", {
         cardId: card.id,
       });
+      yield* escalateSpawnFailure({ card, state });
       return;
     }
     const threadId = yield* spawnStepThread({
@@ -751,6 +839,12 @@ const make = Effect.gen(function* () {
       runSetup: false,
       text: stepPromptFor(card, state),
     });
+    // A plan step holds no slot, so a failed spawn leaks no capacity — but it
+    // must still not be admitted against a thread that was never created.
+    if (threadId === null) {
+      yield* escalateSpawnFailure({ card, state });
+      return;
+    }
     yield* dispatch({
       type: "board.card.admit-step",
       commandId: yield* commandId("admit-step"),
@@ -1225,7 +1319,7 @@ const make = Effect.gen(function* () {
             createdAt: yield* nowIso,
           });
         }
-        threadId = yield* spawnStepThread({
+        const respawned = yield* spawnStepThread({
           card: input.card,
           step: {
             stepId: input.state.stepId,
@@ -1242,6 +1336,19 @@ const make = Effect.gen(function* () {
           runSetup: false,
           text: decision.nudge,
         });
+        // A respawn that produced no thread sent nothing. Escalating here is
+        // what keeps the failure visible: the `!acted` arm below leaves the
+        // step `running` against the thread this recovery just tombstoned, so
+        // the timeout sweep would re-enter every `timeoutMs` forever — no
+        // attempt consumed, a build step's slot held throughout, and nothing
+        // the human can see or restart (the phantom-running state this whole
+        // change exists to eliminate).
+        if (respawned === null) {
+          yield* escalateSpawnFailure({ card: input.card, state: input.state });
+          yield* schedule();
+          return;
+        }
+        threadId = respawned;
         acted = true;
       }
     } else if (input.state.threadId !== null) {

@@ -71,6 +71,7 @@ import {
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+import { coalesceShellWindow } from "./orchestration/shellCoalesce.ts";
 // T3o: board events map to card shell deltas in the board module.
 import { boardShellStreamEvent, isBoardEvent } from "./board/projector.ts";
 // T3o: board RPC handlers live in the board module (t3o-04); the actor stamp and
@@ -694,18 +695,30 @@ const makeWsRpcLayer = (
           ),
         );
 
-      // Turn a batch of domain events into shell stream items, coalescing by
-      // aggregate first. `toShellStreamEvent` re-reads the *current* projected
-      // shell for an aggregate, so within a batch only the latest event per
-      // aggregate matters: a burst of streaming `thread.message-sent` deltas for
-      // one thread collapses into a single shell refetch, and an unrelated
-      // `thread.created` in the same batch is never stuck behind those DB reads.
+      // Turn a batch of domain events into shell stream items, coalescing first.
+      // Collapsing is what keeps a burst of streaming `thread.message-sent`
+      // deltas from serializing the stream behind one DB read each, and keeps an
+      // unrelated `thread.created` in the same batch from queuing behind them.
+      // WHICH events may collapse into which is a rule of its own — see
+      // `coalesceShellWindow`; it is not simply "the last event per aggregate".
       //
-      // Input events arrive in ascending sequence; we keep the last (highest
-      // sequence) event per aggregate, then re-sort ascending before emitting so
-      // the client — which applies shell items strictly by increasing sequence
-      // and drops any `sequence <= snapshotSequence` — never skips a coalesced
-      // item. The refetch runs with bounded concurrency (order-preserving).
+      // Survivors come back in ascending sequence order, which is what the
+      // client's strictly-increasing guard (`sequence <= snapshotSequence` is
+      // dropped) requires of coalescing: no survivor is stranded behind one
+      // already applied. That guard is per ITEM, not per event, so two deltas
+      // mapped from ONE event share its sequence and the client keeps only the
+      // first — a known gap in the sibling `card-threads` delta, not something
+      // coalescing introduces. The refetch runs with bounded concurrency
+      // (order-preserving).
+      //
+      // TODO(shell-sibling-sequence): the `card-threads` sibling delta shares
+      // its primary's `sequence`, so the client's strict `<=` guard drops it
+      // and live card→thread link / todo updates only land on reconnect. This
+      // is pre-existing and every fix changes shell sequencing for every delta
+      // family, so it is deferred — full diagnosis and the review adjudication
+      // are on PR #36 (issues are disabled on this repo, hence the grep tag
+      // rather than a link). Fix: give siblings distinct monotonic sequences,
+      // or relax the client guard to allow equal-sequence siblings once.
       const SHELL_REFETCH_CONCURRENCY = 8;
       const coalesceShellEvents = (
         events: ReadonlyArray<OrchestrationEvent>,
@@ -714,13 +727,7 @@ const makeWsRpcLayer = (
           if (events.length === 0) {
             return [];
           }
-          const latestByAggregate = new Map<string, OrchestrationEvent>();
-          for (const event of events) {
-            latestByAggregate.set(`${event.aggregateKind}:${event.aggregateId}`, event);
-          }
-          const survivors = Array.from(latestByAggregate.values()).sort(
-            (left, right) => left.sequence - right.sequence,
-          );
+          const survivors = coalesceShellWindow(events);
           const shellEvents = yield* Effect.forEach(survivors, toShellStreamEvents, {
             concurrency: SHELL_REFETCH_CONCURRENCY,
           });
