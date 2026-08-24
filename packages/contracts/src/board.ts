@@ -3346,6 +3346,12 @@ export const BoardReviewFinding = Schema.Struct({
   line: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   title: TrimmedNonEmptyString,
   detail: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** The id of the inline PR review comment this finding was posted as (t3o-20
+      D3), so `triage`/`adjudicate` can reply on the right thread. Optional: a
+      finding raised before a PR existed, or a repo-wide finding with no line to
+      anchor to, carries none — the phases then fall back to the
+      `<!-- t3o-finding:<id> -->` marker in the comment body. */
+  commentId: Schema.optional(TrimmedNonEmptyString),
 });
 export type BoardReviewFinding = typeof BoardReviewFinding.Type;
 
@@ -3454,11 +3460,11 @@ export const DEFAULT_BOARD_REVIEW_ROUNDS = 5;
     mechanics here would only drift from it. These carry the reviewer /
     triager / adjudicator persona a user then edits. */
 export const DEFAULT_BOARD_REVIEW_PHASE_PROMPT =
-  "Review the changes on this card's branch against its base ref as a fresh-eyes senior engineer. Diff the worktree and read every changed file. If the change raises no blocking findings, say so explicitly.";
+  "Your job this round is to find every problem in this PR's changes and log each as a code review comment on the exact file and line it affects — a fresh-eyes senior engineer seeing the code for the first time, judging it as it stands. Read beyond the diff: pull in the validators, handlers, models, routes, config and existing tests the change touches or relies on, so each finding is grounded in how the code actually behaves. Weigh correctness and security first (injection, broken or missing auth, cross-tenant access, data loss, races, regressions of existing behaviour), then design, readability and test coverage. Rate each finding honestly — critical for anything that would cause an incident or break existing behaviour, improvement for code that works but is fragile or under-tested, nitpick for cosmetic — and never inflate a nit to force another round. Give every comment a concrete reason and a specific fix; if nothing blocks, say so.";
 export const DEFAULT_BOARD_TRIAGE_PHASE_PROMPT =
-  "For each blocking finding, either fix it in the worktree or reject it with a clear, specific reason. Make the smallest correct change and run the project's checks before finishing.";
+  "Your job this round is to resolve every blocking finding the review raised — as the author, working the review comments one by one and answering each on its thread. Fix by preference; reject only when you have concrete evidence the finding is wrong (a test showing the current behaviour is correct, a spec or doc quote, or a counter-example from the codebase), and give that evidence in your reply. When you fix a behavioural or security defect, prove it with a test that fails before your change and passes after, and name that test in your reply so the adjudicator can check it. Fix the underlying cause, not the symptom, and when a finding admits several reasonable fixes pick the one most consistent with the surrounding code and say why.";
 export const DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT =
-  "Rule on each finding's triage as a skeptical adjudicator: verify whether a claimed fix actually holds and whether a rejection is justified.";
+  "Your job this round is to independently rule on how the author handled each finding — a skeptical adjudicator checking the work against the actual code, not taking the author's word for it. \"This is fixed\" is a hypothesis to test at the line, not a fact: for a claimed fix, read the real change and confirm it resolves the finding, and prefer proof from tests — where the author named a test that proves the fix, run or read it to confirm it actually exercises the finding and passes; for a behavioural or security fix, a passing test that would have caught the original problem is the strongest evidence and its absence is grounds for fix-incomplete. For a rejection, check whether its stated reason is genuinely true in the code, not merely plausible. Record a verdict on each finding and post it on its thread. Don't pad in either direction — a false upheld ships a real bug and a false absent burns a round.";
 
 /** A single review phase's execution config (D2): its own prompt and its own
     model, so a thorough reviewer can pair with a cheap triager. `model` null

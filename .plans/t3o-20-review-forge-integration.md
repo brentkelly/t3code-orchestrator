@@ -38,6 +38,18 @@ The `review` stage, when auto-executing, operates against a GitHub pull request:
 GitHub is **mandatory** for v1: a review stage on a card whose origin is not an authenticated
 GitHub remote blocks with a clear reason rather than silently degrading to the local-JSON path.
 
+> **v1 implementation note (agent-driven PR lifecycle).** Rather than wire full
+> forge-provider discovery into the supervisor reactor (a large, externally
+> dependent integration), v1 puts the PR lifecycle in the review phase's forced
+> protocol: the `review` agent — which already runs `git`/`gh` in its worktree
+> (t3o-21) — ensures the branch is pushed and a PR exists (creating it via the
+> forge CLI if absent), and completes `failed` with the reason if it cannot (no
+> remote / unauthenticated). This keeps D1's git-mandatory guarantee and D2's
+> "agents operate on the PR" without a reactor/provider/migration change. The
+> server-side card→PR link (D6) and settings-time GitHub gating are DEFERRED to
+> a follow-up; `commentId` on the finding payload (D3) still threads the finding
+> ↔ comment link through the loop.
+
 ## Scope
 
 **In**
@@ -243,6 +255,31 @@ covering **human PR comments** as untrusted data under review.
   auto-execute) rather than blocked per-card at runtime? Better UX; small settings-validation add.
 - **Q4:** PR reuse — if a card re-enters review after changes, reuse the open PR (push new commits)
   vs. open a new one. Default: reuse while the PR is open.
+
+## Live verification (t3o-20 v1)
+
+The forge mechanics the review protocol prescribes were exercised end-to-end
+against a throwaway private GitHub repo with the authenticated `gh` (2.46.0),
+proving the exact command sequences an agent runs:
+
+- `git push -u origin <branch>` — **prerequisite:** requires `gh auth setup-git`
+  (or SSH) so git can authenticate the push; a bare HTTPS remote fails with
+  "could not read Username". The review protocol's "ensure the branch is pushed"
+  step depends on the agent's environment having this configured — worth a
+  board-setup check.
+- `gh pr create --base <base> --head <branch>` — opens the PR.
+- `gh api repos/<o>/<r>/pulls/<n>/reviews` with an inline `comments[]` entry on
+  a `path`+`line`, body carrying `<!-- t3o-finding:<id> -->` — posts the finding.
+- `gh api .../pulls/<n>/comments` — reads comments back; the finding is located
+  by its marker and its `id` captured.
+- `gh api .../pulls/<n>/comments/<id>/replies` — threaded reply (`in_reply_to_id`
+  links correctly).
+- `gh api .../pulls/comments/<id>/reactions -f content=+1` — the verdict reaction.
+
+Not yet verified live (deferred, needs the running app): the full board run —
+reactor spawning the review phase in a card worktree, the phase agent performing
+the above autonomously, and convergence over the JSON payload. The decision
+logic is unit-tested; the forge I/O is proven above.
 
 ## Acceptance
 
