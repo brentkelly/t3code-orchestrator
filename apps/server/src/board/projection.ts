@@ -317,6 +317,20 @@ const boardActivityStepLabel = (
     payload: we wrote it with `JSON.stringify` of a valid selection, so a
     successful parse of an array is trusted; anything else yields no options
     rather than a decode failure that would break rehydration. */
+/** Resolve the authority posture for a rehydrated step-state row (t3o-21). A
+    non-null column is honoured verbatim. A NULL column is a row persisted before
+    migration 021: it resolves to the PRE-t3o-21 behaviour — `full-access` for a
+    build-mode run, `approval-required` otherwise — so a card mid-stage at deploy
+    keeps the authority it was actually running under. This is deliberately NOT
+    `effectiveBoardRuntimeMode` (whose unset build default is the safer `auto`):
+    that governs a NEW resolution, this preserves an IN-FLIGHT one. */
+export function resolveStoredStepRuntimeMode(
+  stored: RuntimeMode | null,
+  mode: BoardStageMode,
+): RuntimeMode {
+  return stored ?? (mode === "build" ? "full-access" : "approval-required");
+}
+
 function stepModelOptionsPatch(raw: string | null): { modelOptions?: ProviderOptionSelections } {
   if (raw === null) return {};
   try {
@@ -2062,10 +2076,7 @@ export function loadBoardState(
               providerInstanceId: row.providerInstanceId,
               model: row.model,
               mode: row.mode,
-              // A null runtime_mode is a pre-t3o-21 row: resolve to the old
-              // behaviour so a card mid-stage at deploy keeps its authority.
-              runtimeMode:
-                row.runtimeMode ?? (row.mode === "build" ? "full-access" : "approval-required"),
+              runtimeMode: resolveStoredStepRuntimeMode(row.runtimeMode, row.mode),
               ...stepModelOptionsPatch(row.modelOptions),
               humanInLoop: row.humanInLoop !== 0,
               maxAttempts: row.maxAttempts,

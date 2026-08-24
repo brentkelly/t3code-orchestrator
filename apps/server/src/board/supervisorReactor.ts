@@ -332,6 +332,13 @@ const make = Effect.gen(function* () {
   const sendTurn = Effect.fn("board-supervisor-sendTurn")(function* (input: {
     readonly threadId: ThreadId;
     readonly text: string;
+    /** The frozen run-row authority (t3o-21). A nudge/resume on an EXISTING
+        thread inherits that thread's posture, so this is inert today — but
+        passing the step's real value rather than a hardcoded `full-access`
+        keeps the "board never forces full-access" invariant true at every
+        dispatch and removes a footgun if the turn command ever stops ignoring
+        it for existing threads. */
+    readonly runtimeMode: BoardCardStepState["runtimeMode"];
   }) {
     const createdAt = yield* nowIso;
     yield* dispatch({
@@ -344,7 +351,7 @@ const make = Effect.gen(function* () {
         text: input.text,
         attachments: [],
       },
-      runtimeMode: "full-access",
+      runtimeMode: input.runtimeMode,
       interactionMode: "default",
       createdAt,
     });
@@ -1238,7 +1245,11 @@ const make = Effect.gen(function* () {
         acted = true;
       }
     } else if (input.state.threadId !== null) {
-      yield* sendTurn({ threadId: input.state.threadId, text: decision.nudge });
+      yield* sendTurn({
+        threadId: input.state.threadId,
+        text: decision.nudge,
+        runtimeMode: input.state.runtimeMode,
+      });
       acted = true;
     }
     // If we could neither nudge a live thread nor respawn a vanished one (a gone
@@ -1413,7 +1424,7 @@ const make = Effect.gen(function* () {
       const text = desired
         ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`
         : `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;
-      yield* sendTurn({ threadId: state.threadId, text });
+      yield* sendTurn({ threadId: state.threadId, text, runtimeMode: state.runtimeMode });
     }
     yield* dispatch({
       type: "board.card.retune-step",

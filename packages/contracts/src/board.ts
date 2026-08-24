@@ -836,11 +836,13 @@ export const BoardCardStepState = Schema.Struct({
   /** The resolved agent authority posture, frozen at stage entry (t3o-21) so a
       settings edit mid-flight cannot change a live agent's authority. The
       reactor reads this instead of deriving the posture from `mode`. A DECODING
-      DEFAULT because this struct is a replayed event payload: rows written
-      before t3o-21 have no key and must rehydrate — they resolve to the old
+      DEFAULT because this struct is a replayed event payload: an event written
+      before t3o-21 has no key and must still decode — it takes the safe
+      least-authority default here. A legacy ROW persisted before migration 021
+      (a NULL `runtime_mode` column) is instead resolved to the pre-t3o-21
       behaviour (`full-access` for a `build` run, `approval-required` otherwise)
-      via `boardStepRuntimeMode`, applied by the reactor, not here. The stored
-      default is the safe least-authority value. */
+      by the projection reader, so a card mid-stage at deploy keeps the
+      authority it was running under. */
   runtimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("approval-required" as const)),
   ),
