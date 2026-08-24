@@ -710,6 +710,15 @@ const makeWsRpcLayer = (
       // first — a known gap in the sibling `card-threads` delta, not something
       // coalescing introduces. The refetch runs with bounded concurrency
       // (order-preserving).
+      //
+      // TODO(shell-sibling-sequence): the `card-threads` sibling delta shares
+      // its primary's `sequence`, so the client's strict `<=` guard drops it
+      // and live card→thread link / todo updates only land on reconnect. This
+      // is pre-existing and every fix changes shell sequencing for every delta
+      // family, so it is deferred — full diagnosis and the review adjudication
+      // are on PR #36 (issues are disabled on this repo, hence the grep tag
+      // rather than a link). Fix: give siblings distinct monotonic sequences,
+      // or relax the client guard to allow equal-sequence siblings once.
       const SHELL_REFETCH_CONCURRENCY = 8;
       const coalesceShellEvents = (
         events: ReadonlyArray<OrchestrationEvent>,
