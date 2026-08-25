@@ -1144,6 +1144,18 @@ const make = Effect.gen(function* () {
     });
     switch (plan.kind) {
       case "run": {
+        // Only auto-EXECUTE a stage that opts into it. A completed step is
+        // normally the card's current stage's own, but if the card was dragged
+        // to another column while a step was still in flight and that step later
+        // finishes, `card.stage` is now the DESTINATION — and the simple
+        // executor, seeing no completion for it, plans a fresh `run`. That is
+        // how a finished Planning run, on a card already moved to the manual
+        // Sprint column, once spawned a spurious Sprint thread on the app's
+        // fallback provider. The move handler now abandons such leftovers before
+        // they complete; this is the second lock. Gating only the `run` arm (not
+        // the whole continuation) leaves a manual stage's `complete` → auto-
+        // advance path intact — this blocks a spurious SPAWN, not a crossing.
+        if (!exec.autoExecute) return;
         // A continuation is executor-driven, never a human re-entry: inject the
         // planned prompt and honour the stage's own human-in-the-loop stance.
         const humanInLoop = resolveHumanInLoop(board, settings, card, exec);
@@ -1606,6 +1618,65 @@ const make = Effect.gen(function* () {
     yield* beginStageRun({ card, onDemand: false });
   });
 
+  // A card crossed into a new stage (drag, or an auto-advance). The card holds
+  // ONE step-state row, and until this move nothing has selected a step for the
+  // destination — so any non-terminal step still on the row is a LEFTOVER from
+  // the stage the card just left (a run that stalled or was mid-flight in the
+  // old stage; auto-advance settles its step before moving, so a legitimate
+  // continuation is already terminal here). That leftover otherwise reads to
+  // the auto-kickoff guard as "a live step for the current stage" and blocks
+  // the destination's run — the card lands in the new stage with no thread,
+  // which is exactly the "moved to planning, no thread" report. Abandon it
+  // first (releasing any slot and unlinking its thread), then kick off the
+  // destination stage on a fresh read so its own guards see a clean card.
+  const handleCardMoved = Effect.fn("board-supervisor-handleCardMoved")(function* (
+    event: Extract<OrchestrationEvent, { type: "board.card-moved" }>,
+  ) {
+    // The destination stage and the current link set both come from the event
+    // payload, not a board re-read: the card carries its post-move stage here,
+    // which is the one authority every other move path already trusts.
+    const card = event.payload.card;
+    const board = yield* readBoard;
+    const existing = boardCardStepState(board, card.id);
+    let kickoffCard = card;
+    if (existing !== null && !isBoardTerminalStepStatus(existing.status)) {
+      yield* settleStep({ card, state: existing, outcome: "abandoned" });
+      if (existing.threadId !== null) {
+        yield* dispatch({
+          type: "board.card.unlink-thread",
+          commandId: yield* commandId("unlink-moved"),
+          cardId: card.id,
+          threadId: existing.threadId,
+          createdAt: yield* nowIso,
+        });
+        // Stop the abandoned thread's turn: a leftover step can be genuinely
+        // mid-flight (a stuck-running provider, or a build run the human dragged
+        // away from), and settling the row does not touch the agent. Left alone
+        // it keeps burning provider capacity and — for a build-mode leftover —
+        // keeps writing the worktree while the destination stage spawns a second
+        // thread, breaking the one-writer invariant. Best-effort, like every
+        // other orphan interrupt (the dispatch helper swallows a reject).
+        yield* interruptOrphan(existing.threadId);
+        // Reflect the unlink onto the card handed to the kickoff: `beginStageRun`
+        // reads the links to decide whether a live stage thread already exists,
+        // and the leftover link we just tombstoned (its role is the old step id
+        // — the destination stage itself on a re-entry) would otherwise trip
+        // that guard against the very thread we are abandoning.
+        kickoffCard = {
+          ...card,
+          threadLinks: card.threadLinks.map((link) =>
+            link.threadId === existing.threadId && link.tombstonedAt === null
+              ? { ...link, tombstonedAt: event.payload.card.updatedAt }
+              : link,
+          ),
+        };
+      }
+      // The abandoned step may have held a slot — offer it to the queue.
+      yield* schedule();
+    }
+    yield* beginStageRun({ card: kickoffCard, onDemand: false });
+  });
+
   // On-demand kickoff request (D7): start a thread for the card's current stage.
   const handleStageThreadRequested = Effect.fn("board-supervisor-handleStageThreadRequested")(
     function* (event: Extract<OrchestrationEvent, { type: "board.card-stage-thread-requested" }>) {
@@ -1715,8 +1786,10 @@ const make = Effect.gen(function* () {
     switch (event.type) {
       case "board.card-moved":
         // Generic auto-kickoff (D7): a card landing in ANY stage may start a run
-        // — not just Building. The stage's `autoExecute` setting gates it.
-        return beginStageRun({ card: event.payload.card, onDemand: false });
+        // — not just Building. The stage's `autoExecute` setting gates it. The
+        // handler first clears any leftover step from the stage the card left,
+        // so a card carrying a stalled/in-flight step still starts the new one.
+        return handleCardMoved(event);
       case "board.card-created":
         // Creating a card straight into an auto-executing stage is a real path
         // now (D10) and must behave identically to a drag.
