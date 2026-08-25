@@ -5,9 +5,12 @@
  * expressible as "these completions in, this decision out":
  *
  *  - AC3  a clean review pass completes the stage after ONE phase.
- *  - AC4  a nitpick-only review pass also converges.
+ *  - AC4  a nitpick-only review pass runs ONE triage pass, then converges —
+ *         the nitpick gets its chance to be fixed, but never spawns a round.
  *  - AC5  a card needing two rounds runs distinct `<phase>@<round>` steps.
- *  - AC7  exhausting the round cap completes the stage `blocked`.
+ *  - AC7  exhausting the round cap ends the loop `succeeded` — the loop check
+ *         (blocking findings AND rounds remaining) is the executor's, and when
+ *         either condition fails the loop ends and the stage may auto-advance.
  *  - AC8  a malformed/absent review payload never reads as "no findings".
  */
 import { describe, expect, it } from "@effect/vitest";
@@ -128,8 +131,21 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(result).toEqual({ kind: "complete", outcome: "succeeded" });
   });
 
-  it("AC4: a nitpick-only review pass also converges", () => {
-    const result = plan([completion("review@1", reviewPayload([finding("nitpick")]))]);
+  it("AC4: a nitpick-only review pass runs triage before converging", () => {
+    // The nitpick never blocks, but triage is its one chance to be fixed — the
+    // loop must not end before the author has seen it.
+    const afterReview = plan([completion("review@1", reviewPayload([finding("nitpick")]))]);
+    expect(afterReview.kind === "run" && afterReview.stepId).toBe("triage@1");
+  });
+
+  it("AC4: a nitpick-only round converges after triage, with no adjudication and no next round", () => {
+    const result = plan([
+      completion("review@1", reviewPayload([finding("nitpick")])),
+      completion("triage@1", {
+        fixedSha: "s",
+        dispositions: [{ findingId: "f1", action: "fixed", note: "" }],
+      }),
+    ]);
     expect(result).toEqual({ kind: "complete", outcome: "succeeded" });
   });
 
@@ -166,7 +182,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(clean).toEqual({ kind: "complete", outcome: "succeeded" });
   });
 
-  it("AC7: exhausting the round cap completes the stage blocked", () => {
+  it("AC7: exhausting the round cap ends the loop succeeded (the stage may auto-advance)", () => {
     const oneRound = reviewExec({ rounds: 1 });
     const capped = plan(
       [
@@ -176,7 +192,9 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       ],
       oneRound,
     );
-    expect(capped).toEqual({ kind: "complete", outcome: "blocked" });
+    // The loop check failed its second condition (no rounds remain), so the
+    // loop ends exactly as a converged one does; the findings stay on the card.
+    expect(capped).toEqual({ kind: "complete", outcome: "succeeded" });
   });
 
   it("AC8: a malformed review payload terminates blocked rather than converging", () => {

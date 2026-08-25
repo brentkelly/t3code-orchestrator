@@ -199,7 +199,7 @@ export function boardReviewPhaseProtocol(input: {
     case "review":
       return [
         "To finish this phase, complete with a succeeded outcome and a JSON payload { reviewedSha, findings: [{ id, severity, file, line, title, detail }] }, where `severity` is `critical`, `improvement` or `nitpick`.",
-        "Critical and improvement findings block the round; nitpicks never do. A round with no blocking findings ends the loop.",
+        "Critical and improvement findings are blocking; nitpicks never are. Whether the loop runs another round is decided by the system from the severities you record, never by you — report what you found and stop.",
         "If you cannot produce a valid findings payload, complete with outcome failed instead. Never complete succeeded with an empty or malformed payload.",
       ].join(" ");
     case "triage":

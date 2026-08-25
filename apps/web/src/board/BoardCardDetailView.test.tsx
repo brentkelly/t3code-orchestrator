@@ -135,62 +135,32 @@ describe("BoardCardDetailPanel", () => {
     expect(html).toContain("More actions");
   });
 
-  it("renders review findings grouped by round with triage and verdict (t3o-16, D9/AC5)", () => {
-    const html = renderToStaticMarkup(
+  // The review loop lives in its own pane now (t3o-16, D9): the header gains a
+  // Review pill, and the pane itself (lazy, tested in BoardCardReviewPane
+  // tests) renders the rounds. The pill exists for a card ON the review stage
+  // and for any card CARRYING review completions — past reviews stay readable
+  // after the card moves on.
+  it("shows the Review pill on the review stage and on any card with review completions", () => {
+    const onReviewStage = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
-        detail={detail({ stage: BOARD_SEED_STAGE_IDS.review }, null, {
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.review })}
+        projectName="P"
+      />,
+    );
+    expect(onReviewStage).toContain(">Review</button>");
+
+    const movedOnWithHistory = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge }, null, {
           stepCompletions: [
             {
               cardId,
               stepId: "review@1",
               outcome: "succeeded",
               summary: "reviewed",
-              payload: JSON.stringify({
-                reviewedSha: "sha1",
-                findings: [
-                  {
-                    id: "f1",
-                    severity: "critical",
-                    file: "src/a.ts",
-                    line: 12,
-                    title: "Null deref",
-                    detail: "x may be null",
-                  },
-                ],
-              }),
-              threadId: null,
-              completedAt: NOW,
-            },
-            {
-              cardId,
-              stepId: "triage@1",
-              outcome: "succeeded",
-              summary: "triaged",
-              payload: JSON.stringify({
-                fixedSha: "sha2",
-                dispositions: [{ findingId: "f1", action: "fixed", note: "guarded it" }],
-              }),
-              threadId: null,
-              completedAt: NOW,
-            },
-            {
-              cardId,
-              stepId: "adjudicate@1",
-              outcome: "succeeded",
-              summary: "adjudicated",
-              payload: JSON.stringify({
-                verdicts: [{ findingId: "f1", verdict: "fix-upheld", note: "" }],
-              }),
-              threadId: null,
-              completedAt: NOW,
-            },
-            {
-              cardId,
-              stepId: "review@2",
-              outcome: "succeeded",
-              summary: "clean",
-              payload: JSON.stringify({ reviewedSha: "sha3", findings: [] }),
+              payload: JSON.stringify({ reviewedSha: "sha1", findings: [] }),
               threadId: null,
               completedAt: NOW,
             },
@@ -199,14 +169,16 @@ describe("BoardCardDetailPanel", () => {
         projectName="P"
       />,
     );
-    expect(html).toContain("Code review");
-    expect(html).toContain("Round 1");
-    expect(html).toContain("Round 2");
-    expect(html).toContain("Null deref");
-    expect(html).toContain("critical");
-    expect(html).toContain("triage: fixed");
-    expect(html).toContain("fix-upheld");
-    expect(html).toContain("no blocking findings");
+    expect(movedOnWithHistory).toContain(">Review</button>");
+
+    const neverReviewed = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        projectName="P"
+      />,
+    );
+    expect(neverReviewed).not.toContain(">Review</button>");
   });
 
   it("renders an archived dependency as the card it is, not as an unknown id", () => {

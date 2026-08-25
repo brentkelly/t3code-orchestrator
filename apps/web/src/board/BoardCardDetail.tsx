@@ -15,6 +15,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ThreadId,
+  isBoardReviewStageExecution,
   activeBoardCardThreadId,
   areBoardStagesAdjacent,
   boardStageWithRole,
@@ -278,6 +279,14 @@ export function BoardCardDetail({
   // same step. Both facts are derived by pure helpers (asserted in
   // `boardCardThreadMenu.test.ts`); the in-flight proxy reads the card shell's
   // live status since the step-state read model is server-only.
+  // The review loop's configured round cap, for the Review pane's R1..Rn bar
+  // (t3o-16). Resolved from the same settings the executor reads, so the bar
+  // and the real loop can never disagree on the cap.
+  const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
+  const reviewMaxRounds = isBoardReviewStageExecution(reviewExecution)
+    ? reviewExecution.rounds
+    : undefined;
+
   const cardShell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
   const stageRestart = resolveBoardThreadStageRestart({
     autoExecute: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
@@ -448,6 +457,7 @@ export function BoardCardDetail({
       }
       agents={agents}
       projectName={projectName ?? null}
+      reviewMaxRounds={reviewMaxRounds}
       threadLinks={threadLinks}
       threadTodos={threadTodos}
     />
