@@ -163,6 +163,21 @@ textarea{font-family:var(--font-sans)}
                         </div>
                       </sc-if>
 
+                      <sc-if value="{{ r.isModel }}" hint-placeholder-val="{{ false }}">
+                        <div style="{{ r.rowStyle }}">
+                          <span style="font:400 13.5px var(--font-sans)">{{ r.label }}</span>
+                          <div style="display:flex;align-items:center;gap:6px;flex:none">
+                            <sc-for list="{{ r.selects }}" as="sel" hint-placeholder-count="3">
+                              <select value="{{ sel.value }}" onChange="{{ sel.onPick }}" style="{{ sel.style }}">
+                                <sc-for list="{{ sel.options }}" as="o" hint-placeholder-count="3">
+                                  <option value="{{ o.value }}">{{ o.label }}</option>
+                                </sc-for>
+                              </select>
+                            </sc-for>
+                          </div>
+                        </div>
+                      </sc-if>
+
                       <sc-if value="{{ r.isNumber }}" hint-placeholder-val="{{ false }}">
                         <div style="{{ r.rowStyle }}">
                           <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
@@ -371,6 +386,23 @@ class Component extends DCLogic {
       knobStyle: `position:absolute;top:3px;left:${on ? "21px" : "3px"};width:16px;height:16px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgb(0 0 0 / 25%);transition:left .16s`
     };
   }
+  modelRow(src, set) {
+    const dense = this.props.density === "compact";
+    const sel = (value, options, key, width) => ({
+      value, onPick: e => set(key, e.target.value),
+      options: options.map(o => ({ value: o, label: o })),
+      style: `height:30px;width:${width};padding:0 8px;border:1px solid var(--input);border-radius:var(--control-radius);background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);box-shadow:var(--shadow-xs);cursor:pointer`
+    });
+    return {
+      isModel: true, label: "Model",
+      rowStyle: `display:flex;align-items:center;justify-content:space-between;gap:16px;padding:${dense ? "5px" : "7px"} 0`,
+      selects: [
+        sel(src.model, this.models, "model", "170px"),
+        sel(src.reasoning || "High", this.reasoningLevels, "reasoning", "120px"),
+        sel(src.access || "Auto", this.accessLevels, "access", "150px")
+      ]
+    };
+  }
   selectRow(label, value, options, onPick) {
     const dense = this.props.density === "compact";
     return {
@@ -439,12 +471,12 @@ class Component extends DCLogic {
       s.phases.forEach((p, i) => {
         rows.push({ isHeader: true, label: p.label, step: i + 1 });
         rows.push(this.promptRow("Prompt", s.id + ":" + p.id, p.prompt, v => this.patchPhase(s.id, p.id, "prompt", v), p.pre, p.post));
-        rows.push(this.selectRow("Model", p.model, this.models, e => this.patchPhase(s.id, p.id, "model", e.target.value)));
+        rows.push(this.modelRow(p, (k, v) => this.patchPhase(s.id, p.id, k, v)));
       });
       return rows;
     }
     rows.push(this.promptRow("Prompt", s.id, s.prompt, v => this.patch(s.id, "prompt", v), s.pre, s.post));
-    rows.push(this.selectRow("Model", s.model, this.models, e => this.patch(s.id, "model", e.target.value)));
+    rows.push(this.modelRow(s, (k, v) => this.patch(s.id, k, v)));
     if (s.pausePlan !== undefined) {
       rows.push(this.toggleRow("Pause for a human when no plan exists", s.pauseNoPlan, () => this.patch(s.id, "pauseNoPlan", !s.pauseNoPlan)));
       rows.push(this.toggleRow("Auto advance to the next stage", s.advance, () => this.patch(s.id, "advance", !s.advance)));
@@ -464,6 +496,8 @@ class Component extends DCLogic {
 
   renderVals() {
     this.models = ["claude-opus-4", "claude-sonnet-4", "claude-haiku-4", "gpt-5-codex"];
+    this.reasoningLevels = ["Low", "Medium", "High", "Extra High", "Max", "Ultracode", "Ultrathink"];
+    this.accessLevels = ["Supervised", "Auto-accept edits", "Auto", "Full access"];
     const open = this.state.open;
     const stages = this.state.stages.map((s, i) => {
       const expanded = open === s.id;

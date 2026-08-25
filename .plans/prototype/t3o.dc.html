@@ -570,19 +570,25 @@ a:hover{text-decoration:underline}
                           <sc-if value="{{ c.hasMeta }}" hint-placeholder-val="{{ false }}">
                             <div style="display:flex;align-items:center;gap:10px;margin-top:9px;color:var(--muted-fg)">
                               <sc-if value="{{ c.hasDeps }}" hint-placeholder-val="{{ false }}">
-                                <span style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans)">
+                                <span title="{{ c.depTip }}" style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans)">
                                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"></path><path d="M15 7h2a5 5 0 1 1 0 10h-2"></path><line x1="8" x2="16" y1="12" y2="12"></line></svg>
                                   {{ c.depCount }}
                                 </span>
                               </sc-if>
-                              <sc-if value="{{ c.hasPlan }}" hint-placeholder-val="{{ false }}">
-                                <span title="1 attachment" style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans)">
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-                                  1
+                              <sc-if value="{{ c.hasThreads }}" hint-placeholder-val="{{ false }}">
+                                <span title="{{ c.threadTip }}" style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans)">
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+                                  {{ c.threadCount }}
+                                </span>
+                              </sc-if>
+                              <sc-if value="{{ c.hasPlanCount }}" hint-placeholder-val="{{ false }}">
+                                <span title="{{ c.planCountTip }}" style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans)">
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" x2="21" y1="6" y2="6"></line><line x1="8" x2="21" y1="12" y2="12"></line><line x1="8" x2="21" y1="18" y2="18"></line><line x1="3" x2="3.01" y1="6" y2="6"></line><line x1="3" x2="3.01" y1="12" y2="12"></line><line x1="3" x2="3.01" y1="18" y2="18"></line></svg>
+                                  {{ c.planCount }}
                                 </span>
                               </sc-if>
                               <sc-if value="{{ c.hasPr }}" hint-placeholder-val="{{ false }}">
-                                <span style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans);color:var(--info-fg)">
+                                <span title="{{ c.prTip }}" style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans);color:var(--info-fg)">
                                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>
                                   {{ c.prLabel }}
                                 </span>
@@ -680,6 +686,12 @@ a:hover{text-decoration:underline}
               <button type="button" onClick="{{ selectPlans }}" title="Plans for this feature" style="{{ plansTabStyle }}">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"></rect><rect width="7" height="7" x="14" y="14" rx="1"></rect><path d="M10 6.5h4a2 2 0 0 1 2 2V14"></path></svg>
                 {{ plansTabLabel }}
+              </button>
+            </sc-if>
+            <sc-if value="{{ hasPlanDocTab }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ selectPlanDoc }}" title="Implementation plan" style="{{ planDocTabStyle }}">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="m9 15 2 2 4-4"></path></svg>
+                Plan
               </button>
             </sc-if>
             <button type="button" onClick="{{ selectBrief }}" title="Brief" style="{{ briefTabStyle }}">
@@ -891,6 +903,19 @@ a:hover{text-decoration:underline}
                 <span style="flex:1"></span>
                 <button type="button" style="{{ cardFinal.style }}">{{ cardFinal.label }}</button>
               </div>
+            </div>
+          </section>
+          </sc-if>
+
+          <sc-if value="{{ planDocPane }}" hint-placeholder-val="{{ false }}">
+          <section style="display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--border);background:color-mix(in srgb,var(--muted) 55%,var(--card))">
+            <div style="display:flex;align-items:center;gap:8px;flex:none;height:44px;padding:0 12px 0 14px;border-bottom:1px solid var(--border)">
+              <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Implementation plan</span>
+              <span style="font:500 11px var(--font-sans);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:1px 6px;background:var(--muted)">{{ activeCard.key }}</span>
+              <span style="flex:1"></span>
+            </div>
+            <div style="flex:1;min-height:0;overflow-y:auto;padding:16px 18px 24px">
+              <pre style="margin:0;white-space:pre-wrap;font:400 12.5px/1.75 var(--font-sans);color:var(--fg)">{{ planDocBody }}</pre>
             </div>
           </section>
           </sc-if>
@@ -1182,12 +1207,6 @@ a:hover{text-decoration:underline}
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                 <span>{{ activeCard.blockedBy }}</span>
               </div>
-            </sc-if>
-            <sc-if value="{{ activeCard.hasPlan }}" hint-placeholder-val="{{ false }}">
-              <button type="button" onClick="{{ openPlan }}" style="display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 11px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>
-                View plan
-              </button>
             </sc-if>
             <sc-if value="{{ activeCard.hasPr }}" hint-placeholder-val="{{ false }}">
               <button type="button" onClick="{{ openPr }}" style="display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 11px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">
@@ -2581,6 +2600,8 @@ class Component extends DCLogic {
       const plans = c.planKeys ? this.planCardsFor(c.key) : [];
       const planDone = plans.filter((p) => p.status === "done").length;
       const stacked = plans.length > 0;
+      const planThreads = plans.filter((p) => !!this.threadFor(p)).length;
+      const threadCount = (th ? 1 : 0) + planThreads;
       const rs = this.reviewState(c);
       const review = rs
         ? {
@@ -2636,11 +2657,27 @@ class Component extends DCLogic {
         blocked,
         hasDeps,
         depCount: c.depKeys.length,
+        depTip:
+          c.depKeys.length === 1
+            ? "Depends on 1 task"
+            : "Depends on " + c.depKeys.length + " tasks",
         hasPlan,
+        hasThreads: threadCount > 0,
+        threadCount,
+        threadTip:
+          threadCount === 1
+            ? "1 agent thread"
+            : threadCount + " agent threads (" + (th ? "this task" : "plans only") + ")",
+        hasPlanCount: stacked || hasPlan,
+        planCount: stacked ? plans.length : hasPlan ? 1 : 0,
+        planCountTip: stacked
+          ? plans.length + " plans · " + planDone + " done"
+          : "1 plan",
         hasPr,
         prLabel: hasPr ? "#" + c.pr.n : "",
+        prTip: hasPr ? "Pull request #" + c.pr.n : "",
         hasImage: c.brief.indexOf("<img") !== -1,
-        hasMeta: hasDeps || hasPlan || hasPr,
+        hasMeta: hasDeps || threadCount > 0 || stacked || hasPlan || hasPr,
         todo: (() => {
           const ls = this.todoLists(c);
           const l = this.activeTodo(c);
@@ -3148,6 +3185,8 @@ class Component extends DCLogic {
     if (pane === "plans" && !isParent) pane = isReview ? "review" : "thread";
     if (pane === "review" && !isReview) pane = "thread";
     if (pane === "thread" && threadLocked && !isReview) pane = "plans";
+    const hasPlanDoc = !!(active && active.plan && hasThreadPane);
+    if (pane === "plandoc" && !hasPlanDoc) pane = threadLocked ? "plans" : "thread";
     const setPane = (p) => () => {
       if (!active) return;
       this.setState((s) => ({
@@ -3679,6 +3718,11 @@ class Component extends DCLogic {
       selectPlans: setPane("plans"),
       briefTabStyle: paneBtn(pane === "brief", false),
       selectBrief: setPane("brief"),
+      hasPlanDocTab: hasPlanDoc,
+      planDocTabStyle: paneBtn(pane === "plandoc", false),
+      selectPlanDoc: setPane("plandoc"),
+      planDocPane: pane === "plandoc" && hasPlanDoc,
+      planDocBody: active ? active.plan : "",
       plansPane: hasThreadPane && pane === "plans" && isParent,
       planRows,
       cardGraph,
