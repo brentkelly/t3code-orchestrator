@@ -20,18 +20,22 @@
 import type {
   BoardCardActivityEntry,
   BoardStageDefinition,
+  BoardStepOutcome,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   CheckCircle2Icon,
+  CheckIcon,
   CircleAlertIcon,
+  CircleSlashIcon,
   FileTextIcon,
   ListTreeIcon,
   MoveRightIcon,
   PlusCircleIcon,
   TriangleAlertIcon,
+  XIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -98,6 +102,29 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
   }
 }
 
+/** The terminal outcome of a completed step, shown as a glyph rather than a
+    word: a grey tick for a clean pass, a red cross for a failure, and a muted
+    slash for a blocked run. `title` keeps the original word available on hover
+    and to assistive tech. */
+function StepOutcomeIcon({ outcome }: { readonly outcome: BoardStepOutcome }) {
+  const className = "inline-block size-3 shrink-0 align-text-bottom";
+  switch (outcome) {
+    case "succeeded":
+      return (
+        <CheckIcon aria-label="succeeded" className={cn(className, "text-muted-foreground")} />
+      );
+    case "failed":
+      return <XIcon aria-label="failed" className={cn(className, "text-destructive-foreground")} />;
+    case "blocked":
+      return (
+        <CircleSlashIcon
+          aria-label="blocked"
+          className={cn(className, "text-warning-foreground")}
+        />
+      );
+  }
+}
+
 /** The sentence for one row, built from its typed payload. A payload field that
     is absent simply drops out of the sentence — a row from an older schema reads
     as a shorter, still-true sentence rather than as `undefined`. */
@@ -137,7 +164,12 @@ function activitySentence(
       return (
         <>
           finished {payload.stepId ?? "the step"}
-          {payload.outcome === undefined ? null : <> — {payload.outcome}</>}
+          {payload.outcome === undefined ? null : (
+            <>
+              {" "}
+              <StepOutcomeIcon outcome={payload.outcome} />
+            </>
+          )}
         </>
       );
     case "card-input-requested":
