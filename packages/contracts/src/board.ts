@@ -3112,6 +3112,12 @@ export const BoardCardDetail = Schema.Struct({
       defaults to `humanInLoopWithPlan`, one without to `humanInLoopWithoutPlan`.
       Decodes to false on legacy detail payloads. */
   hasPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** The card's proposed plans with their markdown bodies (t3o-08), in ordinal
+      order. Carried on the detail so the modal's Plan pane can render the
+      planning output with no second round trip. The body lives only in
+      `board_plans` (D8), so it rides here rather than on the read-model
+      `BoardPlan` metadata. Decodes to `[]` on legacy detail payloads. */
+  plans: Schema.Array(BoardPlanWithBody).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** `card.dependsOn` resolved, in `dependsOn` order. Archived dependencies
       are included — they no longer gate, but they are still real cards and
       must read as such rather than as a dangling id. An id with no row left
