@@ -25,36 +25,25 @@
  * inventory); their owning specs are named in comments.
  */
 import {
-  BoardAdjudicatePayload,
-  BoardReviewPayload,
-  BoardTriagePayload,
+  DEFAULT_BOARD_REVIEW_ROUNDS,
   activeBoardCardThreadId,
   boardCardArchiveNeedsConfirmation,
   boardStageIndex,
   boardStagesInOrder,
   boardStageWithRole,
-  isBoardReviewBlockingSeverity,
   liveBoardCardDependents,
-  parseReviewStepId,
-  type BoardAdjudicatePayload as BoardAdjudicatePayloadType,
   type BoardCardDetail,
   type BoardCardId,
   type BoardCardThreadShell,
   type BoardCardThreadState,
   type BoardLabel,
   type BoardLabelId,
-  type BoardReviewFinding,
-  type BoardReviewPayload as BoardReviewPayloadType,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
-  type BoardStepCompletion,
-  type BoardTriagePayload as BoardTriagePayloadType,
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { Link } from "@tanstack/react-router";
 import {
   ArchiveIcon,
@@ -69,6 +58,7 @@ import {
   FileTextIcon,
   LockIcon,
   MessageSquareIcon,
+  RefreshCcwIcon,
   XIcon,
 } from "lucide-react";
 import { Suspense, lazy, useState } from "react";
@@ -90,6 +80,7 @@ import {
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
+import { hasBoardReviewSteps } from "./boardReviewLoop";
 import { boardStageLabel } from "./boardStages";
 import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
 
@@ -118,6 +109,15 @@ const BoardCardThreadPane = lazy(() =>
  */
 const BoardCardPlanPane = lazy(() =>
   import("./BoardCardPlanPane").then((module) => ({ default: module.BoardCardPlanPane })),
+);
+
+/**
+ * The review pane renders the adversarial review loop (t3o-16, D9) — rounds,
+ * phase progress and findings from the card's step completions. Lazy like its
+ * siblings: a card that never reaches review pays nothing for it.
+ */
+const BoardCardReviewPane = lazy(() =>
+  import("./BoardCardReviewPane").then((module) => ({ default: module.BoardCardReviewPane })),
 );
 
 /**
@@ -198,6 +198,9 @@ export interface BoardCardDetailViewProps {
       the modal's per-tab counts and its sticky todos strip. */
   readonly threadTodos?: ReadonlyMap<ThreadId, BoardCardThreadShell> | undefined;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
+  /** The review loop's configured round cap, for the Review pane's R1..Rn bar
+      (t3o-16). Absent falls back to the compiled default. */
+  readonly reviewMaxRounds?: number | undefined;
   /** The thread pane `+` menu's restart affordance (t3o-14): present only when
       the card's current stage auto-executes, `null` otherwise. */
   readonly stageRestart: BoardThreadStageRestart | null;
@@ -618,172 +621,6 @@ function ActionsSection({
   );
 }
 
-// ── Review findings (t3o-16, D9) ───────────────────────────────────────
-// With no PR to anchor them to (D6), the review loop's findings live on the
-// card. The panel reads the SAME opaque completion payloads the agents write —
-// review findings, triage dispositions, adjudication verdicts — grouped by
-// round. It parses payloads, never branches on the stage's role, so it is not
-// a third dispatch on `review` (AC10): a card with no review completions
-// renders nothing at all (absent, not empty).
-
-const decodeReviewPayload = Schema.decodeUnknownOption(BoardReviewPayload);
-const decodeTriagePayload = Schema.decodeUnknownOption(BoardTriagePayload);
-const decodeAdjudicatePayload = Schema.decodeUnknownOption(BoardAdjudicatePayload);
-
-function parsePayloadJson(payload: string | null): unknown {
-  if (payload === null) return undefined;
-  try {
-    return JSON.parse(payload);
-  } catch {
-    return undefined;
-  }
-}
-
-interface ReviewRound {
-  readonly round: number;
-  readonly review: BoardReviewPayloadType | null;
-  readonly reviewMalformed: boolean;
-  readonly triage: BoardTriagePayloadType | null;
-  readonly adjudicate: BoardAdjudicatePayloadType | null;
-}
-
-/** Group a card's completions into review rounds (D8/D9). Pure over the
-    completion list, so the same round-scoped step ids the executor mints drive
-    the render. */
-function groupReviewRounds(completions: ReadonlyArray<BoardStepCompletion>): ReviewRound[] {
-  const byRound = new Map<
-    number,
-    { review?: BoardStepCompletion; triage?: BoardStepCompletion; adjudicate?: BoardStepCompletion }
-  >();
-  for (const completion of completions) {
-    const parsed = parseReviewStepId(completion.stepId);
-    if (parsed === null) continue;
-    const entry = byRound.get(parsed.round) ?? {};
-    entry[parsed.phase] = completion;
-    byRound.set(parsed.round, entry);
-  }
-  return [...byRound.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([round, entry]) => {
-      const reviewJson = entry.review ? parsePayloadJson(entry.review.payload) : undefined;
-      const review = entry.review ? decodeReviewPayload(reviewJson) : Option.none();
-      const triage = entry.triage
-        ? decodeTriagePayload(parsePayloadJson(entry.triage.payload))
-        : Option.none();
-      const adjudicate = entry.adjudicate
-        ? decodeAdjudicatePayload(parsePayloadJson(entry.adjudicate.payload))
-        : Option.none();
-      return {
-        round,
-        review: Option.getOrNull(review),
-        // A recorded review phase whose payload will not parse is a broken
-        // reviewer, surfaced as such rather than silently dropped.
-        reviewMalformed: entry.review !== undefined && Option.isNone(review),
-        triage: Option.getOrNull(triage),
-        adjudicate: Option.getOrNull(adjudicate),
-      };
-    });
-}
-
-const SEVERITY_STYLES: Record<BoardReviewFinding["severity"], string> = {
-  critical: "border-destructive/40 bg-destructive/10 text-destructive-foreground",
-  improvement: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  nitpick: "border-border/60 bg-muted text-muted-foreground",
-};
-
-function ReviewFindingsSection({
-  completions,
-}: {
-  readonly completions: ReadonlyArray<BoardStepCompletion>;
-}) {
-  const rounds = groupReviewRounds(completions);
-  if (rounds.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-3 border-t border-border p-3.5">
-      <SectionHeading>Code review</SectionHeading>
-      {rounds.map((round) => {
-        const findings = round.review?.findings ?? [];
-        const blocking = findings.filter((f) => isBoardReviewBlockingSeverity(f.severity));
-        const dispositionsByFinding = new Map(
-          (round.triage?.dispositions ?? []).map((d) => [d.findingId, d]),
-        );
-        const verdictsByFinding = new Map(
-          (round.adjudicate?.verdicts ?? []).map((v) => [v.findingId, v]),
-        );
-        return (
-          <div key={round.round} className="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-[12px] font-semibold text-foreground">Round {round.round}</span>
-              <span className="text-[11px] text-muted-foreground">
-                {round.reviewMalformed
-                  ? "reviewer payload unreadable"
-                  : round.review === null
-                    ? "in progress"
-                    : blocking.length === 0
-                      ? "no blocking findings"
-                      : `${blocking.length} blocking`}
-              </span>
-            </div>
-            {findings.length === 0 ? null : (
-              <ul className="flex flex-col gap-1.5">
-                {findings.map((finding) => {
-                  const disposition = dispositionsByFinding.get(finding.id);
-                  const verdict = verdictsByFinding.get(finding.id);
-                  return (
-                    <li
-                      key={finding.id}
-                      className="rounded-md border border-border/50 px-2 py-1.5 text-[12px]"
-                    >
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span
-                          className={cn(
-                            "rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                            SEVERITY_STYLES[finding.severity],
-                          )}
-                        >
-                          {finding.severity}
-                        </span>
-                        <span className="font-medium text-foreground">{finding.title}</span>
-                        {finding.file !== null ? (
-                          <span className="text-[11px] text-muted-foreground">
-                            {finding.file}
-                            {finding.line !== null ? `:${finding.line}` : ""}
-                          </span>
-                        ) : null}
-                      </div>
-                      {finding.detail.trim().length > 0 ? (
-                        <p className="mt-1 text-[11.5px] leading-[1.4] text-muted-foreground">
-                          {finding.detail}
-                        </p>
-                      ) : null}
-                      {disposition !== undefined || verdict !== undefined ? (
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-                          {disposition !== undefined ? (
-                            <span className="rounded border border-border/60 px-1.5 py-0.5 text-muted-foreground">
-                              triage: {disposition.action}
-                              {disposition.note.trim().length > 0 ? ` — ${disposition.note}` : ""}
-                            </span>
-                          ) : null}
-                          {verdict !== undefined ? (
-                            <span className="rounded border border-border/60 px-1.5 py-0.5 text-muted-foreground">
-                              {verdict.verdict}
-                              {verdict.note.trim().length > 0 ? ` — ${verdict.note}` : ""}
-                            </span>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   return (
     <div className="border-t border-border p-3.5 text-[11.5px]/[1.7] text-muted-foreground">
@@ -801,18 +638,21 @@ function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   );
 }
 
-type BoardCardPane = "thread" | "plan" | "brief";
+type BoardCardPane = "thread" | "review" | "plan" | "brief";
 
-/** The header's Thread/Plan/Brief switch — only the wide form has one, because
-    only it has somewhere else for the brief to live. The Plan pill appears only
-    once the card has a plan; before planning writes one there is nothing to
-    show, so the switch is a plain Thread/Brief pair. */
+/** The header's Thread/Review/Plan/Brief switch — only the wide form has one,
+    because only it has somewhere else for the brief to live. The Review pill
+    appears once the card is on the review stage or carries review-loop
+    completions; the Plan pill once the card has a plan. Before either there is
+    nothing to show, so the switch is a plain Thread/Brief pair. */
 function PaneTabs({
   pane,
+  hasReview,
   hasPlan,
   onSelect,
 }: {
   readonly pane: BoardCardPane;
+  readonly hasReview: boolean;
   readonly hasPlan: boolean;
   readonly onSelect: (pane: BoardCardPane) => void;
 }) {
@@ -829,6 +669,17 @@ function PaneTabs({
         <MessageSquareIcon className="size-3" />
         Thread
       </button>
+      {hasReview ? (
+        <button
+          className={tab("review")}
+          onClick={() => onSelect("review")}
+          title="Adversarial review loop"
+          type="button"
+        >
+          <RefreshCcwIcon className="size-3" />
+          Review
+        </button>
+      ) : null}
       {hasPlan ? (
         <button className={tab("plan")} onClick={() => onSelect("plan")} type="button">
           <FileIcon className="size-3" />
@@ -866,15 +717,24 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const [pane, setPane] = useState<BoardCardPane>("thread");
   // The plan is a first-class entity, so its pill only exists once one is
   // written; if the card loses its plans while the pane is open, fall back to
-  // the thread rather than render an empty surface.
+  // the thread rather than render an empty surface. The review pane follows
+  // the same rule: it exists once the card is on the review-role stage or
+  // carries review-loop completions (past reviews stay readable after the
+  // card moves on).
   const hasPlan = props.detail.plans.length > 0;
-  const activePane: BoardCardPane = pane === "plan" && !hasPlan ? "thread" : pane;
+  const reviewStageId = boardStageWithRole(stageStateOf(props.stages), "review")?.stageId ?? null;
+  const hasReview =
+    (reviewStageId !== null && card.stage === reviewStageId) ||
+    hasBoardReviewSteps(props.detail.stepCompletions);
+  const activePane: BoardCardPane =
+    (pane === "plan" && !hasPlan) || (pane === "review" && !hasReview) ? "thread" : pane;
   // Which tab the thread pane is on. Absent means "the card's active thread",
   // so a newly adopted thread opens without the panel tracking it.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
+  const activeThreadId = activeBoardCardThreadId(card.threadLinks);
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
-    activeBoardCardThreadId(card.threadLinks);
+    activeThreadId;
 
   return (
     <>
@@ -891,7 +751,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           </span>
         ) : null}
         <span className="flex-1" />
-        {wide ? <PaneTabs hasPlan={hasPlan} onSelect={setPane} pane={activePane} /> : null}
+        {wide ? (
+          <PaneTabs hasPlan={hasPlan} hasReview={hasReview} onSelect={setPane} pane={activePane} />
+        ) : null}
         <Menu>
           <MenuTrigger
             aria-label="More actions"
@@ -954,6 +816,25 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 <BriefBody brief={props.detail.brief} onSave={props.onSaveBrief} />
               </div>
             </section>
+          ) : activePane === "review" ? (
+            <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
+              <BoardCardReviewPane
+                completions={props.detail.stepCompletions}
+                // "Running now" means the loop's own step is live: the ACTIVE
+                // linked thread is the one a running phase owns, so only its
+                // state drives the spinner — a side conversation on another
+                // linked thread must not.
+                live={props.threadLinks.some(
+                  (link) => link.threadId === activeThreadId && link.threadState === "working",
+                )}
+                maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
+                onBackToThread={() => setPane("thread")}
+                onOpenThread={(threadId) => {
+                  setSelectedThreadId(threadId);
+                  setPane("thread");
+                }}
+              />
+            </Suspense>
           ) : activePane === "plan" ? (
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardPlanPane
@@ -1014,7 +895,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 stages={props.stages}
               />
             </div>
-            <ReviewFindingsSection completions={props.detail.stepCompletions} />
             <InfoSection props={props} />
           </div>
         </div>

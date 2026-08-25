@@ -1134,7 +1134,8 @@ const make = Effect.gen(function* () {
   // this selects it, re-entering the ordinary select-step → schedule → spawn
   // path. The reactor stays generic — it never learns which kind of stage it is
   // driving, only what the executor says to run. A terminal loop outcome
-  // (`blocked`) leaves the card put with its completions visible (D8).
+  // (`blocked`, a broken reviewer payload) leaves the card put with its
+  // completions visible (D8).
   const continueStage = Effect.fn("board-supervisor-continueStage")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
@@ -1214,9 +1215,10 @@ const make = Effect.gen(function* () {
         return;
       }
       case "complete": {
-        // The stage is done. A successful stage may auto-advance (D8); a
-        // non-succeeded terminal outcome (a review loop that exhausted its round
-        // cap) leaves the card put, unconverged, with its findings visible.
+        // The stage is done. A successful stage may auto-advance (D8) — for the
+        // review loop that covers both a converged round and the round cap; a
+        // non-succeeded terminal outcome (a broken reviewer payload) leaves the
+        // card put with its findings visible.
         if (plan.outcome === "succeeded") yield* advanceStage({ card, state });
         return;
       }

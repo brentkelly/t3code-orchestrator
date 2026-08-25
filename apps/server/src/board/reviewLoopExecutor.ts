@@ -18,7 +18,6 @@
  * prompt, and the AGENT runs `git` in its worktree and records the payload.
  */
 import {
-  BOARD_REVIEW_PHASE_LABELS,
   BoardReviewPayload,
   composeBoardReviewPhasePrompt,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
@@ -67,15 +66,6 @@ export function parseReviewPayload(payload: string | null): ParsedPayload<BoardR
   return Option.isSome(decoded) ? { ok: true, value: decoded.value } : { ok: false };
 }
 
-/** The convergence rule (D3/D5): a review round converges when its payload is
-    valid AND carries no blocking (critical/improvement) finding. A valid empty
-    list, or a nitpick-only list, converges; a malformed payload does not. */
-export function reviewRoundConverged(payload: ParsedPayload<BoardReviewPayload>): boolean {
-  return (
-    payload.ok && !payload.value.findings.some((f) => isBoardReviewBlockingSeverity(f.severity))
-  );
-}
-
 /** A card's succeeded review-loop completions, keyed by their `<phase>@<round>`
     step id, so the executor decides the next phase purely from what has landed. */
 function succeededReviewSteps(
@@ -100,9 +90,13 @@ function resolvePhaseModel(
 /**
  * The pure loop state machine (D1/D3/D8): a completions array in, a decision
  * out. Walks rounds from 1; the first round whose phase sequence is incomplete
- * yields the next phase to run. A review phase with no blocking findings ends
- * the loop `succeeded`; a review phase with a malformed payload escalates rather
- * than converging (D4); running out of rounds ends the loop `blocked` (D8).
+ * yields the next phase to run. Within a round, any findings at all run one
+ * triage pass, and only blocking findings run adjudication. At the END of the
+ * round the executor — never the agent — applies the loop check: another round
+ * runs only when the round raised a blocking (critical/improvement) finding
+ * AND rounds remain. When either condition fails the loop ends `succeeded`, so
+ * the stage may auto-advance; a review phase with a malformed payload
+ * terminates `blocked` rather than converging (D4).
  */
 export function reviewLoopDecision(input: {
   readonly review: BoardStageExecutionReview;
@@ -154,21 +148,37 @@ export function reviewLoopDecision(input: {
       // converging on unreviewed code or re-escalating forever on every re-plan.
       return { kind: "complete", outcome: "blocked" };
     }
-    if (reviewRoundConverged(reviewPayload)) {
-      return { kind: "complete", outcome: "succeeded" };
-    }
+    const findings = reviewPayload.value.findings;
+    const blocking = findings.some((f) => isBoardReviewBlockingSeverity(f.severity));
 
-    // Blocking findings — run triage then adjudicate, then the next round.
-    if (done.get(reviewStepId("triage", round)) === undefined) return runPhase("triage", round);
-    if (done.get(reviewStepId("adjudicate", round)) === undefined) {
+    // Any findings at all — blocking or not — get one triage pass, so even a
+    // nitpick-only round gives the author a chance to fix or decline them.
+    // A genuinely clean round has nothing to triage and skips straight to the
+    // loop check.
+    if (findings.length > 0 && done.get(reviewStepId("triage", round)) === undefined) {
+      return runPhase("triage", round);
+    }
+    // Only blocking findings summon the adjudicator — there is no fix/reject
+    // dispute to rule on when nothing blocked.
+    if (blocking && done.get(reviewStepId("adjudicate", round)) === undefined) {
       return runPhase("adjudicate", round);
     }
-    // Round complete without converging; fall through to the next round's review.
+
+    // The round's phases are done. The LOOP CHECK is the executor's, never the
+    // agent's: another round runs only when this round raised a blocking
+    // finding AND rounds remain. A non-blocking round converges here —
+    // `succeeded`, so the stage may auto-advance.
+    if (!blocking) {
+      return { kind: "complete", outcome: "succeeded" };
+    }
+    // Blocking findings and rounds remain: the next round's review re-reads
+    // the branch with the triage fixes on it.
   }
 
-  // Every round ran without a clean review pass (D8): the stage completes
-  // `blocked`, the card stays in Code review and its open findings stay visible.
-  return { kind: "complete", outcome: "blocked" };
+  // The round cap: the loop check's second condition failed, so the loop ends
+  // exactly as a converged one does — `succeeded`, the stage may auto-advance —
+  // with every round's findings still on the card for the next stage to see.
+  return { kind: "complete", outcome: "succeeded" };
 }
 
 // The phase prompt composition (D6/D7) — round header, prior-payload pointer,

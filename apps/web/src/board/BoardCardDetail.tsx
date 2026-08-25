@@ -15,6 +15,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ThreadId,
+  isBoardReviewStageExecution,
   activeBoardCardThreadId,
   areBoardStagesAdjacent,
   boardStageWithRole,
@@ -272,6 +273,14 @@ export function BoardCardDetail({
         })()
       : null;
 
+  // The review loop's configured round cap, for the Review pane's R1..Rn bar
+  // (t3o-16). Resolved from the same settings the executor reads, so the bar
+  // and the real loop can never disagree on the cap.
+  const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
+  const reviewMaxRounds = isBoardReviewStageExecution(reviewExecution)
+    ? reviewExecution.rounds
+    : undefined;
+
   // The `+` menu's restart affordance (t3o-14, D1): shown only when the card's
   // current stage auto-executes, and disabled while a supervised run is in
   // flight for the card — restarting then would leave two threads owning the
@@ -448,6 +457,7 @@ export function BoardCardDetail({
       }
       agents={agents}
       projectName={projectName ?? null}
+      reviewMaxRounds={reviewMaxRounds}
       threadLinks={threadLinks}
       threadTodos={threadTodos}
     />
