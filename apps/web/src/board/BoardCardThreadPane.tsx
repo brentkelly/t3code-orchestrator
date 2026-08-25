@@ -19,12 +19,14 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { BoardCardThreadShell, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import {
+  ChevronRightIcon,
   MaximizeIcon,
   MessageSquareIcon,
   MinimizeIcon,
   SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import ChatView from "../components/ChatView";
 import { cn } from "../lib/utils";
@@ -121,11 +123,52 @@ export function BoardCardThreadPane({
   };
   const selected = threadLinks.find((link) => link.threadId === selectedThreadId) ?? null;
 
+  // The tab strip reads newest-first: the latest thread sits next to the `+`
+  // control on the left, older threads trail off to the right. `threadLinks`
+  // arrives oldest-first (link order), so the strip iterates a reversed copy.
+  const orderedLinks = [...threadLinks].reverse();
+
+  // Rather than a fat native scrollbar, older threads hide off the right edge
+  // and a chevron scrolls them into view. `canScrollRight` tracks whether any
+  // remain hidden so the chevron only appears when it does something.
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+  const syncScrollAffordance = useCallback(() => {
+    const el = stripRef.current;
+    if (el === null) return;
+    setCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 1);
+  }, []);
+  useEffect(() => {
+    const el = stripRef.current;
+    if (el === null) return undefined;
+    syncScrollAffordance();
+    const observer = new ResizeObserver(syncScrollAffordance);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+    };
+  }, [syncScrollAffordance, threadLinks]);
+  const scrollOlderIntoView = () => {
+    stripRef.current?.scrollBy({ left: stripRef.current.clientWidth * 0.7, behavior: "smooth" });
+  };
+
   return (
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-3">
-        <div className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
-          {threadLinks.map((link) => {
+        <BoardCardThreadAddMenu
+          adoptableThreads={adoptableThreads}
+          label=""
+          onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
+          onCreateBlankThread={createBlankThreadAndSelect}
+          onRestartStage={onRestartStage}
+          stageRestart={stageRestart}
+        />
+        <div
+          className="flex min-w-0 items-center gap-0.5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          onScroll={syncScrollAffordance}
+          ref={stripRef}
+        >
+          {orderedLinks.map((link) => {
             const active = link.threadId === selectedThreadId;
             return (
               // The pill is a GROUP, not one button: nesting the unlink control
@@ -194,15 +237,18 @@ export function BoardCardThreadPane({
               </span>
             );
           })}
-          <BoardCardThreadAddMenu
-            adoptableThreads={adoptableThreads}
-            label=""
-            onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
-            onCreateBlankThread={createBlankThreadAndSelect}
-            onRestartStage={onRestartStage}
-            stageRestart={stageRestart}
-          />
         </div>
+        {canScrollRight ? (
+          <button
+            aria-label="Show older threads"
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            onClick={scrollOlderIntoView}
+            title="Show older threads"
+            type="button"
+          >
+            <ChevronRightIcon className="size-3.5" />
+          </button>
+        ) : null}
         <span className="flex-1" />
         <button
           className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
