@@ -275,7 +275,7 @@ describe("review phase envelope", () => {
   it("carries the safety stance and PR workflow in the USER-EDITABLE default prompts, not the forced layer", () => {
     // Safety wording is now in the editable prompt (a user can reword it).
     expect(DEFAULT_BOARD_REVIEW_PHASE_PROMPT.toLowerCase()).toContain("untrusted");
-    expect(DEFAULT_BOARD_REVIEW_PHASE_PROMPT).toContain("inline review comment");
+    expect(DEFAULT_BOARD_REVIEW_PHASE_PROMPT).toContain("inline comment");
     expect(DEFAULT_BOARD_REVIEW_PHASE_PROMPT.toLowerCase()).toContain("pull request");
     // Triage/adjudicate answer on threads — in the editable prompt.
     expect(DEFAULT_BOARD_TRIAGE_PHASE_PROMPT).toContain("thread");
@@ -288,6 +288,27 @@ describe("review phase envelope", () => {
     ]) {
       expect(prompt).not.toContain("t3o-finding");
     }
+  });
+
+  it("tells the review agent to format findings as severity callouts with a summary line, in the editable prompt", () => {
+    // The scannable comment styling is USER-OWNED craft (it lives in the
+    // editable prompt, not the forced protocol) — a user can reword it.
+    const review = DEFAULT_BOARD_REVIEW_PHASE_PROMPT;
+    // Severity -> GitHub alert callout mapping.
+    expect(review).toContain("[!CAUTION]");
+    expect(review).toContain("[!WARNING]");
+    expect(review).toContain("[!NOTE]");
+    // Bold "Severity (i/N): title" summary line + suggested-fix line.
+    expect(review).toContain("<Severity> (<i>/<N>): <title>");
+    expect(review).toContain("**Suggested fix:**");
+    // High-level summary in the review body, plus the re-review status table.
+    expect(review).toContain("## High-level summary");
+    expect(review).toContain("Status of round-");
+    // The forced protocol stays free of this craft — it is not enforced.
+    expect(boardReviewPhaseProtocol({ phase: "review", round: 1 })).not.toContain("[!CAUTION]");
+    expect(boardReviewPhaseProtocol({ phase: "review", round: 1 })).not.toContain(
+      "High-level summary",
+    );
   });
 
   it("a user rewriting the editable prompt cannot break the forced payload contract", () => {
@@ -324,7 +345,10 @@ describe("default prompts carry intent only", () => {
   it("do not carry the force-appended contract sentences", () => {
     expect(DEFAULT_BOARD_BUILD_PROMPT).not.toContain("completion tool");
     expect(DEFAULT_BOARD_PLANNING_PROMPT).not.toContain("board_propose_plans");
-    expect(DEFAULT_BOARD_REVIEW_PHASE_PROMPT).not.toContain("severity");
+    // The forced payload shape (its field names) belongs to the protocol, not
+    // the editable prompt. The prompt may name severities as craft, so the canary
+    // is the payload field `reviewedSha`, which only the protocol carries.
+    expect(DEFAULT_BOARD_REVIEW_PHASE_PROMPT).not.toContain("reviewedSha");
   });
 });
 
