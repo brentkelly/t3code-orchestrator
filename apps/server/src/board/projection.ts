@@ -2236,11 +2236,16 @@ export function withBoardShellCards(
       const labelsByCard = groupCardLabels(cardLabelRows);
       const queuedByCard = new Set<BoardCardId>();
       const stalledByCard = new Set<BoardCardId>();
+      const runningByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
         // The second step-state field on the bounded shell (t3o-17, D3): a card
         // is `stalled` when recovery gave up on its live step.
         if (row.status === "stalled") stalledByCard.add(row.cardId);
+        // The durable "being worked" flag: the executor's step is admitted and
+        // running, so the card dot stays lit across a loop stage's per-phase
+        // thread spin-up gaps rather than only while a single thread is mid-turn.
+        if (row.status === "running") runningByCard.add(row.cardId);
       }
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
@@ -2270,6 +2275,7 @@ export function withBoardShellCards(
           activeThreadId,
           queued: queuedByCard.has(row.cardId),
           stalled: stalledByCard.has(row.cardId),
+          stepRunning: runningByCard.has(row.cardId),
           thread: liveThreads,
         });
       });

@@ -223,13 +223,23 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.stalled === withQueued.stalled
           ? withQueued
           : { ...withQueued, stalled: existing.stalled };
+      // `stepRunning` (the durable "being worked" dot) is derived from the
+      // step-state slice the card aggregate does not carry, so a card-carrying
+      // delta rests it at false — preserve the last known value the same way as
+      // `queued`/`stalled`, so a drag never blanks a working card's dot. The
+      // authoritative flips arrive via `card-queued`/`card-stalled` and the
+      // snapshot.
+      const withStepRunning =
+        existing === undefined || existing.stepRunning === withStalled.stepRunning
+          ? withStalled
+          : { ...withStalled, stepRunning: existing.stepRunning };
       // `briefHasImage` and `planCount` are derived from slices the card
       // aggregate does not carry (the brief BODY, the plan set), so a
       // card-carrying delta that cannot see them OMITS the key rather than
       // asserting a false/zero — absent means "unchanged, keep what you have".
       // A present key is authoritative, including `false`/`0`: clearing an
       // image out of a brief has to clear the icon.
-      const withBodyDerived = preserveAbsentShellFields(withStalled, existing);
+      const withBodyDerived = preserveAbsentShellFields(withStepRunning, existing);
       const card = withDerivedThreadFields(
         withBodyDerived,
         (threadId) => snapshot.threads.find((thread) => thread.id === threadId),
@@ -244,9 +254,13 @@ export function applyBoardShellStreamEvent(
       // The one authoritative live flip of `queued` (t3o-11): the governor
       // admitted the card's step (→ false) or held it for a slot (→ true). A
       // no-op for a card we do not hold (archived / not yet arrived).
+      // Admission also settles the durable `stepRunning` dot: admitted-to-running
+      // (`queued=false, stepRunning=true`) vs held-for-a-slot (`queued=true,
+      // stepRunning=false`). Both flip on this one delta.
       const nextCards = Arr.map(cards, (card) =>
-        card.cardId === event.cardId && card.queued !== event.queued
-          ? { ...card, queued: event.queued }
+        card.cardId === event.cardId &&
+        (card.queued !== event.queued || card.stepRunning !== event.stepRunning)
+          ? { ...card, queued: event.queued, stepRunning: event.stepRunning }
           : card,
       );
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
@@ -263,12 +277,17 @@ export function applyBoardShellStreamEvent(
       // refused) keeps a queue badge no later delta clears, and it goes on
       // occupying a displayed queue position for every card behind it until a
       // reconnect re-derives the shell.
+      // Recovery/select/settle also settle the durable `stepRunning` dot on this
+      // same delta: recovered-to-running lights it, while stalled / freshly
+      // selected (pending) / settled (terminal) put it out.
       const nextCards = Arr.map(cards, (card) => {
         if (card.cardId !== event.cardId) return card;
         const queued = event.stalled ? false : card.queued;
-        return card.stalled === event.stalled && card.queued === queued
+        return card.stalled === event.stalled &&
+          card.queued === queued &&
+          card.stepRunning === event.stepRunning
           ? card
-          : { ...card, stalled: event.stalled, queued };
+          : { ...card, stalled: event.stalled, queued, stepRunning: event.stepRunning };
       });
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
     }

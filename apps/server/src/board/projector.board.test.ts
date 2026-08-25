@@ -507,6 +507,7 @@ describe("board projector", () => {
         sequence: admittedEvent.sequence,
         cardId,
         queued: false,
+        stepRunning: true,
       });
       // A step only leaves `queued` via admission above, never via settle — but
       // settling clears the stalled badge (t3o-17, D3): the one path a stalled
@@ -517,6 +518,7 @@ describe("board projector", () => {
         sequence: settledEvent.sequence,
         cardId,
         stalled: false,
+        stepRunning: false,
       });
     }),
   );
@@ -556,6 +558,7 @@ describe("board projector", () => {
         sequence: queuedAdmit.sequence,
         cardId,
         queued: true,
+        stepRunning: false,
       });
     }),
   );
@@ -594,6 +597,7 @@ describe("board projector", () => {
         sequence: stalledRecover.sequence,
         cardId,
         stalled: true,
+        stepRunning: false,
       });
       // An ordinary retry (status running) clears the badge.
       const retryRecover: BoardEvent = {
@@ -606,6 +610,7 @@ describe("board projector", () => {
         sequence: retryRecover.sequence,
         cardId,
         stalled: false,
+        stepRunning: true,
       });
       // A fresh stage run (select-step) also clears any lingering stalled badge.
       const selected: BoardEvent = {
@@ -621,6 +626,7 @@ describe("board projector", () => {
         sequence: selected.sequence,
         cardId,
         stalled: false,
+        stepRunning: false,
       });
     }),
   );

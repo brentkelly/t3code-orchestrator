@@ -2403,6 +2403,21 @@ export const BoardCardShell = Schema.Struct({
       the snapshot; card-carrying deltas rest it at false and the client
       preserves the last known value (`applyBoardShellStreamEvent`). */
   stalled: Schema.Boolean,
+  /** Whether the card's live step is admitted and RUNNING — the executor is
+      actively driving this card right now. Unlike `threadState === "working"`,
+      which lights only while a single linked thread is mid-turn, this is the
+      DURABLE "being worked" signal: it is true for the whole admitted-and-running
+      window of a step, so it spans the per-phase thread spin-up gaps of a loop
+      stage (Code review runs `review@1` → `triage@1` → … as separate short-lived
+      threads, and between them no thread is itself mid-turn). The card dot reads
+      `threadState === "working" || stepRunning`, so an active loop stays lit and
+      only goes dark when the card is genuinely queued, stalled, awaiting input or
+      done. Like `queued`/`stalled`, it is derived from the step-state read-model
+      slice the card aggregate does not carry, so it rides the `card-queued`
+      /`card-stalled` deltas and the snapshot; card-carrying deltas rest it at
+      false and the client preserves the last known value
+      (`applyBoardShellStreamEvent`). */
+  stepRunning: Schema.Boolean,
   // Thread-derived — joined from `board_card_thread_links` (902) and the
   // linked thread's shell; no new plumbing (t3o-04).
   threadState: BoardCardThreadState,
@@ -2593,6 +2608,9 @@ export function makeBoardCardShell(input: {
       producers omit it, resting it at false — the client preserves its last
       known stalled value across those deltas. */
   readonly stalled?: boolean | undefined;
+  /** Whether the card's live step is admitted and running (the executor is
+      driving it now). Real on the snapshot; rests false on card deltas. */
+  readonly stepRunning?: boolean | undefined;
   /** Whether the brief carries a picture. Omitted by producers that do not
       have the brief body in hand, which leaves the key absent so the client
       preserves its last known value. */
@@ -2626,6 +2644,7 @@ export function makeBoardCardShell(input: {
     attachmentCount: 0, // t3o-11
     queued: input.queued ?? false, // t3o-11 (D11): real on the snapshot, rests false on card deltas
     stalled: input.stalled ?? false, // t3o-17 (D3): real on the snapshot, rests false on card deltas
+    stepRunning: input.stepRunning ?? false, // durable "being worked" flag: real on the snapshot, rests false on card deltas
     threadState,
     awaitingInput,
     activeThreadId: input.activeThreadId,
@@ -2719,6 +2738,11 @@ export const BoardCardQueuedShellEvent = Schema.Struct({
   sequence: NonNegativeInt,
   cardId: BoardCardId,
   queued: Schema.Boolean,
+  /** The same admission event that flips `queued` also settles `stepRunning`:
+      an admitted step is either held for a slot (`queued`) or admitted to
+      running (`stepRunning`). Carried here so the durable "being worked" dot
+      flips live on the one delta, never needing a card rebuild. */
+  stepRunning: Schema.Boolean,
 });
 export type BoardCardQueuedShellEvent = typeof BoardCardQueuedShellEvent.Type;
 
@@ -2738,6 +2762,11 @@ export const BoardCardStalledShellEvent = Schema.Struct({
   sequence: NonNegativeInt,
   cardId: BoardCardId,
   stalled: Schema.Boolean,
+  /** Recovery, a fresh select and a settle all move the step out of (or back
+      into) running, so this delta also carries the durable `stepRunning` flag:
+      a recovered-to-running step sets it true; a stalled, freshly-selected
+      (pending) or settled (terminal) step sets it false. */
+  stepRunning: Schema.Boolean,
 });
 export type BoardCardStalledShellEvent = typeof BoardCardStalledShellEvent.Type;
 

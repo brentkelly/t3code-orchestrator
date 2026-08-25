@@ -81,6 +81,7 @@ const fullyPopulatedShell = {
   attachmentCount: 42,
   queued: true,
   stalled: true,
+  stepRunning: true,
   threadState: "waiting",
   awaitingInput: true,
   activeThreadId: ThreadId.make("thread-0b8a2c3d-4e5f-6789-abcd-ef0123456789"),

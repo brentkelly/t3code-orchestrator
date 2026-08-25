@@ -226,6 +226,40 @@ describe("BoardCardContent (D7)", () => {
     expect(awaiting).not.toContain("Stalled");
   });
 
+  it("keeps the working dot lit while the executor step is running, even when no thread is mid-turn", () => {
+    // A Code-review card mid-loop: the executor's step is admitted and running,
+    // but between one phase's thread completing and the next spinning up, no
+    // linked thread is itself mid-turn (threadState is "stopped"/"none"). The
+    // card is still being actively worked, so the durable `stepRunning` signal
+    // must keep the green dot lit across the per-phase gap.
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("review", { stepRunning: true, threadState: "stopped" })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    expect(html).toContain("Thread running");
+    expect(html).toContain("bg-emerald-500");
+    // The working dot pulses so an actively-worked card reads at a glance.
+    expect(html).toContain("animate-pulse");
+  });
+
+  it("shows no working dot on a settled card with no running step and no live turn", () => {
+    // The other half: a review card whose loop has settled (step succeeded)
+    // and whose threads are all idle must NOT show the dot.
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("review", { stepRunning: false, threadState: "stopped" })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    expect(html).not.toContain("Thread running");
+  });
+
   it("mutes a Done card", () => {
     const html = renderToStaticMarkup(
       <BoardCardContent

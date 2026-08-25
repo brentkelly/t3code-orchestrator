@@ -123,6 +123,7 @@ const expectedCardShell = {
   attachmentCount: 0,
   queued: false,
   stalled: false,
+  stepRunning: false,
   threadState: "none",
   awaitingInput: false,
   activeThreadId: null,

@@ -673,6 +673,9 @@ export function boardShellStreamEvent(
         sequence: event.sequence,
         cardId: event.payload.cardId,
         queued: event.payload.state.status === "queued",
+        // Admission also settles the durable "being worked" dot: held for a slot
+        // (`queued`) means not running; admitted to running lights `stepRunning`.
+        stepRunning: event.payload.state.status === "running",
       });
 
     case "board.card-step-recovered":
@@ -687,6 +690,9 @@ export function boardShellStreamEvent(
         sequence: event.sequence,
         cardId: event.payload.cardId,
         stalled: event.payload.state.status === "stalled",
+        // Recovery either put the step back to running (dot re-lights) or landed
+        // it stalled (dot dark) — carry the durable flag on the same delta.
+        stepRunning: event.payload.state.status === "running",
       });
 
     case "board.card-step-selected":
@@ -698,6 +704,9 @@ export function boardShellStreamEvent(
         sequence: event.sequence,
         cardId: event.payload.cardId,
         stalled: false,
+        // A freshly-selected step is `pending` — admitted-and-running has not
+        // happened yet — so the durable dot is off until `card-step-admitted`.
+        stepRunning: false,
       });
 
     case "board.card-step-settled":
@@ -712,6 +721,9 @@ export function boardShellStreamEvent(
         sequence: event.sequence,
         cardId: event.payload.cardId,
         stalled: false,
+        // A settled step is terminal — not running — so the durable dot goes
+        // dark here (a converged loop that stops running turns stops being lit).
+        stepRunning: false,
       });
 
     case "board.plans-proposed":

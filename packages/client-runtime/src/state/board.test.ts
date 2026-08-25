@@ -134,6 +134,7 @@ describe("board shell reducer", () => {
       sequence: 2,
       cardId: BoardCardId.make("card-1"),
       queued: true,
+      stepRunning: false,
     });
     expect(queued.cards?.[0]?.queued).toBe(true);
     expect(queued.snapshotSequence).toBe(2);
@@ -142,8 +143,54 @@ describe("board shell reducer", () => {
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
       queued: false,
+      stepRunning: true,
     });
     expect(cleared.cards?.[0]?.queued).toBe(false);
+  });
+
+  it("card-queued admitted-to-running lights stepRunning; holding for a slot clears it", () => {
+    // The durable "being worked" dot: an admitted-and-running step keeps a card
+    // lit across a loop stage's per-phase thread gaps, while a step held for a
+    // slot (queued) is not running.
+    const held = snapshot({
+      cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })],
+    });
+    const running = applyShellStreamEvent(held, {
+      kind: "card-queued",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      queued: false,
+      stepRunning: true,
+    });
+    expect(running.cards?.[0]?.stepRunning).toBe(true);
+    const heldAgain = applyShellStreamEvent(running, {
+      kind: "card-queued",
+      sequence: 3,
+      cardId: BoardCardId.make("card-1"),
+      queued: true,
+      stepRunning: false,
+    });
+    expect(heldAgain.cards?.[0]?.stepRunning).toBe(false);
+  });
+
+  it("a card-carrying upsert preserves stepRunning — a drag never blanks a working card's dot", () => {
+    const running = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
+      {
+        kind: "card-queued",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        queued: false,
+        stepRunning: true,
+      },
+    );
+    expect(running.cards?.[0]?.stepRunning).toBe(true);
+    const reordered = applyShellStreamEvent(running, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
+    });
+    expect(reordered.cards?.[0]?.stepRunning).toBe(true); // preserved across the drag
   });
 
   it("card-stalled raises then clears the stalled badge on a card (t3o-17, D3)", () => {
@@ -155,6 +202,7 @@ describe("board shell reducer", () => {
       sequence: 2,
       cardId: BoardCardId.make("card-1"),
       stalled: true,
+      stepRunning: false,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     expect(stalled.snapshotSequence).toBe(2);
@@ -163,6 +211,7 @@ describe("board shell reducer", () => {
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
       stalled: false,
+      stepRunning: false,
     });
     expect(cleared.cards?.[0]?.stalled).toBe(false);
   });
@@ -174,7 +223,13 @@ describe("board shell reducer", () => {
     // badge — it would otherwise hold a displayed queue position until reconnect.
     const queued = applyShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
-      { kind: "card-queued", sequence: 2, cardId: BoardCardId.make("card-1"), queued: true },
+      {
+        kind: "card-queued",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        queued: true,
+        stepRunning: false,
+      },
     );
     expect(queued.cards?.[0]?.queued).toBe(true);
     const stalled = applyShellStreamEvent(queued, {
@@ -182,6 +237,7 @@ describe("board shell reducer", () => {
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
       stalled: true,
+      stepRunning: false,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     expect(stalled.cards?.[0]?.queued).toBe(false);
@@ -192,13 +248,20 @@ describe("board shell reducer", () => {
     // anything about the queue — only `card-queued` and an admit do.
     const queued = applyShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
-      { kind: "card-queued", sequence: 2, cardId: BoardCardId.make("card-1"), queued: true },
+      {
+        kind: "card-queued",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        queued: true,
+        stepRunning: false,
+      },
     );
     const cleared = applyShellStreamEvent(queued, {
       kind: "card-stalled",
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
       stalled: false,
+      stepRunning: false,
     });
     expect(cleared.cards?.[0]?.queued).toBe(true);
   });
@@ -206,7 +269,13 @@ describe("board shell reducer", () => {
   it("a card-carrying upsert preserves the stalled badge — a drag never blanks it (t3o-17)", () => {
     const stalled = applyShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
-      { kind: "card-stalled", sequence: 2, cardId: BoardCardId.make("card-1"), stalled: true },
+      {
+        kind: "card-stalled",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        stalled: true,
+        stepRunning: false,
+      },
     );
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     const reordered = applyShellStreamEvent(stalled, {
@@ -277,6 +346,7 @@ describe("board shell reducer", () => {
       sequence: 2,
       cardId: BoardCardId.make("card-missing"),
       queued: true,
+      stepRunning: false,
     });
     expect(next.cards).toEqual(held.cards);
   });
@@ -288,7 +358,13 @@ describe("board shell reducer", () => {
     // threadState, or reprioritising the queue would flicker the badge off.
     const queued = applyShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
-      { kind: "card-queued", sequence: 2, cardId: BoardCardId.make("card-1"), queued: true },
+      {
+        kind: "card-queued",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        queued: true,
+        stepRunning: false,
+      },
     );
     expect(queued.cards?.[0]?.queued).toBe(true);
     const reordered = applyShellStreamEvent(queued, {

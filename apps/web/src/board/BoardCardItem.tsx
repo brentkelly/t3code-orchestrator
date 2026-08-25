@@ -3,10 +3,12 @@
  * state badges, title. The rich summary content (plans, review rounds,
  * attachments) is t3o-06's.
  *
- * State indicators are static state changes, never continuously repainting
- * animations (upstream AGENTS.md: loops peg the GPU on high-refresh
- * displays) — a running thread is a solid dot, not a spinner. The same dot
- * turns blue when the card is awaiting input.
+ * State indicators are static state changes with one deliberate exception: the
+ * "working" dot slowly pulses (an opacity fade, not a spinner — no per-frame
+ * layout, so it stays cheap on high-refresh displays; upstream AGENTS.md warns
+ * against transform/loop animations that peg the GPU) so an actively-worked card
+ * reads at a glance. The same dot slot turns to a static blue dot when the card
+ * is awaiting input.
  */
 import type {
   BoardCardShell,
@@ -142,8 +144,20 @@ export function BoardCardContent({
         >
           {card.key}
         </span>
-        {card.threadState === "working" ? (
-          <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="Thread running" />
+        {card.threadState === "working" || card.stepRunning ? (
+          // Green while the agent is working. `threadState === "working"` lights
+          // only while a single linked thread is mid-turn; `stepRunning` is the
+          // durable half — true for a card's whole admitted-and-running step — so
+          // a loop stage (Code review's review/triage/adjudicate phases run as
+          // separate short-lived threads) stays lit across the per-phase spin-up
+          // gaps and goes dark only when genuinely queued, stalled, awaiting
+          // input or done. It pulses so "working" reads at a glance; a slow
+          // opacity fade (`animate-pulse`), not a spinner — no per-frame layout,
+          // so it stays cheap on high-refresh displays.
+          <span
+            className="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
+            title="Thread running"
+          />
         ) : null}
         {card.stalled ? (
           // Stalled (t3o-17, D3): recovery gave up — loud and distinct from the
