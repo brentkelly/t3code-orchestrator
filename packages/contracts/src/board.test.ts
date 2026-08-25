@@ -84,6 +84,8 @@ const fullyPopulatedShell = {
   threadState: "waiting",
   awaitingInput: true,
   activeThreadId: ThreadId.make("thread-0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
+  briefHasImage: true,
+  planCount: 24,
   planTotal: 24,
   planDone: 12,
   prNumber: 48213,
@@ -332,6 +334,46 @@ describe("board card shell derivation", () => {
     expect("planDone" in shell).toBe(false);
     expect("prNumber" in shell).toBe(false);
     expect("issuesOpen" in shell).toBe(false);
+    // Absent-means-preserve: a producer that cannot see the brief body or the
+    // plan slice omits the key rather than asserting a false/zero the client
+    // would then apply as a real change.
+    expect("briefHasImage" in shell).toBe(false);
+    expect("planCount" in shell).toBe(false);
+  });
+
+  it("threads real body-derived fields through makeBoardCardShell", () => {
+    const base = {
+      cardId: BoardCardId.make("card-1"),
+      key: "T3O-1",
+      projectId: ProjectId.make("project-1"),
+      labelIds: [],
+      stage: BOARD_SEED_STAGE_IDS.planning,
+      orderKey: "m",
+      title: "Card",
+      blocked: false,
+      dependencyCount: 0,
+      hasBrief: true,
+      activeThreadId: null,
+    } as const;
+    const populated = makeBoardCardShell({ ...base, briefHasImage: true, planCount: 3 });
+    expect(populated.briefHasImage).toBe(true);
+    expect(populated.planCount).toBe(3);
+    // `false` / `0` are REAL values, not the resting state — clearing the image
+    // out of a brief has to be able to clear the card's icon.
+    const cleared = makeBoardCardShell({ ...base, briefHasImage: false, planCount: 0 });
+    expect(cleared.briefHasImage).toBe(false);
+    expect(cleared.planCount).toBe(0);
+  });
+
+  it("boardCardShellFromCard carries the brief-derived flag only when it is given one", () => {
+    const card = typicalCard(3);
+    expect("briefHasImage" in boardCardShellFromCard(card)).toBe(false);
+    expect(boardCardShellFromCard(card, undefined, { briefHasImage: true }).briefHasImage).toBe(
+      true,
+    );
+    expect(boardCardShellFromCard(card, undefined, { briefHasImage: false }).briefHasImage).toBe(
+      false,
+    );
   });
 
   it("threads a real queued flag through makeBoardCardShell (t3o-11, D11)", () => {

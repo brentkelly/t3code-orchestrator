@@ -511,6 +511,29 @@ export type BoardStageMode = typeof BoardStageMode.Type;
     `board_card_bodies`; `BoardCard.briefRef` holds it when a brief exists. */
 export const BOARD_CARD_BRIEF_BODY_KIND = "brief";
 
+/**
+ * Whether a brief body carries a picture, for the column card's image
+ * indicator (t3o-06). Two spellings reach a brief: a markdown image
+ * (`![alt](src)`) and a raw `<img …>` tag — a pasted screenshot arrives as
+ * the former, HTML pasted from elsewhere as the latter.
+ *
+ * The body itself lives only in `board_card_bodies` (D8) and never reaches a
+ * column card, so this collapses it to the one bit the card renders. The
+ * snapshot query in `projection.ts` matches the same two spellings in SQL
+ * (it must not read a thousand brief bodies to build a shell); the two are
+ * held together by a test that runs both over the same fixtures.
+ */
+export function boardBriefHasImage(brief: string): boolean {
+  // Case-insensitive because SQLite's `LIKE` is, for ASCII, and the two
+  // spellings of this rule have to agree on `<IMG` as well as `<img`.
+  if (/<img/i.test(brief)) return true;
+  // Deliberately "`![` somewhere, then `](` after it" rather than a tighter
+  // markdown regex: that is exactly what SQLite's `LIKE '%![%](%'` means, and
+  // the two spellings of this rule have to agree character for character.
+  const open = brief.indexOf("![");
+  return open !== -1 && brief.indexOf("](", open + 2) !== -1;
+}
+
 // ── Worktree / branch lifecycle (t3o-09, D6) ───────────────────────────
 
 /**
@@ -2396,6 +2419,24 @@ export const BoardCardShell = Schema.Struct({
   // would rebuild a third of the payload the shell split just removed.
   // Absent means "no data" — today always, later "not a parent" / "not in
   // review".
+  /** Whether the card's brief carries a picture (`boardBriefHasImage`), for
+      the card footer's image indicator. Derived from the brief BODY, which
+      lives only in `board_card_bodies` (D8) and is not on the card aggregate —
+      so, like `queued`/`stalled`, it cannot ride every card-carrying delta.
+      Here the resting value is the ABSENT key rather than `false`: the two
+      events that carry a brief body (`card-created`, `card-updated`) set it,
+      the shell snapshot always sets it, and every other card delta omits it so
+      the client keeps its last known value (`applyBoardShellStreamEvent`).
+      Absent-means-preserve rather than false-means-preserve because `false` is
+      a real value here — clearing an image out of a brief must be able to
+      clear the icon. */
+  briefHasImage: Schema.optionalKey(Schema.Boolean),
+  /** How many plans the card carries (`board_plans`, t3o-08) — 1 for a single
+      attached plan document, N once a card holds a plan set. Plans are their
+      own aggregate slice, so this follows the same absent-means-preserve rule
+      as `briefHasImage`: the snapshot and the `card-plans` delta are
+      authoritative and card-carrying deltas omit the key. */
+  planCount: Schema.optionalKey(NonNegativeInt),
   // Sub-board summary — absent until post-MVP sub-boards (D12
   // materialisation).
   planTotal: Schema.optionalKey(NonNegativeInt),
@@ -2552,6 +2593,13 @@ export function makeBoardCardShell(input: {
       producers omit it, resting it at false — the client preserves its last
       known stalled value across those deltas. */
   readonly stalled?: boolean | undefined;
+  /** Whether the brief carries a picture. Omitted by producers that do not
+      have the brief body in hand, which leaves the key absent so the client
+      preserves its last known value. */
+  readonly briefHasImage?: boolean | undefined;
+  /** How many plans the card carries. Omitted by producers that cannot see the
+      plan slice, leaving the key absent (preserve-last-known). */
+  readonly planCount?: number | undefined;
   /** Every LIVE-linked thread's shell (t3o-18, D7) — the badge aggregates
       across all of them. A single thread is still accepted (delta producers and
       tests pass one, or none). */
@@ -2581,6 +2629,11 @@ export function makeBoardCardShell(input: {
     threadState,
     awaitingInput,
     activeThreadId: input.activeThreadId,
+    // Absent-means-preserve (see the schema): a producer without the brief
+    // body or the plan slice in hand omits the key entirely rather than
+    // asserting a false/zero it cannot know.
+    ...(input.briefHasImage === undefined ? {} : { briefHasImage: input.briefHasImage }),
+    ...(input.planCount === undefined ? {} : { planCount: input.planCount }),
     // planTotal / planDone (post-MVP sub-boards), prNumber / round* /
     // stepLabel / severity* / issues* (post-MVP review pipeline): key-
     // optional and deliberately absent until their producing specs land.
@@ -2599,6 +2652,11 @@ export function makeBoardCardShell(input: {
 export function boardCardShellFromCard(
   card: BoardCard,
   thread?: BoardThreadStateSource | ReadonlyArray<BoardThreadStateSource | null | undefined> | null,
+  /** The body-derived fields the card aggregate cannot carry. Passed only by
+      the two delta mappings that hold a brief body (`card-created`,
+      `card-updated`); everywhere else they stay absent and the client keeps
+      its last known value. */
+  bodyDerived?: { readonly briefHasImage?: boolean | undefined } | undefined,
 ): BoardCardShell {
   return makeBoardCardShell({
     cardId: card.id,
@@ -2614,6 +2672,9 @@ export function boardCardShellFromCard(
     archivedAt: card.archivedAt,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
+    ...(bodyDerived?.briefHasImage === undefined
+      ? {}
+      : { briefHasImage: bodyDerived.briefHasImage }),
   });
 }
 
@@ -2679,6 +2740,25 @@ export const BoardCardStalledShellEvent = Schema.Struct({
   stalled: Schema.Boolean,
 });
 export type BoardCardStalledShellEvent = typeof BoardCardStalledShellEvent.Type;
+
+/**
+ * Plan-count delta (t3o-08): the card's plan set was replaced, so the footer's
+ * plan indicator changes. A dedicated one-number delta, the exact analogue of
+ * `card-queued`: `board.plans-proposed` carries the plans and the card id but
+ * NOT the card, so the full bounded shell cannot be rebuilt here — and plans
+ * live in their own slice, which a card-carrying event cannot see. The plan
+ * BODIES stay where they are (`board_plans`, read through
+ * `board.subscribeCard`); only the count rides the column card. Its `kind`
+ * keeps the `card-` prefix, so it routes through `isBoardShellStreamEvent`
+ * with zero core-seam change.
+ */
+export const BoardCardPlansShellEvent = Schema.Struct({
+  kind: Schema.Literal("card-plans"),
+  sequence: NonNegativeInt,
+  cardId: BoardCardId,
+  planCount: NonNegativeInt,
+});
+export type BoardCardPlansShellEvent = typeof BoardCardPlansShellEvent.Type;
 
 /**
  * Card-thread delta (t3o-18, D3): the live card↔thread links of ONE card, with
@@ -2867,6 +2947,7 @@ export const BOARD_SHELL_STREAM_EVENTS = [
   BoardCardRemovedShellEvent,
   BoardCardQueuedShellEvent,
   BoardCardStalledShellEvent,
+  BoardCardPlansShellEvent,
   BoardCardThreadsShellEvent,
   BoardLabelUpsertedShellEvent,
   BoardStageUpsertedShellEvent,

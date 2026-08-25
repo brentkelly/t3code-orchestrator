@@ -10,6 +10,7 @@ import {
   BoardCardId,
   BoardStageId,
   ProjectId,
+  ThreadId,
   makeBoardCardShell,
   type BoardCardShell,
   type BoardLabel,
@@ -95,6 +96,106 @@ describe("BoardCardContent (D7)", () => {
     );
     expect(gated).toContain("Blocked");
     expect(gated).toContain("Blocked by 2 dependencies");
+    // The gate does not swallow the count: a blocked card still says what it
+    // is waiting on, down in the meta row.
+    expect(gated).toContain("Depends on 2 cards");
+  });
+
+  it("spells out every meta indicator in a tooltip, since a bare glyph and a number mean nothing", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("review", {
+          dependencyCount: 1,
+          planCount: 1,
+          prNumber: 88,
+          briefHasImage: true,
+        })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    expect(html).toContain("Depends on 1 card");
+    expect(html).toContain("1 plan");
+    expect(html).toContain("Pull request #88");
+    expect(html).toContain("#88");
+    expect(html).toContain("Brief contains an image");
+  });
+
+  it("renders no meta row at all when the card is tied to nothing", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("backlog")}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    expect(html).not.toContain("Depends on");
+    expect(html).not.toContain("Brief contains an image");
+    expect(html).not.toContain("agent thread");
+  });
+
+  it("counts the card's live threads in the meta row (t3o-18)", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building")}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        todos={{
+          threads: [
+            { cardId: BoardCardId.make("card-1"), threadId: ThreadId.make("thread-1") },
+            { cardId: BoardCardId.make("card-1"), threadId: ThreadId.make("thread-2") },
+          ],
+          stateOf: () => undefined,
+          titleOf: () => "Thread",
+          expanded: false,
+          onToggleExpanded: () => {},
+        }}
+      />,
+    );
+    expect(html).toContain("2 agent threads on this card");
+  });
+
+  it("paints the whole card blue when it is waiting on a human", () => {
+    const awaiting = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building", { awaitingInput: true })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    // Not just the badge: the fill, the border and the ring all go info-blue,
+    // so "where am I needed" is answerable across a whole column at a glance.
+    expect(awaiting).toContain("border-info/55");
+    expect(awaiting).toContain("color-mix(in_srgb,var(--info)_7%,var(--card))");
+    expect(awaiting).not.toContain("border-border");
+
+    const calm = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building")}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    expect(calm).toContain("border-border");
+    expect(calm).not.toContain("border-info/55");
+
+    // Selection still wins the border — the blue would otherwise read as
+    // "needs input" on whichever card you happened to click.
+    const selected = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building", { awaitingInput: true })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={true}
+      />,
+    );
+    expect(selected).toContain("border-foreground/40");
+    expect(selected).not.toContain("border-info/55");
   });
 
   it("renders a distinct stalled badge, separate from the awaiting-input treatment (t3o-17, D3)", () => {

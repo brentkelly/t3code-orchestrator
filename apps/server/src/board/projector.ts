@@ -36,6 +36,7 @@ import {
   BoardCardStepRetunedPayload,
   BoardCardStageThreadRequestedPayload,
   BoardCardUpdatedPayload,
+  boardBriefHasImage,
   boardCardShellFromCard,
   boardLabelCatalogue,
   BoardLabelCreatedPayload,
@@ -574,12 +575,34 @@ export function boardShellStreamEvent(
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
-        card: boardCardShellFromCard(boardCardFromCreatedPayload(event.payload)),
+        // The one card-carrying delta that always knows the brief body: a card
+        // is created with its brief or without one, so the footer's image
+        // indicator is decidable here (`boardBriefHasImage`).
+        card: boardCardShellFromCard(boardCardFromCreatedPayload(event.payload), undefined, {
+          briefHasImage:
+            event.payload.brief === undefined ? false : boardBriefHasImage(event.payload.brief),
+        }),
+      });
+
+    case "board.card-updated":
+      return Option.some({
+        kind: "card-upserted",
+        sequence: event.sequence,
+        // `brief` absent means the brief did not change, and the body is not on
+        // the card — so the key is omitted and the client keeps its last known
+        // value. A set or a clear is authoritative.
+        card: boardCardShellFromCard(event.payload.card, undefined, {
+          briefHasImage:
+            event.payload.brief === undefined
+              ? undefined
+              : event.payload.brief === null
+                ? false
+                : boardBriefHasImage(event.payload.brief),
+        }),
       });
 
     case "board.card-moved":
     case "board.card-reordered":
-    case "board.card-updated":
     case "board.card-thread-linked":
     case "board.card-thread-unlinked":
     case "board.card-unarchived":
@@ -691,8 +714,20 @@ export function boardShellStreamEvent(
         stalled: false,
       });
 
-    case "board.card-step-completed":
     case "board.plans-proposed":
+      // The card's plan set was replaced wholesale, which moves the column
+      // card's plan indicator (t3o-08). Only the COUNT rides the shell; the
+      // plans themselves stay on board.subscribeCard. A dedicated delta rather
+      // than a `card-upserted` because this event carries the plans and the
+      // card id, never the card, so the bounded shell cannot be rebuilt here.
+      return Option.some({
+        kind: "card-plans",
+        sequence: event.sequence,
+        cardId: event.payload.cardId,
+        planCount: event.payload.plans.length,
+      });
+
+    case "board.card-step-completed":
     case "board.plan-written":
     case "board.card-stage-thread-requested":
     // Step-lifecycle events (t3o-10) are card DETAIL — the live step status
@@ -703,11 +738,12 @@ export function boardShellStreamEvent(
     case "board.card-step-awaiting-input":
     case "board.card-step-retuned":
       // Agent write-path events are card DETAIL, not column-card shell fields
-      // (D7): an agent's progress note, step completion or plan set changes
-      // nothing a column card renders, so they emit no shell delta. They reach
-      // a client through board.subscribeCard / the MCP context tool. (A step
-      // leaving `queued` always does so via `card-step-admitted` above, so the
-      // badge clears there — never here.)
+      // (D7): an agent's progress note, step completion or a plan BODY rewrite
+      // changes nothing a column card renders, so they emit no shell delta.
+      // They reach a client through board.subscribeCard / the MCP context tool.
+      // (A step leaving `queued` always does so via `card-step-admitted` above,
+      // so the badge clears there — never here; and a plan SET change rides
+      // `card-plans` above, which `board.plan-written` never causes.)
       return Option.none();
 
     default: {

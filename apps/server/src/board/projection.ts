@@ -427,6 +427,11 @@ const BoardCardShellDbRow = Schema.Struct({
   blocked: Schema.Int,
   dependencyCount: Schema.Int,
   hasBrief: Schema.Int,
+  /** `boardBriefHasImage` spelled in SQL — see `BOARD_BRIEF_IMAGE_SQL`. */
+  briefHasImage: Schema.Int,
+  /** The card's `board_plans` rows, counted in SQL so a thousand-card shell
+      never loads a plan body. */
+  planCount: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
 });
@@ -661,6 +666,16 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         blocked,
         json_array_length(depends_on) AS "dependencyCount",
         CASE WHEN brief_ref IS NULL THEN 0 ELSE 1 END AS "hasBrief",
+        CASE
+          WHEN EXISTS (
+            SELECT 1 FROM board_card_bodies
+            WHERE board_card_bodies.card_id = board_cards.card_id
+              AND board_card_bodies.kind = ${BOARD_CARD_BRIEF_BODY_KIND}
+              AND (board_card_bodies.body LIKE '%<img%' OR board_card_bodies.body LIKE '%![%](%')
+          ) THEN 1 ELSE 0
+        END AS "briefHasImage",
+        (SELECT COUNT(*) FROM board_plans WHERE board_plans.card_id = board_cards.card_id)
+          AS "planCount",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
@@ -685,6 +700,11 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         blocked,
         json_array_length(depends_on) AS "dependencyCount",
         CASE WHEN brief_ref IS NULL THEN 0 ELSE 1 END AS "hasBrief",
+        -- The archive list renders neither indicator, so neither is worth a
+        -- correlated subquery per archived card; the columns exist only because
+        -- both queries decode through one row schema.
+        0 AS "briefHasImage",
+        0 AS "planCount",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
@@ -2244,6 +2264,8 @@ export function withBoardShellCards(
           blocked: row.blocked !== 0,
           dependencyCount: row.dependencyCount,
           hasBrief: row.hasBrief !== 0,
+          briefHasImage: row.briefHasImage !== 0,
+          planCount: row.planCount,
           archivedAt: row.archivedAt,
           activeThreadId,
           queued: queuedByCard.has(row.cardId),

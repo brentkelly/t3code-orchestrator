@@ -217,6 +217,59 @@ describe("board shell reducer", () => {
     expect(reordered.cards?.[0]?.stalled).toBe(true); // preserved
   });
 
+  it("card-plans updates the footer's plan count and no-ops on an unheld card", () => {
+    const held = snapshot({ cards: [cardShell("card-1")] });
+    const proposed = applyShellStreamEvent(held, {
+      kind: "card-plans",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      planCount: 3,
+    });
+    expect(proposed.cards?.[0]?.planCount).toBe(3);
+
+    // A re-proposal that shrinks the set has to bring the count down.
+    const shrunk = applyShellStreamEvent(proposed, {
+      kind: "card-plans",
+      sequence: 3,
+      cardId: BoardCardId.make("card-1"),
+      planCount: 1,
+    });
+    expect(shrunk.cards?.[0]?.planCount).toBe(1);
+
+    const stranger = applyShellStreamEvent(held, {
+      kind: "card-plans",
+      sequence: 4,
+      cardId: BoardCardId.make("card-elsewhere"),
+      planCount: 9,
+    });
+    expect(stranger.cards).toEqual(held.cards);
+  });
+
+  it("a card upsert preserves body-derived fields it could not know, and applies the ones it could", () => {
+    // These two fields come from slices the card aggregate does not carry, so
+    // an absent key means "unchanged" — otherwise a drag (`card-reordered` →
+    // `card-upserted`) would blank a card's image icon and plan count.
+    const known = snapshot({
+      cards: [{ ...cardShell("card-1"), briefHasImage: true, planCount: 2 }],
+    });
+    const dragged = applyShellStreamEvent(known, {
+      kind: "card-upserted",
+      sequence: 2,
+      card: cardShell("card-1", { orderKey: "z" }),
+    });
+    expect(dragged.cards?.[0]?.briefHasImage).toBe(true);
+    expect(dragged.cards?.[0]?.planCount).toBe(2);
+
+    // But a delta that DID see the brief is authoritative, `false` included.
+    const edited = applyShellStreamEvent(known, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: { ...cardShell("card-1"), briefHasImage: false },
+    });
+    expect(edited.cards?.[0]?.briefHasImage).toBe(false);
+    expect(edited.cards?.[0]?.planCount).toBe(2);
+  });
+
   it("card-queued is a no-op for a card the client does not hold (t3o-11)", () => {
     const held = snapshot({ cards: [cardShell("card-1")] });
     const next = applyShellStreamEvent(held, {

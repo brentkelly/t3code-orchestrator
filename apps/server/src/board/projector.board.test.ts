@@ -7,6 +7,7 @@
 import {
   BOARD_SEED_LABEL_IDS,
   BoardCardId,
+  BoardPlanId,
   BoardStageId,
   boardCardShellFromCard,
   EventId,
@@ -168,9 +169,142 @@ describe("board projector", () => {
       if (delta?.kind === "card-upserted") {
         assert.strictEqual(delta.card.hasBrief, true);
         assert.strictEqual(delta.card.dependencyCount, 1);
+        // A create always knows its brief — with one or without one — so the
+        // footer's image flag is decided here rather than left to preserve.
+        assert.strictEqual(delta.card.briefHasImage, false);
       }
     }),
   );
+
+  // The footer's image indicator (t3o-06). The brief BODY is not on the card
+  // aggregate (D8), so the flag can only be decided by the two events that
+  // carry a brief; every other card delta has to leave it alone, or a drag
+  // would blank the icon.
+  it("decides the brief-image flag only on the events that carry a brief", () => {
+    const created = {
+      ...eventBase,
+      type: "board.card-created",
+      payload: {
+        cardId,
+        projectId,
+        title: "Card with a picture",
+        key: "CARD-1",
+        cardNumber: 1,
+        labels: [BOARD_SEED_LABEL_IDS.feature],
+        brief: "Here it is: ![mockup](./mockup.png)",
+        stage: "backlog",
+        orderKey: "m",
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    } as unknown as BoardEvent;
+    const createdDelta = Option.getOrNull(boardShellStreamEvent(created));
+    assert.strictEqual(
+      createdDelta?.kind === "card-upserted" ? createdDelta.card.briefHasImage : null,
+      true,
+    );
+
+    const card = makeCard({ briefRef: "brief" });
+    // Brief edited to drop the image: `false` is a real value and must ride.
+    const cleared: BoardEvent = {
+      ...eventBase,
+      sequence: 2,
+      type: "board.card-updated",
+      payload: { cardId, brief: "Described in words instead.", card },
+    };
+    const clearedDelta = Option.getOrNull(boardShellStreamEvent(cleared));
+    assert.strictEqual(
+      clearedDelta?.kind === "card-upserted" ? clearedDelta.card.briefHasImage : null,
+      false,
+    );
+
+    // Brief cleared outright is also `false`, not "unknown".
+    const removed: BoardEvent = {
+      ...eventBase,
+      sequence: 3,
+      type: "board.card-updated",
+      payload: { cardId, brief: null, card: makeCard({}) },
+    };
+    const removedDelta = Option.getOrNull(boardShellStreamEvent(removed));
+    assert.strictEqual(
+      removedDelta?.kind === "card-upserted" ? removedDelta.card.briefHasImage : null,
+      false,
+    );
+
+    // A title-only edit does not know the brief, so it omits the key and the
+    // client keeps what it has.
+    const retitled: BoardEvent = {
+      ...eventBase,
+      sequence: 4,
+      type: "board.card-updated",
+      payload: { cardId, card },
+    };
+    const retitledDelta = Option.getOrNull(boardShellStreamEvent(retitled));
+    assert.strictEqual(
+      retitledDelta?.kind === "card-upserted" ? "briefHasImage" in retitledDelta.card : null,
+      false,
+    );
+
+    // As does a plain move — the same rule for every card-carrying event.
+    const moved: BoardEvent = {
+      ...eventBase,
+      sequence: 5,
+      type: "board.card-moved",
+      payload: {
+        cardId,
+        fromStage: BoardStageId.make("backlog"),
+        toStage: BoardStageId.make("sprint"),
+        card,
+      },
+    };
+    const movedDelta = Option.getOrNull(boardShellStreamEvent(moved));
+    assert.strictEqual(
+      movedDelta?.kind === "card-upserted" ? "briefHasImage" in movedDelta.card : null,
+      false,
+    );
+  });
+
+  // The footer's plan indicator (t3o-08): the plan set is its own slice, so a
+  // proposal emits a one-number delta of its own rather than a card upsert.
+  it("emits a plan-count delta when the card's plans are replaced", () => {
+    const plan = (key: string, ordinal: number) => ({
+      planId: BoardPlanId.make(`${cardId}::${key}`),
+      cardId,
+      title: key,
+      summary: "s",
+      dependsOn: [],
+      ordinal,
+      locked: false,
+      createdAt: NOW,
+      updatedAt: NOW,
+      body: `# ${key}`,
+    });
+    const proposed: BoardEvent = {
+      ...eventBase,
+      type: "board.plans-proposed",
+      payload: { cardId, plans: [plan("one", 0), plan("two", 1)] },
+    };
+    assert.deepStrictEqual(Option.getOrNull(boardShellStreamEvent(proposed)), {
+      kind: "card-plans",
+      sequence: 1,
+      cardId,
+      planCount: 2,
+    });
+
+    // Rewriting one plan's BODY changes no count, so it stays card DETAIL.
+    const written: BoardEvent = {
+      ...eventBase,
+      sequence: 2,
+      type: "board.plan-written",
+      payload: {
+        cardId,
+        planId: BoardPlanId.make(`${cardId}::one`),
+        body: "# One, rewritten",
+        plan: (({ body: _body, ...rest }) => rest)(plan("one", 0)),
+      },
+    };
+    assert.strictEqual(Option.getOrNull(boardShellStreamEvent(written)), null);
+  });
 
   it.effect("keeps an archived card in the read model while the shell drops it", () =>
     Effect.gen(function* () {
