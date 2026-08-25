@@ -52,6 +52,7 @@ import {
   ProviderInstanceId,
   sortBoardCardThreadLinks,
   type BoardCardDetail,
+  type BoardPlanWithBody,
   type BoardState,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -386,6 +387,27 @@ const BoardPlanDbRow = Schema.Struct({
   updatedAt: BoardPlan.fields.updatedAt,
 });
 type BoardPlanDbRow = typeof BoardPlanDbRow.Type;
+
+// Row → plan mapping, spelled once: the read-model builder wants the metadata,
+// the detail loader wants it plus the markdown body. Coercing `locked` (0/1)
+// and adding a field lands in exactly one place.
+function rowToBoardPlan(row: BoardPlanDbRow): BoardPlan {
+  return {
+    planId: row.planId,
+    cardId: row.cardId,
+    title: row.title,
+    summary: row.summary,
+    dependsOn: row.dependsOn,
+    ordinal: row.ordinal,
+    locked: row.locked !== 0,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function rowToBoardPlanWithBody(row: BoardPlanDbRow): BoardPlanWithBody {
+  return { ...rowToBoardPlan(row), body: row.body };
+}
 
 /**
  * The narrow row behind `BoardCardShell` (t3o-04): exactly the columns the
@@ -2102,19 +2124,7 @@ export function loadBoardState(
             }),
           )
           .sort(compareBoardStepStates);
-        const plans = planRows
-          .map((row) => ({
-            planId: row.planId,
-            cardId: row.cardId,
-            title: row.title,
-            summary: row.summary,
-            dependsOn: row.dependsOn,
-            ordinal: row.ordinal,
-            locked: row.locked !== 0,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-          }))
-          .sort(compareBoardPlans);
+        const plans = planRows.map(rowToBoardPlan).sort(compareBoardPlans);
         return {
           cards: cardRows
             .map((row) =>
@@ -2440,20 +2450,7 @@ export function makeBoardCardDetailLoader(
           const dependencyRefsById = new Map(dependencyRows.map((row) => [row.cardId, row]));
           // Plans with their bodies (t3o-08), in the card's ordinal order — the
           // Plan pane's source, and the `hasPlan` flag is just "any plan".
-          const plans = planRows
-            .map((row) => ({
-              planId: row.planId,
-              cardId: row.cardId,
-              title: row.title,
-              summary: row.summary,
-              dependsOn: row.dependsOn,
-              ordinal: row.ordinal,
-              locked: row.locked !== 0,
-              createdAt: row.createdAt,
-              updatedAt: row.updatedAt,
-              body: row.body,
-            }))
-            .sort(compareBoardPlans);
+          const plans = planRows.map(rowToBoardPlanWithBody).sort(compareBoardPlans);
           return {
             card,
             brief: Option.match(bodyRow, {
