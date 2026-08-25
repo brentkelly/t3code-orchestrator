@@ -247,6 +247,12 @@ export type Harness = {
       ones the engine double otherwise treats as no-ops, so a test can assert
       HOW a thread was spawned, not just that a step went running. */
   readonly commands: Effect.Effect<ReadonlyArray<OrchestrationCommand>>;
+  /** Every board event the double DECIDED, in order. `commands` records what
+      the reactor asked for; this records what the decider accepted — the
+      difference is a rejected command, which the reactor swallows into a log
+      line. A test asserting an outcome the card state does not carry (a pure
+      report, e.g. a pre-provision worktree failure) reads it here. */
+  readonly decided: Effect.Effect<ReadonlyArray<OrchestrationEvent>>;
 };
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
@@ -261,6 +267,11 @@ export function withGovernor(
         commit-liveness signal the timeout sweep reads. Defaults to "" (no
         commit history). */
     readonly latestCommitIso?: string;
+    /** Make every git call answer as it does outside a repository: empty
+        stdout, exit 128. The driver runs with `allowNonZeroExit`, so this is
+        what the reactor's base-branch probes really see when a project's
+        workspace root is not a git checkout. */
+    readonly notAGitRepo?: boolean;
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
@@ -285,10 +296,12 @@ export function withGovernor(
 
     // Apply a decided (planned) event to the model exactly as the projection
     // pipeline would, so `getCommandReadModel` reflects prior dispatches.
+    const decided = yield* Ref.make<ReadonlyArray<OrchestrationEvent>>([]);
     const applyDecided = (planned: Omit<OrchestrationEvent, "sequence">) =>
       Effect.gen(function* () {
         const sequence = yield* Ref.updateAndGet(seq, (n) => n + 1);
         const event = { ...planned, sequence } as OrchestrationEvent;
+        yield* Ref.update(decided, (current) => [...current, event]);
         if (isBoardEvent(event)) {
           const next = yield* projectBoardEvent(yield* Ref.get(model), event);
           yield* Ref.set(model, next);
@@ -419,13 +432,19 @@ export function withGovernor(
 
     const gitStub = {
       execute: (request: { readonly args?: ReadonlyArray<string> }) =>
-        Effect.succeed({
-          // `git log -1 --format=%cI` answers the configured commit time (the
-          // sweep's commit-liveness signal); every other call answers "main".
-          stdout: request.args?.[0] === "log" ? (input.latestCommitIso ?? "") : "main",
-          stderr: "",
-          exitCode: 0,
-        }),
+        input.notAGitRepo === true
+          ? Effect.succeed({
+              stdout: "",
+              stderr: "fatal: not a git repository (or any of the parent directories): .git",
+              exitCode: 128,
+            })
+          : Effect.succeed({
+              // `git log -1 --format=%cI` answers the configured commit time (the
+              // sweep's commit-liveness signal); every other call answers "main".
+              stdout: request.args?.[0] === "log" ? (input.latestCommitIso ?? "") : "main",
+              stderr: "",
+              exitCode: 0,
+            }),
     } as unknown as GitVcsDriver.GitVcsDriver["Service"];
 
     const setupStub = {
@@ -488,6 +507,7 @@ export function withGovernor(
             ),
           ),
           commands: Ref.get(commands),
+          decided: Ref.get(decided),
         });
       }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
     );

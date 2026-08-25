@@ -44,6 +44,49 @@ import {
   withGovernor,
 } from "./supervisorHarness.testkit.ts";
 
+// ── A build that cannot be provisioned says so on the card ──────────────────
+it.effect("a project that is not a git repository fails the card visibly, not silently", () =>
+  withGovernor(
+    {
+      // No worktree yet: this is a card taking its FIRST run at Building, the
+      // path that resolves the base branch before anything is provisioned.
+      board: {
+        cards: [makeBoardCard({ id: "card-1", stage: "building", orderKey: "m" })],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      notAGitRepo: true,
+    },
+    ({ slots, pumpDomain, board, decided }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(
+          movedToBuilding(makeBoardCard({ id: "card-1", stage: "building", orderKey: "m" }), 1),
+        );
+
+        // The card cannot build — no worktree, so no thread and no slot.
+        assert.strictEqual((yield* board).cards[0]?.worktree, null);
+        assert.strictEqual(yield* slots.heldTotal, 0);
+
+        // But it SAYS so: the failure is decided as a card event (which the
+        // projection turns into the activity rail's "could not prepare the
+        // worktree" row), naming the workspace and why. Before this, the
+        // decider rejected the report — the card just sat in Building with
+        // nothing running and the only trace was a server-side warning.
+        const failures = (yield* decided).filter(
+          (event) => event.type === "board.card-worktree-failed",
+        );
+        // Exactly one row per click: the reason is reported once, by the
+        // single provisioning pass `schedule` owns.
+        assert.strictEqual(failures.length, 1);
+        const error = String(
+          (failures[0]?.payload as { readonly error?: unknown } | undefined)?.error,
+        );
+        assert.include(error, "/tmp/project-1");
+        assert.match(error, /not a git repository/);
+      }),
+  ),
+);
+
 // ── D18: Building → Code review on build-step success (the one board-driven
 //    crossing) ─────────────────────────────────────────────────────────────
 it.effect("D18: a successful build step advances Building → Code review", () =>

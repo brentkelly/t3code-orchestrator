@@ -262,6 +262,73 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
     }),
   );
 
+  it.effect("a pre-provision failure is reported on a card that has no worktree yet", () =>
+    Effect.gen(function* () {
+      // The reactor resolves the project cwd and the base branch BEFORE it
+      // dispatches `provision-worktree`; when that resolution fails there is no
+      // worktree record to mark. Rejecting the report used to swallow the only
+      // signal the human had (the card just sat in Building with nothing
+      // running), so the event is decided as a pure report: the reason reaches
+      // the activity rail, and `worktree` stays null — the state a retry starts
+      // from, since a null worktree is provisionable.
+      const card = makeCard({ id: "card-1", worktree: null });
+      const event = yield* decide(
+        fail("card-1", "/tmp/proj is not a git repository, or has no commits yet"),
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-worktree-failed");
+      if (event.type === "board.card-worktree-failed") {
+        assert.strictEqual(event.payload.card.worktree, null);
+        assert.strictEqual(
+          event.payload.error,
+          "/tmp/proj is not a git repository, or has no commits yet",
+        );
+      }
+    }),
+  );
+
+  it.effect("a retry that fails the same way again records the fresh reason", () =>
+    Effect.gen(function* () {
+      const card = makeCard({
+        id: "card-1",
+        worktree: {
+          branch: "board/card-1",
+          baseRefName: "main",
+          path: null,
+          status: "failed",
+          attempts: 2,
+          lastError: "boom",
+          reclaimBlockedReason: null,
+        },
+      });
+      const event = yield* decide(fail("card-1", "boom again"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-worktree-failed");
+      if (event.type === "board.card-worktree-failed") {
+        assert.strictEqual(event.payload.card.worktree?.status, "failed");
+        assert.strictEqual(event.payload.card.worktree?.lastError, "boom again");
+      }
+    }),
+  );
+
+  it.effect("a ready worktree is never failed behind a live checkout's back", () =>
+    Effect.gen(function* () {
+      const card = makeCard({
+        id: "card-1",
+        worktree: {
+          branch: "board/card-1",
+          baseRefName: "main",
+          path: "/tmp/worktrees/card-1",
+          status: "ready",
+          attempts: 1,
+          lastError: null,
+          reclaimBlockedReason: null,
+        },
+      });
+      const failure = yield* decideFail(fail("card-1"), makeReadModel(boardWith([card])));
+      assert.match(String(failure), /only a provisioning or failed worktree can be failed/);
+    }),
+  );
+
   it.effect("a failed worktree can be re-provisioned, incrementing attempts", () =>
     Effect.gen(function* () {
       const card = makeCard({

@@ -379,18 +379,43 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** Report a worktree failure onto the card, with the reason a human can act
+      on. Every arm of `ensureWorktree` reports through here so a build that
+      cannot start is visible on the card (activity rail) rather than only in
+      the server log — including the pre-flight arms that fail before a worktree
+      record exists, which the decider accepts for exactly that reason. */
+  const failWorktree = Effect.fn("board-supervisor-failWorktree")(function* (
+    card: BoardCard,
+    error: string,
+  ) {
+    yield* dispatch({
+      type: "board.card.fail-worktree",
+      commandId: yield* commandId("fail-worktree"),
+      cardId: card.id,
+      error,
+      createdAt: yield* nowIso,
+    });
+  });
+
   // Provision the card's branch + worktree (t3o-09 effects), reporting the
   // outcome through the worktree lifecycle commands. Returns the worktree path
-  // on success, or null on failure (the card records a visible, retryable
-  // `failed` worktree — a reverse state, never a silent wedge).
+  // on success, or null on failure — every failure arm reports through
+  // `failWorktree` first, so the card carries a visible, retryable reason (a
+  // `failed` worktree once one exists, an activity row when provisioning never
+  // got that far) rather than being a silent wedge.
   const ensureWorktree = Effect.fn("board-supervisor-ensureWorktree")(function* (card: BoardCard) {
     if (card.worktree !== null && card.worktree.status === "ready" && card.worktree.path !== null) {
       return card.worktree.path;
     }
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
+    // Every pre-flight failure below reports through `fail-worktree` rather
+    // than a server-side log: the card is the only place the human is looking,
+    // and a build that cannot start must say so THERE (the activity rail's
+    // "could not prepare the worktree: …" row) instead of leaving the card
+    // parked in its stage with nothing running and no explanation.
     if (cwd === null) {
-      yield* Effect.logWarning("board supervisor: no project cwd for card", { cardId: card.id });
+      yield* failWorktree(card, "The card's project has no workspace folder on this server.");
       return null;
     }
     const branch = boardCardWorktreeBranchName(card);
@@ -432,13 +457,18 @@ const make = Effect.gen(function* () {
       defaultBranch,
     });
     if (baseRefName === null || defaultBranch === "") {
-      yield* dispatch({
-        type: "board.card.fail-worktree",
-        commandId: yield* commandId("fail-worktree"),
-        cardId: card.id,
-        error: "Could not resolve the card's base branch.",
-        createdAt: yield* nowIso,
-      });
+      // Say WHICH of the three ways base-ref resolution failed — "could not
+      // resolve the base branch" is true but unactionable, and the three have
+      // different fixes (commit the parent's work, check out a branch, run
+      // `git init` + a first commit).
+      yield* failWorktree(
+        card,
+        baseRefName === null
+          ? "The parent card has no branch yet, so there is no base to cut this card's branch from."
+          : currentBranch === "HEAD"
+            ? `The project checkout at ${cwd} is on a detached HEAD, so there is no branch to cut the card's branch from.`
+            : `${cwd} is not a git repository, or has no commits yet, so there is no branch to cut the card's branch from.`,
+      );
       return null;
     }
     // Observe the provision dispatch: a rejected command (e.g. the worktree is
@@ -478,13 +508,7 @@ const make = Effect.gen(function* () {
       ),
     );
     if (Option.isNone(provisioned)) {
-      yield* dispatch({
-        type: "board.card.fail-worktree",
-        commandId: yield* commandId("fail-worktree"),
-        cardId: card.id,
-        error: "git worktree add failed; retry the build.",
-        createdAt: yield* nowIso,
-      });
+      yield* failWorktree(card, "git worktree add failed; retry the build.");
       return null;
     }
     yield* dispatch({
@@ -1041,7 +1065,6 @@ const make = Effect.gen(function* () {
         timeoutMs: exec.timeoutMs,
         createdAt: yield* nowIso,
       });
-      if (exec.mode === "build") yield* ensureWorktree(card);
       yield* schedule();
       return;
     }
@@ -1069,8 +1092,12 @@ const make = Effect.gen(function* () {
       timeoutMs: plan.timeoutMs,
       createdAt: yield* nowIso,
     });
-    // Build mode provisions a worktree (no-op if ready); plan mode needs none.
-    if (exec.mode === "build") yield* ensureWorktree(card);
+    // Provisioning is `schedule`'s job, not a second call here: it already
+    // provisions (or retries) the worktree of every pending build-mode step,
+    // including the one just selected, and plan mode needs none. Doing it
+    // twice was invisible while provisioning succeeded — the second call
+    // short-circuits on a `ready` worktree — but a FAILING one reported its
+    // failure onto the card twice for a single click.
     yield* schedule();
   });
 

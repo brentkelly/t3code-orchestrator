@@ -1459,21 +1459,42 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
 
     case "board.card.fail-worktree": {
       const card = yield* requireActiveBoardCard({ board, command });
-      if (card.worktree === null || card.worktree.status !== "provisioning") {
+      // A `ready` or `reclaimed` worktree is not an attempt in flight: failing
+      // one would rewrite a live (or already-released) checkout's state behind
+      // its back. Everything else is failable — including a worktree that is
+      // ALREADY failed, so a retry that fails the same way again records the
+      // fresh reason rather than being rejected.
+      if (
+        card.worktree !== null &&
+        card.worktree.status !== "provisioning" &&
+        card.worktree.status !== "failed"
+      ) {
         return yield* invariant(
           command,
-          `Card '${command.cardId}' has no worktree in 'provisioning'; cannot fail it.`,
+          `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a provisioning or failed worktree can be failed.`,
         );
       }
-      const nextCard: BoardCard = {
-        ...card,
-        worktree: {
-          ...card.worktree,
-          status: "failed",
-          lastError: command.error,
-        },
-        updatedAt: command.createdAt,
-      };
+      // Pre-provision failure: the reactor can fail BEFORE it ever dispatches
+      // `provision-worktree` — the project has no workspace folder, or the repo
+      // offers no base branch to cut from — so there is no worktree record to
+      // mark, and none should be invented (`baseRefName` would be a lie). The
+      // event is decided anyway, purely to report: it carries the reason onto
+      // the card's activity rail ("could not prepare the worktree: …") and
+      // leaves `worktree` null, which is exactly the state a retry starts from.
+      // Rejecting it instead swallowed the card's only failure signal into a
+      // server-side warning and left the card silently wedged in its stage.
+      const nextCard: BoardCard =
+        card.worktree === null
+          ? card
+          : {
+              ...card,
+              worktree: {
+                ...card.worktree,
+                status: "failed",
+                lastError: command.error,
+              },
+              updatedAt: command.createdAt,
+            };
       return {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
