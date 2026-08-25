@@ -144,10 +144,15 @@ function phaseNote(
   }
   if (phase === "triage") {
     if (status === "skipped") return "Nothing to triage — the review came back clean.";
-    if (status === "running")
-      return `${counts.fixed} fixed, ${counts.rejected} rejected, ${counts.open} still being worked.`;
-    if (status === "done")
-      return `${counts.fixed} fixed, ${counts.rejected} rejected with a written rationale.`;
+    // The triage note reports what TRIAGE did — the raw dispositions — not the
+    // adjudication-folded resolutions, which would erase a disputed call here.
+    const fixed = findings.filter((f) => f.disposition === "fixed").length;
+    const rejected = findings.filter((f) => f.disposition === "rejected").length;
+    if (status === "running") {
+      const open = findings.length - fixed - rejected;
+      return `${fixed} fixed, ${rejected} rejected, ${open} still being worked.`;
+    }
+    if (status === "done") return `${fixed} fixed, ${rejected} rejected with a written rationale.`;
     return "Not started.";
   }
   if (status === "skipped") return "Only runs when a finding blocks the round.";
@@ -365,8 +370,11 @@ export function BoardCardReviewPane({
   readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
 }) {
   const loop = deriveBoardReviewLoop(completions, maxRounds);
-  const [openRound, setOpenRound] = useState<number | null>(null);
-  const shownRound = openRound ?? loop.currentRound;
+  // Which round is expanded: a round number the user picked, "collapsed" after
+  // they closed the open one, or null — never touched — which follows the
+  // loop's current round.
+  const [openRound, setOpenRound] = useState<number | "collapsed" | null>(null);
+  const shownRound = openRound === "collapsed" ? null : (openRound ?? loop.currentRound);
   const pill = statusPill(loop, live);
   const counts = [
     `${loop.totals.raised} raised`,
@@ -443,7 +451,7 @@ export function BoardCardReviewPane({
           <Round
             key={round.round}
             onOpenThread={onOpenThread}
-            onToggle={() => setOpenRound(shownRound === round.round ? 0 : round.round)}
+            onToggle={() => setOpenRound(shownRound === round.round ? "collapsed" : round.round)}
             open={shownRound === round.round}
             round={round}
           />

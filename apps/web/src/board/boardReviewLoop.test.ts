@@ -145,6 +145,26 @@ describe("deriveBoardReviewLoop", () => {
     expect(loop.totals.open).toBe(1);
   });
 
+  it("a cap lowered below recorded rounds ends the loop, exactly as the executor does", () => {
+    // The executor walks only the configured cap; recorded rounds beyond it
+    // are history it will never re-enter. The derivation must agree — not
+    // report a next phase the server will never run — while still rendering
+    // the extra rounds.
+    const loop = deriveBoardReviewLoop(
+      [
+        completion("review@1", review([finding("critical")])),
+        completion("triage@1", { fixedSha: "s", dispositions: [] }),
+        completion("adjudicate@1", { verdicts: [] }),
+        completion("review@2", review([finding("critical", "f2")])),
+      ],
+      1,
+    );
+    expect(loop.status).toBe("round-cap");
+    expect(loop.next).toBeNull();
+    expect(loop.rounds).toHaveLength(2);
+    expect(loop.maxRounds).toBe(2);
+  });
+
   it("a malformed review payload reads unreadable, never as no findings", () => {
     const loop = deriveBoardReviewLoop([completion("review@1", "{not json")], 5);
     expect(loop.status).toBe("unreadable");

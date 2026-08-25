@@ -819,8 +819,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardReviewPane
                 completions={props.detail.stepCompletions}
+                // "Running now" means the loop's own step is live: the ACTIVE
+                // linked thread is the one a running phase owns, so only its
+                // state drives the spinner — a side conversation on another
+                // linked thread must not.
                 live={props.threadLinks.some(
-                  (link) => !link.tombstoned && link.threadState === "working",
+                  (link) =>
+                    link.threadId === activeBoardCardThreadId(card.threadLinks) &&
+                    link.threadState === "working",
                 )}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
                 onBackToThread={() => setPane("thread")}

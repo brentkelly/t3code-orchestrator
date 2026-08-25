@@ -26,6 +26,7 @@ import {
   parseReviewStepId,
   type BoardReviewFinding,
   type BoardReviewPhaseId,
+  type BoardReviewTriageAction,
   type BoardReviewVerdict,
   type BoardStepCompletion,
   type ThreadId,
@@ -55,6 +56,9 @@ export type BoardReviewFindingResolution = "open" | "fixed" | "rejected" | "disp
 export interface BoardReviewLoopFinding {
   readonly finding: BoardReviewFinding;
   readonly resolution: BoardReviewFindingResolution;
+  /** The triage phase's raw call, before any adjudication verdict folds into
+      `resolution` — what the triage step itself did with the finding. */
+  readonly disposition: BoardReviewTriageAction | null;
   readonly dispositionNote: string;
   readonly verdict: BoardReviewVerdict | null;
   readonly verdictNote: string;
@@ -167,15 +171,17 @@ export function deriveBoardReviewLoop(
   }
 
   // The executor's walk (reviewLoopDecision), verbatim in miniature: find the
-  // phase due next, or how the loop ended.
-  const rounds = Math.max(maxRounds, highestRound);
+  // phase due next, or how the loop ended. The walk is bounded by the
+  // CONFIGURED cap exactly as the executor's is — a recorded round beyond a
+  // since-lowered cap is history the executor will never re-enter, so it is
+  // rendered below but never treated as "the loop is still running".
   interface Walk {
     readonly next: { readonly phase: BoardReviewPhaseId; readonly round: number } | null;
     readonly status: BoardReviewLoopStatus;
     readonly currentRound: number;
   }
   const walk = (): Walk => {
-    for (let round = 1; round <= rounds; round++) {
+    for (let round = 1; round <= maxRounds; round++) {
       const review = byStep.get(`review@${round}`);
       if (review === undefined) {
         return { next: { phase: "review", round }, status: "running", currentRound: round };
@@ -198,12 +204,14 @@ export function deriveBoardReviewLoop(
         return { next: null, status: "converged", currentRound: round };
       }
     }
-    return { next: null, status: "round-cap", currentRound: rounds };
+    return { next: null, status: "round-cap", currentRound: maxRounds };
   };
   const { next, status, currentRound } = walk();
 
   const roundModels: BoardReviewLoopRound[] = [];
-  for (let round = 1; round <= currentRound; round++) {
+  // Recorded rounds beyond the walk (a since-lowered cap) still render.
+  const shownRounds = Math.max(currentRound, highestRound);
+  for (let round = 1; round <= shownRounds; round++) {
     const review = byStep.get(`review@${round}`);
     const triage = byStep.get(`triage@${round}`);
     const adjudicate = byStep.get(`adjudicate@${round}`);
@@ -242,6 +250,7 @@ export function deriveBoardReviewLoop(
       return {
         finding,
         resolution: resolutionOf(disposition, verdict),
+        disposition: disposition?.action ?? null,
         dispositionNote: disposition?.note ?? "",
         verdict: verdict?.verdict ?? null,
         verdictNote: verdict?.note ?? "",
@@ -306,7 +315,8 @@ export function deriveBoardReviewLoop(
   const all = roundModels.flatMap((round) => round.findings);
   return {
     rounds: roundModels,
-    maxRounds: rounds,
+    // The segment bar's width: the cap, stretched only to fit recorded history.
+    maxRounds: Math.max(maxRounds, highestRound),
     currentRound,
     next,
     status,
