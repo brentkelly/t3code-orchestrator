@@ -5,7 +5,8 @@
  *
  * State indicators are static state changes, never continuously repainting
  * animations (upstream AGENTS.md: loops peg the GPU on high-refresh
- * displays) — a running thread is a solid dot, not a spinner.
+ * displays) — a running thread is a solid dot, not a spinner. The same dot
+ * turns blue when the card is awaiting input.
  */
 import type {
   BoardCardShell,
@@ -14,7 +15,7 @@ import type {
   BoardLabelId,
   ThreadId,
 } from "@t3tools/contracts";
-import { CircleAlertIcon, LockIcon, TriangleAlertIcon } from "lucide-react";
+import { LockIcon, TriangleAlertIcon } from "lucide-react";
 import type { DragEvent } from "react";
 
 import { cn } from "../lib/utils";
@@ -156,8 +157,11 @@ export function BoardCardContent({
           </span>
         ) : null}
         {card.awaitingInput ? (
-          <span className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-info-foreground">
-            <CircleAlertIcon className="size-3" />
+          // A blue dot in the running-dot's slot, not an icon: the card reads
+          // as "has a thread, and it needs you" — same indicator, different
+          // colour — with the "Input needed" label spelling it out.
+          <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-info-foreground">
+            <span className="size-2 shrink-0 rounded-full bg-info" title="Input needed" />
             Input needed
           </span>
         ) : null}
