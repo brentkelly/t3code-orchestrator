@@ -731,9 +731,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // Which tab the thread pane is on. Absent means "the card's active thread",
   // so a newly adopted thread opens without the panel tracking it.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
+  const activeThreadId = activeBoardCardThreadId(card.threadLinks);
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
-    activeBoardCardThreadId(card.threadLinks);
+    activeThreadId;
 
   return (
     <>
@@ -824,9 +825,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 // state drives the spinner — a side conversation on another
                 // linked thread must not.
                 live={props.threadLinks.some(
-                  (link) =>
-                    link.threadId === activeBoardCardThreadId(card.threadLinks) &&
-                    link.threadState === "working",
+                  (link) => link.threadId === activeThreadId && link.threadState === "working",
                 )}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
                 onBackToThread={() => setPane("thread")}

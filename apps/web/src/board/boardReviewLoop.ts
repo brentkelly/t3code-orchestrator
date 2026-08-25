@@ -262,6 +262,9 @@ export function deriveBoardReviewLoop(
       const completion = phase === "review" ? review : phase === "triage" ? triage : adjudicate;
       if (completion !== undefined) return "done";
       if (next !== null && next.round === round && next.phase === phase) return "running";
+      // A round beyond the walk (recorded before the cap was lowered) will
+      // never run its remaining phases — skipped, not forever pending.
+      if (round > currentRound) return "skipped";
       if (review === undefined || reviewMalformed) return "pending";
       // The review has spoken: phases its findings never summon are skipped,
       // matching the executor — no triage for a clean round, no adjudication
