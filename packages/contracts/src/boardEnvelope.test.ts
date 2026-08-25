@@ -294,10 +294,11 @@ describe("review phase envelope", () => {
     // The scannable comment styling is USER-OWNED craft (it lives in the
     // editable prompt, not the forced protocol) — a user can reword it.
     const review = DEFAULT_BOARD_REVIEW_PHASE_PROMPT;
-    // Severity -> GitHub alert callout mapping.
-    expect(review).toContain("[!CAUTION]");
-    expect(review).toContain("[!WARNING]");
-    expect(review).toContain("[!NOTE]");
+    // Severity -> GitHub alert callout mapping, asserted as PAIRS so a reordering
+    // (e.g. critical -> [!NOTE]) is caught, not just the presence of each tag.
+    expect(review).toContain("critical uses `> [!CAUTION]`");
+    expect(review).toContain("improvement uses `> [!WARNING]`");
+    expect(review).toContain("nitpick uses `> [!NOTE]`");
     // Bold "Severity (i/N): title" summary line + suggested-fix line.
     expect(review).toContain("<Severity> (<i>/<N>): <title>");
     expect(review).toContain("**Suggested fix:**");
