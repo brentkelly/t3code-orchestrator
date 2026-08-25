@@ -47,8 +47,9 @@ export type BoardCardProgressBlock =
       readonly otherThreadCount: number;
     };
 
+// No "pr": the PR reference moved to the stage-independent meta row, so it is
+// not part of the review ledger's progress block any more.
 const REVIEW_ITEM_KINDS: ReadonlySet<BoardCardSummaryItem["kind"]> = new Set([
-  "pr",
   "round",
   "step",
   "severity",

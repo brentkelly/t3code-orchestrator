@@ -1,23 +1,39 @@
 /**
- * T3o stage-specific summary row (t3o-06). Renders the `BoardCardSummaryItem`s
- * `boardCardSummary` derives from a `BoardCardShell` — plan pips, review round
- * pips, the severity triple (with the tooltip that makes three bare numbers
- * mean something), the issue tally, PR and attachment counts.
+ * T3o card summary rows (t3o-06). Two of them:
+ *
+ * `BoardCardSummaryRow` renders the `BoardCardSummaryItem`s `boardCardSummary`
+ * derives from a `BoardCardShell` — plan pips, review round pips, the severity
+ * triple (with the tooltip that makes three bare numbers mean something), the
+ * issue tally, attachment counts — and changes with the card's stage.
+ *
+ * `BoardCardMetaRow` is the stage-independent footer: dependencies, agent
+ * threads, plans and the pull request as icon+count pairs, with the brief's
+ * image flag pushed to the far end.
  *
  * Static presentation only: no animations (upstream AGENTS.md — repainting
- * loops peg the GPU on high-refresh displays). The row renders nothing when
- * `items` is empty, so a stage with no data adds no height to the card.
+ * loops peg the GPU on high-refresh displays). Either row renders nothing when
+ * it has nothing to say, so a card with no data adds no height.
  */
 import type { BoardCardThreadShell } from "@t3tools/contracts";
 import {
   BOARD_THREAD_TODO_STATUS_DONE,
   BOARD_THREAD_TODO_STATUS_IN_PROGRESS,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronRightIcon, GitPullRequestIcon, PaperclipIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  GitPullRequestIcon,
+  ImageIcon,
+  Link2Icon,
+  ListIcon,
+  MessageSquareIcon,
+  PaperclipIcon,
+  type LucideIcon,
+} from "lucide-react";
 
 import { cn } from "../lib/utils";
 import { formatRelativeTime } from "../timestampFormat";
-import type { BoardCardSummaryItem } from "./boardCardSummary";
+import type { BoardCardMeta, BoardCardSummaryItem } from "./boardCardSummary";
 
 /** Max pips rendered for either the review-round or plan-progress rows, so a
     pathological count cannot blow out the card width. */
@@ -132,12 +148,6 @@ function SummaryItem({ item }: { readonly item: BoardCardSummaryItem }) {
       );
     case "plans":
       return <PlanPips done={item.done} total={item.total} />;
-    case "pr":
-      return (
-        <span className="inline-flex items-center gap-0.5 text-[10.5px] font-medium text-muted-foreground">
-          <GitPullRequestIcon className="size-3" />#{item.number}
-        </span>
-      );
     case "round":
       return <RoundPips current={item.current} max={item.max} />;
     case "step":
@@ -177,6 +187,89 @@ export function BoardCardSummaryRow({
       {items.map((item) => (
         <SummaryItem item={item} key={item.kind} />
       ))}
+    </div>
+  );
+}
+
+/** One count with its icon. The number is never on its own: three bare glyphs
+    in a row mean nothing without the tooltip that spells them out. */
+function MetaCount({
+  children,
+  icon: Icon,
+  tint,
+  title,
+}: {
+  readonly children: number | string;
+  readonly icon: LucideIcon;
+  readonly tint?: string | undefined;
+  readonly title: string;
+}) {
+  return (
+    <span
+      aria-label={title}
+      className={cn(
+        "inline-flex items-center gap-1 text-[10.5px] font-medium tabular-nums",
+        tint ?? "text-muted-foreground",
+      )}
+      title={title}
+    >
+      <Icon className="size-3" />
+      {children}
+    </span>
+  );
+}
+
+/**
+ * The card's footer: dependencies, agent threads, plans and the pull request,
+ * left to right, with the brief's image flag pushed to the far end. Renders
+ * nothing at all when the card is tied to nothing, so a bare card keeps its
+ * height.
+ */
+export function BoardCardMetaRow({ meta }: { readonly meta: BoardCardMeta }) {
+  if (meta.empty) return null;
+  return (
+    <div className="flex items-center gap-2.5 text-muted-foreground">
+      {meta.dependencyCount === 0 ? null : (
+        <MetaCount
+          icon={Link2Icon}
+          title={`Depends on ${meta.dependencyCount} ${meta.dependencyCount === 1 ? "card" : "cards"}`}
+        >
+          {meta.dependencyCount}
+        </MetaCount>
+      )}
+      {meta.threadCount === 0 ? null : (
+        <MetaCount
+          icon={MessageSquareIcon}
+          title={`${meta.threadCount} agent ${meta.threadCount === 1 ? "thread" : "threads"} on this card`}
+        >
+          {meta.threadCount}
+        </MetaCount>
+      )}
+      {meta.planCount === 0 ? null : (
+        <MetaCount
+          icon={ListIcon}
+          title={`${meta.planCount} ${meta.planCount === 1 ? "plan" : "plans"}`}
+        >
+          {meta.planCount}
+        </MetaCount>
+      )}
+      {meta.prNumber === undefined ? null : (
+        <MetaCount
+          icon={GitPullRequestIcon}
+          tint="text-info-foreground"
+          title={`Pull request #${meta.prNumber}`}
+        >
+          {`#${meta.prNumber}`}
+        </MetaCount>
+      )}
+      <span className="flex-1" />
+      {meta.briefHasImage ? (
+        // The one indicator with no number: a brief either has a picture in it
+        // or it does not, and "1 image" would be a count of nothing useful.
+        <span aria-label="Brief contains an image" title="Brief contains an image">
+          <ImageIcon className="size-3" />
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -13,7 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardCardSummary } from "./boardCardSummary";
+import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 
 /** A shell as `makeBoardCardShell` produces it: every not-yet-sourced review /
     plan field ABSENT, exactly what rides the wire today. Overrides let a test
@@ -92,13 +92,9 @@ describe("boardCardSummary", () => {
         issuesDisputed: 1,
       }),
     );
-    expect(summary.items.map((item) => item.kind)).toEqual([
-      "pr",
-      "round",
-      "step",
-      "severity",
-      "issues",
-    ]);
+    // No "pr": the PR reference is stage-independent now and rides the meta
+    // row (`boardCardMeta`) rather than the review stage's summary.
+    expect(summary.items.map((item) => item.kind)).toEqual(["round", "step", "severity", "issues"]);
     expect(summary.items).toContainEqual({
       kind: "severity",
       critical: 1,
@@ -119,9 +115,57 @@ describe("boardCardSummary", () => {
     });
   });
 
-  it("shows a PR reference on a Ready-for-merge card when detection lands", () => {
-    expect(boardCardSummary(shell("merge", { prNumber: 128 })).items).toEqual([
-      { kind: "pr", number: 128 },
-    ]);
+  it("keeps the PR reference out of every stage summary", () => {
+    // It belongs to the card, not to the column it happens to be sitting in.
+    for (const stage of ["review", "merge", "done"] as const) {
+      expect(boardCardSummary(shell(stage, { prNumber: 128 })).items).not.toContainEqual(
+        expect.objectContaining({ kind: "pr" }),
+      );
+    }
+  });
+});
+
+describe("boardCardMeta", () => {
+  it("is empty on a card that is tied to nothing, so the row adds no height", () => {
+    expect(boardCardMeta(shell("backlog"), 0).empty).toBe(true);
+  });
+
+  it("reads every indicator off the shell, plus the client-joined thread count", () => {
+    const meta = boardCardMeta(
+      shell("review", { dependencyCount: 2, planCount: 3, prNumber: 88, briefHasImage: true }),
+      1,
+    );
+    expect(meta).toEqual({
+      dependencyCount: 2,
+      threadCount: 1,
+      planCount: 3,
+      prNumber: 88,
+      briefHasImage: true,
+      empty: false,
+    });
+  });
+
+  it("is stage-independent — a Backlog card shows the same counts as a Review one", () => {
+    const fields = { dependencyCount: 2, planCount: 3, prNumber: 88, briefHasImage: true };
+    expect(boardCardMeta(shell("backlog", fields), 1)).toEqual(
+      boardCardMeta(shell("review", fields), 1),
+    );
+  });
+
+  it("prefers a sub-board's stacked plan cards over the card's own plan documents", () => {
+    // `planTotal` is the parent's count of children (D12); `planCount` is the
+    // card's own attached plans (t3o-08). A parent counts its children.
+    expect(boardCardMeta(shell("building", { planCount: 1, planTotal: 6 }), 0).planCount).toBe(6);
+    expect(boardCardMeta(shell("planning", { planCount: 1 }), 0).planCount).toBe(1);
+  });
+
+  it("treats an absent or zero field as nothing to show", () => {
+    // The not-yet-sourced shell fields (`prNumber` until PR detection lands)
+    // must not render a `#0` or an empty icon — no-speculative-inventory.
+    const meta = boardCardMeta(shell("merge", { prNumber: 0 }), 0);
+    expect(meta.prNumber).toBeUndefined();
+    expect(meta.planCount).toBe(0);
+    expect(meta.briefHasImage).toBe(false);
+    expect(meta.empty).toBe(true);
   });
 });

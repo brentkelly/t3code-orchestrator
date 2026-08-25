@@ -24,9 +24,10 @@ import {
   pickBoardCardTodoThread,
   type BoardTodoThreadState,
 } from "./boardCardProgressBlock";
-import { boardCardSummary } from "./boardCardSummary";
+import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
+  BoardCardMetaRow,
   BoardCardSummaryRow,
   BoardCardTodoStrip,
   BoardCardTodoThreadRow,
@@ -96,21 +97,35 @@ export function BoardCardContent({
     progress.kind === "todos" && todos?.expanded === true
       ? todoThreads.filter((entry) => entry.threadId !== progress.todo.threadId)
       : EMPTY_TODO_THREADS;
+  // Blue means "this card is waiting on you" — the whole card, not just the
+  // badge, so a board of forty cards answers "where am I needed" at a glance
+  // (the prototype's treatment: tinted fill, info border, a 1px info ring).
+  // Muting a Done card wins over it: a finished card is not asking for
+  // anything, whatever its last thread state said.
+  const awaiting = card.awaitingInput && !summary.muted;
   return (
     <article
       className={cn(
         // `transition-colors` alone could not animate the lift — box-shadow is
         // not a colour property, so the hover shadow snapped in. Transition
         // both, and use the prototype's lifted shadow.
+        "flex cursor-pointer flex-col gap-1.5 rounded-[10px] border px-[11px] py-2.5 transition-[color,background-color,border-color,box-shadow] duration-[120ms] ease-[ease] hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]",
+        // One border class, chosen here rather than layered: Tailwind resolves
+        // competing `border-*` utilities by stylesheet order, not by the order
+        // they appear in the class list, so stacking them decides nothing.
+        // Selection darkens the card's own border rather than adding a ring:
+        // `ring-2 ring-ring` painted the accent blue outside the card and read
+        // as a focus ring on click.
+        selected ? "border-foreground/40" : awaiting ? "border-info/55" : "border-border",
+        // The tint is a colour-MIX into the card fill, not a translucent
+        // overlay, so it reads the same over the light `--card` and the dark
+        // lift below — a flat `bg-info/7` would wash out on one of them.
         // `dark:bg-[#1c1c20]` lifts the card above the column beneath it. The
         // stock `--card` in dark is ~3% off the page background, which landed
         // BELOW the column's fill and left cards darker than the board.
-        "flex cursor-pointer flex-col gap-1.5 rounded-[10px] border border-border bg-card px-[11px] py-2.5 shadow-xs/5 transition-[color,background-color,border-color,box-shadow] duration-[120ms] ease-[ease] dark:bg-[#1c1c20] hover:border-foreground/18 hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]",
-        // Selection darkens the card's own border rather than adding a ring:
-        // `ring-2 ring-ring` painted the accent blue outside the card and read
-        // as a focus ring on click. Blue on a board card means "needs input",
-        // and selection is already unmistakable — the detail pane opens.
-        selected && "border-foreground/40",
+        awaiting
+          ? "bg-[color-mix(in_srgb,var(--info)_7%,var(--card))] shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent)] dark:bg-[color-mix(in_srgb,var(--info)_9%,#1c1c20)]"
+          : "bg-card shadow-xs/5 hover:border-foreground/18 dark:bg-[#1c1c20]",
         // Done recedes: finished work is muted and lower-contrast (D15 stage).
         summary.muted && "bg-card/60 opacity-70",
       )}
@@ -160,24 +175,16 @@ export function BoardCardContent({
           </span>
         ) : null}
         {card.blocked ? (
+          // Only the GATE lives up here (it starts at Ready, D18). A card
+          // carries dependencies long before they gate it, and that count is
+          // now the meta row's chain icon — one place, every stage, and never
+          // mistaken for the warning-coloured gate.
           <span
             className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-warning-foreground"
             title={`Blocked by ${card.dependencyCount} ${card.dependencyCount === 1 ? "dependency" : "dependencies"}`}
           >
             <LockIcon className="size-3" />
             Blocked
-          </span>
-        ) : card.dependencyCount > 0 ? (
-          // A card carries dependencies long before they gate it — the gate
-          // itself starts at Ready (D18). Muted, and a count rather than the
-          // word "Blocked", so the badge reads as "this waits on something"
-          // and never gets mistaken for the warning-coloured gate above.
-          <span
-            className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-muted-foreground"
-            title={`Depends on ${card.dependencyCount} ${card.dependencyCount === 1 ? "card" : "cards"} — gates from Ready onward`}
-          >
-            <LockIcon className="size-3" />
-            {card.dependencyCount}
           </span>
         ) : null}
       </div>
@@ -216,6 +223,9 @@ export function BoardCardContent({
           ))}
         </div>
       )}
+      {/* Last, always: the meta row is the card's footer, so it sits below the
+          stage summary and the todo strip however tall those grow. */}
+      <BoardCardMetaRow meta={boardCardMeta(card, todoThreads.length)} />
     </article>
   );
 }

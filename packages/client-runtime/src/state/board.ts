@@ -29,6 +29,7 @@ import {
   isBoardShellStreamEvent,
   type BoardCardDetail,
   type BoardCardId,
+  type BoardCardPlansShellEvent,
   type BoardCardQueuedShellEvent,
   type BoardCardRemovedShellEvent,
   type BoardCardShell,
@@ -123,6 +124,7 @@ export type BoardShellStreamEvent =
   | BoardCardRemovedShellEvent
   | BoardCardQueuedShellEvent
   | BoardCardStalledShellEvent
+  | BoardCardPlansShellEvent
   | BoardCardThreadsShellEvent
   | BoardLabelUpsertedShellEvent
   | BoardStageUpsertedShellEvent
@@ -168,6 +170,33 @@ function withDerivedThreadFields(
     : { ...card, threadState, awaitingInput };
 }
 
+/**
+ * Carry forward the key-optional shell fields a card-carrying delta cannot
+ * know: `briefHasImage` (the brief BODY lives in `board_card_bodies`, D8) and
+ * `planCount` (the plan set is its own slice). Their resting value is the
+ * ABSENT key, not `false`/`0`, so "the producer could not see it" and "the
+ * producer saw nothing there" stay distinguishable — a brief whose image was
+ * deleted sends `briefHasImage: false` and clears the icon, while a drag
+ * (`card-reordered` → `card-upserted`) omits the key and changes nothing.
+ *
+ * Returns the same reference when there is nothing to carry, so memoized
+ * consumers keep their identity.
+ */
+function preserveAbsentShellFields(
+  next: BoardCardShell,
+  existing: BoardCardShell | undefined,
+): BoardCardShell {
+  if (existing === undefined) return next;
+  const briefHasImage = next.briefHasImage ?? existing.briefHasImage;
+  const planCount = next.planCount ?? existing.planCount;
+  if (briefHasImage === next.briefHasImage && planCount === next.planCount) return next;
+  return {
+    ...next,
+    ...(briefHasImage === undefined ? {} : { briefHasImage }),
+    ...(planCount === undefined ? {} : { planCount }),
+  };
+}
+
 export function applyBoardShellStreamEvent(
   snapshot: OrchestrationShellSnapshot,
   event: BoardShellStreamEvent,
@@ -194,8 +223,15 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.stalled === withQueued.stalled
           ? withQueued
           : { ...withQueued, stalled: existing.stalled };
+      // `briefHasImage` and `planCount` are derived from slices the card
+      // aggregate does not carry (the brief BODY, the plan set), so a
+      // card-carrying delta that cannot see them OMITS the key rather than
+      // asserting a false/zero — absent means "unchanged, keep what you have".
+      // A present key is authoritative, including `false`/`0`: clearing an
+      // image out of a brief has to clear the icon.
+      const withBodyDerived = preserveAbsentShellFields(withStalled, existing);
       const card = withDerivedThreadFields(
-        withStalled,
+        withBodyDerived,
         (threadId) => snapshot.threads.find((thread) => thread.id === threadId),
         snapshot.boardCardThreads,
       );
@@ -234,6 +270,16 @@ export function applyBoardShellStreamEvent(
           ? card
           : { ...card, stalled: event.stalled, queued };
       });
+      return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
+    }
+    case "card-plans": {
+      // The card's plan set was replaced (t3o-08) — the authoritative live
+      // change of the footer's plan count. A no-op for a card we do not hold.
+      const nextCards = Arr.map(cards, (card) =>
+        card.cardId === event.cardId && card.planCount !== event.planCount
+          ? { ...card, planCount: event.planCount }
+          : card,
+      );
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
     }
     case "card-threads": {

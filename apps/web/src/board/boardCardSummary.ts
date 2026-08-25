@@ -26,7 +26,6 @@ import type { BoardCardShell } from "@t3tools/contracts";
 export type BoardCardSummaryItem =
   | { readonly kind: "attachments"; readonly count: number }
   | { readonly kind: "plans"; readonly done: number; readonly total: number }
-  | { readonly kind: "pr"; readonly number: number }
   | { readonly kind: "round"; readonly current: number; readonly max: number }
   | { readonly kind: "step"; readonly label: string }
   | {
@@ -83,7 +82,9 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
       break;
 
     case "review":
-      if (positive(card.prNumber)) items.push({ kind: "pr", number: card.prNumber });
+      // The PR reference is NOT here: it moved to the card's meta row, which
+      // renders it at every stage rather than only where the pipeline happens
+      // to be looking (`boardCardMeta`).
       if (card.roundMax !== undefined && card.roundMax > 0) {
         items.push({ kind: "round", current: card.roundCurrent ?? 0, max: card.roundMax });
       }
@@ -117,12 +118,61 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
       break;
 
     case "merge":
-      // PR state and check summary — `prNumber` when detection lands (t3o-11).
-      if (positive(card.prNumber)) items.push({ kind: "pr", number: card.prNumber });
+      // PR state and check summary. The PR number itself rides the meta row
+      // (`boardCardMeta`); a check summary has no data source until t3o-11.
       break;
 
     case "done":
       break;
   }
   return { muted: card.stage === "done", items };
+}
+
+/**
+ * The card's footer meta row: four counts, then the brief's image flag pushed
+ * to the far end. Unlike `boardCardSummary` this is stage-INDEPENDENT — how
+ * many things a card is tied to does not change with where it sits, and a
+ * dependency that only shows up in some columns is a dependency you forget.
+ *
+ * `threadCount` is the one input that is not a shell field: the card's live
+ * thread links ride the snapshot as their own array (t3o-18, D3), joined
+ * client-side. Surfaces that do not carry them (the archive sheet, the drag
+ * ghost) pass 0 and the bubble simply does not render.
+ */
+export interface BoardCardMeta {
+  /** How many other cards this one waits on. */
+  readonly dependencyCount: number;
+  /** Agent threads attached to the card — its own, plus any running on the
+      plans stacked under it once sub-boards materialise (D12). */
+  readonly threadCount: number;
+  /** Stacked plan cards, else the count of attached plan documents. */
+  readonly planCount: number;
+  /** The linked pull request, absent until PR detection lands (t3o-11). */
+  readonly prNumber: number | undefined;
+  /** Whether the brief carries a picture — the one right-aligned indicator. */
+  readonly briefHasImage: boolean;
+  /** Nothing to show, so the row adds no height to the card. */
+  readonly empty: boolean;
+}
+
+export function boardCardMeta(card: BoardCardShell, threadCount: number): BoardCardMeta {
+  // `planTotal` is the sub-board's count of stacked plan cards (D12) and
+  // outranks `planCount`, the card's own attached plan documents (t3o-08) —
+  // a parent card counts its children, not the plan it was built from.
+  const planCount = card.planTotal ?? card.planCount ?? 0;
+  const prNumber = positive(card.prNumber) ? card.prNumber : undefined;
+  const briefHasImage = card.briefHasImage === true;
+  return {
+    dependencyCount: card.dependencyCount,
+    threadCount,
+    planCount,
+    prNumber,
+    briefHasImage,
+    empty:
+      card.dependencyCount === 0 &&
+      threadCount === 0 &&
+      planCount === 0 &&
+      prNumber === undefined &&
+      !briefHasImage,
+  };
 }
