@@ -14,6 +14,7 @@ import {
   BoardLabelId,
   ProjectId,
   ThreadId,
+  boardPlanId,
   type BoardCard,
   type BoardCardDetail,
   type BoardLabel,
@@ -65,13 +66,15 @@ function detail(
   overrides?: Partial<BoardCard>,
   brief: string | null = null,
   edges?: Partial<
-    Pick<BoardCardDetail, "dependencies" | "dependents" | "stepCompletions" | "activity">
+    Pick<BoardCardDetail, "dependencies" | "dependents" | "stepCompletions" | "activity" | "plans">
   >,
 ): BoardCardDetail {
+  const plans = edges?.plans ?? [];
   return {
     card: card(overrides),
     brief,
-    hasPlan: false,
+    hasPlan: plans.length > 0,
+    plans,
     dependencies: edges?.dependencies ?? [],
     dependents: edges?.dependents ?? [],
     activity: edges?.activity ?? [],
@@ -359,6 +362,41 @@ describe("BoardCardDetailPanel", () => {
     expect(planning).not.toContain("Ship the thing");
     expect(planning).toContain(">Thread</button>");
     expect(planning).toContain(">Brief</button>");
+  });
+
+  it("shows the Plan pill only once the card has a plan (t3o-08)", () => {
+    const withoutPlan = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.planning }, "Ship the thing")}
+        projectName="P"
+      />,
+    );
+    expect(withoutPlan).not.toContain(">Plan</button>");
+
+    const withPlan = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.planning }, "Ship the thing", {
+          plans: [
+            {
+              planId: boardPlanId(cardId, "1"),
+              cardId,
+              title: "Key rotation",
+              summary: "Rotate the signing keys",
+              dependsOn: [],
+              ordinal: 0,
+              locked: false,
+              createdAt: NOW,
+              updatedAt: NOW,
+              body: "# Key rotation",
+            },
+          ] as BoardCardDetail["plans"],
+        })}
+        projectName="P"
+      />,
+    );
+    expect(withPlan).toContain(">Plan</button>");
   });
 
   it("renders the whole stage ladder with the card's stage marked current", () => {

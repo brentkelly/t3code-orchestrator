@@ -52,6 +52,7 @@ import {
   ProviderInstanceId,
   sortBoardCardThreadLinks,
   type BoardCardDetail,
+  type BoardPlanWithBody,
   type BoardState,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -386,6 +387,27 @@ const BoardPlanDbRow = Schema.Struct({
   updatedAt: BoardPlan.fields.updatedAt,
 });
 type BoardPlanDbRow = typeof BoardPlanDbRow.Type;
+
+// Row → plan mapping, spelled once: the read-model builder wants the metadata,
+// the detail loader wants it plus the markdown body. Coercing `locked` (0/1)
+// and adding a field lands in exactly one place.
+function rowToBoardPlan(row: BoardPlanDbRow): BoardPlan {
+  return {
+    planId: row.planId,
+    cardId: row.cardId,
+    title: row.title,
+    summary: row.summary,
+    dependsOn: row.dependsOn,
+    ordinal: row.ordinal,
+    locked: row.locked !== 0,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function rowToBoardPlanWithBody(row: BoardPlanDbRow): BoardPlanWithBody {
+  return { ...rowToBoardPlan(row), body: row.body };
+}
 
 /**
  * The narrow row behind `BoardCardShell` (t3o-04): exactly the columns the
@@ -1350,13 +1372,26 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
-  // Whether a card has any proposed plan (t3o-15, D6) — one bounded scalar for
-  // the Build stage's human-in-the-loop default, not the plan bodies.
-  const countBoardPlansForCard = SqlSchema.findAll({
+  // A card's proposed plans with their bodies (t3o-08) — the detail loader's
+  // source for both the Plan pane's markdown and the Build stage's
+  // human-in-the-loop default (D6), so one query serves the count and the text.
+  const listBoardPlanRowsForCard = SqlSchema.findAll({
     Request: BoardCardId,
-    Result: Schema.Struct({ count: Schema.Int }),
+    Result: BoardPlanDbRow,
     execute: (cardId) => sql`
-      SELECT COUNT(*) AS "count" FROM board_plans WHERE card_id = ${cardId}
+      SELECT
+        plan_id AS "planId",
+        card_id AS "cardId",
+        title,
+        summary,
+        depends_on AS "dependsOn",
+        ordinal,
+        locked,
+        body,
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM board_plans
+      WHERE card_id = ${cardId}
     `,
   });
 
@@ -1425,7 +1460,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
     listBoardPlanRows,
-    countBoardPlansForCard,
+    listBoardPlanRowsForCard,
     findBoardPlanRow,
   };
 }
@@ -2089,19 +2124,7 @@ export function loadBoardState(
             }),
           )
           .sort(compareBoardStepStates);
-        const plans = planRows
-          .map((row) => ({
-            planId: row.planId,
-            cardId: row.cardId,
-            title: row.title,
-            summary: row.summary,
-            dependsOn: row.dependsOn,
-            ordinal: row.ordinal,
-            locked: row.locked !== 0,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-          }))
-          .sort(compareBoardPlans);
+        const plans = planRows.map(rowToBoardPlan).sort(compareBoardPlans);
         return {
           cards: cardRows
             .map((row) =>
@@ -2391,7 +2414,7 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardLabelRowsForCard(cardId),
       queries.listBoardCardDependencyRefRows(cardId),
       queries.listBoardCardDependentRefRows(cardId),
-      queries.countBoardPlansForCard(cardId),
+      queries.listBoardPlanRowsForCard(cardId),
       queries.listBoardCardStepRowsForCard(cardId),
       queries.listBoardCardActivityRowsForCard(cardId),
     ]).pipe(
@@ -2403,7 +2426,7 @@ export function makeBoardCardDetailLoader(
           labelRows,
           dependencyRows,
           dependentRows,
-          planCountRows,
+          planRows,
           stepRows,
           activityRows,
         ]) => {
@@ -2425,6 +2448,9 @@ export function makeBoardCardDetailLoader(
           // An id whose row is gone is simply dropped: the chip has nothing to
           // show, and the gate already treats it as unmet.
           const dependencyRefsById = new Map(dependencyRows.map((row) => [row.cardId, row]));
+          // Plans with their bodies (t3o-08), in the card's ordinal order — the
+          // Plan pane's source, and the `hasPlan` flag is just "any plan".
+          const plans = planRows.map(rowToBoardPlanWithBody).sort(compareBoardPlans);
           return {
             card,
             brief: Option.match(bodyRow, {
@@ -2436,7 +2462,8 @@ export function makeBoardCardDetailLoader(
               return row === undefined ? [] : [row];
             }),
             dependents: dependentRows,
-            hasPlan: (planCountRows[0]?.count ?? 0) > 0,
+            hasPlan: plans.length > 0,
+            plans,
             // The card's completions in completion order (t3o-16, D9), from the
             // per-card step query — the same rows the read model's
             // `stepCompletions` slice is built from — sorted so the modal renders

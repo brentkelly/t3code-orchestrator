@@ -65,6 +65,7 @@ import {
   CircleAlertIcon,
   EllipsisVerticalIcon,
   ExternalLinkIcon,
+  FileIcon,
   FileTextIcon,
   LockIcon,
   MessageSquareIcon,
@@ -109,6 +110,14 @@ const CARD_TITLE_ID = "board-card-detail-title";
  */
 const BoardCardThreadPane = lazy(() =>
   import("./BoardCardThreadPane").then((module) => ({ default: module.BoardCardThreadPane })),
+);
+
+/**
+ * The plan pane pulls in the markdown renderer, so like the thread pane it
+ * loads only when a card is actually shown on it — the board chunk stays lean.
+ */
+const BoardCardPlanPane = lazy(() =>
+  import("./BoardCardPlanPane").then((module) => ({ default: module.BoardCardPlanPane })),
 );
 
 /**
@@ -792,16 +801,22 @@ function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   );
 }
 
-/** The header's Thread/Brief switch — only the wide form has one, because
-    only it has somewhere else for the brief to live. */
+type BoardCardPane = "thread" | "plan" | "brief";
+
+/** The header's Thread/Plan/Brief switch — only the wide form has one, because
+    only it has somewhere else for the brief to live. The Plan pill appears only
+    once the card has a plan; before planning writes one there is nothing to
+    show, so the switch is a plain Thread/Brief pair. */
 function PaneTabs({
   pane,
+  hasPlan,
   onSelect,
 }: {
-  readonly pane: "thread" | "brief";
-  readonly onSelect: (pane: "thread" | "brief") => void;
+  readonly pane: BoardCardPane;
+  readonly hasPlan: boolean;
+  readonly onSelect: (pane: BoardCardPane) => void;
 }) {
-  const tab = (value: "thread" | "brief") =>
+  const tab = (value: BoardCardPane) =>
     cn(
       "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] px-2.5 text-[11.5px]",
       pane === value
@@ -814,6 +829,12 @@ function PaneTabs({
         <MessageSquareIcon className="size-3" />
         Thread
       </button>
+      {hasPlan ? (
+        <button className={tab("plan")} onClick={() => onSelect("plan")} type="button">
+          <FileIcon className="size-3" />
+          Plan
+        </button>
+      ) : null}
       <button className={tab("brief")} onClick={() => onSelect("brief")} type="button">
         <FileTextIcon className="size-3" />
         Brief
@@ -842,7 +863,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   });
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
 
-  const [pane, setPane] = useState<"thread" | "brief">("thread");
+  const [pane, setPane] = useState<BoardCardPane>("thread");
+  // The plan is a first-class entity, so its pill only exists once one is
+  // written; if the card loses its plans while the pane is open, fall back to
+  // the thread rather than render an empty surface.
+  const hasPlan = props.detail.plans.length > 0;
+  const activePane: BoardCardPane = pane === "plan" && !hasPlan ? "thread" : pane;
   // Which tab the thread pane is on. Absent means "the card's active thread",
   // so a newly adopted thread opens without the panel tracking it.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
@@ -865,7 +891,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           </span>
         ) : null}
         <span className="flex-1" />
-        {wide ? <PaneTabs onSelect={setPane} pane={pane} /> : null}
+        {wide ? <PaneTabs hasPlan={hasPlan} onSelect={setPane} pane={activePane} /> : null}
         <Menu>
           <MenuTrigger
             aria-label="More actions"
@@ -910,7 +936,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
       {wide ? (
         <div className="mt-3 grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_336px] border-t border-border">
-          {pane === "brief" ? (
+          {activePane === "brief" ? (
             <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
               <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-3.5 pr-3">
                 <SectionHeading>Brief</SectionHeading>
@@ -928,6 +954,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 <BriefBody brief={props.detail.brief} onSave={props.onSaveBrief} />
               </div>
             </section>
+          ) : activePane === "plan" ? (
+            <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
+              <BoardCardPlanPane
+                cardKey={card.key}
+                onBackToThread={() => setPane("thread")}
+                plans={props.detail.plans}
+              />
+            </Suspense>
           ) : (
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardThreadPane
