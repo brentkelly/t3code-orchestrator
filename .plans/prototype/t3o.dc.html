@@ -739,19 +739,6 @@ a:hover{text-decoration:underline}
               </span>
             </div>
             <div ref="{{ review.scrollRef }}" style="flex:1;min-height:0;overflow-y:auto;padding:14px 16px 20px;display:flex;flex-direction:column;gap:12px">
-              <div style="flex:none;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:var(--shadow-xs)">
-                <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;flex:none;border-radius:8px;background:var(--muted);border:1px solid var(--border);color:var(--muted-fg)">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>
-                </span>
-                <div style="min-width:0;display:flex;flex-direction:column;gap:3px">
-                  <div style="font:600 12.5px var(--font-sans);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                    <span style="font-family:var(--font-mono)">{{ review.prLabel }}</span> {{ review.prTitle }}
-                  </div>
-                  <div style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ review.forgeLine }} · <span style="font-family:var(--font-mono)">{{ review.branch }}</span> · {{ review.checks }}</div>
-                </div>
-                <span style="flex:1"></span>
-                <button type="button" onClick="{{ review.openPr }}" style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;flex:none;white-space:nowrap;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">View diff</button>
-              </div>
               <div style="flex:none;display:flex;flex-direction:column;gap:7px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
                 <div style="display:flex;gap:4px">
                   <sc-for list="{{ review.segs }}" as="sg" hint-placeholder-count="5">
@@ -760,6 +747,42 @@ a:hover{text-decoration:underline}
                 </div>
                 <div style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ review.counts }}</div>
               </div>
+              <sc-if value="{{ review.exhausted }}" hint-placeholder-val="{{ false }}">
+              <div style="flex:none;display:flex;flex-direction:column;gap:11px;padding:13px 14px;border:1px solid color-mix(in srgb,var(--warning) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--warning) 7%,var(--card))">
+                <div style="display:flex;align-items:center;gap:9px">
+                  <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;border-radius:7px;background:color-mix(in srgb,var(--warning) 18%,transparent);color:var(--warning-fg);font:600 12px var(--font-mono)">!</span>
+                  <div style="font:600 12.5px var(--font-sans);color:var(--fg)">Round limit reached without convergence</div>
+                </div>
+                <div style="font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ review.holdNote }}</div>
+                <div style="display:flex;flex-direction:column;gap:9px;padding:11px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
+                  <div style="font:500 10px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)">Settings for further rounds</div>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <label style="display:flex;flex:1;min-width:0;flex-direction:column;gap:4px">
+                      <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">Model</span>
+                      <select value="{{ review.model }}" onChange="{{ review.pickModel }}" style="width:100%;height:28px;padding:0 26px 0 9px;border:1px solid var(--input);border-radius:7px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted-fg) 50%),linear-gradient(135deg,var(--muted-fg) 50%,transparent 50%);background-position:calc(100% - 14px) 12px,calc(100% - 10px) 12px;background-size:4px 4px,4px 4px;background-repeat:no-repeat">
+                        <sc-for list="{{ review.modelOpts }}" as="mo" hint-placeholder-count="3">
+                          <option value="{{ mo.label }}">{{ mo.label }}</option>
+                        </sc-for>
+                      </select>
+                    </label>
+                    <label style="display:flex;flex:1;min-width:0;flex-direction:column;gap:4px">
+                      <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">Reasoning effort</span>
+                      <select value="{{ review.effort }}" onChange="{{ review.pickEffort }}" style="width:100%;height:28px;padding:0 26px 0 9px;border:1px solid var(--input);border-radius:7px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted-fg) 50%),linear-gradient(135deg,var(--muted-fg) 50%,transparent 50%);background-position:calc(100% - 14px) 12px,calc(100% - 10px) 12px;background-size:4px 4px,4px 4px;background-repeat:no-repeat">
+                        <sc-for list="{{ review.effortOpts }}" as="eo" hint-placeholder-count="3">
+                          <option value="{{ eo.label }}">{{ eo.label }}</option>
+                        </sc-for>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <button type="button" onClick="{{ review.runMore }}" style="display:inline-flex;align-items:center;justify-content:center;gap:7px;height:30px;padding:0 12px;flex:none;border-radius:8px;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg)">{{ review.runMoreLabel }}</button>
+                  <button type="button" onClick="{{ review.forceAdvance }}" style="display:inline-flex;align-items:center;justify-content:center;gap:7px;height:30px;padding:0 12px;flex:none;border-radius:8px;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid var(--input);background:var(--popover);color:var(--fg)">Advance to Ready for merge</button>
+                  <span style="flex:1"></span>
+                  <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ review.outstandingLine }}</span>
+                </div>
+              </div>
+              </sc-if>
               <sc-for list="{{ review.rounds }}" as="r" hint-placeholder-count="2">
                 <div ref="{{ r.ref }}" style="{{ r.style }}">
                   <div onClick="{{ r.toggle }}" style="{{ r.headStyle }}">
@@ -768,6 +791,9 @@ a:hover{text-decoration:underline}
                     <span title="{{ r.tallyTip }}" style="{{ r.tallyStyle }}">{{ r.tally }}</span>
                     <span style="font:400 11px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.summary }}</span>
                     <span style="flex:1"></span>
+                    <sc-if value="{{ r.hasRunOn }}" hint-placeholder-val="{{ false }}">
+                      <span title="{{ r.runOnTip }}" style="display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:5px;border:1px solid var(--border);background:var(--muted);font:500 10.5px var(--font-mono);color:var(--muted-fg);white-space:nowrap">{{ r.runOn }}</span>
+                    </sc-if>
                     <span style="font:400 11px var(--font-sans);color:var(--muted-fg);flex:none">{{ r.when }}</span>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;transform:{{ r.caret }};transition:transform .12s ease"><path d="m6 9 6 6 6-6"></path></svg>
                   </div>
@@ -817,11 +843,13 @@ a:hover{text-decoration:underline}
                   </sc-if>
                 </div>
               </sc-for>
+              <sc-if value="{{ review.showCta }}" hint-placeholder-val="{{ true }}">
               <div style="flex:none;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px dashed var(--input);border-radius:12px;background:color-mix(in srgb,var(--fg) 3%,transparent)">
                 <div style="min-width:0;font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ review.ctaNote }}</div>
                 <span style="flex:1"></span>
                 <button type="button" onClick="{{ review.cta }}" style="{{ review.ctaStyle }}">{{ review.ctaLabel }}</button>
               </div>
+              </sc-if>
             </div>
           </section>
           </sc-if>
@@ -1450,6 +1478,7 @@ const SEED = [
   { key: "T3-188", p: "advisor", type: "Feature", status: "building", title: "Kanban board mode in the workspace shell", brief: "Add a top-level mode switch: threads or board. Board is per project, with drag between stages.", deps: ["T3-195"], plan: PLAN("Kanban board mode", ["Add workspaceMode atom persisted in client storage", "Mount BoardView beside ChatView under AppSidebarLayout", "Cards are server-authoritative events, same store as threads", "Dependencies are edges on the task record, validated on progress"], ["apps/web/src/components/BoardView.tsx", "apps/web/src/state/board.ts", "packages/contracts/src/task.ts"]) },
   { key: "T3-186", p: "advisor", type: "Feature", status: "building", t: "waiting", title: "Server-authoritative event sourcing cleanup", brief: "Collapse the duplicate client reducer so the server event log is the single source of truth.", plan: PLAN("Event sourcing cleanup", ["Delete the client-side mirror reducer", "Replay from the server log on reconnect", "Add a determinism test over recorded fixtures"], ["apps/server/src/events/log.ts", "packages/client-runtime/src/replay.ts"]) },
   { key: "T3-182", p: "advisor", type: "Feature", status: "review", t: "working", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
+  { key: "T3-180", p: "advisor", type: "bug", status: "review", title: "Compaction leaves orphaned tool-call spans", brief: "After a compaction, spans whose parent turn was summarised away keep streaming into the timeline.", plan: PLAN("Orphaned span cleanup", ["Reparent live spans onto the summary turn", "Drop spans whose turn no longer exists", "Replay test over a recorded compaction"], ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"]), pr: { n: 287, title: "fix(runtime): reparent spans across compaction", add: 244, del: 96, files: ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"], state: "In review" } },
   { key: "T3-179", p: "advisor", type: "chore", status: "merge", title: "Pre-commit format and lint gate", brief: "Formatting drift keeps landing on main. Gate commits with the same checks CI runs.", plan: PLAN("Pre-commit gate", ["Wire lefthook with a staged-file filter", "Run oxlint + prettier on staged files only", "Document the escape hatch in CONTRIBUTING"], ["lefthook.yml", "CONTRIBUTING.md"]), pr: { n: 284, title: "chore: pre-commit format and lint", add: 96, del: 12, files: ["lefthook.yml", "package.json", "CONTRIBUTING.md"], state: "Approved" } },
   { key: "T3-171", p: "advisor", type: "chore", status: "done", title: "Diff panel scroll fade", brief: "Rows now fade under the sticky header instead of cutting hard.", plan: PLAN("Diff panel scroll fade", ["Reuse the chat timeline mask", "Respect the scrollbar gutter"], ["apps/web/src/components/DiffPanel.tsx"]), pr: { n: 276, title: "fix(diff): scroll fade under header", add: 41, del: 9, files: ["apps/web/src/components/DiffPanel.tsx", "apps/web/src/index.css"], state: "Merged" } },
   { key: "T3-168", p: "advisor", type: "bug", status: "done", title: "Fix knowledge capture skill lookup", brief: "Skill ids were resolved case-sensitively, so captures silently no-oped.", plan: PLAN("Skill lookup fix", ["Normalize ids at the registry boundary", "Add a regression test"], ["packages/shared/src/skills.ts"]), pr: { n: 268, title: "fix: normalize skill ids", add: 28, del: 6, files: ["packages/shared/src/skills.ts"], state: "Merged" } },
@@ -1539,6 +1568,73 @@ const REVIEWS = {
           ISS("improvement", "Schema version is not pinned across the process boundary", "packages/contracts/src/ipc.ts", "open", "pending"),
           ISS("improvement", "Error payloads lose their cause chain", "apps/desktop/src/preload.ts", "fixed", "pending"),
           ISS("nitpick", "Two channels named in past tense, the rest imperative", "packages/contracts/src/ipc.ts", "rejected", "pending"),
+        ],
+      },
+    ],
+  },
+  "T3-180": {
+    forge: "GitHub",
+    repo: "mesh/core-agent-advisor",
+    pr: 287,
+    prTitle: "fix(runtime): reparent spans across compaction",
+    branch: "fix/orphaned-spans → main",
+    checks: "11 checks passing",
+    max: 5,
+    rounds: [
+      {
+        n: 1,
+        when: "4d ago",
+        outcome: "Changes requested",
+        steps: { review: "done", triage: "done", assess: "done", adjudicate: "skipped" },
+        issues: [
+          ISS("critical", "Reparenting mutates the span while it is still streaming", "packages/client-runtime/src/compaction.ts", "fixed", "accepted"),
+          ISS("improvement", "Orphan detection walks the whole timeline per span", "apps/web/src/state/timeline.ts", "fixed", "accepted"),
+        ],
+      },
+      {
+        n: 2,
+        when: "3d ago",
+        outcome: "Changes requested",
+        steps: { review: "done", triage: "done", assess: "done", adjudicate: "done" },
+        ruling: "Ruled with the implementer: the index is fine to keep in memory for now.",
+        issues: [
+          ISS("critical", "Span index is rebuilt on every event, not incrementally", "apps/web/src/state/timeline.ts", "rejected", "disputed"),
+          ISS("improvement", "Summary turn id is derived twice with different rules", "packages/client-runtime/src/compaction.ts", "fixed", "accepted"),
+        ],
+      },
+      {
+        n: 3,
+        when: "2d ago",
+        outcome: "Changes requested",
+        steps: { review: "done", triage: "done", assess: "done", adjudicate: "done" },
+        ruling: "Ruled with the reviewer: the dropped-span path needs a test before merge.",
+        issues: [
+          ISS("critical", "Dropped spans leave their tool result unclaimed", "packages/client-runtime/src/compaction.ts", "fixed", "accepted"),
+          ISS("improvement", "No test covers a compaction mid-tool-call", "packages/client-runtime/test/compaction.test.ts", "fixed", "disputed"),
+          ISS("nitpick", "Reparent helper is exported but unused elsewhere", "packages/client-runtime/src/compaction.ts", "rejected", "accepted"),
+        ],
+      },
+      {
+        n: 4,
+        when: "yesterday",
+        outcome: "Changes requested",
+        steps: { review: "done", triage: "done", assess: "done", adjudicate: "done" },
+        ruling: "Ruled with the reviewer on ordering; the reviewer's second point was withdrawn.",
+        issues: [
+          ISS("critical", "Reparented spans land out of order after a reconnect", "apps/web/src/state/timeline.ts", "fixed", "accepted"),
+          ISS("improvement", "Ordering fix reintroduces the full index rebuild", "apps/web/src/state/timeline.ts", "rejected", "disputed"),
+        ],
+      },
+      {
+        n: 5,
+        when: "3h ago",
+        outcome: "No convergence",
+        steps: { review: "done", triage: "done", assess: "done", adjudicate: "done" },
+        ruling: "Round limit reached before the two threads agreed. Loop stopped, nothing auto-approved.",
+        issues: [
+          ISS("critical", "Index rebuild is back to O(n) per event on the hot path", "apps/web/src/state/timeline.ts", "rejected", "disputed"),
+          ISS("improvement", "Ordering guarantee is asserted in a comment, not a test", "packages/client-runtime/test/compaction.test.ts", "open", "disputed"),
+          ISS("nitpick", "Two helpers now do the same reparenting", "packages/client-runtime/src/compaction.ts", "fixed", "accepted"),
         ],
       },
     ],
@@ -1710,6 +1806,8 @@ class Component extends DCLogic {
     this.state = {
       activeThread: null,
       cardMaxed: false,
+      rvModel: "Opus 4.8",
+      rvEffort: "High",
       mode: props.defaultMode === "board" ? "board" : "threads",
       scope: props.defaultScope || "advisor",
       cards,
@@ -1780,7 +1878,11 @@ class Component extends DCLogic {
               : "Stopped after the third step. Resume whenever you're ready."
             : rs
               ? "PR #" + rs.rv.pr + " is open on " + rs.rv.forge + ". " + rs.roundLabel + " of the adversarial loop is " +
-                (rs.step ? "at " + rs.step.name.toLowerCase() + "." : "settled.") +
+                (rs.step
+                  ? "at " + rs.step.name.toLowerCase() + "."
+                  : rs.exhausted
+                    ? "stopped at the round limit without convergence."
+                    : "settled.") +
                 " " + rs.found + " issues raised so far, " + rs.fixed + " fixed and " + rs.rejected + " rejected."
               : "PR is up and checks are green. Waiting on review feedback.",
       question:
@@ -1963,13 +2065,22 @@ class Component extends DCLogic {
         if (i.verdict === "disputed") disputed++;
       }),
     );
+    // A round closes clean only when nothing is left open and nothing is still
+    // disputed. Hit the round limit without that and the loop stops where it is:
+    // no automatic hand-off to Ready for merge.
+    const unsettled = (cur.issues || []).filter(
+      (i) => i.resolution === "open" || i.verdict === "disputed",
+    ).length;
+    const exhausted = !stepId && cur.n >= rv.max && unsettled > 0;
     return {
       rv,
       cur,
       stepId,
       step: REVIEW_STEPS.find((s) => s.id === stepId) || null,
       awaiting: !!stepId && cur.steps[stepId] === "await",
-      settled: !stepId,
+      settled: !stepId && !exhausted,
+      exhausted,
+      unsettled,
       found, fixed, rejected, open, disputed,
       roundLabel: "Round " + cur.n + " of " + rv.max,
     };
@@ -2130,6 +2241,27 @@ class Component extends DCLogic {
       rowStyle:
         "display:flex;align-items:flex-start;gap:9px;padding:6px 8px;margin:0 -8px;border-radius:8px;cursor:pointer;transition:background-color 120ms ease",
     };
+  }
+
+  // Kick off more rounds past the limit, on whatever model/effort is set now.
+  extendReview(card, extra) {
+    const rv = this.reviewFor(card);
+    if (!rv) return;
+    rv.max += extra;
+    rv.rounds.push({
+      n: rv.rounds.length + 1,
+      when: "now",
+      outcome: "",
+      model: this.state.rvModel,
+      effort: this.state.rvEffort,
+      steps: { review: "active", triage: "pending", assess: "pending", adjudicate: "pending" },
+      issues: [],
+    });
+    this.setState((s) => {
+      const rvOpen = { ...s.rvOpen };
+      delete rvOpen[card.id];
+      return { rvOpen };
+    });
   }
 
   openReviewThread(card, r, stepId) {
@@ -2611,17 +2743,21 @@ class Component extends DCLogic {
               ? rs.awaiting
                 ? "Adjudicating"
                 : { review: "Reviewing", triage: "Triaging", assess: "Assessing", adjudicate: "Adjudicating" }[rs.step.id]
-              : "Settled",
+              : rs.exhausted
+                ? "No convergence"
+                : "Settled",
             spinning: !!rs.step && !rs.awaiting,
             tally: this.triple(rs.cur.issues || []).label,
             tallyTip: "This round: " + this.triple(rs.cur.issues || []).tip,
             stepStyle:
               "display:inline-flex;align-items:center;gap:5px;height:16px;padding:0 6px;flex:none;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;" +
-              (rs.awaiting
-                ? "background:color-mix(in srgb,var(--info) 16%,transparent);color:var(--info-fg)"
-                : rs.settled
-                  ? "background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success-fg)"
-                  : "background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)"),
+              (rs.exhausted
+                ? "background:color-mix(in srgb,var(--warning) 18%,transparent);color:var(--warning-fg)"
+                : rs.awaiting
+                  ? "background:color-mix(in srgb,var(--info) 16%,transparent);color:var(--info-fg)"
+                  : rs.settled
+                    ? "background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success-fg)"
+                    : "background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)"),
             pips: Array.apply(null, { length: rs.rv.max }).map((x, i) => {
               const n = i + 1;
               const past = n < rs.cur.n;
@@ -2629,13 +2765,15 @@ class Component extends DCLogic {
               return {
                 style:
                   "flex:1;height:5px;border-radius:2px;background:" +
-                  (past
-                    ? "color-mix(in srgb,var(--fg) 30%,transparent)"
-                    : now
-                      ? rs.awaiting
-                        ? "var(--info)"
-                        : "color-mix(in srgb,var(--fg) 60%,transparent)"
-                      : "transparent") +
+                  (rs.exhausted
+                    ? "color-mix(in srgb,var(--warning) 55%,transparent)"
+                    : past
+                      ? "color-mix(in srgb,var(--fg) 30%,transparent)"
+                      : now
+                        ? rs.awaiting
+                          ? "var(--info)"
+                          : "color-mix(in srgb,var(--fg) 60%,transparent)"
+                        : "transparent") +
                   (past || now ? "" : ";box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 12%,transparent)"),
               };
             }),
@@ -3410,17 +3548,21 @@ class Component extends DCLogic {
       reviewVm = {
         roundLabel: reviewData.roundLabel,
         spinning: !!reviewData.step && !reviewData.awaiting,
-        statusLine: reviewData.settled
-          ? "Loop settled — no issues outstanding."
-          : reviewData.step.name +
-            (reviewData.awaiting ? " · waiting on your ruling" : " · running now"),
+        statusLine: reviewData.exhausted
+          ? "Round limit reached · no convergence"
+          : reviewData.settled
+            ? "Loop settled — no issues outstanding."
+            : reviewData.step.name +
+              (reviewData.awaiting ? " · waiting on your ruling" : " · running now"),
         statusStyle:
           "display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;flex:none;border-radius:7px;font:500 11.5px var(--font-sans);" +
-          (reviewData.awaiting
-            ? "background:color-mix(in srgb,var(--info) 14%,transparent);color:var(--info-fg)"
-            : reviewData.settled
-              ? "background:color-mix(in srgb,var(--success) 14%,transparent);color:var(--success-fg)"
-              : "background:var(--accent);color:var(--fg)"),
+          (reviewData.exhausted
+            ? "background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning-fg)"
+            : reviewData.awaiting
+              ? "background:color-mix(in srgb,var(--info) 14%,transparent);color:var(--info-fg)"
+              : reviewData.settled
+                ? "background:color-mix(in srgb,var(--success) 14%,transparent);color:var(--success-fg)"
+                : "background:var(--accent);color:var(--fg)"),
         prLabel: "#" + rv.pr,
         prTitle: rv.prTitle,
         forgeLine: rv.forge + " · " + rv.repo,
@@ -3461,9 +3603,11 @@ class Component extends DCLogic {
               (past
                 ? "background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--muted-fg)"
                 : now
-                  ? (reviewData.awaiting
-                      ? "background:color-mix(in srgb,var(--info) 16%,transparent);color:var(--info-fg)"
-                      : "background:var(--fg);color:var(--bg)")
+                  ? (reviewData.exhausted
+                      ? "background:color-mix(in srgb,var(--warning) 22%,transparent);color:var(--warning-fg)"
+                      : reviewData.awaiting
+                        ? "background:color-mix(in srgb,var(--info) 16%,transparent);color:var(--info-fg)"
+                        : "background:var(--fg);color:var(--bg)")
                   : "background:transparent;box-shadow:inset 0 0 0 1px var(--border);color:color-mix(in srgb,var(--muted-fg) 60%,transparent)") +
               (n === openN ? ";outline:2px solid color-mix(in srgb,var(--fg) 30%,transparent);outline-offset:1px" : ""),
           };
@@ -3487,6 +3631,11 @@ class Component extends DCLogic {
                 this._roundEls = this._roundEls || {};
                 this._roundEls[r.n] = el;
               },
+              hasRunOn: !!r.model,
+              runOn: r.model ? r.model + " · " + (r.effort || "").toLowerCase() : "",
+              runOnTip: r.model
+                ? "Re-run past the round limit on " + r.model + " at " + (r.effort || "").toLowerCase() + " effort"
+                : "",
               toggle: () => showRound(open ? null : r.n),
               badge: r.outcome || (isCur ? "In progress" : "Settled"),
               badgeStyle: tagStyle(
@@ -3584,6 +3733,28 @@ class Component extends DCLogic {
               })),
             };
           }),
+        exhausted: reviewData.exhausted,
+        showCta: !reviewData.exhausted,
+        holdNote:
+          "All " + rv.max + " rounds ran and round " + reviewData.cur.n +
+          " still closed with " + reviewData.unsettled + " unsettled " +
+          (reviewData.unsettled === 1 ? "issue" : "issues") +
+          ". The loop stops here and will not hand the task to Ready for merge on its own.",
+        outstandingLine:
+          reviewData.unsettled + " unsettled this round · " +
+          reviewData.disputed + " disputed across the loop",
+        runMoreLabel: "Run 2 more rounds",
+        runMore: () => this.extendReview(active, 2),
+        forceAdvance: () => {
+          const next = STAGES[this.stageIndex(active.status) + 1];
+          if (next) this.setStatus(active.id, next.id);
+        },
+        model: st.rvModel,
+        effort: st.rvEffort,
+        pickModel: (e) => this.setState({ rvModel: e.target.value }),
+        pickEffort: (e) => this.setState({ rvEffort: e.target.value }),
+        modelOpts: ["Opus 4.8", "Sonnet 4.7", "Haiku 4.5"].map((m) => ({ label: m })),
+        effortOpts: ["Low", "Medium", "High"].map((e) => ({ label: e })),
         ctaNote: reviewData.settled
           ? "Every issue is closed and the reviewer signed off."
           : reviewData.awaiting
@@ -3591,7 +3762,7 @@ class Component extends DCLogic {
             : "Round " + reviewData.cur.n + " of " + rv.max + " · the loop stops early once a round closes clean.",
         ctaLabel: reviewData.settled
           ? "Approve review"
-          : reviewData.awaiting
+          : reviewData.awaiting || !reviewData.step
             ? "Adjudicate now"
             : "Open " + reviewData.step.short.toLowerCase() + " thread",
         ctaStyle:
@@ -3607,7 +3778,7 @@ class Component extends DCLogic {
             if (next) this.setStatus(active.id, next.id);
             return;
           }
-          this.openReviewThread(active, reviewData.cur, reviewData.stepId);
+          this.openReviewThread(active, reviewData.cur, reviewData.stepId || "adjudicate");
         },
       };
     }
