@@ -1587,9 +1587,11 @@ const make = Effect.gen(function* () {
       // current link are exempt for the reasons the decider gives: the first is
       // the branch's live pull request rather than a finished round's, and the
       // second is how a link adopted while open records its own merge.
+      const isCurrentLink =
+        next !== null && card.pullRequest !== null && card.pullRequest.number === next.number;
       if (
         next !== null &&
-        !(card.pullRequest !== null && card.pullRequest.number === next.number) &&
+        !isCurrentLink &&
         next.state !== "open" &&
         card.pullRequestFloor !== null &&
         next.number <= card.pullRequestFloor
