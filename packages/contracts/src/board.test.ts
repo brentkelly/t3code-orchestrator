@@ -111,6 +111,7 @@ const typicalCard = (index: number): BoardCard => ({
   // the shell's worst per-card case (t3o-06a).
   labels: labelIdsAtCap,
   stage: BOARD_SEED_STAGE_IDS.building,
+  pullRequest: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",
@@ -321,8 +322,10 @@ describe("board card shell derivation", () => {
       hasBrief: false,
       activeThreadId: null,
     });
-    // Still-unsourced t3o-11 fields.
+    // No `pullRequest` passed means the card has none: `hasPr` is a real
+    // derived false here, not the hardcoded placeholder it used to be.
     expect(shell.hasPr).toBe(false);
+    // Still-unsourced t3o-11 field.
     expect(shell.attachmentCount).toBe(0);
     // `queued` is now sourced (t3o-11) but rests at false when a producer omits
     // it — the card-carrying delta path, where step state is not in hand.
@@ -333,6 +336,8 @@ describe("board card shell derivation", () => {
     // an unsourced field costs zero wire bytes per card.
     expect("planTotal" in shell).toBe(false);
     expect("planDone" in shell).toBe(false);
+    // A card with no PR omits the key entirely, so a PR-less board's shell
+    // payload is exactly the size it was before the field existed.
     expect("prNumber" in shell).toBe(false);
     expect("issuesOpen" in shell).toBe(false);
     // Absent-means-preserve: a producer that cannot see the brief body or the
@@ -364,6 +369,56 @@ describe("board card shell derivation", () => {
     const cleared = makeBoardCardShell({ ...base, briefHasImage: false, planCount: 0 });
     expect(cleared.briefHasImage).toBe(false);
     expect(cleared.planCount).toBe(0);
+  });
+
+  it("sources hasPr / prNumber from the card's pull request", () => {
+    const base = {
+      cardId: BoardCardId.make("card-1"),
+      key: "T3O-1",
+      projectId: ProjectId.make("project-1"),
+      labelIds: [],
+      stage: BOARD_SEED_STAGE_IDS.merge,
+      orderKey: "m",
+      title: "Card",
+      blocked: false,
+      dependencyCount: 0,
+      hasBrief: true,
+      activeThreadId: null,
+    } as const;
+    const linked = makeBoardCardShell({
+      ...base,
+      pullRequest: {
+        number: 284,
+        url: "https://github.com/acme/repo/pull/284",
+        state: "open",
+        headBranch: "t3o/T3O-1",
+        baseRef: "main",
+        checkedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    expect(linked.hasPr).toBe(true);
+    expect(linked.prNumber).toBe(284);
+
+    // A merged PR is still a PR: the badge keeps showing the number after the
+    // work lands, which is what makes a Done card traceable back to its change.
+    const merged = makeBoardCardShell({
+      ...base,
+      pullRequest: {
+        number: 284,
+        url: "https://github.com/acme/repo/pull/284",
+        state: "merged",
+        headBranch: "t3o/T3O-1",
+        baseRef: "main",
+        checkedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    expect(merged.hasPr).toBe(true);
+    expect(merged.prNumber).toBe(284);
+
+    // Explicit null is a real "we looked and there is none", and it clears.
+    const none = makeBoardCardShell({ ...base, pullRequest: null });
+    expect(none.hasPr).toBe(false);
+    expect("prNumber" in none).toBe(false);
   });
 
   it("boardCardShellFromCard carries the brief-derived flag only when it is given one", () => {

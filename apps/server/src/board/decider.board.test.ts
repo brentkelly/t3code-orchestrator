@@ -55,6 +55,7 @@ function makeCard(
     externalRef: null,
     humanInLoop: null,
     worktree: null,
+    pullRequest: null,
     blocked: false,
     archivedAt: null,
     createdAt: NOW,
@@ -1222,6 +1223,22 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           path: "/tmp/worktrees/card-provisioning",
           createdAt: NOW,
         },
+        // The card starts with no PR, so recording one is a real change and
+        // clears the decider's no-op guard.
+        "board.card.record-pull-request": {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr"),
+          cardId: BoardCardId.make("card-ready"),
+          pullRequest: {
+            number: 284,
+            url: "https://github.com/acme/repo/pull/284",
+            state: "open",
+            headBranch: "t3o/card-ready",
+            baseRef: "main",
+            checkedAt: NOW,
+          },
+          createdAt: NOW,
+        },
         "board.card.fail-worktree": {
           type: "board.card.fail-worktree",
           commandId: CommandId.make("cmd-fail"),
@@ -1327,10 +1344,12 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           orderKey: "a",
           createdAt: NOW,
         },
+        // Backlog, not "merge": "Ready for merge" now holds the `merge` role
+        // and role holders are undeletable, like every other role stage.
         "board.stage.delete": {
           type: "board.stage.delete",
           commandId: CommandId.make("cmd-stage-delete"),
-          stageId: BoardStageId.make("merge"),
+          stageId: BoardStageId.make("backlog"),
           createdAt: NOW,
         },
       };

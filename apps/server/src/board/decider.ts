@@ -25,6 +25,7 @@ import {
   BOARD_CARD_BRIEF_BODY_KIND,
   BOARD_CARD_LABELS_MAX,
   boardCardPlans,
+  boardCardPullRequestsEqual,
   boardCardStepCompletions,
   boardCardStepState,
   boardLabelCatalogue,
@@ -47,6 +48,7 @@ import {
   unmetBoardCardDependencies,
   type BoardCard,
   type BoardCardId,
+  type BoardCardPullRequestTransition,
   type BoardCardStepState,
   type BoardLabel,
   type BoardLabelId,
@@ -1452,6 +1454,50 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         payload: {
           cardId: command.cardId,
           path: command.path,
+          card: nextCard,
+        },
+      };
+    }
+
+    case "board.card.record-pull-request": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const previous = card.pullRequest;
+      const next = command.pullRequest;
+      // No-op guard at the decider, not just at the caller. The refresh
+      // triggers fire on every step boundary, stage move and card open, and
+      // the overwhelming majority of those lookups return exactly what the
+      // card already holds — landing an event for each would bloat the log and
+      // republish a shell delta per card open for no change at all. `checkedAt`
+      // is deliberately EXCLUDED from the comparison: it moves on every single
+      // lookup, so including it would defeat the guard entirely.
+      if (boardCardPullRequestsEqual(previous, next)) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' already records this pull request state; nothing to record.`,
+        );
+      }
+      const transition: BoardCardPullRequestTransition =
+        next === null
+          ? "unlinked"
+          : previous === null || previous.number !== next.number
+            ? "linked"
+            : "state-changed";
+      const nextCard: BoardCard = {
+        ...card,
+        pullRequest: next,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-pull-request-recorded",
+        payload: {
+          cardId: command.cardId,
+          pullRequest: next,
+          transition,
           card: nextCard,
         },
       };

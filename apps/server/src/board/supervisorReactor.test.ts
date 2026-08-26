@@ -46,6 +46,7 @@ const stepId = String(BoardStageId.make("building"));
 
 const card: BoardCard = {
   id: cardId,
+  pullRequest: null,
   key: "T3-1",
   cardNumber: 1,
   projectId,

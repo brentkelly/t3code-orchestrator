@@ -47,6 +47,7 @@ import {
   compareBoardLabels,
   compareBoardStages,
   BoardCardWorktree,
+  BoardCardPullRequest,
   isBoardEvent,
   makeBoardCardShell,
   ProviderInstanceId,
@@ -144,6 +145,7 @@ const BoardCardDbRow = Schema.Struct({
   // NULL means untouched).
   humanInLoop: Schema.NullOr(Schema.Int),
   worktree: Schema.NullOr(Schema.fromJsonString(BoardCardWorktree)),
+  pullRequest: Schema.NullOr(Schema.fromJsonString(BoardCardPullRequest)),
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -462,6 +464,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     externalRef: card.externalRef,
     humanInLoop: card.humanInLoop === null ? null : card.humanInLoop ? 1 : 0,
     worktree: card.worktree,
+    pullRequest: card.pullRequest,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -489,6 +492,7 @@ function rowToBoardCard(
     externalRef: row.externalRef,
     humanInLoop: row.humanInLoop === null ? null : row.humanInLoop !== 0,
     worktree: row.worktree,
+    pullRequest: row.pullRequest,
     blocked: row.blocked !== 0,
     threadLinks,
     archivedAt: row.archivedAt,
@@ -539,6 +543,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         external_ref,
         human_in_loop,
         worktree,
+        pull_request,
         blocked,
         archived_at,
         created_at,
@@ -558,6 +563,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.externalRef},
         ${row.humanInLoop},
         ${row.worktree},
+        ${row.pullRequest},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -577,6 +583,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         external_ref = excluded.external_ref,
         human_in_loop = excluded.human_in_loop,
         worktree = excluded.worktree,
+        pull_request = excluded.pull_request,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -606,6 +613,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         external_ref AS "externalRef",
         human_in_loop AS "humanInLoop",
         worktree,
+        pull_request AS "pullRequest",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -768,6 +776,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         external_ref AS "externalRef",
         human_in_loop AS "humanInLoop",
         worktree,
+        pull_request AS "pullRequest",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -1851,6 +1860,31 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
           threadId: null,
         });
         return;
+
+      case "board.card-pull-request-recorded": {
+        yield* upsertCard(event.payload.card);
+        // Only TRANSITIONS earn a rail row. The reactor already suppresses a
+        // no-change lookup, so anything reaching here moved: the link
+        // appearing, or its state changing. A link DISAPPEARING (null) is not
+        // railed — it means the branch's PR was deleted on the forge, which is
+        // not something the card did.
+        const pullRequest = event.payload.pullRequest;
+        if (pullRequest === null) return;
+        const kind =
+          event.payload.transition === "linked"
+            ? ("card-pull-request-linked" as const)
+            : pullRequest.state === "merged"
+              ? ("card-pull-request-merged" as const)
+              : ("card-pull-request-state-changed" as const);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind,
+          payload: { prNumber: pullRequest.number, prState: pullRequest.state },
+          threadId: null,
+        });
+        return;
+      }
 
       case "board.card-reordered":
       // Worktree lifecycle (t3o-09): every payload carries the whole card, so

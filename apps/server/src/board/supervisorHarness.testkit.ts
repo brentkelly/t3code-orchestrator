@@ -30,6 +30,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
+  type BoardCardPullRequest,
   type BoardCardWorktree,
   type BoardSettings,
   type BoardStageExecution,
@@ -96,6 +97,7 @@ export const makeBoardCard = (input: {
   readonly stage: string;
   readonly orderKey: string;
   readonly worktree?: BoardCardWorktree | null;
+  readonly pullRequest?: BoardCardPullRequest | null;
 }): BoardCard => ({
   id: BoardCardId.make(input.id),
   key: input.id.toUpperCase(),
@@ -112,6 +114,7 @@ export const makeBoardCard = (input: {
   externalRef: null,
   humanInLoop: null,
   worktree: input.worktree ?? null,
+  pullRequest: input.pullRequest ?? null,
   blocked: false,
   archivedAt: null,
   createdAt: NOW,
