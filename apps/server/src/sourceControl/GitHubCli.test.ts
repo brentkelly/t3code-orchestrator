@@ -412,14 +412,16 @@ describe("GitHubCli.mergePullRequest", () => {
 
   it.effect("strips credentials out of the refusal before it reaches a card", () =>
     Effect.gen(function* () {
-      // The refusal lands on the card's activity rail, so it goes through the
-      // same transport-safe sanitizer the provider errors use rather than
-      // being passed along raw.
+      // The refusal lands on the card's activity rail and in a durable event
+      // log, so it goes through the free-text scrubber rather than being
+      // passed along raw. A credential inside a SENTENCE is the case that
+      // matters — a URL-parsing sanitizer lets that straight through — so the
+      // fixture wraps it in one.
       mockRun.mockReturnValueOnce(
         Effect.succeed({
           exitCode: ChildProcessSpawner.ExitCode(1),
           stdout: "",
-          stderr: "https://user:hunter2@github.com/acme/repo.git",
+          stderr: "X Pull request is not mergeable: https://user:hunter2@github.com/acme/repo.git",
           stdoutTruncated: false,
           stderrTruncated: false,
         }),

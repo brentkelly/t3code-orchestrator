@@ -1527,8 +1527,10 @@ const make = Effect.gen(function* () {
    * bounded by "cards actually in flight":
    *
    *  1. No ready worktree — no branch, so nothing to look up.
-   *  2. A TERMINAL pull request (merged or closed) — nothing about it can ever
-   *     change again, so a card stops costing lookups the moment its PR lands.
+   *  2. A MERGED pull request — the one state that can never change again, so a
+   *     card stops costing lookups the moment its PR lands. `closed`
+   *     deliberately does NOT stop them: it can be reopened, and a branch
+   *     whose PR was closed is the one most likely to get a new one.
    *  3. A lookup FAILURE records nothing, leaving the last known link in
    *     place. This mirrors `rememberLastKnownPr` in `GitManager` and exists
    *     for the same reason: a rate limit or a network blip must not blank a
