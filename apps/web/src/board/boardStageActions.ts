@@ -10,6 +10,7 @@
  * click. The last stage (Done) has none either — its only exit is archive.
  */
 import {
+  effectiveBoardStageRole,
   boardStageIndex,
   boardNextStageId,
   boardStageWithRole,
@@ -44,29 +45,82 @@ export function isBoardStageManuallySelectable(
   return index >= 0 && buildIndex >= 0 && index < buildIndex;
 }
 
-export interface BoardStagePrimaryAction {
-  readonly label: string;
-  readonly toStage: BoardStageId;
-  /** Whether the button is the filled, accented one — the build crossing is the
-      one gate loud enough to read before clicking. */
-  readonly emphasised: boolean;
+/**
+ * The detail pane's primary button.
+ *
+ * A discriminated union because the merge-role stage's button does something
+ * categorically different from every other stage's: it performs a git
+ * operation on the forge rather than moving a card between columns. Making
+ * that a `kind` rather than, say, a nullable `toStage` means the view cannot
+ * accidentally treat a Merge click as a stage move.
+ */
+export type BoardStagePrimaryAction =
+  | {
+      readonly kind: "move";
+      readonly label: string;
+      readonly toStage: BoardStageId;
+      /** Whether the button is the filled, accented one — the build crossing is
+          the one gate loud enough to read before clicking. */
+      readonly emphasised: boolean;
+    }
+  | {
+      readonly kind: "merge";
+      readonly label: string;
+      readonly emphasised: true;
+      /** Set while a conflict-resolution step is running: the branch is being
+          rewritten under the pull request, so merging now is meaningless. */
+      readonly disabled: boolean;
+      /** Why the button is disabled, for the tooltip. Null when enabled. */
+      readonly disabledReason: string | null;
+    };
+
+/** What the merge-role stage's button needs to know beyond the stage list. */
+export interface BoardStagePrimaryActionContext {
+  /** The card's pull request state, or null when it has none. Only `open` puts
+      a Merge button on the card: a merged or closed PR has nothing left to
+      merge, and the card falls back to the ordinary forward move so it is
+      never stranded short of Done. */
+  readonly pullRequestState?: "open" | "closed" | "merged" | null;
+  /** Whether a step is running on this card in the merge stage. Nothing else
+      runs there — the stage does not auto-execute — so a live step can only be
+      the conflict-resolution one. */
+  readonly conflictStepRunning?: boolean;
 }
 
 export function boardStagePrimaryAction(
   stages: ReadonlyArray<BoardStageDefinition>,
   stageId: BoardStageId,
+  context?: BoardStagePrimaryActionContext,
 ): BoardStagePrimaryAction | null {
   const board = stateOf(stages);
   const current = stages.find((stage) => stage.stageId === stageId) ?? null;
+  // Effective, not raw: a `board_stages` row seeded before a role existed
+  // carries it as NULL, and the button must not change behaviour based on how
+  // old someone's database is.
+  const currentRole = current === null ? null : effectiveBoardStageRole(current);
   // The build role advances board-driven (D8) — no human forward gate.
-  if (current?.role === "build") return null;
+  if (currentRole === "build") return null;
+  // The merge role's button merges the pull request and advances as a
+  // consequence. Only with a PR still OPEN: merged, closed, or absent all fall
+  // through to the ordinary forward move below, so a card whose PR someone
+  // merged on GitHub — or a card that never had one — still has a way to Done.
+  if (currentRole === "merge" && context?.pullRequestState === "open") {
+    const disabled = context.conflictStepRunning === true;
+    return {
+      kind: "merge",
+      label: "Merge",
+      emphasised: true,
+      disabled,
+      disabledReason: disabled ? "Resolving conflicts…" : null,
+    };
+  }
   const next = boardNextStageId(board, stageId);
   if (next === null) return null;
   const nextStage = stages.find((stage) => stage.stageId === next);
   if (nextStage === undefined) return null;
   // Crossing into the build role is the "Begin build" human gate (D11).
-  if (nextStage.role === "build") {
-    return { label: "Begin build", toStage: next, emphasised: true };
+  if (effectiveBoardStageRole(nextStage) === "build") {
+    return { kind: "move", label: "Begin build", toStage: next, emphasised: true };
   }
-  return { label: `Move to ${nextStage.label}`, toStage: next, emphasised: false };
+  return { kind: "move", label: `Move to ${nextStage.label}`, toStage: next, emphasised: false };
 }

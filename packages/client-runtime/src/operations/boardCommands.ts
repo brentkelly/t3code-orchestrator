@@ -13,8 +13,10 @@
  * precedent committed to on `BoardCard.orderKey`.
  */
 import {
+  BOARD_WS_METHODS,
   CommandId,
   ORCHESTRATION_WS_METHODS,
+  type BoardCardId,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -81,6 +83,19 @@ const commandMetadata = (input: { readonly commandId?: CommandId; readonly creat
 function dispatch(command: ClientOrchestrationCommand) {
   return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
 }
+
+/**
+ * The two card→pull-request ACTIONS (t3o card↔PR spec). Unlike everything else
+ * in this module these do not ride `orchestration.dispatchCommand`: they are
+ * board RPCs, because each returns a result the caller renders — and because a
+ * refresh fires whenever a card is opened, which has no business writing to
+ * the durable event log every time.
+ */
+export const refreshBoardCardPullRequest = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.refreshCardPullRequest, input);
+
+export const mergeBoardCardPullRequest = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.mergeCardPullRequest, input);
 
 export const createBoardCard: (input: CreateBoardCardInput) => CommandEffect = Effect.fn(
   "BoardCommands.createBoardCard",

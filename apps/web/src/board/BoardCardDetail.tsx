@@ -61,7 +61,9 @@ import {
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
-import { describeBoardCommandFailure } from "./boardCommandFeedback";
+import { describeBoardCommandFailure, describeBoardMergeOutcome } from "./boardCommandFeedback";
+import { openPullRequestLink } from "../lib/openPullRequestLink";
+import { readLocalApi } from "../localApi";
 
 /** The modal frame, empty, while `board.subscribeCard` opens — same sheet, so
     nothing jumps when the detail lands. */
@@ -109,6 +111,15 @@ export function BoardCardDetail({
   });
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
+  // Both PR actions report their own outcomes below — a merge the forge
+  // refused is a normal answer with the forge's own wording, not a command
+  // failure the generic toast could describe usefully.
+  const refreshCardPullRequest = useAtomCommand(boardEnvironment.refreshCardPullRequest, {
+    reportFailure: false,
+  });
+  const mergeCardPullRequest = useAtomCommand(boardEnvironment.mergeCardPullRequest, {
+    reportFailure: false,
+  });
   const createLabel = useAtomCommand(boardEnvironment.createLabel);
   const updateLabel = useAtomCommand(boardEnvironment.updateLabel);
   const deleteLabel = useAtomCommand(boardEnvironment.deleteLabel);
@@ -146,6 +157,14 @@ export function BoardCardDetail({
   }, []);
 
   const card = detail?.card ?? null;
+  /** Whether a conflict-resolution step is running on this card. The merge
+      stage auto-executes nothing, so a live step there can only be that one —
+      which is exactly what disables the Merge button while the branch is being
+      rewritten under the pull request. */
+  const conflictStepRunning = useMemo(
+    () => (snapshot?.cards ?? []).find((shell) => shell.cardId === cardId)?.stepRunning === true,
+    [snapshot, cardId],
+  );
 
   // Resolved server-side (t3o-13, D4): the shell snapshot drops archived
   // cards, so resolving here would render every archived dependency as an
@@ -410,6 +429,31 @@ export function BoardCardDetail({
       onLinkThread={(threadId, role) =>
         runCommand(linkThread({ environmentId, input: { cardId: card.id, threadId, role } }))
       }
+      conflictStepRunning={conflictStepRunning}
+      onMergePullRequest={() => {
+        setFeedback(null);
+        void mergeCardPullRequest({ environmentId, input: { cardId: card.id } }).then((result) => {
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+            return;
+          }
+          setFeedback(describeBoardMergeOutcome(result.value));
+        });
+      }}
+      onOpenPullRequest={(url) => {
+        // Refresh on the way out: clicking through is the moment the user is
+        // about to see the real state on the forge, so the card should not
+        // still be showing them a stale one when they come back.
+        void refreshCardPullRequest({ environmentId, input: { cardId: card.id } });
+        const shell = readLocalApi()?.shell;
+        if (shell === undefined) {
+          setFeedback("Link opening is unavailable.");
+          return;
+        }
+        void openPullRequestLink(shell, url).catch((error: unknown) => {
+          setFeedback(error instanceof Error ? error.message : "Unable to open the pull request.");
+        });
+      }}
       onMoveStage={(toStage) => {
         const targetColumn = (snapshot?.cards ?? []).filter((shell) => shell.stage === toStage);
         runCommand(
