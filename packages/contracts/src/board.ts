@@ -2812,11 +2812,14 @@ export function makeBoardCardShell(input: {
   /** How many plans the card carries. Omitted by producers that cannot see the
       plan slice, leaving the key absent (preserve-last-known). */
   readonly planCount?: number | undefined;
-  /** The card's linked pull request, or null when it has none. Unlike the
-      body-derived fields this is ON the card aggregate, so every producer
-      holds it and it is asserted unconditionally rather than
+  /** The card's pull request NUMBER, or null when it has none. Deliberately
+      the number and not the whole `BoardCardPullRequest`: the shell carries
+      nothing else about the PR, so asking producers for the full struct only
+      invites a SQL producer to fabricate the fields it did not select. Unlike
+      the body-derived fields this comes off the card aggregate, so every
+      producer holds it and asserts it unconditionally rather than
       absent-means-preserve. */
-  readonly pullRequest?: BoardCardPullRequest | null | undefined;
+  readonly prNumber?: number | null | undefined;
   /** Every LIVE-linked thread's shell (t3o-18, D7) — the badge aggregates
       across all of them. A single thread is still accepted (delta producers and
       tests pass one, or none). */
@@ -2839,7 +2842,7 @@ export function makeBoardCardShell(input: {
     dependencyCount: input.dependencyCount,
     hasBrief: input.hasBrief,
     archivedAt: input.archivedAt ?? null,
-    hasPr: input.pullRequest != null,
+    hasPr: input.prNumber != null,
     attachmentCount: 0, // t3o-11
     queued: input.queued ?? false, // t3o-11 (D11): real on the snapshot, rests false on card deltas
     stalled: input.stalled ?? false, // t3o-17 (D3): real on the snapshot, rests false on card deltas
@@ -2857,7 +2860,7 @@ export function makeBoardCardShell(input: {
     // card-carrying delta — no absent-means-preserve needed. The key is still
     // omitted when there is no PR, which is what keeps a PR-less board's shell
     // payload exactly the size it was before this field existed.
-    ...(input.pullRequest == null ? {} : { prNumber: input.pullRequest.number }),
+    ...(input.prNumber == null ? {} : { prNumber: input.prNumber }),
     // planTotal / planDone (post-MVP sub-boards), round* / stepLabel /
     // severity* / issues* (post-MVP review pipeline): key-optional and
     // deliberately absent until their producing specs land.
@@ -2894,7 +2897,7 @@ export function boardCardShellFromCard(
     dependencyCount: card.dependsOn.length,
     hasBrief: card.briefRef !== null,
     archivedAt: card.archivedAt,
-    pullRequest: card.pullRequest,
+    prNumber: card.pullRequest?.number ?? null,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined

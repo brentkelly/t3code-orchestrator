@@ -682,6 +682,9 @@ const make = Effect.gen(function* () {
         cardId: input.card.id,
         stepId: input.state.stepId,
       });
+      // Same reason as the recovery escalation: a spawn failure parks the step
+      // for a human without settling it, so disarm here too.
+      disarmPendingMerge(input.card.id);
       yield* dispatch({
         type: "board.card.recover-step",
         commandId: yield* commandId("spawn-failed"),
@@ -1039,7 +1042,16 @@ const make = Effect.gen(function* () {
     // means the card has been here before, so re-run nothing — open a clean
     // human-in-the-loop conversation. This is reactor policy, orthogonal to the
     // executor's "what runs next".
-    const firstEntry = !completions.some((completion) => completion.stepId === card.stage);
+    // The merge role is exempt from the re-entry rule. That rule exists so a
+    // card dragged BACK to a stage does not silently re-run the stage's work —
+    // but this stage's step is not stage work: it is requested explicitly, once
+    // per merge conflict, and a second request is as real as the first.
+    // Treating a repeat as a re-entry gave it an empty prompt and a
+    // human-in-the-loop thread, so the second Merge click on a stubborn branch
+    // opened a blank conversation instead of resolving anything.
+    const requestedPerRun = effectiveBoardStageRole(stage) === "merge";
+    const firstEntry =
+      requestedPerRun || !completions.some((completion) => completion.stepId === card.stage);
     // The boot pass only ever STARTS fresh work (or resumes an executor-driven
     // continuation below); a re-entry is skipped — its clean human thread must
     // not re-open on every server restart.
@@ -1303,7 +1315,7 @@ const make = Effect.gen(function* () {
     // merge-stage step to succeed, possibly one a human started by hand days
     // later, would consume and turn into a merge nobody asked for.
     if (input.outcome !== "succeeded") {
-      mergeAwaitingConflictFix.delete(String(input.card.id));
+      disarmPendingMerge(input.card.id);
     }
     yield* dispatch({
       type: "board.card.settle-step",
@@ -1362,6 +1374,12 @@ const make = Effect.gen(function* () {
         stallCount: decision.stallCount,
         question: decision.question,
       });
+      // Escalation lands the step `stalled` — non-terminal, so it never reaches
+      // `settleStep` and its disarm. A conflict fix that stalls has handed the
+      // card to a human, and the human's next move must be an explicit Merge
+      // click; leaving the card armed would let some later merge-stage step
+      // succeeding turn into a merge nobody asked for.
+      disarmPendingMerge(input.card.id);
       yield* dispatch({
         type: "board.card.recover-step",
         commandId: yield* commandId("recover-step"),
@@ -1651,6 +1669,14 @@ const make = Effect.gen(function* () {
    */
   const mergeAwaitingConflictFix = new Set<string>();
 
+  /** Drop a card's pending merge. Called from every path that ends a conflict
+      fix WITHOUT the success that would complete the merge — settlement,
+      recovery escalation and spawn failure — because each of those hands the
+      card back to a human, and only a human may start a merge. */
+  const disarmPendingMerge = (cardId: BoardCardId): void => {
+    mergeAwaitingConflictFix.delete(String(cardId));
+  };
+
   /**
    * Whether a forge refusal is a MERGE CONFLICT rather than a policy block.
    *
@@ -1885,8 +1911,12 @@ const make = Effect.gen(function* () {
               commandId: yield* commandId("merge-refused"),
               cardId: card.id,
               kind: "card-merge-refused",
+              // `conflict` is unreachable here: this call passes
+              // `viaConflictFix`, which is exactly what suppresses starting
+              // another conflict step, so a second conflict comes back as
+              // `refused` carrying the forge's text.
               detail:
-                outcome.outcome === "refused" || outcome.outcome === "conflict"
+                outcome.outcome === "refused"
                   ? `Conflicts resolved, but the merge was refused: ${outcome.detail}`
                   : "Conflicts resolved, but the pull request could no longer be merged.",
               createdAt: yield* nowIso,

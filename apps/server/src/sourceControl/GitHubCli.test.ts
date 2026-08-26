@@ -374,3 +374,71 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 });
+
+describe("GitHubCli.mergePullRequest", () => {
+  it.effect("surfaces the forge's own refusal text", () =>
+    Effect.gen(function* () {
+      // The failure this closes: `VcsProcessExitError` deliberately redacts
+      // stderr, so routing the merge through the ordinary error path gave the
+      // board a constant string ("GitHub CLI command failed.") instead of
+      // GitHub's explanation. That silently disabled conflict detection — the
+      // classifier can only ever see this text — and showed the user a message
+      // that says nothing. So the merge reads the refusal as OUTPUT.
+      mockRun.mockReturnValueOnce(
+        Effect.succeed({
+          exitCode: ChildProcessSpawner.ExitCode(1),
+          stdout: "",
+          stderr: "X Pull request is not mergeable: the merge commit cannot be cleanly created\n",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
+
+      const github = yield* GitHubCli.GitHubCli;
+      const error = yield* Effect.flip(
+        github.mergePullRequest({ cwd: "/repo", reference: "284", strategy: "squash" }),
+      );
+
+      assert.equal(error._tag, "GitHubPullRequestMergeRefusedError");
+      assert.include(error.detail, "cannot be cleanly created");
+      // `--squash` is always passed: `gh pr merge` with no strategy prompts
+      // interactively, which would hang the server.
+      const call = mockRun.mock.calls[0]?.[0];
+      assert.deepStrictEqual(call?.args, ["pr", "merge", "284", "--squash"]);
+      // Non-zero has to come back as a RESULT, or the stderr never survives.
+      assert.strictEqual(call?.allowNonZeroExit, true);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("strips credentials out of the refusal before it reaches a card", () =>
+    Effect.gen(function* () {
+      // The refusal lands on the card's activity rail, so it goes through the
+      // same transport-safe sanitizer the provider errors use rather than
+      // being passed along raw.
+      mockRun.mockReturnValueOnce(
+        Effect.succeed({
+          exitCode: ChildProcessSpawner.ExitCode(1),
+          stdout: "",
+          stderr: "https://user:hunter2@github.com/acme/repo.git",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+      );
+
+      const github = yield* GitHubCli.GitHubCli;
+      const error = yield* Effect.flip(
+        github.mergePullRequest({ cwd: "/repo", reference: "284", strategy: "squash" }),
+      );
+      assert.notInclude(error.detail, "hunter2");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("succeeds silently on a clean merge", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      const github = yield* GitHubCli.GitHubCli;
+      yield* github.mergePullRequest({ cwd: "/repo", reference: "284", strategy: "merge" });
+      assert.deepStrictEqual(mockRun.mock.calls[0]?.[0]?.args, ["pr", "merge", "284", "--merge"]);
+    }).pipe(Effect.provide(layer)),
+  );
+});

@@ -84,6 +84,14 @@ const runningMergeStep = (cardId: BoardCardId): BoardCardStepState => ({
   updatedAt: "2026-01-01T00:00:00.000Z",
 });
 
+/** The on-demand kickoff signal a Merge-click conflict dispatches. */
+const stageThreadRequested = (card: BoardCard, sequence: number): OrchestrationEvent =>
+  ({
+    type: "board.card-stage-thread-requested",
+    sequence,
+    payload: { cardId: card.id, stage: card.stage },
+  }) as unknown as OrchestrationEvent;
+
 const mergeStepCompleted = (cardId: BoardCardId, sequence: number): OrchestrationEvent =>
   ({
     type: "board.card-step-completed",
@@ -409,6 +417,57 @@ describe("merging a card's pull request", () => {
           assert.deepStrictEqual(movesTo(yield* h.commands), []);
         }),
     ),
+  );
+
+  it.effect("runs the conflict prompt on a SECOND conflict fix, not a blank thread", () =>
+    Effect.gen(function* () {
+      // The gap this closes: the reactor's re-entry rule blanks the prompt and
+      // forces a human-in-the-loop thread when a card already has a completion
+      // for the stage's step. Every other conflict test uses a card with no
+      // prior merge-stage completion, which is the only branch that behaves as
+      // designed — so a card on its SECOND Merge click got an empty
+      // conversation instead of the conflict-resolution prompt.
+      const card = cardInMerge();
+      const priorCompletion = {
+        cardId: card.id,
+        stepId: String(BOARD_SEED_STAGE_IDS.merge),
+        outcome: "succeeded" as const,
+        summary: "resolved the conflicts",
+        payload: null,
+        threadId: null,
+        completedAt: "2026-01-01T00:00:00.000Z",
+      };
+      yield* withGovernor(
+        {
+          board: {
+            nextCardNumberByProject: {},
+            cards: [card],
+            stepCompletions: [priorCompletion],
+          },
+          settings: settings(),
+          pullRequest: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain(stageThreadRequested(card, 1));
+            const selected = (yield* h.commands).filter(
+              (command) => command.type === "board.card.select-step",
+            );
+            assert.equal(selected.length, 1, "a step should have been selected");
+            const step = selected[0] as { readonly prompt: string; readonly humanInLoop: boolean };
+            assert.isAbove(
+              step.prompt.trim().length,
+              0,
+              "the conflict step must carry its prompt, not an empty re-entry one",
+            );
+            assert.strictEqual(
+              step.humanInLoop,
+              false,
+              "the conflict fix runs unattended so its success can complete the merge",
+            );
+          }),
+      );
+    }),
   );
 
   it.effect("refuses to merge a pull request that is already merged", () =>

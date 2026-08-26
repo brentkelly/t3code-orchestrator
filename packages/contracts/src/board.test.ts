@@ -387,36 +387,31 @@ describe("board card shell derivation", () => {
     } as const;
     const linked = makeBoardCardShell({
       ...base,
-      pullRequest: {
-        number: 284,
-        url: "https://github.com/acme/repo/pull/284",
-        state: "open",
-        headBranch: "t3o/T3O-1",
-        baseRef: "main",
-        checkedAt: "2026-01-01T00:00:00.000Z",
-      },
+      prNumber: 284,
     });
     expect(linked.hasPr).toBe(true);
     expect(linked.prNumber).toBe(284);
 
-    // A merged PR is still a PR: the badge keeps showing the number after the
-    // work lands, which is what makes a Done card traceable back to its change.
-    const merged = makeBoardCardShell({
-      ...base,
+    // A merged PR is still a PR: the badge keeps the number after the work
+    // lands, which is what makes a Done card traceable back to its change.
+    // Asserted through `boardCardShellFromCard`, the path that actually sees
+    // the PR's state — `makeBoardCardShell` is given the number alone.
+    const mergedShell = boardCardShellFromCard({
+      ...typicalCard(9),
       pullRequest: {
         number: 284,
         url: "https://github.com/acme/repo/pull/284",
         state: "merged",
-        headBranch: "t3o/T3O-1",
+        headBranch: "t3o/T3O-9",
         baseRef: "main",
         checkedAt: "2026-01-01T00:00:00.000Z",
       },
     });
-    expect(merged.hasPr).toBe(true);
-    expect(merged.prNumber).toBe(284);
+    expect(mergedShell.hasPr).toBe(true);
+    expect(mergedShell.prNumber).toBe(284);
 
     // Explicit null is a real "we looked and there is none", and it clears.
-    const none = makeBoardCardShell({ ...base, pullRequest: null });
+    const none = makeBoardCardShell({ ...base, prNumber: null });
     expect(none.hasPr).toBe(false);
     expect("prNumber" in none).toBe(false);
   });

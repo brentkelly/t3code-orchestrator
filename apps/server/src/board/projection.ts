@@ -2333,21 +2333,7 @@ export function withBoardShellCards(
           hasBrief: row.hasBrief !== 0,
           briefHasImage: row.briefHasImage !== 0,
           planCount: row.planCount,
-          // `makeBoardCardShell` takes the whole link and reads the number off
-          // it, so the snapshot supplies a minimal stand-in rather than a
-          // second way of setting `prNumber` that could disagree with the
-          // delta path's.
-          pullRequest:
-            row.prNumber === null
-              ? null
-              : {
-                  number: row.prNumber,
-                  url: "",
-                  state: "open",
-                  headBranch: "",
-                  baseRef: "",
-                  checkedAt: row.createdAt,
-                },
+          prNumber: row.prNumber,
           archivedAt: row.archivedAt,
           activeThreadId,
           queued: queuedByCard.has(row.cardId),
@@ -2426,6 +2412,7 @@ export function withBoardArchivedShellCards(
             blocked: row.blocked !== 0,
             dependencyCount: row.dependencyCount,
             hasBrief: row.hasBrief !== 0,
+            prNumber: row.prNumber,
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),
