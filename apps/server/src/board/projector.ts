@@ -499,7 +499,7 @@ export function projectBoardEvent(
     // Reporting only — it changes no card field, so the read model is
     // unchanged and a replay that includes it lands exactly where a replay
     // without it would.
-    case "board.card-branch-cleanup-recorded":
+    case "board.card-note-recorded":
       return Effect.succeed(model);
 
     case "board.stage-created":
@@ -773,7 +773,7 @@ export function boardShellStreamEvent(
     case "board.card-step-retuned":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
-    case "board.card-branch-cleanup-recorded":
+    case "board.card-note-recorded":
       // Agent write-path events are card DETAIL, not column-card shell fields
       // (D7): an agent's progress note, step completion or a plan BODY rewrite
       // changes nothing a column card renders, so they emit no shell delta.

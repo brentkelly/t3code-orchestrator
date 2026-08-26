@@ -1065,6 +1065,9 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   "card-pull-request-state-changed",
   "card-pull-request-merged",
   "card-branch-deleted",
+  /** A Merge click that ended without a merge and without a conflict fix left
+      running — the one outcome that would otherwise be invisible. */
+  "card-merge-refused",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -1825,24 +1828,34 @@ export const BoardCardRecordPullRequestCommand = Schema.Struct({
 });
 export type BoardCardRecordPullRequestCommand = typeof BoardCardRecordPullRequestCommand.Type;
 
+/** The activity kinds that are pure REPORTING — the board telling the user
+    what it did to their repository, with no card field behind it. */
+export const BoardCardNoteKind = Schema.Literals(["card-branch-deleted", "card-merge-refused"]);
+export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
+
 /**
- * Record what branch cleanup did when the card reached Done.
+ * Record something the board did to the repository, on the card's activity
+ * rail.
  *
- * A pure REPORTING command: it mutates no card field, it exists so the
- * deletion (or the reason one was skipped) lands on the card's activity rail
- * where the user can see it. Deleting a branch is irreversible and silent
- * otherwise — a log line the user never reads is not an account of what
- * happened to their branch.
+ * A pure REPORTING command: it mutates no card field. It exists because both
+ * things it covers would otherwise happen in silence — a branch deleted at
+ * Done, and a merge that conflicted again after its conflict fix and gave up.
+ * A log line the user never reads is not an account of what happened to their
+ * branch, and a Merge click that ends in nothing at all is worse.
+ *
+ * One command with a `kind` rather than one per event: the shapes are
+ * identical and the projection's only job is to write the row.
  */
-export const BoardCardRecordBranchCleanupCommand = Schema.Struct({
-  type: Schema.Literal("board.card.record-branch-cleanup"),
+export const BoardCardRecordNoteCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-note"),
   commandId: CommandId,
   cardId: BoardCardId,
-  /** Human-facing summary of the outcome, already written for the rail. */
+  kind: BoardCardNoteKind,
+  /** Human-facing summary, already written for the rail. */
   detail: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
 });
-export type BoardCardRecordBranchCleanupCommand = typeof BoardCardRecordBranchCleanupCommand.Type;
+export type BoardCardRecordNoteCommand = typeof BoardCardRecordNoteCommand.Type;
 
 // Server-INTERNAL step-lifecycle commands (t3o-10, BOARD_INTERNAL_COMMANDS):
 // the supervisor reactor dispatches them as it drives a card's step through
@@ -2269,12 +2282,12 @@ export type BoardCardPullRequestRecordedPayload = typeof BoardCardPullRequestRec
 /** Reporting-only: no card field changes, so unlike every other card event
     this one carries no `card`. The projection writes an activity row and
     nothing else. */
-export const BoardCardBranchCleanupRecordedPayload = Schema.Struct({
+export const BoardCardNoteRecordedPayload = Schema.Struct({
   cardId: BoardCardId,
+  kind: BoardCardNoteKind,
   detail: TrimmedNonEmptyString,
 });
-export type BoardCardBranchCleanupRecordedPayload =
-  typeof BoardCardBranchCleanupRecordedPayload.Type;
+export type BoardCardNoteRecordedPayload = typeof BoardCardNoteRecordedPayload.Type;
 
 // Step-lifecycle event payloads (t3o-10). The recipe-snapshot event carries
 // the full post-change `card` (like every worktree event), so the projector
@@ -3124,7 +3137,7 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardFailWorktreeCommand,
   BoardCardReclaimWorktreeCommand,
   BoardCardRecordPullRequestCommand,
-  BoardCardRecordBranchCleanupCommand,
+  BoardCardRecordNoteCommand,
   BoardCardSelectStepCommand,
   BoardCardAdmitStepCommand,
   BoardCardAwaitStepInputCommand,
@@ -3159,7 +3172,7 @@ export const BOARD_EVENT_TYPES = [
   "board.card-worktree-failed",
   "board.card-worktree-reclaimed",
   "board.card-pull-request-recorded",
-  "board.card-branch-cleanup-recorded",
+  "board.card-note-recorded",
   "board.card-step-selected",
   "board.card-step-admitted",
   "board.card-step-awaiting-input",
@@ -3316,8 +3329,8 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     }),
     Schema.Struct({
       ...base,
-      type: Schema.Literal("board.card-branch-cleanup-recorded"),
-      payload: BoardCardBranchCleanupRecordedPayload,
+      type: Schema.Literal("board.card-note-recorded"),
+      payload: BoardCardNoteRecordedPayload,
     }),
     Schema.Struct({
       ...base,

@@ -109,6 +109,8 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <GitMergeIcon className={className} />;
     case "card-branch-deleted":
       return <ScissorsIcon className={className} />;
+    case "card-merge-refused":
+      return <TriangleAlertIcon className={cn(className, "text-destructive-foreground")} />;
   }
 }
 
@@ -220,6 +222,12 @@ function activitySentence(
       );
     case "card-branch-deleted":
       return payload.detail === undefined ? <>deleted the branch</> : <>{payload.detail}</>;
+    case "card-merge-refused":
+      return payload.detail === undefined ? (
+        <>could not merge the pull request</>
+      ) : (
+        <>{payload.detail}</>
+      );
   }
 }
 

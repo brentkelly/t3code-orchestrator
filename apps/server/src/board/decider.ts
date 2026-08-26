@@ -1503,7 +1503,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       };
     }
 
-    case "board.card.record-branch-cleanup": {
+    case "board.card.record-note": {
       // Reporting only: no card field changes, so no `card` on the payload and
       // no `updatedAt` bump. The card must still EXIST and be live — a rail
       // row on an archived or deleted card would have nowhere to render.
@@ -1514,8 +1514,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           occurredAt: command.createdAt,
           commandId: command.commandId,
         })),
-        type: "board.card-branch-cleanup-recorded",
-        payload: { cardId: card.id, detail: command.detail },
+        type: "board.card-note-recorded",
+        payload: { cardId: card.id, kind: command.kind, detail: command.detail },
       };
     }
 

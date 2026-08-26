@@ -1625,9 +1625,10 @@ const make = Effect.gen(function* () {
             result.skippedReason === null ? "" : ` — ${result.skippedReason}`
           }`;
     yield* dispatch({
-      type: "board.card.record-branch-cleanup",
+      type: "board.card.record-note",
       commandId: yield* commandId("branch-cleanup"),
       cardId: card.id,
+      kind: "card-branch-deleted",
       detail,
       createdAt: yield* nowIso,
     });
@@ -1872,7 +1873,25 @@ const make = Effect.gen(function* () {
         // complete was initiated by a Merge click that hit a conflict.
         if (stageRole === "merge" && mergeAwaitingConflictFix.delete(String(card.id))) {
           yield* schedule();
-          yield* mergeCardPullRequest(card.id, true).pipe(Effect.asVoid);
+          // The human clicked Merge, watched it say "resolving conflicts", and
+          // is not watching the server log. If this completion does not
+          // actually merge — the fix landed but the branch conflicts again, or
+          // the forge now refuses for some other reason — the card has to say
+          // so, or the Merge click ends in nothing at all.
+          const outcome = yield* mergeCardPullRequest(card.id, true);
+          if (outcome.outcome !== "merged") {
+            yield* dispatch({
+              type: "board.card.record-note",
+              commandId: yield* commandId("merge-refused"),
+              cardId: card.id,
+              kind: "card-merge-refused",
+              detail:
+                outcome.outcome === "refused" || outcome.outcome === "conflict"
+                  ? `Conflicts resolved, but the merge was refused: ${outcome.detail}`
+                  : "Conflicts resolved, but the pull request could no longer be merged.",
+              createdAt: yield* nowIso,
+            });
+          }
           return;
         }
         // Ask the stage executor what runs next (t3o-16): a single-step stage
