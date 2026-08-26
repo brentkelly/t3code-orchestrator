@@ -30,7 +30,9 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
+  DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
   type BoardCardPullRequest,
+  type BoardStageExecutionMerge,
   type VcsStatusChangeRequest,
   type BoardCardWorktree,
   type BoardSettings,
@@ -228,6 +230,10 @@ export const settingsWith = (input: {
   /** Pass a step to make Planning auto-execute too — the plan-mode counterpart
       of `building`, for the suites that drive a card into Planning. */
   readonly planning?: TestBuildStep;
+  /** Overrides for the merge stage's config (strategy, branch cleanup, the
+      conflict prompt). Absent leaves it at the compiled-in defaults, which is
+      what a board nobody has configured actually resolves to. */
+  readonly merge?: Partial<BoardStageExecutionMerge>;
 }): BoardSettings => ({
   projects: {},
   pipeline: {
@@ -235,6 +241,14 @@ export const settingsWith = (input: {
     ...(input.planning === undefined
       ? {}
       : { [BOARD_SEED_STAGE_IDS.planning]: planningStageExecution(input.planning) }),
+    ...(input.merge === undefined
+      ? {}
+      : {
+          [BOARD_SEED_STAGE_IDS.merge]: {
+            ...DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
+            ...input.merge,
+          },
+        }),
   },
   concurrency: {
     perInstance: input.perInstance ?? {},

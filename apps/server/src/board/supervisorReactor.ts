@@ -1600,20 +1600,26 @@ const make = Effect.gen(function* () {
    * Whether a forge refusal is a MERGE CONFLICT rather than a policy block.
    *
    * The distinction drives two very different responses — start an agent to
-   * resolve it, or stop and tell the human — so it is worth being explicit
-   * about. Matched on the forge's own words because that is all `gh` gives us;
-   * kept deliberately broad, since the cost of the two mistakes is asymmetric:
-   * treating a conflict as a policy block just means the user reads the real
-   * reason and clicks again, while treating a policy block as a conflict would
-   * spawn an agent to "fix" a branch that has nothing wrong with it.
+   * resolve it, or stop and tell the human — and the cost of the two mistakes
+   * is very asymmetric, so this is deliberately NARROW. Mistaking a conflict
+   * for a policy block just means the user reads the real reason and clicks
+   * again; mistaking a policy block for a conflict spawns an agent to "fix" a
+   * branch that has nothing wrong with it, which then merges base into a
+   * healthy branch and pushes for no reason.
+   *
+   * In particular "not mergeable" is NOT a conflict signal: GitHub wraps every
+   * refusal in it, failing status checks included. Only phrases that can mean
+   * nothing else count.
    */
   const isMergeConflictRefusal = (detail: string): boolean => {
     const text = detail.toLowerCase();
     return (
       text.includes("conflict") ||
-      text.includes("not mergeable") ||
-      text.includes("merge_conflict") ||
-      text.includes("dirty")
+      // GitHub's wording when the merge commit cannot be constructed.
+      text.includes("cannot be cleanly created") ||
+      // The `mergeStateStatus` token, matched with its label so the bare word
+      // "dirty" appearing in some other sentence cannot trigger a fix.
+      text.includes("mergestatestatus: dirty")
     );
   };
 
