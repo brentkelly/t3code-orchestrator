@@ -897,6 +897,38 @@ describe("branch cleanup at Done", () => {
     }),
   );
 
+  it.effect("does not re-attempt a reclaim it was already refused", () =>
+    Effect.gen(function* () {
+      // A dirty tree leaves `status: "ready"` on purpose — the card keeps its
+      // worktree and says why — so `ready` alone cannot retire the card from
+      // the boot sweep, and it would match on every restart forever. The
+      // refusal reason is the durable marker that it has been tried.
+      const card = {
+        ...cardInMerge(),
+        stage: BOARD_SEED_STAGE_IDS.done,
+        worktree: {
+          ...readyWorktree("card-1"),
+          reclaimBlockedReason: "Worktree has uncommitted changes.",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: { ...openPr, state: "merged" },
+          worktreeDirty: true,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            // Boot reconcile has already run by the time the harness hands the
+            // reactor over, so the sweep's decision is visible here.
+            assert.deepEqual(yield* h.removedWorktrees, []);
+            assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
+          }),
+      );
+    }),
+  );
+
   it.effect("settles a card whose pull request is merged while it SITS in Done", () =>
     Effect.gen(function* () {
       // The two facts — "in Done" and "merged" — can become true in either

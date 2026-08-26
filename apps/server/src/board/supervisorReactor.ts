@@ -1782,9 +1782,10 @@ const make = Effect.gen(function* () {
    * THE ORDER IS THE POINT. `deleteMergedCardBranch` refuses to delete a local
    * branch a worktree still has checked out, and until this ran second that
    * refusal was the NORMAL outcome — every finished card left its local
-   * `board/*` branch behind for archive to deal with. Reclaiming first means
-   * the branch is unheld by the time the delete is attempted, so the worktree
-   * and the local branch go together, in one move.
+   * `board/*` branch behind, permanently: archive reclaims a worktree but
+   * never deletes branches, so nothing came along later to collect it.
+   * Reclaiming first means the branch is unheld by the time the delete is
+   * attempted, so the worktree and the local branch go together, in one move.
    *
    * Best-effort throughout, both halves. A card that cannot reach Done because
    * a `git push --delete` failed is broken; a branch that outlives its card is
@@ -1828,9 +1829,20 @@ const make = Effect.gen(function* () {
     // Marked only once the work has actually run. Marking on ENTRY would record
     // the attempt rather than the outcome, so a settle that died on a transient
     // git failure — the network blip that made `git push --delete` fail — would
-    // be remembered as done and never retried while the process lived. Every
-    // arm below it is best-effort and swallows its own errors, so reaching here
-    // means the settle ran to completion, whatever it managed to delete.
+    // be remembered as done and never retried while the process lived.
+    //
+    // "Settled" means RAN TO COMPLETION, not "achieved everything". A reclaim
+    // refused for a dirty tree is a completed settle: the refusal is a normal
+    // return value, the card records `reclaimBlockedReason` and displays it,
+    // and nothing this process can do will clean that tree — so re-attempting
+    // it on every card open would re-report a refusal the user is already
+    // looking at. The retry is the human's: commit or push the work, and the
+    // card earns a fresh attempt the next time it leaves and re-enters the
+    // done-role stage, which clears this marker. A restart does NOT re-attempt
+    // it — the boot sweep skips a blocked reclaim for the same reason — and
+    // archive reclaims unconditionally, so a tree left dirty for good is
+    // collected there, still subject to the same never-delete-uncommitted-work
+    // refusal.
     settledAtDone.add(String(card.id));
   });
 
@@ -2522,21 +2534,29 @@ const make = Effect.gen(function* () {
     // `gh pr list` proportional to the size of Done on every single restart,
     // which is the periodic polling this design refuses.
     //
-    // It must also be SELF-TERMINATING, which is why it is gated on the
-    // setting. `settledAtDone` is empty after a restart, so the sweep is the
-    // one settle path a restart re-arms — and with the setting off the
-    // worktree stays `ready` by design, so the filter below would match the
-    // same cards on every boot forever and append another branch-cleanup row
-    // to each of their rails each time. With the setting on, the reclaim flips
-    // the worktree out of `ready` and the next boot finds nothing. Giving the
-    // disk back is the backlog this exists to clear; a card whose worktree is
-    // deliberately kept has no backlog to clear.
+    // It must also be SELF-TERMINATING. `settledAtDone` is empty after a
+    // restart, so the sweep is the one settle path a restart re-arms; a card it
+    // keeps matching gets another branch-cleanup row on its rail and another
+    // forge round-trip on every single boot, forever. Two filters retire a card
+    // from it permanently, one per way a settle can end:
+    //
+    //  - The reclaim SUCCEEDED — the worktree is no longer `ready`.
+    //  - The reclaim was REFUSED — `reclaimBlockedReason` is set. A dirty or
+    //    unpushed tree leaves `status: "ready"` on purpose (the card keeps its
+    //    worktree, and says why), so without this the blocked card would match
+    //    for ever. It is also the right answer on its own terms: nothing here
+    //    can clean that tree, so re-attempting it every boot only re-reports a
+    //    refusal the card is already displaying.
+    //
+    // The setting gate is the third: with reclaim off there is no disk backlog
+    // to clear, and clearing it is the only thing this sweep is for.
     const settings = yield* boardSettings;
     if (settings.lifecycle.reclaimWorktreeOnDone) {
       const finished = yield* readBoard;
       for (const card of finished.cards) {
         if (card.archivedAt !== null) continue;
         if (card.worktree === null || card.worktree.status !== "ready") continue;
+        if (card.worktree.reclaimBlockedReason !== null) continue;
         if (card.pullRequest === null || card.pullRequest.state !== "merged") continue;
         yield* settleCardAtDone(card);
       }
