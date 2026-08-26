@@ -89,6 +89,7 @@ const baseProps = {
   onMergePullRequest: noop,
   onOpenPullRequest: noop,
   conflictStepRunning: false,
+  merging: false,
   catalogue: [] as ReadonlyArray<BoardLabel>,
   stages: BOARD_SEED_STAGES,
   humanInLoop: null,
@@ -300,6 +301,40 @@ describe("BoardCardDetailPanel", () => {
       />,
     );
     expect(archived).not.toContain("Begin build");
+  });
+
+  it("swaps the Merge button for a disabled 'Merging…' spinner while a merge is in flight", () => {
+    const openPr = {
+      number: 42,
+      url: "https://example.test/pr/42",
+      state: "open" as const,
+      headBranch: "board/t3-7",
+      baseRef: "main",
+      checkedAt: NOW,
+    };
+    const idle = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge, pullRequest: openPr })}
+        projectName="P"
+      />,
+    );
+    expect(idle).toContain(">Merge</button>");
+    expect(idle).not.toContain("Merging…");
+
+    const inFlight = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        merging
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge, pullRequest: openPr })}
+        projectName="P"
+      />,
+    );
+    expect(inFlight).toContain("Merging…");
+    // The in-flight button is disabled so the several-second round trip can't be
+    // re-entered by a second click.
+    expect(inFlight).toMatch(/Merging…<\/button>/);
+    expect(inFlight).toContain("disabled");
   });
 
   it("renders the brief body when present", () => {

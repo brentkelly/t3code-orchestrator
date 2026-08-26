@@ -75,6 +75,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
 import { boardSnapshotQueryMethodsOf } from "./projection.ts";
 import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
+import { pullMergedBaseBranch } from "./baseBranchSync.ts";
 import { deleteMergedCardBranch } from "./branchCleanup.ts";
 import {
   assertSingleBoardWorktreeWriter,
@@ -1844,6 +1845,34 @@ const make = Effect.gen(function* () {
     // already known to be merged — which is what the branch cleanup gates on.
     yield* refreshCardPullRequest(fresh);
     const merged = (yield* readCard(cardId)) ?? fresh;
+
+    // Pull the just-merged commits into the LOCAL base branch of the project
+    // ROOT checkout (not `cwd`, which may be the card's worktree). The merge ran
+    // on the forge, so the clone new worktrees fork from is now behind; without
+    // this the next card branches off pre-merge history. Best-effort and
+    // fast-forward-only — a base we can't cleanly advance is a staleness the
+    // next fetch fixes, never a reason to fail a merge that already landed.
+    const root = projectCwd(model, fresh);
+    const baseBranch = merged.pullRequest?.baseRef ?? null;
+    if (root !== null && baseBranch !== null) {
+      yield* pullMergedBaseBranch({ git, cwd: root, baseBranch }).pipe(
+        Effect.flatMap((sync) =>
+          sync.updated || sync.skippedReason === null
+            ? Effect.void
+            : Effect.logWarning(
+                `board merge: local base branch ${baseBranch} not updated: ${sync.skippedReason}`,
+              ),
+        ),
+        // Truly best-effort: the merge has already landed on the forge, so
+        // nothing this fast-forward does — down to an unexpected defect from the
+        // git driver — may change the card's merged outcome. The whole block is
+        // swallowed to a log so it can never reach the outer merge catch.
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board merge: base branch sync failed", { cause: Cause.pretty(cause) }),
+        ),
+      );
+    }
+
     const board = yield* readBoard;
     const nextStage = boardNextStageId(board, merged.stage);
     if (nextStage !== null) {

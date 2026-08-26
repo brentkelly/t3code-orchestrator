@@ -130,6 +130,10 @@ export function BoardCardDetail({
   type BoardCommandResult = Awaited<ReturnType<typeof updateCard>>;
 
   const [feedback, setFeedback] = useState<string | null>(null);
+  // Set for the whole merge round trip — the forge merge plus the local base
+  // fast-forward take several seconds — so the button can say "Merging…" and
+  // refuse a second click that would re-enter a merge already in flight.
+  const [merging, setMerging] = useState(false);
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
   // Refresh trigger: the card detail opening. One of the moments the answer
@@ -442,9 +446,12 @@ export function BoardCardDetail({
         runCommand(linkThread({ environmentId, input: { cardId: card.id, threadId, role } }))
       }
       conflictStepRunning={conflictStepRunning}
+      merging={merging}
       onMergePullRequest={() => {
         setFeedback(null);
+        setMerging(true);
         void mergeCardPullRequest({ environmentId, input: { cardId: card.id } }).then((result) => {
+          setMerging(false);
           if (result._tag === "Failure") {
             if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
             return;
