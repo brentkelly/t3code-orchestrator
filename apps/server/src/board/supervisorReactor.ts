@@ -1184,6 +1184,22 @@ const make = Effect.gen(function* () {
         // the whole continuation) leaves a manual stage's `complete` → auto-
         // advance path intact — this blocks a spurious SPAWN, not a crossing.
         if (!exec.autoExecute) return;
+        // The card is finished with the phase that just settled: the loop is
+        // moving to the NEXT step within this stage (the review loop is the one
+        // stage that lands here). Settle that phase's thread so it drops out of
+        // the inbox as the next phase spins up — the card keeps the tab, this
+        // only clears the inbox. Best-effort: a thread still mid-turn is refused
+        // by the settle guard and simply skipped; the swallow-on-reject dispatch
+        // never derails the continuation. The stage's FINAL phase does not reach
+        // this arm (it `complete`s → advances), so its thread is settled by the
+        // graduation sweep in `handleCardMoved` instead.
+        if (state.threadId !== null) {
+          yield* dispatch({
+            type: "thread.settle",
+            commandId: yield* commandId("settle-phase"),
+            threadId: state.threadId,
+          });
+        }
         // A continuation is executor-driven, never a human re-entry: inject the
         // planned prompt and honour the stage's own human-in-the-loop stance.
         const humanInLoop = resolveHumanInLoop(board, settings, card, exec);
@@ -1702,6 +1718,27 @@ const make = Effect.gen(function* () {
       }
       // The abandoned step may have held a slot — offer it to the queue.
       yield* schedule();
+    }
+    // Graduation sweep: the card finished a whole stage and moved to a later
+    // one, so settle every thread still linked to it — the just-completed
+    // stage's thread plus any earlier one left active — dropping them out of
+    // the inbox (the links stay, so the card keeps its tabs). Only on a FORWARD
+    // move: a backward drag is a reopen and must leave threads untouched. The
+    // leftover in-flight step (if any) was just unlinked above, so the tombstone
+    // filter skips it; the destination's fresh thread is not linked yet.
+    // Best-effort: a thread still mid-turn is refused by the settle guard and
+    // skipped, matching "settle any unsettled threads that are not running".
+    const fromIndex = boardStageIndex(board, event.payload.fromStage);
+    const toIndex = boardStageIndex(board, event.payload.toStage);
+    if (fromIndex >= 0 && toIndex > fromIndex) {
+      for (const link of kickoffCard.threadLinks) {
+        if (link.tombstonedAt !== null) continue;
+        yield* dispatch({
+          type: "thread.settle",
+          commandId: yield* commandId("settle-graduated"),
+          threadId: link.threadId,
+        });
+      }
     }
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
   });
