@@ -582,7 +582,11 @@ function ActionsSection({
   // The per-card human-in-the-loop toggle shows only on the Build role (D6);
   // `props.humanInLoop` is non-null exactly then.
   const humanInLoop = archived ? null : props.humanInLoop;
-  if (forward === null && !card.blocked && humanInLoop === null) return null;
+  // The View PR link renders at every stage (including Done, past any forward
+  // action), so keep the section alive whenever a PR is linked — otherwise the
+  // link vanishes exactly when a merged card lands in Done.
+  if (forward === null && !card.blocked && humanInLoop === null && pullRequest === null)
+    return null;
   return (
     <div className="flex flex-col gap-2 p-3.5">
       {forward !== null ? (
