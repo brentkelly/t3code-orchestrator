@@ -125,6 +125,7 @@ import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import { SupervisorReactor } from "./board/supervisorReactor.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -728,10 +729,21 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provide(
-        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
-          runForThread: () => Effect.succeed({ status: "no-script" as const }),
-          ...options?.layers?.projectSetupScriptRunner,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+            runForThread: () => Effect.succeed({ status: "no-script" as const }),
+            ...options?.layers?.projectSetupScriptRunner,
+          }),
+          // T3o: the ws layer resolves the board supervisor for the card→PR
+          // actions. These tests exercise the router and RPC seams, not the
+          // board's forge integration, so the reactor is a no-op here. Merged
+          // into this provide rather than added as its own pipe step — the
+          // pipe is already at TypeScript's 20-argument ceiling.
+          Layer.mock(SupervisorReactor)({
+            refreshPullRequest: () => Effect.void,
+            mergePullRequest: () => Effect.succeed({ outcome: "no-pull-request" as const }),
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(TerminalManager.TerminalManager)({

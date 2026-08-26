@@ -33,7 +33,11 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 
-import { AuthOrchestrationReadScope, EnvironmentAuthorizationError } from "./auth.ts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  EnvironmentAuthorizationError,
+} from "./auth.ts";
 import { DEFAULT_RUNTIME_MODE, ProviderOptionSelections, RuntimeMode } from "./model.ts";
 import {
   CommandId,
@@ -3335,6 +3339,17 @@ type _FactoryCoversRegistry = _AssertExtends<BoardEventTypeFromRegistry, BoardEv
 
 export const BOARD_WS_METHODS = {
   subscribeCard: "board.subscribeCard",
+  /** Re-resolve a card's pull request from the forge. Two of the refresh
+      triggers are client-side moments (the card detail opening, the View PR
+      button being clicked), and both are cheap: the underlying lookup is
+      cached for two minutes, so a burst of these costs one forge call. */
+  refreshCardPullRequest: "board.refreshCardPullRequest",
+  /** Merge a card's pull request and advance the card. An RPC rather than a
+      board command because the caller is a human waiting on an answer — the
+      outcome decides whether they see "merged", the forge's refusal, or
+      "resolving conflicts" — and because a refresh must not write to the
+      durable event log every time somebody opens a card. */
+  mergeCardPullRequest: "board.mergeCardPullRequest",
 } as const;
 
 /**
@@ -3344,6 +3359,33 @@ export const BOARD_WS_METHODS = {
  * upstream union derives unary tags by exclusion.
  */
 export type BoardSubscriptionRpcTag = (typeof BOARD_WS_METHODS)["subscribeCard"];
+
+/** Both PR actions take just the card — the environment is implicit in the
+    connection, exactly as it is for `board.subscribeCard`. */
+export const BoardCardPullRequestActionInput = Schema.Struct({
+  cardId: BoardCardId,
+});
+export type BoardCardPullRequestActionInput = typeof BoardCardPullRequestActionInput.Type;
+
+/**
+ * What a Merge click did. Every arm is a normal outcome the card reports, not
+ * an exception: a forge that refuses the merge is the system working.
+ */
+export const BoardMergeCardPullRequestResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("merged"), number: PositiveInt }),
+  /** A conflict-resolution step has been started; the Merge button is disabled
+      until it finishes, and a successful one completes this merge. */
+  Schema.Struct({ outcome: Schema.Literal("conflict"), detail: Schema.String }),
+  /** The forge said no for a reason only a human can clear — a failing check,
+      a missing approval. `detail` is the forge's own wording. */
+  Schema.Struct({ outcome: Schema.Literal("refused"), detail: Schema.String }),
+  /** Already merged or closed, most likely elsewhere. */
+  Schema.Struct({ outcome: Schema.Literal("not-open"), state: BoardCardPullRequestState }),
+  Schema.Struct({ outcome: Schema.Literal("no-pull-request") }),
+  Schema.Struct({ outcome: Schema.Literal("no-workspace") }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+]);
+export type BoardMergeCardPullRequestResult = typeof BoardMergeCardPullRequestResult.Type;
 
 export const BoardSubscribeCardInput = Schema.Struct({
   cardId: BoardCardId,
@@ -3479,6 +3521,16 @@ export const BOARD_RPCS = [
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
     stream: true,
   }),
+  Rpc.make(BOARD_WS_METHODS.refreshCardPullRequest, {
+    payload: BoardCardPullRequestActionInput,
+    success: Schema.Void,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WS_METHODS.mergeCardPullRequest, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardMergeCardPullRequestResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
 ] as const;
 
 /**
@@ -3489,6 +3541,12 @@ export const BOARD_RPCS = [
  */
 export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.subscribeCard]: AuthOrchestrationReadScope,
+  // A refresh only re-reads forge state onto the card, so it sits at the same
+  // read tier as the subscription it exists to keep current.
+  [BOARD_WS_METHODS.refreshCardPullRequest]: AuthOrchestrationReadScope,
+  // Merging changes the repository and moves the card: the operate tier, the
+  // same one every other board mutation rides.
+  [BOARD_WS_METHODS.mergeCardPullRequest]: AuthOrchestrationOperateScope,
 } as const;
 
 // ── Board settings (D10, t3o-07) ───────────────────────────────────────

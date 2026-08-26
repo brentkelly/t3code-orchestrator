@@ -33,6 +33,7 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import { ServerConfig } from "../config.ts";
+import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 import { boardRpcHandlers } from "./rpc.ts";
 
 const makeBoardRpcTestLayer = (prefix: string) =>
@@ -90,6 +91,31 @@ const seedCard = Effect.gen(function* () {
   });
 });
 
+/** Records what the RPC handlers asked the supervisor to do, so the
+    authorization tests can assert that an unauthorized call reached it not at
+    all — a scope check that runs but still performs the action is worse than
+    no check. */
+const supervisorCalls: {
+  refresh: Array<string>;
+  merge: Array<string>;
+} = { refresh: [], merge: [] };
+
+const supervisorStub: SupervisorReactorShape = {
+  start: () => Effect.void,
+  reconcile: Effect.void,
+  sweep: Effect.void,
+  drain: Effect.void,
+  refreshPullRequest: (cardId) =>
+    Effect.sync(() => {
+      supervisorCalls.refresh.push(String(cardId));
+    }),
+  mergePullRequest: (cardId) =>
+    Effect.sync(() => {
+      supervisorCalls.merge.push(String(cardId));
+      return { outcome: "merged", number: 284 } as const;
+    }),
+};
+
 const makeHandlers = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][number]>) =>
   Effect.gen(function* () {
     const orchestrationEngine = yield* OrchestrationEngineService;
@@ -98,6 +124,7 @@ const makeHandlers = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][numbe
       currentSession: session(scopes),
       orchestrationEngine,
       projectionSnapshotQuery,
+      boardSupervisor: supervisorStub,
     });
   });
 

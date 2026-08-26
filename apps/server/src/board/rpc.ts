@@ -31,6 +31,7 @@ import {
   type BoardCardDetail,
   type BoardCardDetailStreamItem,
   type BoardCardId,
+  type BoardCardPullRequestActionInput,
   type BoardSubscribeCardInput,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -43,7 +44,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
-import { observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
+import { observeRpcEffect, observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
@@ -53,11 +54,15 @@ import {
   stampBoardActivityActor,
 } from "./activityActors.ts";
 import { boardSnapshotQueryMethodsOf } from "./projection.ts";
+import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 
 export interface BoardRpcHandlerDeps {
   readonly currentSession: AuthenticatedSession;
   readonly orchestrationEngine: OrchestrationEngineShape;
   readonly projectionSnapshotQuery: ProjectionSnapshotQueryShape;
+  /** The supervisor reactor performs the card→PR actions: it owns the forge
+      gateway and the step machinery a conflict fix needs. */
+  readonly boardSupervisor: SupervisorReactorShape;
 }
 
 export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
@@ -107,6 +112,42 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
   });
 
   return {
+    /**
+     * Re-resolve the card's pull request from the forge.
+     *
+     * Fire-and-forget from the client's point of view: it returns void, and
+     * the refreshed link reaches the open card through the `subscribeCard`
+     * stream that is already re-emitting on every board event. A failed
+     * lookup is deliberately NOT an error here — the reactor keeps the last
+     * known link and logs, because a rate limit must leave a card's PR badge
+     * alone rather than blanking it or popping a toast at someone who only
+     * opened a card.
+     */
+    [BOARD_WS_METHODS.refreshCardPullRequest]: (input: BoardCardPullRequestActionInput) =>
+      observeRpcEffect(
+        BOARD_WS_METHODS.refreshCardPullRequest,
+        authorized(
+          BOARD_WS_METHODS.refreshCardPullRequest,
+          deps.boardSupervisor.refreshPullRequest(input.cardId),
+        ),
+      ),
+
+    /**
+     * Merge the card's pull request and advance it — the blue Merge button.
+     *
+     * Always human-initiated. The result is a value, not an error channel:
+     * "the forge refused because a check is failing" is the system working
+     * correctly, and the caller renders each outcome differently.
+     */
+    [BOARD_WS_METHODS.mergeCardPullRequest]: (input: BoardCardPullRequestActionInput) =>
+      observeRpcEffect(
+        BOARD_WS_METHODS.mergeCardPullRequest,
+        authorized(
+          BOARD_WS_METHODS.mergeCardPullRequest,
+          deps.boardSupervisor.mergePullRequest(input.cardId),
+        ),
+      ),
+
     /**
      * One streaming subscription per open card, mirroring
      * `subscribeThread`'s lifecycle: emits the full detail on subscribe,
