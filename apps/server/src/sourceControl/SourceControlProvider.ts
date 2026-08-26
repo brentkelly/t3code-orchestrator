@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type {
   ChangeRequest,
+  ChangeRequestMergeStrategy,
   ChangeRequestState,
   SourceControlProviderError,
   SourceControlProviderInfo,
@@ -125,6 +126,27 @@ export class SourceControlProvider extends Context.Service<
       readonly context?: SourceControlProviderContext;
       readonly reference: string;
       readonly force?: boolean;
+    }) => Effect.Effect<void, SourceControlProviderError>;
+    /**
+     * Integrate a change request into its base branch.
+     *
+     * Implemented for GitHub only in v1 — every other provider returns the
+     * registry's unsupported-operation error, which the board surfaces as a
+     * plain "merging is not supported for <provider>" rather than a failure
+     * that looks like the merge went wrong. Read operations
+     * (`listChangeRequests`) stay provider-agnostic, so a card on GitLab or
+     * Bitbucket still shows its PR badge and link; only the merge is gated.
+     *
+     * A refusal by the forge (failing checks, missing approvals, conflicts) is
+     * a normal outcome here, not an exception in the caller's design: it comes
+     * back as a `SourceControlProviderError` whose `detail` carries the forge's
+     * own words, which is what the board shows the user.
+     */
+    readonly mergeChangeRequest: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProviderContext;
+      readonly reference: string;
+      readonly strategy: ChangeRequestMergeStrategy;
     }) => Effect.Effect<void, SourceControlProviderError>;
   }
 >()("t3/sourceControl/SourceControlProvider") {}

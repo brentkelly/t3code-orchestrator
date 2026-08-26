@@ -159,6 +159,19 @@ export const make = Effect.gen(function* () {
               }),
           ),
         ),
+    // Merging through the board is GitHub-only in v1 (t3o-20 set the
+    // GitHub-mandatory precedent for the review loop). Read operations above
+    // stay provider-agnostic, so a card on Bitbucket still shows its PR badge and
+    // its link — only the merge is gated, and it says so plainly rather than
+    // failing in a way that looks like the merge went wrong.
+    mergeChangeRequest: (input) =>
+      new SourceControlProviderError({
+        provider: "bitbucket",
+        operation: "mergeChangeRequest",
+        cwd: input.cwd,
+        reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
+        detail: "Merging a change request from the board is supported for GitHub only.",
+      }),
     checkoutChangeRequest: (input) =>
       bitbucket
         .checkoutPullRequest({

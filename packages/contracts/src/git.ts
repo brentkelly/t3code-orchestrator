@@ -190,7 +190,10 @@ export type VcsInitInput = typeof VcsInitInput.Type;
 
 // RPC Results
 
-const VcsStatusChangeRequest = Schema.Struct({
+/** Exported because the board resolves a card's pull request through the same
+    cached lookup that fills this field on git status, and needs to name its
+    result type. */
+export const VcsStatusChangeRequest = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
   url: Schema.String,
@@ -198,6 +201,7 @@ const VcsStatusChangeRequest = Schema.Struct({
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
 });
+export type VcsStatusChangeRequest = typeof VcsStatusChangeRequest.Type;
 
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,

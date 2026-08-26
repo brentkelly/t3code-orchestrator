@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import {
   TrimmedNonEmptyString,
+  type ChangeRequestMergeStrategy,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
@@ -244,6 +245,11 @@ export class GitHubCli extends Context.Service<
       readonly reference: string;
       readonly force?: boolean;
     }) => Effect.Effect<void, GitHubCliError>;
+    readonly mergePullRequest: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+      readonly strategy: ChangeRequestMergeStrategy;
+    }) => Effect.Effect<void, GitHubCliError>;
   }
 >()("t3/sourceControl/GitHubCli") {}
 
@@ -449,6 +455,15 @@ export const make = Effect.gen(function* () {
       execute({
         cwd: input.cwd,
         args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
+      }).pipe(Effect.asVoid),
+    // The strategy flag is always passed: `gh pr merge` with none prompts
+    // interactively, which would hang a server. Branch deletion is NOT
+    // delegated to `--delete-branch` — the board deletes the branch itself at
+    // Done, behind its own setting, and only when no worktree still holds it.
+    mergePullRequest: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "merge", input.reference, `--${input.strategy}`],
       }).pipe(Effect.asVoid),
   });
 });

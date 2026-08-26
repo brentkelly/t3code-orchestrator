@@ -21,6 +21,12 @@ export type SourceControlProviderInfo = typeof SourceControlProviderInfo.Type;
 export const ChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 export type ChangeRequestState = typeof ChangeRequestState.Type;
 
+/** How a change request is integrated. Named for the abstraction, not for
+    GitHub: `squash` collapses the branch to one commit, `merge` records a
+    merge commit, `rebase` replays the commits onto the base. */
+export const ChangeRequestMergeStrategy = Schema.Literals(["squash", "merge", "rebase"]);
+export type ChangeRequestMergeStrategy = typeof ChangeRequestMergeStrategy.Type;
+
 export const ChangeRequest = Schema.Struct({
   provider: SourceControlProviderKind,
   number: PositiveInt,

@@ -58,7 +58,11 @@ import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import { detectPrTemplate } from "../sourceControl/PrTemplateDetection.ts";
-import type { ChangeRequest } from "@t3tools/contracts";
+import type {
+  ChangeRequest,
+  ChangeRequestMergeStrategy,
+  VcsStatusChangeRequest,
+} from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -93,6 +97,19 @@ export class GitManager extends Context.Service<
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+    /** The PR open on a branch, from the shared PR lookup cache (see the
+        implementation for why this is a wrapper, not a second resolver). */
+    readonly findBranchPullRequest: (input: {
+      readonly cwd: string;
+      readonly branch: string;
+    }) => Effect.Effect<VcsStatusChangeRequest | null, GitManagerServiceError>;
+    /** Merge a pull request, then invalidate this checkout's PR lookup cache
+        so the follow-up refresh sees the new state. */
+    readonly mergeBranchPullRequest: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly strategy: ChangeRequestMergeStrategy;
+    }) => Effect.Effect<void, GitManagerServiceError>;
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
@@ -2213,7 +2230,65 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * The pull request open on a named branch, for the board's card→PR link.
+   *
+   * Deliberately a THIN wrapper over `lookupStatusPr` rather than a second
+   * resolver: it inherits the 2-minute success TTL, the per-branch exponential
+   * failure backoff, and the last-known-good fallback that keeps a rate-limit
+   * blip from blanking a card's PR badge. A second implementation would have
+   * to re-earn all three, and would drift.
+   *
+   * `upstreamRef: null` is passed deliberately. It engages the
+   * `isUnpublishedBranch` guard, so a branch that exists only locally is never
+   * sent to the forge at all — which is exactly the board's "never look up a
+   * card whose branch was never pushed" rule, for free.
+   *
+   * `isDefaultBranch: false` because a card's branch never is one; the flag
+   * only exists to suppress reverse-merge history on trunk.
+   *
+   * Returns null both for "no PR" and for "lookup failed". The board treats
+   * those differently — a failure must leave the existing link alone — so the
+   * caller distinguishes them by catching, not by the return value.
+   */
+  const findBranchPullRequest = Effect.fn("findBranchPullRequest")(function* (input: {
+    readonly cwd: string;
+    readonly branch: string;
+  }) {
+    return yield* lookupStatusPr(input.cwd, {
+      branch: input.branch,
+      upstreamRef: null,
+      isDefaultBranch: false,
+    });
+  });
+
+  /**
+   * Merge a pull request through the provider abstraction.
+   *
+   * The PR lookup cache for this checkout is invalidated afterwards, so the
+   * refresh the board runs immediately after a merge sees the new state
+   * instead of a two-minute-old `open`. Bumped on FAILURE too: a merge that
+   * was refused because the PR had already been merged elsewhere must not
+   * leave the card believing it is still open.
+   */
+  const mergeBranchPullRequest = Effect.fn("mergeBranchPullRequest")(function* (input: {
+    readonly cwd: string;
+    readonly number: number;
+    readonly strategy: ChangeRequestMergeStrategy;
+  }) {
+    const provider = yield* sourceControlProvider(input.cwd);
+    return yield* provider
+      .mergeChangeRequest({
+        cwd: input.cwd,
+        reference: String(input.number),
+        strategy: input.strategy,
+      })
+      .pipe(Effect.ensuring(bumpPrLookupEpoch(input.cwd).pipe(Effect.ignore)));
+  });
+
   return GitManager.of({
+    findBranchPullRequest,
+    mergeBranchPullRequest,
     localStatus,
     remoteStatus,
     status,
