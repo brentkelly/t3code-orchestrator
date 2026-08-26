@@ -323,4 +323,52 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       assert.strictEqual("prNumber" in (cleared ?? {}), false);
     }),
   );
+
+  it.effect("carries the PR number onto the ARCHIVED shell too", () =>
+    Effect.gen(function* () {
+      // A THIRD producer: the archive page reuses the same bounded shell
+      // through its own SQL query and its own mapper, so it can drop a field
+      // the live pair agree on. Archived work is exactly when the PR number
+      // matters most — it is how you find out what happened to a card someone
+      // abandoned.
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const archivedId = BoardCardId.make("card-archived-pr");
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-archived-pr-card"),
+        cardId: archivedId,
+        projectId,
+        title: "Abandoned but linked",
+        orderKey: "z",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.record-pull-request",
+        commandId: CommandId.make("cmd-archived-pr-record"),
+        cardId: archivedId,
+        pullRequest: {
+          number: 512,
+          url: "https://github.com/acme/repo/pull/512",
+          state: "closed",
+          headBranch: "board/card-archived-pr",
+          baseRef: "main",
+          checkedAt: createdAt,
+        },
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.archive",
+        commandId: CommandId.make("cmd-archive-pr-card"),
+        cardId: archivedId,
+        createdAt,
+      });
+
+      const archived = yield* snapshotQuery.getArchivedShellSnapshot();
+      const card = cardsOf(archived).find((entry) => entry.cardId === archivedId);
+      assert.strictEqual(card?.prNumber, 512);
+      assert.strictEqual(card?.hasPr, true);
+    }),
+  );
 });

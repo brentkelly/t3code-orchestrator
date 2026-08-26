@@ -1898,6 +1898,27 @@ const make = Effect.gen(function* () {
         // not merge anything. This is not auto-merge — every merge it can
         // complete was initiated by a Merge click that hit a conflict.
         if (stageRole === "merge" && mergeAwaitingConflictFix.delete(String(card.id))) {
+          // Release this fix's thread before anything else. Its link's role is
+          // the stage id, which is exactly what `hasLiveStageThread` refuses to
+          // trample — so leaving it live means the NEXT Merge click on a branch
+          // that conflicts again opens nothing at all, while the card still
+          // says it is resolving conflicts. The fix is finished with its thread
+          // either way: the merge either lands (and the card graduates) or it
+          // does not (and the human clicks Merge again).
+          if (state.threadId !== null) {
+            yield* dispatch({
+              type: "board.card.unlink-thread",
+              commandId: yield* commandId("unlink-conflict-fix"),
+              cardId: card.id,
+              threadId: state.threadId,
+              createdAt: yield* nowIso,
+            });
+            yield* dispatch({
+              type: "thread.settle",
+              commandId: yield* commandId("settle-conflict-fix"),
+              threadId: state.threadId,
+            });
+          }
           yield* schedule();
           // The human clicked Merge, watched it say "resolving conflicts", and
           // is not watching the server log. If this completion does not

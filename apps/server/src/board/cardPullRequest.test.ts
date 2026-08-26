@@ -427,7 +427,21 @@ describe("merging a card's pull request", () => {
       // prior merge-stage completion, which is the only branch that behaves as
       // designed — so a card on its SECOND Merge click got an empty
       // conversation instead of the conflict-resolution prompt.
-      const card = cardInMerge();
+      // The card carries the PRIOR fix's live thread link as well as its
+      // completion. The link's role is the stage id, which is what
+      // `hasLiveStageThread` refuses to trample — so a fixture with only the
+      // completion misses the guard that actually fires first in production.
+      const card = {
+        ...cardInMerge(),
+        threadLinks: [
+          {
+            threadId: ThreadId.make("thread-prior-fix"),
+            role: String(BOARD_SEED_STAGE_IDS.merge),
+            linkedAt: "2026-01-01T00:00:00.000Z",
+            tombstonedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      };
       const priorCompletion = {
         cardId: card.id,
         stepId: String(BOARD_SEED_STAGE_IDS.merge),
@@ -465,6 +479,57 @@ describe("merging a card's pull request", () => {
               false,
               "the conflict fix runs unattended so its success can complete the merge",
             );
+          }),
+      );
+    }),
+  );
+
+  it.effect("releases the conflict fix's thread so a second Merge click can run", () =>
+    Effect.gen(function* () {
+      // The trap: the fix's thread link has role === the stage id, which is
+      // exactly what `hasLiveStageThread` refuses to trample. Left live, the
+      // next Merge click on a branch that conflicts again opens nothing while
+      // the card still says it is resolving conflicts.
+      const card = cardInMerge();
+      yield* withGovernor(
+        {
+          board: {
+            nextCardNumberByProject: {},
+            cards: [
+              {
+                ...card,
+                threadLinks: [
+                  {
+                    threadId: ThreadId.make("thread-1"),
+                    role: String(BOARD_SEED_STAGE_IDS.merge),
+                    linkedAt: "2026-01-01T00:00:00.000Z",
+                    tombstonedAt: null,
+                  },
+                ],
+              },
+            ],
+            stepStates: [runningMergeStep(card.id)],
+          },
+          settings: settings(),
+          pullRequest: openPr,
+          mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
+          initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            // Arm the card the only way a human can: a Merge click that
+            // conflicts.
+            yield* h.reactor.mergePullRequest(card.id);
+            // The fix reports success; the merge is retried and conflicts
+            // again, so the card stays put — and the thread must be released.
+            yield* h.pumpDomain(mergeStepCompleted(card.id, 1));
+
+            const unlinked = (yield* h.commands).filter(
+              (command) =>
+                command.type === "board.card.unlink-thread" &&
+                String(command.threadId) === "thread-1",
+            );
+            assert.equal(unlinked.length, 1, "the conflict fix's thread must be unlinked");
           }),
       );
     }),
