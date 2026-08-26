@@ -1410,19 +1410,28 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       //    Retiring it here would strand the round's own pull request behind a
       //    floor it could never clear.
       //  - `reclaimed` is a NEW ROUND. `attempts` resets to 1 so the count keeps
-      //    meaning "retries of THIS provision" rather than a lifetime tally, the
-      //    finished round's pull request retires into the history, and the floor
-      //    rises to shut that round out of the new one.
+      //    meaning "retries of THIS provision" rather than a lifetime tally, and
+      //    a MERGED pull request retires into the history with the floor rising
+      //    to shut that round out of the new one.
       const newRound = card.worktree !== null && card.worktree.status === "reclaimed";
       const attempts = card.worktree === null || newRound ? 1 : card.worktree.attempts + 1;
-      const retired =
-        newRound && card.pullRequest !== null
-          ? [...card.pullRequestHistory, card.pullRequest]
-          : card.pullRequestHistory;
+      // Only a MERGED pull request retires. Archive reclaims a worktree
+      // unconditionally, whatever the card's pull request says, so a card
+      // archived mid-review and then unarchived arrives here with its pull
+      // request still OPEN — and that pull request is not finished with. It is
+      // open on the very branch about to be re-cut, so the next push lands on
+      // it and it goes on being the card's current pull request. Retiring it
+      // would floor a LIVE pull request out of existence: the card would show
+      // none while one sat open on its branch, and no later lookup could ever
+      // adopt it back.
+      const retiring = newRound && card.pullRequest !== null && card.pullRequest.state === "merged";
+      const retired = retiring
+        ? [...card.pullRequestHistory, card.pullRequest]
+        : card.pullRequestHistory;
       // Highest number across everything the card has ever seen, not just the
       // entry being retired: a round that ended without a pull request of its
       // own must not lower a floor an earlier round already raised.
-      const floor = newRound
+      const floor = retiring
         ? retired.reduce<BoardCard["pullRequestFloor"]>(
             (highest, entry) =>
               highest === null || entry.number > highest ? entry.number : highest,
@@ -1440,7 +1449,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           lastError: null,
           reclaimBlockedReason: null,
         },
-        ...(newRound
+        ...(retiring
           ? {
               pullRequest: null,
               pullRequestHistory: retired,

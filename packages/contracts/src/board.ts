@@ -3731,23 +3731,32 @@ export type BoardConcurrencySettings = typeof BoardConcurrencySettings.Type;
  *
  * This replaced a three-value `worktreeRetention` in which two of the values
  * (`reclaim-on-archive` and `keep`) named the same behaviour once archive is
- * unconditional, and the third was never implemented at all. Renaming the field
- * rather than narrowing the old literal set is what makes the change safe on
- * upgrade: settings persist SPARSELY, so a user who touched the old setting has
- * `worktreeRetention` on disk, and an unknown key is dropped silently by
- * `Schema.Struct` where a narrowed `Schema.Literals` would have failed to
- * decode their file.
+ * unconditional, and the third was never implemented at all.
+ *
+ * Upgrade safety rests on the DECODING DEFAULT below, not on the rename alone.
+ * `lifecycle` is one of `INDIVISIBLE_SETTINGS_KEYS` (serverSettings.ts), so a
+ * user who touched either old field has the WHOLE old object on disk —
+ * `{ archiveAfterDays, worktreeRetention }`. Unknown keys are dropped silently
+ * by `Schema.Struct`, which leaves `{}`; without a default on the field that is
+ * a missing required key, the `lifecycle` block fails to decode, and
+ * `loadSettingsFromDisk` discards the ENTIRE settings file back to compiled-in
+ * defaults — silently reverting every unrelated setting the user has. The
+ * struct-level `withDecodingDefault` on `BoardSettings.lifecycle` does not
+ * cover this: it fires when `lifecycle` is ABSENT, never when it is present and
+ * invalid.
  */
+export const DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE = true;
+
 export const BoardLifecycleSettings = Schema.Struct({
   /** Reclaim a card's worktree on arrival at Done when its pull request is
       merged, instead of waiting for archive. Default on: a busy board otherwise
       stacks a full checkout — dependency install and all — per finished card,
       for as long as those cards sit in Done. */
-  reclaimWorktreeOnDone: Schema.Boolean,
+  reclaimWorktreeOnDone: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE)),
+  ),
 });
 export type BoardLifecycleSettings = typeof BoardLifecycleSettings.Type;
-
-export const DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE = true;
 export const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
 export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
 /** Consecutive-stall ceiling per step (t3o-17, D1). Raised from 3 to 5: safe

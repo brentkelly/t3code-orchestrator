@@ -22,7 +22,6 @@ import {
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { useAtomValue } from "@effect/atom-react";
 import { useMemo } from "react";
 import * as Option from "effect/Option";

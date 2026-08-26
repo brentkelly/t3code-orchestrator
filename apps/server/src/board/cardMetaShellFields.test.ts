@@ -324,6 +324,91 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
     }),
   );
 
+  it.effect("keeps the badge on a RETIRED pull request across a round boundary", () =>
+    Effect.gen(function* () {
+      // A card dragged back out of Done starts a second round on a re-cut
+      // branch, which nulls `pullRequest` until that round opens one of its
+      // own. Both producers fall back to the newest retired round so the badge
+      // does not blink out in between — and, more to the point, so the merged
+      // pull request stays reachable from the card while the new work runs.
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      // Its own card id: the tests in this layer share one database, so
+      // reusing `cardId` would collide with the card an earlier scenario made.
+      const roundCardId = BoardCardId.make("card-second-round");
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-round-card"),
+        cardId: roundCardId,
+        projectId,
+        title: "Card on its second round",
+        orderKey: "m",
+        createdAt,
+      });
+      const shellCard = Effect.map(snapshotQuery.getShellSnapshot(), (snapshot) =>
+        cardsOf(snapshot).find((entry) => entry.cardId === roundCardId),
+      );
+
+      // Round one: a worktree, a merged pull request, then the reclaim that
+      // settling the card at Done performs.
+      yield* engine.dispatch({
+        type: "board.card.provision-worktree",
+        commandId: CommandId.make("cmd-round-1-provision"),
+        cardId: roundCardId,
+        branch: "board/card-second-round",
+        baseRefName: "main",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.record-worktree",
+        commandId: CommandId.make("cmd-round-1-record"),
+        cardId: roundCardId,
+        path: "/tmp/wt/card-second-round",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.record-pull-request",
+        commandId: CommandId.make("cmd-round-1-pr"),
+        cardId: roundCardId,
+        pullRequest: {
+          number: 284,
+          url: "https://github.com/acme/repo/pull/284",
+          state: "merged",
+          headBranch: "board/card-second-round",
+          baseRef: "main",
+          checkedAt: createdAt,
+        },
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.reclaim-worktree",
+        commandId: CommandId.make("cmd-round-1-reclaim"),
+        cardId: roundCardId,
+        outcome: "removed",
+        createdAt,
+      });
+      assert.strictEqual((yield* shellCard)?.prNumber, 284);
+
+      // Round two begins: the re-provision retires #284 and clears the card's
+      // current pull request.
+      yield* engine.dispatch({
+        type: "board.card.provision-worktree",
+        commandId: CommandId.make("cmd-round-2-provision"),
+        cardId: roundCardId,
+        branch: "board/card-second-round",
+        baseRefName: "main",
+        createdAt,
+      });
+      const secondRound = yield* shellCard;
+      // The SQL producer read it out of `pull_request_history`, since
+      // `pull_request` is now NULL — the fallback the JS producer makes on the
+      // delta path, and the pair must agree.
+      assert.strictEqual(secondRound?.prNumber, 284);
+      assert.strictEqual(secondRound?.hasPr, true);
+    }),
+  );
+
   it.effect("carries the PR number onto the ARCHIVED shell too", () =>
     Effect.gen(function* () {
       // A THIRD producer: the archive page reuses the same bounded shell

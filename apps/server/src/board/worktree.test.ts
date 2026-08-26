@@ -162,6 +162,23 @@ it.effect("falls back to the default branch when the parent's pull request has m
     });
     assert.strictEqual(base, "main");
 
+    // The fallback is the branch the parent MERGED INTO, not the project
+    // default: on a sub-board the parent merges into an integration branch,
+    // and cutting the child from the default branch would silently drop every
+    // sibling already integrated there.
+    const ontoIntegration = {
+      ...parent,
+      pullRequest: { ...parent.pullRequest, baseRef: "board/epic" },
+    };
+    assert.strictEqual(
+      resolveBoardCardBaseRef({
+        card: { parentCardId: "parent" as never },
+        cards: [ontoIntegration],
+        defaultBranch: "main",
+      }),
+      "board/epic",
+    );
+
     // An UNMERGED parent keeps its branch and keeps being the base. The
     // fallback is gated on exactly the condition that deletes the branch, so
     // it can never fire while the branch is still there.

@@ -51,11 +51,16 @@ export function boardCardWorktreeBranchName(card: Pick<BoardCard, "key">): strin
  *
  * A parent whose pull request has MERGED is no longer a base. Its branch is
  * deleted on arrival at Done, so cutting from it would fail on a ref that no
- * longer exists — and the fallback is not a guess: a merged parent's commits
- * ARE in the default branch, by the same argument that made deleting the branch
- * safe in the first place. The condition is deliberately the exact one that
- * triggers the deletion, so a parent that reached Done without a merged pull
- * request keeps its branch and keeps being the base, unchanged.
+ * longer exists. The replacement is the pull request's own `baseRef` — the
+ * branch the parent's work actually merged INTO — rather than the project
+ * default: on a sub-board the parent may well have merged into an integration
+ * branch, and cutting the child from the default branch would silently drop
+ * every sibling already integrated there. `baseRef` is recorded on the card, so
+ * this stays pure and needs no git query.
+ *
+ * The condition is deliberately the exact one that triggers the deletion, so a
+ * parent that reached Done without a merged pull request keeps its branch and
+ * keeps being the base, unchanged.
  */
 export function resolveBoardCardBaseRef(input: {
   readonly card: Pick<BoardCard, "parentCardId">;
@@ -64,7 +69,8 @@ export function resolveBoardCardBaseRef(input: {
 }): string | null {
   if (input.card.parentCardId === null) return input.defaultBranch;
   const parent = input.cards.find((candidate) => candidate.id === input.card.parentCardId);
-  if (parent?.pullRequest?.state === "merged") return input.defaultBranch;
+  const merged = parent?.pullRequest;
+  if (merged?.state === "merged") return merged.baseRef;
   return parent?.worktree?.branch ?? null;
 }
 

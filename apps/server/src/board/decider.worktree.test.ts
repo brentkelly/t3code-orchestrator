@@ -461,6 +461,27 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
     }),
   );
 
+  it.effect("a still-OPEN pull request is not retired and does not raise the floor", () =>
+    Effect.gen(function* () {
+      // Archive reclaims a worktree unconditionally, whatever the card's pull
+      // request says — so a card archived mid-review and then unarchived
+      // arrives here with a LIVE pull request. It is open on the very branch
+      // about to be re-cut, so the next push lands on it. Retiring it would
+      // floor a live pull request out of existence: the card would show none
+      // while one sat open on its branch, and no later lookup could adopt it.
+      const card = reclaimedCard({ pullRequest: { ...mergedPr(284), state: "open" } });
+      const event = yield* decide(provision("card-1"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-worktree-provisioning");
+      if (event.type !== "board.card-worktree-provisioning") return;
+      const next = event.payload.card;
+      assert.strictEqual(next.pullRequest?.number, 284);
+      assert.deepStrictEqual(next.pullRequestHistory, []);
+      assert.strictEqual(next.pullRequestFloor, null);
+      // Still a new round for the purposes of the attempt count.
+      assert.strictEqual(next.worktree?.attempts, 1);
+    }),
+  );
+
   it.effect("a round that ended without a pull request cannot LOWER the floor", () =>
     Effect.gen(function* () {
       // Round one merged #284 and set the floor. Round two was abandoned

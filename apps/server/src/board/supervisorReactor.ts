@@ -1678,9 +1678,9 @@ const make = Effect.gen(function* () {
     if (result === null) return;
     // Report it on the card, not just in the log. Deleting a branch is
     // irreversible, and a partial cleanup — remote gone, local still held by a
-    // worktree — is the NORMAL outcome given `reclaim-on-archive`, so the user
-    // needs to be told which of their branches still exist without reading
-    // server logs to find out.
+    // worktree — is a real outcome whenever `reclaimWorktreeOnDone` is off, so
+    // the user needs to be told which of their branches still exist without
+    // reading server logs to find out.
     const deleted = [
       ...(result.remoteDeleted ? ["remote"] : []),
       ...(result.localDeleted ? ["local"] : []),
@@ -1754,6 +1754,15 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * Cards already settled at Done in this process — see `settleCardAtDone`.
+   *
+   * A card LEAVING Done clears its entry: dragging it back out starts a second
+   * round of work that will earn its own merge, its own branch and its own
+   * settle, and a stale entry would silently skip it.
+   */
+  const settledAtDone = new Set<string>();
+
+  /**
    * Give a finished card its disk back: reclaim the worktree, then delete the
    * branches.
    *
@@ -1777,9 +1786,28 @@ const make = Effect.gen(function* () {
     card: BoardCard,
   ) {
     if (card.pullRequest === null || card.pullRequest.state !== "merged") return;
+    // Nothing to give back. A worktree that is not `ready` has already been
+    // reclaimed (or never existed), which is the DURABLE half of the
+    // once-only guarantee below: after a successful reclaim this test alone
+    // stops the settle for good, across restarts.
+    if (card.worktree === null || card.worktree.status !== "ready") return;
     const board = yield* readBoard;
     const stage = boardStageById(board, card.stage);
     if (stage === null || effectiveBoardStageRole(stage) !== "done") return;
+    // The in-memory half. Settling hangs off the pull-request refresh, and a
+    // refresh fires every time anyone OPENS the card — so without a guard, a
+    // card sitting in Done would re-run `git push --delete` on an
+    // already-deleted branch and append another "Deleted branch…" row to its
+    // activity rail on every single open.
+    //
+    // The durable test above covers the normal case on its own; this set
+    // covers the one it cannot — `reclaimWorktreeOnDone` off, where the
+    // worktree stays `ready` by design and only the branch cleanup runs. In
+    // memory deliberately, following `mergeAwaitingConflictFix`: after a
+    // restart an opted-out card can settle once more, which costs one
+    // idempotent cleanup attempt rather than an unbounded stream of them.
+    if (settledAtDone.has(String(card.id))) return;
+    settledAtDone.add(String(card.id));
 
     const settings = yield* boardSettings;
     if (settings.lifecycle.reclaimWorktreeOnDone) {
@@ -2341,6 +2369,13 @@ const make = Effect.gen(function* () {
           threadId: link.threadId,
         });
       }
+    }
+    // A card LEAVING Done is starting a second round of work, so it becomes
+    // eligible to settle again once that round merges. Clear before the refresh
+    // below, which is what performs the settle.
+    const movedTo = boardStageById(board, card.stage);
+    if (movedTo === null || effectiveBoardStageRole(movedTo) !== "done") {
+      settledAtDone.delete(String(card.id));
     }
     // Refresh trigger: a stage change. The card may have crossed into the
     // merge stage (where the Merge button needs a current PR state) or into

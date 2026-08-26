@@ -3,9 +3,10 @@
  * worktrees currently hold.
  *
  * This is the guard that keeps the local delete from stranding a live checkout
- * on a nameless HEAD, and `worktreeRetention` defaults to `reclaim-on-archive`
- * — so a card at Done normally STILL has its worktree and this is the common
- * path, not an edge case.
+ * on a nameless HEAD. Settling a card at Done reclaims its worktree BEFORE
+ * deleting the branch, so the guard normally sees an unheld branch and the
+ * local delete goes through; with `reclaimWorktreeOnDone` off the worktree
+ * survives and the guard is what refuses the delete.
  */
 import { assert, describe, it } from "@effect/vitest";
 
