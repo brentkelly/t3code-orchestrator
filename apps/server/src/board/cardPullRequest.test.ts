@@ -13,9 +13,11 @@
  */
 import { assert, it, describe } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 
 import {
   BOARD_SEED_STAGE_IDS,
+  EMPTY_BOARD_STATE,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
@@ -390,6 +392,50 @@ describe("merging a card's pull request", () => {
     }),
   );
 
+  it.effect("refuses rather than claiming a fix when a thread already holds the stage", () =>
+    Effect.gen(function* () {
+      // The drop that no downstream signal can report: `beginStageRun` bails
+      // at `hasLiveStageThread` AFTER the kickoff command has landed, with a
+      // bare `return`. Left unchecked, a card whose merge-stage thread a human
+      // started by hand would report `conflict` — disabling the Merge button
+      // and arming the card — while nothing ran at all.
+      const held = {
+        ...cardInMerge(),
+        threadLinks: [
+          {
+            threadId: ThreadId.make("thread-human"),
+            role: String(BOARD_SEED_STAGE_IDS.merge),
+            linkedAt: "2026-01-01T00:00:00.000Z",
+            tombstonedAt: null,
+          },
+        ],
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [held] },
+          settings: settings(),
+          pullRequest: openPr,
+          mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
+          initialShells: new Map([["thread-human", { id: "thread-human" } as never]]),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const result = yield* h.reactor.mergePullRequest(held.id);
+            assert.equal(result.outcome, "refused");
+            assert.include(
+              result.outcome === "refused" ? result.detail : "",
+              "A thread is already open on this stage",
+            );
+            // And no kickoff was requested, so nothing is left half-started.
+            const started = (yield* h.commands).filter(
+              (command) => command.type === "board.card.start-stage-thread",
+            );
+            assert.deepStrictEqual(started, []);
+          }),
+      );
+    }),
+  );
+
   it.effect("treats GitHub's own conflict wording as a conflict", () =>
     withGovernor(
       {
@@ -567,23 +613,11 @@ describe("merging a card's pull request", () => {
       const card = cardInMerge();
       yield* withGovernor(
         {
-          board: {
-            nextCardNumberByProject: {},
-            cards: [
-              {
-                ...card,
-                threadLinks: [
-                  {
-                    threadId: ThreadId.make("thread-1"),
-                    role: String(BOARD_SEED_STAGE_IDS.merge),
-                    linkedAt: "2026-01-01T00:00:00.000Z",
-                    tombstonedAt: null,
-                  },
-                ],
-              },
-            ],
-            stepStates: [runningMergeStep(card.id)],
-          },
+          // The stage starts FREE, which is the only state a Merge click can
+          // legitimately act on — the fix's own thread and step come into
+          // existence because of that click, so seeding them up front would
+          // encode a state that cannot occur.
+          board: { nextCardNumberByProject: {}, cards: [card] },
           settings: settings(),
           pullRequest: openPr,
           mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
@@ -593,7 +627,16 @@ describe("merging a card's pull request", () => {
           Effect.gen(function* () {
             // Arm the card the only way a human can: a Merge click that
             // conflicts.
-            yield* h.reactor.mergePullRequest(card.id);
+            const clicked = yield* h.reactor.mergePullRequest(card.id);
+            assert.equal(clicked.outcome, "conflict");
+            // Now the fix is running — the state the completion arrives in.
+            yield* Ref.update(h.model, (model) => ({
+              ...model,
+              board: {
+                ...(model.board ?? EMPTY_BOARD_STATE),
+                stepStates: [runningMergeStep(card.id)],
+              },
+            }));
             // The fix reports success; the merge is retried and conflicts
             // again, so the card stays put — and the thread must be released.
             yield* h.pumpDomain(mergeStepCompleted(card.id, 1));

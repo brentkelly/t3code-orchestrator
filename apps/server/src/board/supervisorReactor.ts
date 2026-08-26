@@ -1800,14 +1800,31 @@ const make = Effect.gen(function* () {
         // loop a pair of agents against a branch that keeps re-conflicting,
         // burning provider capacity with nobody watching. Fall through to
         // `refused` instead, so the card says so and waits for a human.
-        mergeAwaitingConflictFix.add(String(fresh.id));
-        // `dispatchLanded`, not `dispatch`: the plain helper swallows a
-        // rejection, which is right for best-effort writes and wrong here.
         // Reporting `conflict` puts the card into "Resolving conflicts…" and
-        // DISABLES the Merge button — so if the kickoff never landed, the card
-        // would sit there claiming work that does not exist, with the one
-        // control that could retry greyed out. On a drop, disarm and report the
-        // refusal instead, which leaves the button live.
+        // DISABLES the Merge button, so it must only ever be said when a fix
+        // will actually run. Two checks, because a kickoff can fail in two
+        // very different places:
+        //
+        //  - Up front, against the guards `beginStageRun` applies AFTER the
+        //    command has already landed. Those are silent `return`s, not
+        //    failures, so nothing downstream can report them — a card with a
+        //    hand-started thread on this stage would otherwise sit disabled
+        //    forever, claiming work that never started.
+        //  - `dispatchLanded` for a decider rejection (an archived card).
+        //
+        // Either way: disarm and report the refusal, which leaves the button
+        // live so the human can act.
+        const liveStep = boardCardStepState(stages, fresh.id);
+        const stageBusy =
+          hasLiveStageThread(fresh, fresh.stage) ||
+          (liveStep !== null && !isBoardTerminalStepStatus(liveStep.status));
+        if (stageBusy) {
+          return {
+            outcome: "refused" as const,
+            detail: `${detail} A thread is already open on this stage; close it before merging.`,
+          };
+        }
+        mergeAwaitingConflictFix.add(String(fresh.id));
         const started = yield* dispatchLanded({
           type: "board.card.start-stage-thread",
           commandId: yield* commandId("merge-conflict"),
