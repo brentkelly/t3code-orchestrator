@@ -630,7 +630,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   );
 
   // Regression (board settings redesign follow-up): every board edit — a stage's
-  // model or attempt cap, a concurrency ceiling, an archive window — used to be
+  // model or attempt cap, a concurrency ceiling, a lifecycle toggle — used to be
   // REFUSED at the write. The sparse strip diffed these objects field by field,
   // and the resulting partial (`{ maxAttempts: 6 }`, no `kind`) fails the
   // validation the writer runs before it

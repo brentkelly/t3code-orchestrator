@@ -760,7 +760,7 @@ export const BoardCard = Schema.Struct({
   worktree: Schema.NullOr(BoardCardWorktree).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** The pull request the card's branch has open on the forge for its CURRENT
       round of work; null until a lookup finds one, and null again from the
-      moment a reclaimed worktree is re-provisioned until that new round opens a
+      moment the card LEAVES the done-role stage until that new round opens a
       pull request of its own. Decodes to null on every event payload written
       before this spec, so a from-empty replay of an older log matches the
       table-rehydrated model — the same guarantee `worktree` makes, and
