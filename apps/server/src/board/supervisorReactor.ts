@@ -1801,12 +1801,23 @@ const make = Effect.gen(function* () {
         // burning provider capacity with nobody watching. Fall through to
         // `refused` instead, so the card says so and waits for a human.
         mergeAwaitingConflictFix.add(String(fresh.id));
-        yield* dispatch({
+        // `dispatchLanded`, not `dispatch`: the plain helper swallows a
+        // rejection, which is right for best-effort writes and wrong here.
+        // Reporting `conflict` puts the card into "Resolving conflicts…" and
+        // DISABLES the Merge button — so if the kickoff never landed, the card
+        // would sit there claiming work that does not exist, with the one
+        // control that could retry greyed out. On a drop, disarm and report the
+        // refusal instead, which leaves the button live.
+        const started = yield* dispatchLanded({
           type: "board.card.start-stage-thread",
           commandId: yield* commandId("merge-conflict"),
           cardId: fresh.id,
           createdAt: yield* nowIso,
         });
+        if (!started) {
+          disarmPendingMerge(fresh.id);
+          return { outcome: "refused" as const, detail };
+        }
         return { outcome: "conflict" as const, detail };
       }
       return { outcome: "refused" as const, detail };

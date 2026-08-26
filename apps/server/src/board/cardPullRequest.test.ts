@@ -351,6 +351,45 @@ describe("merging a card's pull request", () => {
     ),
   );
 
+  it.effect("does not claim a conflict fix that never started", () =>
+    Effect.gen(function* () {
+      // An archived card is the reachable version of "the kickoff was
+      // dropped": the decider refuses `start-stage-thread` for one, which is
+      // exactly what happens if someone archives a card mid-merge.
+      // The link is seeded and already matches what the lookup returns, so the
+      // pre-merge refresh is a no-op — an archived card cannot record one.
+      const archived = {
+        ...cardInMerge(),
+        archivedAt: "2026-01-01T00:00:00.000Z",
+        pullRequest: {
+          number: openPr.number,
+          url: openPr.url,
+          state: "open" as const,
+          headBranch: openPr.headRef,
+          baseRef: openPr.baseRef,
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [archived] },
+          settings: settings(),
+          pullRequest: openPr,
+          mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
+        },
+        (h) =>
+          Effect.gen(function* () {
+            // Reporting `conflict` disables the Merge button. If the fix never
+            // started, that leaves the card claiming work that does not exist
+            // with its only retry greyed out — so the outcome must be
+            // `refused`, which keeps the button live.
+            const result = yield* h.reactor.mergePullRequest(archived.id);
+            assert.equal(result.outcome, "refused");
+          }),
+      );
+    }),
+  );
+
   it.effect("treats GitHub's own conflict wording as a conflict", () =>
     withGovernor(
       {

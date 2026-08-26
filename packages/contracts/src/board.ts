@@ -33,6 +33,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 
+import { ChangeRequestMergeStrategy } from "./sourceControl.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -642,7 +643,12 @@ export const BoardCardPullRequest = Schema.Struct({
       else's repository and is not the board's to delete. */
   headBranch: TrimmedNonEmptyString,
   baseRef: TrimmedNonEmptyString,
-  /** When this snapshot was taken, so a stale link is diagnosable. */
+  /** When this state was first observed — NOT when it was last checked.
+      Refreshes that find no change record no event at all (the decider's
+      no-op guard deliberately excludes this field, or every card open would
+      write one), so it does not move on a confirming lookup and cannot be
+      used to answer "how stale is this?". It answers "since when has the PR
+      said this?", which is the question the activity rail is really about. */
   checkedAt: IsoDateTime,
 });
 export type BoardCardPullRequest = typeof BoardCardPullRequest.Type;
@@ -4007,9 +4013,15 @@ export type BoardStageExecutionReview = typeof BoardStageExecutionReview.Type;
 
 /** How a pull request is merged. `gh pr merge` with no strategy flag prompts
     interactively, which is unusable from a server, so one is always chosen.
-    Squash is the default: a card's branch is one unit of work. */
-export const BoardMergeStrategy = Schema.Literals(["squash", "merge", "rebase"]);
-export type BoardMergeStrategy = typeof BoardMergeStrategy.Type;
+    Squash is the default: a card's branch is one unit of work.
+
+    An ALIAS, not a second literal set: the value the settings card writes is
+    handed straight to `SourceControlProvider.mergeChangeRequest`, so two
+    independent definitions could drift into a config the provider cannot
+    accept. `sourceControl.ts` imports nothing from here, so the direction is
+    safe. */
+export const BoardMergeStrategy = ChangeRequestMergeStrategy;
+export type BoardMergeStrategy = ChangeRequestMergeStrategy;
 
 /**
  * The conflict-resolution prompt (intent only — the completion mechanics are
