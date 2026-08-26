@@ -1583,8 +1583,24 @@ const make = Effect.gen(function* () {
       // it too — that refusal is the load-bearing one — but a card on its second
       // round resolves its retired pull request on EVERY lookup until the new
       // round opens one, so catching it here keeps that from being a rejected
-      // dispatch and a warning log every single time.
-      if (next !== null && card.pullRequestFloor !== null && next.number <= card.pullRequestFloor) {
+      // dispatch and a warning log every single time. `open` is exempt for the
+      // reason the decider gives: it is the branch's live pull request, not a
+      // finished round's.
+      if (
+        next !== null &&
+        next.state !== "open" &&
+        card.pullRequestFloor !== null &&
+        next.number <= card.pullRequestFloor
+      ) {
+        // Logged rather than dropped in silence. A card that keeps resolving a
+        // retired pull request and never adopting one shows no pull request at
+        // all, and without this there is nothing anywhere that says why.
+        yield* Effect.logDebug("board supervisor: pull request below the card's round floor", {
+          cardId: card.id,
+          number: next.number,
+          state: next.state,
+          floor: card.pullRequestFloor,
+        });
         return;
       }
       // The decider rejects a no-op too, but checking here keeps the common case
@@ -1762,13 +1778,22 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Cards already settled at Done in this process — see `settleCardAtDone`.
+   * The round each card was last settled in, this process — see
+   * `settleCardAtDone`. Keyed by ROUND rather than being a plain set of card
+   * ids, and cleared by nothing but archive.
    *
-   * A card LEAVING Done clears its entry: dragging it back out starts a second
-   * round of work that will earn its own merge, its own branch and its own
-   * settle, and a stale entry would silently skip it.
+   * A per-card flag cleared on the move out of Done looked equivalent and was
+   * not: a settle already in flight when the card moved would finish afterwards
+   * and re-add the flag, and round two would then silently never settle. The
+   * round index moves with the card instead, so a late write from round one
+   * records round one and cannot mask round two.
+   *
+   * `pullRequestHistory.length` IS the round index: it increments exactly once,
+   * at the boundary, when the card leaves the done-role stage carrying a pull
+   * request.
    */
-  const settledAtDone = new Set<string>();
+  const settledAtDone = new Map<string, number>();
+  const boardCardRound = (card: BoardCard): number => card.pullRequestHistory.length;
 
   /**
    * Cards whose settle is running right now.
@@ -1828,7 +1853,8 @@ const make = Effect.gen(function* () {
     // still sitting in Done can settle once more, which costs one idempotent
     // cleanup attempt — the remote delete reports "remote ref does not exist"
     // and is treated as success — rather than an unbounded stream of them.
-    if (settledAtDone.has(String(card.id))) return;
+    const round = boardCardRound(card);
+    if (settledAtDone.get(String(card.id)) === round) return;
     // Both checks and the add are synchronous — nothing yields between them —
     // so a concurrent caller cannot slip through into the same settle.
     if (settlingAtDone.has(String(card.id))) return;
@@ -1847,24 +1873,20 @@ const make = Effect.gen(function* () {
       const reclaimed = yield* readCard(card.id);
       yield* cleanupBranchOnDone(reclaimed ?? card);
     }).pipe(Effect.ensuring(Effect.sync(() => settlingAtDone.delete(String(card.id)))));
-    // Marked only once the work has actually run. Marking on ENTRY would record
-    // the attempt rather than the outcome, so a settle that died on a transient
-    // git failure — the network blip that made `git push --delete` fail — would
-    // be remembered as done and never retried while the process lived.
+    // "Settled" means THIS ROUND HAS HAD ITS ATTEMPT — not "achieved
+    // everything". Both halves above swallow their own errors, so control
+    // reaches here whatever they managed: a reclaim refused for a dirty tree
+    // and a `git push --delete` that failed on a network blip both count.
     //
-    // "Settled" means RAN TO COMPLETION, not "achieved everything". A reclaim
-    // refused for a dirty tree is a completed settle: the refusal is a normal
-    // return value, the card records `reclaimBlockedReason` and displays it,
-    // and nothing this process can do will clean that tree — so re-attempting
-    // it on every card open would re-report a refusal the user is already
-    // looking at. The retry is the human's: commit or push the work, and the
-    // card earns a fresh attempt the next time it leaves and re-enters the
-    // done-role stage, which clears this marker. A restart does NOT re-attempt
-    // it — the boot sweep skips a blocked reclaim for the same reason — and
-    // archive reclaims unconditionally, so a tree left dirty for good is
-    // collected there, still subject to the same never-delete-uncommitted-work
-    // refusal.
-    settledAtDone.add(String(card.id));
+    // That is deliberate rather than a gap. Nothing in this process can clean a
+    // dirty tree, so re-attempting on every card open would re-report a refusal
+    // the card is already displaying; and a cleanup that failed has already
+    // said so on the card's activity rail, which is where a human looks. The
+    // retry paths are the honest ones: the round index moves when the card next
+    // leaves Done carrying a pull request, giving that round its own attempt,
+    // and archive reclaims unconditionally — still subject to the same
+    // never-delete-uncommitted-work refusal.
+    settledAtDone.set(String(card.id), round);
   });
 
   /**
@@ -2421,13 +2443,6 @@ const make = Effect.gen(function* () {
           threadId: link.threadId,
         });
       }
-    }
-    // A card LEAVING Done is starting a second round of work, so it becomes
-    // eligible to settle again once that round merges. Clear before the refresh
-    // below, which is what performs the settle.
-    const movedTo = boardStageById(board, card.stage);
-    if (movedTo === null || effectiveBoardStageRole(movedTo) !== "done") {
-      settledAtDone.delete(String(card.id));
     }
     // Refresh trigger: a stage change. The card may have crossed into the
     // merge stage (where the Merge button needs a current PR state) or into

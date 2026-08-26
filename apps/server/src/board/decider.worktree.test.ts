@@ -617,6 +617,39 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
     }),
   );
 
+  it.effect("a retired pull request that is still OPEN may be re-adopted", () =>
+    Effect.gen(function* () {
+      // The exemption that stops the floor from stranding a card. Leaving Done
+      // retires whatever link the card held without consulting its cached state
+      // — a cache may not authorise an irreversible deletion — so a pull request
+      // that was genuinely still open gets retired too. It is nonetheless the
+      // branch's LIVE pull request: round two's pushes go into it, and no new
+      // one can be opened for a head that already has one. Refusing it would
+      // leave the card unable to link, merge, or ever open a pull request again.
+      const card = reclaimedCard({
+        pullRequest: null,
+        pullRequestHistory: [mergedPr(284)],
+        pullRequestFloor: 284 as BoardCard["pullRequestFloor"],
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-card-1"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: { ...mergedPr(284), state: "open" },
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      if (event.type !== "board.card-pull-request-recorded") return;
+      assert.strictEqual(event.payload.card.pullRequest?.number, 284);
+      // Safe because only a non-open pull request can authorise a deletion, and
+      // if this one later merges, it merged carrying round two's work.
+      assert.strictEqual(event.payload.card.pullRequest?.state, "open");
+    }),
+  );
+
   it.effect("the new round's own pull request clears the floor and is adopted", () =>
     Effect.gen(function* () {
       const card = reclaimedCard({

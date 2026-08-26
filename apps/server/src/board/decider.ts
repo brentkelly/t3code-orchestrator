@@ -1547,17 +1547,38 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       const previous = card.pullRequest;
       const next = command.pullRequest;
       // The floor (see `BoardCard.pullRequestFloor`) refuses a pull request
-      // belonging to a round the card has already finished. A re-provisioned
-      // card re-cuts the same `board/<key>` branch, and the forge lookup falls
-      // back to the newest pull request overall when none is open — so the
-      // MERGED round is exactly what a refresh hands back until the new round
-      // opens one of its own. Adopting it would let branch cleanup delete the
-      // remote branch of unmerged work, so the refusal lives here, in the pure
-      // decider, where no caller can forget it.
-      if (next !== null && card.pullRequestFloor !== null && next.number <= card.pullRequestFloor) {
+      // belonging to a round the card has already finished. The card keeps the
+      // same deterministic `board/<key>` branch across rounds, and the forge
+      // lookup falls back to the newest pull request overall when none is open
+      // — so the FINISHED round is exactly what a refresh hands back until the
+      // new round opens one of its own. Adopting it would let branch cleanup
+      // delete the branch of unmerged work, so the refusal lives here, in the
+      // pure decider, where no caller can forget it.
+      //
+      // `open` is exempt, and the exemption is what keeps the floor from
+      // stranding a card. Leaving Done retires whatever link the card held,
+      // without consulting its cached state — a cache may not authorise an
+      // irreversible deletion — so a pull request that was genuinely still open
+      // gets retired too. It is nonetheless the branch's LIVE pull request:
+      // round two's pushes go straight into it, and no new one can be opened
+      // for a head that already has one. Refusing it would leave that card
+      // unable to link, merge, or ever open a pull request again.
+      //
+      // Safe, because `state` here is a value the forge answered on THIS
+      // lookup, not a cached one, and because only a non-open pull request can
+      // authorise a deletion: `settleCardAtDone` gates on `merged`. A retired
+      // pull request that is open now is adopted; the same one, found merged
+      // later, is refused — and if it merged because round two's work went into
+      // it, then round two IS merged and the branch really is spent.
+      if (
+        next !== null &&
+        next.state !== "open" &&
+        card.pullRequestFloor !== null &&
+        next.number <= card.pullRequestFloor
+      ) {
         return yield* invariant(
           command,
-          `Card '${command.cardId}' pull request #${next.number} is at or below its floor of #${card.pullRequestFloor}; it belongs to a completed round of work.`,
+          `Card '${command.cardId}' pull request #${next.number} is ${next.state} and at or below its floor of #${card.pullRequestFloor}; it belongs to a completed round of work.`,
         );
       }
       // No-op guard at the decider, not just at the caller. The refresh
