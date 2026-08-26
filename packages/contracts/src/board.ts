@@ -772,8 +772,11 @@ export const BoardCard = Schema.Struct({
       worked on, merged, then dragged back out of Done and worked on again has
       one entry per completed round.
 
-      Append-only, and appended to at exactly one moment: the re-provision of a
-      reclaimed worktree, which retires the current `pullRequest` into here. */
+      Append-only, and appended to at exactly one moment: the card LEAVING the
+      done-role stage, which ends the round and retires the current
+      `pullRequest` into here. That is the one event every second round passes
+      through — a card whose worktree survived Done is never re-provisioned, so
+      a boundary hung on provisioning would miss it entirely. */
   pullRequestHistory: Schema.Array(BoardCardPullRequest).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

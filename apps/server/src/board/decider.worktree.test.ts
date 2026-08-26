@@ -453,11 +453,16 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
     }),
   );
 
-  it.effect("leaving Done with an OPEN pull request retires nothing", () =>
+  it.effect("leaving Done retires a pull request cached as OPEN too", () =>
     Effect.gen(function* () {
-      // A pull request still open belongs to work that is not finished with —
-      // it is open on the very branch the card goes on using. Flooring it would
-      // strand a live pull request the card could never adopt back.
+      // `card.pullRequest` is a CACHE, and the decider is pure — so a link
+      // cached `open` that has since merged on the forge would otherwise take
+      // the no-boundary path. The card would carry that stale link into round
+      // two, the next refresh would resolve it as `merged`, and the settle
+      // would delete a branch now holding round two's unmerged commits, with
+      // the reclaim having already removed the checkout. Leaving Done ends the
+      // round whatever the link says, so no stale value can authorise a
+      // deletion.
       const card = makeCard({
         id: "card-1",
         stage: "done",
@@ -467,7 +472,29 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
       const event = yield* decide(move("card-1", "building"), makeReadModel(boardWith([card])));
       assert.strictEqual(event.type, "board.card-moved");
       if (event.type !== "board.card-moved") return;
-      assert.strictEqual(event.payload.card.pullRequest?.number, 284);
+      assert.strictEqual(event.payload.card.pullRequest, null);
+      assert.deepStrictEqual(
+        event.payload.card.pullRequestHistory.map((entry) => entry.number),
+        [284],
+      );
+      assert.strictEqual(event.payload.card.pullRequestFloor, 284);
+    }),
+  );
+
+  it.effect("leaving Done with NO pull request changes nothing", () =>
+    Effect.gen(function* () {
+      // Nothing to retire and nothing to floor — a card that never opened one
+      // must not have its floor invented out of thin air.
+      const card = makeCard({
+        id: "card-1",
+        stage: "done",
+        pullRequest: null,
+        worktree: readyWorktree,
+      });
+      const event = yield* decide(move("card-1", "building"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-moved");
+      if (event.type !== "board.card-moved") return;
+      assert.strictEqual(event.payload.card.pullRequest, null);
       assert.deepStrictEqual(event.payload.card.pullRequestHistory, []);
       assert.strictEqual(event.payload.card.pullRequestFloor, null);
     }),

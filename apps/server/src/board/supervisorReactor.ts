@@ -1771,6 +1771,18 @@ const make = Effect.gen(function* () {
   const settledAtDone = new Set<string>();
 
   /**
+   * Cards whose settle is running right now.
+   *
+   * `settledAtDone` is marked on COMPLETION, deliberately — a settle that dies
+   * partway must be retryable. That leaves a check-then-set window across every
+   * yield in between, and the `board.refreshPullRequest` RPC is not serialised
+   * through the reactor's worker, so two card opens really can be in that
+   * window together and both run the cleanup. This closes it: the test and the
+   * add below are synchronous, so no yield separates them.
+   */
+  const settlingAtDone = new Set<string>();
+
+  /**
    * Give a finished card its disk back: reclaim the worktree, then delete the
    * branches.
    *
@@ -1817,15 +1829,24 @@ const make = Effect.gen(function* () {
     // cleanup attempt — the remote delete reports "remote ref does not exist"
     // and is treated as success — rather than an unbounded stream of them.
     if (settledAtDone.has(String(card.id))) return;
+    // Both checks and the add are synchronous — nothing yields between them —
+    // so a concurrent caller cannot slip through into the same settle.
+    if (settlingAtDone.has(String(card.id))) return;
+    settlingAtDone.add(String(card.id));
 
-    const settings = yield* boardSettings;
-    if (settings.lifecycle.reclaimWorktreeOnDone) {
-      yield* reclaimCardWorktree(card);
-    }
-    // Re-read: the reclaim just changed the card's worktree state, and branch
-    // cleanup asks whether a worktree still holds the branch.
-    const reclaimed = yield* readCard(card.id);
-    yield* cleanupBranchOnDone(reclaimed ?? card);
+    // `ensuring`, so a failure anywhere below releases the in-flight marker.
+    // Leaking it would wedge the card out of ever settling again in this
+    // process — the opposite of what marking on completion is FOR.
+    yield* Effect.gen(function* () {
+      const settings = yield* boardSettings;
+      if (settings.lifecycle.reclaimWorktreeOnDone) {
+        yield* reclaimCardWorktree(card);
+      }
+      // Re-read: the reclaim just changed the card's worktree state, and branch
+      // cleanup asks whether a worktree still holds the branch.
+      const reclaimed = yield* readCard(card.id);
+      yield* cleanupBranchOnDone(reclaimed ?? card);
+    }).pipe(Effect.ensuring(Effect.sync(() => settlingAtDone.delete(String(card.id)))));
     // Marked only once the work has actually run. Marking on ENTRY would record
     // the attempt rather than the outcome, so a settle that died on a transient
     // git failure — the network blip that made `git push --delete` fail — would

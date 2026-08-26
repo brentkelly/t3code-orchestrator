@@ -620,16 +620,32 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // verbatim the outcome `BoardCard.pullRequestFloor` exists to foreclose,
       // and only a boundary that fires on EVERY path forecloses it.
       //
-      // Gated on `merged` for the same reason retirement always was: a pull
-      // request that is still open belongs to work that is not finished with,
-      // and flooring it would strand a live pull request the card could never
-      // adopt back.
+      // Deliberately NOT gated on the pull request being `merged`.
+      //
+      // `card.pullRequest` is a CACHE of forge state, refreshed only at this
+      // design's event triggers — and this decider is pure, so it reads
+      // whatever was last cached, not what the forge says now. A card sitting
+      // in Done with a link cached `open` that has since merged would take the
+      // no-boundary path: no floor, the stale link surviving into round two,
+      // and the card's next arrival at Done handing the settle a `merged` link
+      // for a branch now carrying round two's unmerged commits. Reclaim runs
+      // first, so the checkout goes, then the local and remote branches — and
+      // round two's work exists nowhere. Deciding an irreversible deletion off
+      // a value that is allowed to be stale is the mistake; not the staleness.
+      //
+      // So leaving Done ENDS THE ROUND, whatever the link says. The trade, in
+      // the one case that is really still open: that pull request is retired
+      // rather than kept current, so the card no longer offers to merge it and
+      // the floor blocks re-adopting it by number. It is not lost —
+      // `boardCardDisplayPullRequest` keeps the badge and the View PR link
+      // pointing at it — and the failure is toward doing nothing rather than
+      // toward deleting a branch, which is the direction this whole module
+      // errs in by construction.
       const startsNewRound =
         doneStageId !== null &&
         card.stage === doneStageId &&
         command.toStage !== doneStageId &&
-        card.pullRequest !== null &&
-        card.pullRequest.state === "merged";
+        card.pullRequest !== null;
       const retiredHistory = startsNewRound
         ? [...card.pullRequestHistory, card.pullRequest]
         : card.pullRequestHistory;
