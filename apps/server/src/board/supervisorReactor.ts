@@ -1583,11 +1583,13 @@ const make = Effect.gen(function* () {
       // it too — that refusal is the load-bearing one — but a card on its second
       // round resolves its retired pull request on EVERY lookup until the new
       // round opens one, so catching it here keeps that from being a rejected
-      // dispatch and a warning log every single time. `open` is exempt for the
-      // reason the decider gives: it is the branch's live pull request, not a
-      // finished round's.
+      // dispatch and a warning log every single time. `open` and the card's
+      // current link are exempt for the reasons the decider gives: the first is
+      // the branch's live pull request rather than a finished round's, and the
+      // second is how a link adopted while open records its own merge.
       if (
         next !== null &&
+        !(card.pullRequest !== null && card.pullRequest.number === next.number) &&
         next.state !== "open" &&
         card.pullRequestFloor !== null &&
         next.number <= card.pullRequestFloor
@@ -1866,7 +1868,25 @@ const make = Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const settings = yield* boardSettings;
       if (settings.lifecycle.reclaimWorktreeOnDone) {
-        yield* reclaimCardWorktree(card);
+        // Re-assert immediately before the destructive half. Every check above
+        // ran against the snapshot this was called with, and there are yields
+        // in between — long enough for a human to drag the card straight back
+        // out of Done and start round two in that very checkout. Removing it
+        // then would delete work that had just begun, and the reclaim's own
+        // clean-and-pushed refusal does not cover it: a checkout can be clean
+        // and pushed and still be the one an agent is about to write to.
+        //
+        // Re-asserted on the ROUND, not on the stage. Re-reading the stage
+        // would contradict the rule `handleCardMoved` states — the move event's
+        // payload is the authority for where a card is, precisely because the
+        // read model may not have caught up — so a lagging read would cancel
+        // legitimate reclaims. The round index has no such ambiguity: it only
+        // ever advances, and it advances on exactly the move being guarded
+        // against.
+        const current = yield* readCard(card.id);
+        if (current !== null && boardCardRound(current) === round) {
+          yield* reclaimCardWorktree(current);
+        }
       }
       // Re-read: the reclaim just changed the card's worktree state, and branch
       // cleanup asks whether a worktree still holds the branch.

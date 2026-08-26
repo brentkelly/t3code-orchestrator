@@ -650,6 +650,59 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
     }),
   );
 
+  it.effect("a re-adopted open pull request can still record its own merge", () =>
+    Effect.gen(function* () {
+      // The floor never falls, so exempting `open` alone would be a one-way
+      // door: the pull request re-adopted while open could never record its
+      // merge, the link would read `open` for ever, and the settle, the branch
+      // cleanup and the boot sweep would all keep no-opping — the card would
+      // never get its worktree or its branches back.
+      const card = reclaimedCard({
+        pullRequest: { ...mergedPr(284), state: "open" },
+        pullRequestHistory: [mergedPr(284)],
+        pullRequestFloor: 284 as BoardCard["pullRequestFloor"],
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-card-1"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: mergedPr(284),
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      if (event.type !== "board.card-pull-request-recorded") return;
+      assert.strictEqual(event.payload.card.pullRequest?.state, "merged");
+    }),
+  );
+
+  it.effect("a retired pull request found MERGED is still refused", () =>
+    Effect.gen(function* () {
+      // The exemption above is scoped to the link the card actually holds. A
+      // retired pull request the card is NOT holding — the stale-`open`-then-
+      // merged case the round boundary exists for — stays refused, so it can
+      // never authorise deleting a branch carrying the new round's work.
+      const card = reclaimedCard({
+        pullRequest: null,
+        pullRequestHistory: [mergedPr(284)],
+        pullRequestFloor: 284 as BoardCard["pullRequestFloor"],
+      });
+      const failure = yield* decideFail(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-card-1"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: mergedPr(284),
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.match(String(failure), /belongs to a completed round of work/);
+    }),
+  );
+
   it.effect("the new round's own pull request clears the floor and is adopted", () =>
     Effect.gen(function* () {
       const card = reclaimedCard({

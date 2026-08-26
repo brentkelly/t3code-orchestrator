@@ -1570,8 +1570,22 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // pull request that is open now is adopted; the same one, found merged
       // later, is refused — and if it merged because round two's work went into
       // it, then round two IS merged and the branch really is spent.
+      // The card's CURRENT link is exempt too, and this is what stops the
+      // `open` exemption above from being a one-way door. The floor never
+      // falls, so without this the pull request just re-adopted while open
+      // could never record its own merge: the refresh would be refused, the
+      // link would read `open` for ever, and the settle, the branch cleanup and
+      // the boot sweep would all keep no-opping — the card would never get its
+      // worktree or its branches back. The floor's job is to stop a FINISHED
+      // round's pull request being ADOPTED, not to freeze the state of one the
+      // card already holds. And a link the card holds can only have been
+      // adopted while open, so a merge recorded through here is a merge that
+      // carried the current round's work.
+      const isCurrentLink =
+        next !== null && card.pullRequest !== null && card.pullRequest.number === next.number;
       if (
         next !== null &&
+        !isCurrentLink &&
         next.state !== "open" &&
         card.pullRequestFloor !== null &&
         next.number <= card.pullRequestFloor
