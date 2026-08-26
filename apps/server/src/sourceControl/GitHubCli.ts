@@ -13,7 +13,6 @@ import {
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { transportSafeSourceControlErrorValue } from "./SourceControlProvider.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
@@ -518,7 +517,14 @@ export const make = Effect.gen(function* () {
                   exitCode: result.exitCode,
                   // stderr first: `gh` puts the refusal there. Falls back to
                   // stdout, which some versions use instead.
-                  refusal: transportSafeSourceControlErrorValue(
+                  //
+                  // `safeProcessOutput`, NOT
+                  // `transportSafeSourceControlErrorValue`: the latter parses
+                  // the whole value as a URL, which is right for an identifier
+                  // and does nothing for a credential embedded in a sentence —
+                  // and a refusal is a sentence. This text is persisted and
+                  // shown to a user, so it needs free-text scrubbing.
+                  refusal: VcsProcess.safeProcessOutput(
                     result.stderr.trim().length > 0 ? result.stderr : result.stdout,
                   ),
                   cause: null,

@@ -4,6 +4,7 @@
  * `detail` string (the unmet dependency, the cycle-closing edge, the label
  * cap), and that is what the user needs to see, not a generic failure.
  */
+import type { BoardMergeCardPullRequestResult } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 /** The invariant `detail` when the failure carries one, else the error
@@ -35,11 +36,7 @@ export function describeBoardCommandFailure(result: unknown): string {
  * `merged` returns null: the card visibly moves to Done, which says it better
  * than a sentence would.
  */
-export function describeBoardMergeOutcome(result: {
-  readonly outcome: string;
-  readonly detail?: string;
-  readonly state?: string;
-}): string | null {
+export function describeBoardMergeOutcome(result: BoardMergeCardPullRequestResult): string | null {
   switch (result.outcome) {
     case "merged":
       return null;
@@ -59,7 +56,7 @@ export function describeBoardMergeOutcome(result: {
       return "This card has no workspace to merge from.";
     case "wrong-stage":
       return "Move the card to the merge stage before merging.";
-    default:
-      return "The merge could not be attempted.";
+    case "unknown-card":
+      return "This card no longer exists.";
   }
 }

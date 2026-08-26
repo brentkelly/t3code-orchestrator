@@ -2259,8 +2259,11 @@ export const make = Effect.gen(function* () {
     // The epoch map is keyed by the normalized path (`bumpPrLookupEpoch` runs
     // `normalizeStatusCacheKey` itself), so reading under a raw path would put
     // the entry in a bucket no invalidation can ever reach — the post-merge
-    // refresh would keep answering `open` for the full TTL. It also means the
-    // board and the status poll share one entry per checkout rather than two.
+    // refresh would keep answering `open` for the full TTL. (The entry is
+    // still the board's own: `upstreamRef` is part of the key and this path
+    // always passes null, so the status poll's entry for the same branch is a
+    // separate one. Sharing the EPOCH is what matters — that is what
+    // invalidation acts on.)
     const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
     const details = { branch: input.branch, upstreamRef: null };
     const { latest } = yield* Cache.get(prLookupCache, prLookupCacheKey(cacheKey, details));

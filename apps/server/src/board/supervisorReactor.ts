@@ -1042,16 +1042,27 @@ const make = Effect.gen(function* () {
     // means the card has been here before, so re-run nothing — open a clean
     // human-in-the-loop conversation. This is reactor policy, orthogonal to the
     // executor's "what runs next".
-    // The merge role is exempt from the re-entry rule. That rule exists so a
-    // card dragged BACK to a stage does not silently re-run the stage's work —
-    // but this stage's step is not stage work: it is requested explicitly, once
-    // per merge conflict, and a second request is as real as the first.
-    // Treating a repeat as a re-entry gave it an empty prompt and a
-    // human-in-the-loop thread, so the second Merge click on a stubborn branch
-    // opened a blank conversation instead of resolving anything.
-    const requestedPerRun = effectiveBoardStageRole(stage) === "merge";
+    // The merge role does not follow the re-entry rule at all; it follows a
+    // stricter one of its own. Nothing in this stage may run UNATTENDED unless
+    // the board itself asked for it, which the pending-merge arm marks.
+    //
+    //  - Armed (a Merge click hit a conflict): run the conflict prompt
+    //    unattended, however many times the card has been here. The step is
+    //    requested once per conflict, not once per stage entry, so a second
+    //    request is as real as the first — the re-entry rule would have given
+    //    it an empty prompt and resolved nothing.
+    //  - Not armed (a human restarted the stage thread by hand): a clean
+    //    conversation, never an agent that merges base into their branch and
+    //    pushes it. This holds even on the card's FIRST visit, where the
+    //    ordinary rule would have run unattended.
+    //
+    // Every other stage keeps the ordinary rule: re-entry means the card came
+    // back, and coming back must not silently redo the stage's work.
+    const mergeRole = effectiveBoardStageRole(stage) === "merge";
+    const armedConflictFix = mergeRole && mergeAwaitingConflictFix.has(String(card.id));
     const firstEntry =
-      requestedPerRun || !completions.some((completion) => completion.stepId === card.stage);
+      armedConflictFix ||
+      (!mergeRole && !completions.some((completion) => completion.stepId === card.stage));
     // The boot pass only ever STARTS fresh work (or resumes an executor-driven
     // continuation below); a re-entry is skipped — its clean human thread must
     // not re-open on every server restart.

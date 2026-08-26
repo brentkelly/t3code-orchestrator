@@ -25,6 +25,7 @@
 import * as Effect from "effect/Effect";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { safeProcessOutput } from "../vcs/VcsProcess.ts";
 
 /** What a cleanup attempt actually did, for the activity rail and the log. */
 export interface BoardBranchCleanupResult {
@@ -98,7 +99,11 @@ export const deleteMergedCardBranch = Effect.fn("deleteMergedCardBranch")(functi
       .pipe(Effect.catch(() => Effect.succeed(null)));
     remoteDeleted = result !== null && result.exitCode === 0;
     if (!remoteDeleted) {
-      const detail = (result?.stderr ?? "").trim();
+      // Scrubbed, not raw: this string is persisted to an event log that is
+      // never rewritten and rendered on the card, and `git push` prints the
+      // remote URL — which carries an embedded credential whenever the remote
+      // is an https URL with one.
+      const detail = safeProcessOutput(result?.stderr ?? "");
       // "remote ref does not exist" means someone already deleted it — the
       // desired end state, reached without us.
       if (detail.toLowerCase().includes("remote ref does not exist")) {
@@ -145,7 +150,7 @@ export const deleteMergedCardBranch = Effect.fn("deleteMergedCardBranch")(functi
       .pipe(Effect.catch(() => Effect.succeed(null)));
     localDeleted = result !== null && result.exitCode === 0;
     if (!localDeleted) {
-      const detail = (result?.stderr ?? "").trim();
+      const detail = safeProcessOutput(result?.stderr ?? "");
       // Already gone is the end state we wanted.
       if (detail.toLowerCase().includes("not found")) {
         localDeleted = true;

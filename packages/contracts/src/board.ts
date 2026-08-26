@@ -632,8 +632,14 @@ export const BoardCardPullRequest = Schema.Struct({
   state: BoardCardPullRequestState,
   /** The PR's head branch as the forge reports it, which is NOT always the
       card's local branch name — a cross-repository (fork) PR carries the
-      fork's branch. Kept so a card whose branch was retargeted cannot keep
-      showing the old PR. */
+      fork's branch.
+      
+      Recorded for diagnosis, and deliberately NOT used as a guard: the link is
+      resolved BY the card's branch on every refresh, so a mismatch cannot
+      arise without the lookup itself returning a different PR, which replaces
+      the link anyway. Branch cleanup likewise deletes the card's OWN branch
+      rather than this one — on a fork PR the head branch lives in someone
+      else's repository and is not the board's to delete. */
   headBranch: TrimmedNonEmptyString,
   baseRef: TrimmedNonEmptyString,
   /** When this snapshot was taken, so a stale link is diagnosable. */
@@ -664,12 +670,17 @@ export function boardCardPullRequestsEqual(
   );
 }
 
-/** Terminal PR states: nothing about the pull request can change again, so the
-    refresh triggers stop asking about that card. This is what keeps the
-    lookup set bounded by "cards in flight" rather than growing with the
-    board. */
+/** Terminal PR state: nothing about the pull request can change again, so the
+    refresh triggers stop asking about that card. This is what keeps the lookup
+    set bounded by "cards in flight" rather than growing with the board.
+
+    Only `merged` counts. `closed` looks terminal and is not: a closed pull
+    request can be reopened, and — far more common — a branch whose PR was
+    closed is the one most likely to get a NEW one. Treating it as terminal
+    pinned the card to the dead PR forever with no way back, since every
+    refresh trigger checks this first. */
 export function isBoardCardPullRequestTerminal(pullRequest: BoardCardPullRequest | null): boolean {
-  return pullRequest !== null && pullRequest.state !== "open";
+  return pullRequest !== null && pullRequest.state === "merged";
 }
 
 // ── Card aggregate ─────────────────────────────────────────────────────

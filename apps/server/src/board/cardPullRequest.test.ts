@@ -460,9 +460,13 @@ describe("merging a card's pull request", () => {
           },
           settings: settings(),
           pullRequest: openPr,
+          mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
         },
         (h) =>
           Effect.gen(function* () {
+            // Arm the card the only way a human can — a Merge click that
+            // conflicts — then deliver the kickoff it requested.
+            yield* h.reactor.mergePullRequest(card.id);
             yield* h.pumpDomain(stageThreadRequested(card, 1));
             const selected = (yield* h.commands).filter(
               (command) => command.type === "board.card.select-step",
@@ -478,6 +482,37 @@ describe("merging a card's pull request", () => {
               step.humanInLoop,
               false,
               "the conflict fix runs unattended so its success can complete the merge",
+            );
+          }),
+      );
+    }),
+  );
+
+  it.effect("gives a HUMAN restarting the merge stage a conversation, not an agent", () =>
+    Effect.gen(function* () {
+      // The other side of the same exemption. A person restarting this stage's
+      // thread by hand wants to talk about the merge — not an unattended agent
+      // that merges base into their branch and pushes it. The card is NOT
+      // armed here (no Merge click), which is what tells the two apart.
+      const card = cardInMerge();
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain(stageThreadRequested(card, 1));
+            const selected = (yield* h.commands).filter(
+              (command) => command.type === "board.card.select-step",
+            );
+            assert.equal(selected.length, 1, "a step should have been selected");
+            const step = selected[0] as { readonly prompt: string; readonly humanInLoop: boolean };
+            assert.strictEqual(
+              step.humanInLoop,
+              true,
+              "a hand-started merge-stage thread must stay human-in-the-loop",
             );
           }),
       );
