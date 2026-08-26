@@ -15,6 +15,7 @@
  * query), because that is where the two producers actually meet.
  */
 import {
+  BOARD_SEED_STAGE_IDS,
   BoardCardId,
   boardBriefHasImage,
   CommandId,
@@ -382,6 +383,14 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
         createdAt,
       });
       yield* engine.dispatch({
+        type: "board.card.move",
+        commandId: CommandId.make("cmd-round-1-done"),
+        cardId: roundCardId,
+        toStage: BOARD_SEED_STAGE_IDS.done,
+        override: true,
+        createdAt,
+      });
+      yield* engine.dispatch({
         type: "board.card.reclaim-worktree",
         commandId: CommandId.make("cmd-round-1-reclaim"),
         cardId: roundCardId,
@@ -390,14 +399,15 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       });
       assert.strictEqual((yield* shellCard)?.prNumber, 284);
 
-      // Round two begins: the re-provision retires #284 and clears the card's
-      // current pull request.
+      // Round two begins when the card LEAVES Done — that move retires #284 and
+      // clears the card's current pull request, whatever became of its
+      // worktree.
       yield* engine.dispatch({
-        type: "board.card.provision-worktree",
-        commandId: CommandId.make("cmd-round-2-provision"),
+        type: "board.card.move",
+        commandId: CommandId.make("cmd-round-2-reopen"),
         cardId: roundCardId,
-        branch: "board/card-second-round",
-        baseRefName: "main",
+        toStage: BOARD_SEED_STAGE_IDS.building,
+        override: true,
         createdAt,
       });
       const secondRound = yield* shellCard;

@@ -601,6 +601,38 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         }
       }
 
+      const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
+      // ── The round boundary ────────────────────────────────────────────
+      //
+      // LEAVING Done with a merged pull request is what starts a card's next
+      // round of work, so it is here — not at worktree re-provision — that the
+      // finished round retires into the history and `pullRequestFloor` rises.
+      //
+      // Tying it to the worktree was wrong: a worktree is reclaimed at Done
+      // only when `reclaimWorktreeOnDone` is on AND the tree is clean and
+      // pushed. Both of the other paths keep a `ready` worktree, which
+      // `ensureWorktree` then REUSES — no re-provision, so no boundary, so the
+      // card carried its merged pull request into round two. `merged` is
+      // terminal, so every refresh short-circuited and the new round's pull
+      // request was never adopted; the card's next arrival at Done then handed
+      // branch cleanup a stale `merged` link for a live branch and deleted
+      // round two's branch out from under its open pull request. That is
+      // verbatim the outcome `BoardCard.pullRequestFloor` exists to foreclose,
+      // and only a boundary that fires on EVERY path forecloses it.
+      //
+      // Gated on `merged` for the same reason retirement always was: a pull
+      // request that is still open belongs to work that is not finished with,
+      // and flooring it would strand a live pull request the card could never
+      // adopt back.
+      const startsNewRound =
+        doneStageId !== null &&
+        card.stage === doneStageId &&
+        command.toStage !== doneStageId &&
+        card.pullRequest !== null &&
+        card.pullRequest.state === "merged";
+      const retiredHistory = startsNewRound
+        ? [...card.pullRequestHistory, card.pullRequest]
+        : card.pullRequestHistory;
       const nextCard: BoardCard = {
         ...card,
         stage: command.toStage,
@@ -611,6 +643,20 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           dependsOn: card.dependsOn,
           cards: board.cards,
         }),
+        ...(startsNewRound
+          ? {
+              pullRequest: null,
+              pullRequestHistory: retiredHistory,
+              // Highest across EVERYTHING the card has seen, not just the entry
+              // retiring now: a round that ended without a pull request of its
+              // own must not lower a floor an earlier round already raised.
+              pullRequestFloor: retiredHistory.reduce<BoardCard["pullRequestFloor"]>(
+                (highest, entry) =>
+                  highest === null || entry.number > highest ? entry.number : highest,
+                card.pullRequestFloor,
+              ),
+            }
+          : {}),
         updatedAt: command.createdAt,
       };
       const moved: PlannedOrchestrationEvent = {
@@ -631,7 +677,6 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // DEPENDENCY (t3o-13, D5): dependents' stored `blocked` would otherwise
       // go stale — met on entering Done, unmet again on being dragged back out
       // — exactly the staleness the archive/unarchive paths already re-flag.
-      const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
       const crossesDone =
         doneStageId !== null && (card.stage === doneStageId) !== (command.toStage === doneStageId);
       return crossesDone
@@ -1401,43 +1446,24 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed or reclaimed worktree can be re-provisioned.`,
         );
       }
-      // Those two admitted states mean different things, and the difference is
-      // the whole safety story of a second round:
+      // Those two admitted states mean different things:
       //
-      //  - `failed` is a RETRY of the round already in flight. `attempts` climbs
-      //    so the repeated failure is visible, and the round's pull request —
-      //    which may well already be open — must be left exactly where it is.
-      //    Retiring it here would strand the round's own pull request behind a
-      //    floor it could never clear.
-      //  - `reclaimed` is a NEW ROUND. `attempts` resets to 1 so the count keeps
-      //    meaning "retries of THIS provision" rather than a lifetime tally, and
-      //    a MERGED pull request retires into the history with the floor rising
-      //    to shut that round out of the new one.
-      const newRound = card.worktree !== null && card.worktree.status === "reclaimed";
-      const attempts = card.worktree === null || newRound ? 1 : card.worktree.attempts + 1;
-      // Only a MERGED pull request retires. Archive reclaims a worktree
-      // unconditionally, whatever the card's pull request says, so a card
-      // archived mid-review and then unarchived arrives here with its pull
-      // request still OPEN — and that pull request is not finished with. It is
-      // open on the very branch about to be re-cut, so the next push lands on
-      // it and it goes on being the card's current pull request. Retiring it
-      // would floor a LIVE pull request out of existence: the card would show
-      // none while one sat open on its branch, and no later lookup could ever
-      // adopt it back.
-      const retiring = newRound && card.pullRequest !== null && card.pullRequest.state === "merged";
-      const retired = retiring
-        ? [...card.pullRequestHistory, card.pullRequest]
-        : card.pullRequestHistory;
-      // Highest number across everything the card has ever seen, not just the
-      // entry being retired: a round that ended without a pull request of its
-      // own must not lower a floor an earlier round already raised.
-      const floor = retiring
-        ? retired.reduce<BoardCard["pullRequestFloor"]>(
-            (highest, entry) =>
-              highest === null || entry.number > highest ? entry.number : highest,
-            card.pullRequestFloor,
-          )
-        : card.pullRequestFloor;
+      //  - `failed` is a RETRY of the provision already in flight, so `attempts`
+      //    climbs and the repeated failure stays visible.
+      //  - `reclaimed` is a fresh provision for a card that has been dragged
+      //    back out of Done, so `attempts` restarts and keeps meaning "retries
+      //    of THIS provision" rather than a lifetime tally across every round.
+      //
+      // Neither touches the card's pull request. The ROUND boundary — retiring
+      // a merged pull request and raising `pullRequestFloor` — belongs to the
+      // move out of the done-role stage (see `board.card.move`), because that
+      // is the one event every second round passes through. A card whose
+      // worktree survived Done is never re-provisioned at all, so a boundary
+      // hung here would simply not fire for it.
+      const attempts =
+        card.worktree === null || card.worktree.status === "reclaimed"
+          ? 1
+          : card.worktree.attempts + 1;
       const nextCard: BoardCard = {
         ...card,
         worktree: {
@@ -1449,13 +1475,6 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           lastError: null,
           reclaimBlockedReason: null,
         },
-        ...(retiring
-          ? {
-              pullRequest: null,
-              pullRequestHistory: retired,
-              pullRequestFloor: floor,
-            }
-          : {}),
         updatedAt: command.createdAt,
       };
       return {

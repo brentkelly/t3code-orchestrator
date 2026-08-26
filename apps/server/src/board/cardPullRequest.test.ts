@@ -115,6 +115,13 @@ const mergeStepCompleted = (cardId: BoardCardId, sequence: number): Orchestratio
 const recordedPullRequests = (commands: ReadonlyArray<OrchestrationCommand>) =>
   commands.filter((command) => command.type === "board.card.record-pull-request");
 
+/** The activity-rail notes branch cleanup reports — its only observable. */
+const branchCleanupNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+  commands.filter(
+    (command) =>
+      command.type === "board.card.record-note" && command.kind === "card-branch-deleted",
+  );
+
 const movesTo = (commands: ReadonlyArray<OrchestrationCommand>) =>
   commands.flatMap((command) =>
     command.type === "board.card.move" ? [String(command.toStage)] : [],
@@ -779,6 +786,10 @@ describe("branch cleanup at Done", () => {
             // The branch NAME survives the reclaim, which is what lets the card
             // still be looked up on the forge afterwards.
             assert.equal(settled.worktree?.branch, "board/card-1");
+            // And the branches actually went. Asserted through the note the
+            // cleanup reports on the card, which is the only observable it
+            // produces — nothing else in the suite covered that it fires at all.
+            assert.equal(branchCleanupNotes(yield* h.commands).length, 1);
           }),
       );
     }),
@@ -829,6 +840,58 @@ describe("branch cleanup at Done", () => {
             // unconditionally whatever this setting says.
             assert.deepEqual(yield* h.removedWorktrees, []);
             assert.equal((yield* h.board).cards[0]!.worktree?.status, "ready");
+          }),
+      );
+    }),
+  );
+
+  it.effect("settles a card ONCE, however many times it is refreshed", () =>
+    Effect.gen(function* () {
+      // Settling hangs off the pull-request refresh, and a refresh fires every
+      // time anyone OPENS the card. Without a guard, a card sitting in Done
+      // would re-run `git push --delete` on an already-deleted branch and
+      // append another "Deleted branch…" row to its rail on every open.
+      const card = { ...cardInMerge(), stage: BOARD_SEED_STAGE_IDS.done };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: { ...openPr, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(card.id);
+            yield* h.reactor.refreshPullRequest(card.id);
+            yield* h.reactor.refreshPullRequest(card.id);
+            assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+            assert.equal(branchCleanupNotes(yield* h.commands).length, 1);
+          }),
+      );
+    }),
+  );
+
+  it.effect("still deletes the branches when the worktree was reclaimed earlier", () =>
+    Effect.gen(function* () {
+      // A card reclaimed at archive and then unarchived arrives at Done with a
+      // worktree that is no longer `ready`. Gating the whole settle on `ready`
+      // would silently drop its branch cleanup — the branch is exactly as
+      // spent, and exactly as safe to delete, as any other merged card's.
+      const card = {
+        ...cardInMerge(),
+        worktree: { ...readyWorktree("card-1"), status: "reclaimed" as const, path: null },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: { ...openPr, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const done = { ...card, stage: BOARD_SEED_STAGE_IDS.done };
+            yield* h.pumpDomain(doneMove(done, 1));
+            assert.deepEqual(yield* h.removedWorktrees, []);
+            assert.equal(branchCleanupNotes(yield* h.commands).length, 1);
           }),
       );
     }),

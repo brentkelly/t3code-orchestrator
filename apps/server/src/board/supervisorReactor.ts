@@ -1617,15 +1617,23 @@ const make = Effect.gen(function* () {
    */
   const refreshCardPullRequest = Effect.fn("board-supervisor-refreshCardPullRequest")(function* (
     card: BoardCard,
+    /** The stage to settle against, when the caller holds better authority than
+        the read model does. Only `handleCardMoved` passes it: a `board.card-moved`
+        payload carries the post-move stage, which is the rule that handler
+        already states for itself, and the read model has not necessarily caught
+        up. Every other caller — the RPC path included — omits it and gets the
+        card's own stage as re-read, which is the freshest thing available to
+        them; overriding with a stage they read EARLIER would be strictly
+        staler, not fresher. */
+    movedToStage?: BoardCard["stage"],
   ) {
     yield* refreshCardPullRequestLink(card);
-    // Re-read for the pull request the refresh may have just recorded, but keep
-    // the STAGE of the card we were handed: on the move path the event
-    // payload's card is the authority for where the card now is — the read
-    // model has not necessarily caught up — which is the same rule
-    // `handleCardMoved` states for itself.
+    // Re-read for the pull request the refresh may have just recorded.
     const refreshed = yield* readCard(card.id);
-    if (refreshed !== null) yield* settleCardAtDone({ ...refreshed, stage: card.stage });
+    if (refreshed === null) return;
+    yield* settleCardAtDone(
+      movedToStage === undefined ? refreshed : { ...refreshed, stage: movedToStage },
+    );
   });
 
   /** The card as the read model currently has it, or null if it is gone. */
@@ -1786,26 +1794,27 @@ const make = Effect.gen(function* () {
     card: BoardCard,
   ) {
     if (card.pullRequest === null || card.pullRequest.state !== "merged") return;
-    // Nothing to give back. A worktree that is not `ready` has already been
-    // reclaimed (or never existed), which is the DURABLE half of the
-    // once-only guarantee below: after a successful reclaim this test alone
-    // stops the settle for good, across restarts.
-    if (card.worktree === null || card.worktree.status !== "ready") return;
     const board = yield* readBoard;
     const stage = boardStageById(board, card.stage);
     if (stage === null || effectiveBoardStageRole(stage) !== "done") return;
-    // The in-memory half. Settling hangs off the pull-request refresh, and a
-    // refresh fires every time anyone OPENS the card — so without a guard, a
-    // card sitting in Done would re-run `git push --delete` on an
-    // already-deleted branch and append another "Deleted branch…" row to its
-    // activity rail on every single open.
+    // Settling hangs off the pull-request refresh, and a refresh fires every
+    // time anyone OPENS the card — so without a guard a card sitting in Done
+    // would re-run `git push --delete` on an already-deleted branch and append
+    // another "Deleted branch…" row to its activity rail on every single open.
     //
-    // The durable test above covers the normal case on its own; this set
-    // covers the one it cannot — `reclaimWorktreeOnDone` off, where the
-    // worktree stays `ready` by design and only the branch cleanup runs. In
-    // memory deliberately, following `mergeAwaitingConflictFix`: after a
-    // restart an opted-out card can settle once more, which costs one
-    // idempotent cleanup attempt rather than an unbounded stream of them.
+    // Deliberately NOT gated on the worktree still being `ready`. That would
+    // read as a durable guard and is not one: the two paths that keep a `ready`
+    // worktree at Done (`reclaimWorktreeOnDone` off, and a reclaim refused for
+    // a dirty tree) are exactly the paths that would then never have their
+    // branches deleted at all, and a card whose worktree was reclaimed earlier
+    // — at archive, before being unarchived — would silently lose its cleanup
+    // too. The reclaim's own `ready` check keeps THAT half idempotent; this set
+    // keeps the branch half idempotent.
+    //
+    // In memory, following `mergeAwaitingConflictFix`. After a restart a card
+    // still sitting in Done can settle once more, which costs one idempotent
+    // cleanup attempt — the remote delete reports "remote ref does not exist"
+    // and is treated as success — rather than an unbounded stream of them.
     if (settledAtDone.has(String(card.id))) return;
     settledAtDone.add(String(card.id));
 
@@ -2264,6 +2273,10 @@ const make = Effect.gen(function* () {
     event: Extract<OrchestrationEvent, { type: "board.card-archived" }>,
   ) {
     const board = yield* readBoard;
+    // Reap the settle marker whether or not the card is still readable: an
+    // archived card is done being settled, and an entry that outlives its card
+    // is a leak the process never gets back.
+    settledAtDone.delete(String(event.payload.cardId));
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     if (card === undefined) return;
     const state = boardCardStepState(board, event.payload.cardId);
@@ -2383,7 +2396,7 @@ const make = Effect.gen(function* () {
     // answer plausibly changed. The arrival-at-Done case needs no branch of its
     // own: `refreshCardPullRequest` settles the card whenever the refresh
     // leaves it in Done with a merged pull request, which is exactly this.
-    yield* refreshCardPullRequest(card);
+    yield* refreshCardPullRequest(card, card.stage);
 
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
   });
