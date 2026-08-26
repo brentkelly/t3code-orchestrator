@@ -34,6 +34,8 @@ import {
   boardStepPreamble,
   effectiveBoardRuntimeMode,
   effectiveBoardStageRole,
+  DEFAULT_BOARD_MERGE_CONFLICT_PROMPT,
+  isBoardMergeStageExecution,
   isBoardReviewStageExecution,
   ProviderInstanceId,
   resolveBoardStageExecution,
@@ -41,6 +43,7 @@ import {
   type BoardReviewPhaseId,
   type BoardStageDefinition,
   type BoardStageExecution,
+  type BoardStageExecutionMerge,
   type BoardStageExecutionReview,
   type BoardStageRole,
   type ProviderOptionSelection,
@@ -927,19 +930,28 @@ function StageAccordionRow(props: {
   });
 
   const isReview = isBoardReviewStageExecution(exec);
+  const isMerge = isBoardMergeStageExecution(exec);
   const chips: ReadonlyArray<{ text: string; tone: "auto" | "quiet" }> = expanded
     ? []
-    : [
-        exec.autoExecute
-          ? { text: "Auto", tone: "auto" as const }
-          : { text: "Manual", tone: "quiet" as const },
-        ...(exec.autoExecute && isReview
-          ? [{ text: `${exec.rounds} rounds`, tone: "quiet" as const }]
-          : []),
-        ...(exec.autoExecute && !isReview && role !== "plan"
-          ? [{ text: `${msToMinutes(exec.timeoutMs)} min idle`, tone: "quiet" as const }]
-          : []),
-      ];
+    : isMerge
+      ? [
+          // "Manual" is true of this stage but says nothing: it is manual by
+          // design and cannot be otherwise. What the reader wants at a glance
+          // is what the Merge button will do and whether branches get tidied.
+          { text: exec.strategy, tone: "quiet" as const },
+          ...(exec.deleteBranchOnDone ? [{ text: "Delete branch", tone: "quiet" as const }] : []),
+        ]
+      : [
+          exec.autoExecute
+            ? { text: "Auto", tone: "auto" as const }
+            : { text: "Manual", tone: "quiet" as const },
+          ...(exec.autoExecute && isReview
+            ? [{ text: `${exec.rounds} rounds`, tone: "quiet" as const }]
+            : []),
+          ...(exec.autoExecute && !isReview && role !== "plan"
+            ? [{ text: `${msToMinutes(exec.timeoutMs)} min idle`, tone: "quiet" as const }]
+            : []),
+        ];
 
   return (
     <div
@@ -1015,6 +1027,14 @@ function StageAccordionRow(props: {
               getModelOptions={props.getModelOptions}
               updateStage={props.updateStage}
             />
+          ) : isMerge ? (
+            <MergeStageBody
+              stage={stage}
+              exec={exec}
+              instanceEntries={props.instanceEntries}
+              getModelOptions={props.getModelOptions}
+              updateStage={props.updateStage}
+            />
           ) : (
             <SimpleStageBody
               stage={stage}
@@ -1042,6 +1062,100 @@ function StageAccordionRow(props: {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The merge-role stage's body.
+ *
+ * Deliberately short, and deliberately WITHOUT an "Auto execute" row: nothing
+ * in this stage runs on entry. Merging is always a human click, and the only
+ * agent this stage ever starts is the conflict-resolution step — started by a
+ * merge that was refused for conflicts, never by a card arriving here.
+ */
+function MergeStageBody(props: {
+  stage: BoardStageDefinition;
+  exec: BoardStageExecutionMerge;
+  instanceEntries: InstanceEntries;
+  getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
+  updateStage: (stageId: BoardStageId, patch: Partial<BoardStageExecution>) => void;
+}) {
+  const { stage, exec } = props;
+  const set = (patch: Partial<BoardStageExecution>) => props.updateStage(stage.stageId, patch);
+
+  return (
+    <>
+      <div className="flex items-center justify-between gap-4 py-2">
+        <div className="flex min-w-0 flex-col">
+          <span className="text-[13.5px] text-foreground">Merge strategy</span>
+          <span className="text-xs text-muted-foreground">
+            How the Merge button integrates the card&apos;s pull request.
+          </span>
+        </div>
+        <select
+          aria-label="Merge strategy"
+          className="h-8 shrink-0 rounded-md border border-input bg-popover px-2 text-[13px] text-foreground"
+          onChange={(event) =>
+            set({ strategy: event.target.value as BoardStageExecutionMerge["strategy"] })
+          }
+          value={exec.strategy}
+        >
+          <option value="squash">Squash and merge</option>
+          <option value="merge">Merge commit</option>
+          <option value="rebase">Rebase and merge</option>
+        </select>
+      </div>
+      <ToggleRow
+        label="Auto delete branch when card done"
+        hint="Deletes the remote branch once a card reaches Done with its pull request merged. The local branch waits for a worktree that still has it checked out."
+        checked={exec.deleteBranchOnDone}
+        ariaLabel="Auto delete branch when card done"
+        onChange={(checked) => set({ deleteBranchOnDone: checked })}
+      />
+      <PromptRow
+        id={`stage-prompt:${stage.stageId}`}
+        label="Conflict resolution prompt"
+        value={exec.prompt}
+        defaultValue={DEFAULT_BOARD_MERGE_CONFLICT_PROMPT}
+        preamble={boardStepPreamble({
+          card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
+          stageLabel: stage.label,
+          // One step in this stage, so the run carries no step identity
+          // (t3o-19, D4) and the preview shows no `Step:` line.
+          step: { stepLabel: null },
+        })}
+        postamble={boardStepPostamble({
+          // Unattended: the conflict fix reports through `board_complete_step`
+          // rather than asking a human, which is what lets a successful one
+          // finish the merge automatically.
+          humanInLoop: false,
+          role: "merge",
+          step: { stepId: stage.stageId, stepLabel: null },
+        })}
+        onChange={(prompt) => set({ prompt })}
+      />
+      <ModelRow
+        label="Model"
+        ariaLabel="Conflict resolution model"
+        selection={exec.model}
+        requiredMessage="Pick the model conflict resolution runs on."
+        instanceEntries={props.instanceEntries}
+        getModelOptions={props.getModelOptions}
+        onChange={(model) => set({ model })}
+        modelOptions={exec.model?.options}
+        onModelOptionsChange={(options) => {
+          if (exec.model === null) return;
+          set({
+            model:
+              options === undefined
+                ? { instanceId: exec.model.instanceId, model: exec.model.model }
+                : { instanceId: exec.model.instanceId, model: exec.model.model, options },
+          });
+        }}
+        runtimeMode={effectiveBoardRuntimeMode(exec.runtimeMode, exec.mode)}
+        onRuntimeModeChange={(runtimeMode) => set({ runtimeMode })}
+      />
+    </>
   );
 }
 

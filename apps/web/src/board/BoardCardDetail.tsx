@@ -32,7 +32,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Dialog } from "../components/ui/dialog";
 import { randomUUID } from "../lib/utils";
@@ -61,7 +61,9 @@ import {
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
-import { describeBoardCommandFailure } from "./boardCommandFeedback";
+import { describeBoardCommandFailure, describeBoardMergeOutcome } from "./boardCommandFeedback";
+import { openPullRequestLink } from "../lib/openPullRequestLink";
+import { readLocalApi } from "../localApi";
 
 /** The modal frame, empty, while `board.subscribeCard` opens — same sheet, so
     nothing jumps when the detail lands. */
@@ -109,6 +111,15 @@ export function BoardCardDetail({
   });
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
+  // Both PR actions report their own outcomes below — a merge the forge
+  // refused is a normal answer with the forge's own wording, not a command
+  // failure the generic toast could describe usefully.
+  const refreshCardPullRequest = useAtomCommand(boardEnvironment.refreshCardPullRequest, {
+    reportFailure: false,
+  });
+  const mergeCardPullRequest = useAtomCommand(boardEnvironment.mergeCardPullRequest, {
+    reportFailure: false,
+  });
   const createLabel = useAtomCommand(boardEnvironment.createLabel);
   const updateLabel = useAtomCommand(boardEnvironment.updateLabel);
   const deleteLabel = useAtomCommand(boardEnvironment.deleteLabel);
@@ -121,6 +132,18 @@ export function BoardCardDetail({
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
+  // Refresh trigger: the card detail opening. One of the moments the answer
+  // plausibly changed AND is about to be read — the Merge button's condition is
+  // the card's PR state, so it should be current at the instant it becomes
+  // visible rather than as of whenever the card last did something. Keyed on
+  // the card id so it fires once per open, not on every re-render; the
+  // server-side lookup is cached for two minutes, so reopening a card in quick
+  // succession costs no forge calls at all.
+  useEffect(() => {
+    void refreshCardPullRequest({ environmentId, input: { cardId } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the command atom
+    // is stable; re-running on its identity would defeat the once-per-open key.
+  }, [environmentId, cardId]);
   const labelsById = useMemo(() => indexBoardLabels(catalogue), [catalogue]);
   const stageState = useMemo<BoardState>(
     () => ({ cards: [], stages, nextCardNumberByProject: {} }),
@@ -146,6 +169,14 @@ export function BoardCardDetail({
   }, []);
 
   const card = detail?.card ?? null;
+  /** Whether a conflict-resolution step is running on this card. The merge
+      stage auto-executes nothing, so a live step there can only be that one —
+      which is exactly what disables the Merge button while the branch is being
+      rewritten under the pull request. */
+  const conflictStepRunning = useMemo(
+    () => (snapshot?.cards ?? []).find((shell) => shell.cardId === cardId)?.stepRunning === true,
+    [snapshot, cardId],
+  );
 
   // Resolved server-side (t3o-13, D4): the shell snapshot drops archived
   // cards, so resolving here would render every archived dependency as an
@@ -410,6 +441,31 @@ export function BoardCardDetail({
       onLinkThread={(threadId, role) =>
         runCommand(linkThread({ environmentId, input: { cardId: card.id, threadId, role } }))
       }
+      conflictStepRunning={conflictStepRunning}
+      onMergePullRequest={() => {
+        setFeedback(null);
+        void mergeCardPullRequest({ environmentId, input: { cardId: card.id } }).then((result) => {
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+            return;
+          }
+          setFeedback(describeBoardMergeOutcome(result.value));
+        });
+      }}
+      onOpenPullRequest={(url) => {
+        // Refresh on the way out: clicking through is the moment the user is
+        // about to see the real state on the forge, so the card should not
+        // still be showing them a stale one when they come back.
+        void refreshCardPullRequest({ environmentId, input: { cardId: card.id } });
+        const shell = readLocalApi()?.shell;
+        if (shell === undefined) {
+          setFeedback("Link opening is unavailable.");
+          return;
+        }
+        void openPullRequestLink(shell, url).catch((error: unknown) => {
+          setFeedback(error instanceof Error ? error.message : "Unable to open the pull request.");
+        });
+      }}
       onMoveStage={(toStage) => {
         const targetColumn = (snapshot?.cards ?? []).filter((shell) => shell.stage === toStage);
         runCommand(

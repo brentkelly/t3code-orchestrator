@@ -47,6 +47,7 @@ import {
   compareBoardLabels,
   compareBoardStages,
   BoardCardWorktree,
+  BoardCardPullRequest,
   isBoardEvent,
   makeBoardCardShell,
   ProviderInstanceId,
@@ -144,6 +145,7 @@ const BoardCardDbRow = Schema.Struct({
   // NULL means untouched).
   humanInLoop: Schema.NullOr(Schema.Int),
   worktree: Schema.NullOr(Schema.fromJsonString(BoardCardWorktree)),
+  pullRequest: Schema.NullOr(Schema.fromJsonString(BoardCardPullRequest)),
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -432,6 +434,11 @@ const BoardCardShellDbRow = Schema.Struct({
   /** The card's `board_plans` rows, counted in SQL so a thousand-card shell
       never loads a plan body. */
   planCount: Schema.Int,
+  /** The card's PR number, read straight out of the `pull_request` JSON. Only
+      the NUMBER, not the whole struct: it is all the shell carries, and
+      pulling the URL and state onto every card would spend wire bytes the
+      column view has nothing to do with. */
+  prNumber: Schema.NullOr(Schema.Int),
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
 });
@@ -462,6 +469,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     externalRef: card.externalRef,
     humanInLoop: card.humanInLoop === null ? null : card.humanInLoop ? 1 : 0,
     worktree: card.worktree,
+    pullRequest: card.pullRequest,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -489,6 +497,7 @@ function rowToBoardCard(
     externalRef: row.externalRef,
     humanInLoop: row.humanInLoop === null ? null : row.humanInLoop !== 0,
     worktree: row.worktree,
+    pullRequest: row.pullRequest,
     blocked: row.blocked !== 0,
     threadLinks,
     archivedAt: row.archivedAt,
@@ -539,6 +548,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         external_ref,
         human_in_loop,
         worktree,
+        pull_request,
         blocked,
         archived_at,
         created_at,
@@ -558,6 +568,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.externalRef},
         ${row.humanInLoop},
         ${row.worktree},
+        ${row.pullRequest},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -577,6 +588,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         external_ref = excluded.external_ref,
         human_in_loop = excluded.human_in_loop,
         worktree = excluded.worktree,
+        pull_request = excluded.pull_request,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -606,6 +618,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         external_ref AS "externalRef",
         human_in_loop AS "humanInLoop",
         worktree,
+        pull_request AS "pullRequest",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -676,6 +689,12 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         END AS "briefHasImage",
         (SELECT COUNT(*) FROM board_plans WHERE board_plans.card_id = board_cards.card_id)
           AS "planCount",
+        -- The SECOND producer of prNumber. The delta path derives it in JS
+        -- from the card aggregate; this derives it in SQL from the same
+        -- column, and the two must agree - a badge that appears after an edit
+        -- but vanishes on reconnect is exactly the stale label this codebase
+        -- refuses to ship (cardMetaShellFields.test.ts asserts the pair).
+        json_extract(pull_request, '$.number') AS "prNumber",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
@@ -705,6 +724,11 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- both queries decode through one row schema.
         0 AS "briefHasImage",
         0 AS "planCount",
+        -- Unlike the two indicators above this is a plain column read, not a
+        -- correlated subquery, so the archive list carries it for free — and
+        -- an archived card's PR is exactly what you look for when working out
+        -- what happened to abandoned work.
+        json_extract(pull_request, '$.number') AS "prNumber",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
@@ -768,6 +792,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         external_ref AS "externalRef",
         human_in_loop AS "humanInLoop",
         worktree,
+        pull_request AS "pullRequest",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -1852,6 +1877,43 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         });
         return;
 
+      case "board.card-pull-request-recorded": {
+        yield* upsertCard(event.payload.card);
+        // Only TRANSITIONS earn a rail row. The reactor already suppresses a
+        // no-change lookup, so anything reaching here moved: the link
+        // appearing, or its state changing. A link DISAPPEARING (null) is not
+        // railed — it means the branch's PR was deleted on the forge, which is
+        // not something the card did.
+        const pullRequest = event.payload.pullRequest;
+        if (pullRequest === null) return;
+        const kind =
+          event.payload.transition === "linked"
+            ? ("card-pull-request-linked" as const)
+            : pullRequest.state === "merged"
+              ? ("card-pull-request-merged" as const)
+              : ("card-pull-request-state-changed" as const);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind,
+          payload: { prNumber: pullRequest.number, prState: pullRequest.state },
+          threadId: null,
+        });
+        return;
+      }
+
+      case "board.card-note-recorded":
+        // No card write: the event exists only so the deletion (or the reason
+        // one was skipped) is visible on the card rather than buried in a log.
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: event.payload.kind,
+          payload: { detail: event.payload.detail },
+          threadId: null,
+        });
+        return;
+
       case "board.card-reordered":
       // Worktree lifecycle (t3o-09): every payload carries the whole card, so
       // the persisted projection is the same idempotent upsert — the worktree
@@ -2271,6 +2333,7 @@ export function withBoardShellCards(
           hasBrief: row.hasBrief !== 0,
           briefHasImage: row.briefHasImage !== 0,
           planCount: row.planCount,
+          prNumber: row.prNumber,
           archivedAt: row.archivedAt,
           activeThreadId,
           queued: queuedByCard.has(row.cardId),
@@ -2349,6 +2412,7 @@ export function withBoardArchivedShellCards(
             blocked: row.blocked !== 0,
             dependencyCount: row.dependencyCount,
             hasBrief: row.hasBrief !== 0,
+            prNumber: row.prNumber,
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),

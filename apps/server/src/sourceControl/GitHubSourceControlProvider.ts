@@ -278,6 +278,26 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    mergeChangeRequest: (input) =>
+      github.mergePullRequest(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "mergeChangeRequest",
+              command: error.command,
+              cwd: input.cwd,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.reference,
+              ),
+              // `gh` prints the forge's own refusal here — failing checks,
+              // missing approvals, "not mergeable". That text is what the card
+              // shows, so the user reads GitHub's reason rather than ours.
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     checkoutChangeRequest: (input) =>
       github.checkoutPullRequest(input).pipe(
         Effect.mapError(

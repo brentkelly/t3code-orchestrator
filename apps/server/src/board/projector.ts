@@ -28,6 +28,7 @@ import {
   BoardCardWorktreeProvisioningPayload,
   BoardCardWorktreeReadyPayload,
   BoardCardWorktreeReclaimedPayload,
+  BoardCardPullRequestRecordedPayload,
   BoardCardStepSelectedPayload,
   BoardCardStepAdmittedPayload,
   BoardCardStepAwaitingInputPayload,
@@ -109,6 +110,9 @@ const decodeBoardCardWorktreeFailedPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardWorktreeReclaimedPayload = Schema.decodeUnknownEffect(
   BoardCardWorktreeReclaimedPayload,
 );
+const decodeBoardCardPullRequestRecordedPayload = Schema.decodeUnknownEffect(
+  BoardCardPullRequestRecordedPayload,
+);
 const decodeBoardStageCreatedPayload = Schema.decodeUnknownEffect(BoardStageCreatedPayload);
 const decodeBoardStageRenamedPayload = Schema.decodeUnknownEffect(BoardStageRenamedPayload);
 const decodeBoardStageReorderedPayload = Schema.decodeUnknownEffect(BoardStageReorderedPayload);
@@ -171,6 +175,8 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
     worktree: null,
+    // Nor a pull request: with no branch pushed there is nothing to look up.
+    pullRequest: null,
     blocked: false,
     archivedAt: null,
     createdAt: payload.createdAt,
@@ -484,6 +490,18 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    case "board.card-pull-request-recorded":
+      return decodeBoardCardPullRequestRecordedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    // Reporting only — it changes no card field, so the read model is
+    // unchanged and a replay that includes it lands exactly where a replay
+    // without it would.
+    case "board.card-note-recorded":
+      return Effect.succeed(model);
+
     case "board.stage-created":
       return decodeBoardStageCreatedPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
@@ -614,6 +632,10 @@ export function boardShellStreamEvent(
     case "board.card-worktree-ready":
     case "board.card-worktree-failed":
     case "board.card-worktree-reclaimed":
+    // The PR link IS on the bounded shell (`hasPr` / `prNumber`), and it rides
+    // the card aggregate — so this delta carries the real value like any other
+    // card field, with no absent-means-preserve dance.
+    case "board.card-pull-request-recorded":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
@@ -749,6 +771,9 @@ export function boardShellStreamEvent(
     // fields, so a step transition needs no separate shell delta.
     case "board.card-step-awaiting-input":
     case "board.card-step-retuned":
+    // Branch cleanup is card DETAIL too: it lands on the activity rail, which
+    // rides `board.subscribeCard`, and changes nothing a column card renders.
+    case "board.card-note-recorded":
       // Agent write-path events are card DETAIL, not column-card shell fields
       // (D7): an agent's progress note, step completion or a plan BODY rewrite
       // changes nothing a column card renders, so they emit no shell delta.

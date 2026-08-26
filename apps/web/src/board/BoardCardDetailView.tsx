@@ -53,6 +53,7 @@ import {
   ChevronLeftIcon,
   CircleAlertIcon,
   EllipsisVerticalIcon,
+  GitPullRequestIcon,
   ExternalLinkIcon,
   FileIcon,
   FileTextIcon,
@@ -222,6 +223,15 @@ export interface BoardCardDetailViewProps {
   readonly onAddDependency: (cardId: BoardCardId) => void;
   readonly onRemoveDependency: (cardId: BoardCardId) => void;
   readonly onMoveStage: (toStage: BoardStageId) => void;
+  /** Merge the card's pull request and advance it. */
+  readonly onMergePullRequest: () => void;
+  /** Open the pull request externally, and refresh its state while we are at
+      it — clicking through is a moment the user is about to learn whether the
+      card's link is stale, so it may as well not be. */
+  readonly onOpenPullRequest: (url: string) => void;
+  /** Whether a conflict-resolution step is running on this card. Nothing else
+      runs in the merge stage, so a live step there can only be that. */
+  readonly conflictStepRunning: boolean;
   readonly onArchiveToggle: () => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
@@ -556,7 +566,11 @@ function ActionsSection({
 }) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
-  const primaryAction = boardStagePrimaryAction(props.stages, card.stage);
+  const pullRequest = card.pullRequest;
+  const primaryAction = boardStagePrimaryAction(props.stages, card.stage, {
+    pullRequestState: pullRequest?.state ?? null,
+    conflictStepRunning: props.conflictStepRunning,
+  });
   const forward = primaryAction !== null && !archived ? primaryAction : null;
   // The per-card human-in-the-loop toggle shows only on the Build role (D6);
   // `props.humanInLoop` is non-null exactly then.
@@ -573,15 +587,45 @@ function ActionsSection({
               : "border-input bg-popover text-foreground hover:bg-accent",
             // The dependency gate is not overridable (D18) — the button says
             // so rather than bouncing off the decider.
-            card.blocked && "cursor-not-allowed opacity-50",
+            (card.blocked || (forward.kind === "merge" && forward.disabled)) &&
+              "cursor-not-allowed opacity-50",
           )}
-          disabled={card.blocked}
-          onClick={() => props.onMoveStage(forward.toStage)}
-          title={card.blocked ? "Blocked by unmet dependencies" : undefined}
+          disabled={card.blocked || (forward.kind === "merge" && forward.disabled)}
+          onClick={() => {
+            if (forward.kind === "merge") {
+              props.onMergePullRequest();
+              return;
+            }
+            props.onMoveStage(forward.toStage);
+          }}
+          title={
+            card.blocked
+              ? "Blocked by unmet dependencies"
+              : forward.kind === "merge"
+                ? (forward.disabledReason ?? undefined)
+                : undefined
+          }
           type="button"
         >
           <ArrowRightIcon className="size-3.5" />
           {forward.label}
+        </button>
+      ) : null}
+      {/* The card's pull request, at EVERY stage rather than only where the
+          Merge button lives: a card in Done is exactly when you want to find
+          the change that closed it. Only the number rides the card shell, so
+          this link — which needs the URL — lives here on the detail, which
+          already subscribes to the whole card. */}
+      {pullRequest !== null ? (
+        <button
+          className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
+          onClick={() => props.onOpenPullRequest(pullRequest.url)}
+          title={`Open pull request #${pullRequest.number}`}
+          type="button"
+        >
+          <GitPullRequestIcon className="size-3.5" />
+          <span>View PR</span>
+          <span className="text-muted-foreground">{`#${pullRequest.number}`}</span>
         </button>
       ) : null}
       {card.blocked ? (

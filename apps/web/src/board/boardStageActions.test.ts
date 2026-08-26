@@ -15,16 +15,19 @@ const stages = BOARD_SEED_STAGES;
 describe("boardStagePrimaryAction", () => {
   it("moves a card to the next stage in order", () => {
     expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.backlog)).toEqual({
+      kind: "move",
       label: "Move to Sprint",
       toStage: BOARD_SEED_STAGE_IDS.sprint,
       emphasised: false,
     });
     expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.sprint)).toEqual({
+      kind: "move",
       label: "Move to Planning",
       toStage: BOARD_SEED_STAGE_IDS.planning,
       emphasised: false,
     });
     expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.planning)).toEqual({
+      kind: "move",
       label: "Move to Ready",
       toStage: BOARD_SEED_STAGE_IDS.ready,
       emphasised: false,
@@ -33,20 +36,102 @@ describe("boardStagePrimaryAction", () => {
     // never be automatic; it is a human click here, nothing more, and the one
     // emphasised action.
     expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.ready)).toEqual({
+      kind: "move",
       label: "Begin build",
       toStage: BOARD_SEED_STAGE_IDS.building,
       emphasised: true,
     });
     expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.review)).toEqual({
+      kind: "move",
       label: "Move to Ready for merge",
       toStage: BOARD_SEED_STAGE_IDS.merge,
       emphasised: false,
     });
     expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.merge)).toEqual({
+      kind: "move",
       label: "Move to Done",
       toStage: BOARD_SEED_STAGE_IDS.done,
       emphasised: false,
     });
+  });
+
+  it("offers Merge in the merge role only while the pull request is still open", () => {
+    // The blue button in the merge stage merges the PR; the card advancing to
+    // Done is a consequence of the merge, not a separate gate the user clicks.
+    expect(
+      boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.merge, { pullRequestState: "open" }),
+    ).toEqual({
+      kind: "merge",
+      label: "Merge",
+      emphasised: true,
+      disabled: false,
+      disabledReason: null,
+    });
+
+    // Merged, closed, or no PR at all: there is nothing left to merge, so the
+    // card falls back to the ordinary forward move rather than being stranded
+    // short of Done. Merging on GitHub yourself must still leave a way onward.
+    for (const state of ["merged", "closed", null] as const) {
+      expect(
+        boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.merge, { pullRequestState: state }),
+      ).toEqual({
+        kind: "move",
+        label: "Move to Done",
+        toStage: BOARD_SEED_STAGE_IDS.done,
+        emphasised: false,
+      });
+    }
+
+    // A card that never had a pull request behaves exactly as it did before
+    // this button existed — no context at all is the same as no PR.
+    expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.merge)).toEqual({
+      kind: "move",
+      label: "Move to Done",
+      toStage: BOARD_SEED_STAGE_IDS.done,
+      emphasised: false,
+    });
+  });
+
+  it("disables Merge while a conflict-resolution step is running", () => {
+    // The step is rewriting the branch the PR is open on, so merging mid-flight
+    // would merge a half-resolved state. The button stays visible and says why.
+    expect(
+      boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.merge, {
+        pullRequestState: "open",
+        conflictStepRunning: true,
+      }),
+    ).toEqual({
+      kind: "merge",
+      label: "Merge",
+      emphasised: true,
+      disabled: true,
+      disabledReason: "Resolving conflicts…",
+    });
+  });
+
+  it("offers no Merge button outside the merge role, however open the PR is", () => {
+    // A PR exists from the review stage onward, but merging is gated on the
+    // card having reached the merge stage — mid-review the agent is still
+    // posting to that PR.
+    for (const stage of [BOARD_SEED_STAGE_IDS.review, BOARD_SEED_STAGE_IDS.ready]) {
+      expect(boardStagePrimaryAction(stages, stage, { pullRequestState: "open" })?.kind).toBe(
+        "move",
+      );
+    }
+  });
+
+  it("resolves the merge role on a stage row that predates it", () => {
+    // Migration 023 backfills the role, but `effectiveBoardStageRole` is the
+    // read-side fallback for a row (or a replayed event payload) still
+    // carrying NULL — the button must not depend on how old the database is.
+    const legacyStages = stages.map((stage) =>
+      stage.stageId === BOARD_SEED_STAGE_IDS.merge ? { ...stage, role: null } : stage,
+    );
+    expect(
+      boardStagePrimaryAction(legacyStages, BOARD_SEED_STAGE_IDS.merge, {
+        pullRequestState: "open",
+      })?.kind,
+    ).toBe("merge");
   });
 
   it("offers NO forward button from the build role or the last stage", () => {
@@ -59,7 +144,7 @@ describe("boardStagePrimaryAction", () => {
   it("no primary action ever targets the build role except the explicit gate before it", () => {
     for (const stage of stages) {
       const action = boardStagePrimaryAction(stages, stage.stageId);
-      if (action?.toStage === BOARD_SEED_STAGE_IDS.building) {
+      if (action?.kind === "move" && action.toStage === BOARD_SEED_STAGE_IDS.building) {
         expect(stage.stageId).toBe(BOARD_SEED_STAGE_IDS.ready);
       }
     }

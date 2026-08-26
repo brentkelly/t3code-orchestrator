@@ -63,7 +63,9 @@ import {
   deleteBoardLabel,
   deleteBoardStage,
   linkBoardCardThread,
+  mergeBoardCardPullRequest,
   moveBoardCard,
+  refreshBoardCardPullRequest,
   renameBoardStage,
   reorderBoardCard,
   reorderBoardStage,
@@ -711,6 +713,19 @@ export function createBoardEnvironmentAtoms<R, ER>(
     moveCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:move-card",
       execute: (input: MoveBoardCardInput) => moveBoardCard(input),
+    }),
+    /** Re-resolve the card's pull request from the forge. Cheap and safe to
+        fire on any of the client-side refresh triggers — the server-side
+        lookup is cached for two minutes, so a burst costs one forge call. */
+    refreshCardPullRequest: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:refresh-card-pull-request",
+      execute: (input: { readonly cardId: BoardCardId }) => refreshBoardCardPullRequest(input),
+    }),
+    /** Merge the card's pull request and advance it. Resolves to the outcome
+        the button reports — merged, refused, conflict-being-resolved. */
+    mergeCardPullRequest: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:merge-card-pull-request",
+      execute: (input: { readonly cardId: BoardCardId }) => mergeBoardCardPullRequest(input),
     }),
     reorderCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reorder-card",

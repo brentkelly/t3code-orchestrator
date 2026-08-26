@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import {
   TrimmedNonEmptyString,
+  type ChangeRequestMergeStrategy,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
@@ -61,6 +62,36 @@ export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitH
 
   override get message(): string {
     return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
+/**
+ * A merge the forge REFUSED, carrying the forge's own words.
+ *
+ * Separate from `GitHubCliCommandError` because that error's `detail` is a
+ * deliberately constant string: `VcsProcessExitError` redacts stderr down to a
+ * length and a truncation flag, since a process's stderr can carry tokens and
+ * credentialed URLs. That policy is right for a general command failure and
+ * useless here — for a merge, the forge's explanation IS the product: it is
+ * what the card shows the user, and what tells a conflict apart from a failing
+ * status check.
+ *
+ * So the merge path reads the refusal as a RESULT (`allowNonZeroExit`) rather
+ * than an error, and sanitizes it through
+ * `transportSafeSourceControlErrorValue` — the same helper the provider errors
+ * already use, which strips URL credentials and control characters and bounds
+ * the length.
+ */
+export class GitHubPullRequestMergeRefusedError extends Schema.TaggedErrorClass<GitHubPullRequestMergeRefusedError>()(
+  "GitHubPullRequestMergeRefusedError",
+  { ...gitHubCliFailureFields, refusal: Schema.String, exitCode: Schema.Number },
+) {
+  get detail(): string {
+    return this.refusal.length > 0 ? this.refusal : "The forge refused the merge.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in mergePullRequest: ${this.detail}`;
   }
 }
 
@@ -139,6 +170,7 @@ export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
   GitHubPullRequestNotFoundError,
+  GitHubPullRequestMergeRefusedError,
   GitHubCliCommandError,
   GitHubPullRequestListDecodeError,
   GitHubChangeRequestListDecodeError,
@@ -203,6 +235,10 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
+      /** Return a non-zero exit as a RESULT instead of an error, so a caller
+          that needs the process's own output (the merge path needs the forge's
+          refusal text) can read it. */
+      readonly allowNonZeroExit?: boolean;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
     readonly listOpenPullRequests: (input: {
@@ -243,6 +279,11 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly reference: string;
       readonly force?: boolean;
+    }) => Effect.Effect<void, GitHubCliError>;
+    readonly mergePullRequest: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+      readonly strategy: ChangeRequestMergeStrategy;
     }) => Effect.Effect<void, GitHubCliError>;
   }
 >()("t3/sourceControl/GitHubCli") {}
@@ -314,6 +355,7 @@ export const make = Effect.gen(function* () {
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        ...(input.allowNonZeroExit === true ? { allowNonZeroExit: true } : {}),
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
 
@@ -450,6 +492,46 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
       }).pipe(Effect.asVoid),
+    // The strategy flag is always passed: `gh pr merge` with none prompts
+    // interactively, which would hang a server. Branch deletion is NOT
+    // delegated to `--delete-branch` — the board deletes the branch itself at
+    // Done, behind its own setting, and only when no worktree still holds it.
+    //
+    // `allowNonZeroExit` so the refusal comes back as output rather than as an
+    // error whose text has been redacted to a constant: the board classifies
+    // conflicts from this string and shows it on the card, so losing it makes
+    // the whole conflict-resolution path unreachable.
+    mergePullRequest: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "merge", input.reference, `--${input.strategy}`],
+        allowNonZeroExit: true,
+      }).pipe(
+        Effect.flatMap((result) =>
+          result.exitCode === 0
+            ? Effect.void
+            : Effect.fail(
+                new GitHubPullRequestMergeRefusedError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  exitCode: result.exitCode,
+                  // stderr first: `gh` puts the refusal there. Falls back to
+                  // stdout, which some versions use instead.
+                  //
+                  // `safeProcessOutput`, NOT
+                  // `transportSafeSourceControlErrorValue`: the latter parses
+                  // the whole value as a URL, which is right for an identifier
+                  // and does nothing for a credential embedded in a sentence —
+                  // and a refusal is a sentence. This text is persisted and
+                  // shown to a user, so it needs free-text scrubbing.
+                  refusal: VcsProcess.safeProcessOutput(
+                    result.stderr.trim().length > 0 ? result.stderr : result.stdout,
+                  ),
+                  cause: null,
+                }),
+              ),
+        ),
+      ),
   });
 });
 

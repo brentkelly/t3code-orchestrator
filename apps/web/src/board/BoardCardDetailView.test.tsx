@@ -44,6 +44,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     cardNumber: 7,
     projectId: ProjectId.make("project-gone"),
     labels: [],
+    pullRequest: null,
     stage: BOARD_SEED_STAGE_IDS.ready,
     orderKey: "m",
     title: "Wire the widget",
@@ -85,6 +86,9 @@ function detail(
 const noop = () => {};
 const baseProps = {
   environmentId,
+  onMergePullRequest: noop,
+  onOpenPullRequest: noop,
+  conflictStepRunning: false,
   catalogue: [] as ReadonlyArray<BoardLabel>,
   stages: BOARD_SEED_STAGES,
   humanInLoop: null,

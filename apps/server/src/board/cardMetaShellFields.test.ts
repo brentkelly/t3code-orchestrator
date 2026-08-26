@@ -240,3 +240,135 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("plan count", (it) => {
     }),
   );
 });
+
+it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (it) => {
+  it.effect("carries the card's PR number on the SNAPSHOT, not only on deltas", () =>
+    Effect.gen(function* () {
+      // The failure this exists to catch: `prNumber` derived only on the delta
+      // path lights the badge while the client stays connected and drops it on
+      // every reload, because the snapshot is a separate SQL producer. The two
+      // must agree — that is the whole point of this file.
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-pr-card"),
+        cardId,
+        projectId,
+        title: "Card with a pull request",
+        orderKey: "m",
+        createdAt,
+      });
+
+      const shellCard = Effect.map(snapshotQuery.getShellSnapshot(), (snapshot) =>
+        cardsOf(snapshot).find((entry) => entry.cardId === cardId),
+      );
+
+      // Before any lookup: absent key, and `hasPr` false — a PR-less board
+      // pays zero wire bytes for the field.
+      const before = yield* shellCard;
+      assert.strictEqual(before?.hasPr, false);
+      assert.strictEqual("prNumber" in (before ?? {}), false);
+
+      yield* engine.dispatch({
+        type: "board.card.record-pull-request",
+        commandId: CommandId.make("cmd-record-pr"),
+        cardId,
+        pullRequest: {
+          number: 284,
+          url: "https://github.com/acme/repo/pull/284",
+          state: "open",
+          headBranch: "board/card-1",
+          baseRef: "main",
+          checkedAt: createdAt,
+        },
+        createdAt,
+      });
+
+      const linked = yield* shellCard;
+      assert.strictEqual(linked?.prNumber, 284);
+      assert.strictEqual(linked?.hasPr, true);
+
+      // A merged PR is still a PR: the badge keeps the number after the work
+      // lands, which is what makes a Done card traceable to its change.
+      yield* engine.dispatch({
+        type: "board.card.record-pull-request",
+        commandId: CommandId.make("cmd-record-pr-merged"),
+        cardId,
+        pullRequest: {
+          number: 284,
+          url: "https://github.com/acme/repo/pull/284",
+          state: "merged",
+          headBranch: "board/card-1",
+          baseRef: "main",
+          checkedAt: createdAt,
+        },
+        createdAt,
+      });
+      const merged = yield* shellCard;
+      assert.strictEqual(merged?.prNumber, 284);
+      assert.strictEqual(merged?.hasPr, true);
+
+      // Clearing is a real value, not "no data": the badge must be able to go.
+      yield* engine.dispatch({
+        type: "board.card.record-pull-request",
+        commandId: CommandId.make("cmd-record-pr-cleared"),
+        cardId,
+        pullRequest: null,
+        createdAt,
+      });
+      const cleared = yield* shellCard;
+      assert.strictEqual(cleared?.hasPr, false);
+      assert.strictEqual("prNumber" in (cleared ?? {}), false);
+    }),
+  );
+
+  it.effect("carries the PR number onto the ARCHIVED shell too", () =>
+    Effect.gen(function* () {
+      // A THIRD producer: the archive page reuses the same bounded shell
+      // through its own SQL query and its own mapper, so it can drop a field
+      // the live pair agree on. Archived work is exactly when the PR number
+      // matters most — it is how you find out what happened to a card someone
+      // abandoned.
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const archivedId = BoardCardId.make("card-archived-pr");
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-archived-pr-card"),
+        cardId: archivedId,
+        projectId,
+        title: "Abandoned but linked",
+        orderKey: "z",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.record-pull-request",
+        commandId: CommandId.make("cmd-archived-pr-record"),
+        cardId: archivedId,
+        pullRequest: {
+          number: 512,
+          url: "https://github.com/acme/repo/pull/512",
+          state: "closed",
+          headBranch: "board/card-archived-pr",
+          baseRef: "main",
+          checkedAt: createdAt,
+        },
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.archive",
+        commandId: CommandId.make("cmd-archive-pr-card"),
+        cardId: archivedId,
+        createdAt,
+      });
+
+      const archived = yield* snapshotQuery.getArchivedShellSnapshot();
+      const card = cardsOf(archived).find((entry) => entry.cardId === archivedId);
+      assert.strictEqual(card?.prNumber, 512);
+      assert.strictEqual(card?.hasPr, true);
+    }),
+  );
+});

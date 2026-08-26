@@ -170,3 +170,55 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(VcsProcess, make).pipe(Layer.provide(ProcessRunner.layer));
+
+/** How much process output is worth keeping once it is destined for a durable
+    event log and a card in the UI. Long enough for a real forge refusal,
+    short enough that a runaway stack trace cannot bloat the log. */
+const SAFE_OUTPUT_MAX_LENGTH = 400;
+
+/**
+ * Make a process's own output safe to persist and show to a user.
+ *
+ * `VcsProcessExitError` deliberately drops stderr, because a git or forge
+ * process can print a remote URL with an embedded credential
+ * (`https://user:token@host/...`), a token in an error body, or a raw carriage
+ * return that would corrupt a rendered line. Anything that deliberately keeps
+ * that output — the merge refusal the card shows, the branch-cleanup summary
+ * on the activity rail — has to do this scrubbing itself, because it is
+ * writing to an EVENT LOG that is never rewritten and to a UI a person reads.
+ *
+ * Not the same job as `transportSafeSourceControlErrorValue`: that one parses
+ * the whole value AS a URL and strips its credentials, which is right for an
+ * identifier field and does nothing at all for a credential embedded in a
+ * sentence — the parse simply throws and the string passes through untouched.
+ * This works on free text.
+ */
+export function safeProcessOutput(raw: string): string {
+  const collapsed = [...raw]
+    .map((character) => {
+      const codePoint = character.codePointAt(0);
+      return codePoint !== undefined && (codePoint < 32 || codePoint === 127) ? " " : character;
+    })
+    .join("")
+    .replace(/\s+/gu, " ")
+    .trim();
+
+  // `scheme://user:secret@host` → `scheme://***@host`, anywhere in the text.
+  // Also covers the userinfo-without-password form, which is still an identity
+  // worth not persisting.
+  const withoutUrlCredentials = collapsed.replace(
+    /([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+(?::[^\s/@]*)?@/giu,
+    "$1***@",
+  );
+
+  // Bare tokens that never belong in a log line, matched by their published
+  // prefixes rather than by shape, so ordinary words are never mangled.
+  const withoutBareTokens = withoutUrlCredentials.replace(
+    /\b(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,})\b/gu,
+    "***",
+  );
+
+  return withoutBareTokens.length > SAFE_OUTPUT_MAX_LENGTH
+    ? `${withoutBareTokens.slice(0, SAFE_OUTPUT_MAX_LENGTH)}…`
+    : withoutBareTokens;
+}

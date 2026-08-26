@@ -33,7 +33,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 
-import { AuthOrchestrationReadScope, EnvironmentAuthorizationError } from "./auth.ts";
+import { ChangeRequestMergeStrategy } from "./sourceControl.ts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  EnvironmentAuthorizationError,
+} from "./auth.ts";
 import { DEFAULT_RUNTIME_MODE, ProviderOptionSelections, RuntimeMode } from "./model.ts";
 import {
   CommandId,
@@ -286,7 +291,7 @@ export type BoardStageId = typeof BoardStageId.Type;
  * (`review`) and archival / dependency satisfaction (`done`) key on the role,
  * never on a stage name.
  */
-export const BoardStageRole = Schema.Literals(["plan", "build", "review", "done"]);
+export const BoardStageRole = Schema.Literals(["plan", "build", "review", "merge", "done"]);
 export type BoardStageRole = typeof BoardStageRole.Type;
 
 /**
@@ -348,7 +353,7 @@ const BOARD_SEED_STAGE_SHAPES: ReadonlyArray<{
   { stageId: BOARD_SEED_STAGE_IDS.ready, label: "Ready", role: null, orderKey: "h" },
   { stageId: BOARD_SEED_STAGE_IDS.building, label: "Building", role: "build", orderKey: "j" },
   { stageId: BOARD_SEED_STAGE_IDS.review, label: "Code review", role: "review", orderKey: "l" },
-  { stageId: BOARD_SEED_STAGE_IDS.merge, label: "Ready for merge", role: null, orderKey: "n" },
+  { stageId: BOARD_SEED_STAGE_IDS.merge, label: "Ready for merge", role: "merge", orderKey: "n" },
   { stageId: BOARD_SEED_STAGE_IDS.done, label: "Done", role: "done", orderKey: "p" },
 ];
 
@@ -378,12 +383,13 @@ export function boardStagesAreSeedOnly(stages: ReadonlyArray<BoardStageDefinitio
     return (
       stage.stageId === seed.stageId &&
       stage.label === seed.label &&
-      // A table seeded before the `plan` role existed carries Planning with a
-      // null role; treat it as untouched so rehydration falls back to the
-      // compiled seeds (which now carry the role) instead of pinning the
-      // legacy shape forever.
+      // A table seeded before the `plan` / `merge` roles existed carries
+      // Planning / Ready-for-merge with a null role; treat it as untouched so
+      // rehydration falls back to the compiled seeds (which now carry the
+      // roles) instead of pinning the legacy shape forever.
       (stage.role === seed.role ||
-        (stage.stageId === BOARD_SEED_STAGE_IDS.planning && stage.role === null)) &&
+        (stage.stageId === BOARD_SEED_STAGE_IDS.planning && stage.role === null) ||
+        (stage.stageId === BOARD_SEED_STAGE_IDS.merge && stage.role === null)) &&
       stage.orderKey === seed.orderKey &&
       stage.createdAt === seed.createdAt &&
       stage.updatedAt === seed.updatedAt
@@ -402,6 +408,8 @@ export function boardSeedStageRole(stageId: string): BoardStageRole | null {
       return "build";
     case BOARD_SEED_STAGE_IDS.review:
       return "review";
+    case BOARD_SEED_STAGE_IDS.merge:
+      return "merge";
     case BOARD_SEED_STAGE_IDS.done:
       return "done";
     default:
@@ -410,8 +418,9 @@ export function boardSeedStageRole(stageId: string): BoardStageRole | null {
 }
 
 /**
- * A stage's effective role. The `plan` role postdates persisted stage lists
- * and event payloads that carry Planning with a null role, so every reader
+ * A stage's effective role. The `plan` and `merge` roles postdate persisted
+ * stage lists and event payloads that carry Planning / Ready-for-merge with a
+ * null role, so every reader
  * that keys behavior on a role — delete guards, role uniqueness, envelope
  * segments, the settings card — resolves through this helper rather than the
  * raw field.
@@ -596,6 +605,90 @@ export const BoardCardWorktree = Schema.Struct({
 });
 export type BoardCardWorktree = typeof BoardCardWorktree.Type;
 
+/** Where a card's pull request currently stands on the forge. `merged` and
+    `closed` are terminal: once a PR reaches either, nothing about it can
+    change again, so the refresh triggers stop asking about that card. */
+export const BoardCardPullRequestState = Schema.Literals(["open", "closed", "merged"]);
+export type BoardCardPullRequestState = typeof BoardCardPullRequestState.Type;
+
+/**
+ * The pull request a card's branch has open on the forge. Absent
+ * (`BoardCard.pullRequest === null`) until a lookup finds one — a card that
+ * never reached review has no branch pushed and so can have no PR.
+ *
+ * Resolved by branch (the card's `worktree.branch`) rather than recorded by
+ * the agent that opened it, so a PR a HUMAN opened on the same branch links
+ * itself just as well. Stored on the aggregate, mirroring `BoardCardWorktree`,
+ * because the decider needs `state` to gate branch deletion at Done and the
+ * activity rail earns "PR #284 merged" as history.
+ *
+ * This is a CACHE of forge state, refreshed only at the events in the spec's
+ * D2 table — never on a timer. It can therefore be stale; every consumer
+ * treats it as "what we last saw", and the merge path re-checks by attempting
+ * the operation rather than trusting this field.
+ */
+export const BoardCardPullRequest = Schema.Struct({
+  number: PositiveInt,
+  url: TrimmedNonEmptyString,
+  state: BoardCardPullRequestState,
+  /** The PR's head branch as the forge reports it, which is NOT always the
+      card's local branch name — a cross-repository (fork) PR carries the
+      fork's branch.
+      
+      Recorded for diagnosis, and deliberately NOT used as a guard: the link is
+      resolved BY the card's branch on every refresh, so a mismatch cannot
+      arise without the lookup itself returning a different PR, which replaces
+      the link anyway. Branch cleanup likewise deletes the card's OWN branch
+      rather than this one — on a fork PR the head branch lives in someone
+      else's repository and is not the board's to delete. */
+  headBranch: TrimmedNonEmptyString,
+  baseRef: TrimmedNonEmptyString,
+  /** When this state was first observed — NOT when it was last checked.
+      Refreshes that find no change record no event at all (the decider's
+      no-op guard deliberately excludes this field, or every card open would
+      write one), so it does not move on a confirming lookup and cannot be
+      used to answer "how stale is this?". It answers "since when has the PR
+      said this?", which is the question the activity rail is really about. */
+  checkedAt: IsoDateTime,
+});
+export type BoardCardPullRequest = typeof BoardCardPullRequest.Type;
+
+/**
+ * Whether two PR links describe the same forge state, IGNORING `checkedAt`.
+ *
+ * `checkedAt` moves on every single lookup, so comparing it would make every
+ * refresh look like a change — an event per card open, a shell delta per step
+ * boundary, and a card `updatedAt` that churns for no reason. What matters is
+ * whether the PR itself moved; when it has not, the recorded `checkedAt` is
+ * simply left at the last value that told us something new.
+ */
+export function boardCardPullRequestsEqual(
+  left: BoardCardPullRequest | null,
+  right: BoardCardPullRequest | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.number === right.number &&
+    left.state === right.state &&
+    left.url === right.url &&
+    left.headBranch === right.headBranch &&
+    left.baseRef === right.baseRef
+  );
+}
+
+/** Terminal PR state: nothing about the pull request can change again, so the
+    refresh triggers stop asking about that card. This is what keeps the lookup
+    set bounded by "cards in flight" rather than growing with the board.
+
+    Only `merged` counts. `closed` looks terminal and is not: a closed pull
+    request can be reopened, and — far more common — a branch whose PR was
+    closed is the one most likely to get a NEW one. Treating it as terminal
+    pinned the card to the dead PR forever with no way back, since every
+    refresh trigger checks this first. */
+export function isBoardCardPullRequestTerminal(pullRequest: BoardCardPullRequest | null): boolean {
+  return pullRequest !== null && pullRequest.state === "merged";
+}
+
 // ── Card aggregate ─────────────────────────────────────────────────────
 
 export const BoardCard = Schema.Struct({
@@ -642,6 +735,14 @@ export const BoardCard = Schema.Struct({
       table-rehydrated model (migration 904's `worktree` column defaults to
       NULL to the same end). */
   worktree: Schema.NullOr(BoardCardWorktree).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** The pull request the card's branch has open on the forge; null until a
+      lookup finds one. Decodes to null on every event payload written before
+      this spec, so a from-empty replay of an older log matches the
+      table-rehydrated model — the same guarantee `worktree` makes, and
+      migration 022's `pull_request` column defaults to NULL to the same end. */
+  pullRequest: Schema.NullOr(BoardCardPullRequest).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -975,6 +1076,15 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   "card-archived",
   "card-unarchived",
   "card-worktree-failed",
+  // Pull-request lifecycle: the link appearing, its state changing (most
+  // importantly to `merged`), and the branch cleanup that follows at Done.
+  "card-pull-request-linked",
+  "card-pull-request-state-changed",
+  "card-pull-request-merged",
+  "card-branch-deleted",
+  /** A Merge click that ended without a merge and without a conflict fix left
+      running — the one outcome that would otherwise be invisible. */
+  "card-merge-refused",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -1037,8 +1147,13 @@ export const BoardCardActivityPayload = Schema.Struct({
   stepId: Schema.optionalKey(TrimmedNonEmptyString),
   stepLabel: Schema.optionalKey(TrimmedNonEmptyString),
   outcome: Schema.optionalKey(BoardStepOutcome),
-  /** card-worktree-failed: the failure detail, already agent-facing text. */
+  /** card-worktree-failed: the failure detail, already agent-facing text.
+      Also carries the forge's own refusal reason on a failed merge, and the
+      branch name on `card-branch-deleted`. */
   detail: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The pull-request rows: which PR, and what state it moved to. */
+  prNumber: Schema.optionalKey(PositiveInt),
+  prState: Schema.optionalKey(BoardCardPullRequestState),
 });
 export type BoardCardActivityPayload = typeof BoardCardActivityPayload.Type;
 
@@ -1707,6 +1822,58 @@ export const BoardCardReclaimWorktreeCommand = Schema.Struct({
 });
 export type BoardCardReclaimWorktreeCommand = typeof BoardCardReclaimWorktreeCommand.Type;
 
+/**
+ * Record what a forge lookup found for the card's branch. Dispatched by the
+ * supervisor reactor only when the resolved value DIFFERS from what the card
+ * already holds, so repeated lookups that return the same answer land no
+ * event — the refresh triggers can fire as often as they like without an
+ * event storm.
+ *
+ * `pullRequest: null` is a real value, not "unknown": it records that a
+ * lookup ran and found no PR for the branch. A lookup that FAILED (rate
+ * limit, network) dispatches nothing at all, leaving the last known link in
+ * place — the same last-known-wins stance `rememberLastKnownPr` takes in
+ * `GitManager`, for the same reason: a transient failure must not blank a
+ * card's PR badge.
+ */
+export const BoardCardRecordPullRequestCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-pull-request"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  pullRequest: Schema.NullOr(BoardCardPullRequest),
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordPullRequestCommand = typeof BoardCardRecordPullRequestCommand.Type;
+
+/** The activity kinds that are pure REPORTING — the board telling the user
+    what it did to their repository, with no card field behind it. */
+export const BoardCardNoteKind = Schema.Literals(["card-branch-deleted", "card-merge-refused"]);
+export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
+
+/**
+ * Record something the board did to the repository, on the card's activity
+ * rail.
+ *
+ * A pure REPORTING command: it mutates no card field. It exists because both
+ * things it covers would otherwise happen in silence — a branch deleted at
+ * Done, and a merge that conflicted again after its conflict fix and gave up.
+ * A log line the user never reads is not an account of what happened to their
+ * branch, and a Merge click that ends in nothing at all is worse.
+ *
+ * One command with a `kind` rather than one per event: the shapes are
+ * identical and the projection's only job is to write the row.
+ */
+export const BoardCardRecordNoteCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-note"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  kind: BoardCardNoteKind,
+  /** Human-facing summary, already written for the rail. */
+  detail: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordNoteCommand = typeof BoardCardRecordNoteCommand.Type;
+
 // Server-INTERNAL step-lifecycle commands (t3o-10, BOARD_INTERNAL_COMMANDS):
 // the supervisor reactor dispatches them as it drives a card's step through
 // its lifecycle. They are never client-dispatchable — a step advances only by
@@ -2104,6 +2271,41 @@ export const BoardCardWorktreeReclaimedPayload = Schema.Struct({
 });
 export type BoardCardWorktreeReclaimedPayload = typeof BoardCardWorktreeReclaimedPayload.Type;
 
+/** What changed about the card's pull-request link. Computed by the DECIDER,
+    which holds the prior card, and carried on the event so the projection can
+    write the right activity row without re-reading the row it is about to
+    overwrite — and so a from-empty replay classifies every row identically to
+    the live run. */
+export const BoardCardPullRequestTransition = Schema.Literals([
+  /** No PR was linked before, or a different one was: this is a new link. */
+  "linked",
+  /** Same PR, different state — most importantly `open` → `merged`. */
+  "state-changed",
+  /** A lookup ran and found no PR where one was linked before. */
+  "unlinked",
+]);
+export type BoardCardPullRequestTransition = typeof BoardCardPullRequestTransition.Type;
+
+/** Carries the whole post-change card, like every other non-created board
+    event, so the shell-delta mapping stays a pure function of the event. */
+export const BoardCardPullRequestRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  pullRequest: Schema.NullOr(BoardCardPullRequest),
+  transition: BoardCardPullRequestTransition,
+  card: BoardCard,
+});
+export type BoardCardPullRequestRecordedPayload = typeof BoardCardPullRequestRecordedPayload.Type;
+
+/** Reporting-only: no card field changes, so unlike every other card event
+    this one carries no `card`. The projection writes an activity row and
+    nothing else. */
+export const BoardCardNoteRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  kind: BoardCardNoteKind,
+  detail: TrimmedNonEmptyString,
+});
+export type BoardCardNoteRecordedPayload = typeof BoardCardNoteRecordedPayload.Type;
+
 // Step-lifecycle event payloads (t3o-10). The recipe-snapshot event carries
 // the full post-change `card` (like every worktree event), so the projector
 // upserts it and the shell delta stays a pure function of the event. The step
@@ -2374,7 +2576,9 @@ export const BoardCardShell = Schema.Struct({
       snapshot (t3o-13, D7), which reuses this same bounded shell so the
       archive view needs no second card type. */
   archivedAt: Schema.NullOr(IsoDateTime),
-  /** Always false until t3o-11 wires PR detection. */
+  /** Whether the card has a linked pull request. Derived from
+      `BoardCard.pullRequest`; true regardless of the PR's state, so a card
+      whose PR is already merged still reads as having one. */
   hasPr: Schema.Boolean,
   /** Always 0 until t3o-11 wires attachments. */
   attachmentCount: NonNegativeInt,
@@ -2456,9 +2660,16 @@ export const BoardCardShell = Schema.Struct({
   // materialisation).
   planTotal: Schema.optionalKey(NonNegativeInt),
   planDone: Schema.optionalKey(NonNegativeInt),
+  /** The card's linked pull request number, absent when it has none. Sourced
+      from `BoardCard.pullRequest`, so — unlike `briefHasImage` / `planCount` —
+      it is on the aggregate and every card-carrying delta asserts it; there is
+      no absent-means-preserve rule here, and clearing a PR really does clear
+      the badge. Only the NUMBER rides the shell: the URL stays on the full
+      card, which the detail pane already subscribes to, so the column view
+      pays no bytes for a link it does not render. */
+  prNumber: Schema.optionalKey(NonNegativeInt),
   // Review summary — counts, never bodies; absent until the post-MVP
   // review pipeline lands, then populated only in the review stage.
-  prNumber: Schema.optionalKey(NonNegativeInt),
   roundCurrent: Schema.optionalKey(NonNegativeInt),
   roundMax: Schema.optionalKey(NonNegativeInt),
   stepLabel: Schema.optionalKey(TrimmedNonEmptyString),
@@ -2618,6 +2829,14 @@ export function makeBoardCardShell(input: {
   /** How many plans the card carries. Omitted by producers that cannot see the
       plan slice, leaving the key absent (preserve-last-known). */
   readonly planCount?: number | undefined;
+  /** The card's pull request NUMBER, or null when it has none. Deliberately
+      the number and not the whole `BoardCardPullRequest`: the shell carries
+      nothing else about the PR, so asking producers for the full struct only
+      invites a SQL producer to fabricate the fields it did not select. Unlike
+      the body-derived fields this comes off the card aggregate, so every
+      producer holds it and asserts it unconditionally rather than
+      absent-means-preserve. */
+  readonly prNumber?: number | null | undefined;
   /** Every LIVE-linked thread's shell (t3o-18, D7) — the badge aggregates
       across all of them. A single thread is still accepted (delta producers and
       tests pass one, or none). */
@@ -2640,7 +2859,7 @@ export function makeBoardCardShell(input: {
     dependencyCount: input.dependencyCount,
     hasBrief: input.hasBrief,
     archivedAt: input.archivedAt ?? null,
-    hasPr: false, // t3o-11
+    hasPr: input.prNumber != null,
     attachmentCount: 0, // t3o-11
     queued: input.queued ?? false, // t3o-11 (D11): real on the snapshot, rests false on card deltas
     stalled: input.stalled ?? false, // t3o-17 (D3): real on the snapshot, rests false on card deltas
@@ -2653,9 +2872,15 @@ export function makeBoardCardShell(input: {
     // asserting a false/zero it cannot know.
     ...(input.briefHasImage === undefined ? {} : { briefHasImage: input.briefHasImage }),
     ...(input.planCount === undefined ? {} : { planCount: input.planCount }),
-    // planTotal / planDone (post-MVP sub-boards), prNumber / round* /
-    // stepLabel / severity* / issues* (post-MVP review pipeline): key-
-    // optional and deliberately absent until their producing specs land.
+    // `prNumber` rides the card aggregate (`BoardCard.pullRequest`), so unlike
+    // the body/plan slices EVERY producer holds it and it is asserted on every
+    // card-carrying delta — no absent-means-preserve needed. The key is still
+    // omitted when there is no PR, which is what keeps a PR-less board's shell
+    // payload exactly the size it was before this field existed.
+    ...(input.prNumber == null ? {} : { prNumber: input.prNumber }),
+    // planTotal / planDone (post-MVP sub-boards), round* / stepLabel /
+    // severity* / issues* (post-MVP review pipeline): key-optional and
+    // deliberately absent until their producing specs land.
   };
 }
 
@@ -2689,6 +2914,7 @@ export function boardCardShellFromCard(
     dependencyCount: card.dependsOn.length,
     hasBrief: card.briefRef !== null,
     archivedAt: card.archivedAt,
+    prNumber: card.pullRequest?.number ?? null,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined
@@ -2930,6 +3156,8 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardRecordWorktreeCommand,
   BoardCardFailWorktreeCommand,
   BoardCardReclaimWorktreeCommand,
+  BoardCardRecordPullRequestCommand,
+  BoardCardRecordNoteCommand,
   BoardCardSelectStepCommand,
   BoardCardAdmitStepCommand,
   BoardCardAwaitStepInputCommand,
@@ -2963,6 +3191,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-worktree-ready",
   "board.card-worktree-failed",
   "board.card-worktree-reclaimed",
+  "board.card-pull-request-recorded",
+  "board.card-note-recorded",
   "board.card-step-selected",
   "board.card-step-admitted",
   "board.card-step-awaiting-input",
@@ -3114,6 +3344,16 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     }),
     Schema.Struct({
       ...base,
+      type: Schema.Literal("board.card-pull-request-recorded"),
+      payload: BoardCardPullRequestRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-note-recorded"),
+      payload: BoardCardNoteRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
       type: Schema.Literal("board.card-step-selected"),
       payload: BoardCardStepSelectedPayload,
     }),
@@ -3168,6 +3408,17 @@ type _FactoryCoversRegistry = _AssertExtends<BoardEventTypeFromRegistry, BoardEv
 
 export const BOARD_WS_METHODS = {
   subscribeCard: "board.subscribeCard",
+  /** Re-resolve a card's pull request from the forge. Two of the refresh
+      triggers are client-side moments (the card detail opening, the View PR
+      button being clicked), and both are cheap: the underlying lookup is
+      cached for two minutes, so a burst of these costs one forge call. */
+  refreshCardPullRequest: "board.refreshCardPullRequest",
+  /** Merge a card's pull request and advance the card. An RPC rather than a
+      board command because the caller is a human waiting on an answer — the
+      outcome decides whether they see "merged", the forge's refusal, or
+      "resolving conflicts" — and because a refresh must not write to the
+      durable event log every time somebody opens a card. */
+  mergeCardPullRequest: "board.mergeCardPullRequest",
 } as const;
 
 /**
@@ -3177,6 +3428,36 @@ export const BOARD_WS_METHODS = {
  * upstream union derives unary tags by exclusion.
  */
 export type BoardSubscriptionRpcTag = (typeof BOARD_WS_METHODS)["subscribeCard"];
+
+/** Both PR actions take just the card — the environment is implicit in the
+    connection, exactly as it is for `board.subscribeCard`. */
+export const BoardCardPullRequestActionInput = Schema.Struct({
+  cardId: BoardCardId,
+});
+export type BoardCardPullRequestActionInput = typeof BoardCardPullRequestActionInput.Type;
+
+/**
+ * What a Merge click did. Every arm is a normal outcome the card reports, not
+ * an exception: a forge that refuses the merge is the system working.
+ */
+export const BoardMergeCardPullRequestResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("merged"), number: PositiveInt }),
+  /** A conflict-resolution step has been started; the Merge button is disabled
+      until it finishes, and a successful one completes this merge. */
+  Schema.Struct({ outcome: Schema.Literal("conflict"), detail: Schema.String }),
+  /** The forge said no for a reason only a human can clear — a failing check,
+      a missing approval. `detail` is the forge's own wording. */
+  Schema.Struct({ outcome: Schema.Literal("refused"), detail: Schema.String }),
+  /** Already merged or closed, most likely elsewhere. */
+  Schema.Struct({ outcome: Schema.Literal("not-open"), state: BoardCardPullRequestState }),
+  Schema.Struct({ outcome: Schema.Literal("no-pull-request") }),
+  Schema.Struct({ outcome: Schema.Literal("no-workspace") }),
+  /** The card is not in the merge-role stage. The button renders only there,
+      so this answers a client that called the RPC without one. */
+  Schema.Struct({ outcome: Schema.Literal("wrong-stage") }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+]);
+export type BoardMergeCardPullRequestResult = typeof BoardMergeCardPullRequestResult.Type;
 
 export const BoardSubscribeCardInput = Schema.Struct({
   cardId: BoardCardId,
@@ -3312,6 +3593,16 @@ export const BOARD_RPCS = [
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
     stream: true,
   }),
+  Rpc.make(BOARD_WS_METHODS.refreshCardPullRequest, {
+    payload: BoardCardPullRequestActionInput,
+    success: Schema.Void,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WS_METHODS.mergeCardPullRequest, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardMergeCardPullRequestResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
 ] as const;
 
 /**
@@ -3322,6 +3613,12 @@ export const BOARD_RPCS = [
  */
 export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.subscribeCard]: AuthOrchestrationReadScope,
+  // A refresh only re-reads forge state onto the card, so it sits at the same
+  // read tier as the subscription it exists to keep current.
+  [BOARD_WS_METHODS.refreshCardPullRequest]: AuthOrchestrationReadScope,
+  // Merging changes the repository and moves the card: the operate tier, the
+  // same one every other board mutation rides.
+  [BOARD_WS_METHODS.mergeCardPullRequest]: AuthOrchestrationOperateScope,
 } as const;
 
 // ── Board settings (D10, t3o-07) ───────────────────────────────────────
@@ -3714,6 +4011,84 @@ export const BoardStageExecutionReview = Schema.Struct({
 });
 export type BoardStageExecutionReview = typeof BoardStageExecutionReview.Type;
 
+/** How a pull request is merged. `gh pr merge` with no strategy flag prompts
+    interactively, which is unusable from a server, so one is always chosen.
+    Squash is the default: a card's branch is one unit of work.
+
+    An ALIAS, not a second literal set: the value the settings card writes is
+    handed straight to `SourceControlProvider.mergeChangeRequest`, so two
+    independent definitions could drift into a config the provider cannot
+    accept. `sourceControl.ts` imports nothing from here, so the direction is
+    safe. */
+export const BoardMergeStrategy = ChangeRequestMergeStrategy;
+export type BoardMergeStrategy = ChangeRequestMergeStrategy;
+
+/**
+ * The conflict-resolution prompt (intent only — the completion mechanics are
+ * force-appended by the prompt envelope, as for every other stage prompt).
+ *
+ * The no-rewrite constraint is stated here rather than left to the agent's
+ * judgement: a force-push on a branch with an open PR strands the review
+ * loop's inline comments, invalidates the round's `reviewedSha`, and can
+ * silently destroy a concurrent human push. Under the default squash strategy
+ * the extra merge commit disappears at merge time anyway, so there is nothing
+ * to gain by rewriting.
+ */
+export const DEFAULT_BOARD_MERGE_CONFLICT_PROMPT =
+  "This card's pull request cannot merge because its branch conflicts with the base branch. Merge the base branch into this card's branch and resolve every conflict. Resolve them on the merits: read enough of both sides to understand what each change was for, and keep the intent of both — never resolve a conflict by simply discarding one side to make the merge go through. Run the project's checks and tests afterwards and fix what they catch, because a conflict resolved wrongly usually compiles and still breaks behaviour. Then commit and push normally. Do NOT rebase, and do NOT force-push under any circumstances: this branch has an open pull request, and rewriting its history strands the review comments already anchored to it and can destroy work someone else pushed. If the conflicts need a decision you cannot make from the code alone, stop and say so rather than guessing.";
+
+/**
+ * The `{ kind: "merge" }` member — the merge-role stage's config. Like the
+ * review member it carries every simple-member field so the reactor keeps
+ * reading `prompt`/`model`/`mode`/… uniformly, and adds the three settings the
+ * merge role owns.
+ *
+ * `autoExecute` is FORCED off by `resolveBoardStageExecution` and is not
+ * offered in the settings card: nothing in this stage runs on entry. Merging
+ * is always a deliberate human click, so the only agent run this stage ever
+ * starts is the conflict-resolution step, and only after a merge attempt has
+ * actually been refused for conflicts.
+ */
+export const BoardStageExecutionMerge = Schema.Struct({
+  kind: Schema.Literal("merge"),
+  /** Always false — see above. Retained so the member is field-compatible with
+      the simple member for every uniform reader. */
+  autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** The conflict-resolution step's prompt. The stage's only agent run, so it
+      is the stage's `prompt` rather than a separate key. */
+  prompt: Schema.String.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MERGE_CONFLICT_PROMPT)),
+  ),
+  model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  runtimeMode: Schema.optional(RuntimeMode),
+  /** Build mode: resolving conflicts needs the card's worktree. Forced by
+      `resolveBoardStageExecution`, as the review loop's is. */
+  mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("build" as const))),
+  humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithoutPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Off: the card leaves this stage when a merge succeeds or a human moves
+      it, never because a step finished. */
+  autoAdvance: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  timeoutMs: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
+  ),
+  maxAttempts: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
+  ),
+  maxInvocationsPerStageEntry: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
+  ),
+  /** How the Merge button merges. */
+  strategy: BoardMergeStrategy.pipe(Schema.withDecodingDefault(Effect.succeed("squash" as const))),
+  /** Delete the card's branch once it reaches Done with a MERGED pull request.
+      On by default: a merged PR means the commits already live in the base
+      branch, so the branch is genuinely spent. Never deletes for an unmerged
+      or closed PR, and never for a card with no PR at all. */
+  deleteBranchOnDone: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+export type BoardStageExecutionMerge = typeof BoardStageExecutionMerge.Type;
+
 /**
  * A stage's execution config (D4/D15) — a `kind`-discriminated union so the
  * codebase branches on stage kind in exactly two places (the executor registry
@@ -3725,6 +4100,7 @@ export type BoardStageExecutionReview = typeof BoardStageExecutionReview.Type;
 export const BoardStageExecution = Schema.Union([
   BoardStageExecutionSimple,
   BoardStageExecutionReview,
+  BoardStageExecutionMerge,
 ]);
 export type BoardStageExecution = typeof BoardStageExecution.Type;
 
@@ -3735,6 +4111,15 @@ export function isBoardReviewStageExecution(
   execution: BoardStageExecution,
 ): execution is BoardStageExecutionReview {
   return execution.kind === "review";
+}
+
+/** True when a resolved stage config is the merge member. Companion to
+    `isBoardReviewStageExecution`; the settings card and the merge action are
+    the only readers. */
+export function isBoardMergeStageExecution(
+  execution: BoardStageExecution,
+): execution is BoardStageExecutionMerge {
+  return execution.kind === "merge";
 }
 
 /**
@@ -3760,6 +4145,13 @@ export const DEFAULT_BOARD_STAGE_EXECUTION: BoardStageExecution = Schema.decodeS
 export const DEFAULT_BOARD_REVIEW_STAGE_EXECUTION: BoardStageExecutionReview = Schema.decodeSync(
   BoardStageExecution,
 )({ kind: "review" }) as BoardStageExecutionReview;
+
+/** The all-defaults merge-stage config: squash, branch cleanup on, the
+    compiled-in conflict prompt. What the `merge` stage resolves to when absent
+    from the pipeline map, and the base a merge settings edit patches from. */
+export const DEFAULT_BOARD_MERGE_STAGE_EXECUTION: BoardStageExecutionMerge = Schema.decodeSync(
+  BoardStageExecution,
+)({ kind: "merge" }) as BoardStageExecutionMerge;
 
 /** The Building prompt (D4), intent only: completion / question mechanics are
     force-appended by the prompt envelope (`composeStepPrompt`), never carried
@@ -3817,6 +4209,10 @@ export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
   // prompts. The `ReviewLoopExecutor` reads this member; the reactor drives it
   // as any other stage.
   [BOARD_SEED_STAGE_IDS.review]: DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
+  // Ready for merge carries config but runs NOTHING on entry: its settings
+  // (strategy, branch cleanup, the conflict prompt) are read by the merge
+  // action and the Done transition, not by an auto-execute.
+  [BOARD_SEED_STAGE_IDS.merge]: DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
 };
 
 export const BoardSettings = Schema.Struct({
@@ -3933,6 +4329,26 @@ export function resolveBoardStageExecution(
       ...base,
       mode: "build",
       humanInLoop: false,
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+    };
+  }
+  if (stageId === BOARD_SEED_STAGE_IDS.merge) {
+    // Same coercion the review branch performs: an absent entry, or a legacy
+    // `simple` entry stored at this id before the merge member existed, both
+    // resolve to the merge default; only a genuine merge member (the settings
+    // card's own writes) passes through, preserving the user's strategy and
+    // branch-cleanup choices. `autoExecute` is forced OFF and `mode` to
+    // `build` — nothing runs on entry, and the conflict step needs the
+    // worktree — so neither a hand-edited settings file nor a stale stored
+    // config can start an agent in this stage or strand one without a tree.
+    const base =
+      configured !== undefined && isBoardMergeStageExecution(configured)
+        ? configured
+        : DEFAULT_BOARD_MERGE_STAGE_EXECUTION;
+    return {
+      ...base,
+      autoExecute: false,
+      mode: "build",
       runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
     };
   }

@@ -77,6 +77,7 @@ import { boardShellStreamEvent, isBoardEvent } from "./board/projector.ts";
 // T3o: board RPC handlers live in the board module (t3o-04); the actor stamp and
 // the card-threads shell delta live beside them (t3o-18, D3/D11).
 import { boardActorStamp, boardCardThreadsShellEvents, boardRpcHandlers } from "./board/rpc.ts";
+import { SupervisorReactor } from "./board/supervisorReactor.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -362,6 +363,10 @@ const makeWsRpcLayer = (
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+      // T3o: the board's pull-request actions (refresh / merge) are performed
+      // by the supervisor reactor, which owns the forge gateway and the step
+      // machinery a conflict fix needs.
+      const boardSupervisor = yield* SupervisorReactor;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
@@ -2176,7 +2181,12 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "server" },
           ),
         // T3o: board RPC handlers register from the board module (t3o-04).
-        ...boardRpcHandlers({ currentSession, orchestrationEngine, projectionSnapshotQuery }),
+        ...boardRpcHandlers({
+          currentSession,
+          orchestrationEngine,
+          projectionSnapshotQuery,
+          boardSupervisor,
+        }),
       });
     }),
   );
