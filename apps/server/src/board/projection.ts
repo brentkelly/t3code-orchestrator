@@ -434,6 +434,11 @@ const BoardCardShellDbRow = Schema.Struct({
   /** The card's `board_plans` rows, counted in SQL so a thousand-card shell
       never loads a plan body. */
   planCount: Schema.Int,
+  /** The card's PR number, read straight out of the `pull_request` JSON. Only
+      the NUMBER, not the whole struct: it is all the shell carries, and
+      pulling the URL and state onto every card would spend wire bytes the
+      column view has nothing to do with. */
+  prNumber: Schema.NullOr(Schema.Int),
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
 });
@@ -684,6 +689,12 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         END AS "briefHasImage",
         (SELECT COUNT(*) FROM board_plans WHERE board_plans.card_id = board_cards.card_id)
           AS "planCount",
+        -- The SECOND producer of prNumber. The delta path derives it in JS
+        -- from the card aggregate; this derives it in SQL from the same
+        -- column, and the two must agree - a badge that appears after an edit
+        -- but vanishes on reconnect is exactly the stale label this codebase
+        -- refuses to ship (cardMetaShellFields.test.ts asserts the pair).
+        json_extract(pull_request, '$.number') AS "prNumber",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
@@ -713,6 +724,11 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- both queries decode through one row schema.
         0 AS "briefHasImage",
         0 AS "planCount",
+        -- Unlike the two indicators above this is a plain column read, not a
+        -- correlated subquery, so the archive list carries it for free — and
+        -- an archived card's PR is exactly what you look for when working out
+        -- what happened to abandoned work.
+        json_extract(pull_request, '$.number') AS "prNumber",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
@@ -2317,6 +2333,21 @@ export function withBoardShellCards(
           hasBrief: row.hasBrief !== 0,
           briefHasImage: row.briefHasImage !== 0,
           planCount: row.planCount,
+          // `makeBoardCardShell` takes the whole link and reads the number off
+          // it, so the snapshot supplies a minimal stand-in rather than a
+          // second way of setting `prNumber` that could disagree with the
+          // delta path's.
+          pullRequest:
+            row.prNumber === null
+              ? null
+              : {
+                  number: row.prNumber,
+                  url: "",
+                  state: "open",
+                  headBranch: "",
+                  baseRef: "",
+                  checkedAt: row.createdAt,
+                },
           archivedAt: row.archivedAt,
           activeThreadId,
           queued: queuedByCard.has(row.cardId),

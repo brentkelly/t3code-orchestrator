@@ -57,6 +57,8 @@ export function describeBoardMergeOutcome(result: {
       return "This card has no pull request to merge.";
     case "no-workspace":
       return "This card has no workspace to merge from.";
+    case "wrong-stage":
+      return "Move the card to the merge stage before merging.";
     default:
       return "The merge could not be attempted.";
   }

@@ -102,6 +102,9 @@ export type BoardMergeAttemptResult =
   | { readonly outcome: "not-open"; readonly state: "closed" | "merged" }
   | { readonly outcome: "no-pull-request" }
   | { readonly outcome: "no-workspace" }
+  /** The card is not in the merge-role stage. The button only renders there,
+      so this is a client that called the RPC without one. */
+  | { readonly outcome: "wrong-stage" }
   | { readonly outcome: "unknown-card" };
 
 export interface SupervisorReactorShape {
@@ -1293,6 +1296,15 @@ const make = Effect.gen(function* () {
     readonly state: BoardCardStepState;
     readonly outcome: "succeeded" | "failed" | "abandoned";
   }) {
+    // A conflict fix that did NOT succeed must not leave the card armed. The
+    // success path consumes the entry itself (and needs it, to complete the
+    // merge), so only the other terminal outcomes clear it here — otherwise a
+    // failed, timed-out or abandoned fix leaves a stale entry that the next
+    // merge-stage step to succeed, possibly one a human started by hand days
+    // later, would consume and turn into a merge nobody asked for.
+    if (input.outcome !== "succeeded") {
+      mergeAwaitingConflictFix.delete(String(input.card.id));
+    }
     yield* dispatch({
       type: "board.card.settle-step",
       commandId: yield* commandId("settle-step"),
@@ -1683,14 +1695,18 @@ const make = Effect.gen(function* () {
    */
   const mergeCardPullRequest = Effect.fn("board-supervisor-mergeCardPullRequest")(function* (
     cardId: BoardCardId,
+    /** True when this call is the completion of a conflict fix rather than a
+        fresh Merge click. Bounds the conflict→merge cycle (see below). */
+    viaConflictFix = false,
   ) {
     const card = yield* readCard(cardId);
     if (card === null) return { outcome: "unknown-card" } as const;
 
-    // Re-check against the forge first. The card's link is a cache refreshed
-    // only at the trigger points, so it can say `open` about a PR that was
-    // merged elsewhere minutes ago — and merging is the one operation where
-    // acting on a stale read is worth a round trip to avoid.
+    // Re-check first. This is a cache read, not a guaranteed round trip: the
+    // underlying lookup has a 2-minute TTL, so it narrows the staleness window
+    // rather than closing it. That is the honest bound, and it is enough —
+    // acting on a stale `open` costs a refused merge the user reads and
+    // retries, not a wrong merge, because the forge is the one that decides.
     yield* refreshCardPullRequest(card);
     const fresh = (yield* readCard(cardId)) ?? card;
 
@@ -1698,6 +1714,16 @@ const make = Effect.gen(function* () {
     if (pullRequest === null) return { outcome: "no-pull-request" } as const;
     if (pullRequest.state !== "open") {
       return { outcome: "not-open" as const, state: pullRequest.state };
+    }
+
+    // The stage gate, enforced HERE and not only on the button. The client
+    // renders Merge only in the merge-role stage, but an RPC is reachable
+    // without that button, and merging a card still mid-review would merge a
+    // branch the review agent is actively posting on.
+    const stages = yield* readBoard;
+    const mergeStage = boardStageWithRole(stages, "merge");
+    if (mergeStage === null || fresh.stage !== mergeStage.stageId) {
+      return { outcome: "wrong-stage" as const };
     }
 
     const worktree = fresh.worktree;
@@ -1708,7 +1734,12 @@ const make = Effect.gen(function* () {
     if (cwd === null) return { outcome: "no-workspace" } as const;
 
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, fresh.stage);
+    // Resolved from the MERGE-ROLE stage, not from `fresh.stage`. They are the
+    // same stage today because of the gate above, but reading the role holder
+    // is what makes the strategy the user configured the one that runs —
+    // resolving off the card's own stage would silently fall back to squash
+    // the moment those two could differ.
+    const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
     const strategy = isBoardMergeStageExecution(exec) ? exec.strategy : "squash";
 
     const failure = yield* pullRequests.merge({ cwd, number: pullRequest.number, strategy }).pipe(
@@ -1718,10 +1749,17 @@ const make = Effect.gen(function* () {
 
     if (failure !== null) {
       const detail = failure.detail;
-      if (isMergeConflictRefusal(detail)) {
+      if (isMergeConflictRefusal(detail) && !viaConflictFix) {
         // Ask for the stage's own thread: the merge stage resolves to the
         // conflict-resolution prompt in build mode, so this is the conflict
         // step and nothing else can run here.
+        //
+        // `viaConflictFix` bounds the cycle at ONE automatic attempt per click:
+        // this call is itself the completion of a conflict fix, and conflicting
+        // again means the fix did not work. Starting another step there would
+        // loop a pair of agents against a branch that keeps re-conflicting,
+        // burning provider capacity with nobody watching. Fall through to
+        // `refused` instead, so the card says so and waits for a human.
         mergeAwaitingConflictFix.add(String(fresh.id));
         yield* dispatch({
           type: "board.card.start-stage-thread",
@@ -1834,7 +1872,7 @@ const make = Effect.gen(function* () {
         // complete was initiated by a Merge click that hit a conflict.
         if (stageRole === "merge" && mergeAwaitingConflictFix.delete(String(card.id))) {
           yield* schedule();
-          yield* mergeCardPullRequest(card.id).pipe(Effect.asVoid);
+          yield* mergeCardPullRequest(card.id, true).pipe(Effect.asVoid);
           return;
         }
         // Ask the stage executor what runs next (t3o-16): a single-step stage

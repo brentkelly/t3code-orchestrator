@@ -3419,6 +3419,9 @@ export const BoardMergeCardPullRequestResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("not-open"), state: BoardCardPullRequestState }),
   Schema.Struct({ outcome: Schema.Literal("no-pull-request") }),
   Schema.Struct({ outcome: Schema.Literal("no-workspace") }),
+  /** The card is not in the merge-role stage. The button renders only there,
+      so this answers a client that called the RPC without one. */
+  Schema.Struct({ outcome: Schema.Literal("wrong-stage") }),
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
 ]);
 export type BoardMergeCardPullRequestResult = typeof BoardMergeCardPullRequestResult.Type;

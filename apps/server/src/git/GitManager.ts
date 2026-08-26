@@ -2255,8 +2255,15 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly branch: string;
   }) {
+    // Normalized exactly as `remoteStatus` does before it reaches this cache.
+    // The epoch map is keyed by the normalized path (`bumpPrLookupEpoch` runs
+    // `normalizeStatusCacheKey` itself), so reading under a raw path would put
+    // the entry in a bucket no invalidation can ever reach — the post-merge
+    // refresh would keep answering `open` for the full TTL. It also means the
+    // board and the status poll share one entry per checkout rather than two.
+    const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
     const details = { branch: input.branch, upstreamRef: null };
-    const { latest } = yield* Cache.get(prLookupCache, prLookupCacheKey(input.cwd, details));
+    const { latest } = yield* Cache.get(prLookupCache, prLookupCacheKey(cacheKey, details));
     return latest === null ? null : toStatusPr(latest);
   });
 
@@ -2268,6 +2275,10 @@ export const make = Effect.gen(function* () {
    * instead of a two-minute-old `open`. Bumped on FAILURE too: a merge that
    * was refused because the PR had already been merged elsewhere must not
    * leave the card believing it is still open.
+   *
+   * `bumpPrLookupEpoch` normalizes the path itself, and `findBranchPullRequest`
+   * reads under the same normalized key — the two must not drift, or the
+   * invalidation silently stops reaching the entry it exists to clear.
    */
   const mergeBranchPullRequest = Effect.fn("mergeBranchPullRequest")(function* (input: {
     readonly cwd: string;

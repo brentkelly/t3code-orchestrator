@@ -32,7 +32,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Dialog } from "../components/ui/dialog";
 import { randomUUID } from "../lib/utils";
@@ -132,6 +132,18 @@ export function BoardCardDetail({
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
+  // Refresh trigger: the card detail opening. One of the moments the answer
+  // plausibly changed AND is about to be read — the Merge button's condition is
+  // the card's PR state, so it should be current at the instant it becomes
+  // visible rather than as of whenever the card last did something. Keyed on
+  // the card id so it fires once per open, not on every re-render; the
+  // server-side lookup is cached for two minutes, so reopening a card in quick
+  // succession costs no forge calls at all.
+  useEffect(() => {
+    void refreshCardPullRequest({ environmentId, input: { cardId } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the command atom
+    // is stable; re-running on its identity would defeat the once-per-open key.
+  }, [environmentId, cardId]);
   const labelsById = useMemo(() => indexBoardLabels(catalogue), [catalogue]);
   const stageState = useMemo<BoardState>(
     () => ({ cards: [], stages, nextCardNumberByProject: {} }),
