@@ -1503,6 +1503,22 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       };
     }
 
+    case "board.card.record-branch-cleanup": {
+      // Reporting only: no card field changes, so no `card` on the payload and
+      // no `updatedAt` bump. The card must still EXIST and be live — a rail
+      // row on an archived or deleted card would have nowhere to render.
+      const card = yield* requireActiveBoardCard({ board, command });
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: card.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-branch-cleanup-recorded",
+        payload: { cardId: card.id, detail: command.detail },
+      };
+    }
+
     case "board.card.fail-worktree": {
       const card = yield* requireActiveBoardCard({ board, command });
       // A `ready` or `reclaimed` worktree is not an attempt in flight: failing

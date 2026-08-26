@@ -31,9 +31,12 @@ import {
   CircleAlertIcon,
   CircleSlashIcon,
   FileTextIcon,
+  GitMergeIcon,
+  GitPullRequestIcon,
   ListTreeIcon,
   MoveRightIcon,
   PlusCircleIcon,
+  ScissorsIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -99,6 +102,13 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <ArchiveRestoreIcon className={className} />;
     case "card-worktree-failed":
       return <TriangleAlertIcon className={cn(className, "text-destructive-foreground")} />;
+    case "card-pull-request-linked":
+    case "card-pull-request-state-changed":
+      return <GitPullRequestIcon className={className} />;
+    case "card-pull-request-merged":
+      return <GitMergeIcon className={className} />;
+    case "card-branch-deleted":
+      return <ScissorsIcon className={className} />;
   }
 }
 
@@ -188,6 +198,28 @@ function activitySentence(
       ) : (
         <>could not prepare the worktree: {payload.detail}</>
       );
+    case "card-pull-request-linked":
+      return payload.prNumber === undefined ? (
+        <>linked a pull request</>
+      ) : (
+        <>linked pull request #{payload.prNumber}</>
+      );
+    case "card-pull-request-state-changed":
+      return payload.prNumber === undefined ? (
+        <>the pull request changed state</>
+      ) : (
+        <>
+          pull request #{payload.prNumber} is {payload.prState ?? "changed"}
+        </>
+      );
+    case "card-pull-request-merged":
+      return payload.prNumber === undefined ? (
+        <>merged the pull request</>
+      ) : (
+        <>merged pull request #{payload.prNumber}</>
+      );
+    case "card-branch-deleted":
+      return payload.detail === undefined ? <>deleted the branch</> : <>{payload.detail}</>;
   }
 }
 

@@ -1223,6 +1223,15 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           path: "/tmp/worktrees/card-provisioning",
           createdAt: NOW,
         },
+        // Reporting only: it writes an activity row and touches no card field,
+        // so it cannot possibly emit a move.
+        "board.card.record-branch-cleanup": {
+          type: "board.card.record-branch-cleanup",
+          commandId: CommandId.make("cmd-record-branch-cleanup"),
+          cardId: BoardCardId.make("card-ready"),
+          detail: "Deleted branch board/card-ready",
+          createdAt: NOW,
+        },
         // The card starts with no PR, so recording one is a real change and
         // clears the decider's no-op guard.
         "board.card.record-pull-request": {

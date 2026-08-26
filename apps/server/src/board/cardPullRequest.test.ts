@@ -16,8 +16,13 @@ import * as Effect from "effect/Effect";
 
 import {
   BOARD_SEED_STAGE_IDS,
+  ProviderInstanceId,
+  ThreadId,
   type BoardCard,
+  type BoardCardId,
+  type BoardCardStepState,
   type OrchestrationCommand,
+  type OrchestrationEvent,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -53,6 +58,49 @@ const cardInMerge = (): BoardCard =>
     orderKey: "m",
     worktree: readyWorktree("card-1"),
   });
+
+/** A running step in the merge stage — what a human gets by restarting the
+    stage thread by hand. The step id IS the stage id (t3o-15, D1). */
+const runningMergeStep = (cardId: BoardCardId): BoardCardStepState => ({
+  cardId,
+  stepId: String(BOARD_SEED_STAGE_IDS.merge),
+  stepLabel: "Ready for merge",
+  stageLabel: "Ready for merge",
+  attempt: 1,
+  stallCount: 0,
+  lastNudgeAt: null,
+  prompt: "resolve the conflicts",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5-codex",
+  mode: "build",
+  runtimeMode: "auto",
+  humanInLoop: false,
+  maxAttempts: 3,
+  timeoutMs: 1_000,
+  threadId: ThreadId.make("thread-1"),
+  status: "running",
+  slotHeld: true,
+  startedAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+});
+
+const mergeStepCompleted = (cardId: BoardCardId, sequence: number): OrchestrationEvent =>
+  ({
+    type: "board.card-step-completed",
+    sequence,
+    payload: {
+      cardId,
+      completion: {
+        cardId,
+        stepId: String(BOARD_SEED_STAGE_IDS.merge),
+        outcome: "succeeded",
+        summary: "resolved the conflicts",
+        payload: null,
+        threadId: ThreadId.make("thread-1"),
+        completedAt: "2026-01-01T00:00:00.000Z",
+      },
+    },
+  }) as unknown as OrchestrationEvent;
 
 const recordedPullRequests = (commands: ReadonlyArray<OrchestrationCommand>) =>
   commands.filter((command) => command.type === "board.card.record-pull-request");
@@ -132,6 +180,38 @@ describe("card ↔ pull request link", () => {
             assert.equal(recordedPullRequests(yield* h.commands).length, 0);
             const board = yield* h.board;
             assert.equal(board.cards[0]!.pullRequest?.number, 284);
+          }),
+      );
+    }),
+  );
+
+  it.effect("still refreshes a card whose worktree was reclaimed", () =>
+    Effect.gen(function* () {
+      // Reclaim nulls `path`, not `branch`, and such a card can still be
+      // merged — so freezing its PR link at whatever it last said would leave
+      // a Merge button acting on stale state.
+      const reclaimed = {
+        ...cardInMerge(),
+        worktree: {
+          branch: "board/card-1",
+          baseRefName: "main",
+          path: null,
+          status: "reclaimed" as const,
+          attempts: 1,
+          lastError: null,
+          reclaimBlockedReason: null,
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [reclaimed] },
+          settings: settings(),
+          pullRequest: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(reclaimed.id);
+            assert.equal((yield* h.board).cards[0]!.pullRequest?.number, 284);
           }),
       );
     }),
@@ -301,6 +381,32 @@ describe("merging a card's pull request", () => {
             (command) => command.type === "board.card.start-stage-thread",
           );
           assert.deepStrictEqual(started, []);
+        }),
+    ),
+  );
+
+  it.effect("does NOT merge when a merge-stage step succeeds without a merge request", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [cardInMerge()],
+          stepStates: [runningMergeStep(cardInMerge().id)],
+        },
+        settings: settings(),
+        pullRequest: openPr,
+        initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          // A human can start a thread in the merge stage by hand (the card's
+          // stage-restart menu). Its success must NOT merge the pull request —
+          // that would be a merge nobody asked for, which is the one thing the
+          // design refuses to do. Only a Merge click that hit a conflict arms
+          // the completion path.
+          yield* h.pumpDomain(mergeStepCompleted(cardInMerge().id, 1));
+          assert.equal((yield* h.mergeAttempts).length, 0);
+          assert.deepStrictEqual(movesTo(yield* h.commands), []);
         }),
     ),
   );

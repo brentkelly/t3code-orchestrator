@@ -496,6 +496,12 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    // Reporting only — it changes no card field, so the read model is
+    // unchanged and a replay that includes it lands exactly where a replay
+    // without it would.
+    case "board.card-branch-cleanup-recorded":
+      return Effect.succeed(model);
+
     case "board.stage-created":
       return decodeBoardStageCreatedPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
@@ -765,6 +771,9 @@ export function boardShellStreamEvent(
     // fields, so a step transition needs no separate shell delta.
     case "board.card-step-awaiting-input":
     case "board.card-step-retuned":
+    // Branch cleanup is card DETAIL too: it lands on the activity rail, which
+    // rides `board.subscribeCard`, and changes nothing a column card renders.
+    case "board.card-branch-cleanup-recorded":
       // Agent write-path events are card DETAIL, not column-card shell fields
       // (D7): an agent's progress note, step completion or a plan BODY rewrite
       // changes nothing a column card renders, so they emit no shell delta.

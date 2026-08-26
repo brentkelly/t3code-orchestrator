@@ -1498,10 +1498,20 @@ const make = Effect.gen(function* () {
     card: BoardCard,
   ) {
     const worktree = card.worktree;
-    if (worktree === null || worktree.status !== "ready" || worktree.path === null) return;
+    // No branch means nothing to look up — a card that never entered Building
+    // has no worktree at all. But a RECLAIMED worktree still has its branch
+    // name (reclaim nulls `path`, not `branch`) and its card can still be
+    // merged, so it must still be refreshable: falling back to the project
+    // root keeps "the worktree was tidied away" from silently freezing the
+    // card's link at whatever it last said.
+    if (worktree === null) return;
     if (isBoardCardPullRequestTerminal(card.pullRequest)) return;
 
-    const found = yield* pullRequests.find({ cwd: worktree.path, branch: worktree.branch }).pipe(
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const cwd = worktree.path ?? projectCwd(model, card);
+    if (cwd === null) return;
+
+    const found = yield* pullRequests.find({ cwd, branch: worktree.branch }).pipe(
       Effect.catchCause((cause) =>
         Effect.logDebug("board supervisor: pull request lookup failed; keeping last known", {
           cardId: card.id,
@@ -1587,14 +1597,46 @@ const make = Effect.gen(function* () {
       ),
     );
     if (result === null) return;
-    yield* Effect.logDebug("board supervisor: branch cleanup", {
+    // Report it on the card, not just in the log. Deleting a branch is
+    // irreversible, and a partial cleanup — remote gone, local still held by a
+    // worktree — is the NORMAL outcome given `reclaim-on-archive`, so the user
+    // needs to be told which of their branches still exist without reading
+    // server logs to find out.
+    const deleted = [
+      ...(result.remoteDeleted ? ["remote"] : []),
+      ...(result.localDeleted ? ["local"] : []),
+    ];
+    const detail =
+      deleted.length === 0
+        ? `Kept branch ${worktree.branch}${result.skippedReason === null ? "" : ` — ${result.skippedReason}`}`
+        : `Deleted ${deleted.join(" and ")} branch ${worktree.branch}${
+            result.skippedReason === null ? "" : ` — ${result.skippedReason}`
+          }`;
+    yield* dispatch({
+      type: "board.card.record-branch-cleanup",
+      commandId: yield* commandId("branch-cleanup"),
       cardId: card.id,
-      branch: worktree.branch,
-      remoteDeleted: result.remoteDeleted,
-      localDeleted: result.localDeleted,
-      skippedReason: result.skippedReason,
+      detail,
+      createdAt: yield* nowIso,
     });
   });
+
+  /**
+   * Cards whose human-initiated merge is waiting on a conflict fix.
+   *
+   * The merge stage runs nothing on entry, but a human CAN start a thread there
+   * by hand (the card's stage-restart menu). Without this set, that thread
+   * reporting success would merge the pull request — a merge nobody asked for,
+   * which is the one thing this design refuses to do. An entry is added only
+   * when a Merge click hits a conflict, and consumed by the step that resolves
+   * it.
+   *
+   * In-memory deliberately. After a restart the set is empty, so a conflict
+   * step that finishes across a restart does NOT auto-merge and the human
+   * clicks Merge again — the conservative direction, and the only one
+   * consistent with "no merge happens that a human did not initiate".
+   */
+  const mergeAwaitingConflictFix = new Set<string>();
 
   /**
    * Whether a forge refusal is a MERGE CONFLICT rather than a policy block.
@@ -1680,6 +1722,7 @@ const make = Effect.gen(function* () {
         // Ask for the stage's own thread: the merge stage resolves to the
         // conflict-resolution prompt in build mode, so this is the conflict
         // step and nothing else can run here.
+        mergeAwaitingConflictFix.add(String(fresh.id));
         yield* dispatch({
           type: "board.card.start-stage-thread",
           commandId: yield* commandId("merge-conflict"),
@@ -1785,10 +1828,11 @@ const make = Effect.gen(function* () {
       case "succeeded":
         yield* settleStep({ card, state, outcome: "succeeded" });
         // The conflict-resolution step reporting success finishes the merge the
-        // human already asked for — the branch is only in this state because
-        // someone clicked Merge and hit a conflict. This is not auto-merge: no
-        // merge happens here that a human did not initiate.
-        if (stageRole === "merge") {
+        // human already asked for. Gated on the pending-merge set, NOT merely
+        // on the stage: a thread a human restarted by hand in this stage must
+        // not merge anything. This is not auto-merge — every merge it can
+        // complete was initiated by a Merge click that hit a conflict.
+        if (stageRole === "merge" && mergeAwaitingConflictFix.delete(String(card.id))) {
           yield* schedule();
           yield* mergeCardPullRequest(card.id).pipe(Effect.asVoid);
           return;

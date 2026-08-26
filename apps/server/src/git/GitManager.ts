@@ -2233,33 +2233,31 @@ export const make = Effect.gen(function* () {
   /**
    * The pull request open on a named branch, for the board's card→PR link.
    *
-   * Deliberately a THIN wrapper over `lookupStatusPr` rather than a second
-   * resolver: it inherits the 2-minute success TTL, the per-branch exponential
-   * failure backoff, and the last-known-good fallback that keeps a rate-limit
-   * blip from blanking a card's PR badge. A second implementation would have
-   * to re-earn all three, and would drift.
+   * Goes at `prLookupCache` rather than at `lookupStatusPr`, which is the
+   * status path's wrapper. That is deliberate and load-bearing: the board must
+   * be able to tell "we looked and there is no pull request" from "we could
+   * not look", because recording the first over an existing link blanks a
+   * card's PR badge on a transient forge blip. `lookupStatusPr` catches every
+   * failure into a last-known-or-null answer — correct for a status badge that
+   * only needs to render something, and fatal for a caller that PERSISTS the
+   * result. Reading the cache directly keeps the 2-minute success TTL, the
+   * per-branch exponential failure backoff and the `isUnpublishedBranch` skip,
+   * while leaving the error channel intact.
    *
    * `upstreamRef: null` is passed deliberately. It engages the
    * `isUnpublishedBranch` guard, so a branch that exists only locally is never
    * sent to the forge at all — which is exactly the board's "never look up a
    * card whose branch was never pushed" rule, for free.
    *
-   * `isDefaultBranch: false` because a card's branch never is one; the flag
-   * only exists to suppress reverse-merge history on trunk.
-   *
-   * Returns null both for "no PR" and for "lookup failed". The board treats
-   * those differently — a failure must leave the existing link alone — so the
-   * caller distinguishes them by catching, not by the return value.
+   * Returns null ONLY for "there is no pull request". A failed lookup fails.
    */
   const findBranchPullRequest = Effect.fn("findBranchPullRequest")(function* (input: {
     readonly cwd: string;
     readonly branch: string;
   }) {
-    return yield* lookupStatusPr(input.cwd, {
-      branch: input.branch,
-      upstreamRef: null,
-      isDefaultBranch: false,
-    });
+    const details = { branch: input.branch, upstreamRef: null };
+    const { latest } = yield* Cache.get(prLookupCache, prLookupCacheKey(input.cwd, details));
+    return latest === null ? null : toStatusPr(latest);
   });
 
   /**

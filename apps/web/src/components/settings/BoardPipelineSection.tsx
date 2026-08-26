@@ -1159,7 +1159,7 @@ function MergeStageBody(props: {
   );
 }
 
-/** Every non-review stage body. The rows a stage exposes follow its effective/** Every non-review stage body. The rows a stage exposes follow its effective
+/** Every non-review stage body. The rows a stage exposes follow its effective
     role: `plan` is forced read-only + human-in-the-loop (no mode / pause /
     ceiling rows), `build` runs the worktree unattended-with-plan (no worktree
     or generic pause rows), and a roleless stage keeps the full set behind the

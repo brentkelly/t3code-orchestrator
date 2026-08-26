@@ -1886,6 +1886,18 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         return;
       }
 
+      case "board.card-branch-cleanup-recorded":
+        // No card write: the event exists only so the deletion (or the reason
+        // one was skipped) is visible on the card rather than buried in a log.
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-branch-deleted",
+          payload: { detail: event.payload.detail },
+          threadId: null,
+        });
+        return;
+
       case "board.card-reordered":
       // Worktree lifecycle (t3o-09): every payload carries the whole card, so
       // the persisted projection is the same idempotent upsert — the worktree
