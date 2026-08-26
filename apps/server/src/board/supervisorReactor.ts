@@ -18,6 +18,7 @@
  */
 import {
   boardCardPlans,
+  boardCardPullRequestsEqual,
   boardCardStepCompletions,
   boardCardStepState,
   boardRunLabel,
@@ -27,17 +28,23 @@ import {
   boardStageById,
   boardStageEntryInvocationCount,
   boardStageIndex,
+  boardStageWithRole,
   CommandId,
   BOARD_ENVELOPE_QUESTION_MECHANISM,
   DEFAULT_BOARD_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EMPTY_BOARD_STATE,
+  effectiveBoardStageRole,
+  isBoardCardPullRequestTerminal,
+  isBoardMergeStageExecution,
   isBoardTerminalStepStatus,
   MessageId,
   resolveBoardStageExecution,
   resolveBoardStageModelSelection,
   ThreadId,
   type BoardCard,
+  type BoardCardId,
+  type BoardCardPullRequest,
   type BoardCardStepState,
   type BoardSettings,
   type BoardStageExecution,
@@ -67,6 +74,8 @@ import { forkParked } from "../serverActivation.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
 import { boardSnapshotQueryMethodsOf } from "./projection.ts";
+import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
+import { deleteMergedCardBranch } from "./branchCleanup.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
@@ -85,6 +94,16 @@ import {
 } from "./supervisor.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
 
+/** What a Merge click did, for the RPC to turn into a toast. */
+export type BoardMergeAttemptResult =
+  | { readonly outcome: "merged"; readonly number: number }
+  | { readonly outcome: "conflict"; readonly detail: string }
+  | { readonly outcome: "refused"; readonly detail: string }
+  | { readonly outcome: "not-open"; readonly state: "closed" | "merged" }
+  | { readonly outcome: "no-pull-request" }
+  | { readonly outcome: "no-workspace" }
+  | { readonly outcome: "unknown-card" };
+
 export interface SupervisorReactorShape {
   /** Reconcile persisted step state, then subscribe to board and thread
       events. Must run in a scope so worker fibers finalize on shutdown. */
@@ -97,6 +116,12 @@ export interface SupervisorReactorShape {
   readonly sweep: Effect.Effect<void>;
   /** Resolves when the internal queue is empty and idle (test hook). */
   readonly drain: Effect.Effect<void>;
+  /** Re-resolve one card's pull request from the forge and record any change.
+      The client-driven refresh triggers (card detail opened, View PR clicked)
+      call this through the board RPC. */
+  readonly refreshPullRequest: (cardId: BoardCardId) => Effect.Effect<void>;
+  /** Merge a card's pull request and advance it (the Merge button). */
+  readonly mergePullRequest: (cardId: BoardCardId) => Effect.Effect<BoardMergeAttemptResult>;
 }
 
 export class SupervisorReactor extends Context.Service<SupervisorReactor, SupervisorReactorShape>()(
@@ -134,6 +159,7 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
   const slots = yield* BoardStepSlots;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const pullRequests = yield* BoardPullRequestGateway;
   const setupRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
 
   const commandId = (tag: string) =>
@@ -1445,6 +1471,239 @@ const make = Effect.gen(function* () {
   // (D4). A step that is running OR awaiting a human answer, with no completion
   // and no pending question left on the thread, settled without completing —
   // recover. A still-pending question is the legitimate gate (D13), not death.
+  // ── Card ↔ pull request ─────────────────────────────────────────────
+
+  /**
+   * Re-resolve the card's pull request from the forge and record it if it
+   * moved.
+   *
+   * Called from the refresh triggers, never on a timer. There is deliberately
+   * NO periodic sweep: the cost of PR lookups is driven by how many branches
+   * are asked about, not how often, and a board-wide poll would grow with the
+   * board while telling us nothing new about cards nobody is touching.
+   *
+   * Three cheap refusals come first, and between them they keep the lookup set
+   * bounded by "cards actually in flight":
+   *
+   *  1. No ready worktree — no branch, so nothing to look up.
+   *  2. A TERMINAL pull request (merged or closed) — nothing about it can ever
+   *     change again, so a card stops costing lookups the moment its PR lands.
+   *  3. A lookup FAILURE records nothing, leaving the last known link in
+   *     place. This mirrors `rememberLastKnownPr` in `GitManager` and exists
+   *     for the same reason: a rate limit or a network blip must not blank a
+   *     card's PR badge. "No PR" and "could not ask" are different answers and
+   *     only the first is worth recording.
+   */
+  const refreshCardPullRequest = Effect.fn("board-supervisor-refreshCardPullRequest")(function* (
+    card: BoardCard,
+  ) {
+    const worktree = card.worktree;
+    if (worktree === null || worktree.status !== "ready" || worktree.path === null) return;
+    if (isBoardCardPullRequestTerminal(card.pullRequest)) return;
+
+    const found = yield* pullRequests.find({ cwd: worktree.path, branch: worktree.branch }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logDebug("board supervisor: pull request lookup failed; keeping last known", {
+          cardId: card.id,
+          branch: worktree.branch,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
+    // `undefined` is the failure sentinel, `null` a real "there is no PR".
+    if (found === undefined) return;
+
+    const next =
+      found === null
+        ? null
+        : ({
+            number: found.number,
+            url: found.url,
+            state: found.state,
+            headBranch: found.headRef,
+            baseRef: found.baseRef,
+            checkedAt: yield* nowIso,
+          } satisfies BoardCardPullRequest);
+
+    // The decider rejects a no-op too, but checking here keeps the common case
+    // — a refresh that found exactly what we already knew — from generating a
+    // rejected dispatch and a warning log on every card open.
+    if (boardCardPullRequestsEqual(card.pullRequest, next)) return;
+
+    yield* dispatch({
+      type: "board.card.record-pull-request",
+      commandId: yield* commandId("record-pr"),
+      cardId: card.id,
+      pullRequest: next,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /** The card as the read model currently has it, or null if it is gone. */
+  const readCard = Effect.fn("board-supervisor-readCard")(function* (cardId: BoardCardId) {
+    const board = yield* readBoard;
+    return board.cards.find((candidate) => candidate.id === cardId) ?? null;
+  });
+
+  /**
+   * Delete a card's branch on arrival at Done, when its PR is merged and the
+   * merge stage's `deleteBranchOnDone` is on.
+   *
+   * Runs AFTER a refresh, so the decision is made against what the forge says
+   * now rather than whatever was last cached — the difference matters most in
+   * exactly the case this exists for, a PR merged on GitHub while the card sat
+   * in the merge stage.
+   *
+   * Best-effort throughout: a cleanup that fails is reported on the card and
+   * never blocks the move to Done. A branch that outlives its card is untidy;
+   * a card that cannot reach Done because a `git push --delete` failed is
+   * broken.
+   */
+  const cleanupBranchOnDone = Effect.fn("board-supervisor-cleanupBranchOnDone")(function* (
+    card: BoardCard,
+  ) {
+    const worktree = card.worktree;
+    if (worktree === null) return;
+    if (card.pullRequest === null || card.pullRequest.state !== "merged") return;
+
+    const settings = yield* boardSettings;
+    const board = yield* readBoard;
+    const mergeStage = boardStageWithRole(board, "merge");
+    if (mergeStage === null) return;
+    const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
+    if (!isBoardMergeStageExecution(exec) || !exec.deleteBranchOnDone) return;
+
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const cwd = projectCwd(model, card);
+    if (cwd === null) return;
+
+    const result = yield* deleteMergedCardBranch({ git, cwd, branch: worktree.branch }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: branch cleanup failed", {
+          cardId: card.id,
+          branch: worktree.branch,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (result === null) return;
+    yield* Effect.logDebug("board supervisor: branch cleanup", {
+      cardId: card.id,
+      branch: worktree.branch,
+      remoteDeleted: result.remoteDeleted,
+      localDeleted: result.localDeleted,
+      skippedReason: result.skippedReason,
+    });
+  });
+
+  /**
+   * Whether a forge refusal is a MERGE CONFLICT rather than a policy block.
+   *
+   * The distinction drives two very different responses — start an agent to
+   * resolve it, or stop and tell the human — so it is worth being explicit
+   * about. Matched on the forge's own words because that is all `gh` gives us;
+   * kept deliberately broad, since the cost of the two mistakes is asymmetric:
+   * treating a conflict as a policy block just means the user reads the real
+   * reason and clicks again, while treating a policy block as a conflict would
+   * spawn an agent to "fix" a branch that has nothing wrong with it.
+   */
+  const isMergeConflictRefusal = (detail: string): boolean => {
+    const text = detail.toLowerCase();
+    return (
+      text.includes("conflict") ||
+      text.includes("not mergeable") ||
+      text.includes("merge_conflict") ||
+      text.includes("dirty")
+    );
+  };
+
+  /**
+   * Merge a card's pull request, then advance it — the blue Merge button.
+   *
+   * Always human-initiated: nothing in the merge stage auto-executes, so no
+   * merge ever happens that someone did not ask for. What follows a refusal
+   * depends on WHY:
+   *
+   * - **Conflicts** — start the merge stage's conflict-resolution step. It
+   *   runs through the ordinary step machine (slot, timeout, stall detection,
+   *   attempt ladder) and reports through `board_complete_step`, which is the
+   *   only channel an agent has to say "done, and it worked". On success
+   *   `handleStepCompleted` finishes the merge the human already asked for.
+   * - **Anything else** (failing checks, missing approvals) — report the
+   *   forge's own reason and stop. That block needs a human, so the next
+   *   attempt should be a human's too; there is no automatic retry.
+   */
+  const mergeCardPullRequest = Effect.fn("board-supervisor-mergeCardPullRequest")(function* (
+    cardId: BoardCardId,
+  ) {
+    const card = yield* readCard(cardId);
+    if (card === null) return { outcome: "unknown-card" } as const;
+
+    // Re-check against the forge first. The card's link is a cache refreshed
+    // only at the trigger points, so it can say `open` about a PR that was
+    // merged elsewhere minutes ago — and merging is the one operation where
+    // acting on a stale read is worth a round trip to avoid.
+    yield* refreshCardPullRequest(card);
+    const fresh = (yield* readCard(cardId)) ?? card;
+
+    const pullRequest = fresh.pullRequest;
+    if (pullRequest === null) return { outcome: "no-pull-request" } as const;
+    if (pullRequest.state !== "open") {
+      return { outcome: "not-open" as const, state: pullRequest.state };
+    }
+
+    const worktree = fresh.worktree;
+    const model = yield* snapshotQuery.getCommandReadModel();
+    // The card's own worktree when it still has one, else the project root:
+    // a reclaimed worktree must not make a card unmergeable.
+    const cwd = worktree?.path ?? projectCwd(model, fresh);
+    if (cwd === null) return { outcome: "no-workspace" } as const;
+
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(settings, fresh.stage);
+    const strategy = isBoardMergeStageExecution(exec) ? exec.strategy : "squash";
+
+    const failure = yield* pullRequests.merge({ cwd, number: pullRequest.number, strategy }).pipe(
+      Effect.as(null),
+      Effect.catch((error) => Effect.succeed(error)),
+    );
+
+    if (failure !== null) {
+      const detail = failure.detail;
+      if (isMergeConflictRefusal(detail)) {
+        // Ask for the stage's own thread: the merge stage resolves to the
+        // conflict-resolution prompt in build mode, so this is the conflict
+        // step and nothing else can run here.
+        yield* dispatch({
+          type: "board.card.start-stage-thread",
+          commandId: yield* commandId("merge-conflict"),
+          cardId: fresh.id,
+          createdAt: yield* nowIso,
+        });
+        return { outcome: "conflict" as const, detail };
+      }
+      return { outcome: "refused" as const, detail };
+    }
+
+    // Record the merged state before moving, so a card arriving at Done is
+    // already known to be merged — which is what the branch cleanup gates on.
+    yield* refreshCardPullRequest(fresh);
+    const merged = (yield* readCard(cardId)) ?? fresh;
+    const board = yield* readBoard;
+    const nextStage = boardNextStageId(board, merged.stage);
+    if (nextStage !== null) {
+      yield* dispatch({
+        type: "board.card.move",
+        commandId: yield* commandId("merge-advance"),
+        cardId: merged.id,
+        toStage: nextStage,
+        orderKey: merged.orderKey,
+        createdAt: yield* nowIso,
+      });
+    }
+    return { outcome: "merged" as const, number: pullRequest.number };
+  });
+
   const handleTurnCompleted = Effect.fn("board-supervisor-handleTurnCompleted")(function* (
     threadId: ThreadId,
   ) {
@@ -1505,9 +1764,29 @@ const make = Effect.gen(function* () {
     const state = boardCardStepState(board, completion.cardId);
     if (card === undefined || state === null || state.stepId !== completion.stepId) return;
     if (isBoardTerminalStepStatus(state.status)) return; // idempotent: already settled
+    // Refresh trigger: a step boundary in the review stage. The review loop
+    // needs the PR open to post on, so this is both the moment the link most
+    // likely first appears and a natural heartbeat that catches a PR merged or
+    // closed out from under a running review.
+    const stageRole = effectiveBoardStageRole(
+      boardStageById(board, card.stage) ?? { stageId: card.stage, role: null },
+    );
+    if (stageRole === "review") {
+      yield* refreshCardPullRequest(card);
+    }
+
     switch (completion.outcome) {
       case "succeeded":
         yield* settleStep({ card, state, outcome: "succeeded" });
+        // The conflict-resolution step reporting success finishes the merge the
+        // human already asked for — the branch is only in this state because
+        // someone clicked Merge and hit a conflict. This is not auto-merge: no
+        // merge happens here that a human did not initiate.
+        if (stageRole === "merge") {
+          yield* schedule();
+          yield* mergeCardPullRequest(card.id).pipe(Effect.asVoid);
+          return;
+        }
         // Ask the stage executor what runs next (t3o-16): a single-step stage
         // reports `complete` and this auto-advances to the next stage in order
         // on a successful unattended run (D8), re-triggering auto-kickoff there;
@@ -1740,6 +2019,19 @@ const make = Effect.gen(function* () {
         });
       }
     }
+    // Refresh trigger: a stage change. The card may have crossed into the
+    // merge stage (where the Merge button needs a current PR state) or into
+    // Done (where branch cleanup gates on it), and either way this is a moment
+    // the answer plausibly changed.
+    yield* refreshCardPullRequest(card);
+    const toStage = boardStageById(board, event.payload.toStage);
+    if (toStage !== null && effectiveBoardStageRole(toStage) === "done") {
+      // Re-read: the refresh above may have just recorded the merge that makes
+      // this branch safe to delete.
+      const settled = yield* readCard(card.id);
+      if (settled !== null) yield* cleanupBranchOnDone(settled);
+    }
+
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
   });
 
@@ -2021,6 +2313,39 @@ const make = Effect.gen(function* () {
     reconcile,
     sweep: sweepTimeouts,
     drain: worker.drain,
+    // Both run OUTSIDE the serialised worker: they are request-scoped, the
+    // caller is waiting on the answer, and neither touches step state — the
+    // conflict step they can start goes through the ordinary
+    // `start-stage-thread` event, which the worker picks up as usual.
+    // Both are TOTAL: they are called from an RPC handler that owes the user a
+    // response, and a read-model hiccup must surface as "the merge did not
+    // happen, here is why" rather than as an unhandled failure on a button
+    // click.
+    refreshPullRequest: (cardId) =>
+      Effect.flatMap(readCard(cardId), (card) =>
+        card === null ? Effect.void : refreshCardPullRequest(card),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: pull request refresh failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
+    mergePullRequest: (cardId) =>
+      mergeCardPullRequest(cardId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: merge failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(
+            Effect.as({
+              outcome: "refused",
+              detail: "The merge could not be attempted. See the server log for details.",
+            } as const),
+          ),
+        ),
+      ),
   } satisfies SupervisorReactorShape;
 });
 

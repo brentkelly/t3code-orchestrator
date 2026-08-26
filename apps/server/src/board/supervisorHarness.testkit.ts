@@ -31,6 +31,7 @@ import {
   ThreadId,
   type BoardCard,
   type BoardCardPullRequest,
+  type VcsStatusChangeRequest,
   type BoardCardWorktree,
   type BoardSettings,
   type BoardStageExecution,
@@ -57,6 +58,10 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlots, BoardStepSlotsLive } from "./BoardStepSlots.ts";
+import {
+  BoardPullRequestGateway,
+  BoardPullRequestGatewayError,
+} from "./BoardPullRequestGateway.ts";
 import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
@@ -256,6 +261,8 @@ export type Harness = {
       line. A test asserting an outcome the card state does not carry (a pure
       report, e.g. a pre-provision worktree failure) reads it here. */
   readonly decided: Effect.Effect<ReadonlyArray<OrchestrationEvent>>;
+  /** Every merge the reactor asked the forge for, in order. */
+  readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
 };
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
@@ -278,6 +285,13 @@ export function withGovernor(
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
+    /** What a branch pull-request lookup answers. `undefined` (the default) is
+        "no pull request"; a `detail` string makes the lookup FAIL, which is a
+        different answer the reactor must not confuse with "there is none". */
+    readonly pullRequest?: VcsStatusChangeRequest | { readonly failWith: string } | null;
+    /** What a merge attempt answers: `undefined` succeeds, a string is the
+        forge's refusal detail (a conflict when it reads like one). */
+    readonly mergeFailure?: string;
     /** The cached todo state per thread id (t3o-18): the reactor reads
         `advancedAt` for the stall-reset / timeout-liveness signal and `hasList`
         for the recovery nudge. Absent threads answer "no list". */
@@ -454,6 +468,34 @@ export function withGovernor(
       runForThread: () => Effect.void,
     } as unknown as ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
 
+    // Every merge attempt the reactor makes, so a test can assert that a
+    // refusal did NOT silently retry and that a conflict fix did.
+    const mergeAttempts = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
+    const pullRequestStub = BoardPullRequestGateway.of({
+      find: () => {
+        const configured = input.pullRequest;
+        if (configured !== undefined && configured !== null && "failWith" in configured) {
+          return Effect.fail(
+            new BoardPullRequestGatewayError({ operation: "find", detail: configured.failWith }),
+          );
+        }
+        return Effect.succeed(configured ?? null);
+      },
+      merge: (request) =>
+        Ref.update(mergeAttempts, (attempts) => [...attempts, { number: request.number }]).pipe(
+          Effect.andThen(
+            input.mergeFailure === undefined
+              ? Effect.void
+              : Effect.fail(
+                  new BoardPullRequestGatewayError({
+                    operation: "merge",
+                    detail: input.mergeFailure,
+                  }),
+                ),
+          ),
+        ),
+    });
+
     const deps = Layer.mergeAll(
       Layer.succeed(OrchestrationEngineService, engineStub),
       Layer.succeed(ProjectionSnapshotQuery, snapshotStub),
@@ -461,6 +503,7 @@ export function withGovernor(
       Layer.succeed(ServerSettingsService, settingsStub),
       Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub),
       Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
+      Layer.succeed(BoardPullRequestGateway, pullRequestStub),
       BoardStepSlotsLive,
     );
 
@@ -511,6 +554,7 @@ export function withGovernor(
           ),
           commands: Ref.get(commands),
           decided: Ref.get(decided),
+          mergeAttempts: Ref.get(mergeAttempts),
         });
       }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
     );

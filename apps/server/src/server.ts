@@ -58,6 +58,7 @@ import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletion
 // T3o: the board supervisor reactor + its concurrency slots (t3o-10).
 import { SupervisorReactorLive } from "./board/supervisorReactor.ts";
 import { BoardStepSlotsLive } from "./board/BoardStepSlots.ts";
+import { layer as BoardPullRequestGatewayLive } from "./board/BoardPullRequestGateway.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
@@ -286,6 +287,14 @@ const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
 );
 
+// The board's two-method window onto the forge (card→PR link + merge), bundled
+// with the git layer that satisfies it. Bundled rather than added as its own
+// step in `RuntimeCoreDependenciesLive` because that pipe is already at
+// TypeScript's 20-argument ceiling — and this is where its one dependency
+// lives anyway. The supervisor reactor therefore never has to depend on the
+// whole GitManager surface just to link a card to its pull request.
+const BoardGitLayerLive = BoardPullRequestGatewayLive.pipe(Layer.provideMerge(GitLayerLive));
+
 const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
@@ -369,7 +378,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
-  Layer.provideMerge(GitLayerLive),
+  Layer.provideMerge(BoardGitLayerLive),
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),

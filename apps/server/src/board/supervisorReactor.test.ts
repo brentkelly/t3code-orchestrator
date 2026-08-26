@@ -34,6 +34,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
+import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -176,6 +177,15 @@ function reconcileCommandObjects(input: {
       Layer.succeed(ServerSettingsService, settingsStub),
       Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub),
       Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
+      // Boot reconcile never looks a pull request up (it reconciles step state,
+      // not forge state), so an always-empty gateway is the honest stub here.
+      Layer.succeed(
+        BoardPullRequestGateway,
+        BoardPullRequestGateway.of({
+          find: () => Effect.succeed(null),
+          merge: () => Effect.void,
+        }),
+      ),
       BoardStepSlotsLive,
     );
 
