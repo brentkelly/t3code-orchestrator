@@ -32,8 +32,11 @@ import {
   boardStagesInOrder,
   boardStageWithRole,
   liveBoardCardDependents,
+  parseReviewStepId,
+  sortBoardCardThreadLinks,
   type BoardCardDetail,
   type BoardCardId,
+  type BoardCardThreadLink,
   type BoardCardThreadShell,
   type BoardCardThreadState,
   type BoardLabel,
@@ -707,6 +710,71 @@ function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
 
 type BoardCardPane = "thread" | "review" | "plan" | "brief";
 
+/** Whether the card has reached the review-role stage — from there on the loop
+    is what the card is about, so the modal opens on the Review pane. */
+function isStageAtOrAfterReview(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stage: BoardStageId,
+): boolean {
+  const state = stageStateOf(stages);
+  const review = boardStageWithRole(state, "review");
+  if (review === null) return false;
+  const reviewIndex = boardStageIndex(state, review.stageId);
+  const stageIndex = boardStageIndex(state, stage);
+  return reviewIndex >= 0 && stageIndex >= reviewIndex;
+}
+
+/**
+ * The pane a card opens on: the latest surface its stage has produced.
+ * Planning and Ready open on the conversation, Build on its build thread, and
+ * Code review / Ready for merge / Done on the review pane. A card that reached
+ * those stages without ever running the loop has no review to show, so the
+ * caller's `hasReview` fallback lands it back on the thread.
+ */
+export function initialBoardCardPane(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stage: BoardStageId,
+): BoardCardPane {
+  return isStageAtOrAfterReview(stages, stage) ? "review" : "thread";
+}
+
+/**
+ * The thread a card opens on before it reaches the review stages: the newest
+ * live one the card's stage has any business showing — so Planning and Ready
+ * land on the planning conversation and Build on the build one, and a card
+ * dragged back from Build to Planning shows planning again rather than the
+ * build run it left behind.
+ *
+ * A stage step links its thread under the step id, and a stage step's id IS
+ * the stage id, so a link's role names the stage that spawned it: a role from
+ * a LATER stage is stale here and drops out, as does a review-loop role
+ * (`review@1`, …), which belongs to a pass the card has moved on from. A role
+ * that is neither — an adopted or blank thread's `linked` — belongs to no
+ * stage, so it stays and, being newest, opens.
+ *
+ * From the review stage onward the loop owns the card and the Review pane is
+ * what opens, so the thread pane keeps its old answer there: the card's active
+ * thread, the most recently linked live one.
+ */
+export function initialBoardCardThreadId(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stage: BoardStageId,
+  links: ReadonlyArray<BoardCardThreadLink>,
+): ThreadId | null {
+  const active = activeBoardCardThreadId(links);
+  const state = stageStateOf(stages);
+  const stageIndex = boardStageIndex(state, stage);
+  if (stageIndex < 0 || isStageAtOrAfterReview(stages, stage)) return active;
+  const current = sortBoardCardThreadLinks(
+    links.filter((link) => link.tombstonedAt === null),
+  ).filter((link) => {
+    if (parseReviewStepId(link.role) !== null) return false;
+    const linkStageIndex = boardStageIndex(state, link.role as BoardStageId);
+    return linkStageIndex <= stageIndex;
+  });
+  return current.at(-1)?.threadId ?? active;
+}
+
 /** The header's Thread/Review/Plan/Brief switch — only the wide form has one,
     because only it has somewhere else for the brief to live. The Review pill
     appears once the card is on the review stage or carries review-loop
@@ -781,7 +849,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   });
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
 
-  const [pane, setPane] = useState<BoardCardPane>("thread");
+  // Null means "whatever the card's stage says is latest" (Planning/Ready and
+  // Build open on the thread, the review stages on the Review pane): the modal
+  // opens there and keeps tracking the card until the user picks a pane, which
+  // pins it.
+  const [paneChoice, setPane] = useState<BoardCardPane | null>(null);
+  const pane = paneChoice ?? initialBoardCardPane(props.stages, card.stage);
   // The plan is a first-class entity, so its pill only exists once one is
   // written; if the card loses its plans while the pane is open, fall back to
   // the thread rather than render an empty surface. The review pane follows
@@ -795,13 +868,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     hasBoardReviewSteps(props.detail.stepCompletions);
   const activePane: BoardCardPane =
     (pane === "plan" && !hasPlan) || (pane === "review" && !hasReview) ? "thread" : pane;
-  // Which tab the thread pane is on. Absent means "the card's active thread",
-  // so a newly adopted thread opens without the panel tracking it.
+  // Which tab the thread pane is on. Absent means "whichever thread the card's
+  // stage makes current", so the pane follows the card until the user picks a
+  // thread, and a since-unlinked selection falls back to that same default.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
   const activeThreadId = activeBoardCardThreadId(card.threadLinks);
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
-    activeThreadId;
+    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
 
   return (
     <>

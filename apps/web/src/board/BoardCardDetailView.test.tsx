@@ -17,6 +17,7 @@ import {
   boardPlanId,
   type BoardCard,
   type BoardCardDetail,
+  type BoardCardThreadLink,
   type BoardLabel,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -30,7 +31,8 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-const { BoardCardDetailPanel } = await import("./BoardCardDetailView");
+const { BoardCardDetailPanel, initialBoardCardPane, initialBoardCardThreadId } =
+  await import("./BoardCardDetailView");
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const environmentId = "env-1" as never;
@@ -121,6 +123,17 @@ const baseProps = {
   onLinkThread: noop,
   onUnlinkThread: noop,
 } as const;
+
+/** The pane switch's selected tab — the one tab styled active (`bg-card`) —
+    read back out of the static markup by its label. */
+function selectedTab(html: string): string | null {
+  for (const [, className, label] of html.matchAll(
+    /<button class="(inline-flex h-6[^"]*)"[^>]*>(.*?)<\/button>/g,
+  )) {
+    if (className!.includes("bg-card")) return label!.replace(/<svg.*?<\/svg>/g, "").trim();
+  }
+  return null;
+}
 
 describe("BoardCardDetailPanel", () => {
   it("renders an archived card whose project is not on disk, with a Restore action", () => {
@@ -453,5 +466,121 @@ describe("BoardCardDetailPanel", () => {
     expect(html).toContain("Blocked by T3-2");
     expect(html).not.toContain("Blocked by T3-1");
     expect(html).toContain("disabled");
+  });
+  // The modal opens on the pane the card's stage has made current (planning
+  // and build on their thread, everything from Code review on the review
+  // pane), so nobody lands on a stale surface and has to click across.
+  it("opens the review stages onto the review pane, and the earlier ones onto the thread", () => {
+    const reviewCompletion = {
+      stepCompletions: [
+        {
+          cardId,
+          stepId: "review@1",
+          outcome: "succeeded" as const,
+          summary: "reviewed",
+          payload: JSON.stringify({ reviewedSha: "sha1", findings: [] }),
+          threadId: null,
+          completedAt: NOW,
+        },
+      ],
+    };
+    const paneFor = (stage: BoardCard["stage"], reviewed: boolean) =>
+      selectedTab(
+        renderToStaticMarkup(
+          <BoardCardDetailPanel
+            {...baseProps}
+            detail={detail({ stage }, null, reviewed ? reviewCompletion : undefined)}
+            projectName="P"
+          />,
+        ),
+      );
+
+    expect(paneFor(BOARD_SEED_STAGE_IDS.planning, false)).toBe("Thread");
+    expect(paneFor(BOARD_SEED_STAGE_IDS.ready, false)).toBe("Thread");
+    expect(paneFor(BOARD_SEED_STAGE_IDS.building, false)).toBe("Thread");
+    expect(paneFor(BOARD_SEED_STAGE_IDS.review, false)).toBe("Review");
+    expect(paneFor(BOARD_SEED_STAGE_IDS.merge, true)).toBe("Review");
+    expect(paneFor(BOARD_SEED_STAGE_IDS.done, true)).toBe("Review");
+    // A card dragged past the loop without ever running it has no review to
+    // show, so it falls back to the thread rather than an empty pane.
+    expect(paneFor(BOARD_SEED_STAGE_IDS.done, false)).toBe("Thread");
+  });
+});
+
+describe("initialBoardCardPane", () => {
+  it("keeps every stage on the thread when the board has no review role", () => {
+    const stages = BOARD_SEED_STAGES.filter(
+      (stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.review,
+    ).map((stage) => ({ ...stage, role: null }));
+    expect(initialBoardCardPane(stages, BOARD_SEED_STAGE_IDS.done)).toBe("thread");
+  });
+});
+
+describe("initialBoardCardThreadId", () => {
+  const link = (
+    threadId: string,
+    role: string,
+    linkedAt: string,
+    tombstonedAt: string | null = null,
+  ): BoardCardThreadLink => ({
+    threadId: ThreadId.make(threadId),
+    role,
+    linkedAt,
+    tombstonedAt,
+  });
+  // A stage step links its thread under the step id, and a stage step's id IS
+  // the stage id — so these roles are what a real planning/build run writes.
+  const links = [
+    link("thread-plan", BOARD_SEED_STAGE_IDS.planning, "2026-01-01T00:00:00.000Z"),
+    link("thread-build", BOARD_SEED_STAGE_IDS.building, "2026-01-01T01:00:00.000Z"),
+    link("thread-review", "review@1", "2026-01-01T02:00:00.000Z"),
+  ];
+
+  it("opens Planning and Ready on the planning thread and Build on the build one", () => {
+    const on = (stage: BoardCard["stage"]) =>
+      initialBoardCardThreadId(BOARD_SEED_STAGES, stage, links);
+    expect(on(BOARD_SEED_STAGE_IDS.planning)).toBe("thread-plan");
+    expect(on(BOARD_SEED_STAGE_IDS.ready)).toBe("thread-plan");
+    expect(on(BOARD_SEED_STAGE_IDS.building)).toBe("thread-build");
+  });
+
+  it("leaves the review stages on the card's active thread", () => {
+    expect(initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.review, links)).toBe(
+      "thread-review",
+    );
+  });
+
+  it("skips a tombstoned thread, and opens a newly adopted one", () => {
+    const tombstoned = [
+      link("thread-plan", BOARD_SEED_STAGE_IDS.planning, "2026-01-01T00:00:00.000Z", NOW),
+      link("thread-adopted", "linked", "2026-01-01T03:00:00.000Z"),
+    ];
+    expect(
+      initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.ready, tombstoned),
+    ).toBe("thread-adopted");
+    // An adopted thread belongs to no stage, so it is never the stale one:
+    // adopting on a build card opens it, as it did before the stage rule.
+    expect(
+      initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.building, [
+        ...links.slice(0, 2),
+        link("thread-adopted", "linked", "2026-01-01T05:00:00.000Z"),
+      ]),
+    ).toBe("thread-adopted");
+  });
+
+  it("prefers the newest run of a restarted stage", () => {
+    const restarted = [
+      ...links.slice(0, 1),
+      link("thread-plan-2", BOARD_SEED_STAGE_IDS.planning, "2026-01-01T04:00:00.000Z"),
+    ];
+    expect(
+      initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.planning, restarted),
+    ).toBe("thread-plan-2");
+  });
+
+  it("ignores a later stage's thread, and a past review pass's, after a move back", () => {
+    expect(initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.planning, links)).toBe(
+      "thread-plan",
+    );
   });
 });
