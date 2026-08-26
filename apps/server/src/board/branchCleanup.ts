@@ -16,7 +16,10 @@
  *   detached, nameless HEAD. The caller settles a card at Done by reclaiming
  *   the worktree FIRST, so by the time this runs the branch is normally
  *   unheld and the local delete succeeds; with `reclaimWorktreeOnDone` off the
- *   worktree survives and the local branch is left for archive to clean up.
+ *   worktree survives and the local branch OUTLIVES the card — archive reclaims
+ *   the worktree but never runs this, so nothing deletes it afterwards. That is
+ *   the cost of opting out, and it is the local branch only: the remote one is
+ *   deleted at Done either way.
  *
  * Every step is independently best-effort and reports what it did. A cleanup
  * that half-succeeds (remote gone, local held) is a normal, reportable

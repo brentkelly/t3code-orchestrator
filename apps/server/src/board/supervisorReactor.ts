@@ -1816,7 +1816,6 @@ const make = Effect.gen(function* () {
     // cleanup attempt — the remote delete reports "remote ref does not exist"
     // and is treated as success — rather than an unbounded stream of them.
     if (settledAtDone.has(String(card.id))) return;
-    settledAtDone.add(String(card.id));
 
     const settings = yield* boardSettings;
     if (settings.lifecycle.reclaimWorktreeOnDone) {
@@ -1826,6 +1825,13 @@ const make = Effect.gen(function* () {
     // cleanup asks whether a worktree still holds the branch.
     const reclaimed = yield* readCard(card.id);
     yield* cleanupBranchOnDone(reclaimed ?? card);
+    // Marked only once the work has actually run. Marking on ENTRY would record
+    // the attempt rather than the outcome, so a settle that died on a transient
+    // git failure — the network blip that made `git push --delete` fail — would
+    // be remembered as done and never retried while the process lived. Every
+    // arm below it is best-effort and swallows its own errors, so reaching here
+    // means the settle ran to completion, whatever it managed to delete.
+    settledAtDone.add(String(card.id));
   });
 
   /**
@@ -2516,14 +2522,24 @@ const make = Effect.gen(function* () {
     // `gh pr list` proportional to the size of Done on every single restart,
     // which is the periodic polling this design refuses.
     //
-    // Idempotent: a reclaimed worktree is no longer `ready`, so a second boot
-    // finds nothing to do.
-    const finished = yield* readBoard;
-    for (const card of finished.cards) {
-      if (card.archivedAt !== null) continue;
-      if (card.worktree === null || card.worktree.status !== "ready") continue;
-      if (card.pullRequest === null || card.pullRequest.state !== "merged") continue;
-      yield* settleCardAtDone(card);
+    // It must also be SELF-TERMINATING, which is why it is gated on the
+    // setting. `settledAtDone` is empty after a restart, so the sweep is the
+    // one settle path a restart re-arms — and with the setting off the
+    // worktree stays `ready` by design, so the filter below would match the
+    // same cards on every boot forever and append another branch-cleanup row
+    // to each of their rails each time. With the setting on, the reclaim flips
+    // the worktree out of `ready` and the next boot finds nothing. Giving the
+    // disk back is the backlog this exists to clear; a card whose worktree is
+    // deliberately kept has no backlog to clear.
+    const settings = yield* boardSettings;
+    if (settings.lifecycle.reclaimWorktreeOnDone) {
+      const finished = yield* readBoard;
+      for (const card of finished.cards) {
+        if (card.archivedAt !== null) continue;
+        if (card.worktree === null || card.worktree.status !== "ready") continue;
+        if (card.pullRequest === null || card.pullRequest.state !== "merged") continue;
+        yield* settleCardAtDone(card);
+      }
     }
   }).pipe(
     Effect.catchCause((cause) =>

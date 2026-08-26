@@ -316,9 +316,6 @@ export function withGovernor(
     /** What a merge attempt answers: `undefined` succeeds, a string is the
         forge's refusal detail (a conflict when it reads like one). */
     readonly mergeFailure?: string;
-    /** Drop the repository's remote, so a test can drive the arm of branch
-        cleanup that has nowhere to push a deletion to. */
-    readonly noRemote?: boolean;
     /** Make the stubbed `statusDetails` report uncommitted changes, so a test
         can drive the reclaim refusal — the case where the checkout holds work
         that exists nowhere else and must NOT be deleted to save disk. */
@@ -487,7 +484,7 @@ export function withGovernor(
       // `deleteMergedCardBranch` throw straight into the reactor's catch-all,
       // so the cleanup at Done silently did nothing in every test that reached
       // it — which is why nothing in these suites asserted that it fires.
-      resolvePrimaryRemoteName: () => Effect.succeed(input.noRemote === true ? null : "origin"),
+      resolvePrimaryRemoteName: () => Effect.succeed("origin"),
       // Reclaim's clean-and-pushed gate. Clean and pushed by default, since
       // that is what a card whose pull request has merged looks like; a suite
       // testing the refusal sets `worktreeDirty`.
