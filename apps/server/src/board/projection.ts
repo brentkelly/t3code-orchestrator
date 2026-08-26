@@ -146,6 +146,11 @@ const BoardCardDbRow = Schema.Struct({
   humanInLoop: Schema.NullOr(Schema.Int),
   worktree: Schema.NullOr(Schema.fromJsonString(BoardCardWorktree)),
   pullRequest: Schema.NullOr(Schema.fromJsonString(BoardCardPullRequest)),
+  /** NULL for every row written before migration 024, which is why the read
+      side below turns a null history into the empty array rather than letting
+      it through — `BoardCard.pullRequestHistory` has no null inhabitant. */
+  pullRequestHistory: Schema.NullOr(Schema.fromJsonString(Schema.Array(BoardCardPullRequest))),
+  pullRequestFloor: BoardCard.fields.pullRequestFloor,
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -470,6 +475,11 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     humanInLoop: card.humanInLoop === null ? null : card.humanInLoop ? 1 : 0,
     worktree: card.worktree,
     pullRequest: card.pullRequest,
+    // An empty history is stored as NULL, not `[]`: it keeps a pre-024 row and
+    // a card that has simply never finished a round indistinguishable, so
+    // rehydration cannot depend on which of the two it is looking at.
+    pullRequestHistory: card.pullRequestHistory.length === 0 ? null : card.pullRequestHistory,
+    pullRequestFloor: card.pullRequestFloor,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -498,6 +508,8 @@ function rowToBoardCard(
     humanInLoop: row.humanInLoop === null ? null : row.humanInLoop !== 0,
     worktree: row.worktree,
     pullRequest: row.pullRequest,
+    pullRequestHistory: row.pullRequestHistory ?? [],
+    pullRequestFloor: row.pullRequestFloor,
     blocked: row.blocked !== 0,
     threadLinks,
     archivedAt: row.archivedAt,
@@ -549,6 +561,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         human_in_loop,
         worktree,
         pull_request,
+        pull_request_history,
+        pull_request_floor,
         blocked,
         archived_at,
         created_at,
@@ -569,6 +583,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.humanInLoop},
         ${row.worktree},
         ${row.pullRequest},
+        ${row.pullRequestHistory},
+        ${row.pullRequestFloor},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -589,6 +605,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         human_in_loop = excluded.human_in_loop,
         worktree = excluded.worktree,
         pull_request = excluded.pull_request,
+        pull_request_history = excluded.pull_request_history,
+        pull_request_floor = excluded.pull_request_floor,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -619,6 +637,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         human_in_loop AS "humanInLoop",
         worktree,
         pull_request AS "pullRequest",
+        pull_request_history AS "pullRequestHistory",
+        pull_request_floor AS "pullRequestFloor",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -694,7 +714,16 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- column, and the two must agree - a badge that appears after an edit
         -- but vanishes on reconnect is exactly the stale label this codebase
         -- refuses to ship (cardMetaShellFields.test.ts asserts the pair).
-        json_extract(pull_request, '$.number') AS "prNumber",
+        --
+        -- The COALESCE mirrors boardCardDisplayPullRequest: a card on a SECOND
+        -- round of work has no current pull request until that round opens one,
+        -- and falling back to the newest retired round keeps the badge from
+        -- blinking out in between. SQLite's last-element path is used, and the
+        -- history is stored oldest-first, so the last element is the newest.
+        COALESCE(
+          json_extract(pull_request, '$.number'),
+          json_extract(pull_request_history, '$[#-1].number')
+        ) AS "prNumber",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
@@ -727,8 +756,12 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- Unlike the two indicators above this is a plain column read, not a
         -- correlated subquery, so the archive list carries it for free — and
         -- an archived card's PR is exactly what you look for when working out
-        -- what happened to abandoned work.
-        json_extract(pull_request, '$.number') AS "prNumber",
+        -- what happened to abandoned work. Same retired-round fallback as the
+        -- live query, and for the same reason.
+        COALESCE(
+          json_extract(pull_request, '$.number'),
+          json_extract(pull_request_history, '$[#-1].number')
+        ) AS "prNumber",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
@@ -793,6 +826,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         human_in_loop AS "humanInLoop",
         worktree,
         pull_request AS "pullRequest",
+        pull_request_history AS "pullRequestHistory",
+        pull_request_floor AS "pullRequestFloor",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",

@@ -15,7 +15,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   BoardSettings,
   boardProjectAcronym,
-  DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
+  DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_PIPELINE,
@@ -47,9 +47,24 @@ describe("board settings defaults", () => {
     );
     expect(settings.projects).toEqual({});
     expect(settings.concurrency.globalMaxConcurrent).toBeGreaterThan(0);
-    expect(settings.lifecycle.archiveAfterDays).toBe(DEFAULT_BOARD_ARCHIVE_AFTER_DAYS);
-    expect(settings.lifecycle.worktreeRetention).toBe("reclaim-on-archive");
+    expect(settings.lifecycle.reclaimWorktreeOnDone).toBe(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE);
     expect(settings).toEqual(DEFAULT_BOARD_SETTINGS);
+  });
+
+  it("decodes a settings file written before the lifecycle reshape", () => {
+    // `lifecycle` is one of the INDIVISIBLE settings keys, so a user who ever
+    // touched the old archive-window or retention control has the WHOLE old
+    // object on disk. Unknown keys drop silently, leaving `{}` — and a
+    // `lifecycle` block that fails to decode does not merely lose its own
+    // value: `loadSettingsFromDisk` discards the ENTIRE settings file back to
+    // compiled-in defaults, silently reverting every unrelated setting the
+    // user has. The field's own decoding default is what stops that; the
+    // struct-level one on `BoardSettings.lifecycle` does not, because it fires
+    // only when `lifecycle` is ABSENT, never when it is present and invalid.
+    const settings = decodeSettings({
+      lifecycle: { archiveAfterDays: 21, worktreeRetention: "reclaim-on-archive" },
+    });
+    expect(settings.lifecycle.reclaimWorktreeOnDone).toBe(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE);
   });
 
   it("the default Building stage is runnable (real instance + model), not a placeholder", () => {

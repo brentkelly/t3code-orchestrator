@@ -112,6 +112,8 @@ const typicalCard = (index: number): BoardCard => ({
   labels: labelIdsAtCap,
   stage: BOARD_SEED_STAGE_IDS.building,
   pullRequest: null,
+  pullRequestHistory: [],
+  pullRequestFloor: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",

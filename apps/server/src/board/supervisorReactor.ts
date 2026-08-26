@@ -1538,59 +1538,122 @@ const make = Effect.gen(function* () {
    *     card's PR badge. "No PR" and "could not ask" are different answers and
    *     only the first is worth recording.
    */
+  const refreshCardPullRequestLink = Effect.fn("board-supervisor-refreshCardPullRequestLink")(
+    function* (card: BoardCard) {
+      const worktree = card.worktree;
+      // No branch means nothing to look up — a card that never entered Building
+      // has no worktree at all. But a RECLAIMED worktree still has its branch
+      // name (reclaim nulls `path`, not `branch`) and its card can still be
+      // merged, so it must still be refreshable: falling back to the project
+      // root keeps "the worktree was tidied away" from silently freezing the
+      // card's link at whatever it last said.
+      if (worktree === null) return;
+      if (isBoardCardPullRequestTerminal(card.pullRequest)) return;
+
+      const model = yield* snapshotQuery.getCommandReadModel();
+      const cwd = worktree.path ?? projectCwd(model, card);
+      if (cwd === null) return;
+
+      const found = yield* pullRequests.find({ cwd, branch: worktree.branch }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logDebug("board supervisor: pull request lookup failed; keeping last known", {
+            cardId: card.id,
+            branch: worktree.branch,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(undefined)),
+        ),
+      );
+      // `undefined` is the failure sentinel, `null` a real "there is no PR".
+      if (found === undefined) return;
+
+      const next =
+        found === null
+          ? null
+          : ({
+              number: found.number,
+              url: found.url,
+              state: found.state,
+              headBranch: found.headRef,
+              baseRef: found.baseRef,
+              checkedAt: yield* nowIso,
+            } satisfies BoardCardPullRequest);
+
+      // A pull request at or below the floor belongs to a round this card has
+      // already finished (see `BoardCard.pullRequestFloor`). The decider refuses
+      // it too — that refusal is the load-bearing one — but a card on its second
+      // round resolves its retired pull request on EVERY lookup until the new
+      // round opens one, so catching it here keeps that from being a rejected
+      // dispatch and a warning log every single time. `open` and the card's
+      // current link are exempt for the reasons the decider gives: the first is
+      // the branch's live pull request rather than a finished round's, and the
+      // second is how a link adopted while open records its own merge.
+      const isCurrentLink =
+        next !== null && card.pullRequest !== null && card.pullRequest.number === next.number;
+      if (
+        next !== null &&
+        !isCurrentLink &&
+        next.state !== "open" &&
+        card.pullRequestFloor !== null &&
+        next.number <= card.pullRequestFloor
+      ) {
+        // Logged rather than dropped in silence. A card that keeps resolving a
+        // retired pull request and never adopting one shows no pull request at
+        // all, and without this there is nothing anywhere that says why.
+        yield* Effect.logDebug("board supervisor: pull request below the card's round floor", {
+          cardId: card.id,
+          number: next.number,
+          state: next.state,
+          floor: card.pullRequestFloor,
+        });
+        return;
+      }
+      // The decider rejects a no-op too, but checking here keeps the common case
+      // — a refresh that found exactly what we already knew — from generating a
+      // rejected dispatch and a warning log on every card open.
+      if (boardCardPullRequestsEqual(card.pullRequest, next)) return;
+
+      yield* dispatch({
+        type: "board.card.record-pull-request",
+        commandId: yield* commandId("record-pr"),
+        cardId: card.id,
+        pullRequest: next,
+        createdAt: yield* nowIso,
+      });
+    },
+  );
+
+  /**
+   * Refresh the card's pull request, then settle it if that leaves a merged
+   * pull request on a card sitting in Done.
+   *
+   * The settle is deliberately hung off the REFRESH rather than off the stage
+   * move. "In Done" and "merged" are two facts that can become true in either
+   * order — the card can arrive in Done with its pull request already merged,
+   * or sit there while somebody merges it on the forge — and only the second
+   * fact to arrive can act on the pair. Every refresh trigger the card already
+   * has (a merge click, a stage move, the card's detail being opened) therefore
+   * doubles as a settle trigger, and none of them costs a forge call it was not
+   * already making. Nothing here polls.
+   */
   const refreshCardPullRequest = Effect.fn("board-supervisor-refreshCardPullRequest")(function* (
     card: BoardCard,
+    /** The stage to settle against, when the caller holds better authority than
+        the read model does. Only `handleCardMoved` passes it: a `board.card-moved`
+        payload carries the post-move stage, which is the rule that handler
+        already states for itself, and the read model has not necessarily caught
+        up. Every other caller — the RPC path included — omits it and gets the
+        card's own stage as re-read, which is the freshest thing available to
+        them; overriding with a stage they read EARLIER would be strictly
+        staler, not fresher. */
+    movedToStage?: BoardCard["stage"],
   ) {
-    const worktree = card.worktree;
-    // No branch means nothing to look up — a card that never entered Building
-    // has no worktree at all. But a RECLAIMED worktree still has its branch
-    // name (reclaim nulls `path`, not `branch`) and its card can still be
-    // merged, so it must still be refreshable: falling back to the project
-    // root keeps "the worktree was tidied away" from silently freezing the
-    // card's link at whatever it last said.
-    if (worktree === null) return;
-    if (isBoardCardPullRequestTerminal(card.pullRequest)) return;
-
-    const model = yield* snapshotQuery.getCommandReadModel();
-    const cwd = worktree.path ?? projectCwd(model, card);
-    if (cwd === null) return;
-
-    const found = yield* pullRequests.find({ cwd, branch: worktree.branch }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logDebug("board supervisor: pull request lookup failed; keeping last known", {
-          cardId: card.id,
-          branch: worktree.branch,
-          cause: Cause.pretty(cause),
-        }).pipe(Effect.as(undefined)),
-      ),
+    yield* refreshCardPullRequestLink(card);
+    // Re-read for the pull request the refresh may have just recorded.
+    const refreshed = yield* readCard(card.id);
+    if (refreshed === null) return;
+    yield* settleCardAtDone(
+      movedToStage === undefined ? refreshed : { ...refreshed, stage: movedToStage },
     );
-    // `undefined` is the failure sentinel, `null` a real "there is no PR".
-    if (found === undefined) return;
-
-    const next =
-      found === null
-        ? null
-        : ({
-            number: found.number,
-            url: found.url,
-            state: found.state,
-            headBranch: found.headRef,
-            baseRef: found.baseRef,
-            checkedAt: yield* nowIso,
-          } satisfies BoardCardPullRequest);
-
-    // The decider rejects a no-op too, but checking here keeps the common case
-    // — a refresh that found exactly what we already knew — from generating a
-    // rejected dispatch and a warning log on every card open.
-    if (boardCardPullRequestsEqual(card.pullRequest, next)) return;
-
-    yield* dispatch({
-      type: "board.card.record-pull-request",
-      commandId: yield* commandId("record-pr"),
-      cardId: card.id,
-      pullRequest: next,
-      createdAt: yield* nowIso,
-    });
   });
 
   /** The card as the read model currently has it, or null if it is gone. */
@@ -1643,9 +1706,9 @@ const make = Effect.gen(function* () {
     if (result === null) return;
     // Report it on the card, not just in the log. Deleting a branch is
     // irreversible, and a partial cleanup — remote gone, local still held by a
-    // worktree — is the NORMAL outcome given `reclaim-on-archive`, so the user
-    // needs to be told which of their branches still exist without reading
-    // server logs to find out.
+    // worktree — is a real outcome whenever `reclaimWorktreeOnDone` is off, so
+    // the user needs to be told which of their branches still exist without
+    // reading server logs to find out.
     const deleted = [
       ...(result.remoteDeleted ? ["remote"] : []),
       ...(result.localDeleted ? ["local"] : []),
@@ -1664,6 +1727,188 @@ const make = Effect.gen(function* () {
       detail,
       createdAt: yield* nowIso,
     });
+  });
+
+  /**
+   * Remove a card's worktree, reporting the outcome onto the card.
+   *
+   * Shared by the two moments a worktree is reclaimed — arrival at Done with a
+   * merged pull request, and archive — so both get the same clean-and-pushed
+   * refusal, the same activity-rail entry and the same never-fatal error
+   * handling. Reclaim NEVER deletes uncommitted work to save disk: a dirty or
+   * unpushed tree is kept and the reason recorded (t3o-09, D6).
+   *
+   * A worktree that is not `ready` is already gone (or never arrived), so this
+   * is idempotent — the property the boot sweep leans on.
+   */
+  const reclaimCardWorktree = Effect.fn("board-supervisor-reclaimCardWorktree")(function* (
+    card: BoardCard,
+  ) {
+    if (card.worktree === null || card.worktree.status !== "ready" || card.worktree.path === null) {
+      return;
+    }
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const cwd = projectCwd(model, card);
+    if (cwd === null) return;
+    const reclaimed = yield* reclaimBoardCardWorktree({
+      projectCwd: cwd,
+      worktreePath: card.worktree.path,
+    }).pipe(
+      Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+      Effect.map(Option.some),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: worktree reclaim failed", {
+          cardId: card.id,
+          cause: Cause.pretty(cause),
+        }).pipe(
+          Effect.as(
+            Option.none<{
+              readonly outcome: "removed" | "blocked";
+              readonly reason: string | null;
+            }>(),
+          ),
+        ),
+      ),
+    );
+    if (Option.isNone(reclaimed)) return;
+    yield* dispatch({
+      type: "board.card.reclaim-worktree",
+      commandId: yield* commandId("reclaim-worktree"),
+      cardId: card.id,
+      outcome: reclaimed.value.outcome,
+      ...(reclaimed.value.reason === null ? {} : { reason: reclaimed.value.reason }),
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * The round each card was last settled in, this process — see
+   * `settleCardAtDone`. Keyed by ROUND rather than being a plain set of card
+   * ids, and cleared by nothing but archive.
+   *
+   * A per-card flag cleared on the move out of Done looked equivalent and was
+   * not: a settle already in flight when the card moved would finish afterwards
+   * and re-add the flag, and round two would then silently never settle. The
+   * round index moves with the card instead, so a late write from round one
+   * records round one and cannot mask round two.
+   *
+   * `pullRequestHistory.length` IS the round index: it increments exactly once,
+   * at the boundary, when the card leaves the done-role stage carrying a pull
+   * request.
+   */
+  const settledAtDone = new Map<string, number>();
+  const boardCardRound = (card: BoardCard): number => card.pullRequestHistory.length;
+
+  /**
+   * Cards whose settle is running right now.
+   *
+   * `settledAtDone` is marked on COMPLETION, deliberately — a settle that dies
+   * partway must be retryable. That leaves a check-then-set window across every
+   * yield in between, and the `board.refreshPullRequest` RPC is not serialised
+   * through the reactor's worker, so two card opens really can be in that
+   * window together and both run the cleanup. This closes it: the test and the
+   * add below are synchronous, so no yield separates them.
+   */
+  const settlingAtDone = new Set<string>();
+
+  /**
+   * Give a finished card its disk back: reclaim the worktree, then delete the
+   * branches.
+   *
+   * Runs when a card is in the done-role stage AND its pull request is merged.
+   * Both halves are gated on `merged` because that is what makes them safe —
+   * the commits already live in the base branch, so neither the checkout nor
+   * the branch holds anything that exists nowhere else.
+   *
+   * THE ORDER IS THE POINT. `deleteMergedCardBranch` refuses to delete a local
+   * branch a worktree still has checked out, and until this ran second that
+   * refusal was the NORMAL outcome — every finished card left its local
+   * `board/*` branch behind, permanently: archive reclaims a worktree but
+   * never deletes branches, so nothing came along later to collect it.
+   * Reclaiming first means the branch is unheld by the time the delete is
+   * attempted, so the worktree and the local branch go together, in one move.
+   *
+   * Best-effort throughout, both halves. A card that cannot reach Done because
+   * a `git push --delete` failed is broken; a branch that outlives its card is
+   * merely untidy.
+   */
+  const settleCardAtDone = Effect.fn("board-supervisor-settleCardAtDone")(function* (
+    card: BoardCard,
+  ) {
+    if (card.pullRequest === null || card.pullRequest.state !== "merged") return;
+    const board = yield* readBoard;
+    const stage = boardStageById(board, card.stage);
+    if (stage === null || effectiveBoardStageRole(stage) !== "done") return;
+    // Settling hangs off the pull-request refresh, and a refresh fires every
+    // time anyone OPENS the card — so without a guard a card sitting in Done
+    // would re-run `git push --delete` on an already-deleted branch and append
+    // another "Deleted branch…" row to its activity rail on every single open.
+    //
+    // Deliberately NOT gated on the worktree still being `ready`. That would
+    // read as a durable guard and is not one: the two paths that keep a `ready`
+    // worktree at Done (`reclaimWorktreeOnDone` off, and a reclaim refused for
+    // a dirty tree) are exactly the paths that would then never have their
+    // branches deleted at all, and a card whose worktree was reclaimed earlier
+    // — at archive, before being unarchived — would silently lose its cleanup
+    // too. The reclaim's own `ready` check keeps THAT half idempotent; this set
+    // keeps the branch half idempotent.
+    //
+    // In memory, following `mergeAwaitingConflictFix`. After a restart a card
+    // still sitting in Done can settle once more, which costs one idempotent
+    // cleanup attempt — the remote delete reports "remote ref does not exist"
+    // and is treated as success — rather than an unbounded stream of them.
+    const round = boardCardRound(card);
+    if (settledAtDone.get(String(card.id)) === round) return;
+    // Both checks and the add are synchronous — nothing yields between them —
+    // so a concurrent caller cannot slip through into the same settle.
+    if (settlingAtDone.has(String(card.id))) return;
+    settlingAtDone.add(String(card.id));
+
+    // `ensuring`, so a failure anywhere below releases the in-flight marker.
+    // Leaking it would wedge the card out of ever settling again in this
+    // process — the opposite of what marking on completion is FOR.
+    yield* Effect.gen(function* () {
+      const settings = yield* boardSettings;
+      if (settings.lifecycle.reclaimWorktreeOnDone) {
+        // Re-assert immediately before the destructive half. Every check above
+        // ran against the snapshot this was called with, and there are yields
+        // in between — long enough for a human to drag the card straight back
+        // out of Done and start round two in that very checkout. Removing it
+        // then would delete work that had just begun, and the reclaim's own
+        // clean-and-pushed refusal does not cover it: a checkout can be clean
+        // and pushed and still be the one an agent is about to write to.
+        //
+        // Re-asserted on the ROUND, not on the stage. Re-reading the stage
+        // would contradict the rule `handleCardMoved` states — the move event's
+        // payload is the authority for where a card is, precisely because the
+        // read model may not have caught up — so a lagging read would cancel
+        // legitimate reclaims. The round index has no such ambiguity: it only
+        // ever advances, and it advances on exactly the move being guarded
+        // against.
+        const current = yield* readCard(card.id);
+        if (current !== null && boardCardRound(current) === round) {
+          yield* reclaimCardWorktree(current);
+        }
+      }
+      // Re-read: the reclaim just changed the card's worktree state, and branch
+      // cleanup asks whether a worktree still holds the branch.
+      const reclaimed = yield* readCard(card.id);
+      yield* cleanupBranchOnDone(reclaimed ?? card);
+    }).pipe(Effect.ensuring(Effect.sync(() => settlingAtDone.delete(String(card.id)))));
+    // "Settled" means THIS ROUND HAS HAD ITS ATTEMPT — not "achieved
+    // everything". Both halves above swallow their own errors, so control
+    // reaches here whatever they managed: a reclaim refused for a dirty tree
+    // and a `git push --delete` that failed on a network blip both count.
+    //
+    // That is deliberate rather than a gap. Nothing in this process can clean a
+    // dirty tree, so re-attempting on every card open would re-report a refusal
+    // the card is already displaying; and a cleanup that failed has already
+    // said so on the card's activity rail, which is where a human looks. The
+    // retry paths are the honest ones: the round index moves when the card next
+    // leaves Done carrying a pull request, giving that round its own attempt,
+    // and archive reclaims unconditionally — still subject to the same
+    // never-delete-uncommitted-work refusal.
+    settledAtDone.set(String(card.id), round);
   });
 
   /**
@@ -2111,6 +2356,10 @@ const make = Effect.gen(function* () {
     event: Extract<OrchestrationEvent, { type: "board.card-archived" }>,
   ) {
     const board = yield* readBoard;
+    // Reap the settle marker whether or not the card is still readable: an
+    // archived card is done being settled, and an entry that outlives its card
+    // is a leak the process never gets back.
+    settledAtDone.delete(String(event.payload.cardId));
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     if (card === undefined) return;
     const state = boardCardStepState(board, event.payload.cardId);
@@ -2119,44 +2368,14 @@ const make = Effect.gen(function* () {
       // The abandoned step released its slot — offer it to whatever is queued.
       yield* schedule();
     }
-    // Reclaim the card's worktree at archive (t3o-09, D6/D15): remove it only
-    // when clean and pushed, otherwise record why it was kept — without this,
+    // Reclaim the card's worktree at archive (t3o-09, D6/D15) — without this,
     // every archived card leaks its worktree and `board/*` branch on disk.
-    if (card.worktree === null || card.worktree.status !== "ready" || card.worktree.path === null) {
-      return;
-    }
-    const model = yield* snapshotQuery.getCommandReadModel();
-    const cwd = projectCwd(model, card);
-    if (cwd === null) return;
-    const reclaimed = yield* reclaimBoardCardWorktree({
-      projectCwd: cwd,
-      worktreePath: card.worktree.path,
-    }).pipe(
-      Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-      Effect.map(Option.some),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("board supervisor: worktree reclaim failed", {
-          cardId: card.id,
-          cause: Cause.pretty(cause),
-        }).pipe(
-          Effect.as(
-            Option.none<{
-              readonly outcome: "removed" | "blocked";
-              readonly reason: string | null;
-            }>(),
-          ),
-        ),
-      ),
-    );
-    if (Option.isNone(reclaimed)) return;
-    yield* dispatch({
-      type: "board.card.reclaim-worktree",
-      commandId: yield* commandId("reclaim-worktree"),
-      cardId: card.id,
-      outcome: reclaimed.value.outcome,
-      ...(reclaimed.value.reason === null ? {} : { reason: reclaimed.value.reason }),
-      createdAt: yield* nowIso,
-    });
+    //
+    // UNCONDITIONAL, and it reads no setting on purpose. Archive is the
+    // guaranteed cleanup point: `reclaimWorktreeOnDone` chooses whether a card
+    // is reclaimed EARLIER, at Done, and never whether it is reclaimed at all.
+    // A worktree may not outlive its card.
+    yield* reclaimCardWorktree(card);
   });
 
   // A card was created (D10): if it landed in an auto-executing stage, kick off
@@ -2249,16 +2468,11 @@ const make = Effect.gen(function* () {
     }
     // Refresh trigger: a stage change. The card may have crossed into the
     // merge stage (where the Merge button needs a current PR state) or into
-    // Done (where branch cleanup gates on it), and either way this is a moment
-    // the answer plausibly changed.
-    yield* refreshCardPullRequest(card);
-    const toStage = boardStageById(board, event.payload.toStage);
-    if (toStage !== null && effectiveBoardStageRole(toStage) === "done") {
-      // Re-read: the refresh above may have just recorded the merge that makes
-      // this branch safe to delete.
-      const settled = yield* readCard(card.id);
-      if (settled !== null) yield* cleanupBranchOnDone(settled);
-    }
+    // Done (where the settle gates on it), and either way this is a moment the
+    // answer plausibly changed. The arrival-at-Done case needs no branch of its
+    // own: `refreshCardPullRequest` settles the card whenever the refresh
+    // leaves it in Done with a merged pull request, which is exactly this.
+    yield* refreshCardPullRequest(card, card.stage);
 
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
   });
@@ -2360,6 +2574,49 @@ const make = Effect.gen(function* () {
         const state = boardCardStepState(settled, card.id);
         if (state !== null && !isBoardTerminalStepStatus(state.status)) continue;
         yield* beginStageRun({ card, onDemand: false, bootPass: true });
+      }
+    }
+    // Settle the cards that finished while this feature did not exist.
+    //
+    // The settle is normally driven by a pull-request refresh, and refreshes
+    // are event-driven — so a card that reached Done before this shipped gets
+    // no trigger, ever, and keeps its worktree until somebody archives it by
+    // hand. That backlog is the whole reason the feature exists, so it has to
+    // be swept once.
+    //
+    // Cached `merged` ONLY, which is what makes the sweep free: merged is
+    // terminal — nothing about that pull request can change again — so the
+    // cached value cannot be stale and no lookup is needed. This pass issues
+    // ZERO forge calls. Cards still cached `open` are deliberately left for
+    // their next ordinary refresh; refreshing them here would be a burst of
+    // `gh pr list` proportional to the size of Done on every single restart,
+    // which is the periodic polling this design refuses.
+    //
+    // It must also be SELF-TERMINATING. `settledAtDone` is empty after a
+    // restart, so the sweep is the one settle path a restart re-arms; a card it
+    // keeps matching gets another branch-cleanup row on its rail and another
+    // forge round-trip on every single boot, forever. Two filters retire a card
+    // from it permanently, one per way a settle can end:
+    //
+    //  - The reclaim SUCCEEDED — the worktree is no longer `ready`.
+    //  - The reclaim was REFUSED — `reclaimBlockedReason` is set. A dirty or
+    //    unpushed tree leaves `status: "ready"` on purpose (the card keeps its
+    //    worktree, and says why), so without this the blocked card would match
+    //    for ever. It is also the right answer on its own terms: nothing here
+    //    can clean that tree, so re-attempting it every boot only re-reports a
+    //    refusal the card is already displaying.
+    //
+    // The setting gate is the third: with reclaim off there is no disk backlog
+    // to clear, and clearing it is the only thing this sweep is for.
+    const settings = yield* boardSettings;
+    if (settings.lifecycle.reclaimWorktreeOnDone) {
+      const finished = yield* readBoard;
+      for (const card of finished.cards) {
+        if (card.archivedAt !== null) continue;
+        if (card.worktree === null || card.worktree.status !== "ready") continue;
+        if (card.worktree.reclaimBlockedReason !== null) continue;
+        if (card.pullRequest === null || card.pullRequest.state !== "merged") continue;
+        yield* settleCardAtDone(card);
       }
     }
   }).pipe(

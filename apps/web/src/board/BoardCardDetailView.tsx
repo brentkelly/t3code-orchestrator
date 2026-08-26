@@ -28,6 +28,7 @@ import {
   DEFAULT_BOARD_REVIEW_ROUNDS,
   activeBoardCardThreadId,
   boardCardArchiveNeedsConfirmation,
+  boardCardDisplayPullRequest,
   boardStageIndex,
   boardStagesInOrder,
   boardStageWithRole,
@@ -573,9 +574,20 @@ function ActionsSection({
 }) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
+  // Two different pull requests, deliberately.
+  //
+  // `pullRequest` is the CURRENT round's — the only one the Merge button may
+  // ever act on, because acting on a round the card has already finished is
+  // precisely what `pullRequestFloor` exists to prevent.
+  //
+  // `displayed` falls back to the newest retired round, so a card that has been
+  // dragged back out of Done and is being worked on again still LINKS the pull
+  // request that merged last time, right up until its new round opens one.
   const pullRequest = card.pullRequest;
+  const displayed = boardCardDisplayPullRequest(card);
   const primaryAction = boardStagePrimaryAction(props.stages, card.stage, {
     pullRequestState: pullRequest?.state ?? null,
+    pullRequestNumber: pullRequest?.number ?? null,
     conflictStepRunning: props.conflictStepRunning,
   });
   const forward = primaryAction !== null && !archived ? primaryAction : null;
@@ -588,8 +600,7 @@ function ActionsSection({
   // The View PR link renders at every stage (including Done, past any forward
   // action), so keep the section alive whenever a PR is linked — otherwise the
   // link vanishes exactly when a merged card lands in Done.
-  if (forward === null && !card.blocked && humanInLoop === null && pullRequest === null)
-    return null;
+  if (forward === null && !card.blocked && humanInLoop === null && displayed === null) return null;
   return (
     <div className="flex flex-col gap-2 p-3.5">
       {forward !== null ? (
@@ -642,16 +653,16 @@ function ActionsSection({
           the change that closed it. Only the number rides the card shell, so
           this link — which needs the URL — lives here on the detail, which
           already subscribes to the whole card. */}
-      {pullRequest !== null ? (
+      {displayed !== null ? (
         <button
           className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
-          onClick={() => props.onOpenPullRequest(pullRequest.url)}
-          title={`Open pull request #${pullRequest.number}`}
+          onClick={() => props.onOpenPullRequest(displayed.url)}
+          title={`Open pull request #${displayed.number}`}
           type="button"
         >
           <GitPullRequestIcon className="size-3.5" />
           <span>View PR</span>
-          <span className="text-muted-foreground">{`#${pullRequest.number}`}</span>
+          <span className="text-muted-foreground">{`#${displayed.number}`}</span>
         </button>
       ) : null}
       {card.blocked ? (

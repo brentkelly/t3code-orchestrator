@@ -27,14 +27,8 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
   { id: "board-pipeline", title: "Pipeline", to: "/settings/board" },
   { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
   {
-    id: "board-archive-window",
-    title: "Archive window",
-    to: "/settings/board",
-    targetId: "board-lifecycle",
-  },
-  {
-    id: "board-worktree-retention",
-    title: "Worktree retention",
+    id: "board-reclaim-worktree-on-done",
+    title: "Reclaim worktrees at Done",
     to: "/settings/board",
     targetId: "board-lifecycle",
   },

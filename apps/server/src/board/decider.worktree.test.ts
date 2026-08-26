@@ -49,6 +49,8 @@ function makeCard(
     humanInLoop: null,
     worktree: null,
     pullRequest: null,
+    pullRequestHistory: [],
+    pullRequestFloor: null,
     blocked: false,
     archivedAt: null,
     createdAt: NOW,
@@ -370,11 +372,364 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
         },
       });
       const failure = yield* decideFail(provision("card-1"), makeReadModel(boardWith([card])));
-      assert.match(String(failure), /only a failed worktree can be re-provisioned/);
+      assert.match(String(failure), /only a failed or reclaimed worktree can be re-provisioned/);
     }),
   );
 
-  // ── reclaim (reverse state) ──────────────────────────────────────────
+  // ── a second round of work ───────────────────────────────────────────
+
+  const mergedPr = (number: number) =>
+    ({
+      number,
+      url: `https://github.com/acme/repo/pull/${number}`,
+      state: "merged",
+      headBranch: "board/card-1",
+      baseRef: "main",
+      checkedAt: NOW,
+    }) as const;
+
+  const readyWorktree = {
+    branch: "board/card-1",
+    baseRefName: "main",
+    path: "/tmp/worktrees/card-1",
+    status: "ready",
+    attempts: 1,
+    lastError: null,
+    reclaimBlockedReason: null,
+  } as const;
+
+  const reclaimedCard = (overrides?: Partial<BoardCard>) =>
+    makeCard({
+      id: "card-1",
+      worktree: {
+        branch: "board/card-1",
+        baseRefName: "main",
+        path: null,
+        status: "reclaimed",
+        attempts: 3,
+        lastError: null,
+        reclaimBlockedReason: null,
+      },
+      ...overrides,
+    });
+
+  const move = (cardId: string, toStage: string) =>
+    ({
+      type: "board.card.move",
+      commandId: CommandId.make(`cmd-move-${cardId}-${toStage}`),
+      cardId: BoardCardId.make(cardId),
+      toStage: BoardStageId.make(toStage),
+      override: true,
+      createdAt: NOW,
+    }) as const satisfies BoardCommand;
+
+  it.effect("leaving Done with a MERGED pull request starts a new round", () =>
+    Effect.gen(function* () {
+      // The boundary lives on the move, not on worktree re-provision: the two
+      // paths that keep a `ready` worktree at Done are never re-provisioned at
+      // all, and a boundary hung on provisioning simply would not fire for
+      // them.
+      const card = makeCard({
+        id: "card-1",
+        stage: "done",
+        pullRequest: mergedPr(284),
+        worktree: readyWorktree,
+      });
+      const event = yield* decide(move("card-1", "building"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-moved");
+      if (event.type !== "board.card-moved") return;
+      const next = event.payload.card;
+      // The finished round retires and stops being current...
+      assert.strictEqual(next.pullRequest, null);
+      assert.deepStrictEqual(
+        next.pullRequestHistory.map((entry) => entry.number),
+        [284],
+      );
+      // ...and the floor rises to shut it out of the new round. Without this,
+      // `merged` being terminal short-circuits every later refresh, so round
+      // two's pull request is never adopted and the card's next arrival at
+      // Done deletes round two's live branch.
+      assert.strictEqual(next.pullRequestFloor, 284);
+    }),
+  );
+
+  it.effect("leaving Done retires a pull request cached as OPEN too", () =>
+    Effect.gen(function* () {
+      // `card.pullRequest` is a CACHE, and the decider is pure — so a link
+      // cached `open` that has since merged on the forge would otherwise take
+      // the no-boundary path. The card would carry that stale link into round
+      // two, the next refresh would resolve it as `merged`, and the settle
+      // would delete a branch now holding round two's unmerged commits, with
+      // the reclaim having already removed the checkout. Leaving Done ends the
+      // round whatever the link says, so no stale value can authorise a
+      // deletion.
+      const card = makeCard({
+        id: "card-1",
+        stage: "done",
+        pullRequest: { ...mergedPr(284), state: "open" },
+        worktree: readyWorktree,
+      });
+      const event = yield* decide(move("card-1", "building"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-moved");
+      if (event.type !== "board.card-moved") return;
+      assert.strictEqual(event.payload.card.pullRequest, null);
+      assert.deepStrictEqual(
+        event.payload.card.pullRequestHistory.map((entry) => entry.number),
+        [284],
+      );
+      assert.strictEqual(event.payload.card.pullRequestFloor, 284);
+    }),
+  );
+
+  it.effect("leaving Done with NO pull request changes nothing", () =>
+    Effect.gen(function* () {
+      // Nothing to retire and nothing to floor — a card that never opened one
+      // must not have its floor invented out of thin air.
+      const card = makeCard({
+        id: "card-1",
+        stage: "done",
+        pullRequest: null,
+        worktree: readyWorktree,
+      });
+      const event = yield* decide(move("card-1", "building"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-moved");
+      if (event.type !== "board.card-moved") return;
+      assert.strictEqual(event.payload.card.pullRequest, null);
+      assert.deepStrictEqual(event.payload.card.pullRequestHistory, []);
+      assert.strictEqual(event.payload.card.pullRequestFloor, null);
+    }),
+  );
+
+  it.effect("moving INTO Done retires nothing", () =>
+    Effect.gen(function* () {
+      // Only leaving is a boundary. Arriving is when the card's pull request
+      // matters most — it is what the settle at Done reads to decide whether
+      // the branch is safe to delete.
+      const card = makeCard({
+        id: "card-1",
+        stage: "merge",
+        pullRequest: mergedPr(284),
+        worktree: readyWorktree,
+      });
+      const event = yield* decide(move("card-1", "done"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-moved");
+      if (event.type !== "board.card-moved") return;
+      assert.strictEqual(event.payload.card.pullRequest?.number, 284);
+      assert.deepStrictEqual(event.payload.card.pullRequestHistory, []);
+    }),
+  );
+
+  it.effect("a round that ended without a pull request cannot LOWER the floor", () =>
+    Effect.gen(function* () {
+      // Round one merged #284 and set the floor. Round two is being reopened
+      // having never opened a pull request of its own. Round three must still
+      // be floored at #284 — recomputing from "the entry retiring now" alone
+      // would reset it to nothing and let #284 be adopted all over again.
+      const card = makeCard({
+        id: "card-1",
+        stage: "done",
+        pullRequest: null,
+        pullRequestHistory: [mergedPr(284)],
+        pullRequestFloor: 284 as BoardCard["pullRequestFloor"],
+        worktree: readyWorktree,
+      });
+      const event = yield* decide(move("card-1", "building"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-moved");
+      if (event.type !== "board.card-moved") return;
+      assert.strictEqual(event.payload.card.pullRequestFloor, 284);
+      assert.deepStrictEqual(
+        event.payload.card.pullRequestHistory.map((entry) => entry.number),
+        [284],
+      );
+    }),
+  );
+
+  it.effect("re-provisioning a reclaimed worktree restarts the attempt count only", () =>
+    Effect.gen(function* () {
+      // Provisioning no longer touches the pull request at all — the boundary
+      // is the move. All this arm still owns is the attempt count.
+      const card = reclaimedCard({ pullRequest: null, pullRequestHistory: [mergedPr(284)] });
+      const event = yield* decide(provision("card-1"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-worktree-provisioning");
+      if (event.type !== "board.card-worktree-provisioning") return;
+      const next = event.payload.card;
+      assert.strictEqual(next.worktree?.status, "provisioning");
+      // Restarts, rather than continuing the reclaimed worktree's tally of 3:
+      // `attempts` means "retries of THIS provision".
+      assert.strictEqual(next.worktree?.attempts, 1);
+      assert.strictEqual(next.pullRequest, null);
+      assert.deepStrictEqual(
+        next.pullRequestHistory.map((entry) => entry.number),
+        [284],
+      );
+    }),
+  );
+
+  it.effect("a retry of a FAILED worktree climbs the attempt count", () =>
+    Effect.gen(function* () {
+      const card = makeCard({
+        id: "card-1",
+        pullRequest: { ...mergedPr(284), state: "open" },
+        worktree: {
+          branch: "board/card-1",
+          baseRefName: "main",
+          path: null,
+          status: "failed",
+          attempts: 1,
+          lastError: "boom",
+          reclaimBlockedReason: null,
+        },
+      });
+      const event = yield* decide(provision("card-1"), makeReadModel(boardWith([card])));
+      assert.strictEqual(event.type, "board.card-worktree-provisioning");
+      if (event.type !== "board.card-worktree-provisioning") return;
+      const next = event.payload.card;
+      assert.strictEqual(next.worktree?.attempts, 2);
+      assert.strictEqual(next.pullRequest?.number, 284);
+      assert.deepStrictEqual(next.pullRequestHistory, []);
+      assert.strictEqual(next.pullRequestFloor, null);
+    }),
+  );
+
+  it.effect("a pull request at or below the floor is refused", () =>
+    Effect.gen(function* () {
+      // The forge lookup keeps answering #284 for the re-cut branch until the
+      // new round opens one of its own, because it falls back to the newest
+      // pull request overall when none is open. Adopting it would put a
+      // "merged" link on live, unmerged work — and branch cleanup deletes the
+      // remote branch of a card whose link says merged.
+      const card = reclaimedCard({
+        pullRequest: null,
+        pullRequestHistory: [mergedPr(284)],
+        pullRequestFloor: 284 as BoardCard["pullRequestFloor"],
+      });
+      const failure = yield* decideFail(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-card-1"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: mergedPr(284),
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.match(String(failure), /belongs to a completed round of work/);
+    }),
+  );
+
+  it.effect("a retired pull request that is still OPEN may be re-adopted", () =>
+    Effect.gen(function* () {
+      // The exemption that stops the floor from stranding a card. Leaving Done
+      // retires whatever link the card held without consulting its cached state
+      // — a cache may not authorise an irreversible deletion — so a pull request
+      // that was genuinely still open gets retired too. It is nonetheless the
+      // branch's LIVE pull request: round two's pushes go into it, and no new
+      // one can be opened for a head that already has one. Refusing it would
+      // leave the card unable to link, merge, or ever open a pull request again.
+      const card = reclaimedCard({
+        pullRequest: null,
+        pullRequestHistory: [mergedPr(284)],
+        pullRequestFloor: 284 as BoardCard["pullRequestFloor"],
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-card-1"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: { ...mergedPr(284), state: "open" },
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      if (event.type !== "board.card-pull-request-recorded") return;
+      assert.strictEqual(event.payload.card.pullRequest?.number, 284);
+      // Safe because only a non-open pull request can authorise a deletion, and
+      // if this one later merges, it merged carrying round two's work.
+      assert.strictEqual(event.payload.card.pullRequest?.state, "open");
+    }),
+  );
+
+  it.effect("a re-adopted open pull request can still record its own merge", () =>
+    Effect.gen(function* () {
+      // The floor never falls, so exempting `open` alone would be a one-way
+      // door: the pull request re-adopted while open could never record its
+      // merge, the link would read `open` for ever, and the settle, the branch
+      // cleanup and the boot sweep would all keep no-opping — the card would
+      // never get its worktree or its branches back.
+      const card = reclaimedCard({
+        pullRequest: { ...mergedPr(284), state: "open" },
+        pullRequestHistory: [mergedPr(284)],
+        pullRequestFloor: 284 as BoardCard["pullRequestFloor"],
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-card-1"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: mergedPr(284),
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      if (event.type !== "board.card-pull-request-recorded") return;
+      assert.strictEqual(event.payload.card.pullRequest?.state, "merged");
+    }),
+  );
+
+  it.effect("a retired pull request found MERGED is still refused", () =>
+    Effect.gen(function* () {
+      // The exemption above is scoped to the link the card actually holds. A
+      // retired pull request the card is NOT holding — the stale-`open`-then-
+      // merged case the round boundary exists for — stays refused, so it can
+      // never authorise deleting a branch carrying the new round's work.
+      const card = reclaimedCard({
+        pullRequest: null,
+        pullRequestHistory: [mergedPr(284)],
+        pullRequestFloor: 284 as BoardCard["pullRequestFloor"],
+      });
+      const failure = yield* decideFail(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-card-1"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: mergedPr(284),
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.match(String(failure), /belongs to a completed round of work/);
+    }),
+  );
+
+  it.effect("the new round's own pull request clears the floor and is adopted", () =>
+    Effect.gen(function* () {
+      const card = reclaimedCard({
+        pullRequest: null,
+        pullRequestHistory: [mergedPr(284)],
+        pullRequestFloor: 284 as BoardCard["pullRequestFloor"],
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-card-1"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: { ...mergedPr(301), state: "open" },
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      if (event.type !== "board.card-pull-request-recorded") return;
+      assert.strictEqual(event.payload.card.pullRequest?.number, 301);
+      // History is untouched: recording a pull request is not a round boundary.
+      assert.deepStrictEqual(
+        event.payload.card.pullRequestHistory.map((entry) => entry.number),
+        [284],
+      );
+    }),
+  );
 
   it.effect("reclaiming a removed worktree clears the path and marks it reclaimed", () =>
     Effect.gen(function* () {

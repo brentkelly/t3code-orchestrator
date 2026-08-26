@@ -12,11 +12,14 @@
  * - **Remote** — what GitHub's own "delete branch on merge" does, and safe for
  *   the same reason.
  * - **Local** — refused while a worktree still has the branch checked out.
- *   `worktreeRetention` defaults to `reclaim-on-archive`, so a card at Done
- *   normally STILL HAS its worktree; the usual outcome is that the local
- *   branch is left alone and cleaned up with the worktree at archive. Deleting
- *   it out from under a live checkout would leave a worktree on a detached,
- *   nameless HEAD.
+ *   Deleting it out from under a live checkout would leave a worktree on a
+ *   detached, nameless HEAD. The caller settles a card at Done by reclaiming
+ *   the worktree FIRST, so by the time this runs the branch is normally
+ *   unheld and the local delete succeeds; with `reclaimWorktreeOnDone` off the
+ *   worktree survives and the local branch OUTLIVES the card — archive reclaims
+ *   the worktree but never runs this, so nothing deletes it afterwards. That is
+ *   the cost of opting out, and it is the local branch only: the remote one is
+ *   deleted at Done either way.
  *
  * Every step is independently best-effort and reports what it did. A cleanup
  * that half-succeeds (remote gone, local held) is a normal, reportable

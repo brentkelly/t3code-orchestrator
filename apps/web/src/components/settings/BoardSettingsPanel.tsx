@@ -13,17 +13,15 @@
  * card.
  */
 import {
-  DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT,
   DEFAULT_BOARD_KEY_PREFIX,
+  DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
   ProviderInstanceId,
   resolveBoardProjectAccent,
   type BoardSettings,
-  type BoardWorktreeRetention,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { useAtomValue } from "@effect/atom-react";
 import { useMemo } from "react";
 import * as Option from "effect/Option";
@@ -40,6 +38,7 @@ import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import {
   normalizeKeyPrefixInput,
   setBoardInstanceConcurrency,
@@ -50,12 +49,6 @@ import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 const ACCENT_AUTO = "__auto__";
-
-const WORKTREE_RETENTION_LABELS: Record<BoardWorktreeRetention, string> = {
-  "reclaim-on-archive": "Reclaim when a card is archived",
-  "reclaim-on-merge": "Reclaim when a card is merged",
-  keep: "Keep worktrees until removed manually",
-};
 
 /** Built-in driver ids (the canonical set is `ServerSettings.providers`, so
     this never drifts from contracts) plus any configured custom instances — the
@@ -318,66 +311,31 @@ function ConcurrencySection({
 // ── Lifecycle ──────────────────────────────────────────────────────────
 
 function LifecycleSection({ board, update }: { board: BoardSettings; update: UpdateFn }) {
-  const anchor = searchableSetting("board-archive-window");
-  const defaults = DEFAULT_UNIFIED_SETTINGS.board.lifecycle;
+  const anchor = searchableSetting("board-reclaim-worktree-on-done");
   return (
     <SettingsSection id="board-lifecycle" title="Lifecycle">
       <CardListContainer>
-        <div id="board-archive-window">
+        <div id="board-reclaim-worktree-on-done">
           <CardRow
             label={anchor.title}
-            description={`Cards auto-archive after this many days in Done. Default is ${DEFAULT_BOARD_ARCHIVE_AFTER_DAYS} days.`}
+            description="Remove a card's git worktree as soon as it reaches Done with its pull request merged, instead of waiting for it to be archived. Archiving always reclaims either way."
             control={
-              <NumberStepper
-                value={board.lifecycle.archiveAfterDays}
-                min={1}
-                max={365}
-                unit="days"
-                ariaLabel="Archive window in days"
-                onChange={(value) => {
-                  if (value !== board.lifecycle.archiveAfterDays) {
-                    update({ board: { lifecycle: { archiveAfterDays: value } } });
-                  }
-                }}
+              <Switch
+                checked={board.lifecycle.reclaimWorktreeOnDone}
+                onCheckedChange={(checked) =>
+                  update({
+                    board: { lifecycle: { reclaimWorktreeOnDone: Boolean(checked) } },
+                  })
+                }
+                aria-label={anchor.title}
               />
             }
           />
         </div>
-        <div className="h-px bg-border" />
-        <CardRow
-          label="Worktree retention"
-          description="When a card's git worktree is reclaimed after its work is done."
-          control={
-            <Select
-              value={board.lifecycle.worktreeRetention}
-              onValueChange={(value) =>
-                update({
-                  board: { lifecycle: { worktreeRetention: value as BoardWorktreeRetention } },
-                })
-              }
-            >
-              <SelectTrigger aria-label="Worktree retention" className="w-full sm:w-72">
-                <SelectValue>
-                  {WORKTREE_RETENTION_LABELS[board.lifecycle.worktreeRetention]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {(Object.keys(WORKTREE_RETENTION_LABELS) as BoardWorktreeRetention[]).map(
-                  (value) => (
-                    <SelectItem key={value} value={value}>
-                      {WORKTREE_RETENTION_LABELS[value]}
-                    </SelectItem>
-                  ),
-                )}
-              </SelectPopup>
-            </Select>
-          }
-        />
       </CardListContainer>
       <p className="px-3 text-xs text-muted-foreground/70 sm:px-4">
-        Defaults: reclaim {defaults.worktreeRetention === "reclaim-on-archive" ? "on archive" : ""},
-        archive after {DEFAULT_BOARD_ARCHIVE_AFTER_DAYS} days, global concurrency{" "}
-        {DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT}.
+        Defaults: reclaim worktrees at Done {DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE ? "on" : "off"},
+        global concurrency {DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT}.
       </p>
     </SettingsSection>
   );

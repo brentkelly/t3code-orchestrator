@@ -601,6 +601,54 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         }
       }
 
+      const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
+      // ── The round boundary ────────────────────────────────────────────
+      //
+      // LEAVING Done with a merged pull request is what starts a card's next
+      // round of work, so it is here — not at worktree re-provision — that the
+      // finished round retires into the history and `pullRequestFloor` rises.
+      //
+      // Tying it to the worktree was wrong: a worktree is reclaimed at Done
+      // only when `reclaimWorktreeOnDone` is on AND the tree is clean and
+      // pushed. Both of the other paths keep a `ready` worktree, which
+      // `ensureWorktree` then REUSES — no re-provision, so no boundary, so the
+      // card carried its merged pull request into round two. `merged` is
+      // terminal, so every refresh short-circuited and the new round's pull
+      // request was never adopted; the card's next arrival at Done then handed
+      // branch cleanup a stale `merged` link for a live branch and deleted
+      // round two's branch out from under its open pull request. That is
+      // verbatim the outcome `BoardCard.pullRequestFloor` exists to foreclose,
+      // and only a boundary that fires on EVERY path forecloses it.
+      //
+      // Deliberately NOT gated on the pull request being `merged`.
+      //
+      // `card.pullRequest` is a CACHE of forge state, refreshed only at this
+      // design's event triggers — and this decider is pure, so it reads
+      // whatever was last cached, not what the forge says now. A card sitting
+      // in Done with a link cached `open` that has since merged would take the
+      // no-boundary path: no floor, the stale link surviving into round two,
+      // and the card's next arrival at Done handing the settle a `merged` link
+      // for a branch now carrying round two's unmerged commits. Reclaim runs
+      // first, so the checkout goes, then the local and remote branches — and
+      // round two's work exists nowhere. Deciding an irreversible deletion off
+      // a value that is allowed to be stale is the mistake; not the staleness.
+      //
+      // So leaving Done ENDS THE ROUND, whatever the link says. The trade, in
+      // the one case that is really still open: that pull request is retired
+      // rather than kept current, so the card no longer offers to merge it and
+      // the floor blocks re-adopting it by number. It is not lost —
+      // `boardCardDisplayPullRequest` keeps the badge and the View PR link
+      // pointing at it — and the failure is toward doing nothing rather than
+      // toward deleting a branch, which is the direction this whole module
+      // errs in by construction.
+      const startsNewRound =
+        doneStageId !== null &&
+        card.stage === doneStageId &&
+        command.toStage !== doneStageId &&
+        card.pullRequest !== null;
+      const retiredHistory = startsNewRound
+        ? [...card.pullRequestHistory, card.pullRequest]
+        : card.pullRequestHistory;
       const nextCard: BoardCard = {
         ...card,
         stage: command.toStage,
@@ -611,6 +659,20 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           dependsOn: card.dependsOn,
           cards: board.cards,
         }),
+        ...(startsNewRound
+          ? {
+              pullRequest: null,
+              pullRequestHistory: retiredHistory,
+              // Highest across EVERYTHING the card has seen, not just the entry
+              // retiring now: a round that ended without a pull request of its
+              // own must not lower a floor an earlier round already raised.
+              pullRequestFloor: retiredHistory.reduce<BoardCard["pullRequestFloor"]>(
+                (highest, entry) =>
+                  highest === null || entry.number > highest ? entry.number : highest,
+                card.pullRequestFloor,
+              ),
+            }
+          : {}),
         updatedAt: command.createdAt,
       };
       const moved: PlannedOrchestrationEvent = {
@@ -631,7 +693,6 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // DEPENDENCY (t3o-13, D5): dependents' stored `blocked` would otherwise
       // go stale — met on entering Done, unmet again on being dragged back out
       // — exactly the staleness the archive/unarchive paths already re-flag.
-      const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
       const crossesDone =
         doneStageId !== null && (card.stage === doneStageId) !== (command.toStage === doneStageId);
       return crossesDone
@@ -1387,16 +1448,38 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // gates on the stage's RESOLVED execution mode, so no stage-literal
       // invariant is re-imposed here — it would orphan real git worktrees for
       // build-mode stages that are not literally named 'building'.
-      // Provisioning starts fresh, or retries a failed step. A worktree that
-      // is already provisioning, ready or reclaimed is never re-provisioned
-      // behind its own back.
-      if (card.worktree !== null && card.worktree.status !== "failed") {
+      // Provisioning starts fresh, retries a failed attempt, or begins a NEW
+      // ROUND on a card whose worktree was reclaimed at Done and which has been
+      // dragged back out to be worked on again. A worktree that is already
+      // provisioning or ready is never re-provisioned behind its own back.
+      if (
+        card.worktree !== null &&
+        card.worktree.status !== "failed" &&
+        card.worktree.status !== "reclaimed"
+      ) {
         return yield* invariant(
           command,
-          `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed worktree can be re-provisioned.`,
+          `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed or reclaimed worktree can be re-provisioned.`,
         );
       }
-      const attempts = card.worktree === null ? 1 : card.worktree.attempts + 1;
+      // Those two admitted states mean different things:
+      //
+      //  - `failed` is a RETRY of the provision already in flight, so `attempts`
+      //    climbs and the repeated failure stays visible.
+      //  - `reclaimed` is a fresh provision for a card that has been dragged
+      //    back out of Done, so `attempts` restarts and keeps meaning "retries
+      //    of THIS provision" rather than a lifetime tally across every round.
+      //
+      // Neither touches the card's pull request. The ROUND boundary — retiring
+      // a merged pull request and raising `pullRequestFloor` — belongs to the
+      // move out of the done-role stage (see `board.card.move`), because that
+      // is the one event every second round passes through. A card whose
+      // worktree survived Done is never re-provisioned at all, so a boundary
+      // hung here would simply not fire for it.
+      const attempts =
+        card.worktree === null || card.worktree.status === "reclaimed"
+          ? 1
+          : card.worktree.attempts + 1;
       const nextCard: BoardCard = {
         ...card,
         worktree: {
@@ -1463,6 +1546,55 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       const card = yield* requireActiveBoardCard({ board, command });
       const previous = card.pullRequest;
       const next = command.pullRequest;
+      // The floor (see `BoardCard.pullRequestFloor`) refuses a pull request
+      // belonging to a round the card has already finished. The card keeps the
+      // same deterministic `board/<key>` branch across rounds, and the forge
+      // lookup falls back to the newest pull request overall when none is open
+      // — so the FINISHED round is exactly what a refresh hands back until the
+      // new round opens one of its own. Adopting it would let branch cleanup
+      // delete the branch of unmerged work, so the refusal lives here, in the
+      // pure decider, where no caller can forget it.
+      //
+      // `open` is exempt, and the exemption is what keeps the floor from
+      // stranding a card. Leaving Done retires whatever link the card held,
+      // without consulting its cached state — a cache may not authorise an
+      // irreversible deletion — so a pull request that was genuinely still open
+      // gets retired too. It is nonetheless the branch's LIVE pull request:
+      // round two's pushes go straight into it, and no new one can be opened
+      // for a head that already has one. Refusing it would leave that card
+      // unable to link, merge, or ever open a pull request again.
+      //
+      // Safe, because `state` here is a value the forge answered on THIS
+      // lookup, not a cached one, and because only a non-open pull request can
+      // authorise a deletion: `settleCardAtDone` gates on `merged`. A retired
+      // pull request that is open now is adopted; the same one, found merged
+      // later, is refused — and if it merged because round two's work went into
+      // it, then round two IS merged and the branch really is spent.
+      // The card's CURRENT link is exempt too, and this is what stops the
+      // `open` exemption above from being a one-way door. The floor never
+      // falls, so without this the pull request just re-adopted while open
+      // could never record its own merge: the refresh would be refused, the
+      // link would read `open` for ever, and the settle, the branch cleanup and
+      // the boot sweep would all keep no-opping — the card would never get its
+      // worktree or its branches back. The floor's job is to stop a FINISHED
+      // round's pull request being ADOPTED, not to freeze the state of one the
+      // card already holds. And a link the card holds can only have been
+      // adopted while open, so a merge recorded through here is a merge that
+      // carried the current round's work.
+      const isCurrentLink =
+        next !== null && card.pullRequest !== null && card.pullRequest.number === next.number;
+      if (
+        next !== null &&
+        !isCurrentLink &&
+        next.state !== "open" &&
+        card.pullRequestFloor !== null &&
+        next.number <= card.pullRequestFloor
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' pull request #${next.number} is ${next.state} and at or below its floor of #${card.pullRequestFloor}; it belongs to a completed round of work.`,
+        );
+      }
       // No-op guard at the decider, not just at the caller. The refresh
       // triggers fire on every step boundary, stage move and card open, and
       // the overwhelming majority of those lookups return exactly what the

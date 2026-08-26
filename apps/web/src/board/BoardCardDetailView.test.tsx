@@ -47,6 +47,8 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     projectId: ProjectId.make("project-gone"),
     labels: [],
     pullRequest: null,
+    pullRequestHistory: [],
+    pullRequestFloor: null,
     stage: BOARD_SEED_STAGE_IDS.ready,
     orderKey: "m",
     title: "Wire the widget",
@@ -332,7 +334,9 @@ describe("BoardCardDetailPanel", () => {
         projectName="P"
       />,
     );
-    expect(idle).toContain(">Merge</button>");
+    // The button names the pull request it would merge: a card can have had
+    // several over its life, and the click is irreversible.
+    expect(idle).toContain(">Merge PR #42</button>");
     expect(idle).not.toContain("Merging…");
 
     const inFlight = renderToStaticMarkup(

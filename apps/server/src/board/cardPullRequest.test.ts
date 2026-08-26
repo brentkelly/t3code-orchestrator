@@ -115,6 +115,13 @@ const mergeStepCompleted = (cardId: BoardCardId, sequence: number): Orchestratio
 const recordedPullRequests = (commands: ReadonlyArray<OrchestrationCommand>) =>
   commands.filter((command) => command.type === "board.card.record-pull-request");
 
+/** The activity-rail notes branch cleanup reports — its only observable. */
+const branchCleanupNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+  commands.filter(
+    (command) =>
+      command.type === "board.card.record-note" && command.kind === "card-branch-deleted",
+  );
+
 const movesTo = (commands: ReadonlyArray<OrchestrationCommand>) =>
   commands.flatMap((command) =>
     command.type === "board.card.move" ? [String(command.toStage)] : [],
@@ -749,6 +756,198 @@ describe("branch cleanup at Done", () => {
             // Still open: the commits do not live in the base branch, so the
             // branch is the only place the work exists. Nothing is deleted.
             assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "open");
+            assert.deepEqual(yield* h.removedWorktrees, []);
+          }),
+      );
+    }),
+  );
+
+  it.effect("reclaims the worktree of a card that reaches Done merged", () =>
+    Effect.gen(function* () {
+      const card = cardInMerge();
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: { ...openPr, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const done = { ...card, stage: BOARD_SEED_STAGE_IDS.done };
+            yield* h.pumpDomain(doneMove(done, 1));
+            // The whole point: a finished card gives its checkout back instead
+            // of holding a full dependency install for as long as it sits in
+            // Done. Nothing auto-archives it, so without this it holds it
+            // forever.
+            assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+            const settled = (yield* h.board).cards[0]!;
+            assert.equal(settled.worktree?.status, "reclaimed");
+            assert.equal(settled.worktree?.path, null);
+            // The branch NAME survives the reclaim, which is what lets the card
+            // still be looked up on the forge afterwards.
+            assert.equal(settled.worktree?.branch, "board/card-1");
+            // And the branches actually went. Asserted through the note the
+            // cleanup reports on the card, which is the only observable it
+            // produces — nothing else in the suite covered that it fires at all.
+            assert.equal(branchCleanupNotes(yield* h.commands).length, 1);
+          }),
+      );
+    }),
+  );
+
+  it.effect("keeps the worktree of a card whose tree is dirty, and says why", () =>
+    Effect.gen(function* () {
+      const card = cardInMerge();
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: { ...openPr, state: "merged" },
+          worktreeDirty: true,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const done = { ...card, stage: BOARD_SEED_STAGE_IDS.done };
+            yield* h.pumpDomain(doneMove(done, 1));
+            // Uncommitted work exists nowhere else. Disk is never worth it.
+            assert.deepEqual(yield* h.removedWorktrees, []);
+            const settled = (yield* h.board).cards[0]!;
+            assert.equal(settled.worktree?.status, "ready");
+            assert.match(String(settled.worktree?.reclaimBlockedReason), /uncommitted changes/);
+          }),
+      );
+    }),
+  );
+
+  it.effect("respects reclaimWorktreeOnDone being off", () =>
+    Effect.gen(function* () {
+      const card = cardInMerge();
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settingsWith({
+            building: [codexStep],
+            globalMaxConcurrent: 4,
+            reclaimWorktreeOnDone: false,
+          }),
+          pullRequest: { ...openPr, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const done = { ...card, stage: BOARD_SEED_STAGE_IDS.done };
+            yield* h.pumpDomain(doneMove(done, 1));
+            // Opted out: the card waits for archive, which reclaims
+            // unconditionally whatever this setting says.
+            assert.deepEqual(yield* h.removedWorktrees, []);
+            assert.equal((yield* h.board).cards[0]!.worktree?.status, "ready");
+          }),
+      );
+    }),
+  );
+
+  it.effect("settles a card ONCE, however many times it is refreshed", () =>
+    Effect.gen(function* () {
+      // Settling hangs off the pull-request refresh, and a refresh fires every
+      // time anyone OPENS the card. Without a guard, a card sitting in Done
+      // would re-run `git push --delete` on an already-deleted branch and
+      // append another "Deleted branch…" row to its rail on every open.
+      const card = { ...cardInMerge(), stage: BOARD_SEED_STAGE_IDS.done };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: { ...openPr, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(card.id);
+            yield* h.reactor.refreshPullRequest(card.id);
+            yield* h.reactor.refreshPullRequest(card.id);
+            assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+            assert.equal(branchCleanupNotes(yield* h.commands).length, 1);
+          }),
+      );
+    }),
+  );
+
+  it.effect("still deletes the branches when the worktree was reclaimed earlier", () =>
+    Effect.gen(function* () {
+      // A card reclaimed at archive and then unarchived arrives at Done with a
+      // worktree that is no longer `ready`. Gating the whole settle on `ready`
+      // would silently drop its branch cleanup — the branch is exactly as
+      // spent, and exactly as safe to delete, as any other merged card's.
+      const card = {
+        ...cardInMerge(),
+        worktree: { ...readyWorktree("card-1"), status: "reclaimed" as const, path: null },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: { ...openPr, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const done = { ...card, stage: BOARD_SEED_STAGE_IDS.done };
+            yield* h.pumpDomain(doneMove(done, 1));
+            assert.deepEqual(yield* h.removedWorktrees, []);
+            assert.equal(branchCleanupNotes(yield* h.commands).length, 1);
+          }),
+      );
+    }),
+  );
+
+  it.effect("does not re-attempt a reclaim it was already refused", () =>
+    Effect.gen(function* () {
+      // A dirty tree leaves `status: "ready"` on purpose — the card keeps its
+      // worktree and says why — so `ready` alone cannot retire the card from
+      // the boot sweep, and it would match on every restart forever. The
+      // refusal reason is the durable marker that it has been tried.
+      const card = {
+        ...cardInMerge(),
+        stage: BOARD_SEED_STAGE_IDS.done,
+        worktree: {
+          ...readyWorktree("card-1"),
+          reclaimBlockedReason: "Worktree has uncommitted changes.",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: { ...openPr, state: "merged" },
+          worktreeDirty: true,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            // Boot reconcile has already run by the time the harness hands the
+            // reactor over, so the sweep's decision is visible here.
+            assert.deepEqual(yield* h.removedWorktrees, []);
+            assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
+          }),
+      );
+    }),
+  );
+
+  it.effect("settles a card whose pull request is merged while it SITS in Done", () =>
+    Effect.gen(function* () {
+      // The two facts — "in Done" and "merged" — can become true in either
+      // order. This is the second order: the card arrived with an open pull
+      // request that somebody then merged on the forge. Hanging the settle off
+      // the refresh rather than off the stage move is what catches it, with no
+      // polling and no forge call that was not already being made.
+      const card = { ...cardInMerge(), stage: BOARD_SEED_STAGE_IDS.done };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: { ...openPr, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(card.id);
+            assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+            assert.equal((yield* h.board).cards[0]!.worktree?.status, "reclaimed");
           }),
       );
     }),

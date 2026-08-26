@@ -23,6 +23,7 @@
  * and reclamation through `GitVcsDriver.removeWorktree` — gated by a
  * clean-and-pushed check so uncommitted work is never deleted to save disk.
  */
+import { boardCardDisplayPullRequest } from "@t3tools/contracts";
 import type { BoardCard, BoardCardWorktreeReclaimOutcome } from "@t3tools/contracts";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
@@ -48,14 +49,43 @@ export function boardCardWorktreeBranchName(card: Pick<BoardCard, "key">): strin
  * yet — the caller turns that into a visible failure rather than cutting from
  * the wrong base. Pure, so it is decided in the read model, never by querying
  * git.
+ *
+ * A parent whose pull request has MERGED is no longer a base. Its branch is
+ * deleted on arrival at Done, so cutting from it would fail on a ref that no
+ * longer exists. The replacement is the pull request's own `baseRef` — the
+ * branch the parent's work actually merged INTO — rather than the project
+ * default: on a sub-board the parent may well have merged into an integration
+ * branch, and cutting the child from the default branch would silently drop
+ * every sibling already integrated there. `baseRef` is recorded on the card, so
+ * this stays pure and needs no git query.
+ *
+ * Read through `boardCardDisplayPullRequest`, not `parent.pullRequest`, because
+ * a parent dragged back out of Done has had its merged pull request RETIRED
+ * into the history — `pullRequest` is null from that moment until its new round
+ * opens one. Consulting only the current link would miss exactly that parent
+ * and fall through to `worktree.branch`, which is the branch that was just
+ * deleted, in the window before the parent re-provisions.
+ *
+ * The tradeoff, stated: while a parent is mid-second-round, a child cuts from
+ * where the parent's FINISHED work landed rather than from its in-flight
+ * branch. That is the safer reading — the alternative pulls unreviewed,
+ * unmerged work into a sibling — and sub-board integration branches are
+ * post-MVP anyway.
+ *
+ * A parent that reached Done without a merged pull request keeps its branch and
+ * keeps being the base, unchanged.
  */
 export function resolveBoardCardBaseRef(input: {
   readonly card: Pick<BoardCard, "parentCardId">;
-  readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "worktree">>;
+  readonly cards: ReadonlyArray<
+    Pick<BoardCard, "id" | "worktree" | "pullRequest" | "pullRequestHistory">
+  >;
   readonly defaultBranch: string;
 }): string | null {
   if (input.card.parentCardId === null) return input.defaultBranch;
   const parent = input.cards.find((candidate) => candidate.id === input.card.parentCardId);
+  const finished = parent === undefined ? null : boardCardDisplayPullRequest(parent);
+  if (finished?.state === "merged") return finished.baseRef;
   return parent?.worktree?.branch ?? null;
 }
 
