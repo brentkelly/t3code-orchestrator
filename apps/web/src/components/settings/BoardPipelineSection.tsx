@@ -1352,6 +1352,19 @@ function ReviewStageBody(props: {
               />
             }
           />
+          {/* The review loop runs unattended by definition (D2/D6), so this
+              stage has no human-in-the-loop gate to hide the row behind the
+              way `SimpleStageBody` does — the loop ending IS the verdict, and
+              a converged card left sitting in Code review is one someone has
+              to notice. Reachable here or the setting is unreachable at all:
+              the reactor reads `autoAdvance` for every stage, review included. */}
+          <ToggleRow
+            label="Auto advance to the next stage"
+            hint="On: the card moves itself on when the loop ends — a round with nothing blocking, or the round cap."
+            checked={exec.autoAdvance}
+            ariaLabel="Auto advance to the next stage"
+            onChange={(checked) => set({ autoAdvance: checked })}
+          />
           {BOARD_REVIEW_PHASE_IDS.map((phaseId, index) => {
             const phase = exec.phases[phaseId];
             return (
