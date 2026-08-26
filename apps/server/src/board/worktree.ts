@@ -48,14 +48,23 @@ export function boardCardWorktreeBranchName(card: Pick<BoardCard, "key">): strin
  * yet — the caller turns that into a visible failure rather than cutting from
  * the wrong base. Pure, so it is decided in the read model, never by querying
  * git.
+ *
+ * A parent whose pull request has MERGED is no longer a base. Its branch is
+ * deleted on arrival at Done, so cutting from it would fail on a ref that no
+ * longer exists — and the fallback is not a guess: a merged parent's commits
+ * ARE in the default branch, by the same argument that made deleting the branch
+ * safe in the first place. The condition is deliberately the exact one that
+ * triggers the deletion, so a parent that reached Done without a merged pull
+ * request keeps its branch and keeps being the base, unchanged.
  */
 export function resolveBoardCardBaseRef(input: {
   readonly card: Pick<BoardCard, "parentCardId">;
-  readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "worktree">>;
+  readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "worktree" | "pullRequest">>;
   readonly defaultBranch: string;
 }): string | null {
   if (input.card.parentCardId === null) return input.defaultBranch;
   const parent = input.cards.find((candidate) => candidate.id === input.card.parentCardId);
+  if (parent?.pullRequest?.state === "merged") return input.defaultBranch;
   return parent?.worktree?.branch ?? null;
 }
 

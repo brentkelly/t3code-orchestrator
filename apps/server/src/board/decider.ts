@@ -1387,16 +1387,48 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // gates on the stage's RESOLVED execution mode, so no stage-literal
       // invariant is re-imposed here — it would orphan real git worktrees for
       // build-mode stages that are not literally named 'building'.
-      // Provisioning starts fresh, or retries a failed step. A worktree that
-      // is already provisioning, ready or reclaimed is never re-provisioned
-      // behind its own back.
-      if (card.worktree !== null && card.worktree.status !== "failed") {
+      // Provisioning starts fresh, retries a failed attempt, or begins a NEW
+      // ROUND on a card whose worktree was reclaimed at Done and which has been
+      // dragged back out to be worked on again. A worktree that is already
+      // provisioning or ready is never re-provisioned behind its own back.
+      if (
+        card.worktree !== null &&
+        card.worktree.status !== "failed" &&
+        card.worktree.status !== "reclaimed"
+      ) {
         return yield* invariant(
           command,
-          `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed worktree can be re-provisioned.`,
+          `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed or reclaimed worktree can be re-provisioned.`,
         );
       }
-      const attempts = card.worktree === null ? 1 : card.worktree.attempts + 1;
+      // Those two admitted states mean different things, and the difference is
+      // the whole safety story of a second round:
+      //
+      //  - `failed` is a RETRY of the round already in flight. `attempts` climbs
+      //    so the repeated failure is visible, and the round's pull request —
+      //    which may well already be open — must be left exactly where it is.
+      //    Retiring it here would strand the round's own pull request behind a
+      //    floor it could never clear.
+      //  - `reclaimed` is a NEW ROUND. `attempts` resets to 1 so the count keeps
+      //    meaning "retries of THIS provision" rather than a lifetime tally, the
+      //    finished round's pull request retires into the history, and the floor
+      //    rises to shut that round out of the new one.
+      const newRound = card.worktree !== null && card.worktree.status === "reclaimed";
+      const attempts = card.worktree === null || newRound ? 1 : card.worktree.attempts + 1;
+      const retired =
+        newRound && card.pullRequest !== null
+          ? [...card.pullRequestHistory, card.pullRequest]
+          : card.pullRequestHistory;
+      // Highest number across everything the card has ever seen, not just the
+      // entry being retired: a round that ended without a pull request of its
+      // own must not lower a floor an earlier round already raised.
+      const floor = newRound
+        ? retired.reduce<BoardCard["pullRequestFloor"]>(
+            (highest, entry) =>
+              highest === null || entry.number > highest ? entry.number : highest,
+            card.pullRequestFloor,
+          )
+        : card.pullRequestFloor;
       const nextCard: BoardCard = {
         ...card,
         worktree: {
@@ -1408,6 +1440,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           lastError: null,
           reclaimBlockedReason: null,
         },
+        ...(newRound
+          ? {
+              pullRequest: null,
+              pullRequestHistory: retired,
+              pullRequestFloor: floor,
+            }
+          : {}),
         updatedAt: command.createdAt,
       };
       return {
@@ -1463,6 +1502,20 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       const card = yield* requireActiveBoardCard({ board, command });
       const previous = card.pullRequest;
       const next = command.pullRequest;
+      // The floor (see `BoardCard.pullRequestFloor`) refuses a pull request
+      // belonging to a round the card has already finished. A re-provisioned
+      // card re-cuts the same `board/<key>` branch, and the forge lookup falls
+      // back to the newest pull request overall when none is open — so the
+      // MERGED round is exactly what a refresh hands back until the new round
+      // opens one of its own. Adopting it would let branch cleanup delete the
+      // remote branch of unmerged work, so the refusal lives here, in the pure
+      // decider, where no caller can forget it.
+      if (next !== null && card.pullRequestFloor !== null && next.number <= card.pullRequestFloor) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' pull request #${next.number} is at or below its floor of #${card.pullRequestFloor}; it belongs to a completed round of work.`,
+        );
+      }
       // No-op guard at the decider, not just at the caller. The refresh
       // triggers fire on every step boundary, stage move and card open, and
       // the overwhelming majority of those lookups return exactly what the

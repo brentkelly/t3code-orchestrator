@@ -43,6 +43,8 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   projectId,
   labels: [],
   pullRequest: null,
+  pullRequestHistory: [],
+  pullRequestFloor: null,
   stage: BOARD_SEED_STAGE_IDS.backlog,
   orderKey: "m",
   title: `Card ${id}`,

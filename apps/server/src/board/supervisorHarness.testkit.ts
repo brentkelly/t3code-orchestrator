@@ -105,6 +105,8 @@ export const makeBoardCard = (input: {
   readonly orderKey: string;
   readonly worktree?: BoardCardWorktree | null;
   readonly pullRequest?: BoardCardPullRequest | null;
+  readonly pullRequestHistory?: ReadonlyArray<BoardCardPullRequest>;
+  readonly pullRequestFloor?: number | null;
 }): BoardCard => ({
   id: BoardCardId.make(input.id),
   key: input.id.toUpperCase(),
@@ -122,6 +124,8 @@ export const makeBoardCard = (input: {
   humanInLoop: null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
+  pullRequestHistory: input.pullRequestHistory ?? [],
+  pullRequestFloor: (input.pullRequestFloor ?? null) as BoardCard["pullRequestFloor"],
   blocked: false,
   archivedAt: null,
   createdAt: NOW,
@@ -234,6 +238,10 @@ export const settingsWith = (input: {
       conflict prompt). Absent leaves it at the compiled-in defaults, which is
       what a board nobody has configured actually resolves to. */
   readonly merge?: Partial<BoardStageExecutionMerge>;
+  /** Whether a card reaching Done with a merged pull request has its worktree
+      reclaimed there rather than at archive. Defaults to the shipped default
+      (on), so a suite that says nothing exercises what users actually run. */
+  readonly reclaimWorktreeOnDone?: boolean;
 }): BoardSettings => ({
   projects: {},
   pipeline: {
@@ -254,7 +262,7 @@ export const settingsWith = (input: {
     perInstance: input.perInstance ?? {},
     globalMaxConcurrent: input.globalMaxConcurrent,
   },
-  lifecycle: { archiveAfterDays: 7, worktreeRetention: "reclaim-on-archive" },
+  lifecycle: { reclaimWorktreeOnDone: input.reclaimWorktreeOnDone ?? true },
 });
 
 export type Harness = {
@@ -277,6 +285,8 @@ export type Harness = {
   readonly decided: Effect.Effect<ReadonlyArray<OrchestrationEvent>>;
   /** Every merge the reactor asked the forge for, in order. */
   readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
+  /** Every worktree path the reactor removed, in order. */
+  readonly removedWorktrees: Effect.Effect<ReadonlyArray<string>>;
 };
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
@@ -306,6 +316,10 @@ export function withGovernor(
     /** What a merge attempt answers: `undefined` succeeds, a string is the
         forge's refusal detail (a conflict when it reads like one). */
     readonly mergeFailure?: string;
+    /** Make the stubbed `statusDetails` report uncommitted changes, so a test
+        can drive the reclaim refusal — the case where the checkout holds work
+        that exists nowhere else and must NOT be deleted to save disk. */
+    readonly worktreeDirty?: boolean;
     /** The cached todo state per thread id (t3o-18): the reactor reads
         `advancedAt` for the stall-reset / timeout-liveness signal and `hasList`
         for the recovery nudge. Absent threads answer "no list". */
@@ -461,7 +475,22 @@ export function withGovernor(
       getSettings: Effect.succeed({ board: input.settings }),
     } as unknown as ServerSettingsService["Service"];
 
+    // Every worktree the reactor removed, so a test can assert that a card
+    // reaching Done gave its checkout back — and, just as importantly, that a
+    // card whose tree is dirty did not.
+    const removedWorktrees = yield* Ref.make<ReadonlyArray<string>>([]);
     const gitStub = {
+      // Reclaim's clean-and-pushed gate. Clean and pushed by default, since
+      // that is what a card whose pull request has merged looks like; a suite
+      // testing the refusal sets `worktreeDirty`.
+      statusDetails: () =>
+        Effect.succeed({
+          hasWorkingTreeChanges: input.worktreeDirty === true,
+          hasUpstream: true,
+          aheadCount: 0,
+        }),
+      removeWorktree: (request: { readonly path: string }) =>
+        Ref.update(removedWorktrees, (paths) => [...paths, request.path]),
       execute: (request: { readonly args?: ReadonlyArray<string> }) =>
         input.notAGitRepo === true
           ? Effect.succeed({
@@ -569,6 +598,7 @@ export function withGovernor(
           commands: Ref.get(commands),
           decided: Ref.get(decided),
           mergeAttempts: Ref.get(mergeAttempts),
+          removedWorktrees: Ref.get(removedWorktrees),
         });
       }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
     );

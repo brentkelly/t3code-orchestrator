@@ -118,6 +118,7 @@ it.effect("resolves a plan card's base to its parent's integration branch", () =
         lastError: null,
         reclaimBlockedReason: null,
       },
+      pullRequest: null,
     };
     const base = resolveBoardCardBaseRef({
       card: { parentCardId: "parent" as never },
@@ -128,9 +129,57 @@ it.effect("resolves a plan card's base to its parent's integration branch", () =
   }),
 );
 
+it.effect("falls back to the default branch when the parent's pull request has merged", () =>
+  Effect.sync(() => {
+    // A merged parent loses its branch on arrival at Done, so cutting from it
+    // would fail on a ref that no longer exists. The default branch is not a
+    // guess: a merged parent's commits ARE in it, by the same argument that
+    // made deleting the branch safe.
+    const parent = {
+      id: "parent" as never,
+      worktree: {
+        branch: "feat/parent",
+        baseRefName: "main",
+        path: "/tmp/worktrees/parent",
+        status: "ready" as const,
+        attempts: 1,
+        lastError: null,
+        reclaimBlockedReason: null,
+      },
+      pullRequest: {
+        number: 284 as never,
+        url: "https://github.com/acme/repo/pull/284",
+        state: "merged" as const,
+        headBranch: "feat/parent",
+        baseRef: "main",
+        checkedAt: "2026-01-01T00:00:00.000Z" as never,
+      },
+    };
+    const base = resolveBoardCardBaseRef({
+      card: { parentCardId: "parent" as never },
+      cards: [parent],
+      defaultBranch: "main",
+    });
+    assert.strictEqual(base, "main");
+
+    // An UNMERGED parent keeps its branch and keeps being the base. The
+    // fallback is gated on exactly the condition that deletes the branch, so
+    // it can never fire while the branch is still there.
+    const unmerged = { ...parent, pullRequest: { ...parent.pullRequest, state: "open" as const } };
+    assert.strictEqual(
+      resolveBoardCardBaseRef({
+        card: { parentCardId: "parent" as never },
+        cards: [unmerged],
+        defaultBranch: "main",
+      }),
+      "feat/parent",
+    );
+  }),
+);
+
 it.effect("returns null when a plan card's parent has no branch yet", () =>
   Effect.sync(() => {
-    const parent = { id: "parent" as never, worktree: null };
+    const parent = { id: "parent" as never, worktree: null, pullRequest: null };
     const base = resolveBoardCardBaseRef({
       card: { parentCardId: "parent" as never },
       cards: [parent],

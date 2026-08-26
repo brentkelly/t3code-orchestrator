@@ -676,6 +676,29 @@ export function boardCardPullRequestsEqual(
   );
 }
 
+/**
+ * The pull request to SHOW for a card: the current round's if it has one,
+ * otherwise the most recent one it has finished with.
+ *
+ * The fallback is what keeps a card's pull request reachable across a round
+ * boundary. `BoardCardDetailView` keeps **View PR** visible at Done on purpose
+ * — a card in Done is exactly when you go looking for its pull request — and a
+ * re-provisioned card has `pullRequest: null` until its new round opens one,
+ * which would otherwise make the merged round unreachable from the card at the
+ * very moment it is most wanted.
+ *
+ * Display only. Nothing that ACTS on a pull request may use this: the merge
+ * button, branch cleanup and the refresh path all read `card.pullRequest`
+ * directly, because acting on a retired round is precisely the mistake the
+ * floor exists to prevent.
+ */
+export function boardCardDisplayPullRequest(
+  card: Pick<BoardCard, "pullRequest" | "pullRequestHistory">,
+): BoardCardPullRequest | null {
+  if (card.pullRequest !== null) return card.pullRequest;
+  return card.pullRequestHistory.at(-1) ?? null;
+}
+
 /** Terminal PR state: nothing about the pull request can change again, so the
     refresh triggers stop asking about that card. This is what keeps the lookup
     set bounded by "cards in flight" rather than growing with the board.
@@ -735,12 +758,43 @@ export const BoardCard = Schema.Struct({
       table-rehydrated model (migration 904's `worktree` column defaults to
       NULL to the same end). */
   worktree: Schema.NullOr(BoardCardWorktree).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** The pull request the card's branch has open on the forge; null until a
-      lookup finds one. Decodes to null on every event payload written before
-      this spec, so a from-empty replay of an older log matches the
+  /** The pull request the card's branch has open on the forge for its CURRENT
+      round of work; null until a lookup finds one, and null again from the
+      moment a reclaimed worktree is re-provisioned until that new round opens a
+      pull request of its own. Decodes to null on every event payload written
+      before this spec, so a from-empty replay of an older log matches the
       table-rehydrated model — the same guarantee `worktree` makes, and
       migration 022's `pull_request` column defaults to NULL to the same end. */
   pullRequest: Schema.NullOr(BoardCardPullRequest).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Every pull request the card has finished with, oldest first — a card
+      worked on, merged, then dragged back out of Done and worked on again has
+      one entry per completed round.
+
+      Append-only, and appended to at exactly one moment: the re-provision of a
+      reclaimed worktree, which retires the current `pullRequest` into here. */
+  pullRequestHistory: Schema.Array(BoardCardPullRequest).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** The highest pull-request number the card knew when its current round of
+      work began; null for a card still on its first round.
+
+      This is a SAFETY FIELD, not bookkeeping. A re-provisioned card re-cuts the
+      same deterministic `board/<key>` branch, and `findLatestPrForHeadContext`
+      queries `state: "all"` and falls back to the newest pull request overall
+      when none is open — so the lookup hands back the round that already
+      MERGED. Adopting it would show a merged pull request for work not yet
+      done, collapse the merge button to a plain "Move to Done", and, on the
+      card's next arrival at Done, hand branch cleanup a `merged` link for a
+      live branch and delete the remote branch of unmerged work.
+
+      The floor forecloses all of that with one comparison: a pull request whose
+      number is at or below it belongs to a finished round and can never become
+      `pullRequest` again. Sound because pull-request numbers are monotonic per
+      repository on every forge in the registry — including the cross-repository
+      fork case, where the number is still the upstream repository's. */
+  pullRequestFloor: Schema.NullOr(PositiveInt).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
@@ -2914,7 +2968,12 @@ export function boardCardShellFromCard(
     dependencyCount: card.dependsOn.length,
     hasBrief: card.briefRef !== null,
     archivedAt: card.archivedAt,
-    prNumber: card.pullRequest?.number ?? null,
+    // Falls back to the newest retired round (`boardCardDisplayPullRequest`),
+    // so the badge does not blink out for the stretch between a card starting
+    // a second round of work and that round opening its own pull request. The
+    // SQL producer COALESCEs to the same fallback; the pair is asserted by
+    // `cardMetaShellFields.test.ts`.
+    prNumber: boardCardDisplayPullRequest(card)?.number ?? null,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined
@@ -3662,27 +3721,33 @@ export const BoardConcurrencySettings = Schema.Struct({
 export type BoardConcurrencySettings = typeof BoardConcurrencySettings.Type;
 
 /**
- * Worktree reclaim policy. t3o-09 owns the worktree lifecycle and the exact
- * execution semantics, and may extend this set; t3o-07 provides the setting
- * the user edits and t3o-09 reads. Default matches D15 (archiving reclaims any
- * surviving worktree).
+ * Worktree reclaim policy.
+ *
+ * ARCHIVE ALWAYS RECLAIMS, unconditionally and whatever this says — it is the
+ * guaranteed cleanup point, and no worktree may outlive its card. So the only
+ * question left for the user is whether a card is *also* reclaimed EARLIER, on
+ * reaching Done with a merged pull request, which is a boolean rather than a
+ * policy enum.
+ *
+ * This replaced a three-value `worktreeRetention` in which two of the values
+ * (`reclaim-on-archive` and `keep`) named the same behaviour once archive is
+ * unconditional, and the third was never implemented at all. Renaming the field
+ * rather than narrowing the old literal set is what makes the change safe on
+ * upgrade: settings persist SPARSELY, so a user who touched the old setting has
+ * `worktreeRetention` on disk, and an unknown key is dropped silently by
+ * `Schema.Struct` where a narrowed `Schema.Literals` would have failed to
+ * decode their file.
  */
-export const BoardWorktreeRetention = Schema.Literals([
-  "reclaim-on-archive",
-  "reclaim-on-merge",
-  "keep",
-]);
-export type BoardWorktreeRetention = typeof BoardWorktreeRetention.Type;
-
 export const BoardLifecycleSettings = Schema.Struct({
-  /** Days a card sits in Done before auto-archiving (D15, consumed by the
-      Phase-2 archiver). */
-  archiveAfterDays: PositiveInt,
-  worktreeRetention: BoardWorktreeRetention,
+  /** Reclaim a card's worktree on arrival at Done when its pull request is
+      merged, instead of waiting for archive. Default on: a busy board otherwise
+      stacks a full checkout — dependency install and all — per finished card,
+      for as long as those cards sit in Done. */
+  reclaimWorktreeOnDone: Schema.Boolean,
 });
 export type BoardLifecycleSettings = typeof BoardLifecycleSettings.Type;
 
-export const DEFAULT_BOARD_ARCHIVE_AFTER_DAYS = 7;
+export const DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE = true;
 export const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
 export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
 /** Consecutive-stall ceiling per step (t3o-17, D1). Raised from 3 to 5: safe
@@ -4229,8 +4294,7 @@ export const BoardSettings = Schema.Struct({
   lifecycle: BoardLifecycleSettings.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
-        archiveAfterDays: DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
-        worktreeRetention: "reclaim-on-archive" as const,
+        reclaimWorktreeOnDone: DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
       }),
     ),
   ),
@@ -4261,8 +4325,7 @@ export const BoardConcurrencySettingsPatch = Schema.Struct({
 export type BoardConcurrencySettingsPatch = typeof BoardConcurrencySettingsPatch.Type;
 
 export const BoardLifecycleSettingsPatch = Schema.Struct({
-  archiveAfterDays: Schema.optionalKey(PositiveInt),
-  worktreeRetention: Schema.optionalKey(BoardWorktreeRetention),
+  reclaimWorktreeOnDone: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardLifecycleSettingsPatch = typeof BoardLifecycleSettingsPatch.Type;
 

@@ -81,6 +81,11 @@ export interface BoardStagePrimaryActionContext {
       merge, and the card falls back to the ordinary forward move so it is
       never stranded short of Done. */
   readonly pullRequestState?: "open" | "closed" | "merged" | null;
+  /** The number of the pull request the button would merge, so it can say
+      which one. A card can accumulate several over its life — worked on,
+      merged, dragged back out of Done, worked on again — and an unnumbered
+      "Merge" leaves the one moment that matters ambiguous. */
+  readonly pullRequestNumber?: number | null;
   /** Whether a step is running on this card in the merge stage. Nothing else
       runs there — the stage does not auto-execute — so a live step can only be
       the conflict-resolution one. */
@@ -108,7 +113,7 @@ export function boardStagePrimaryAction(
     const disabled = context.conflictStepRunning === true;
     return {
       kind: "merge",
-      label: "Merge",
+      label: context.pullRequestNumber == null ? "Merge" : `Merge PR #${context.pullRequestNumber}`,
       emphasised: true,
       disabled,
       disabledReason: disabled ? "Resolving conflicts…" : null,

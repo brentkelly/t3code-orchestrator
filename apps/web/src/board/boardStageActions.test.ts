@@ -92,6 +92,24 @@ describe("boardStagePrimaryAction", () => {
     });
   });
 
+  it("names the pull request it would merge", () => {
+    // A card can accumulate several pull requests over its life — worked on,
+    // merged, dragged back out of Done, worked on again — so an unnumbered
+    // "Merge" leaves the one irreversible click on the card ambiguous.
+    expect(
+      boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.merge, {
+        pullRequestState: "open",
+        pullRequestNumber: 301,
+      }),
+    ).toEqual({
+      kind: "merge",
+      label: "Merge PR #301",
+      emphasised: true,
+      disabled: false,
+      disabledReason: null,
+    });
+  });
+
   it("disables Merge while a conflict-resolution step is running", () => {
     // The step is rewriting the branch the PR is open on, so merging mid-flight
     // would merge a half-resolved state. The button stays visible and says why.

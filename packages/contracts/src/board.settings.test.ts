@@ -15,7 +15,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   BoardSettings,
   boardProjectAcronym,
-  DEFAULT_BOARD_ARCHIVE_AFTER_DAYS,
+  DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_PIPELINE,
@@ -47,8 +47,7 @@ describe("board settings defaults", () => {
     );
     expect(settings.projects).toEqual({});
     expect(settings.concurrency.globalMaxConcurrent).toBeGreaterThan(0);
-    expect(settings.lifecycle.archiveAfterDays).toBe(DEFAULT_BOARD_ARCHIVE_AFTER_DAYS);
-    expect(settings.lifecycle.worktreeRetention).toBe("reclaim-on-archive");
+    expect(settings.lifecycle.reclaimWorktreeOnDone).toBe(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE);
     expect(settings).toEqual(DEFAULT_BOARD_SETTINGS);
   });
 

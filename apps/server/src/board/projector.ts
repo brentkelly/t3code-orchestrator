@@ -175,8 +175,11 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
     worktree: null,
-    // Nor a pull request: with no branch pushed there is nothing to look up.
+    // Nor a pull request: with no branch pushed there is nothing to look up,
+    // no round has finished, and so nothing to floor.
     pullRequest: null,
+    pullRequestHistory: [],
+    pullRequestFloor: null,
     blocked: false,
     archivedAt: null,
     createdAt: payload.createdAt,

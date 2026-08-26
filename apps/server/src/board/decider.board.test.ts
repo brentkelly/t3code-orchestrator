@@ -56,6 +56,8 @@ function makeCard(
     humanInLoop: null,
     worktree: null,
     pullRequest: null,
+    pullRequestHistory: [],
+    pullRequestFloor: null,
     blocked: false,
     archivedAt: null,
     createdAt: NOW,

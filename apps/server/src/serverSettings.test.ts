@@ -632,8 +632,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   // Regression (board settings redesign follow-up): every board edit — a stage's
   // model or attempt cap, a concurrency ceiling, an archive window — used to be
   // REFUSED at the write. The sparse strip diffed these objects field by field,
-  // and the resulting partial (`{ maxAttempts: 6 }`, no `kind`; `{ archiveAfterDays: 10 }`,
-  // no `worktreeRetention`) fails the validation the writer runs before it
+  // and the resulting partial (`{ maxAttempts: 6 }`, no `kind`) fails the
+  // validation the writer runs before it
   // touches the file, so the whole settings write failed and the UI silently
   // snapped back — the model picker "not selecting" and the steppers "doing
   // nothing" were both this.
@@ -657,7 +657,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             },
           },
           concurrency: { globalMaxConcurrent: PositiveInt.make(7) },
-          lifecycle: { archiveAfterDays: PositiveInt.make(21) },
+          lifecycle: { reclaimWorktreeOnDone: false },
         },
       });
 
@@ -667,7 +667,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         model: "opus",
       });
       assert.equal(next.board.concurrency.globalMaxConcurrent, 7);
-      assert.equal(next.board.lifecycle.archiveAfterDays, 21);
+      assert.equal(next.board.lifecycle.reclaimWorktreeOnDone, false);
 
       // The file keeps only what differs, and every surviving object is whole
       // enough to decode on its own.
@@ -681,7 +681,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const reloaded = yield* decodeServerSettings(parsed);
       assert.equal(reloaded.board.pipeline.building?.maxAttempts, 6);
       assert.equal(reloaded.board.concurrency.globalMaxConcurrent, 7);
-      assert.equal(reloaded.board.lifecycle.archiveAfterDays, 21);
+      assert.equal(reloaded.board.lifecycle.reclaimWorktreeOnDone, false);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
