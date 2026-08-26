@@ -232,6 +232,10 @@ export interface BoardCardDetailViewProps {
   /** Whether a conflict-resolution step is running on this card. Nothing else
       runs in the merge stage, so a live step there can only be that. */
   readonly conflictStepRunning: boolean;
+  /** Whether a merge kicked off from this card is still in flight — drives the
+      Merge button's "Merging…" spinner and disables it so the several-second
+      round trip can't be re-entered by a second click. */
+  readonly merging: boolean;
   readonly onArchiveToggle: () => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
@@ -572,6 +576,9 @@ function ActionsSection({
     conflictStepRunning: props.conflictStepRunning,
   });
   const forward = primaryAction !== null && !archived ? primaryAction : null;
+  // A merge from this card is mid-flight: the button holds its spot but shows a
+  // spinner and refuses further clicks until the round trip settles.
+  const merging = forward?.kind === "merge" && props.merging;
   // The per-card human-in-the-loop toggle shows only on the Build role (D6);
   // `props.humanInLoop` is non-null exactly then.
   const humanInLoop = archived ? null : props.humanInLoop;
@@ -589,8 +596,11 @@ function ActionsSection({
             // so rather than bouncing off the decider.
             (card.blocked || (forward.kind === "merge" && forward.disabled)) &&
               "cursor-not-allowed opacity-50",
+            merging && "cursor-wait",
           )}
-          disabled={card.blocked || (forward.kind === "merge" && forward.disabled)}
+          disabled={
+            card.blocked || (forward.kind === "merge" && (forward.disabled || props.merging))
+          }
           onClick={() => {
             if (forward.kind === "merge") {
               props.onMergePullRequest();
@@ -607,8 +617,17 @@ function ActionsSection({
           }
           type="button"
         >
-          <ArrowRightIcon className="size-3.5" />
-          {forward.label}
+          {merging ? (
+            <>
+              <span className="size-3.5 shrink-0 animate-spin rounded-full border-[1.7px] border-primary-foreground/40 border-t-primary-foreground" />
+              Merging…
+            </>
+          ) : (
+            <>
+              <ArrowRightIcon className="size-3.5" />
+              {forward.label}
+            </>
+          )}
         </button>
       ) : null}
       {/* The card's pull request, at EVERY stage rather than only where the
