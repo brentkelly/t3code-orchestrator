@@ -76,6 +76,38 @@ describe("boardCardSummary", () => {
     expect(boardCardSummary(shell("building")).items).toEqual([]);
   });
 
+  it("settles the review outcome against stepRunning, not the wire value (t3o-22)", () => {
+    // The shell carries the outcome UNRESOLVED so the snapshot and the
+    // `card-review` delta say the same thing. `running` on the wire means "the
+    // ledger's rounds are accounted for", not "the loop is still going".
+    const held = {
+      roundCurrent: 5,
+      roundMax: 5,
+      reviewOutcome: "running" as const,
+      reviewHeldOutcome: "round-cap" as const,
+      reviewRoundComplete: true,
+    };
+    const roundItem = (overrides: Record<string, unknown>) =>
+      boardCardSummary(shell("review", { ...held, ...overrides })).items.find(
+        (item) => item.kind === "round",
+      );
+
+    // Nothing running and no half-run round behind it: the loop stopped.
+    expect(roundItem({ stepRunning: false })).toMatchObject({ outcome: "round-cap" });
+    // The executor is driving it — still running, whatever the counts say.
+    expect(roundItem({ stepRunning: true })).toMatchObject({ outcome: "running" });
+    // A half-run round with nothing admitted yet is the gap between phases,
+    // NOT a stopped loop. Reading it as one is the false NO CONVERGENCE this
+    // guard exists to prevent.
+    expect(roundItem({ stepRunning: false, reviewRoundComplete: false })).toMatchObject({
+      outcome: "running",
+    });
+    // A decided outcome is never second-guessed.
+    expect(roundItem({ stepRunning: false, reviewOutcome: "converged" })).toMatchObject({
+      outcome: "converged",
+    });
+  });
+
   it("renders the full review summary in order when the pipeline populates it", () => {
     const summary = boardCardSummary(
       shell("review", {

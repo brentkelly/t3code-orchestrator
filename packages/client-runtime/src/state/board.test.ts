@@ -323,8 +323,9 @@ describe("board shell reducer", () => {
     const summary = {
       roundCurrent: 3,
       roundMax: 5,
-      outcome: "round-cap" as const,
+      outcome: "running" as const,
       heldOutcome: "round-cap" as const,
+      roundComplete: true,
       severityCritical: 2,
       severityImprovement: 1,
       severityNitpick: 4,
@@ -343,7 +344,10 @@ describe("board shell reducer", () => {
     expect(reviewed.cards?.[0]?.roundMax).toBe(5);
     // The one field that is not a count: without it the card face renders a
     // loop that ran out of road exactly like one that passed.
-    expect(reviewed.cards?.[0]?.reviewOutcome).toBe("round-cap");
+    // Carried UNRESOLVED: the renderer settles it against `stepRunning`.
+    expect(reviewed.cards?.[0]?.reviewOutcome).toBe("running");
+    expect(reviewed.cards?.[0]?.reviewHeldOutcome).toBe("round-cap");
+    expect(reviewed.cards?.[0]?.reviewRoundComplete).toBe(true);
     expect(reviewed.cards?.[0]?.severityCritical).toBe(2);
     expect(reviewed.cards?.[0]?.issuesDisputed).toBe(1);
 
@@ -381,8 +385,9 @@ describe("board shell reducer", () => {
       summary: {
         roundCurrent: 3,
         roundMax: 5,
-        outcome: "round-cap" as const,
+        outcome: "running" as const,
         heldOutcome: "round-cap" as const,
+        roundComplete: true,
         severityCritical: 2,
         severityImprovement: 1,
         severityNitpick: 4,
@@ -398,7 +403,9 @@ describe("board shell reducer", () => {
       sequence: 3,
       card: cardShell("card-1", { orderKey: "z" }),
     });
-    expect(dragged.cards?.[0]?.reviewOutcome).toBe("round-cap");
+    expect(dragged.cards?.[0]?.reviewOutcome).toBe("running");
+    expect(dragged.cards?.[0]?.reviewHeldOutcome).toBe("round-cap");
+    expect(dragged.cards?.[0]?.reviewRoundComplete).toBe(true);
     expect(dragged.cards?.[0]?.roundCurrent).toBe(3);
     expect(dragged.cards?.[0]?.roundMax).toBe(5);
     expect(dragged.cards?.[0]?.severityCritical).toBe(2);

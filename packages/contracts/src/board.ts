@@ -772,6 +772,12 @@ export const BoardCardReviewSummary = Schema.Struct({
       (`round-cap` or `stopped`). Decided here, where the card's
       `stopAfterRound` is in hand, so the read side needs only a boolean. */
   heldOutcome: BoardReviewLoopOutcome,
+  /** Whether the last RECORDED round ran every phase it was due.
+      The guard that stops a loop between phases from reading as a loop that
+      ended: mid-round there is a real gap with no live step (one phase settled,
+      the next not yet admitted), and without this the card would flash
+      `NO CONVERGENCE` at a card that is working perfectly well. */
+  roundComplete: Schema.Boolean,
   severityCritical: NonNegativeInt,
   severityImprovement: NonNegativeInt,
   severityNitpick: NonNegativeInt,
@@ -2883,8 +2889,20 @@ export const BoardCardShell = Schema.Struct({
   roundMax: Schema.optionalKey(NonNegativeInt),
   /** How the loop stands (t3o-22, D7) — the one review field that is not a
       count, because "ran out of rounds" and "passed" are the same numbers and
-      opposite outcomes. Absent for a card with no review history. */
+      opposite outcomes. Absent for a card with no review history.
+
+      PROVISIONAL, exactly as the cache's is: `running` here means the ledger's
+      rounds are all accounted for, not that the loop is still going. The
+      renderer settles it through `resolveBoardCardReviewOutcome` against
+      `stepRunning`, which is the fact the shell holds and the ledger does not.
+      Deliberately unresolved on the wire so the snapshot and the `card-review`
+      delta carry the same thing and cannot disagree. */
   reviewOutcome: Schema.optionalKey(BoardReviewLoopOutcome),
+  /** The reading `reviewOutcome` settles to if the loop has in fact stopped. */
+  reviewHeldOutcome: Schema.optionalKey(BoardReviewLoopOutcome),
+  /** Whether the last recorded round ran every phase it was due — the guard
+      that keeps a between-phases gap from reading as a stopped loop. */
+  reviewRoundComplete: Schema.optionalKey(Schema.Boolean),
   stepLabel: Schema.optionalKey(TrimmedNonEmptyString),
   severityCritical: Schema.optionalKey(NonNegativeInt),
   severityImprovement: Schema.optionalKey(NonNegativeInt),
@@ -3106,6 +3124,8 @@ export function makeBoardCardShell(input: {
           roundCurrent: input.reviewSummary.roundCurrent,
           roundMax: input.reviewSummary.roundMax,
           reviewOutcome: input.reviewSummary.outcome,
+          reviewHeldOutcome: input.reviewSummary.heldOutcome,
+          reviewRoundComplete: input.reviewSummary.roundComplete,
           severityCritical: input.reviewSummary.severityCritical,
           severityImprovement: input.reviewSummary.severityImprovement,
           severityNitpick: input.reviewSummary.severityNitpick,
@@ -4194,8 +4214,10 @@ export interface BoardReviewLoopWalk {
  * projection cache (what the column card shows), the Review pane's derivation
  * (what the detail shows), and the executor's own walk (what actually runs
  * next). The first two now call this; the executor keeps its own copy only
- * because it must mint prompts and models as it goes, and a test asserts the
- * two stay in step.
+ * because it must mint prompts and models as it goes. A differential in
+ * `apps/server/src/board/reviewLoopExecutor.test.ts` — the only package that
+ * can import both this and `reviewLoopDecision` — drives the same completions
+ * through each and asserts they agree, so the copies cannot drift.
  *
  * The distinctions it exists to preserve: a malformed review payload is never
  * read as "no findings"; a loop that ran out of budget is never reported as one
@@ -4285,10 +4307,18 @@ export function deriveBoardCardReviewSummary(input: {
     if (completion.outcome === "succeeded") succeeded.set(completion.stepId, completion);
   }
 
+  let highestRecorded = 0;
+  for (const completion of reviewSteps) {
+    if (completion.outcome !== "succeeded") continue;
+    const parsed = parseReviewStepId(completion.stepId);
+    if (parsed?.phase === "review") highestRecorded = Math.max(highestRecorded, parsed.round);
+  }
   const summary = {
     roundCurrent: walk.currentRound,
     roundMax: Math.max(input.maxRounds, walk.currentRound),
     outcome: walk.status,
+    // The walk has moved past every recorded round, so nothing is half-run.
+    roundComplete: walk.status !== "running" || walk.currentRound > highestRecorded,
     heldOutcome:
       input.stopAfterRound === walk.currentRound
         ? ("stopped" as BoardReviewLoopOutcome)
@@ -4367,12 +4397,20 @@ export function deriveBoardCardReviewSummary(input: {
  * which is exactly the case the column card must not render as a pass.
  */
 export function resolveBoardCardReviewOutcome(input: {
-  readonly summary: BoardCardReviewSummary;
-  /** True when the card has no live step — nothing is running or queued. */
-  readonly loopSettled: boolean;
+  /** Structural, not `BoardCardReviewSummary`: the shell spreads these three
+      as loose keys, so a reader holding only them can settle the outcome
+      without reassembling a summary it does not have. */
+  readonly summary: Pick<BoardCardReviewSummary, "outcome" | "heldOutcome" | "roundComplete">;
+  /** Whether the executor is driving this card right now. */
+  readonly stepRunning: boolean;
 }): BoardReviewLoopOutcome {
   if (input.summary.outcome !== "running") return input.summary.outcome;
-  return input.loopSettled ? input.summary.heldOutcome : "running";
+  // Two conditions, and both matter. Nothing running is necessary but not
+  // sufficient: there is a real gap between one phase settling and the next
+  // being admitted, and treating that as "the loop ended" would flash
+  // NO CONVERGENCE at a healthy card. `roundComplete` closes it — a loop that
+  // has genuinely stopped has no half-run round behind it.
+  return input.summary.roundComplete && !input.stepRunning ? input.summary.heldOutcome : "running";
 }
 
 /**

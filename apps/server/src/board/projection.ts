@@ -50,11 +50,9 @@ import {
   BoardCardPullRequest,
   BoardCardReviewOverrides,
   BoardCardReviewSummary,
-  isBoardTerminalStepStatus,
   boardReviewRoundsStarted,
   deriveBoardCardReviewSummary,
   parseReviewStepId,
-  resolveBoardCardReviewOutcome,
   isBoardEvent,
   makeBoardCardShell,
   ProviderInstanceId,
@@ -2439,13 +2437,7 @@ export function withBoardShellCards(
       const queuedByCard = new Set<BoardCardId>();
       const stalledByCard = new Set<BoardCardId>();
       const runningByCard = new Set<BoardCardId>();
-      // A card with a LIVE step is still being driven; one whose step state is
-      // terminal (or absent) is not. That is the fact the cached review summary
-      // cannot see, and the one that separates "the loop is between rounds"
-      // from "the loop ended without converging" (t3o-22, D7).
-      const liveStepByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
-        if (!isBoardTerminalStepStatus(row.status)) liveStepByCard.add(row.cardId);
         if (row.status === "queued") queuedByCard.add(row.cardId);
         // The second step-state field on the bounded shell (t3o-17, D3): a card
         // is `stalled` when recovery gave up on its live step.
@@ -2480,16 +2472,11 @@ export function withBoardShellCards(
           briefHasImage: row.briefHasImage !== 0,
           planCount: row.planCount,
           prNumber: row.prNumber,
-          reviewSummary:
-            row.reviewSummary === null
-              ? null
-              : {
-                  ...row.reviewSummary,
-                  outcome: resolveBoardCardReviewOutcome({
-                    summary: row.reviewSummary,
-                    loopSettled: !liveStepByCard.has(row.cardId),
-                  }),
-                },
+          // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
+          // against `stepRunning`, which every shell already holds — resolving
+          // it here as well would give the snapshot and the `card-review`
+          // delta two different answers for the same loop.
+          reviewSummary: row.reviewSummary,
           archivedAt: row.archivedAt,
           activeThreadId,
           queued: queuedByCard.has(row.cardId),

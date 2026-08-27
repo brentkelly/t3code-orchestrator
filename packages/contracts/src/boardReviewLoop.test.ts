@@ -7,13 +7,14 @@
  * them call `boardReviewLoopWalk`; the executor keeps its own copy because it
  * must mint prompts and models as it goes.
  *
- * That duplication is only safe if something holds the copies together, so the
- * differential in "executor parity" below is the point of this file, not a
- * bonus: it drives the same completions through both and asserts they reach the
- * same verdict. The rest pins the distinctions the spec turns on — a loop that
- * ran out of budget is never reported as one that passed, a malformed payload
- * is never read as "no findings", and a round that has STARTED can never be
- * removed from the budget.
+ * That duplication is only safe if something holds the copies together. The
+ * differential that does it lives in `apps/server` (`reviewLoopExecutor.test.ts`),
+ * which is the only package that can import BOTH this walk and
+ * `reviewLoopDecision`; contracts cannot depend on the server. What this file
+ * pins is the walk's own behaviour — a loop that ran out of budget is never
+ * reported as one that passed, a malformed payload is never read as "no
+ * findings", and a round that has STARTED can never be removed from the
+ * budget.
  */
 import { assert, describe, it } from "@effect/vitest";
 
@@ -132,80 +133,6 @@ describe("boardReviewLoopWalk", () => {
   });
 });
 
-describe("executor parity (the reason the walk is duplicated)", () => {
-  // `reviewLoopDecision` lives in the server package, which contracts cannot
-  // import. What CAN be asserted here is the rule the two share verbatim: the
-  // walk's terminal statuses must line up with the executor's terminal
-  // outcomes, round for round, on the same completions.
-  //
-  // succeeded ⇔ converged. blocked ⇔ round-cap | stopped | unreadable.
-  // Anything else means the executor would advance a card the pane calls held,
-  // or hold a card the pane calls passed.
-  const cases: ReadonlyArray<{
-    readonly name: string;
-    readonly completions: ReadonlyArray<BoardStepCompletion>;
-    readonly rounds: number;
-    readonly stopAfterRound: number | null;
-    readonly executorOutcome: "succeeded" | "blocked" | "running";
-  }> = [
-    {
-      name: "clean round 1",
-      completions: [review(1, [])],
-      rounds: 5,
-      stopAfterRound: null,
-      executorOutcome: "succeeded",
-    },
-    {
-      name: "cap at 1",
-      completions: unconverged(1),
-      rounds: 1,
-      stopAfterRound: null,
-      executorOutcome: "blocked",
-    },
-    {
-      name: "cap at 2",
-      completions: [...unconverged(1), ...unconverged(2)],
-      rounds: 2,
-      stopAfterRound: null,
-      executorOutcome: "blocked",
-    },
-    {
-      name: "stopped at 1",
-      completions: unconverged(1),
-      rounds: 5,
-      stopAfterRound: 1,
-      executorOutcome: "blocked",
-    },
-    {
-      name: "unreadable",
-      completions: [completion("review@1", "{oops")],
-      rounds: 5,
-      stopAfterRound: null,
-      executorOutcome: "blocked",
-    },
-    {
-      name: "mid-loop",
-      completions: unconverged(1),
-      rounds: 5,
-      stopAfterRound: null,
-      executorOutcome: "running",
-    },
-  ];
-
-  for (const testCase of cases) {
-    it(`agrees with the executor: ${testCase.name}`, () => {
-      const result = walk(testCase.completions, testCase.rounds, testCase.stopAfterRound);
-      const asExecutorOutcome =
-        result.status === "converged"
-          ? "succeeded"
-          : result.status === "running"
-            ? "running"
-            : "blocked";
-      assert.strictEqual(asExecutorOutcome, testCase.executorOutcome);
-    });
-  }
-});
-
 describe("deriveBoardCardReviewSummary", () => {
   it("is null for a card with no review history", () => {
     assert.strictEqual(
@@ -293,14 +220,30 @@ describe("resolveBoardCardReviewOutcome", () => {
     stopAfterRound: null,
   })!;
 
-  it("keeps a provisional `running` while the card still has a live step", () => {
-    assert.strictEqual(resolveBoardCardReviewOutcome({ summary, loopSettled: false }), "running");
+  it("keeps a provisional `running` while the executor is driving the card", () => {
+    assert.strictEqual(resolveBoardCardReviewOutcome({ summary, stepRunning: true }), "running");
   });
 
   it("settles a provisional `running` into the held reading once nothing runs", () => {
-    // Same summary, opposite meaning — the live step is the only fact that
-    // separates "between rounds" from "the loop ended here".
-    assert.strictEqual(resolveBoardCardReviewOutcome({ summary, loopSettled: true }), "round-cap");
+    // Same summary, opposite meaning — whether anything is running is the fact
+    // that separates "between rounds" from "the loop ended here".
+    assert.strictEqual(resolveBoardCardReviewOutcome({ summary, stepRunning: false }), "round-cap");
+  });
+
+  it("never calls a HALF-RUN round a stopped loop, even with nothing running", () => {
+    // Round 1's review is in, triage is not, and no step is admitted yet — the
+    // real gap between one phase settling and the next starting. Reading that
+    // as "the loop ended" is the false NO CONVERGENCE this guard exists for.
+    const midRound = deriveBoardCardReviewSummary({
+      completions: [review(1, [finding("critical")])],
+      maxRounds: 5,
+      stopAfterRound: null,
+    })!;
+    assert.strictEqual(midRound.roundComplete, false);
+    assert.strictEqual(
+      resolveBoardCardReviewOutcome({ summary: midRound, stepRunning: false }),
+      "running",
+    );
   });
 
   it("never overrides a decided outcome", () => {
@@ -310,7 +253,7 @@ describe("resolveBoardCardReviewOutcome", () => {
       stopAfterRound: null,
     })!;
     assert.strictEqual(
-      resolveBoardCardReviewOutcome({ summary: converged, loopSettled: true }),
+      resolveBoardCardReviewOutcome({ summary: converged, stepRunning: false }),
       "converged",
     );
   });

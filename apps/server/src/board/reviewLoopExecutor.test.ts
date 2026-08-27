@@ -28,6 +28,7 @@ import * as Schema from "effect/Schema";
 
 import {
   BoardStageExecution,
+  boardReviewLoopWalk,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
   ProviderInstanceId,
   isBoardReviewBlockingSeverity,
@@ -338,6 +339,109 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     // Round 1 has no entry, so it falls through to the phase config's model
     // (null here) and then the stage's resolved fallback.
     expect(first.model).toEqual(globalModel);
+  });
+
+  // ── The differential the duplicated walk is justified on (t3o-22) ────
+  //
+  // `boardReviewLoopWalk` in contracts is a second copy of the phase walk
+  // below, and the comment on it promises a test keeps the two honest. This is
+  // that test — and it is only possible here, the one package that can import
+  // both. It drives the SAME completions through each and asserts they reach
+  // the same verdict, which is exactly the check that would have caught the
+  // projection cache reporting `round-cap` where the executor plans round N+1.
+  it("t3o-22: the contracts walk and the executor agree on every terminal verdict", () => {
+    const scenarios: ReadonlyArray<{
+      readonly name: string;
+      readonly completions: ReadonlyArray<BoardStepCompletion>;
+      readonly rounds: number;
+      readonly stopAfterRound: number | null;
+    }> = [
+      { name: "nothing run yet", completions: [], rounds: 5, stopAfterRound: null },
+      {
+        name: "clean round 1",
+        completions: [completion("review@1", reviewPayload([]))],
+        rounds: 5,
+        stopAfterRound: null,
+      },
+      {
+        name: "nitpick-only, triaged",
+        completions: [
+          completion("review@1", reviewPayload([finding("nitpick")])),
+          completion("triage@1", { fixedSha: "s", dispositions: [] }),
+        ],
+        rounds: 5,
+        stopAfterRound: null,
+      },
+      {
+        name: "mid-round: triage due",
+        completions: [completion("review@1", reviewPayload([finding("critical")]))],
+        rounds: 5,
+        stopAfterRound: null,
+      },
+      {
+        name: "mid-loop: round 2 due",
+        completions: cappedRound(1),
+        rounds: 5,
+        stopAfterRound: null,
+      },
+      { name: "cap at 1", completions: cappedRound(1), rounds: 1, stopAfterRound: null },
+      {
+        name: "cap at 2",
+        completions: [...cappedRound(1), ...cappedRound(2)],
+        rounds: 2,
+        stopAfterRound: null,
+      },
+      {
+        name: "stopped at 1 with budget left",
+        completions: cappedRound(1),
+        rounds: 5,
+        stopAfterRound: 1,
+      },
+      {
+        name: "unreadable payload",
+        completions: [completion("review@1", "{oops")],
+        rounds: 5,
+        stopAfterRound: null,
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const executorPlan = plan(
+        scenario.completions,
+        reviewExec({ rounds: scenario.rounds }),
+        scenario.stopAfterRound === null
+          ? null
+          : overrides({ stopAfterRound: scenario.stopAfterRound }),
+      );
+      const contractsWalk = boardReviewLoopWalk({
+        completions: scenario.completions,
+        maxRounds: scenario.rounds,
+        stopAfterRound: scenario.stopAfterRound,
+      });
+
+      // converged ⇔ succeeded; every held/halted ending ⇔ blocked; and while
+      // the loop runs, both must name the SAME next phase and round.
+      const walkAsPlan =
+        contractsWalk.status === "converged"
+          ? "succeeded"
+          : contractsWalk.status === "running"
+            ? "run"
+            : "blocked";
+      const executorAsPlan =
+        executorPlan.kind === "run"
+          ? "run"
+          : executorPlan.kind === "complete"
+            ? executorPlan.outcome
+            : "escalate";
+      expect(executorAsPlan, scenario.name).toBe(walkAsPlan);
+
+      if (executorPlan.kind === "run" && contractsWalk.next !== null) {
+        expect(executorPlan.stepId, scenario.name).toBe(
+          reviewStepId(contractsWalk.next.phase, contractsWalk.next.round),
+        );
+        expect(executorPlan.round, scenario.name).toBe(contractsWalk.next.round);
+      }
+    }
   });
 
   it("AC8: a malformed review payload terminates blocked rather than converging", () => {

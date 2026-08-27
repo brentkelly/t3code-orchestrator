@@ -19,7 +19,11 @@
  * every stage; the renderers exist so the card lights up the day the data
  * lands, with no further UI work.
  */
-import type { BoardCardShell, BoardReviewLoopOutcome } from "@t3tools/contracts";
+import {
+  resolveBoardCardReviewOutcome,
+  type BoardCardShell,
+  type BoardReviewLoopOutcome,
+} from "@t3tools/contracts";
 
 /** One piece of stage-specific summary content. Each variant carries exactly
     the scalars the shell provides — the renderer maps it to a chip/pip row. */
@@ -98,7 +102,21 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
           kind: "round",
           current: card.roundCurrent ?? 0,
           max: card.roundMax,
-          outcome: card.reviewOutcome,
+          // The shell carries the outcome UNRESOLVED (t3o-22, D7): `running`
+          // there means the ledger's rounds are accounted for, not that the
+          // loop is still going. Settling it here — the one place — is what
+          // keeps a snapshot and a `card-review` delta from disagreeing.
+          outcome:
+            card.reviewOutcome === undefined
+              ? undefined
+              : resolveBoardCardReviewOutcome({
+                  summary: {
+                    outcome: card.reviewOutcome,
+                    heldOutcome: card.reviewHeldOutcome ?? card.reviewOutcome,
+                    roundComplete: card.reviewRoundComplete ?? false,
+                  },
+                  stepRunning: card.stepRunning,
+                }),
         });
       }
       if (card.stepLabel !== undefined) items.push({ kind: "step", label: card.stepLabel });

@@ -345,26 +345,30 @@ export function BoardCardDetail({
   const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
   /**
    * The highest round this card's loop has STARTED — the floor the budget
-   * cannot go below (t3o-22, D3), and it must be the SAME number the decider
-   * computes or the pane offers writes the server refuses.
+   * cannot go below (t3o-22, D3).
    *
-   * The ledger alone is not that number. A round whose review is dispatched and
-   * running has recorded nothing yet, and the decider counts it (it reads the
-   * card's live step). The detail payload carries completions but no step
-   * state, so the card shell's `stepRunning` — the durable "the executor is
-   * driving this card" flag — stands in for it: when it is lit, the round the
-   * walk is sitting on is in flight, not merely next.
+   * It must never be LOWER than the decider's or the pane offers a `−` the
+   * server rejects. The decider counts the card's live step whatever its status
+   * (`queued`, `pending`, `running`, `awaiting-input`, …); the detail payload
+   * carries completions but no step state, and the shell's `stepRunning` covers
+   * only `running`, so proxying on it would still mismatch by a round for every
+   * other live status.
+   *
+   * So the client does not try to detect the live step at all: it assumes the
+   * round the walk is sitting on has started. That can only ever be MORE
+   * conservative than the decider — at worst it disables `−` one round early,
+   * in the window after a round closes and before the next is dispatched — and
+   * it can never dispatch a write the server refuses.
    */
   const reviewRoundsStarted = (() => {
     const completions = detail?.stepCompletions ?? [];
     const recorded = boardReviewRoundsStarted({ completions, liveStepId: null });
-    if (cardShell?.stepRunning !== true) return recorded;
     const walk = boardReviewLoopWalk({
       completions,
       maxRounds: BOARD_REVIEW_MAX_ROUNDS,
       stopAfterRound: card.reviewOverrides?.stopAfterRound ?? null,
     });
-    return Math.max(recorded, walk.currentRound);
+    return Math.max(recorded, walk.status === "running" ? walk.currentRound : 0);
   })();
   // The EFFECTIVE budget: the card's own override wins, clamped to that floor.
   const reviewMaxRounds = isBoardReviewStageExecution(reviewExecution)
