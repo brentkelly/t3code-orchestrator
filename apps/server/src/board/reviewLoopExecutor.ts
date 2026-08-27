@@ -18,15 +18,18 @@
  * prompt, and the AGENT runs `git` in its worktree and records the payload.
  */
 import {
+  boardReviewRoundsStarted,
   BoardReviewPayload,
   composeBoardReviewPhasePrompt,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
+  effectiveBoardReviewRounds,
   effectiveBoardRuntimeMode,
   isBoardReviewBlockingSeverity,
   isBoardReviewStageExecution,
   parseReviewStepId,
   reviewStepId,
   reviewStepLabel,
+  type BoardCardReviewOverrides,
   type BoardModelSelection,
   type BoardReviewPhaseExecution,
   type BoardReviewPhaseId,
@@ -80,11 +83,25 @@ function succeededReviewSteps(
   return map;
 }
 
-function resolvePhaseModel(
-  phase: BoardReviewPhaseExecution,
-  fallback: BoardModelSelection,
-): BoardModelSelection {
-  return phase.model ?? fallback;
+/**
+ * The model a phase runs on: its own configured model, else the stage's
+ * resolved fallback — UNLESS the card has overridden this round's REVIEW model
+ * (t3o-22, D4).
+ *
+ * The override applies to the `review` phase alone. It exists to escalate the
+ * reviewer when a loop will not converge — a sharper pair of eyes on the same
+ * branch — and re-modelling the triager is a different decision entirely, since
+ * that changes who is writing the code. Bundling both into one dropdown would
+ * make "put round 4 on Opus" quietly mean more than it says.
+ */
+function resolvePhaseModel(input: {
+  readonly phase: BoardReviewPhaseId;
+  readonly phaseConfig: BoardReviewPhaseExecution;
+  readonly fallback: BoardModelSelection;
+  readonly roundOverride: BoardModelSelection | undefined;
+}): BoardModelSelection {
+  if (input.phase === "review" && input.roundOverride !== undefined) return input.roundOverride;
+  return input.phaseConfig.model ?? input.fallback;
 }
 
 /**
@@ -94,18 +111,35 @@ function resolvePhaseModel(
  * triage pass, and only blocking findings run adjudication. At the END of the
  * round the executor — never the agent — applies the loop check: another round
  * runs only when the round raised a blocking (critical/improvement) finding
- * AND rounds remain. When either condition fails the loop ends `succeeded`, so
- * the stage may auto-advance; a review phase with a malformed payload
- * terminates `blocked` rather than converging (D4).
+ * AND rounds remain. Only the CONVERGENCE arm ends `succeeded`, so only a loop
+ * that actually passed may auto-advance (t3o-22, D1); running out of rounds, a
+ * user's stop, and a malformed payload all terminate `blocked` and leave the
+ * card in Code review with its findings.
  */
 export function reviewLoopDecision(input: {
   readonly review: BoardStageExecutionReview;
   readonly config: BoardStagePlanInput["config"];
   readonly completions: ReadonlyArray<BoardStepCompletion>;
+  /** The card's own review-loop settings (t3o-22, D2), or null for a card that
+      never touched them — in which case the stage config governs outright. */
+  readonly overrides: BoardCardReviewOverrides | null;
+  /** The card's in-flight step id, so the budget floor counts a round that has
+      STARTED but not yet recorded anything (D3). */
+  readonly liveStepId: string | null;
 }): BoardStagePlan {
-  const { review, config } = input;
-  const rounds = review.rounds;
+  const { review, config, overrides } = input;
   const done = succeededReviewSteps(input.completions);
+  // The budget the loop actually runs to (D3): the card's override when it has
+  // one, floored at the highest round already started so a since-lowered budget
+  // can never strand a round mid-flight, and capped at the ceiling.
+  const rounds = effectiveBoardReviewRounds({
+    configured: review.rounds,
+    overrides,
+    roundsStarted: boardReviewRoundsStarted({
+      completions: input.completions,
+      liveStepId: input.liveStepId,
+    }),
+  });
 
   const runPhase = (phase: BoardReviewPhaseId, round: number): BoardStagePlan => {
     const phaseConfig = review.phases[phase];
@@ -120,10 +154,18 @@ export function reviewLoopDecision(input: {
       prompt: composeBoardReviewPhasePrompt({
         phase,
         round,
-        rounds: review.rounds,
+        // The EFFECTIVE budget, not the stage setting: the prompt tells the
+        // agent which round of how many it is running, and a card whose budget
+        // was extended must not be told it is on the last round.
+        rounds,
         prompt: phaseConfig.prompt,
       }),
-      model: resolvePhaseModel(phaseConfig, config.model),
+      model: resolvePhaseModel({
+        phase,
+        phaseConfig,
+        fallback: config.model,
+        roundOverride: overrides?.roundModels[String(round)],
+      }),
       // The review stage is always build-mode (resolveBoardStageExecution forces
       // it), so an unset phase access level defaults to `auto` (t3o-21).
       runtimeMode: effectiveBoardRuntimeMode(phaseConfig.runtimeMode, "build"),
@@ -166,19 +208,31 @@ export function reviewLoopDecision(input: {
 
     // The round's phases are done. The LOOP CHECK is the executor's, never the
     // agent's: another round runs only when this round raised a blocking
-    // finding AND rounds remain. A non-blocking round converges here —
-    // `succeeded`, so the stage may auto-advance.
+    // finding AND rounds remain. A non-blocking round CONVERGED — the one exit
+    // that is a verdict, so it alone completes `succeeded` and lets the stage
+    // auto-advance.
     if (!blocking) {
       return { kind: "complete", outcome: "succeeded" };
+    }
+    // The user asked the loop to hold after this round (t3o-22, D5). Checked
+    // BEFORE the budget because a stop is a decision someone made and outranks
+    // rounds that merely remain. Terminates like the cap: the card stays in
+    // Code review with its findings, and nothing advances.
+    if (overrides?.stopAfterRound === round) {
+      return { kind: "complete", outcome: "blocked" };
     }
     // Blocking findings and rounds remain: the next round's review re-reads
     // the branch with the triage fixes on it.
   }
 
-  // The round cap: the loop check's second condition failed, so the loop ends
-  // exactly as a converged one does — `succeeded`, the stage may auto-advance —
-  // with every round's findings still on the card for the next stage to see.
-  return { kind: "complete", outcome: "succeeded" };
+  // The ROUND CAP (t3o-22, D1). Every round ran and none closed clean, so the
+  // loop is out of budget with blocking findings still open. This is NOT a
+  // converged loop wearing the same round counts: no reviewer signed anything
+  // off, and the code is exactly as unreviewed as it was. It completes
+  // `blocked` — the card holds in Code review with its findings visible, and
+  // `advanceStage` (gated on `succeeded`) never runs, whatever the stage's
+  // `autoAdvance` says. Extending the budget from the pane re-enters the loop.
+  return { kind: "complete", outcome: "blocked" };
 }
 
 // The phase prompt composition (D6/D7) — round header, prior-payload pointer,
@@ -199,6 +253,14 @@ export const ReviewLoopExecutor: BoardStageExecutor = {
     const review = isBoardReviewStageExecution(execution)
       ? execution
       : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
-    return reviewLoopDecision({ review, config: input.config, completions: input.completions });
+    return reviewLoopDecision({
+      review,
+      config: input.config,
+      completions: input.completions,
+      // The card's own loop settings (t3o-22, D2) ride the card the reactor
+      // already passes, so the seam needs no new input field.
+      overrides: input.card.reviewOverrides,
+      liveStepId: input.runState.liveStepId,
+    });
   },
 };

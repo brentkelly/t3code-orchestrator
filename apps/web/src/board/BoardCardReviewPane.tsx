@@ -11,14 +11,29 @@
  * Lazy, like the plan pane — a card that never reaches review pays nothing.
  */
 import {
+  BOARD_REVIEW_MAX_ROUNDS,
   BOARD_REVIEW_PHASE_IDS,
+  boardReviewRoundsStarted,
+  isBoardReviewLoopHeld,
+  type BoardCardReviewOverrides,
+  type BoardModelSelection,
   type BoardReviewPhaseId,
   type BoardStepCompletion,
   type ThreadId,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon, ChevronLeftIcon, MessageSquareIcon } from "lucide-react";
 import { useState } from "react";
 
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
+import { getCustomModelOptionsByInstance } from "../modelSelection";
+import { primaryServerProvidersAtom } from "../state/server";
+import { usePrimarySettings } from "../hooks/useSettings";
+import { ModelRow } from "../components/settings/BoardModelRow";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
@@ -325,7 +340,13 @@ function statusPill(
       };
     case "round-cap":
       return {
-        label: "Loop ended at the round cap — findings still open",
+        label: "Round limit reached · no convergence",
+        spinning: false,
+        className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
+      };
+    case "stopped":
+      return {
+        label: "Stopped after this round — holding for you",
         spinning: false,
         className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
       };
@@ -345,37 +366,237 @@ function footerNote(loop: BoardReviewLoop): string {
     case "converged":
       return "A round closed with nothing blocking, so the loop is settled.";
     case "round-cap":
-      return "Every round ran without a clean pass, so the loop ended at its cap — the open findings above ride along to the next stage.";
+      return "Every round ran without a clean pass, so the loop stopped at its limit. Nothing was signed off, and the card stays here until you extend the loop or advance it yourself.";
+    case "stopped":
+      return "You asked the loop to hold after this round. Nothing was signed off, and the card stays here until you resume it or advance it yourself.";
     case "unreadable":
       return "A review phase recorded a payload nothing can read, so the loop halted here.";
   }
+}
+
+/**
+ * The block a loop that ended WITHOUT converging puts above its rounds
+ * (t3o-22, D8).
+ *
+ * It exists because the round counts alone cannot tell the two endings apart:
+ * "5 of 5, 12 raised, 7 fixed" describes a loop that passed and a loop that ran
+ * out of road identically. This says which, in words, and offers the only two
+ * things a human can usefully do next — buy another round, or take
+ * responsibility for moving the card on.
+ */
+function NoConvergenceBlock({
+  loop,
+  onRunAnotherRound,
+  onAdvance,
+}: {
+  readonly loop: BoardReviewLoop;
+  readonly onRunAnotherRound?: (() => void) | undefined;
+  readonly onAdvance?: (() => void) | undefined;
+}) {
+  const current = loop.rounds.find((round) => round.round === loop.currentRound);
+  const unsettled = (current?.counts.open ?? 0) + (current?.counts.disputed ?? 0);
+  const stopped = loop.status === "stopped";
+  return (
+    <div className="flex shrink-0 flex-col gap-[11px] rounded-xl border border-amber-500/45 bg-amber-500/7 px-3.5 py-3">
+      <div className="flex items-center gap-2.5">
+        <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-[7px] bg-amber-500/18 font-mono text-[12px] font-semibold text-amber-700 dark:text-amber-300">
+          !
+        </span>
+        <div className="text-[12.5px] font-semibold text-foreground">
+          {stopped ? "Loop stopped without convergence" : "Round limit reached without convergence"}
+        </div>
+      </div>
+      <div className="text-pretty text-[11.5px]/[1.55] text-muted-foreground">
+        {stopped
+          ? `You asked the loop to hold after round ${loop.currentRound}.`
+          : `All ${loop.maxRounds} rounds ran and round ${loop.currentRound} still closed with ${unsettled} unsettled ${unsettled === 1 ? "issue" : "issues"}.`}{" "}
+        The loop stops here and will not hand the card on by itself.
+      </div>
+      <div className="text-[11px] text-muted-foreground">
+        {unsettled} unsettled this round · {loop.totals.disputed} disputed across the loop
+      </div>
+      <div className="flex items-center gap-2">
+        {onRunAnotherRound === undefined ? null : (
+          <button
+            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+            onClick={onRunAnotherRound}
+            type="button"
+          >
+            Run round {loop.currentRound + 1}
+          </button>
+        )}
+        {onAdvance === undefined ? null : (
+          <button
+            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-3 text-[12.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+            onClick={onAdvance}
+            type="button"
+          >
+            Advance anyway
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The settings drawer a FUTURE round opens (t3o-22, D4).
+ *
+ * Model and reasoning effort only. The agent's access level is a stage-wide
+ * safety posture rather than a per-round dial, so it stays on the phase config
+ * where it is set once and reviewed as one decision — and the override it does
+ * carry re-points the REVIEW phase alone, because escalating the reviewer and
+ * re-modelling the author who fixes the code are different calls.
+ */
+function PlannedRoundSettings({
+  round,
+  previousRound,
+  model,
+  onChange,
+}: {
+  readonly round: number;
+  readonly previousRound: number;
+  readonly model: BoardModelSelection | null;
+  readonly onChange: (model: BoardModelSelection | null) => void;
+}) {
+  const settings = usePrimarySettings();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const instanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+  );
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+      <ModelRow
+        ariaLabel={`Round ${round} review model`}
+        getModelOptions={(active) =>
+          getCustomModelOptionsByInstance(
+            settings,
+            serverProviders,
+            active.instanceId,
+            active.model,
+          )
+        }
+        hideRuntimeMode
+        instanceEntries={instanceEntries}
+        label={`Round ${round} review model`}
+        modelOptions={model?.options}
+        onChange={(selection) =>
+          onChange(
+            selection === null
+              ? null
+              : {
+                  ...selection,
+                  ...(model?.options === undefined ? {} : { options: model.options }),
+                },
+          )
+        }
+        onModelOptionsChange={(options) =>
+          onChange(
+            model === null ? null : { ...model, ...(options === undefined ? {} : { options }) },
+          )
+        }
+        onRuntimeModeChange={() => {}}
+        runtimeMode="auto"
+        selection={model === null ? null : { instanceId: model.instanceId, model: model.model }}
+      />
+      <p className="text-[11px] text-muted-foreground">
+        {model === null
+          ? `Same as round ${previousRound}. Only round ${round}'s review runs on this — triage and adjudication keep their configured models.`
+          : `Only round ${round}'s review runs on this — triage and adjudication keep their configured models.`}
+      </p>
+    </div>
+  );
 }
 
 export function BoardCardReviewPane({
   completions,
   maxRounds,
   live,
+  overrides,
+  roundsStarted,
+  stepActive,
+  onResume,
+  onSetRounds,
+  onSetRoundModel,
+  onAdvance,
   onBackToThread,
   onOpenThread,
 }: {
   readonly completions: ReadonlyArray<BoardStepCompletion>;
-  /** The configured round cap (the review stage's `rounds`). */
+  /** The EFFECTIVE round budget — the card's override when it has one, else the
+      review stage's `rounds`. Resolved by the caller, which is the only layer
+      that can see both. */
   readonly maxRounds: number;
   /** Whether the card's active thread is working — the difference between a
       due phase spinning "running now" and resting "waiting to run". */
   readonly live: boolean;
+  /** The card's own review-loop settings (t3o-22, D2), or null. */
+  readonly overrides?: BoardCardReviewOverrides | null | undefined;
+  /** The highest round the loop has STARTED, resolved by the caller — which is
+      the only layer that can see the card's live step. The `−` button's floor,
+      and it must equal the decider's or the button offers a write the server
+      refuses. Falls back to the ledger alone when absent. */
+  readonly roundsStarted?: number | undefined;
+  /** Whether the executor is driving the card right now — running, or queued
+      for a concurrency slot. The `−` floor needs it because the decider counts
+      a live step of ANY status, and the ledger alone cannot see one. */
+  readonly stepActive?: boolean | undefined;
+  /** Resume a held loop at `round`. Distinct from `onSetRounds`: resuming must
+      never shrink a budget the user already raised, and must clear the stop it
+      would otherwise terminate on again. */
+  readonly onResume?: ((round: number) => void) | undefined;
+  /** Set the card's round budget. Absent leaves the loop read-only — the pane
+      still reports a stalled loop, it just cannot offer to restart it. */
+  readonly onSetRounds?: ((rounds: number) => void) | undefined;
+  /** Set (or clear, with null) a future round's review model. */
+  readonly onSetRoundModel?:
+    | ((round: number, model: BoardModelSelection | null) => void)
+    | undefined;
+  /** Move the card on despite a loop that never converged (D8). */
+  readonly onAdvance?: (() => void) | undefined;
   readonly onBackToThread: () => void;
   /** Deep-link into a phase's thread; absent when the pane has no thread pane
       to hand off to. */
   readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
 }) {
-  const loop = deriveBoardReviewLoop(completions, maxRounds);
+  const loop = deriveBoardReviewLoop(completions, maxRounds, overrides?.stopAfterRound ?? null);
+  // Which FUTURE round's settings drawer is open. Separate from `openRound`,
+  // which expands a round that has run: a round with history is something to
+  // read, one without is something to configure.
+  const [plannedRound, setPlannedRound] = useState<number | null>(null);
   // Which round is expanded: a round number the user picked, "collapsed" after
   // they closed the open one, or null — never touched — which follows the
   // loop's current round.
   const [openRound, setOpenRound] = useState<number | "collapsed" | null>(null);
   const shownRound = openRound === "collapsed" ? null : (openRound ?? loop.currentRound);
   const pill = statusPill(loop, live);
+  // A loop that ended without a clean pass. The distinction the whole spec
+  // turns on: these carry a converged loop's round counts and the opposite
+  // meaning, so the pane must never let them read as a pass.
+  const held = isBoardReviewLoopHeld(loop.status);
+  // The floor the − button obeys (t3o-22, D3): a round that has STARTED can
+  // never be removed. Strictly a CONTROL gate — never fed back into the budget,
+  // which is the caller's and is floored on the ledger alone. While a step is
+  // live the round the walk sits on has started, so it counts; the decider
+  // counts a live step of any status, so this matches it wherever the shell can
+  // see one.
+  const ledgerFloor = roundsStarted ?? boardReviewRoundsStarted({ completions, liveStepId: null });
+  const budgetFloor = Math.max(
+    1,
+    ledgerFloor,
+    stepActive === true && loop.status === "running" ? loop.currentRound : 0,
+  );
+  /**
+   * Whether round `n`'s settings can still be chosen.
+   *
+   * "Has no completion yet" is not the same as "is in the future": the round
+   * the executor has already dispatched has recorded nothing either, and its
+   * model was frozen onto the run row at `select-step`. Offering a picker there
+   * writes an override nothing will ever read. A round is plannable only when
+   * it is genuinely ahead of the floor — and only when there is somewhere to
+   * write it, so a read-only pane never takes an edit and drops it.
+   */
+  const plannable = (n: number) => onSetRoundModel !== undefined && n > budgetFloor;
   const counts = [
     `${loop.totals.raised} raised`,
     `${loop.totals.fixed} fixed`,
@@ -431,12 +652,18 @@ export function BoardCardReviewPane({
                         : "cursor-default text-muted-foreground/50 shadow-[inset_0_0_0_1px_var(--border)]",
                     n === shownRound && exists && !now ? "shadow-[0_0_0_2px_var(--ring)]" : "",
                   )}
-                  disabled={!exists}
-                  onClick={() => setOpenRound(n)}
+                  disabled={!exists && !plannable(n)}
+                  onClick={() =>
+                    exists
+                      ? setOpenRound(n)
+                      : setPlannedRound((current) => (current === n ? null : n))
+                  }
                   title={
                     exists
                       ? `Show round ${n}`
-                      : `Round ${n} has not run — the loop stops early once a round closes clean`
+                      : plannable(n)
+                        ? `Set the review model for round ${n}`
+                        : `Round ${n} is already in flight — its model was frozen when the step was dispatched`
                   }
                   type="button"
                 >
@@ -444,9 +671,63 @@ export function BoardCardReviewPane({
                 </button>
               );
             })}
+            {onSetRounds === undefined ? null : (
+              <span className="ml-1 flex shrink-0 items-center">
+                <button
+                  aria-label="Remove a round"
+                  className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/45"
+                  disabled={loop.maxRounds <= budgetFloor}
+                  onClick={() => onSetRounds(loop.maxRounds - 1)}
+                  title={
+                    loop.maxRounds <= budgetFloor
+                      ? `Round ${budgetFloor} has already started and cannot be removed`
+                      : `Drop the budget to ${loop.maxRounds - 1} rounds`
+                  }
+                  type="button"
+                >
+                  −
+                </button>
+                <button
+                  aria-label="Add a round"
+                  className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/45"
+                  disabled={loop.maxRounds >= BOARD_REVIEW_MAX_ROUNDS}
+                  onClick={() => onSetRounds(loop.maxRounds + 1)}
+                  title={
+                    loop.maxRounds >= BOARD_REVIEW_MAX_ROUNDS
+                      ? `${BOARD_REVIEW_MAX_ROUNDS} rounds is the ceiling`
+                      : `Allow ${loop.maxRounds + 1} rounds`
+                  }
+                  type="button"
+                >
+                  +
+                </button>
+              </span>
+            )}
           </div>
+          {plannedRound === null || !plannable(plannedRound) ? null : (
+            <PlannedRoundSettings
+              model={overrides?.roundModels[String(plannedRound)] ?? null}
+              onChange={(model) => onSetRoundModel?.(plannedRound, model)}
+              previousRound={plannedRound - 1}
+              round={plannedRound}
+            />
+          )}
           <div className="text-[11.5px] text-muted-foreground">{counts}</div>
         </div>
+        {held ? (
+          <NoConvergenceBlock
+            loop={loop}
+            onAdvance={onAdvance}
+            onRunAnotherRound={
+              // Gated at the ceiling exactly as the `+` button is: at 10 rounds
+              // `onResume(11)` is a write the decider refuses, so the button
+              // must not offer it as a live affordance.
+              onResume === undefined || loop.currentRound + 1 > BOARD_REVIEW_MAX_ROUNDS
+                ? undefined
+                : () => onResume(loop.currentRound + 1)
+            }
+          />
+        ) : null}
         {loop.rounds.toReversed().map((round) => (
           <Round
             key={round.round}

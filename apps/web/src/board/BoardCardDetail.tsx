@@ -24,6 +24,10 @@ import {
   type BoardCardThreadShell,
   type BoardState,
   type EnvironmentId,
+  boardReviewRoundsStarted,
+  effectiveBoardReviewRounds,
+  EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
+  type BoardCardReviewOverrides,
 } from "@t3tools/contracts";
 import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
 import {
@@ -308,13 +312,22 @@ export function BoardCardDetail({
         })()
       : null;
 
-  // The review loop's configured round cap, for the Review pane's R1..Rn bar
-  // (t3o-16). Resolved from the same settings the executor reads, so the bar
-  // and the real loop can never disagree on the cap.
-  const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
-  const reviewMaxRounds = isBoardReviewStageExecution(reviewExecution)
-    ? reviewExecution.rounds
-    : undefined;
+  /** Patch the card's review overrides, preserving the fields not being set.
+      One write shape for all three controls (D8) — there is no second
+      command. */
+  const patchReviewOverrides = (patch: Partial<BoardCardReviewOverrides>) =>
+    runCommand(
+      updateCard({
+        environmentId,
+        input: {
+          cardId: card.id,
+          reviewOverrides: {
+            ...(card.reviewOverrides ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES),
+            ...patch,
+          },
+        },
+      }),
+    );
 
   // The `+` menu's restart affordance (t3o-14, D1): shown only when the card's
   // current stage auto-executes, and disabled while a supervised run is in
@@ -323,6 +336,37 @@ export function BoardCardDetail({
   // `boardCardThreadMenu.test.ts`); the in-flight proxy reads the card shell's
   // live status since the step-state read model is server-only.
   const cardShell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+
+  // The review loop's round budget, for the Review pane's R1..Rn bar. Resolved
+  // from the same settings the executor reads, so the bar and the real loop can
+  // never disagree on the cap.
+  const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
+  /**
+   * The rounds this card's loop has RECORDED — the budget's floor.
+   *
+   * Strictly the ledger, and it must stay that way: `effectiveBoardReviewRounds`
+   * clamps the budget UP to this number, so anything speculative here does not
+   * merely disable a button, it invents a round. Folding in the walk's
+   * `currentRound` did exactly that — the walk sits on the first round with no
+   * `review@N`, which for a held loop is `lastRound + 1`, so the budget grew by
+   * one and the pane could never reach the cap at all.
+   *
+   * The `−` button needs a slightly stricter floor than this (the decider also
+   * counts a live step, which the detail payload cannot see); the pane derives
+   * that for itself, where it gates a control rather than a budget.
+   */
+  const reviewRoundsRecorded = boardReviewRoundsStarted({
+    completions: detail?.stepCompletions ?? [],
+    liveStepId: null,
+  });
+  // The EFFECTIVE budget: the card's own override wins, clamped to that floor.
+  const reviewMaxRounds = isBoardReviewStageExecution(reviewExecution)
+    ? effectiveBoardReviewRounds({
+        configured: reviewExecution.rounds,
+        overrides: card.reviewOverrides,
+        roundsStarted: reviewRoundsRecorded,
+      })
+    : undefined;
   const stageRestart = resolveBoardThreadStageRestart({
     autoExecute: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
     stageLabel: boardStageLabel(stages, card.stage),
@@ -521,6 +565,30 @@ export function BoardCardDetail({
       agents={agents}
       projectName={projectName ?? null}
       reviewMaxRounds={reviewMaxRounds}
+      reviewOverrides={card.reviewOverrides}
+      reviewRoundsStarted={reviewRoundsRecorded}
+      reviewStepActive={cardShell?.stepRunning === true || cardShell?.queued === true}
+      onSetReviewRounds={(rounds) => patchReviewOverrides({ rounds })}
+      onResumeReview={(rounds) =>
+        // "Run round N+1" is a resume, so it says both halves outright: at
+        // least enough budget to reach that round (never LESS than the card
+        // already has), and no pending stop to terminate on again.
+        patchReviewOverrides({
+          rounds: Math.max(rounds, card.reviewOverrides?.rounds ?? rounds),
+          stopAfterRound: null,
+        })
+      }
+      onSetReviewRoundModel={(round, model) =>
+        patchReviewOverrides({
+          roundModels: Object.fromEntries(
+            Object.entries({
+              ...card.reviewOverrides?.roundModels,
+              [String(round)]: model,
+            }).filter(([, value]) => value !== null),
+          ) as BoardCardReviewOverrides["roundModels"],
+        })
+      }
+      onStopAfterRound={(round) => patchReviewOverrides({ stopAfterRound: round })}
       threadLinks={threadLinks}
       threadTodos={threadTodos}
     />

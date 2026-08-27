@@ -16,6 +16,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  BOARD_REVIEW_MAX_ROUNDS,
+  BOARD_SEED_STAGE_IDS,
   type BoardCard,
   type BoardCardStepState,
   type BoardLabel,
@@ -54,6 +56,7 @@ function makeCard(
     threadLinks: [],
     externalRef: null,
     humanInLoop: null,
+    reviewOverrides: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -491,6 +494,224 @@ it.layer(NodeServices.layer)("board decider", (it) => {
   );
 
   // ── Dependency cycles ────────────────────────────────────────────────
+
+  // ── Per-card review-loop overrides (t3o-22, D3/D5) ───────────────────
+  //
+  // The floor is the whole point: the pane's `−` is disabled below it, but the
+  // client is not the guard. A stale pane must not be able to drop the budget
+  // under a round that is already running and strand it beyond the cap.
+
+  const reviewCardBoard = (input: {
+    readonly overrides?: BoardCard["reviewOverrides"];
+    readonly completedRounds?: number;
+    readonly liveStepId?: string;
+  }): OrchestrationReadModel =>
+    makeReadModel({
+      board: {
+        cards: [
+          {
+            ...makeCard({ id: "card-a" }),
+            stage: BOARD_SEED_STAGE_IDS.review,
+            reviewOverrides: input.overrides ?? null,
+          },
+        ],
+        nextCardNumberByProject: {},
+        stepCompletions: Array.from({ length: input.completedRounds ?? 0 }, (_, index) => ({
+          cardId: BoardCardId.make("card-a"),
+          stepId: `review@${index + 1}`,
+          outcome: "succeeded" as const,
+          summary: "reviewed",
+          payload: null,
+          threadId: null,
+          completedAt: NOW,
+        })),
+        ...(input.liveStepId === undefined
+          ? {}
+          : {
+              stepStates: [
+                {
+                  cardId: BoardCardId.make("card-a"),
+                  stepId: input.liveStepId,
+                  stepLabel: "Review",
+                  stageLabel: "Code review",
+                  attempt: 1,
+                  stallCount: 0,
+                  lastNudgeAt: null,
+                  prompt: "review it",
+                  providerInstanceId: ProviderInstanceId.make("codex"),
+                  model: "gpt-5.4",
+                  mode: "build" as const,
+                  runtimeMode: "auto" as const,
+                  humanInLoop: false,
+                  maxAttempts: 3,
+                  timeoutMs: 1000,
+                  threadId: ThreadId.make("thread-1"),
+                  status: "running" as const,
+                  slotHeld: true,
+                  startedAt: NOW,
+                  updatedAt: NOW,
+                },
+              ],
+            }),
+      } as BoardState,
+    });
+
+  const setRounds = (rounds: number | null) =>
+    ({
+      type: "board.card.update",
+      commandId: CommandId.make("cmd-rounds"),
+      cardId: BoardCardId.make("card-a"),
+      reviewOverrides: { rounds, stopAfterRound: null, roundModels: {} },
+      createdAt: NOW,
+    }) satisfies BoardCommand;
+
+  it.effect("t3o-22 D3: accepts a budget at or above the rounds already run", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(setRounds(4), reviewCardBoard({ completedRounds: 2 }));
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.card.reviewOverrides?.rounds, 4);
+    }),
+  );
+
+  it.effect("t3o-22 D3: rejects a budget below a round already RUN", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(setRounds(1), reviewCardBoard({ completedRounds: 3 }));
+      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.include(String(failure), "round 3 has already started");
+    }),
+  );
+
+  it.effect("t3o-22 D3: rejects a budget below a round still IN FLIGHT", () =>
+    Effect.gen(function* () {
+      // Round 3's review is running and has recorded NOTHING. Flooring on
+      // completions alone would accept this and orphan the live agent.
+      const failure = yield* decideFail(
+        setRounds(2),
+        reviewCardBoard({ completedRounds: 2, liveStepId: "review@3" }),
+      );
+      assert.include(String(failure), "round 3 has already started");
+    }),
+  );
+
+  it.effect("t3o-22 D3: rejects a budget above the ceiling", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        setRounds(BOARD_REVIEW_MAX_ROUNDS + 1),
+        reviewCardBoard({}),
+      );
+      assert.include(String(failure), "exceeds the ceiling");
+    }),
+  );
+
+  it.effect("t3o-22 D5: raising the budget clears a pending stop", () =>
+    Effect.gen(function* () {
+      // "Run round 3" while a stop is pending at round 2 — the later intent
+      // wins, or the executor would keep terminating at 2 and the bought
+      // rounds could never run.
+      const event = yield* decide(
+        {
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-extend"),
+          cardId: BoardCardId.make("card-a"),
+          reviewOverrides: { rounds: 3, stopAfterRound: 2, roundModels: {} },
+          createdAt: NOW,
+        },
+        reviewCardBoard({ overrides: { rounds: 2, stopAfterRound: 2, roundModels: {} } }),
+      );
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.card.reviewOverrides?.stopAfterRound, null);
+      assert.strictEqual(event.payload.card.reviewOverrides?.rounds, 3);
+    }),
+  );
+
+  it.effect("t3o-22 D5: resuming past a stop clears it even when the budget shrinks", () =>
+    Effect.gen(function* () {
+      // The pane's resume names an ABSOLUTE round, so a card whose budget was
+      // raised to 8 and then stopped at 2 sends `rounds: 3` — smaller than 8.
+      // Measuring "a raise" against the previous override left the stop in
+      // place, the executor terminated on it again, and the button was inert.
+      const event = yield* decide(
+        {
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-resume"),
+          cardId: BoardCardId.make("card-a"),
+          reviewOverrides: { rounds: 3, stopAfterRound: 2, roundModels: {} },
+          createdAt: NOW,
+        },
+        reviewCardBoard({
+          overrides: { rounds: 8, stopAfterRound: 2, roundModels: {} },
+          completedRounds: 2,
+        }),
+      );
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      // Asking to reach round 3 is asking to run past a stop at round 2.
+      assert.strictEqual(event.payload.card.reviewOverrides?.stopAfterRound, null);
+    }),
+  );
+
+  it.effect("t3o-22 D5: setting a stop without raising the budget keeps it", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        {
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-stop"),
+          cardId: BoardCardId.make("card-a"),
+          reviewOverrides: { rounds: null, stopAfterRound: 2, roundModels: {} },
+          createdAt: NOW,
+        },
+        reviewCardBoard({ completedRounds: 2 }),
+      );
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.card.reviewOverrides?.stopAfterRound, 2);
+    }),
+  );
+
+  it.effect(
+    "t3o-22 D7: a review-override edit folds the summary onto the event for a live card face",
+    () =>
+      Effect.gen(function* () {
+        // The one summary-changing path that used to emit no live delta: a pure
+        // override edit refreshed the SQL cache but the `card-upserted` shell
+        // delta could not see the ledger, so the card face waited for the next
+        // step completion. The decider now folds the summary onto the event.
+        const event = yield* decide(
+          setRounds(3),
+          reviewCardBoard({
+            completedRounds: 2,
+            overrides: { rounds: 5, stopAfterRound: null, roundModels: {} },
+          }),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        // There is review history to summarise, and the new budget rides the
+        // event so the card face can render the real total live.
+        assert.strictEqual(event.payload.reviewSummary?.roundMax, 3);
+      }),
+  );
+
+  it.effect("t3o-22 D7: an override edit on a card with no review history carries no summary", () =>
+    Effect.gen(function* () {
+      // Nothing to summarise — the fold yields null and the key is omitted, so
+      // the delta stays exactly the size it was.
+      const event = yield* decide(setRounds(3), reviewCardBoard({}));
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.reviewSummary, undefined);
+    }),
+  );
+
+  it.effect("t3o-22 D2: an all-empty override set stores as null", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(setRounds(null), reviewCardBoard({}));
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.card.reviewOverrides, null);
+    }),
+  );
 
   it.effect("rejects a self-edge naming the offending edge", () =>
     Effect.gen(function* () {

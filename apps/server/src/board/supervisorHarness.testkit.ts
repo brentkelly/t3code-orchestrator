@@ -122,6 +122,7 @@ export const makeBoardCard = (input: {
   threadLinks: [],
   externalRef: null,
   humanInLoop: null,
+  reviewOverrides: null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],

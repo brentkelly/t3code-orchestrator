@@ -21,10 +21,14 @@ import {
   BOARD_REVIEW_PHASE_IDS,
   BoardAdjudicatePayload,
   BoardReviewPayload,
+  boardReviewFindingResolution,
+  boardReviewLoopWalk,
   BoardTriagePayload,
   isBoardReviewBlockingSeverity,
   parseReviewStepId,
   type BoardReviewFinding,
+  type BoardReviewFindingResolution,
+  type BoardReviewLoopOutcome,
   type BoardReviewPhaseId,
   type BoardReviewTriageAction,
   type BoardReviewVerdict,
@@ -47,11 +51,9 @@ function parsePayloadJson(payload: string | null): unknown {
   }
 }
 
-/** How a finding stands right now, folding its triage disposition and its
-    adjudication verdict into the one word the row shows. A disposition the
-    adjudicator struck down ("fix-incomplete", "fix-absent",
-    "rejection-unjustified") reads `disputed` — the claim did not hold. */
-export type BoardReviewFindingResolution = "open" | "fixed" | "rejected" | "disputed";
+/** Re-exported from contracts, where the folding rule now lives so the pane
+    and the column card's summary agree on what "fixed" means. */
+export type { BoardReviewFindingResolution };
 
 export interface BoardReviewLoopFinding {
   readonly finding: BoardReviewFinding;
@@ -105,16 +107,19 @@ export interface BoardReviewLoopRound {
   readonly completedAt: string | null;
 }
 
-export type BoardReviewLoopStatus =
-  /** A phase is due (running when the card's thread is live, else waiting). */
-  | "running"
-  /** A round closed with nothing blocking — the loop is settled. */
-  | "converged"
-  /** Every round ran without a clean pass; the loop ended at the cap (the
-      card moves on) with its open findings still recorded. */
-  | "round-cap"
-  /** A review phase recorded an unreadable payload; the loop halted. */
-  | "unreadable";
+/**
+ * Where the loop stands. The vocabulary is `BoardReviewLoopOutcome` from
+ * contracts, shared with the column card's summary so the two surfaces cannot
+ * describe the same loop differently:
+ *
+ *  - `running`    — a phase is due (spinning when the card's thread is live).
+ *  - `converged`  — a round closed with nothing blocking; the loop passed.
+ *  - `round-cap`  — every round ran without a clean pass. The card does NOT
+ *                   move on (t3o-22, D1): nothing was signed off.
+ *  - `stopped`    — the user held the loop after a round, budget remaining.
+ *  - `unreadable` — a review phase recorded a payload nothing can read.
+ */
+export type BoardReviewLoopStatus = BoardReviewLoopOutcome;
 
 export interface BoardReviewLoop {
   readonly rounds: ReadonlyArray<BoardReviewLoopRound>;
@@ -139,19 +144,6 @@ export function hasBoardReviewSteps(completions: ReadonlyArray<BoardStepCompleti
   return completions.some((completion) => parseReviewStepId(completion.stepId) !== null);
 }
 
-function resolutionOf(
-  disposition: { readonly action: "fixed" | "rejected"; readonly note: string } | undefined,
-  verdict: { readonly verdict: BoardReviewVerdict; readonly note: string } | undefined,
-): BoardReviewFindingResolution {
-  if (disposition === undefined) return "open";
-  if (verdict !== undefined) {
-    if (verdict.verdict === "fix-upheld") return "fixed";
-    if (verdict.verdict === "rejection-justified") return "rejected";
-    return "disputed";
-  }
-  return disposition.action;
-}
-
 /**
  * Fold a card's completions into the loop's full state. Only `succeeded`
  * completions count, exactly as the executor's `succeededReviewSteps` — a
@@ -160,6 +152,8 @@ function resolutionOf(
 export function deriveBoardReviewLoop(
   completions: ReadonlyArray<BoardStepCompletion>,
   maxRounds: number,
+  /** The card's stop-after-round, if it set one (t3o-22, D5). */
+  stopAfterRound: number | null = null,
 ): BoardReviewLoop {
   const byStep = new Map<string, BoardStepCompletion>();
   let highestRound = 0;
@@ -170,43 +164,16 @@ export function deriveBoardReviewLoop(
     highestRound = Math.max(highestRound, parsed.round);
   }
 
-  // The executor's walk (reviewLoopDecision), verbatim in miniature: find the
-  // phase due next, or how the loop ended. The walk is bounded by the
-  // CONFIGURED cap exactly as the executor's is — a recorded round beyond a
-  // since-lowered cap is history the executor will never re-enter, so it is
-  // rendered below but never treated as "the loop is still running".
-  interface Walk {
-    readonly next: { readonly phase: BoardReviewPhaseId; readonly round: number } | null;
-    readonly status: BoardReviewLoopStatus;
-    readonly currentRound: number;
-  }
-  const walk = (): Walk => {
-    for (let round = 1; round <= maxRounds; round++) {
-      const review = byStep.get(`review@${round}`);
-      if (review === undefined) {
-        return { next: { phase: "review", round }, status: "running", currentRound: round };
-      }
-      const payload = decodeReviewPayload(parsePayloadJson(review.payload));
-      if (Option.isNone(payload)) {
-        return { next: null, status: "unreadable", currentRound: round };
-      }
-      const findings = payload.value.findings;
-      const blocking = findings.some((f) => isBoardReviewBlockingSeverity(f.severity));
-      if (findings.length > 0 && byStep.get(`triage@${round}`) === undefined) {
-        return { next: { phase: "triage", round }, status: "running", currentRound: round };
-      }
-      if (blocking && byStep.get(`adjudicate@${round}`) === undefined) {
-        return { next: { phase: "adjudicate", round }, status: "running", currentRound: round };
-      }
-      // The loop check, the executor's alone: another round only when this one
-      // raised a blocking finding AND rounds remain.
-      if (!blocking) {
-        return { next: null, status: "converged", currentRound: round };
-      }
-    }
-    return { next: null, status: "round-cap", currentRound: maxRounds };
-  };
-  const { next, status, currentRound } = walk();
+  // The executor's walk, from contracts (t3o-22, D7) so the pane, the column
+  // card's cached summary and the executor cannot drift on where the loop is.
+  // It is bounded by the EFFECTIVE cap exactly as the executor's is — a round
+  // recorded beyond a since-lowered cap is history the executor will never
+  // re-enter, so it is rendered below but never treated as "still running".
+  const { next, status, currentRound } = boardReviewLoopWalk({
+    completions,
+    maxRounds,
+    stopAfterRound,
+  });
 
   const roundModels: BoardReviewLoopRound[] = [];
   // Recorded rounds beyond the walk (a since-lowered cap) still render.
@@ -249,7 +216,7 @@ export function deriveBoardReviewLoop(
       const verdict = verdicts.get(finding.id);
       return {
         finding,
-        resolution: resolutionOf(disposition, verdict),
+        resolution: boardReviewFindingResolution(disposition, verdict),
         disposition: disposition?.action ?? null,
         dispositionNote: disposition?.note ?? "",
         verdict: verdict?.verdict ?? null,

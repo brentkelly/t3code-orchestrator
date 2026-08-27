@@ -30,6 +30,7 @@
  * free by upserting exactly what the decider computed.
  */
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 
@@ -712,6 +713,141 @@ export function isBoardCardPullRequestTerminal(pullRequest: BoardCardPullRequest
   return pullRequest !== null && pullRequest.state === "merged";
 }
 
+// ── Per-card review-loop overrides (t3o-22) ────────────────────────────
+
+/** The ceiling on a review loop's round budget, wherever it is set. A cap on
+    the cap: the budget is a per-card control now, so nothing stops a stray
+    click from asking for a hundred rounds of a loop that holds a concurrency
+    slot for its whole run. */
+export const BOARD_REVIEW_MAX_ROUNDS = 10;
+
+/**
+ * How a card's review loop stands (t3o-22, D7) — the vocabulary the column
+ * card, the pane and the projection cache all speak.
+ *
+ * The distinction that matters is `converged` vs `round-cap`: they carry the
+ * SAME round counts and the opposite meaning. One means a reviewer read the
+ * branch and found nothing blocking; the other means the budget ran out with
+ * findings still open and nobody signed anything off.
+ */
+export const BOARD_REVIEW_LOOP_OUTCOMES = [
+  /** A phase is due or in flight. */
+  "running",
+  /** A round closed with nothing blocking — the loop is settled. */
+  "converged",
+  /** Every round ran without a clean pass; the loop held at its budget. */
+  "round-cap",
+  /** The user asked the loop to hold after a round (D5), budget remaining. */
+  "stopped",
+  /** A review phase recorded a payload nothing can read; the loop halted. */
+  "unreadable",
+] as const;
+export const BoardReviewLoopOutcome = Schema.Literals(BOARD_REVIEW_LOOP_OUTCOMES);
+export type BoardReviewLoopOutcome = typeof BoardReviewLoopOutcome.Type;
+
+/** The two outcomes that end a loop WITHOUT a clean review pass, and so must
+    never auto-advance a card (D1). Named once because the reactor, the pane and
+    the card face each need the same answer to "did this actually pass?". */
+export function isBoardReviewLoopHeld(outcome: BoardReviewLoopOutcome): boolean {
+  return outcome === "round-cap" || outcome === "stopped";
+}
+
+/**
+ * The review facts the COLUMN card renders (t3o-22, D7) — counts, plus the one
+ * field that is not a count.
+ *
+ * `converged` and `round-cap` carry identical numbers, so a summary of counts
+ * alone would paint a loop that ran out of rounds exactly like one that passed.
+ * The outcome is what stops that.
+ */
+export const BoardCardReviewSummary = Schema.Struct({
+  roundCurrent: NonNegativeInt,
+  /** The budget, or NULL when the producer cannot see it.
+      The projection and the decider both fold this summary without access to
+      the board's review settings, so for a card with no per-card override
+      neither knows the budget. Null says that outright; inventing a number
+      from the ledger made every un-overridden card read `N of N` — a progress
+      bar that is always full, and one that disagreed with the pane. */
+  roundMax: Schema.NullOr(NonNegativeInt),
+  /** The walk's own verdict. `running` here is provisional: the walk knows a
+      round's phases are all done but not whether the executor went on to plan
+      another one, which is a fact only the card's live step can settle. See
+      `resolveBoardCardReviewOutcome`. */
+  outcome: BoardReviewLoopOutcome,
+  /** Which held outcome this loop resolves to IF it turns out to have stopped
+      (`round-cap` or `stopped`). Decided here, where the card's
+      `stopAfterRound` is in hand, so the read side needs only a boolean. */
+  heldOutcome: BoardReviewLoopOutcome,
+  /** Whether the last RECORDED round ran every phase it was due.
+      The guard that stops a loop between phases from reading as a loop that
+      ended: mid-round there is a real gap with no live step (one phase settled,
+      the next not yet admitted), and without this the card would flash
+      `NO CONVERGENCE` at a card that is working perfectly well. */
+  roundComplete: Schema.Boolean,
+  severityCritical: NonNegativeInt,
+  severityImprovement: NonNegativeInt,
+  severityNitpick: NonNegativeInt,
+  issuesFixed: NonNegativeInt,
+  issuesRejected: NonNegativeInt,
+  issuesOpen: NonNegativeInt,
+  issuesDisputed: NonNegativeInt,
+});
+export type BoardCardReviewSummary = typeof BoardCardReviewSummary.Type;
+
+/**
+ * A card's own review-loop settings (t3o-22, D2), overriding the board-wide
+ * review stage config for THIS card's run. All three are the answers to a loop
+ * that will not converge: give it more rounds, give the reviewer better eyes,
+ * or stop burning rounds and let a human look.
+ *
+ * Every field is inert when absent, so a card that never touched the pane runs
+ * exactly the board's configured loop. Kept on the card rather than in a side
+ * table because the reactor reads it on EVERY re-plan, in the same breath as
+ * `humanInLoop` — the per-card-scalar-override shape t3o-15 D6 established.
+ */
+export const BoardCardReviewOverrides = Schema.Struct({
+  /** This card's round budget. Null means the review stage's `rounds` governs,
+      so raising the board-wide setting still moves an untouched card. */
+  rounds: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Hold the loop once THIS round's phases close, even when budget remains
+      (D5). A round number rather than a flag so it is self-superseding: raising
+      the budget past it is a contradiction the decider resolves by clearing it,
+      and a bare boolean gives it nothing to compare. */
+  stopAfterRound: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Review-phase model per round, keyed by the round number as a string.
+      Applies to the `review` phase ALONE (D4) — triage and adjudicate keep
+      their configured per-phase models, because escalating the reviewer and
+      re-modelling the author are different decisions. An absent key means
+      "inherit", stored as no entry rather than a copied value, so changing the
+      stage setting still moves un-overridden rounds with it. */
+  roundModels: Schema.Record(Schema.String, BoardModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type BoardCardReviewOverrides = typeof BoardCardReviewOverrides.Type;
+
+/** The resting value — no override on any of the three. Distinct from `null`
+    on the card, which means the same thing; this is what a reader normalises
+    to so it never branches on both. */
+export const EMPTY_BOARD_CARD_REVIEW_OVERRIDES: BoardCardReviewOverrides = {
+  rounds: null,
+  stopAfterRound: null,
+  roundModels: {},
+};
+
+/** True when the overrides say nothing at all, so the card can store `null`
+    rather than an empty struct and the two never diverge in the read model. */
+export function isEmptyBoardCardReviewOverrides(
+  overrides: BoardCardReviewOverrides | null,
+): boolean {
+  if (overrides === null) return true;
+  return (
+    overrides.rounds === null &&
+    overrides.stopAfterRound === null &&
+    Object.keys(overrides.roundModels).length === 0
+  );
+}
+
 // ── Card aggregate ─────────────────────────────────────────────────────
 
 export const BoardCard = Schema.Struct({
@@ -798,6 +934,15 @@ export const BoardCard = Schema.Struct({
       repository on every forge in the registry — including the cross-repository
       fork case, where the number is still the upstream repository's. */
   pullRequestFloor: Schema.NullOr(PositiveInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** This card's own review-loop settings (t3o-22, D2); null when the card has
+      never touched them, which is the same as every field being unset. Decodes
+      to null on every event payload written before t3o-22, so a from-empty
+      replay of an older log matches the table-rehydrated model — the guarantee
+      `worktree` and `pullRequest` make, and migration 025's `review_overrides`
+      column defaults to NULL to the same end. Only the review role reads it. */
+  reviewOverrides: Schema.NullOr(BoardCardReviewOverrides).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
@@ -1591,6 +1736,12 @@ export const BoardCardUpdateCommand = Schema.Struct({
       writes an explicit value. Flipping it mid-run sends a turn into the live
       thread (D5), handled by the supervisor reactor. */
   humanInLoop: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  /** Per-card review-loop overrides (t3o-22, D2). Absent leaves them unchanged;
+      `null` clears them back to the stage config; a struct writes them whole.
+      The decider validates it — the budget can never drop below a round the
+      loop has already STARTED (D3), and raising it past a pending stop clears
+      the stop (D5) — so a stale pane cannot strand a running round. */
+  reviewOverrides: Schema.optional(Schema.NullOr(BoardCardReviewOverrides)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -2159,6 +2310,13 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       model — D8). */
   brief: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   card: BoardCard,
+  /** The card face's review summary AFTER this edit (t3o-22, D7), folded by
+      the decider when the edit could change it (a round budget or a stop). It
+      rides the `card-upserted` shell delta this event produces, so a pure
+      override edit updates the card face live rather than waiting for the next
+      step completion. Absent when the edit cannot touch review, and for every
+      event written before this — the SQL cache is refreshed either way. */
+  reviewSummary: Schema.optionalKey(BoardCardReviewSummary),
 });
 export type BoardCardUpdatedPayload = typeof BoardCardUpdatedPayload.Type;
 
@@ -2275,6 +2433,19 @@ export type BoardCardStageThreadRequestedPayload = typeof BoardCardStageThreadRe
 export const BoardCardStepCompletedPayload = Schema.Struct({
   cardId: BoardCardId,
   completion: BoardStepCompletion,
+  /** The card face's review summary AFTER this completion (t3o-22, D7), folded
+      by the decider — the one layer holding both the whole step-completion
+      ledger and the card's own round overrides.
+
+      It rides the event because `boardShellStreamEvent` is a pure function of
+      ONE event: it can see this completion but not the ones before it, so
+      without this the column card could not be updated live and would only
+      catch up on reconnect.
+
+      Absent for every non-review step, and for every event written before
+      t3o-22 — the SQL projection recomputes from the ledger when it is absent,
+      which is what keeps a from-empty replay of an older log correct. */
+  reviewSummary: Schema.optionalKey(BoardCardReviewSummary),
 });
 export type BoardCardStepCompletedPayload = typeof BoardCardStepCompletedPayload.Type;
 
@@ -2728,7 +2899,27 @@ export const BoardCardShell = Schema.Struct({
   // Review summary — counts, never bodies; absent until the post-MVP
   // review pipeline lands, then populated only in the review stage.
   roundCurrent: Schema.optionalKey(NonNegativeInt),
+  /** The round budget. Absent when the producer could not see it (t3o-22, D7):
+      the projection folds the summary without access to the board's review
+      settings, so an un-overridden card has no budget to report and the card
+      face shows the round alone rather than a total it made up. */
   roundMax: Schema.optionalKey(NonNegativeInt),
+  /** How the loop stands (t3o-22, D7) — the one review field that is not a
+      count, because "ran out of rounds" and "passed" are the same numbers and
+      opposite outcomes. Absent for a card with no review history.
+
+      PROVISIONAL, exactly as the cache's is: `running` here means the ledger's
+      rounds are all accounted for, not that the loop is still going. The
+      renderer settles it through `resolveBoardCardReviewOutcome` against
+      `stepRunning`, which is the fact the shell holds and the ledger does not.
+      Deliberately unresolved on the wire so the snapshot and the `card-review`
+      delta carry the same thing and cannot disagree. */
+  reviewOutcome: Schema.optionalKey(BoardReviewLoopOutcome),
+  /** The reading `reviewOutcome` settles to if the loop has in fact stopped. */
+  reviewHeldOutcome: Schema.optionalKey(BoardReviewLoopOutcome),
+  /** Whether the last recorded round ran every phase it was due — the guard
+      that keeps a between-phases gap from reading as a stopped loop. */
+  reviewRoundComplete: Schema.optionalKey(Schema.Boolean),
   stepLabel: Schema.optionalKey(TrimmedNonEmptyString),
   severityCritical: Schema.optionalKey(NonNegativeInt),
   severityImprovement: Schema.optionalKey(NonNegativeInt),
@@ -2894,6 +3085,11 @@ export function makeBoardCardShell(input: {
       producer holds it and asserts it unconditionally rather than
       absent-means-preserve. */
   readonly prNumber?: number | null | undefined;
+  /** The card's review-loop summary (t3o-22, D7), or null when it has no
+      review history. Absent-means-preserve, like the body/plan slices: a
+      producer that cannot see the step-completion ledger omits the key rather
+      than asserting counts it does not have. */
+  readonly reviewSummary?: BoardCardReviewSummary | null | undefined;
   /** Every LIVE-linked thread's shell (t3o-18, D7) — the badge aggregates
       across all of them. A single thread is still accepted (delta producers and
       tests pass one, or none). */
@@ -2935,9 +3131,30 @@ export function makeBoardCardShell(input: {
     // omitted when there is no PR, which is what keeps a PR-less board's shell
     // payload exactly the size it was before this field existed.
     ...(input.prNumber == null ? {} : { prNumber: input.prNumber }),
-    // planTotal / planDone (post-MVP sub-boards), round* / stepLabel /
-    // severity* / issues* (post-MVP review pipeline): key-optional and
-    // deliberately absent until their producing specs land.
+    // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
+    // the outcome describe one loop, so a producer must never publish half of
+    // them and let the client blend them with a previous card's other half.
+    // Absent leaves every key absent, which is preserve-last-known.
+    ...(input.reviewSummary == null
+      ? {}
+      : {
+          roundCurrent: input.reviewSummary.roundCurrent,
+          ...(input.reviewSummary.roundMax === null
+            ? {}
+            : { roundMax: input.reviewSummary.roundMax }),
+          reviewOutcome: input.reviewSummary.outcome,
+          reviewHeldOutcome: input.reviewSummary.heldOutcome,
+          reviewRoundComplete: input.reviewSummary.roundComplete,
+          severityCritical: input.reviewSummary.severityCritical,
+          severityImprovement: input.reviewSummary.severityImprovement,
+          severityNitpick: input.reviewSummary.severityNitpick,
+          issuesFixed: input.reviewSummary.issuesFixed,
+          issuesRejected: input.reviewSummary.issuesRejected,
+          issuesOpen: input.reviewSummary.issuesOpen,
+          issuesDisputed: input.reviewSummary.issuesDisputed,
+        }),
+    // planTotal / planDone (post-MVP sub-boards) and stepLabel: key-optional
+    // and deliberately absent until their producing specs land.
   };
 }
 
@@ -2957,7 +3174,12 @@ export function boardCardShellFromCard(
       the two delta mappings that hold a brief body (`card-created`,
       `card-updated`); everywhere else they stay absent and the client keeps
       its last known value. */
-  bodyDerived?: { readonly briefHasImage?: boolean | undefined } | undefined,
+  bodyDerived?:
+    | {
+        readonly briefHasImage?: boolean | undefined;
+        readonly reviewSummary?: BoardCardReviewSummary | null | undefined;
+      }
+    | undefined,
 ): BoardCardShell {
   return makeBoardCardShell({
     cardId: card.id,
@@ -2982,6 +3204,12 @@ export function boardCardShellFromCard(
     ...(bodyDerived?.briefHasImage === undefined
       ? {}
       : { briefHasImage: bodyDerived.briefHasImage }),
+    // The review slice, when the producing event folded it in (t3o-22, D7):
+    // `boardCardShellFromCard` cannot see the ledger, so only a delta that
+    // carries the summary can keep the card face live through a pure edit.
+    ...(bodyDerived?.reviewSummary === undefined
+      ? {}
+      : { reviewSummary: bodyDerived.reviewSummary }),
   });
 }
 
@@ -3076,6 +3304,32 @@ export const BoardCardPlansShellEvent = Schema.Struct({
   planCount: NonNegativeInt,
 });
 export type BoardCardPlansShellEvent = typeof BoardCardPlansShellEvent.Type;
+
+/**
+ * Review-summary delta (t3o-22, D7): a review phase completed, so the card
+ * face's round pips, severity chip, issue tally and convergence flag change.
+ *
+ * A dedicated delta, the exact analogue of `card-plans`:
+ * `board.card-step-completed` carries the completion and the card id but NOT
+ * the card, so the full bounded shell cannot be rebuilt in the projector — and
+ * the summary is a fold over the step-completion ledger, which no
+ * card-carrying event can see.
+ *
+ * Without it the cache is written correctly and nothing shows it: a board left
+ * open while a card runs its loop renders no pips and no `NO CONVERGENCE` flag
+ * for the whole run, because the shell is only re-read on reconnect.
+ *
+ * `summary` is null for a card whose review history has been cleared. Its
+ * `kind` keeps the `card-` prefix, so it routes through
+ * `isBoardShellStreamEvent` with zero core-seam change.
+ */
+export const BoardCardReviewShellEvent = Schema.Struct({
+  kind: Schema.Literal("card-review"),
+  sequence: NonNegativeInt,
+  cardId: BoardCardId,
+  summary: Schema.NullOr(BoardCardReviewSummary),
+});
+export type BoardCardReviewShellEvent = typeof BoardCardReviewShellEvent.Type;
 
 /**
  * Card-thread delta (t3o-18, D3): the live card↔thread links of ONE card, with
@@ -3269,6 +3523,7 @@ export const BOARD_SHELL_STREAM_EVENTS = [
   BoardCardQueuedShellEvent,
   BoardCardStalledShellEvent,
   BoardCardPlansShellEvent,
+  BoardCardReviewShellEvent,
   BoardCardThreadsShellEvent,
   BoardLabelUpsertedShellEvent,
   BoardStageUpsertedShellEvent,
@@ -3939,6 +4194,322 @@ export function parseReviewStepId(
 
 export const DEFAULT_BOARD_REVIEW_ROUNDS = 5;
 
+/** How a finding stands right now, folding its triage disposition and its
+    adjudication verdict into one word. A disposition the adjudicator struck
+    down (`fix-incomplete`, `fix-absent`, `rejection-unjustified`) reads
+    `disputed` — the claim did not hold. */
+export type BoardReviewFindingResolution = "open" | "fixed" | "rejected" | "disputed";
+
+export function boardReviewFindingResolution(
+  disposition: { readonly action: BoardReviewTriageAction } | undefined,
+  verdict: { readonly verdict: BoardReviewVerdict } | undefined,
+): BoardReviewFindingResolution {
+  if (disposition === undefined) return "open";
+  if (verdict !== undefined) {
+    if (verdict.verdict === "fix-upheld") return "fixed";
+    if (verdict.verdict === "rejection-justified") return "rejected";
+    return "disputed";
+  }
+  return disposition.action;
+}
+
+function parseBoardStepPayloadJson(payload: string | null): unknown {
+  if (payload === null) return undefined;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+}
+
+const decodeBoardReviewPayloadOption = Schema.decodeUnknownOption(BoardReviewPayload);
+const decodeBoardTriagePayloadOption = Schema.decodeUnknownOption(BoardTriagePayload);
+const decodeBoardAdjudicatePayloadOption = Schema.decodeUnknownOption(BoardAdjudicatePayload);
+
+export interface BoardReviewLoopWalk {
+  /** The phase the loop runs next, while it still runs. */
+  readonly next: { readonly phase: BoardReviewPhaseId; readonly round: number } | null;
+  readonly status: BoardReviewLoopOutcome;
+  /** The round the loop is in, or ended on. At least 1. */
+  readonly currentRound: number;
+}
+
+/**
+ * `reviewLoopDecision`'s phase walk, in miniature and without the prompts
+ * (t3o-22, D7).
+ *
+ * This is the ONE definition of "where is the loop up to", and it lives in
+ * contracts rather than beside either consumer because three things must agree
+ * about it and previously could only agree by inspection: the server's
+ * projection cache (what the column card shows), the Review pane's derivation
+ * (what the detail shows), and the executor's own walk (what actually runs
+ * next). The first two now call this; the executor keeps its own copy only
+ * because it must mint prompts and models as it goes. A differential in
+ * `apps/server/src/board/reviewLoopExecutor.test.ts` — the only package that
+ * can import both this and `reviewLoopDecision` — drives the same completions
+ * through each and asserts they agree, so the copies cannot drift.
+ *
+ * The distinctions it exists to preserve: a malformed review payload is never
+ * read as "no findings"; a loop that ran out of budget is never reported as one
+ * that passed; and a loop the user stopped is neither.
+ */
+export function boardReviewLoopWalk(input: {
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+  readonly maxRounds: number;
+  readonly stopAfterRound: number | null;
+}): BoardReviewLoopWalk {
+  const done = new Map<string, BoardStepCompletion>();
+  for (const completion of input.completions) {
+    if (completion.outcome !== "succeeded") continue;
+    if (parseReviewStepId(completion.stepId) === null) continue;
+    done.set(completion.stepId, completion);
+  }
+
+  for (let round = 1; round <= input.maxRounds; round++) {
+    const review = done.get(reviewStepId("review", round));
+    if (review === undefined) {
+      return { next: { phase: "review", round }, status: "running", currentRound: round };
+    }
+    const payload = decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(review.payload));
+    if (Option.isNone(payload)) {
+      return { next: null, status: "unreadable", currentRound: round };
+    }
+    const findings = payload.value.findings;
+    const blocking = findings.some((finding) => isBoardReviewBlockingSeverity(finding.severity));
+    if (findings.length > 0 && done.get(reviewStepId("triage", round)) === undefined) {
+      return { next: { phase: "triage", round }, status: "running", currentRound: round };
+    }
+    if (blocking && done.get(reviewStepId("adjudicate", round)) === undefined) {
+      return { next: { phase: "adjudicate", round }, status: "running", currentRound: round };
+    }
+    // The loop check, the executor's alone: a round with nothing blocking is
+    // the only exit that means the code passed.
+    if (!blocking) return { next: null, status: "converged", currentRound: round };
+    // A stop the user asked for outranks budget that merely remains (D5).
+    if (input.stopAfterRound === round) {
+      return { next: null, status: "stopped", currentRound: round };
+    }
+  }
+  return { next: null, status: "round-cap", currentRound: Math.max(1, input.maxRounds) };
+}
+
+/**
+ * Fold a card's review completions into the column card's summary, or null when
+ * the card has no review history to summarise.
+ *
+ * A projection CACHE, never a source of truth: the pane derives the same facts
+ * from the same completions, so the two can be compared and this can always be
+ * rebuilt from the ledger.
+ */
+export function deriveBoardCardReviewSummary(input: {
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+  /** The budget to DISPLAY, or null when the caller cannot see it. Never
+      bounds the walk — see below. */
+  readonly maxRounds: number | null;
+  readonly stopAfterRound: number | null;
+}): BoardCardReviewSummary | null {
+  const reviewSteps = input.completions.filter(
+    (completion) => parseReviewStepId(completion.stepId) !== null,
+  );
+  if (reviewSteps.length === 0) return null;
+  // The walk runs to the CEILING, never to `maxRounds`, and that is load-bearing.
+  //
+  // Bounding it by the caller's budget makes the cache report `round-cap` the
+  // instant the last recorded round's phases are in — which is true of every
+  // healthy multi-round loop for the whole gap between one round finishing and
+  // the next round's review landing, minutes to tens of minutes of a running
+  // card wearing the alarm. It is also unknowable from here: the projector
+  // cannot see the board's review settings, so any budget it invents is a
+  // guess, and a guess that can invert the verdict is worse than none.
+  //
+  // Run to the ceiling and the walk simply stops at the first round with no
+  // review completion, reporting `running` — provisionally. Whether that
+  // actually means "between rounds" or "the loop ended here" is settled by
+  // `resolveBoardCardReviewOutcome` against the card's live step, which is the
+  // one fact that answers it and the job that function exists for.
+  const walk = boardReviewLoopWalk({
+    completions: input.completions,
+    maxRounds: BOARD_REVIEW_MAX_ROUNDS,
+    stopAfterRound: input.stopAfterRound,
+  });
+
+  const succeeded = new Map<string, BoardStepCompletion>();
+  for (const completion of reviewSteps) {
+    if (completion.outcome === "succeeded") succeeded.set(completion.stepId, completion);
+  }
+
+  let highestRecorded = 0;
+  for (const completion of reviewSteps) {
+    if (completion.outcome !== "succeeded") continue;
+    const parsed = parseReviewStepId(completion.stepId);
+    if (parsed?.phase === "review") highestRecorded = Math.max(highestRecorded, parsed.round);
+  }
+  // The round the loop is ON, not the one it is waiting for. The ceiling walk
+  // reports `lastRound + 1` for a held loop — a round that never started — and
+  // letting that through made the card face render one pip more than the
+  // executor's budget and disagree with the pane over the same ledger. Clamped
+  // to what was actually entered whenever the walk's `running` is provisional.
+  const enteredRound =
+    walk.status === "running"
+      ? Math.max(1, Math.min(walk.currentRound, highestRecorded + 1))
+      : walk.currentRound;
+  const roundComplete = walk.status !== "running" || walk.currentRound > highestRecorded;
+  const summary = {
+    // A held loop shows the last round it ran; a running one shows the round in
+    // flight (the ledger is one behind while a review is mid-run).
+    roundCurrent: roundComplete && walk.status === "running" ? highestRecorded : enteredRound,
+    roundMax: input.maxRounds === null ? null : Math.max(input.maxRounds, highestRecorded),
+    outcome: walk.status,
+    // The walk has moved past every recorded round, so nothing is half-run.
+    roundComplete,
+    heldOutcome:
+      input.stopAfterRound === walk.currentRound
+        ? ("stopped" as BoardReviewLoopOutcome)
+        : ("round-cap" as BoardReviewLoopOutcome),
+    severityCritical: 0,
+    severityImprovement: 0,
+    severityNitpick: 0,
+    issuesFixed: 0,
+    issuesRejected: 0,
+    issuesOpen: 0,
+    issuesDisputed: 0,
+  };
+
+  // Tally over every RECORDED round, which is what the ledger holds — the
+  // display budget is irrelevant here and may not even be known.
+  for (let round = 1; round <= highestRecorded; round++) {
+    const review = succeeded.get(reviewStepId("review", round));
+    if (review === undefined) continue;
+    const reviewPayload = decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(review.payload));
+    if (Option.isNone(reviewPayload)) continue;
+    const triage = succeeded.get(reviewStepId("triage", round));
+    const adjudicate = succeeded.get(reviewStepId("adjudicate", round));
+    const triagePayload =
+      triage === undefined
+        ? Option.none()
+        : decodeBoardTriagePayloadOption(parseBoardStepPayloadJson(triage.payload));
+    const adjudicatePayload =
+      adjudicate === undefined
+        ? Option.none()
+        : decodeBoardAdjudicatePayloadOption(parseBoardStepPayloadJson(adjudicate.payload));
+    const dispositions = new Map(
+      (Option.isSome(triagePayload) ? triagePayload.value.dispositions : []).map((d) => [
+        d.findingId,
+        d,
+      ]),
+    );
+    const verdicts = new Map(
+      (Option.isSome(adjudicatePayload) ? adjudicatePayload.value.verdicts : []).map((v) => [
+        v.findingId,
+        v,
+      ]),
+    );
+    for (const finding of reviewPayload.value.findings) {
+      if (finding.severity === "critical") summary.severityCritical += 1;
+      else if (finding.severity === "improvement") summary.severityImprovement += 1;
+      else summary.severityNitpick += 1;
+      switch (
+        boardReviewFindingResolution(dispositions.get(finding.id), verdicts.get(finding.id))
+      ) {
+        case "fixed":
+          summary.issuesFixed += 1;
+          break;
+        case "rejected":
+          summary.issuesRejected += 1;
+          break;
+        case "disputed":
+          summary.issuesDisputed += 1;
+          break;
+        default:
+          summary.issuesOpen += 1;
+      }
+    }
+  }
+  return summary;
+}
+
+/**
+ * The card face's final review outcome (t3o-22, D7).
+ *
+ * `deriveBoardCardReviewSummary` runs where the step-completion ledger is, and
+ * from there a round whose phases are all done is indistinguishable between
+ * "the executor planned another round" and "the loop ended here" — the walk
+ * reports `running` for both. Only the card's LIVE STEP settles it, and that
+ * lives in a different read-model slice, joined at shell assembly.
+ *
+ * So the cache carries both readings and this picks between them. A settled
+ * loop the walk called `running` is a loop that stopped without converging,
+ * which is exactly the case the column card must not render as a pass.
+ */
+export function resolveBoardCardReviewOutcome(input: {
+  /** Structural, not `BoardCardReviewSummary`: the shell spreads these three
+      as loose keys, so a reader holding only them can settle the outcome
+      without reassembling a summary it does not have. */
+  readonly summary: Pick<BoardCardReviewSummary, "outcome" | "heldOutcome" | "roundComplete">;
+  /** Whether the card's step is LIVE in any sense the board recognises —
+      admitted and running, or holding in the concurrency queue. Both mean the
+      loop is going; keying on `running` alone would call a card waiting for a
+      slot a stopped loop, which is a false alarm on a healthy card. */
+  readonly stepActive: boolean;
+}): BoardReviewLoopOutcome {
+  if (input.summary.outcome !== "running") return input.summary.outcome;
+  // Two conditions, and both matter. Nothing running is necessary but not
+  // sufficient: there is a real gap between one phase settling and the next
+  // being admitted, and treating that as "the loop ended" would flash
+  // NO CONVERGENCE at a healthy card. `roundComplete` closes it — a loop that
+  // has genuinely stopped has no half-run round behind it.
+  return input.summary.roundComplete && !input.stepActive ? input.summary.heldOutcome : "running";
+}
+
+/**
+ * The highest round a card's loop has ENTERED (t3o-22, D3) — the floor the
+ * round budget can never be pushed below.
+ *
+ * Deliberately not "rounds that recorded a completion". A round whose review is
+ * dispatched and running in a worktree has no completion yet, and flooring on
+ * completions alone would let the budget drop below it: the executor's walk
+ * would never reach that round again, its completion would land beyond the cap,
+ * and the loop would wedge with an orphaned run holding a concurrency slot.
+ * A round that has STARTED can never be removed, so the live step counts.
+ *
+ * `liveStepId` is the card's in-flight step, if any; a step id that is not a
+ * review step (or absent) contributes nothing.
+ */
+export function boardReviewRoundsStarted(input: {
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+  readonly liveStepId: string | null;
+}): number {
+  let started = 0;
+  for (const completion of input.completions) {
+    const parsed = parseReviewStepId(completion.stepId);
+    if (parsed !== null) started = Math.max(started, parsed.round);
+  }
+  if (input.liveStepId !== null) {
+    const live = parseReviewStepId(input.liveStepId);
+    if (live !== null) started = Math.max(started, live.round);
+  }
+  return started;
+}
+
+/**
+ * The round budget a card's loop actually runs to (t3o-22, D3): the card's own
+ * override when it has one, else the review stage's setting — clamped so it can
+ * neither drop below a round already started nor exceed the ceiling.
+ *
+ * Every reader goes through this. The executor plans against it, the decider
+ * validates writes against it, and the pane renders it, so the three cannot
+ * disagree about how many rounds are left.
+ */
+export function effectiveBoardReviewRounds(input: {
+  readonly configured: number;
+  readonly overrides: BoardCardReviewOverrides | null;
+  readonly roundsStarted: number;
+}): number {
+  const requested = input.overrides?.rounds ?? input.configured;
+  const floor = Math.max(1, input.roundsStarted);
+  return Math.min(BOARD_REVIEW_MAX_ROUNDS, Math.max(floor, requested));
+}
+
 /** Default per-phase prompts (D2), ported from the `pullrequest-review` /
     `pullrequest-rereview` skills. These are the USER-OWNED core of each phase:
     persona, the untrusted-input/safety stance, how to read the change, what the
@@ -4055,10 +4626,16 @@ export const BoardStageExecutionReview = Schema.Struct({
   humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   humanInLoopWithPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   humanInLoopWithoutPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  /** On by default: when the loop ends — a round with nothing blocking, or the
-      round cap — the card moves itself to the next stage in order. The loop
-      ending IS the review verdict; a card that converged and then sits in Code
-      review is a card someone has to notice. */
+  /** On by default: when the loop CONVERGES — a round closes with nothing
+      blocking — the card moves itself to the next stage in order. Convergence
+      IS the review verdict; a card that passed and then sits in Code review is
+      a card someone has to notice.
+
+      Only convergence (t3o-22, D1). A loop that ends any other way — the round
+      cap, a user's stop, an unreadable payload — never advances, whatever this
+      says: nothing passed review, so there is no verdict to act on. Advancing a
+      stalled loop is a decision someone makes with the pane's explicit button,
+      not a default nobody saw. */
   autoAdvance: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   timeoutMs: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),

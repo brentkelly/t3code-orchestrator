@@ -48,6 +48,10 @@ import {
   compareBoardStages,
   BoardCardWorktree,
   BoardCardPullRequest,
+  BoardCardReviewOverrides,
+  BoardCardReviewSummary,
+  deriveBoardCardReviewSummary,
+  parseReviewStepId,
   isBoardEvent,
   makeBoardCardShell,
   ProviderInstanceId,
@@ -151,6 +155,11 @@ const BoardCardDbRow = Schema.Struct({
       it through — `BoardCard.pullRequestHistory` has no null inhabitant. */
   pullRequestHistory: Schema.NullOr(Schema.fromJsonString(Schema.Array(BoardCardPullRequest))),
   pullRequestFloor: BoardCard.fields.pullRequestFloor,
+  /** NULL for every row written before migration 025, and for every card that
+      has never touched its review-loop settings — the two are deliberately
+      indistinguishable, which is what makes replay equal rehydration (t3o-22,
+      D2). */
+  reviewOverrides: Schema.NullOr(Schema.fromJsonString(BoardCardReviewOverrides)),
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -444,6 +453,10 @@ const BoardCardShellDbRow = Schema.Struct({
       pulling the URL and state onto every card would spend wire bytes the
       column view has nothing to do with. */
   prNumber: Schema.NullOr(Schema.Int),
+  /** The review-summary CACHE (t3o-22, D7); NULL for a card with no review
+      history. Its `outcome` is provisional — `resolveBoardCardReviewOutcome`
+      settles it against the card's live step at assembly. */
+  reviewSummary: Schema.NullOr(Schema.fromJsonString(BoardCardReviewSummary)),
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
 });
@@ -480,6 +493,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     // rehydration cannot depend on which of the two it is looking at.
     pullRequestHistory: card.pullRequestHistory.length === 0 ? null : card.pullRequestHistory,
     pullRequestFloor: card.pullRequestFloor,
+    reviewOverrides: card.reviewOverrides,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -510,6 +524,7 @@ function rowToBoardCard(
     pullRequest: row.pullRequest,
     pullRequestHistory: row.pullRequestHistory ?? [],
     pullRequestFloor: row.pullRequestFloor,
+    reviewOverrides: row.reviewOverrides,
     blocked: row.blocked !== 0,
     threadLinks,
     archivedAt: row.archivedAt,
@@ -563,6 +578,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request,
         pull_request_history,
         pull_request_floor,
+        review_overrides,
         blocked,
         archived_at,
         created_at,
@@ -585,6 +601,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.pullRequest},
         ${row.pullRequestHistory},
         ${row.pullRequestFloor},
+        ${row.reviewOverrides},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -607,6 +624,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request = excluded.pull_request,
         pull_request_history = excluded.pull_request_history,
         pull_request_floor = excluded.pull_request_floor,
+        review_overrides = excluded.review_overrides,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -639,6 +657,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request AS "pullRequest",
         pull_request_history AS "pullRequestHistory",
         pull_request_floor AS "pullRequestFloor",
+        review_overrides AS "reviewOverrides",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -724,6 +743,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           json_extract(pull_request, '$.number'),
           json_extract(pull_request_history, '$[#-1].number')
         ) AS "prNumber",
+        review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
@@ -762,6 +782,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           json_extract(pull_request, '$.number'),
           json_extract(pull_request_history, '$[#-1].number')
         ) AS "prNumber",
+        review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
       FROM board_cards
@@ -828,6 +849,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request AS "pullRequest",
         pull_request_history AS "pullRequestHistory",
         pull_request_floor AS "pullRequestFloor",
+        review_overrides AS "reviewOverrides",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -1295,6 +1317,22 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   // One card's step completions (t3o-16, D9): the card-detail loader reads these
   // to render the review loop's findings, so it filters in SQL rather than
   // scanning the whole table per modal open.
+  /** Write a card's review-summary CACHE (t3o-22, D7). Its own statement, not
+      part of the card upsert: the summary is a fold over the step-completion
+      ledger, which no card-carrying event holds, so it is refreshed on the
+      events that can change it rather than on every card write. */
+  const updateBoardCardReviewSummaryRow = SqlSchema.void({
+    Request: Schema.Struct({
+      cardId: BoardCardId,
+      reviewSummary: Schema.NullOr(Schema.fromJsonString(BoardCardReviewSummary)),
+    }),
+    execute: (row) => sql`
+      UPDATE board_cards
+      SET review_summary = ${row.reviewSummary}
+      WHERE card_id = ${row.cardId}
+    `,
+  });
+
   const listBoardCardStepRowsForCard = SqlSchema.findAll({
     Request: BoardCardId,
     Result: BoardCardStepDbRow,
@@ -1532,6 +1570,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardThreadShellRowsForCard,
     findBoardCardIdForLiveThread,
     listBoardCardStepRowsForCard,
+    updateBoardCardReviewSummaryRow,
     upsertBoardCardStepRow,
     listBoardCardStepRows,
     upsertBoardCardStepStateRow,
@@ -1719,6 +1758,33 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
     queries
       .deleteBoardThreadTodoRowsForCard(cardId)
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodosSweep:query")));
+
+  /**
+   * Recompute and store a card's review-summary cache (t3o-22, D7).
+   *
+   * Called on the two events that can change it: a review step completing (new
+   * findings, a new round) and a card update (a new round budget or a stop).
+   * Reads the whole ledger back rather than folding incrementally — the fold is
+   * cheap, the ledger is one card's worth of rows, and a from-scratch
+   * recomputation is what makes the cache rebuildable and impossible to drift.
+   *
+   * `maxRounds` is DISPLAY only — the walk itself runs to the ceiling, so a
+   * budget this layer cannot see (the projection has no access to the board's
+   * review settings) can never invert the verdict. The worst it can do is
+   * under-report a still-running loop's pip count until the pane, which does
+   * have the settings, renders the real budget.
+   */
+  const refreshReviewSummary = (card: BoardCard) =>
+    Effect.gen(function* () {
+      const rows = yield* queries.listBoardCardStepRowsForCard(card.id);
+      const completions: ReadonlyArray<BoardStepCompletion> = rows;
+      const summary = deriveBoardCardReviewSummary({
+        completions,
+        maxRounds: card.reviewOverrides?.rounds ?? null,
+        stopAfterRound: card.reviewOverrides?.stopAfterRound ?? null,
+      });
+      yield* queries.updateBoardCardReviewSummaryRow({ cardId: card.id, reviewSummary: summary });
+    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewSummary:query")));
 
   const upsertStep = (completion: BoardStepCompletion) =>
     queries
@@ -1985,6 +2051,9 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       case "board.card-updated": {
         yield* upsertCard(event.payload.card);
         yield* syncCardLabels(event.payload.card);
+        // A new round budget or a stop changes what the loop's counts MEAN
+        // (t3o-22, D7), so the cache is refolded against the updated card.
+        yield* refreshReviewSummary(event.payload.card);
         // Bodies live only in this table (D8); absent means unchanged.
         if (event.payload.brief === null) {
           yield* queries
@@ -2021,6 +2090,38 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
 
       case "board.card-step-completed":
         yield* upsertStep(event.payload.completion);
+        // Only a REVIEW step can move the review summary, and every other
+        // stage's step skips this entirely.
+        //
+        // The decider folds the summary onto the event (t3o-22, D7), so the
+        // common path is a plain write of what the event already carries — the
+        // same value the client's `card-review` delta is applying, so the cache
+        // and the live shell cannot disagree. The recompute is the fallback for
+        // events written BEFORE t3o-22, which carry no summary: that is what
+        // makes a from-empty replay of an older log rebuild the cache correctly
+        // rather than leaving it null.
+        if (parseReviewStepId(event.payload.completion.stepId) !== null) {
+          const carried = event.payload.reviewSummary;
+          if (carried === undefined) {
+            const cardRow = yield* queries
+              .findBoardCardRow(event.payload.cardId)
+              .pipe(
+                Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewCard:query")),
+              );
+            if (Option.isSome(cardRow)) {
+              yield* refreshReviewSummary(rowToBoardCard(cardRow.value, [], []));
+            }
+          } else {
+            yield* queries
+              .updateBoardCardReviewSummaryRow({
+                cardId: event.payload.cardId,
+                reviewSummary: carried,
+              })
+              .pipe(
+                Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewSummary:query")),
+              );
+          }
+        }
         yield* recordActivity({
           event,
           cardId: event.payload.cardId,
@@ -2369,6 +2470,11 @@ export function withBoardShellCards(
           briefHasImage: row.briefHasImage !== 0,
           planCount: row.planCount,
           prNumber: row.prNumber,
+          // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
+          // against `stepRunning`, which every shell already holds — resolving
+          // it here as well would give the snapshot and the `card-review`
+          // delta two different answers for the same loop.
+          reviewSummary: row.reviewSummary,
           archivedAt: row.archivedAt,
           activeThreadId,
           queued: queuedByCard.has(row.cardId),

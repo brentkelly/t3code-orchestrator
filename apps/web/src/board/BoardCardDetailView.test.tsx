@@ -58,6 +58,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     threadLinks: [],
     externalRef: null,
     humanInLoop: null,
+    reviewOverrides: null,
     worktree: null,
     blocked: false,
     archivedAt: null,

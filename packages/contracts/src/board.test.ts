@@ -114,6 +114,7 @@ const typicalCard = (index: number): BoardCard => ({
   pullRequest: null,
   pullRequestHistory: [],
   pullRequestFloor: null,
+  reviewOverrides: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",

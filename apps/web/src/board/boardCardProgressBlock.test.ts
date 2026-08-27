@@ -41,12 +41,12 @@ describe("boardCardProgressBlock (D8)", () => {
   it("AC 11: returns exactly one block, subcards outranking review outranking todos", () => {
     const subcards = summary([
       { kind: "plans", done: 1, total: 3 },
-      { kind: "round", current: 1, max: 3 },
+      { kind: "round", current: 1, max: 3, outcome: undefined },
     ]);
     expect(boardCardProgressBlock(subcards, todo("t1")).kind).toBe("subcards");
 
     const review = summary([
-      { kind: "round", current: 1, max: 3 },
+      { kind: "round", current: 1, max: 3, outcome: undefined },
       { kind: "severity", critical: 1, improvement: 0, nitpick: 2 },
     ]);
     expect(boardCardProgressBlock(review, todo("t1")).kind).toBe("review");

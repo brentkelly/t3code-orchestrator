@@ -37,7 +37,6 @@ import {
   DEFAULT_BOARD_MERGE_CONFLICT_PROMPT,
   isBoardMergeStageExecution,
   isBoardReviewStageExecution,
-  ProviderInstanceId,
   resolveBoardStageExecution,
   type BoardReviewPhaseExecution,
   type BoardReviewPhaseId,
@@ -46,8 +45,6 @@ import {
   type BoardStageExecutionMerge,
   type BoardStageExecutionReview,
   type BoardStageRole,
-  type ProviderOptionSelection,
-  type RuntimeMode,
   type BoardState,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -86,6 +83,12 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import {
+  ModelRow,
+  type ActiveModel,
+  type InstanceEntries,
+  type ModelOptionsByInstance,
+} from "./BoardModelRow";
 import { cn, randomUUID } from "../../lib/utils";
 import {
   AlertDialog,
@@ -96,13 +99,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
-import { AccessLevelPicker } from "../chat/AccessLevelPicker";
-import { ModelPickerContent } from "../chat/ModelPickerContent";
-import { TraitsPicker } from "../chat/TraitsPicker";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import {
@@ -116,11 +113,6 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { SettingsSection } from "./settingsLayout";
 
-type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
-type ModelOptionsByInstance = ReturnType<typeof getCustomModelOptionsByInstance>;
-type ActiveModel = { instanceId: ProviderInstanceId; model: string };
-type ModelSelection = ActiveModel | null;
-
 /** The stand-in card identity for envelope previews: a run interpolates the
     real card, so the preview shows placeholders where values vary per card. */
 const PREVIEW_CARD_KEY = "{{card-key}}";
@@ -129,7 +121,6 @@ const PREVIEW_CARD_TITLE = "{{card title}}";
 /** Only reached when the server reports no provider instances at all; the
     picker then has nothing to list, and the trigger still reads "Select a
     model". */
-const EMPTY_INSTANCE_ID = ProviderInstanceId.make("none");
 
 // ── shared row primitives ──────────────────────────────────────────────
 
@@ -511,148 +502,6 @@ function PromptRow(props: {
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
-    </div>
-  );
-}
-
-/**
- * The model row. A stage names the model it runs on EXPLICITLY — there is no
- * "Default" state to fall into, because the board never had a default worth
- * advertising: the old one was a compiled-in codex + `gpt-5.6-luna` pair the
- * user may never have enabled, so "Default" named a model that could not run.
- * An unset stage reads "Select a model" and, while the stage auto-executes,
- * says so in the same required-field language the prompt uses.
- *
- * The trigger is local rather than `ProviderModelPicker`'s, which always
- * renders a concrete model name (falling back to the instance's first option)
- * and so cannot show "nothing picked yet". The popup is the app's own
- * `ModelPickerContent`, so the list, search and favourites are identical.
- */
-function ModelRow(props: {
-  label: string;
-  ariaLabel: string;
-  selection: ModelSelection;
-  requiredMessage?: string | null;
-  instanceEntries: InstanceEntries;
-  getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
-  onChange: (selection: ModelSelection) => void;
-  /** Reasoning/effort selections for the chosen model, and the setter (t3o-21).
-      Rendered as the composer's TraitsPicker; hidden when no model is picked. */
-  modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
-  onModelOptionsChange: (options: ReadonlyArray<ProviderOptionSelection> | undefined) => void;
-  /** The stage/phase agent authority (t3o-21) — the user's, on the same row as
-      the model, exactly like the chat composer. */
-  runtimeMode: RuntimeMode;
-  onRuntimeModeChange: (mode: RuntimeMode) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  // With nothing picked the popup still needs an instance to open on: use the
-  // first available one, with an empty model so no row reads as selected.
-  const firstEntry = props.instanceEntries.find((entry) => entry.enabled && entry.isAvailable);
-  const active: ActiveModel = props.selection ?? {
-    instanceId: firstEntry?.instanceId ?? props.instanceEntries[0]?.instanceId ?? EMPTY_INSTANCE_ID,
-    model: "",
-  };
-  const modelOptions = props.getModelOptions(active);
-  const activeEntry =
-    props.selection === null
-      ? null
-      : (props.instanceEntries.find((entry) => entry.instanceId === active.instanceId) ?? null);
-  const selectedOption = modelOptions
-    .get(active.instanceId)
-    ?.find((option) => option.slug === active.model);
-  const triggerLabel =
-    props.selection === null
-      ? "Select a model"
-      : selectedOption
-        ? getTriggerDisplayModelName(selectedOption)
-        : active.model;
-
-  return (
-    <div className="flex flex-col gap-1 py-2">
-      <div className="flex items-center justify-between gap-4">
-        <span className="text-[13.5px] text-foreground">{props.label}</span>
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-          <Popover open={open} onOpenChange={setOpen}>
-            <PopoverTrigger
-              render={
-                <Button
-                  size="xs"
-                  variant="outline"
-                  aria-label={props.ariaLabel}
-                  className="max-w-56 justify-between gap-1.5"
-                />
-              }
-            >
-              <span className="flex min-w-0 items-center gap-1.5">
-                {activeEntry ? (
-                  <ProviderInstanceIcon
-                    driverKind={activeEntry.driverKind}
-                    displayName={activeEntry.displayName}
-                    accentColor={activeEntry.accentColor}
-                    showBadge={Boolean(activeEntry.accentColor)}
-                    className="size-4"
-                    iconClassName="size-4"
-                    indicatorBackground="var(--input)"
-                  />
-                ) : null}
-                <span
-                  className={cn(
-                    "truncate",
-                    props.selection === null ? "text-muted-foreground" : "",
-                  )}
-                >
-                  {triggerLabel}
-                </span>
-              </span>
-              <ChevronDownIcon aria-hidden="true" className="size-3.5 shrink-0 opacity-60" />
-            </PopoverTrigger>
-            <PopoverPopup
-              align="end"
-              className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
-              viewportClassName="rounded-lg !overflow-hidden p-0"
-            >
-              <ModelPickerContent
-                activeInstanceId={active.instanceId}
-                model={active.model}
-                lockedProvider={null}
-                lockedContinuationGroupKey={null}
-                instanceEntries={props.instanceEntries}
-                modelOptionsByInstance={modelOptions}
-                terminalOpen={false}
-                onRequestClose={() => setOpen(false)}
-                onInstanceModelChange={(instanceId, model) => {
-                  props.onChange({ instanceId, model });
-                  setOpen(false);
-                }}
-              />
-            </PopoverPopup>
-          </Popover>
-          {props.selection !== null && activeEntry !== null ? (
-            <TraitsPicker
-              provider={activeEntry.driverKind}
-              models={activeEntry.models}
-              model={active.model}
-              prompt=""
-              onPromptChange={() => {}}
-              modelOptions={props.modelOptions}
-              allowPromptInjectedEffort={false}
-              triggerVariant="outline"
-              triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-              onModelOptionsChange={props.onModelOptionsChange}
-            />
-          ) : null}
-          <AccessLevelPicker
-            value={props.runtimeMode}
-            onChange={props.onRuntimeModeChange}
-            ariaLabel={`${props.ariaLabel} access level`}
-            triggerClassName="rounded-lg border border-input bg-popover shadow-xs"
-          />
-        </div>
-      </div>
-      {props.selection === null && props.requiredMessage ? (
-        <p className="text-xs text-destructive">{props.requiredMessage}</p>
-      ) : null}
     </div>
   );
 }

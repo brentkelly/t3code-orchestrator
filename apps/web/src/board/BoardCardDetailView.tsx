@@ -30,6 +30,7 @@ import {
   boardCardArchiveNeedsConfirmation,
   boardCardDisplayPullRequest,
   boardStageIndex,
+  boardNextStageId,
   boardStagesInOrder,
   boardStageWithRole,
   liveBoardCardDependents,
@@ -47,6 +48,8 @@ import {
   type BoardState,
   type EnvironmentId,
   type ThreadId,
+  type BoardCardReviewOverrides,
+  type BoardModelSelection,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import {
@@ -63,6 +66,7 @@ import {
   FileTextIcon,
   LockIcon,
   MessageSquareIcon,
+  SquareIcon,
   RefreshCcwIcon,
   XIcon,
 } from "lucide-react";
@@ -85,7 +89,7 @@ import {
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
-import { hasBoardReviewSteps } from "./boardReviewLoop";
+import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
 import { boardStageLabel } from "./boardStages";
 import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
 
@@ -206,6 +210,19 @@ export interface BoardCardDetailViewProps {
   /** The review loop's configured round cap, for the Review pane's R1..Rn bar
       (t3o-16). Absent falls back to the compiled default. */
   readonly reviewMaxRounds?: number | undefined;
+  /** The card's own review-loop settings (t3o-22, D2). */
+  readonly reviewOverrides?: BoardCardReviewOverrides | null | undefined;
+  /** The highest round the card's loop has STARTED — the budget floor, matching
+      the decider's (t3o-22, D3). */
+  readonly reviewRoundsStarted?: number | undefined;
+  /** Whether the executor is driving the card (running or queued for a slot). */
+  readonly reviewStepActive?: boolean | undefined;
+  readonly onResumeReview?: ((rounds: number) => void) | undefined;
+  readonly onSetReviewRounds?: ((rounds: number) => void) | undefined;
+  readonly onSetReviewRoundModel?:
+    | ((round: number, model: BoardModelSelection | null) => void)
+    | undefined;
+  readonly onStopAfterRound?: ((round: number | null) => void) | undefined;
   /** The thread pane `+` menu's restart affordance (t3o-14): present only when
       the card's current stage auto-executes, `null` otherwise. */
   readonly stageRestart: BoardThreadStageRestart | null;
@@ -591,6 +608,29 @@ function ActionsSection({
     conflictStepRunning: props.conflictStepRunning,
   });
   const forward = primaryAction !== null && !archived ? primaryAction : null;
+  // "Stop after this round" (t3o-22, D8): offered only while a review loop is
+  // actually mid-flight — there is nothing to stop after otherwise, and a card
+  // that has never reached review must not show it at all. Toggling it off
+  // re-sends null, which the decider reads as "run on".
+  const reviewLoop =
+    archived || props.onStopAfterRound === undefined
+      ? null
+      : hasBoardReviewSteps(props.detail.stepCompletions)
+        ? deriveBoardReviewLoop(
+            props.detail.stepCompletions,
+            props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS,
+            props.reviewOverrides?.stopAfterRound ?? null,
+          )
+        : null;
+  const onStopAfterRound = props.onStopAfterRound;
+  const stopRound =
+    reviewLoop === null || reviewLoop.status !== "running" || onStopAfterRound === undefined
+      ? null
+      : {
+          round: reviewLoop.currentRound,
+          pending: props.reviewOverrides?.stopAfterRound === reviewLoop.currentRound,
+          onToggle: onStopAfterRound,
+        };
   // A merge from this card is mid-flight: the button holds its spot but shows a
   // spinner and refuses further clicks until the round trip settles.
   const merging = forward?.kind === "merge" && props.merging;
@@ -600,9 +640,37 @@ function ActionsSection({
   // The View PR link renders at every stage (including Done, past any forward
   // action), so keep the section alive whenever a PR is linked — otherwise the
   // link vanishes exactly when a merged card lands in Done.
-  if (forward === null && !card.blocked && humanInLoop === null && displayed === null) return null;
+  if (
+    forward === null &&
+    !card.blocked &&
+    humanInLoop === null &&
+    displayed === null &&
+    stopRound === null
+  ) {
+    return null;
+  }
   return (
     <div className="flex flex-col gap-2 p-3.5">
+      {stopRound !== null ? (
+        <button
+          className={cn(
+            "inline-flex h-8 items-center justify-center gap-[7px] rounded-lg border px-2.75 text-[13px] font-medium shadow-xs",
+            stopRound.pending
+              ? "border-amber-500/55 bg-amber-500/12 text-amber-700 dark:text-amber-300"
+              : "border-input bg-popover text-foreground hover:bg-accent",
+          )}
+          onClick={() => stopRound.onToggle(stopRound.pending ? null : stopRound.round)}
+          title={
+            stopRound.pending
+              ? `Round ${stopRound.round} finishes, then the loop holds for you`
+              : "Let the current round finish, then hold instead of starting another"
+          }
+          type="button"
+        >
+          <SquareIcon className="size-3" />
+          {stopRound.pending ? `Stopping after round ${stopRound.round}` : "Stop after this round"}
+        </button>
+      ) : null}
       {forward !== null ? (
         <button
           className={cn(
@@ -980,7 +1048,21 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   (link) => link.threadId === activeThreadId && link.threadState === "working",
                 )}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
+                onAdvance={(() => {
+                  // "Advance anyway" is an ordinary stage move, gated exactly
+                  // like every other transition (t3o-22, D8) — the button
+                  // exists because a held loop will never make the move on its
+                  // own, not because the move is special.
+                  const next = boardNextStageId(stageStateOf(props.stages), card.stage);
+                  return next === null || card.blocked ? undefined : () => props.onMoveStage(next);
+                })()}
                 onBackToThread={() => setPane("thread")}
+                onSetRoundModel={props.onSetReviewRoundModel}
+                onResume={props.onResumeReview}
+                onSetRounds={props.onSetReviewRounds}
+                overrides={props.reviewOverrides}
+                roundsStarted={props.reviewRoundsStarted}
+                stepActive={props.reviewStepActive}
                 onOpenThread={(threadId) => {
                   setSelectedThreadId(threadId);
                   setPane("thread");

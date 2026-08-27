@@ -83,6 +83,16 @@ export interface BoardStageExecutorConfig {
 export interface BoardStageRunState {
   readonly round: number;
   readonly completedStepIds: readonly string[];
+  /** The card's step currently in flight, or null when nothing is running.
+      Part of the seam's CONTRACT — a run state that cannot express "a step is
+      in flight" is a lossy description of a run — rather than an active guard:
+      every reactor caller today plans only when nothing is running and passes
+      null. It matters because a multi-step executor must be able to tell a
+      round that has STARTED from one that has merely been recorded, and
+      t3o-22's round-budget floor turns on exactly that distinction. The floor
+      that protects a live run in production is the decider's, which reads the
+      card's live step directly. */
+  readonly liveStepId: string | null;
 }
 
 /** What the executor decides the reactor should do next. */
@@ -131,10 +141,12 @@ export interface BoardStageExecutor {
  * yields the stage's one seeded step, and reports `complete` as soon as that
  * step has succeeded in the current run. It never escalates — the reactor owns
  * the recovery ladder (D13). t3o-16's `ReviewLoopExecutor` is the multi-round
- * exception: it completes `succeeded` when its loop check ends the loop (a
- * round with nothing blocking, or the round cap) and `blocked` only for a
- * broken reviewer payload (the `escalate` arm stays part of the seam contract
- * for a future executor, but no shipped executor emits it).
+ * exception: it completes `succeeded` ONLY when its loop CONVERGES (a round
+ * with nothing blocking), and `blocked` for every other ending — the round cap,
+ * a stop the user asked for, or a broken reviewer payload (t3o-22, D1). That
+ * split is what keeps `advanceStage`, which is gated on `succeeded`, from
+ * graduating a card nothing ever passed. (The `escalate` arm stays part of the
+ * seam contract for a future executor, but no shipped executor emits it.)
  */
 export const SimpleStageExecutor: BoardStageExecutor = {
   planNext({ config, runState }: BoardStagePlanInput): BoardStagePlan {

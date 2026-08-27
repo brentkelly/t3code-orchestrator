@@ -30,6 +30,7 @@ import {
   type BoardCardDetail,
   type BoardCardId,
   type BoardCardPlansShellEvent,
+  type BoardCardReviewShellEvent,
   type BoardCardQueuedShellEvent,
   type BoardCardRemovedShellEvent,
   type BoardCardShell,
@@ -127,6 +128,7 @@ export type BoardShellStreamEvent =
   | BoardCardQueuedShellEvent
   | BoardCardStalledShellEvent
   | BoardCardPlansShellEvent
+  | BoardCardReviewShellEvent
   | BoardCardThreadsShellEvent
   | BoardLabelUpsertedShellEvent
   | BoardStageUpsertedShellEvent
@@ -172,14 +174,40 @@ function withDerivedThreadFields(
     : { ...card, threadState, awaitingInput };
 }
 
+/** The review slice (t3o-22, D7) — carried as a group, never field by field.
+    The counts and the outcome describe ONE loop, so a half-carried slice would
+    blend one round's tallies with another's verdict. */
+const REVIEW_SHELL_FIELDS = [
+  "roundCurrent",
+  "roundMax",
+  "reviewOutcome",
+  "reviewHeldOutcome",
+  "reviewRoundComplete",
+  "severityCritical",
+  "severityImprovement",
+  "severityNitpick",
+  "issuesFixed",
+  "issuesRejected",
+  "issuesOpen",
+  "issuesDisputed",
+] as const satisfies ReadonlyArray<keyof BoardCardShell>;
+
 /**
  * Carry forward the key-optional shell fields a card-carrying delta cannot
- * know: `briefHasImage` (the brief BODY lives in `board_card_bodies`, D8) and
- * `planCount` (the plan set is its own slice). Their resting value is the
- * ABSENT key, not `false`/`0`, so "the producer could not see it" and "the
- * producer saw nothing there" stay distinguishable — a brief whose image was
- * deleted sends `briefHasImage: false` and clears the icon, while a drag
+ * know: `briefHasImage` (the brief BODY lives in `board_card_bodies`, D8),
+ * `planCount` (the plan set is its own slice), and the review slice (a fold
+ * over the step-completion ledger, which no card-carrying event can see).
+ * Their resting value is the ABSENT key, not `false`/`0`, so "the producer
+ * could not see it" and "the producer saw nothing there" stay
+ * distinguishable — a brief whose image was deleted sends
+ * `briefHasImage: false` and clears the icon, while a drag
  * (`card-reordered` → `card-upserted`) omits the key and changes nothing.
+ *
+ * Without the review keys here, a card mid-review that the user drags,
+ * retitles, or extends the round budget on loses its pips and its
+ * `NO CONVERGENCE` flag until the next reconnect — and the "Run round N+1"
+ * click is itself one of the triggers, so the feature would blank itself at
+ * the exact moment it is used.
  *
  * Returns the same reference when there is nothing to carry, so memoized
  * consumers keep their identity.
@@ -191,11 +219,24 @@ function preserveAbsentShellFields(
   if (existing === undefined) return next;
   const briefHasImage = next.briefHasImage ?? existing.briefHasImage;
   const planCount = next.planCount ?? existing.planCount;
-  if (briefHasImage === next.briefHasImage && planCount === next.planCount) return next;
+  // The review slice rides or rests as a whole: `reviewOutcome` present means
+  // the producer saw the ledger, so every key it holds is authoritative.
+  const carryReview = next.reviewOutcome === undefined && existing.reviewOutcome !== undefined;
+  if (briefHasImage === next.briefHasImage && planCount === next.planCount && !carryReview) {
+    return next;
+  }
+  const review: Partial<BoardCardShell> = {};
+  if (carryReview) {
+    for (const field of REVIEW_SHELL_FIELDS) {
+      const value = existing[field];
+      if (value !== undefined) Object.assign(review, { [field]: value });
+    }
+  }
   return {
     ...next,
     ...(briefHasImage === undefined ? {} : { briefHasImage }),
     ...(planCount === undefined ? {} : { planCount }),
+    ...review,
   };
 }
 
@@ -301,6 +342,38 @@ export function applyBoardShellStreamEvent(
           ? { ...card, planCount: event.planCount }
           : card,
       );
+      return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
+    }
+    case "card-review": {
+      // A review phase completed (t3o-22, D7) — the authoritative live change
+      // of the card face's round pips, severity chip and convergence flag. A
+      // no-op for a card we do not hold. Applied as a whole slice, and cleared
+      // as a whole when the summary is null.
+      const nextCards = Arr.map(cards, (card) => {
+        if (card.cardId !== event.cardId) return card;
+        const stripped = { ...card };
+        for (const field of REVIEW_SHELL_FIELDS) delete stripped[field];
+        return event.summary === null
+          ? stripped
+          : {
+              ...stripped,
+              roundCurrent: event.summary.roundCurrent,
+              // Omitted, not nulled, when the producer could not see the
+              // budget: the shell key is optional and its absence is the
+              // signal the row reads.
+              ...(event.summary.roundMax === null ? {} : { roundMax: event.summary.roundMax }),
+              reviewOutcome: event.summary.outcome,
+              reviewHeldOutcome: event.summary.heldOutcome,
+              reviewRoundComplete: event.summary.roundComplete,
+              severityCritical: event.summary.severityCritical,
+              severityImprovement: event.summary.severityImprovement,
+              severityNitpick: event.summary.severityNitpick,
+              issuesFixed: event.summary.issuesFixed,
+              issuesRejected: event.summary.issuesRejected,
+              issuesOpen: event.summary.issuesOpen,
+              issuesDisputed: event.summary.issuesDisputed,
+            };
+      });
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
     }
     case "card-threads": {

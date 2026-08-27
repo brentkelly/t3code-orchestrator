@@ -19,14 +19,27 @@
  * every stage; the renderers exist so the card lights up the day the data
  * lands, with no further UI work.
  */
-import type { BoardCardShell } from "@t3tools/contracts";
+import {
+  resolveBoardCardReviewOutcome,
+  type BoardCardShell,
+  type BoardReviewLoopOutcome,
+} from "@t3tools/contracts";
 
 /** One piece of stage-specific summary content. Each variant carries exactly
     the scalars the shell provides — the renderer maps it to a chip/pip row. */
 export type BoardCardSummaryItem =
   | { readonly kind: "attachments"; readonly count: number }
   | { readonly kind: "plans"; readonly done: number; readonly total: number }
-  | { readonly kind: "round"; readonly current: number; readonly max: number }
+  | {
+      readonly kind: "round";
+      readonly current: number;
+      /** Absent when the producer could not see the budget (t3o-22, D7). */
+      readonly max: number | undefined;
+      /** How the loop stands (t3o-22, D7). `round-cap`/`stopped` are the two
+          that must not read as a pass — the row tints every pip and flags the
+          card, because the counts alone are identical to a converged loop's. */
+      readonly outcome: BoardReviewLoopOutcome | undefined;
+    }
   | { readonly kind: "step"; readonly label: string }
   | {
       readonly kind: "severity";
@@ -85,8 +98,33 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
       // The PR reference is NOT here: it moved to the card's meta row, which
       // renders it at every stage rather than only where the pipeline happens
       // to be looking (`boardCardMeta`).
-      if (card.roundMax !== undefined && card.roundMax > 0) {
-        items.push({ kind: "round", current: card.roundCurrent ?? 0, max: card.roundMax });
+      // The round row renders on any card with review history. `roundMax` may
+      // be absent — the projection cannot see the board's review settings — in
+      // which case the row shows the round reached and no total, rather than a
+      // total it invented.
+      if (card.roundCurrent !== undefined && card.roundCurrent > 0) {
+        items.push({
+          kind: "round",
+          current: card.roundCurrent ?? 0,
+          max: card.roundMax,
+          // The shell carries the outcome UNRESOLVED (t3o-22, D7): `running`
+          // there means the ledger's rounds are accounted for, not that the
+          // loop is still going. Settling it here — the one place — is what
+          // keeps a snapshot and a `card-review` delta from disagreeing.
+          outcome:
+            card.reviewOutcome === undefined
+              ? undefined
+              : resolveBoardCardReviewOutcome({
+                  summary: {
+                    outcome: card.reviewOutcome,
+                    heldOutcome: card.reviewHeldOutcome ?? card.reviewOutcome,
+                    roundComplete: card.reviewRoundComplete ?? false,
+                  },
+                  // Queued counts: a card holding for a concurrency slot is a
+                  // loop that is going, not one that stopped.
+                  stepActive: card.stepRunning || card.queued,
+                }),
+        });
       }
       if (card.stepLabel !== undefined) items.push({ kind: "step", label: card.stepLabel });
       if (
