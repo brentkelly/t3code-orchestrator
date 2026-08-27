@@ -574,15 +574,12 @@ export function BoardCardReviewPane({
   // turns on: these carry a converged loop's round counts and the opposite
   // meaning, so the pane must never let them read as a pass.
   const held = isBoardReviewLoopHeld(loop.status);
-  // The floor the − button obeys, mirroring the decider's (t3o-22, D3): a round
-  // that has STARTED can never be removed. The caller resolves it against the
-  // card's live step; the ledger-only fallback is for callers that have no step
-  // state to offer, and can only ever be more permissive by one round.
-  // The floor the − button obeys. Strictly a CONTROL gate — never fed back
-  // into the budget, which is the caller's and is floored on the ledger alone.
-  // While a step is live the round the walk sits on has started, so it counts;
-  // the decider counts a live step of any status, so this matches it wherever
-  // the shell can see one.
+  // The floor the − button obeys (t3o-22, D3): a round that has STARTED can
+  // never be removed. Strictly a CONTROL gate — never fed back into the budget,
+  // which is the caller's and is floored on the ledger alone. While a step is
+  // live the round the walk sits on has started, so it counts; the decider
+  // counts a live step of any status, so this matches it wherever the shell can
+  // see one.
   const ledgerFloor = roundsStarted ?? boardReviewRoundsStarted({ completions, liveStepId: null });
   const budgetFloor = Math.max(
     1,
@@ -722,7 +719,12 @@ export function BoardCardReviewPane({
             loop={loop}
             onAdvance={onAdvance}
             onRunAnotherRound={
-              onResume === undefined ? undefined : () => onResume(loop.currentRound + 1)
+              // Gated at the ceiling exactly as the `+` button is: at 10 rounds
+              // `onResume(11)` is a write the decider refuses, so the button
+              // must not offer it as a live affordance.
+              onResume === undefined || loop.currentRound + 1 > BOARD_REVIEW_MAX_ROUNDS
+                ? undefined
+                : () => onResume(loop.currentRound + 1)
             }
           />
         ) : null}
