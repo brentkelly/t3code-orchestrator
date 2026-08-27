@@ -2310,6 +2310,13 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       model — D8). */
   brief: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   card: BoardCard,
+  /** The card face's review summary AFTER this edit (t3o-22, D7), folded by
+      the decider when the edit could change it (a round budget or a stop). It
+      rides the `card-upserted` shell delta this event produces, so a pure
+      override edit updates the card face live rather than waiting for the next
+      step completion. Absent when the edit cannot touch review, and for every
+      event written before this — the SQL cache is refreshed either way. */
+  reviewSummary: Schema.optionalKey(BoardCardReviewSummary),
 });
 export type BoardCardUpdatedPayload = typeof BoardCardUpdatedPayload.Type;
 
@@ -3167,7 +3174,12 @@ export function boardCardShellFromCard(
       the two delta mappings that hold a brief body (`card-created`,
       `card-updated`); everywhere else they stay absent and the client keeps
       its last known value. */
-  bodyDerived?: { readonly briefHasImage?: boolean | undefined } | undefined,
+  bodyDerived?:
+    | {
+        readonly briefHasImage?: boolean | undefined;
+        readonly reviewSummary?: BoardCardReviewSummary | null | undefined;
+      }
+    | undefined,
 ): BoardCardShell {
   return makeBoardCardShell({
     cardId: card.id,
@@ -3192,6 +3204,12 @@ export function boardCardShellFromCard(
     ...(bodyDerived?.briefHasImage === undefined
       ? {}
       : { briefHasImage: bodyDerived.briefHasImage }),
+    // The review slice, when the producing event folded it in (t3o-22, D7):
+    // `boardCardShellFromCard` cannot see the ledger, so only a delta that
+    // carries the summary can keep the card face live through a pure edit.
+    ...(bodyDerived?.reviewSummary === undefined
+      ? {}
+      : { reviewSummary: bodyDerived.reviewSummary }),
   });
 }
 

@@ -622,6 +622,10 @@ export function boardShellStreamEvent(
               : event.payload.brief === null
                 ? false
                 : boardBriefHasImage(event.payload.brief),
+          // Carried when the edit changed the review summary (t3o-22, D7), so a
+          // pure override edit moves the card face live rather than waiting for
+          // the next step completion. Absent leaves the client's last value.
+          reviewSummary: event.payload.reviewSummary ?? undefined,
         }),
       });
 

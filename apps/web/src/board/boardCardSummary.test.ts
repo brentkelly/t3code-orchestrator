@@ -106,8 +106,9 @@ describe("boardCardSummary", () => {
       outcome: "running",
     });
     // With no budget in hand the row reports the round reached and no total.
+    const { roundMax: _omitBudget, ...heldNoBudget } = held;
     const noBudget = boardCardSummary(
-      shell("review", { ...held, roundMax: undefined, stepRunning: false }),
+      shell("review", { ...heldNoBudget, stepRunning: false }),
     ).items.find((item) => item.kind === "round");
     expect(noBudget).toMatchObject({ current: 5, max: undefined, outcome: "round-cap" });
 

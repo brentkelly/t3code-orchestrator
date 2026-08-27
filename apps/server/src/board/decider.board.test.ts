@@ -670,6 +670,40 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  it.effect(
+    "t3o-22 D7: a review-override edit folds the summary onto the event for a live card face",
+    () =>
+      Effect.gen(function* () {
+        // The one summary-changing path that used to emit no live delta: a pure
+        // override edit refreshed the SQL cache but the `card-upserted` shell
+        // delta could not see the ledger, so the card face waited for the next
+        // step completion. The decider now folds the summary onto the event.
+        const event = yield* decide(
+          setRounds(3),
+          reviewCardBoard({
+            completedRounds: 2,
+            overrides: { rounds: 5, stopAfterRound: null, roundModels: {} },
+          }),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        // There is review history to summarise, and the new budget rides the
+        // event so the card face can render the real total live.
+        assert.strictEqual(event.payload.reviewSummary?.roundMax, 3);
+      }),
+  );
+
+  it.effect("t3o-22 D7: an override edit on a card with no review history carries no summary", () =>
+    Effect.gen(function* () {
+      // Nothing to summarise — the fold yields null and the key is omitted, so
+      // the delta stays exactly the size it was.
+      const event = yield* decide(setRounds(3), reviewCardBoard({}));
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.reviewSummary, undefined);
+    }),
+  );
+
   it.effect("t3o-22 D2: an all-empty override set stores as null", () =>
     Effect.gen(function* () {
       const event = yield* decide(setRounds(null), reviewCardBoard({}));

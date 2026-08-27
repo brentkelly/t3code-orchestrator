@@ -911,6 +911,21 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           cardId: command.cardId,
           ...(command.brief === undefined ? {} : { brief: command.brief }),
           card: nextCard,
+          // Fold the review summary onto the event when the edit could change
+          // it (t3o-22, D7), so a pure override edit updates the card face live
+          // — the same reason the step-completion path folds it. Only when the
+          // overrides actually moved AND the card has review history; a title
+          // or label edit carries nothing and the SQL cache is untouched.
+          ...(command.reviewOverrides === undefined
+            ? {}
+            : (() => {
+                const summary = deriveBoardCardReviewSummary({
+                  completions: boardCardStepCompletions(board, command.cardId),
+                  maxRounds: nextCard.reviewOverrides?.rounds ?? null,
+                  stopAfterRound: nextCard.reviewOverrides?.stopAfterRound ?? null,
+                });
+                return summary === null ? {} : { reviewSummary: summary };
+              })()),
         },
       };
     }

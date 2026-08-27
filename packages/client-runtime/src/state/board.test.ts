@@ -370,6 +370,54 @@ describe("board shell reducer", () => {
     expect(stranger.cards).toEqual(held.cards);
   });
 
+  it("a card upsert APPLIES a review slice the delta carries (t3o-22 D7 live edit)", () => {
+    // A pure override edit folds the summary onto `board.card-updated`, which
+    // rides the `card-upserted` delta — so the card face moves live rather
+    // than waiting for the next step completion. When the slice is present it
+    // must win over any previously-held one, not be preserved.
+    const first = applyShellStreamEvent(snapshot({ cards: [cardShell("card-1")] }), {
+      kind: "card-review",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      summary: {
+        roundCurrent: 2,
+        roundMax: 5,
+        outcome: "running" as const,
+        heldOutcome: "round-cap" as const,
+        roundComplete: true,
+        severityCritical: 1,
+        severityImprovement: 0,
+        severityNitpick: 0,
+        issuesFixed: 0,
+        issuesRejected: 0,
+        issuesOpen: 1,
+        issuesDisputed: 0,
+      },
+    });
+    // The upsert carries a NEW budget (the `+` edit raised it to 6).
+    const edited = applyShellStreamEvent(first, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: boardCardShellFromCard(fullCard("card-1"), undefined, {
+        reviewSummary: {
+          roundCurrent: 2,
+          roundMax: 6,
+          outcome: "running",
+          heldOutcome: "round-cap",
+          roundComplete: true,
+          severityCritical: 1,
+          severityImprovement: 0,
+          severityNitpick: 0,
+          issuesFixed: 0,
+          issuesRejected: 0,
+          issuesOpen: 1,
+          issuesDisputed: 0,
+        },
+      }),
+    });
+    expect(edited.cards?.[0]?.roundMax).toBe(6);
+  });
+
   it("a card upsert preserves the review slice it could not know", () => {
     // The failure this prevents: a card mid-review that the user drags,
     // retitles, or clicks "Run round N+1" on loses its pips and its
