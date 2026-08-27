@@ -83,6 +83,11 @@ export interface BoardStageExecutorConfig {
 export interface BoardStageRunState {
   readonly round: number;
   readonly completedStepIds: readonly string[];
+  /** The card's step currently in flight, or null when nothing is running.
+      A multi-step executor needs it to know which step has STARTED but not yet
+      recorded anything — t3o-22's round-budget floor turns on exactly that
+      distinction, since a round mid-flight has no completion to count. */
+  readonly liveStepId: string | null;
 }
 
 /** What the executor decides the reactor should do next. */

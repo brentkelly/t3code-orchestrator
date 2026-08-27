@@ -63,6 +63,7 @@ const card: BoardCard = {
   threadLinks: [],
   externalRef: null,
   humanInLoop: null,
+  reviewOverrides: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",
@@ -210,6 +211,107 @@ function reconcileCommands(input: {
     Effect.map((commands) => commands.map((command) => command.type)),
   );
 }
+
+// ── The round cap holds the card (t3o-22, D1) ─────────────────────────
+//
+// The regression this spec exists to fix: PR #40 made the cap complete
+// `succeeded`, and `advanceStage` moves any successful stage whose
+// `autoAdvance` is on — which the review stage's is BY DEFAULT. So a card whose
+// reviewer raised criticals it never resolved graduated to the next stage,
+// indistinguishable from one that passed. Asserted at the reactor, not just the
+// executor, because `board.card.move` is the thing that must not happen.
+
+const reviewCard: BoardCard = { ...card, stage: BoardStageId.make("review") };
+
+const reviewStepState = (stepId: string): BoardCardStepState => ({
+  ...runningState,
+  stepId,
+  stepLabel: "Review",
+  stageLabel: "Code review",
+});
+
+const reviewCompletion = (stepId: string, payload: unknown) => ({
+  cardId,
+  stepId,
+  outcome: "succeeded" as const,
+  summary: `did ${stepId}`,
+  payload: payload === null ? null : JSON.stringify(payload),
+  threadId: ThreadId.make("thread-1"),
+  completedAt: NOW,
+});
+
+/** A round that ran every phase and left a critical unresolved. */
+const unconvergedRound = (round: number) => [
+  reviewCompletion(`review@${round}`, {
+    reviewedSha: `sha-${round}`,
+    findings: [
+      {
+        id: `f${round}`,
+        severity: "critical",
+        file: "src/x.ts",
+        line: 1,
+        title: "still broken",
+        detail: "",
+      },
+    ],
+  }),
+  reviewCompletion(`triage@${round}`, { fixedSha: `fix-${round}`, dispositions: [] }),
+  reviewCompletion(`adjudicate@${round}`, { verdicts: [] }),
+];
+
+it.effect("t3o-22: a review loop that runs out of rounds does NOT advance the card", () =>
+  Effect.gen(function* () {
+    const types = yield* reconcileCommands({
+      board: {
+        cards: [
+          { ...reviewCard, reviewOverrides: { rounds: 1, stopAfterRound: null, roundModels: {} } },
+        ],
+        stepStates: [reviewStepState("adjudicate@1")],
+        stepCompletions: unconvergedRound(1),
+        nextCardNumberByProject: {},
+      },
+    });
+    assert.include(types, "board.card.settle-step");
+    // The whole point: nothing converged, so the card holds where it is.
+    assert.notInclude(types, "board.card.move");
+    // ...and no round 2 is started either — the budget really is spent.
+    assert.notInclude(types, "board.card.select-step");
+  }),
+);
+
+it.effect("t3o-22: a review loop that CONVERGES still advances the card", () =>
+  Effect.gen(function* () {
+    const types = yield* reconcileCommands({
+      board: {
+        cards: [
+          { ...reviewCard, reviewOverrides: { rounds: 1, stopAfterRound: null, roundModels: {} } },
+        ],
+        stepStates: [reviewStepState("review@1")],
+        // Same budget, same round count, no blocking finding: this one passed.
+        stepCompletions: [reviewCompletion("review@1", { reviewedSha: "sha-1", findings: [] })],
+        nextCardNumberByProject: {},
+      },
+    });
+    assert.include(types, "board.card.move");
+  }),
+);
+
+it.effect("t3o-22: a stopped loop holds even with budget remaining", () =>
+  Effect.gen(function* () {
+    const types = yield* reconcileCommands({
+      board: {
+        cards: [
+          { ...reviewCard, reviewOverrides: { rounds: 5, stopAfterRound: 1, roundModels: {} } },
+        ],
+        stepStates: [reviewStepState("adjudicate@1")],
+        stepCompletions: unconvergedRound(1),
+        nextCardNumberByProject: {},
+      },
+    });
+    assert.notInclude(types, "board.card.move");
+    assert.notInclude(types, "board.card.select-step");
+  }),
+);
 
 it.effect("boot: a running step whose thread is gone is recovered (respawned)", () =>
   Effect.gen(function* () {

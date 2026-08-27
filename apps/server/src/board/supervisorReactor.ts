@@ -1087,12 +1087,13 @@ const make = Effect.gen(function* () {
         execution: exec,
       },
       completions,
-      runState: { round: 1, completedStepIds: [] },
+      // Stage entry: nothing of this card's is in flight yet.
+      runState: { round: 1, completedStepIds: [], liveStepId: null },
     });
     if (plan.kind === "complete") {
       // The executor considers this entry already complete — a multi-step
       // executor plans from the card's ALL-TIME completions, so a review loop
-      // that previously converged or exhausted its rounds reports `complete`
+      // that previously converged, was stopped, or exhausted its rounds reports `complete`
       // forever. A re-entry drag-back or an explicit on-demand request still
       // deserves a conversation (D7): open a clean human-in-the-loop thread on
       // the stage's own step id, exactly as a simple-stage re-entry does.
@@ -1221,7 +1222,9 @@ const make = Effect.gen(function* () {
         execution: exec,
       },
       completions,
-      runState: { round: 1, completedStepIds },
+      // The step in `state` has just SETTLED, so nothing is in flight; its
+      // round is already counted through its recorded completion.
+      runState: { round: 1, completedStepIds, liveStepId: null },
     });
     switch (plan.kind) {
       case "run": {
@@ -1284,10 +1287,13 @@ const make = Effect.gen(function* () {
         return;
       }
       case "complete": {
-        // The stage is done. A successful stage may auto-advance (D8) — for the
-        // review loop that covers both a converged round and the round cap; a
-        // non-succeeded terminal outcome (a broken reviewer payload) leaves the
-        // card put with its findings visible.
+        // The stage is done. A SUCCESSFUL stage may auto-advance (D8) — for the
+        // review loop that means a converged round and nothing else. Every
+        // other terminal outcome leaves the card put with its findings visible:
+        // a broken reviewer payload, a loop the user stopped, and — since
+        // t3o-22 D1 — a loop that ran out of rounds with findings still open,
+        // which carries a converged loop's round counts and the opposite
+        // meaning.
         if (plan.outcome === "succeeded") yield* advanceStage({ card, state });
         return;
       }
@@ -1308,6 +1314,82 @@ const make = Effect.gen(function* () {
         return;
       }
     }
+  });
+
+  /**
+   * Ask a SETTLED stage's executor whether an edit gave it more to run
+   * (t3o-22, D6), and start that step if so.
+   *
+   * The path exists for the review loop: a loop held at its round cap is
+   * terminal, so raising the card's budget must make it plan round N+1 — but
+   * `continueStage` only ever runs off a step settling, and nothing settles
+   * here. It stays role-agnostic on purpose (t3o-16 AC10): it asks whatever
+   * executor the stage has and acts ONLY on a `run` plan.
+   *
+   * A `complete` plan is a deliberate no-op. `SimpleStageExecutor` reports
+   * exactly that for its already-recorded step, so every non-review stage falls
+   * straight through — and, more importantly, routing a `complete` back into
+   * `advanceStage` would let any card edit re-advance a card that already
+   * graduated.
+   */
+  const replanSettledStage = Effect.fn("board-supervisor-replanSettledStage")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const stage = boardStageById(board, card.stage);
+    if (stage === null) return;
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(settings, card.stage);
+    // Same gate as every other spawn path: a stage the user drives by hand is
+    // not started by an edit.
+    if (!exec.autoExecute) return;
+    const completions = boardCardStepCompletions(board, card.id);
+    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const completedStepIds = completions
+      .filter((completion) => completion.outcome === "succeeded")
+      .map((completion) => completion.stepId);
+    const plan = stageExecutorForRole(stage.role).planNext({
+      card,
+      config: {
+        stepId: card.stage,
+        stageLabel: stage.label,
+        prompt: exec.prompt,
+        model,
+        timeoutMs: exec.timeoutMs,
+        maxAttempts: exec.maxAttempts,
+        runtimeMode: exec.runtimeMode,
+        execution: exec,
+      },
+      completions,
+      // The stage is settled, so nothing of this card's is in flight.
+      runState: { round: 1, completedStepIds, liveStepId: null },
+    });
+    if (plan.kind !== "run") return;
+    yield* dispatch({
+      type: "board.card.select-step",
+      commandId: yield* commandId("select-step"),
+      cardId: card.id,
+      stepId: plan.stepId,
+      stepLabel: plan.stepLabel,
+      stageLabel: stage.label,
+      prompt: plan.prompt,
+      providerInstanceId: plan.model.instanceId,
+      model: plan.model.model,
+      runtimeMode: plan.runtimeMode,
+      ...(plan.model.options === undefined ? {} : { modelOptions: plan.model.options }),
+      mode: exec.mode,
+      humanInLoop: resolveHumanInLoop(board, settings, card, exec),
+      maxAttempts: plan.maxAttempts,
+      timeoutMs: plan.timeoutMs,
+      // Carried forward exactly as an intra-stage continuation does (t3o-17,
+      // D5). Resuming a held loop spends more of the SAME stage entry's budget,
+      // so the per-stage-entry ceiling still applies; a resume that stalls on it
+      // is the stall guard working, and it surfaces on the card.
+      priorInvocations: boardStageEntryInvocationCount(board, card.id),
+      createdAt: yield* nowIso,
+    });
+    if (exec.mode === "build") yield* ensureWorktree(card);
+    yield* schedule();
   });
 
   // Release the step's slot on settlement — a no-op for a plan-mode step, which
@@ -2331,7 +2413,19 @@ const make = Effect.gen(function* () {
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     const state = boardCardStepState(board, event.payload.cardId);
     if (card === undefined || state === null) return;
-    if (isBoardTerminalStepStatus(state.status)) return;
+    // A SETTLED stage may have more to run after an edit (t3o-22, D6). The
+    // review loop is why: a loop held at its round cap is terminal, and raising
+    // the card's budget from the pane must make it plan the next round — but
+    // nothing else in the reactor would ever ask again.
+    //
+    // Deliberately role-AGNOSTIC. An `if (stage.role === "review")` here would
+    // be the first leak of review logic into the reactor and would break
+    // t3o-16 AC10, so this asks whatever executor the stage has and acts ONLY
+    // on a `run` plan. `SimpleStageExecutor` sees its one step recorded and
+    // plans `complete`, so a non-review stage is untouched — and a `complete`
+    // plan must stay a no-op here regardless, because re-running the advance
+    // path from an edit is exactly the double-advance this must not cause.
+    if (isBoardTerminalStepStatus(state.status)) return yield* replanSettledStage(card);
     const stage = boardStageById(board, card.stage);
     const desired =
       stage?.role === "build" ? (card.humanInLoop ?? state.humanInLoop) : state.humanInLoop;

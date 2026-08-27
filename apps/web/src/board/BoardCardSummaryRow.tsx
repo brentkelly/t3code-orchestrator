@@ -14,7 +14,11 @@
  * loops peg the GPU on high-refresh displays). Either row renders nothing when
  * it has nothing to say, so a card with no data adds no height.
  */
-import type { BoardCardThreadShell } from "@t3tools/contracts";
+import {
+  isBoardReviewLoopHeld,
+  type BoardCardThreadShell,
+  type BoardReviewLoopOutcome,
+} from "@t3tools/contracts";
 import {
   BOARD_THREAD_TODO_STATUS_DONE,
   BOARD_THREAD_TODO_STATUS_IN_PROGRESS,
@@ -39,14 +43,31 @@ import type { BoardCardMeta, BoardCardSummaryItem } from "./boardCardSummary";
     pathological count cannot blow out the card width. */
 const MAX_SUMMARY_PIPS = 6;
 
-function RoundPips({ current, max }: { readonly current: number; readonly max: number }) {
+/**
+ * The review-round pips, plus the flag a loop that never converged carries
+ * (t3o-22, D7/D9).
+ *
+ * "Round 5 of 5, 12 raised, 7 fixed" describes a loop that PASSED and a loop
+ * that ran out of road in exactly the same numbers, so the counts cannot be
+ * left to speak for themselves. A held loop tints EVERY pip — the finding is
+ * about the loop, not about round 5 — and says so in words beside them.
+ */
+function RoundPips({
+  current,
+  max,
+  outcome,
+}: {
+  readonly current: number;
+  readonly max: number;
+  readonly outcome: BoardReviewLoopOutcome | undefined;
+}) {
   const shown = Math.min(max, MAX_SUMMARY_PIPS);
+  const held = outcome !== undefined && isBoardReviewLoopHeld(outcome);
+  const label = `Round ${current} of ${max}${
+    held ? (outcome === "stopped" ? " — stopped, no convergence" : " — no convergence") : ""
+  }`;
   return (
-    <span
-      className="inline-flex items-center gap-0.5"
-      title={`Round ${current} of ${max}`}
-      aria-label={`Round ${current} of ${max}`}
-    >
+    <span className="inline-flex items-center gap-0.5" title={label} aria-label={label}>
       <span className="text-[10.5px] font-medium text-muted-foreground">
         Round {current} of {max}
       </span>
@@ -56,11 +77,20 @@ function RoundPips({ current, max }: { readonly current: number; readonly max: n
             key={index}
             className={cn(
               "size-1.5 rounded-full",
-              index < current ? "bg-foreground/70" : "bg-muted-foreground/30",
+              held
+                ? "bg-amber-500/70"
+                : index < current
+                  ? "bg-foreground/70"
+                  : "bg-muted-foreground/30",
             )}
           />
         ))}
       </span>
+      {held ? (
+        <span className="ml-1 inline-flex items-center rounded bg-amber-500/18 px-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+          {outcome === "stopped" ? "Stopped" : "No convergence"}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -149,7 +179,7 @@ function SummaryItem({ item }: { readonly item: BoardCardSummaryItem }) {
     case "plans":
       return <PlanPips done={item.done} total={item.total} />;
     case "round":
-      return <RoundPips current={item.current} max={item.max} />;
+      return <RoundPips current={item.current} max={item.max} outcome={item.outcome} />;
     case "step":
       return (
         <span className="inline-flex items-center rounded bg-muted px-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">

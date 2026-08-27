@@ -48,7 +48,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [],
-      runState: { round: 1, completedStepIds: [] },
+      runState: { round: 1, completedStepIds: [], liveStepId: null },
     });
 
     expect(plan).toEqual({
@@ -71,7 +71,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [],
-      runState: { round: 4, completedStepIds: [] },
+      runState: { round: 4, completedStepIds: [], liveStepId: null },
     });
 
     expect(plan.kind).toBe("run");
@@ -83,7 +83,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [],
-      runState: { round: 1, completedStepIds: ["building"] },
+      runState: { round: 1, completedStepIds: ["building"], liveStepId: null },
     });
 
     expect(plan).toEqual({ kind: "complete", outcome: "succeeded" });
@@ -107,7 +107,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [priorSuccess],
-      runState: { round: 1, completedStepIds: [] },
+      runState: { round: 1, completedStepIds: [], liveStepId: null },
     });
 
     expect(plan.kind).toBe("run");
@@ -123,7 +123,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
         maxAttempts: 1,
       }),
       completions: [],
-      runState: { round: 2, completedStepIds: [] },
+      runState: { round: 2, completedStepIds: [], liveStepId: null },
     });
 
     expect(plan).toEqual({

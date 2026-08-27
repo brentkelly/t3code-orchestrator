@@ -26,8 +26,10 @@ import {
   BOARD_CARD_LABELS_MAX,
   boardCardPlans,
   boardCardPullRequestsEqual,
+  BOARD_REVIEW_MAX_ROUNDS,
   boardCardStepCompletions,
   boardCardStepState,
+  boardReviewRoundsStarted,
   boardLabelCatalogue,
   boardPlanId,
   boardStageById,
@@ -43,11 +45,13 @@ import {
   isBoardCommand,
   isBoardStageAtOrAfterBuild,
   isBoardTerminalStepStatus,
+  isEmptyBoardCardReviewOverrides,
   pickNextBoardLabelColour,
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
   type BoardCardId,
+  type BoardCardReviewOverrides,
   type BoardCardPullRequestTransition,
   type BoardCardStepState,
   type BoardLabel,
@@ -340,6 +344,82 @@ const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(fun
     });
   }
   return events;
+});
+
+/**
+ * Validate and normalise a card's incoming review-loop overrides (t3o-22).
+ *
+ * Two rules, both here rather than in the pane, because the client is not the
+ * guard and a stale pane must never be able to strand a live run:
+ *
+ *  - **A round that has STARTED can never be removed** (D3). The floor is the
+ *    highest round the loop has entered — counting the round whose review is in
+ *    flight with no completion yet, which is precisely the dangerous case:
+ *    dropping the budget below it would leave a running agent whose completion
+ *    lands beyond the cap, a walk that never reaches it again, and a wedged
+ *    loop holding a concurrency slot.
+ *  - **A stop cannot outlive a decision to buy more rounds** (D5). Raising the
+ *    budget is the later expression of intent, so it clears a pending stop;
+ *    otherwise the executor would keep terminating at the stopped round and the
+ *    extra rounds could never run.
+ *
+ * Setting a stop for a round the loop is already past is rejected rather than
+ * silently dropped — nothing in the UI does it, so it is a caller bug worth
+ * surfacing.
+ */
+const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (input: {
+  readonly board: BoardState;
+  readonly command: BoardCardCommand;
+  readonly card: BoardCard;
+  readonly proposed: BoardCardReviewOverrides;
+}) {
+  const { board, command, card, proposed } = input;
+  const stepState = boardCardStepState(board, card.id);
+  const roundsStarted = boardReviewRoundsStarted({
+    completions: boardCardStepCompletions(board, card.id),
+    liveStepId:
+      stepState === null || isBoardTerminalStepStatus(stepState.status) ? null : stepState.stepId,
+  });
+
+  if (proposed.rounds !== null) {
+    if (proposed.rounds < roundsStarted) {
+      return yield* invariant(
+        command,
+        `Cannot set the review budget to ${proposed.rounds} round(s) for card '${card.id}': round ${roundsStarted} has already started and cannot be removed.`,
+      );
+    }
+    if (proposed.rounds > BOARD_REVIEW_MAX_ROUNDS) {
+      return yield* invariant(
+        command,
+        `Review budget of ${proposed.rounds} rounds for card '${card.id}' exceeds the ceiling of ${BOARD_REVIEW_MAX_ROUNDS}.`,
+      );
+    }
+  }
+
+  // A raise is measured against the card's OWN previous override, not the
+  // effective budget: the decider has no settings access, and this is exactly
+  // the gesture that matters — the pane's "Run round N+1" always names a round
+  // number, while its stop button re-sends the budget untouched.
+  const raisedRounds =
+    proposed.rounds !== null &&
+    (card.reviewOverrides?.rounds == null || proposed.rounds > card.reviewOverrides.rounds);
+
+  if (
+    proposed.stopAfterRound !== null &&
+    !raisedRounds &&
+    proposed.stopAfterRound < roundsStarted
+  ) {
+    return yield* invariant(
+      command,
+      `Cannot stop card '${card.id}' after review round ${proposed.stopAfterRound}: the loop is already past it.`,
+    );
+  }
+
+  const normalised: BoardCardReviewOverrides = {
+    ...proposed,
+    stopAfterRound: raisedRounds ? null : proposed.stopAfterRound,
+  };
+  return isEmptyBoardCardReviewOverrides(normalised) ? null : normalised;
 });
 
 /** Event base for label events (t3o-06a): aggregates on the label. Separate
@@ -733,7 +813,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.labels === undefined &&
         command.dependsOn === undefined &&
         command.externalRef === undefined &&
-        command.humanInLoop === undefined
+        command.humanInLoop === undefined &&
+        command.reviewOverrides === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -770,6 +851,21 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         }
       }
 
+      // The review-loop overrides are validated and normalised before the card
+      // is built (t3o-22, D3/D5), so an invalid budget rejects the whole
+      // command rather than landing a half-applied edit.
+      const reviewOverrides =
+        command.reviewOverrides === undefined
+          ? card.reviewOverrides
+          : command.reviewOverrides === null
+            ? null
+            : yield* validateReviewOverrides({
+                board,
+                command,
+                card,
+                proposed: command.reviewOverrides,
+              });
+
       const dependsOn = proposedDependsOn ?? card.dependsOn;
       const nextCard: BoardCard = {
         ...card,
@@ -788,6 +884,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             ? card.blocked
             : deriveBoardCardBlocked({ board, stage: card.stage, dependsOn, cards: board.cards }),
         humanInLoop: command.humanInLoop === undefined ? card.humanInLoop : command.humanInLoop,
+        reviewOverrides,
         updatedAt: command.createdAt,
       };
       return {

@@ -170,8 +170,11 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     parentCardId: null,
     threadLinks: [],
     externalRef: null,
-    // Per-card human-in-the-loop override is untouched at birth (D6).
+    // Per-card human-in-the-loop override is untouched at birth (D6), and so
+    // are the review-loop overrides (t3o-22, D2) — a new card runs the board's
+    // configured loop until someone says otherwise.
     humanInLoop: null,
+    reviewOverrides: null,
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
     worktree: null,

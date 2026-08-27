@@ -24,6 +24,10 @@ import {
   type BoardCardThreadShell,
   type BoardState,
   type EnvironmentId,
+  boardReviewRoundsStarted,
+  effectiveBoardReviewRounds,
+  EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
+  type BoardCardReviewOverrides,
 } from "@t3tools/contracts";
 import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
 import {
@@ -312,9 +316,36 @@ export function BoardCardDetail({
   // (t3o-16). Resolved from the same settings the executor reads, so the bar
   // and the real loop can never disagree on the cap.
   const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
+  // The EFFECTIVE budget (t3o-22, D3): the card's own override wins, floored at
+  // the highest round already started so the pane's `−` can never offer to
+  // strand a live run — the same clamp the decider enforces on the write.
   const reviewMaxRounds = isBoardReviewStageExecution(reviewExecution)
-    ? reviewExecution.rounds
+    ? effectiveBoardReviewRounds({
+        configured: reviewExecution.rounds,
+        overrides: card.reviewOverrides,
+        roundsStarted: boardReviewRoundsStarted({
+          completions: detail?.stepCompletions ?? [],
+          liveStepId: null,
+        }),
+      })
     : undefined;
+
+  /** Patch the card's review overrides, preserving the fields not being set.
+      One write shape for all three controls (D8) — there is no second
+      command. */
+  const patchReviewOverrides = (patch: Partial<BoardCardReviewOverrides>) =>
+    runCommand(
+      updateCard({
+        environmentId,
+        input: {
+          cardId: card.id,
+          reviewOverrides: {
+            ...(card.reviewOverrides ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES),
+            ...patch,
+          },
+        },
+      }),
+    );
 
   // The `+` menu's restart affordance (t3o-14, D1): shown only when the card's
   // current stage auto-executes, and disabled while a supervised run is in
@@ -521,6 +552,19 @@ export function BoardCardDetail({
       agents={agents}
       projectName={projectName ?? null}
       reviewMaxRounds={reviewMaxRounds}
+      reviewOverrides={card.reviewOverrides}
+      onSetReviewRounds={(rounds) => patchReviewOverrides({ rounds })}
+      onSetReviewRoundModel={(round, model) =>
+        patchReviewOverrides({
+          roundModels: Object.fromEntries(
+            Object.entries({
+              ...(card.reviewOverrides?.roundModels ?? {}),
+              [String(round)]: model,
+            }).filter(([, value]) => value !== null),
+          ) as BoardCardReviewOverrides["roundModels"],
+        })
+      }
+      onStopAfterRound={(round) => patchReviewOverrides({ stopAfterRound: round })}
       threadLinks={threadLinks}
       threadTodos={threadTodos}
     />

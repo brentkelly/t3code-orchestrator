@@ -19,14 +19,22 @@
  * every stage; the renderers exist so the card lights up the day the data
  * lands, with no further UI work.
  */
-import type { BoardCardShell } from "@t3tools/contracts";
+import type { BoardCardShell, BoardReviewLoopOutcome } from "@t3tools/contracts";
 
 /** One piece of stage-specific summary content. Each variant carries exactly
     the scalars the shell provides — the renderer maps it to a chip/pip row. */
 export type BoardCardSummaryItem =
   | { readonly kind: "attachments"; readonly count: number }
   | { readonly kind: "plans"; readonly done: number; readonly total: number }
-  | { readonly kind: "round"; readonly current: number; readonly max: number }
+  | {
+      readonly kind: "round";
+      readonly current: number;
+      readonly max: number;
+      /** How the loop stands (t3o-22, D7). `round-cap`/`stopped` are the two
+          that must not read as a pass — the row tints every pip and flags the
+          card, because the counts alone are identical to a converged loop's. */
+      readonly outcome: BoardReviewLoopOutcome | undefined;
+    }
   | { readonly kind: "step"; readonly label: string }
   | {
       readonly kind: "severity";
@@ -86,7 +94,12 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
       // renders it at every stage rather than only where the pipeline happens
       // to be looking (`boardCardMeta`).
       if (card.roundMax !== undefined && card.roundMax > 0) {
-        items.push({ kind: "round", current: card.roundCurrent ?? 0, max: card.roundMax });
+        items.push({
+          kind: "round",
+          current: card.roundCurrent ?? 0,
+          max: card.roundMax,
+          outcome: card.reviewOutcome,
+        });
       }
       if (card.stepLabel !== undefined) items.push({ kind: "step", label: card.stepLabel });
       if (

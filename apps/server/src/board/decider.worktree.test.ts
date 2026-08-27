@@ -47,6 +47,7 @@ function makeCard(
     threadLinks: [],
     externalRef: null,
     humanInLoop: null,
+    reviewOverrides: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

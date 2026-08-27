@@ -116,9 +116,9 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { SettingsSection } from "./settingsLayout";
 
-type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
+export type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
 type ModelOptionsByInstance = ReturnType<typeof getCustomModelOptionsByInstance>;
-type ActiveModel = { instanceId: ProviderInstanceId; model: string };
+export type ActiveModel = { instanceId: ProviderInstanceId; model: string };
 type ModelSelection = ActiveModel | null;
 
 /** The stand-in card identity for envelope previews: a run interpolates the
@@ -528,7 +528,7 @@ function PromptRow(props: {
  * and so cannot show "nothing picked yet". The popup is the app's own
  * `ModelPickerContent`, so the list, search and favourites are identical.
  */
-function ModelRow(props: {
+export function ModelRow(props: {
   label: string;
   ariaLabel: string;
   selection: ModelSelection;
@@ -544,6 +544,11 @@ function ModelRow(props: {
       the model, exactly like the chat composer. */
   runtimeMode: RuntimeMode;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  /** Hide the access-level control. The card's per-round review override
+      (t3o-22, D4) re-points the reviewer's model and effort for one round; the
+      agent's filesystem authority is a stage-wide safety posture and stays with
+      the phase config, so that round's drawer offers only the two it owns. */
+  hideRuntimeMode?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   // With nothing picked the popup still needs an instance to open on: use the
@@ -642,12 +647,14 @@ function ModelRow(props: {
               onModelOptionsChange={props.onModelOptionsChange}
             />
           ) : null}
-          <AccessLevelPicker
-            value={props.runtimeMode}
-            onChange={props.onRuntimeModeChange}
-            ariaLabel={`${props.ariaLabel} access level`}
-            triggerClassName="rounded-lg border border-input bg-popover shadow-xs"
-          />
+          {props.hideRuntimeMode === true ? null : (
+            <AccessLevelPicker
+              value={props.runtimeMode}
+              onChange={props.onRuntimeModeChange}
+              ariaLabel={`${props.ariaLabel} access level`}
+              triggerClassName="rounded-lg border border-input bg-popover shadow-xs"
+            />
+          )}
         </div>
       </div>
       {props.selection === null && props.requiredMessage ? (
