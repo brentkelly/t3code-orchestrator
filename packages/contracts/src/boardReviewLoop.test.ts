@@ -209,6 +209,19 @@ describe("deriveBoardCardReviewSummary", () => {
     assert.strictEqual(capped?.roundCurrent, 2);
     assert.strictEqual(capped?.roundMax, 2);
 
+    // A caller that cannot see the budget says so rather than inventing one
+    // from the ledger — which made every un-overridden card read `N of N`, a
+    // progress bar that is always full and disagrees with the pane.
+    const unknownBudget = deriveBoardCardReviewSummary({
+      completions: [...unconverged(1), ...unconverged(2)],
+      maxRounds: null,
+      stopAfterRound: null,
+    });
+    assert.strictEqual(unknownBudget?.roundCurrent, 2);
+    assert.strictEqual(unknownBudget?.roundMax, null);
+    // The counts are still exact — they come off the ledger, not the budget.
+    assert.strictEqual(unknownBudget?.severityCritical, 2);
+
     // Mid-round: round 2's review is in, its triage is not. The loop is ON
     // round 2, and the budget is still whatever the caller said.
     const midRound = deriveBoardCardReviewSummary({

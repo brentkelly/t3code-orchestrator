@@ -33,7 +33,8 @@ export type BoardCardSummaryItem =
   | {
       readonly kind: "round";
       readonly current: number;
-      readonly max: number;
+      /** Absent when the producer could not see the budget (t3o-22, D7). */
+      readonly max: number | undefined;
       /** How the loop stands (t3o-22, D7). `round-cap`/`stopped` are the two
           that must not read as a pass — the row tints every pip and flags the
           card, because the counts alone are identical to a converged loop's. */
@@ -97,7 +98,11 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
       // The PR reference is NOT here: it moved to the card's meta row, which
       // renders it at every stage rather than only where the pipeline happens
       // to be looking (`boardCardMeta`).
-      if (card.roundMax !== undefined && card.roundMax > 0) {
+      // The round row renders on any card with review history. `roundMax` may
+      // be absent — the projection cannot see the board's review settings — in
+      // which case the row shows the round reached and no total, rather than a
+      // total it invented.
+      if (card.roundCurrent !== undefined && card.roundCurrent > 0) {
         items.push({
           kind: "round",
           current: card.roundCurrent ?? 0,

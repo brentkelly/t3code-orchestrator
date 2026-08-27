@@ -762,7 +762,13 @@ export function isBoardReviewLoopHeld(outcome: BoardReviewLoopOutcome): boolean 
  */
 export const BoardCardReviewSummary = Schema.Struct({
   roundCurrent: NonNegativeInt,
-  roundMax: NonNegativeInt,
+  /** The budget, or NULL when the producer cannot see it.
+      The projection and the decider both fold this summary without access to
+      the board's review settings, so for a card with no per-card override
+      neither knows the budget. Null says that outright; inventing a number
+      from the ledger made every un-overridden card read `N of N` — a progress
+      bar that is always full, and one that disagreed with the pane. */
+  roundMax: Schema.NullOr(NonNegativeInt),
   /** The walk's own verdict. `running` here is provisional: the walk knows a
       round's phases are all done but not whether the executor went on to plan
       another one, which is a fact only the card's live step can settle. See
@@ -2886,6 +2892,10 @@ export const BoardCardShell = Schema.Struct({
   // Review summary — counts, never bodies; absent until the post-MVP
   // review pipeline lands, then populated only in the review stage.
   roundCurrent: Schema.optionalKey(NonNegativeInt),
+  /** The round budget. Absent when the producer could not see it (t3o-22, D7):
+      the projection folds the summary without access to the board's review
+      settings, so an un-overridden card has no budget to report and the card
+      face shows the round alone rather than a total it made up. */
   roundMax: Schema.optionalKey(NonNegativeInt),
   /** How the loop stands (t3o-22, D7) — the one review field that is not a
       count, because "ran out of rounds" and "passed" are the same numbers and
@@ -3122,7 +3132,9 @@ export function makeBoardCardShell(input: {
       ? {}
       : {
           roundCurrent: input.reviewSummary.roundCurrent,
-          roundMax: input.reviewSummary.roundMax,
+          ...(input.reviewSummary.roundMax === null
+            ? {}
+            : { roundMax: input.reviewSummary.roundMax }),
           reviewOutcome: input.reviewSummary.outcome,
           reviewHeldOutcome: input.reviewSummary.heldOutcome,
           reviewRoundComplete: input.reviewSummary.roundComplete,
@@ -4273,8 +4285,9 @@ export function boardReviewLoopWalk(input: {
  */
 export function deriveBoardCardReviewSummary(input: {
   readonly completions: ReadonlyArray<BoardStepCompletion>;
-  /** The budget to DISPLAY. Never bounds the walk — see below. */
-  readonly maxRounds: number;
+  /** The budget to DISPLAY, or null when the caller cannot see it. Never
+      bounds the walk — see below. */
+  readonly maxRounds: number | null;
   readonly stopAfterRound: number | null;
 }): BoardCardReviewSummary | null {
   const reviewSteps = input.completions.filter(
@@ -4327,7 +4340,7 @@ export function deriveBoardCardReviewSummary(input: {
     // A held loop shows the last round it ran; a running one shows the round in
     // flight (the ledger is one behind while a review is mid-run).
     roundCurrent: roundComplete && walk.status === "running" ? highestRecorded : enteredRound,
-    roundMax: Math.max(input.maxRounds, highestRecorded),
+    roundMax: input.maxRounds === null ? null : Math.max(input.maxRounds, highestRecorded),
     outcome: walk.status,
     // The walk has moved past every recorded round, so nothing is half-run.
     roundComplete,
@@ -4344,7 +4357,9 @@ export function deriveBoardCardReviewSummary(input: {
     issuesDisputed: 0,
   };
 
-  for (let round = 1; round <= summary.roundMax; round++) {
+  // Tally over every RECORDED round, which is what the ledger holds — the
+  // display budget is irrelevant here and may not even be known.
+  for (let round = 1; round <= highestRecorded; round++) {
     const review = succeeded.get(reviewStepId("review", round));
     if (review === undefined) continue;
     const reviewPayload = decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(review.payload));

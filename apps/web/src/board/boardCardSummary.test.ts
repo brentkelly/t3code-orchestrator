@@ -105,6 +105,12 @@ describe("boardCardSummary", () => {
     expect(roundItem({ stepRunning: false, reviewRoundComplete: false })).toMatchObject({
       outcome: "running",
     });
+    // With no budget in hand the row reports the round reached and no total.
+    const noBudget = boardCardSummary(
+      shell("review", { ...held, roundMax: undefined, stepRunning: false }),
+    ).items.find((item) => item.kind === "round");
+    expect(noBudget).toMatchObject({ current: 5, max: undefined, outcome: "round-cap" });
+
     // A decided outcome is never second-guessed.
     expect(roundItem({ stepRunning: false, reviewOutcome: "converged" })).toMatchObject({
       outcome: "converged",

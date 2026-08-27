@@ -58,19 +58,20 @@ function RoundPips({
   outcome,
 }: {
   readonly current: number;
-  readonly max: number;
+  /** Absent when the producer could not see the budget — the row then reports
+      the round reached rather than inventing a total. */
+  readonly max: number | undefined;
   readonly outcome: BoardReviewLoopOutcome | undefined;
 }) {
-  const shown = Math.min(max, MAX_SUMMARY_PIPS);
+  const shown = Math.min(max ?? current, MAX_SUMMARY_PIPS);
   const held = outcome !== undefined && isBoardReviewLoopHeld(outcome);
-  const label = `Round ${current} of ${max}${
+  const rounds = max === undefined ? `Round ${current}` : `Round ${current} of ${max}`;
+  const label = `${rounds}${
     held ? (outcome === "stopped" ? " — stopped, no convergence" : " — no convergence") : ""
   }`;
   return (
     <span className="inline-flex items-center gap-0.5" title={label} aria-label={label}>
-      <span className="text-[10.5px] font-medium text-muted-foreground">
-        Round {current} of {max}
-      </span>
+      <span className="text-[10.5px] font-medium text-muted-foreground">{rounds}</span>
       <span className="ml-0.5 inline-flex items-center gap-0.5">
         {Array.from({ length: shown }, (_, index) => (
           <span

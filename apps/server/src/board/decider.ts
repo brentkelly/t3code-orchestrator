@@ -1449,7 +1449,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                 ),
                 completion,
               ],
-              maxRounds: card.reviewOverrides?.rounds ?? 0,
+              maxRounds: card.reviewOverrides?.rounds ?? null,
               stopAfterRound: card.reviewOverrides?.stopAfterRound ?? null,
             }) ?? undefined);
       return {

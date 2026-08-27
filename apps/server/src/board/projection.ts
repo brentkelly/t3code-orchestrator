@@ -50,7 +50,6 @@ import {
   BoardCardPullRequest,
   BoardCardReviewOverrides,
   BoardCardReviewSummary,
-  boardReviewRoundsStarted,
   deriveBoardCardReviewSummary,
   parseReviewStepId,
   isBoardEvent,
@@ -1779,10 +1778,9 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
     Effect.gen(function* () {
       const rows = yield* queries.listBoardCardStepRowsForCard(card.id);
       const completions: ReadonlyArray<BoardStepCompletion> = rows;
-      const roundsSeen = boardReviewRoundsStarted({ completions, liveStepId: null });
       const summary = deriveBoardCardReviewSummary({
         completions,
-        maxRounds: card.reviewOverrides?.rounds ?? Math.max(1, roundsSeen),
+        maxRounds: card.reviewOverrides?.rounds ?? null,
         stopAfterRound: card.reviewOverrides?.stopAfterRound ?? null,
       });
       yield* queries.updateBoardCardReviewSummaryRow({ cardId: card.id, reviewSummary: summary });

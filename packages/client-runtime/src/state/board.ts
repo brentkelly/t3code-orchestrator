@@ -358,7 +358,10 @@ export function applyBoardShellStreamEvent(
           : {
               ...stripped,
               roundCurrent: event.summary.roundCurrent,
-              roundMax: event.summary.roundMax,
+              // Omitted, not nulled, when the producer could not see the
+              // budget: the shell key is optional and its absence is the
+              // signal the row reads.
+              ...(event.summary.roundMax === null ? {} : { roundMax: event.summary.roundMax }),
               reviewOutcome: event.summary.outcome,
               reviewHeldOutcome: event.summary.heldOutcome,
               reviewRoundComplete: event.summary.roundComplete,

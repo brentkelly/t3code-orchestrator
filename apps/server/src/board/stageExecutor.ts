@@ -141,10 +141,12 @@ export interface BoardStageExecutor {
  * yields the stage's one seeded step, and reports `complete` as soon as that
  * step has succeeded in the current run. It never escalates — the reactor owns
  * the recovery ladder (D13). t3o-16's `ReviewLoopExecutor` is the multi-round
- * exception: it completes `succeeded` when its loop check ends the loop (a
- * round with nothing blocking, or the round cap) and `blocked` only for a
- * broken reviewer payload (the `escalate` arm stays part of the seam contract
- * for a future executor, but no shipped executor emits it).
+ * exception: it completes `succeeded` ONLY when its loop CONVERGES (a round
+ * with nothing blocking), and `blocked` for every other ending — the round cap,
+ * a stop the user asked for, or a broken reviewer payload (t3o-22, D1). That
+ * split is what keeps `advanceStage`, which is gated on `succeeded`, from
+ * graduating a card nothing ever passed. (The `escalate` arm stays part of the
+ * seam contract for a future executor, but no shipped executor emits it.)
  */
 export const SimpleStageExecutor: BoardStageExecutor = {
   planNext({ config, runState }: BoardStagePlanInput): BoardStagePlan {
