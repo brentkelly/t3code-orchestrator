@@ -197,6 +197,29 @@ describe("deriveBoardCardReviewSummary", () => {
     assert.strictEqual(summary?.issuesRejected, 0);
   });
 
+  it("reports the round the loop ENTERED, never the one it is waiting on", () => {
+    // The ceiling walk sits on `lastRound + 1` for a held loop — a round that
+    // never started. Letting that through rendered one pip more than the
+    // executor's budget and disagreed with the pane over the same ledger.
+    const capped = deriveBoardCardReviewSummary({
+      completions: [...unconverged(1), ...unconverged(2)],
+      maxRounds: 2,
+      stopAfterRound: null,
+    });
+    assert.strictEqual(capped?.roundCurrent, 2);
+    assert.strictEqual(capped?.roundMax, 2);
+
+    // Mid-round: round 2's review is in, its triage is not. The loop is ON
+    // round 2, and the budget is still whatever the caller said.
+    const midRound = deriveBoardCardReviewSummary({
+      completions: [...unconverged(1), review(2, [finding("critical", "f2")])],
+      maxRounds: 5,
+      stopAfterRound: null,
+    });
+    assert.strictEqual(midRound?.roundCurrent, 2);
+    assert.strictEqual(midRound?.roundMax, 5);
+  });
+
   it("carries the held reading the read side needs to settle the outcome", () => {
     const capped = deriveBoardCardReviewSummary({
       completions: unconverged(1),
@@ -220,14 +243,14 @@ describe("resolveBoardCardReviewOutcome", () => {
     stopAfterRound: null,
   })!;
 
-  it("keeps a provisional `running` while the executor is driving the card", () => {
-    assert.strictEqual(resolveBoardCardReviewOutcome({ summary, stepRunning: true }), "running");
+  it("keeps a provisional `running` while the executor is driving the card (running or queued)", () => {
+    assert.strictEqual(resolveBoardCardReviewOutcome({ summary, stepActive: true }), "running");
   });
 
   it("settles a provisional `running` into the held reading once nothing runs", () => {
     // Same summary, opposite meaning — whether anything is running is the fact
     // that separates "between rounds" from "the loop ended here".
-    assert.strictEqual(resolveBoardCardReviewOutcome({ summary, stepRunning: false }), "round-cap");
+    assert.strictEqual(resolveBoardCardReviewOutcome({ summary, stepActive: false }), "round-cap");
   });
 
   it("never calls a HALF-RUN round a stopped loop, even with nothing running", () => {
@@ -241,7 +264,7 @@ describe("resolveBoardCardReviewOutcome", () => {
     })!;
     assert.strictEqual(midRound.roundComplete, false);
     assert.strictEqual(
-      resolveBoardCardReviewOutcome({ summary: midRound, stepRunning: false }),
+      resolveBoardCardReviewOutcome({ summary: midRound, stepActive: false }),
       "running",
     );
   });
@@ -253,7 +276,7 @@ describe("resolveBoardCardReviewOutcome", () => {
       stopAfterRound: null,
     })!;
     assert.strictEqual(
-      resolveBoardCardReviewOutcome({ summary: converged, stepRunning: false }),
+      resolveBoardCardReviewOutcome({ summary: converged, stepActive: false }),
       "converged",
     );
   });

@@ -4313,12 +4313,24 @@ export function deriveBoardCardReviewSummary(input: {
     const parsed = parseReviewStepId(completion.stepId);
     if (parsed?.phase === "review") highestRecorded = Math.max(highestRecorded, parsed.round);
   }
+  // The round the loop is ON, not the one it is waiting for. The ceiling walk
+  // reports `lastRound + 1` for a held loop — a round that never started — and
+  // letting that through made the card face render one pip more than the
+  // executor's budget and disagree with the pane over the same ledger. Clamped
+  // to what was actually entered whenever the walk's `running` is provisional.
+  const enteredRound =
+    walk.status === "running"
+      ? Math.max(1, Math.min(walk.currentRound, highestRecorded + 1))
+      : walk.currentRound;
+  const roundComplete = walk.status !== "running" || walk.currentRound > highestRecorded;
   const summary = {
-    roundCurrent: walk.currentRound,
-    roundMax: Math.max(input.maxRounds, walk.currentRound),
+    // A held loop shows the last round it ran; a running one shows the round in
+    // flight (the ledger is one behind while a review is mid-run).
+    roundCurrent: roundComplete && walk.status === "running" ? highestRecorded : enteredRound,
+    roundMax: Math.max(input.maxRounds, highestRecorded),
     outcome: walk.status,
     // The walk has moved past every recorded round, so nothing is half-run.
-    roundComplete: walk.status !== "running" || walk.currentRound > highestRecorded,
+    roundComplete,
     heldOutcome:
       input.stopAfterRound === walk.currentRound
         ? ("stopped" as BoardReviewLoopOutcome)
@@ -4401,8 +4413,11 @@ export function resolveBoardCardReviewOutcome(input: {
       as loose keys, so a reader holding only them can settle the outcome
       without reassembling a summary it does not have. */
   readonly summary: Pick<BoardCardReviewSummary, "outcome" | "heldOutcome" | "roundComplete">;
-  /** Whether the executor is driving this card right now. */
-  readonly stepRunning: boolean;
+  /** Whether the card's step is LIVE in any sense the board recognises —
+      admitted and running, or holding in the concurrency queue. Both mean the
+      loop is going; keying on `running` alone would call a card waiting for a
+      slot a stopped loop, which is a false alarm on a healthy card. */
+  readonly stepActive: boolean;
 }): BoardReviewLoopOutcome {
   if (input.summary.outcome !== "running") return input.summary.outcome;
   // Two conditions, and both matter. Nothing running is necessary but not
@@ -4410,7 +4425,7 @@ export function resolveBoardCardReviewOutcome(input: {
   // being admitted, and treating that as "the loop ended" would flash
   // NO CONVERGENCE at a healthy card. `roundComplete` closes it — a loop that
   // has genuinely stopped has no half-run round behind it.
-  return input.summary.roundComplete && !input.stepRunning ? input.summary.heldOutcome : "running";
+  return input.summary.roundComplete && !input.stepActive ? input.summary.heldOutcome : "running";
 }
 
 /**

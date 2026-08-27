@@ -115,7 +115,9 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
                     heldOutcome: card.reviewHeldOutcome ?? card.reviewOutcome,
                     roundComplete: card.reviewRoundComplete ?? false,
                   },
-                  stepRunning: card.stepRunning,
+                  // Queued counts: a card holding for a concurrency slot is a
+                  // loop that is going, not one that stopped.
+                  stepActive: card.stepRunning || card.queued,
                 }),
         });
       }

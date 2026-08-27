@@ -514,6 +514,8 @@ export function BoardCardReviewPane({
   live,
   overrides,
   roundsStarted,
+  stepActive,
+  onResume,
   onSetRounds,
   onSetRoundModel,
   onAdvance,
@@ -535,6 +537,14 @@ export function BoardCardReviewPane({
       and it must equal the decider's or the button offers a write the server
       refuses. Falls back to the ledger alone when absent. */
   readonly roundsStarted?: number | undefined;
+  /** Whether the executor is driving the card right now — running, or queued
+      for a concurrency slot. The `−` floor needs it because the decider counts
+      a live step of ANY status, and the ledger alone cannot see one. */
+  readonly stepActive?: boolean | undefined;
+  /** Resume a held loop at `round`. Distinct from `onSetRounds`: resuming must
+      never shrink a budget the user already raised, and must clear the stop it
+      would otherwise terminate on again. */
+  readonly onResume?: ((round: number) => void) | undefined;
   /** Set the card's round budget. Absent leaves the loop read-only — the pane
       still reports a stalled loop, it just cannot offer to restart it. */
   readonly onSetRounds?: ((rounds: number) => void) | undefined;
@@ -568,9 +578,16 @@ export function BoardCardReviewPane({
   // that has STARTED can never be removed. The caller resolves it against the
   // card's live step; the ledger-only fallback is for callers that have no step
   // state to offer, and can only ever be more permissive by one round.
+  // The floor the − button obeys. Strictly a CONTROL gate — never fed back
+  // into the budget, which is the caller's and is floored on the ledger alone.
+  // While a step is live the round the walk sits on has started, so it counts;
+  // the decider counts a live step of any status, so this matches it wherever
+  // the shell can see one.
+  const ledgerFloor = roundsStarted ?? boardReviewRoundsStarted({ completions, liveStepId: null });
   const budgetFloor = Math.max(
     1,
-    roundsStarted ?? boardReviewRoundsStarted({ completions, liveStepId: null }),
+    ledgerFloor,
+    stepActive === true && loop.status === "running" ? loop.currentRound : 0,
   );
   /**
    * Whether round `n`'s settings can still be chosen.
@@ -705,7 +722,7 @@ export function BoardCardReviewPane({
             loop={loop}
             onAdvance={onAdvance}
             onRunAnotherRound={
-              onSetRounds === undefined ? undefined : () => onSetRounds(loop.currentRound + 1)
+              onResume === undefined ? undefined : () => onResume(loop.currentRound + 1)
             }
           />
         ) : null}

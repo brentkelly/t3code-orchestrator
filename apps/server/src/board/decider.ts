@@ -398,13 +398,24 @@ const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (
     }
   }
 
-  // A raise is measured against the card's OWN previous override, not the
-  // effective budget: the decider has no settings access, and this is exactly
-  // the gesture that matters — the pane's "Run round N+1" always names a round
-  // number, while its stop button re-sends the budget untouched.
+  // Does this write ask the loop to run PAST a pending stop?
+  //
+  // Not "is the budget bigger than last time" — the pane's resume names an
+  // absolute round, so a card whose budget was raised to 8 and then stopped at
+  // 2 sends `rounds: 3` to resume, which is smaller than 8 and would read as
+  // "not a raise". The stop would survive, the executor would terminate on it
+  // again, and the button would be inert forever.
+  //
+  // What actually matters is whether the requested budget reaches past the
+  // stop, and whether the budget MOVED at all — a stop set while the budget
+  // stays put is the stop button doing its job, not a contradiction. D5's rule
+  // stated exactly: raising the budget past a stop clears it.
+  const roundsChanged =
+    proposed.rounds !== null && proposed.rounds !== (card.reviewOverrides?.rounds ?? null);
   const raisedRounds =
+    roundsChanged &&
     proposed.rounds !== null &&
-    (card.reviewOverrides?.rounds == null || proposed.rounds > card.reviewOverrides.rounds);
+    (proposed.stopAfterRound === null || proposed.rounds > proposed.stopAfterRound);
 
   if (
     proposed.stopAfterRound !== null &&

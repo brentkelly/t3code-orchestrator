@@ -24,8 +24,6 @@ import {
   type BoardCardThreadShell,
   type BoardState,
   type EnvironmentId,
-  BOARD_REVIEW_MAX_ROUNDS,
-  boardReviewLoopWalk,
   boardReviewRoundsStarted,
   effectiveBoardReviewRounds,
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
@@ -344,38 +342,29 @@ export function BoardCardDetail({
   // never disagree on the cap.
   const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
   /**
-   * The highest round this card's loop has STARTED — the floor the budget
-   * cannot go below (t3o-22, D3).
+   * The rounds this card's loop has RECORDED — the budget's floor.
    *
-   * It must never be LOWER than the decider's or the pane offers a `−` the
-   * server rejects. The decider counts the card's live step whatever its status
-   * (`queued`, `pending`, `running`, `awaiting-input`, …); the detail payload
-   * carries completions but no step state, and the shell's `stepRunning` covers
-   * only `running`, so proxying on it would still mismatch by a round for every
-   * other live status.
+   * Strictly the ledger, and it must stay that way: `effectiveBoardReviewRounds`
+   * clamps the budget UP to this number, so anything speculative here does not
+   * merely disable a button, it invents a round. Folding in the walk's
+   * `currentRound` did exactly that — the walk sits on the first round with no
+   * `review@N`, which for a held loop is `lastRound + 1`, so the budget grew by
+   * one and the pane could never reach the cap at all.
    *
-   * So the client does not try to detect the live step at all: it assumes the
-   * round the walk is sitting on has started. That can only ever be MORE
-   * conservative than the decider — at worst it disables `−` one round early,
-   * in the window after a round closes and before the next is dispatched — and
-   * it can never dispatch a write the server refuses.
+   * The `−` button needs a slightly stricter floor than this (the decider also
+   * counts a live step, which the detail payload cannot see); the pane derives
+   * that for itself, where it gates a control rather than a budget.
    */
-  const reviewRoundsStarted = (() => {
-    const completions = detail?.stepCompletions ?? [];
-    const recorded = boardReviewRoundsStarted({ completions, liveStepId: null });
-    const walk = boardReviewLoopWalk({
-      completions,
-      maxRounds: BOARD_REVIEW_MAX_ROUNDS,
-      stopAfterRound: card.reviewOverrides?.stopAfterRound ?? null,
-    });
-    return Math.max(recorded, walk.status === "running" ? walk.currentRound : 0);
-  })();
+  const reviewRoundsRecorded = boardReviewRoundsStarted({
+    completions: detail?.stepCompletions ?? [],
+    liveStepId: null,
+  });
   // The EFFECTIVE budget: the card's own override wins, clamped to that floor.
   const reviewMaxRounds = isBoardReviewStageExecution(reviewExecution)
     ? effectiveBoardReviewRounds({
         configured: reviewExecution.rounds,
         overrides: card.reviewOverrides,
-        roundsStarted: reviewRoundsStarted,
+        roundsStarted: reviewRoundsRecorded,
       })
     : undefined;
   const stageRestart = resolveBoardThreadStageRestart({
@@ -577,8 +566,18 @@ export function BoardCardDetail({
       projectName={projectName ?? null}
       reviewMaxRounds={reviewMaxRounds}
       reviewOverrides={card.reviewOverrides}
-      reviewRoundsStarted={reviewRoundsStarted}
+      reviewRoundsStarted={reviewRoundsRecorded}
+      reviewStepActive={cardShell?.stepRunning === true || cardShell?.queued === true}
       onSetReviewRounds={(rounds) => patchReviewOverrides({ rounds })}
+      onResumeReview={(rounds) =>
+        // "Run round N+1" is a resume, so it says both halves outright: at
+        // least enough budget to reach that round (never LESS than the card
+        // already has), and no pending stop to terminate on again.
+        patchReviewOverrides({
+          rounds: Math.max(rounds, card.reviewOverrides?.rounds ?? rounds),
+          stopAfterRound: null,
+        })
+      }
       onSetReviewRoundModel={(round, model) =>
         patchReviewOverrides({
           roundModels: Object.fromEntries(

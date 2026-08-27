@@ -111,9 +111,10 @@ function resolvePhaseModel(input: {
  * triage pass, and only blocking findings run adjudication. At the END of the
  * round the executor — never the agent — applies the loop check: another round
  * runs only when the round raised a blocking (critical/improvement) finding
- * AND rounds remain. When either condition fails the loop ends `succeeded`, so
- * the stage may auto-advance; a review phase with a malformed payload
- * terminates `blocked` rather than converging (D4).
+ * AND rounds remain. Only the CONVERGENCE arm ends `succeeded`, so only a loop
+ * that actually passed may auto-advance (t3o-22, D1); running out of rounds, a
+ * user's stop, and a malformed payload all terminate `blocked` and leave the
+ * card in Code review with its findings.
  */
 export function reviewLoopDecision(input: {
   readonly review: BoardStageExecutionReview;

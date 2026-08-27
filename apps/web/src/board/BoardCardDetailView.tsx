@@ -215,6 +215,9 @@ export interface BoardCardDetailViewProps {
   /** The highest round the card's loop has STARTED — the budget floor, matching
       the decider's (t3o-22, D3). */
   readonly reviewRoundsStarted?: number | undefined;
+  /** Whether the executor is driving the card (running or queued for a slot). */
+  readonly reviewStepActive?: boolean | undefined;
+  readonly onResumeReview?: ((rounds: number) => void) | undefined;
   readonly onSetReviewRounds?: ((rounds: number) => void) | undefined;
   readonly onSetReviewRoundModel?:
     | ((round: number, model: BoardModelSelection | null) => void)
@@ -1055,9 +1058,11 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 })()}
                 onBackToThread={() => setPane("thread")}
                 onSetRoundModel={props.onSetReviewRoundModel}
+                onResume={props.onResumeReview}
                 onSetRounds={props.onSetReviewRounds}
                 overrides={props.reviewOverrides}
                 roundsStarted={props.reviewRoundsStarted}
+                stepActive={props.reviewStepActive}
                 onOpenThread={(threadId) => {
                   setSelectedThreadId(threadId);
                   setPane("thread");

@@ -96,6 +96,9 @@ describe("boardCardSummary", () => {
     expect(roundItem({ stepRunning: false })).toMatchObject({ outcome: "round-cap" });
     // The executor is driving it — still running, whatever the counts say.
     expect(roundItem({ stepRunning: true })).toMatchObject({ outcome: "running" });
+    // Queued for a concurrency slot is a loop that is going, not one that
+    // stopped — flagging it NO CONVERGENCE is a false alarm on a healthy card.
+    expect(roundItem({ stepRunning: false, queued: true })).toMatchObject({ outcome: "running" });
     // A half-run round with nothing admitted yet is the gap between phases,
     // NOT a stopped loop. Reading it as one is the false NO CONVERGENCE this
     // guard exists to prevent.

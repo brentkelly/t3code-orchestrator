@@ -626,6 +626,32 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  it.effect("t3o-22 D5: resuming past a stop clears it even when the budget shrinks", () =>
+    Effect.gen(function* () {
+      // The pane's resume names an ABSOLUTE round, so a card whose budget was
+      // raised to 8 and then stopped at 2 sends `rounds: 3` — smaller than 8.
+      // Measuring "a raise" against the previous override left the stop in
+      // place, the executor terminated on it again, and the button was inert.
+      const event = yield* decide(
+        {
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-resume"),
+          cardId: BoardCardId.make("card-a"),
+          reviewOverrides: { rounds: 3, stopAfterRound: 2, roundModels: {} },
+          createdAt: NOW,
+        },
+        reviewCardBoard({
+          overrides: { rounds: 8, stopAfterRound: 2, roundModels: {} },
+          completedRounds: 2,
+        }),
+      );
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      // Asking to reach round 3 is asking to run past a stop at round 2.
+      assert.strictEqual(event.payload.card.reviewOverrides?.stopAfterRound, null);
+    }),
+  );
+
   it.effect("t3o-22 D5: setting a stop without raising the budget keeps it", () =>
     Effect.gen(function* () {
       const event = yield* decide(
