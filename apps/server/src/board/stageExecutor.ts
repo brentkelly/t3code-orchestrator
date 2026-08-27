@@ -84,9 +84,14 @@ export interface BoardStageRunState {
   readonly round: number;
   readonly completedStepIds: readonly string[];
   /** The card's step currently in flight, or null when nothing is running.
-      A multi-step executor needs it to know which step has STARTED but not yet
-      recorded anything — t3o-22's round-budget floor turns on exactly that
-      distinction, since a round mid-flight has no completion to count. */
+      Part of the seam's CONTRACT — a run state that cannot express "a step is
+      in flight" is a lossy description of a run — rather than an active guard:
+      every reactor caller today plans only when nothing is running and passes
+      null. It matters because a multi-step executor must be able to tell a
+      round that has STARTED from one that has merely been recorded, and
+      t3o-22's round-budget floor turns on exactly that distinction. The floor
+      that protects a live run in production is the decider's, which reads the
+      card's live step directly. */
   readonly liveStepId: string | null;
 }
 

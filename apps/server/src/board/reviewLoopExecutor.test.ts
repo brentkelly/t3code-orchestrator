@@ -253,10 +253,13 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     });
   });
 
-  it("t3o-22 D3: a budget below a round still IN FLIGHT cannot strand it either", () => {
+  it("t3o-22 D3: the executor's own floor counts a round in flight, not just recorded", () => {
     const fiveRounds = reviewExec({ rounds: 5 });
     // Round 2's review is dispatched and running — no completion for it yet.
     // Flooring on completions alone would drop the budget to 1 and orphan it.
+    // No reactor caller passes a live step today (each plans only when nothing
+    // is running); this pins the executor's invariant so the walk stays correct
+    // for whichever caller does.
     const inFlight = plan(cappedRound(1), fiveRounds, overrides({ rounds: 1 }), "review@2");
     expect(inFlight.kind).toBe("run");
     if (inFlight.kind !== "run") return;
