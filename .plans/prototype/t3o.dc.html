@@ -740,11 +740,31 @@ a:hover{text-decoration:underline}
             </div>
             <div ref="{{ review.scrollRef }}" style="flex:1;min-height:0;overflow-y:auto;padding:14px 16px 20px;display:flex;flex-direction:column;gap:12px">
               <div style="flex:none;display:flex;flex-direction:column;gap:7px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
-                <div style="display:flex;gap:4px">
+                <div style="display:flex;align-items:center;gap:4px">
                   <sc-for list="{{ review.segs }}" as="sg" hint-placeholder-count="5">
-                    <button type="button" onClick="{{ sg.open }}" title="{{ sg.tip }}" style="{{ sg.style }}">{{ sg.label }}</button>
+                    <button type="button" onClick="{{ sg.open }}" title="{{ sg.tip }}" style="{{ sg.style }}" style-hover="{{ sg.hoverStyle }}">{{ sg.label }}</button>
                   </sc-for>
+                  <div style="display:flex;align-items:center;gap:1px;flex:none;margin-left:5px;padding:1px;border:1px solid var(--input);border-radius:7px;background:var(--popover)">
+                    <button type="button" onClick="{{ review.limitDown }}" title="{{ review.limitDownTip }}" style="{{ review.limitDownStyle }}">−</button>
+                    <button type="button" onClick="{{ review.limitUp }}" title="{{ review.limitUpTip }}" style="{{ review.limitUpStyle }}">+</button>
+                  </div>
                 </div>
+                <sc-if value="{{ review.plannedOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 10px;border:1px solid var(--border);border-radius:9px;background:var(--muted)">
+                    <span style="font:500 11.5px var(--font-sans);color:var(--fg);flex:none">{{ review.plannedLabel }}</span>
+                    <span style="flex:1"></span>
+                    <select value="{{ review.model }}" onChange="{{ review.pickModel }}" style="height:26px;flex:none;max-width:210px;padding:0 24px 0 9px;border:1px solid var(--input);border-radius:99px;background:var(--card);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted-fg) 50%),linear-gradient(135deg,var(--muted-fg) 50%,transparent 50%);background-position:calc(100% - 13px) 11px,calc(100% - 9px) 11px;background-size:4px 4px,4px 4px;background-repeat:no-repeat">
+                      <sc-for list="{{ review.modelOpts }}" as="mo" hint-placeholder-count="4">
+                        <option value="{{ mo.value }}">{{ mo.label }}</option>
+                      </sc-for>
+                    </select>
+                    <select value="{{ review.effort }}" onChange="{{ review.pickEffort }}" style="height:26px;flex:none;max-width:180px;padding:0 24px 0 9px;border:1px solid var(--input);border-radius:99px;background:var(--card);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted-fg) 50%),linear-gradient(135deg,var(--muted-fg) 50%,transparent 50%);background-position:calc(100% - 13px) 11px,calc(100% - 9px) 11px;background-size:4px 4px,4px 4px;background-repeat:no-repeat">
+                      <sc-for list="{{ review.effortOpts }}" as="eo" hint-placeholder-count="4">
+                        <option value="{{ eo.value }}">{{ eo.label }}</option>
+                      </sc-for>
+                    </select>
+                  </div>
+                </sc-if>
                 <div style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ review.counts }}</div>
               </div>
               <sc-if value="{{ review.exhausted }}" hint-placeholder-val="{{ false }}">
@@ -754,32 +774,10 @@ a:hover{text-decoration:underline}
                   <div style="font:600 12.5px var(--font-sans);color:var(--fg)">Round limit reached without convergence</div>
                 </div>
                 <div style="font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ review.holdNote }}</div>
-                <div style="display:flex;flex-direction:column;gap:9px;padding:11px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
-                  <div style="font:500 10px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)">Settings for further rounds</div>
-                  <div style="display:flex;align-items:center;gap:8px">
-                    <label style="display:flex;flex:1;min-width:0;flex-direction:column;gap:4px">
-                      <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">Model</span>
-                      <select value="{{ review.model }}" onChange="{{ review.pickModel }}" style="width:100%;height:28px;padding:0 26px 0 9px;border:1px solid var(--input);border-radius:7px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted-fg) 50%),linear-gradient(135deg,var(--muted-fg) 50%,transparent 50%);background-position:calc(100% - 14px) 12px,calc(100% - 10px) 12px;background-size:4px 4px,4px 4px;background-repeat:no-repeat">
-                        <sc-for list="{{ review.modelOpts }}" as="mo" hint-placeholder-count="3">
-                          <option value="{{ mo.label }}">{{ mo.label }}</option>
-                        </sc-for>
-                      </select>
-                    </label>
-                    <label style="display:flex;flex:1;min-width:0;flex-direction:column;gap:4px">
-                      <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">Reasoning effort</span>
-                      <select value="{{ review.effort }}" onChange="{{ review.pickEffort }}" style="width:100%;height:28px;padding:0 26px 0 9px;border:1px solid var(--input);border-radius:7px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted-fg) 50%),linear-gradient(135deg,var(--muted-fg) 50%,transparent 50%);background-position:calc(100% - 14px) 12px,calc(100% - 10px) 12px;background-size:4px 4px,4px 4px;background-repeat:no-repeat">
-                        <sc-for list="{{ review.effortOpts }}" as="eo" hint-placeholder-count="3">
-                          <option value="{{ eo.label }}">{{ eo.label }}</option>
-                        </sc-for>
-                      </select>
-                    </label>
-                  </div>
-                </div>
+                <div style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ review.outstandingLine }}</div>
                 <div style="display:flex;align-items:center;gap:8px">
                   <button type="button" onClick="{{ review.runMore }}" style="display:inline-flex;align-items:center;justify-content:center;gap:7px;height:30px;padding:0 12px;flex:none;border-radius:8px;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg)">{{ review.runMoreLabel }}</button>
                   <button type="button" onClick="{{ review.forceAdvance }}" style="display:inline-flex;align-items:center;justify-content:center;gap:7px;height:30px;padding:0 12px;flex:none;border-radius:8px;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid var(--input);background:var(--popover);color:var(--fg)">Advance to Ready for merge</button>
-                  <span style="flex:1"></span>
-                  <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ review.outstandingLine }}</span>
                 </div>
               </div>
               </sc-if>
@@ -1228,6 +1226,12 @@ a:hover{text-decoration:underline}
               <button type="button" onClick="{{ progressCard }}" style="{{ activeCard.progressStyle }}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
                 {{ activeCard.progressLabel }}
+              </button>
+            </sc-if>
+            <sc-if value="{{ activeCard.canStopLoop }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ activeCard.toggleStop }}" title="{{ activeCard.stopTip }}" style="{{ activeCard.stopStyle }}">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="flex:none"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                {{ activeCard.stopLabel }}
               </button>
             </sc-if>
             <sc-if value="{{ activeCard.blocked }}" hint-placeholder-val="{{ false }}">
@@ -1806,8 +1810,11 @@ class Component extends DCLogic {
     this.state = {
       activeThread: null,
       cardMaxed: false,
-      rvModel: "Opus 4.8",
-      rvEffort: "High",
+      rvModel: "inherit",
+      rvEffort: "inherit",
+      rvLimit: {},
+      rvStop: {},
+      rvPlan: null,
       mode: props.defaultMode === "board" ? "board" : "threads",
       scope: props.defaultScope || "advisor",
       cards,
@@ -2071,7 +2078,8 @@ class Component extends DCLogic {
     const unsettled = (cur.issues || []).filter(
       (i) => i.resolution === "open" || i.verdict === "disputed",
     ).length;
-    const exhausted = !stepId && cur.n >= rv.max && unsettled > 0;
+    const limit = this.state.rvLimit[c.id] !== undefined ? this.state.rvLimit[c.id] : rv.max;
+    const exhausted = !stepId && cur.n >= limit && unsettled > 0;
     return {
       rv,
       cur,
@@ -2081,8 +2089,10 @@ class Component extends DCLogic {
       settled: !stepId && !exhausted,
       exhausted,
       unsettled,
+      limit,
+      stopAfter: !!this.state.rvStop[c.id],
       found, fixed, rejected, open, disputed,
-      roundLabel: "Round " + cur.n + " of " + rv.max,
+      roundLabel: "Round " + cur.n + " of " + limit,
     };
   }
 
@@ -2243,17 +2253,61 @@ class Component extends DCLogic {
     };
   }
 
+  // "Same as previous round" resolves against the last round that actually ran.
+  resolvedModel(rv) {
+    if (this.state.rvModel !== "inherit") return this.state.rvModel;
+    for (let i = rv.rounds.length - 1; i >= 0; i--) if (rv.rounds[i].model) return rv.rounds[i].model;
+    return "Opus 4.8";
+  }
+
+  resolvedEffort(rv) {
+    if (this.state.rvEffort !== "inherit") return this.state.rvEffort;
+    for (let i = rv.rounds.length - 1; i >= 0; i--) if (rv.rounds[i].effort) return rv.rounds[i].effort;
+    return "High";
+  }
+
+  // Raise or lower the loop's round budget. Rounds already run are the floor.
+  setRoundLimit(card, delta) {
+    const rs = this.reviewState(card);
+    if (!rs) return;
+    const next = Math.min(10, Math.max(rs.cur.n, 1, rs.limit + delta));
+    if (next === rs.limit) return;
+    // Raising the budget on a stalled loop is the same intent as resuming it.
+    if (rs.exhausted && delta > 0) return this.extendReview(card, delta);
+    this.setState((s) => ({ rvLimit: { ...s.rvLimit, [card.id]: next } }));
+  }
+
+  // Re-run the round that is in flight on the currently selected settings.
+  forceRoundSettings(card) {
+    const rs = this.reviewState(card);
+    if (!rs) return;
+    rs.cur.model = this.resolvedModel(rs.rv);
+    rs.cur.effort = this.resolvedEffort(rs.rv);
+    rs.cur.issues = [];
+    rs.cur.ruling = "";
+    rs.cur.outcome = "";
+    rs.cur.steps = { review: "active", triage: "pending", assess: "pending", adjudicate: "pending" };
+    this.forceUpdate();
+  }
+
   // Kick off more rounds past the limit, on whatever model/effort is set now.
   extendReview(card, extra) {
     const rv = this.reviewFor(card);
     if (!rv) return;
-    rv.max += extra;
+    const rs = this.reviewState(card);
+    const base = rs ? rs.limit : rv.max;
+    rv.max = Math.min(10, base + extra);
+    this.setState((s) => {
+      const rvLimit = { ...s.rvLimit };
+      delete rvLimit[card.id];
+      return { rvLimit };
+    });
     rv.rounds.push({
       n: rv.rounds.length + 1,
       when: "now",
       outcome: "",
-      model: this.state.rvModel,
-      effort: this.state.rvEffort,
+      model: this.resolvedModel(rv),
+      effort: this.resolvedEffort(rv),
       steps: { review: "active", triage: "pending", assess: "pending", adjudicate: "pending" },
       issues: [],
     });
@@ -2758,7 +2812,7 @@ class Component extends DCLogic {
                   : rs.settled
                     ? "background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success-fg)"
                     : "background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)"),
-            pips: Array.apply(null, { length: rs.rv.max }).map((x, i) => {
+            pips: Array.apply(null, { length: rs.limit }).map((x, i) => {
               const n = i + 1;
               const past = n < rs.cur.n;
               const now = n === rs.cur.n;
@@ -3110,6 +3164,7 @@ class Component extends DCLogic {
       const idx = this.stageIndex(active.status);
       const stage = STAGES[idx];
       const blocked = this.isBlocked(active);
+      const rvNow = this.reviewState(active);
       const next = STAGES[idx + 1];
       const isPrimary = !!PRIMARY_ACTIONS[active.status];
       briefNode = React.createElement("div", {
@@ -3159,6 +3214,19 @@ class Component extends DCLogic {
             ? "border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg)"
             : "border:1px solid var(--input);background:var(--popover);color:var(--fg)"),
         hasPlan: !!active.plan,
+        canStopLoop: !!(rvNow && rvNow.stepId),
+        stopLabel: rvNow && rvNow.stopAfter ? "Stopping after round " + rvNow.cur.n : "Stop after this round",
+        stopTip:
+          rvNow && rvNow.stopAfter
+            ? "Round " + rvNow.cur.n + " finishes, then the loop holds for you"
+            : "Let the current round finish, then hold instead of starting another",
+        stopStyle:
+          "display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 11px;border-radius:8px;font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);" +
+          (rvNow && rvNow.stopAfter
+            ? "border:1px solid color-mix(in srgb,var(--warning) 55%,transparent);background:color-mix(in srgb,var(--warning) 12%,transparent);color:var(--warning-fg)"
+            : "border:1px solid var(--input);background:var(--popover);color:var(--fg)"),
+        toggleStop: () =>
+          this.setState((s) => ({ rvStop: { ...s.rvStop, [active.id]: !s.rvStop[active.id] } })),
         hasPr: !!active.pr,
         prLabel: active.pr ? "#" + active.pr.n : "",
         projectName: (PROJECTS.find((p) => p.id === active.project) || {}).name,
@@ -3545,6 +3613,14 @@ class Component extends DCLogic {
             : tone === "info"
               ? "color-mix(in srgb,var(--info) 12%,transparent);color:var(--info-fg)"
               : "var(--muted);color:var(--muted-fg)");
+      // Which future round's settings drawer is open (clicking a greyed pill).
+      const plannedN =
+        st.rvPlan && st.rvPlan > reviewData.cur.n && st.rvPlan <= reviewData.limit
+          ? st.rvPlan
+          : null;
+      const stepBtnStyle = (on) =>
+        "display:inline-flex;align-items:center;justify-content:center;width:19px;height:20px;flex:none;border:none;border-radius:5px;background:transparent;font:500 13px var(--font-sans);" +
+        (on ? "color:var(--fg);cursor:pointer" : "color:color-mix(in srgb,var(--muted-fg) 45%,transparent);cursor:not-allowed");
       reviewVm = {
         roundLabel: reviewData.roundLabel,
         spinning: !!reviewData.step && !reviewData.awaiting,
@@ -3585,7 +3661,7 @@ class Component extends DCLogic {
           reviewData.rejected + " rejected",
           reviewData.open + " open",
         ].join("  ·  "),
-        segs: Array.apply(null, { length: rv.max }).map((x, i) => {
+        segs: Array.apply(null, { length: reviewData.limit }).map((x, i) => {
           const n = i + 1;
           const past = n < reviewData.cur.n;
           const now = n === reviewData.cur.n;
@@ -3594,11 +3670,16 @@ class Component extends DCLogic {
             label: "R" + n,
             tip: exists
               ? "Jump to round " + n
-              : "Round " + n + " has not run — the loop stops early once a round closes clean",
-            open: exists ? () => showRound(n) : () => {},
+              : "Set the model and effort for round " + n,
+            hoverStyle: exists
+              ? "filter:brightness(1.06)"
+              : "background:color-mix(in srgb,var(--fg) 8%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 22%,transparent);color:var(--fg)",
+            open: exists
+              ? () => showRound(n)
+              : () => this.setState((s) => ({ rvPlan: s.rvPlan === n ? null : n })),
             style:
               "flex:1;display:flex;align-items:center;justify-content:center;height:22px;border:none;border-radius:6px;font:500 10.5px var(--font-sans);cursor:" +
-              (exists ? "pointer" : "default") +
+              "pointer" +
               ";" +
               (past
                 ? "background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--muted-fg)"
@@ -3609,7 +3690,9 @@ class Component extends DCLogic {
                         ? "background:color-mix(in srgb,var(--info) 16%,transparent);color:var(--info-fg)"
                         : "background:var(--fg);color:var(--bg)")
                   : "background:transparent;box-shadow:inset 0 0 0 1px var(--border);color:color-mix(in srgb,var(--muted-fg) 60%,transparent)") +
-              (n === openN ? ";outline:2px solid color-mix(in srgb,var(--fg) 30%,transparent);outline-offset:1px" : ""),
+              (n === openN || n === plannedN
+                ? ";outline:2px solid color-mix(in srgb,var(--fg) 30%,transparent);outline-offset:1px"
+                : ""),
           };
         }),
         scrollRef: (el) => {
@@ -3736,30 +3819,47 @@ class Component extends DCLogic {
         exhausted: reviewData.exhausted,
         showCta: !reviewData.exhausted,
         holdNote:
-          "All " + rv.max + " rounds ran and round " + reviewData.cur.n +
+          "All " + reviewData.limit + " rounds ran and round " + reviewData.cur.n +
           " still closed with " + reviewData.unsettled + " unsettled " +
           (reviewData.unsettled === 1 ? "issue" : "issues") +
           ". The loop stops here and will not hand the task to Ready for merge on its own.",
         outstandingLine:
           reviewData.unsettled + " unsettled this round · " +
           reviewData.disputed + " disputed across the loop",
-        runMoreLabel: "Run 2 more rounds",
-        runMore: () => this.extendReview(active, 2),
+        runMoreLabel: "Run round " + (reviewData.cur.n + 1),
+        runMore: () => this.extendReview(active, 1),
         forceAdvance: () => {
           const next = STAGES[this.stageIndex(active.status) + 1];
           if (next) this.setStatus(active.id, next.id);
         },
         model: st.rvModel,
         effort: st.rvEffort,
+        limit: reviewData.limit,
+        limitDown: () => this.setRoundLimit(active, -1),
+        limitUp: () => this.setRoundLimit(active, 1),
+        limitDownStyle: stepBtnStyle(reviewData.limit > Math.max(reviewData.cur.n, 1)),
+        limitUpStyle: stepBtnStyle(reviewData.limit < 10),
+        limitDownTip:
+          reviewData.limit > Math.max(reviewData.cur.n, 1)
+            ? "Drop the budget to " + (reviewData.limit - 1) + " rounds"
+            : "Rounds already run cannot be removed",
+        limitUpTip:
+          reviewData.limit < 10 ? "Allow " + (reviewData.limit + 1) + " rounds" : "10 rounds is the ceiling",
+        plannedOpen: plannedN !== null,
+        plannedLabel: plannedN === null ? "" : "Round " + plannedN + " settings",
         pickModel: (e) => this.setState({ rvModel: e.target.value }),
         pickEffort: (e) => this.setState({ rvEffort: e.target.value }),
-        modelOpts: ["Opus 4.8", "Sonnet 4.7", "Haiku 4.5"].map((m) => ({ label: m })),
-        effortOpts: ["Low", "Medium", "High"].map((e) => ({ label: e })),
+        modelOpts: [{ value: "inherit", label: "Same as round " + reviewData.cur.n }].concat(
+          ["Opus 4.8", "Sonnet 4.7", "Haiku 4.5"].map((m) => ({ value: m, label: m })),
+        ),
+        effortOpts: [{ value: "inherit", label: "Same effort as round " + reviewData.cur.n }].concat(
+          ["Low", "Medium", "High"].map((e) => ({ value: e, label: e + " effort" })),
+        ),
         ctaNote: reviewData.settled
           ? "Every issue is closed and the reviewer signed off."
           : reviewData.awaiting
             ? "The loop is paused until the disagreement is settled."
-            : "Round " + reviewData.cur.n + " of " + rv.max + " · the loop stops early once a round closes clean.",
+            : "Round " + reviewData.cur.n + " of " + reviewData.limit + " · the loop stops early once a round closes clean.",
         ctaLabel: reviewData.settled
           ? "Approve review"
           : reviewData.awaiting || !reviewData.step
