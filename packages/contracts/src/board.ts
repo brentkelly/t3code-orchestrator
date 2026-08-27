@@ -753,6 +753,36 @@ export function isBoardReviewLoopHeld(outcome: BoardReviewLoopOutcome): boolean 
 }
 
 /**
+ * The review facts the COLUMN card renders (t3o-22, D7) — counts, plus the one
+ * field that is not a count.
+ *
+ * `converged` and `round-cap` carry identical numbers, so a summary of counts
+ * alone would paint a loop that ran out of rounds exactly like one that passed.
+ * The outcome is what stops that.
+ */
+export const BoardCardReviewSummary = Schema.Struct({
+  roundCurrent: NonNegativeInt,
+  roundMax: NonNegativeInt,
+  /** The walk's own verdict. `running` here is provisional: the walk knows a
+      round's phases are all done but not whether the executor went on to plan
+      another one, which is a fact only the card's live step can settle. See
+      `resolveBoardCardReviewOutcome`. */
+  outcome: BoardReviewLoopOutcome,
+  /** Which held outcome this loop resolves to IF it turns out to have stopped
+      (`round-cap` or `stopped`). Decided here, where the card's
+      `stopAfterRound` is in hand, so the read side needs only a boolean. */
+  heldOutcome: BoardReviewLoopOutcome,
+  severityCritical: NonNegativeInt,
+  severityImprovement: NonNegativeInt,
+  severityNitpick: NonNegativeInt,
+  issuesFixed: NonNegativeInt,
+  issuesRejected: NonNegativeInt,
+  issuesOpen: NonNegativeInt,
+  issuesDisputed: NonNegativeInt,
+});
+export type BoardCardReviewSummary = typeof BoardCardReviewSummary.Type;
+
+/**
  * A card's own review-loop settings (t3o-22, D2), overriding the board-wide
  * review stage config for THIS card's run. All three are the answers to a loop
  * that will not converge: give it more rounds, give the reviewer better eyes,
@@ -2384,6 +2414,19 @@ export type BoardCardStageThreadRequestedPayload = typeof BoardCardStageThreadRe
 export const BoardCardStepCompletedPayload = Schema.Struct({
   cardId: BoardCardId,
   completion: BoardStepCompletion,
+  /** The card face's review summary AFTER this completion (t3o-22, D7), folded
+      by the decider — the one layer holding both the whole step-completion
+      ledger and the card's own round overrides.
+
+      It rides the event because `boardShellStreamEvent` is a pure function of
+      ONE event: it can see this completion but not the ones before it, so
+      without this the column card could not be updated live and would only
+      catch up on reconnect.
+
+      Absent for every non-review step, and for every event written before
+      t3o-22 — the SQL projection recomputes from the ledger when it is absent,
+      which is what keeps a from-empty replay of an older log correct. */
+  reviewSummary: Schema.optionalKey(BoardCardReviewSummary),
 });
 export type BoardCardStepCompletedPayload = typeof BoardCardStepCompletedPayload.Type;
 
@@ -3213,6 +3256,32 @@ export const BoardCardPlansShellEvent = Schema.Struct({
 export type BoardCardPlansShellEvent = typeof BoardCardPlansShellEvent.Type;
 
 /**
+ * Review-summary delta (t3o-22, D7): a review phase completed, so the card
+ * face's round pips, severity chip, issue tally and convergence flag change.
+ *
+ * A dedicated delta, the exact analogue of `card-plans`:
+ * `board.card-step-completed` carries the completion and the card id but NOT
+ * the card, so the full bounded shell cannot be rebuilt in the projector — and
+ * the summary is a fold over the step-completion ledger, which no
+ * card-carrying event can see.
+ *
+ * Without it the cache is written correctly and nothing shows it: a board left
+ * open while a card runs its loop renders no pips and no `NO CONVERGENCE` flag
+ * for the whole run, because the shell is only re-read on reconnect.
+ *
+ * `summary` is null for a card whose review history has been cleared. Its
+ * `kind` keeps the `card-` prefix, so it routes through
+ * `isBoardShellStreamEvent` with zero core-seam change.
+ */
+export const BoardCardReviewShellEvent = Schema.Struct({
+  kind: Schema.Literal("card-review"),
+  sequence: NonNegativeInt,
+  cardId: BoardCardId,
+  summary: Schema.NullOr(BoardCardReviewSummary),
+});
+export type BoardCardReviewShellEvent = typeof BoardCardReviewShellEvent.Type;
+
+/**
  * Card-thread delta (t3o-18, D3): the live card↔thread links of ONE card, with
  * their todo summaries — the whole set for that card, replaced wholesale.
  *
@@ -3404,6 +3473,7 @@ export const BOARD_SHELL_STREAM_EVENTS = [
   BoardCardQueuedShellEvent,
   BoardCardStalledShellEvent,
   BoardCardPlansShellEvent,
+  BoardCardReviewShellEvent,
   BoardCardThreadsShellEvent,
   BoardLabelUpsertedShellEvent,
   BoardStageUpsertedShellEvent,
@@ -4172,36 +4242,6 @@ export function boardReviewLoopWalk(input: {
 }
 
 /**
- * The review facts the COLUMN card renders (t3o-22, D7) — counts, plus the one
- * field that is not a count.
- *
- * `converged` and `round-cap` carry identical numbers, so a summary of counts
- * alone would paint a loop that ran out of rounds exactly like one that passed.
- * The outcome is what stops that.
- */
-export const BoardCardReviewSummary = Schema.Struct({
-  roundCurrent: NonNegativeInt,
-  roundMax: NonNegativeInt,
-  /** The walk's own verdict. `running` here is provisional: the walk knows a
-      round's phases are all done but not whether the executor went on to plan
-      another one, which is a fact only the card's live step can settle. See
-      `resolveBoardCardReviewOutcome`. */
-  outcome: BoardReviewLoopOutcome,
-  /** Which held outcome this loop resolves to IF it turns out to have stopped
-      (`round-cap` or `stopped`). Decided here, where the card's
-      `stopAfterRound` is in hand, so the read side needs only a boolean. */
-  heldOutcome: BoardReviewLoopOutcome,
-  severityCritical: NonNegativeInt,
-  severityImprovement: NonNegativeInt,
-  severityNitpick: NonNegativeInt,
-  issuesFixed: NonNegativeInt,
-  issuesRejected: NonNegativeInt,
-  issuesOpen: NonNegativeInt,
-  issuesDisputed: NonNegativeInt,
-});
-export type BoardCardReviewSummary = typeof BoardCardReviewSummary.Type;
-
-/**
  * Fold a card's review completions into the column card's summary, or null when
  * the card has no review history to summarise.
  *
@@ -4211,6 +4251,7 @@ export type BoardCardReviewSummary = typeof BoardCardReviewSummary.Type;
  */
 export function deriveBoardCardReviewSummary(input: {
   readonly completions: ReadonlyArray<BoardStepCompletion>;
+  /** The budget to DISPLAY. Never bounds the walk — see below. */
   readonly maxRounds: number;
   readonly stopAfterRound: number | null;
 }): BoardCardReviewSummary | null {
@@ -4218,7 +4259,26 @@ export function deriveBoardCardReviewSummary(input: {
     (completion) => parseReviewStepId(completion.stepId) !== null,
   );
   if (reviewSteps.length === 0) return null;
-  const walk = boardReviewLoopWalk(input);
+  // The walk runs to the CEILING, never to `maxRounds`, and that is load-bearing.
+  //
+  // Bounding it by the caller's budget makes the cache report `round-cap` the
+  // instant the last recorded round's phases are in — which is true of every
+  // healthy multi-round loop for the whole gap between one round finishing and
+  // the next round's review landing, minutes to tens of minutes of a running
+  // card wearing the alarm. It is also unknowable from here: the projector
+  // cannot see the board's review settings, so any budget it invents is a
+  // guess, and a guess that can invert the verdict is worse than none.
+  //
+  // Run to the ceiling and the walk simply stops at the first round with no
+  // review completion, reporting `running` — provisionally. Whether that
+  // actually means "between rounds" or "the loop ended here" is settled by
+  // `resolveBoardCardReviewOutcome` against the card's live step, which is the
+  // one fact that answers it and the job that function exists for.
+  const walk = boardReviewLoopWalk({
+    completions: input.completions,
+    maxRounds: BOARD_REVIEW_MAX_ROUNDS,
+    stopAfterRound: input.stopAfterRound,
+  });
 
   const succeeded = new Map<string, BoardStepCompletion>();
   for (const completion of reviewSteps) {

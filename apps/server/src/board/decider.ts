@@ -30,6 +30,8 @@ import {
   boardCardStepCompletions,
   boardCardStepState,
   boardReviewRoundsStarted,
+  deriveBoardCardReviewSummary,
+  parseReviewStepId,
   boardLabelCatalogue,
   boardPlanId,
   boardStageById,
@@ -1368,7 +1370,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     }
 
     case "board.card.complete-step": {
-      yield* requireActiveBoardCard({ board, command });
+      const card = yield* requireActiveBoardCard({ board, command });
       const existing = boardCardStepCompletions(board, command.cardId).find(
         (completion) => completion.stepId === command.stepId,
       );
@@ -1410,6 +1412,35 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
               threadId: command.threadId,
               completedAt: command.createdAt,
             };
+      // The card face's review summary rides the event (t3o-22, D7).
+      //
+      // It has to. The summary is a fold over the whole step-completion ledger,
+      // and `boardShellStreamEvent` is a PURE function of one event — it can
+      // see this completion but not the ones before it, so the column card
+      // could not be updated live from the projector alone. The decider is the
+      // one place that holds both the ledger and the card's own round
+      // overrides, so it folds the post-event ledger here and the delta rides
+      // out with the event.
+      //
+      // Absent for every non-review step, and for every event written before
+      // t3o-22 — the projection recomputes from the ledger in that case, which
+      // is what keeps a from-empty replay of an older log correct.
+      // Never null in practice — the ledger provably holds this very review
+      // step — but the fold is total over any ledger, so the null is coalesced
+      // rather than asserted away.
+      const reviewSummary =
+        parseReviewStepId(completion.stepId) === null
+          ? undefined
+          : (deriveBoardCardReviewSummary({
+              completions: [
+                ...boardCardStepCompletions(board, command.cardId).filter(
+                  (recorded) => recorded.stepId !== completion.stepId,
+                ),
+                completion,
+              ],
+              maxRounds: card.reviewOverrides?.rounds ?? 0,
+              stopAfterRound: card.reviewOverrides?.stopAfterRound ?? null,
+            }) ?? undefined);
       return {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
@@ -1417,7 +1448,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           commandId: command.commandId,
         })),
         type: "board.card-step-completed",
-        payload: { cardId: command.cardId, completion },
+        payload: {
+          cardId: command.cardId,
+          completion,
+          ...(reviewSummary === undefined ? {} : { reviewSummary }),
+        },
       };
     }
 

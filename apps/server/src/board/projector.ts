@@ -768,6 +768,22 @@ export function boardShellStreamEvent(
       });
 
     case "board.card-step-completed":
+      // A REVIEW phase completing changes the column card (t3o-22, D7): round
+      // pips, the severity chip, the issue tally and the convergence flag. A
+      // dedicated delta rather than a `card-upserted` because this event
+      // carries the completion and the card id, never the card. Every other
+      // step completion still changes nothing a column card renders, and the
+      // decider omits the summary for those, so they fall through below.
+      if (event.payload.reviewSummary !== undefined) {
+        return Option.some({
+          kind: "card-review",
+          sequence: event.sequence,
+          cardId: event.payload.cardId,
+          summary: event.payload.reviewSummary,
+        });
+      }
+      return Option.none();
+
     case "board.plan-written":
     case "board.card-stage-thread-requested":
     // Step-lifecycle events (t3o-10) are card DETAIL — the live step status
@@ -781,8 +797,9 @@ export function boardShellStreamEvent(
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":
       // Agent write-path events are card DETAIL, not column-card shell fields
-      // (D7): an agent's progress note, step completion or a plan BODY rewrite
-      // changes nothing a column card renders, so they emit no shell delta.
+      // (D7): an agent's progress note, a non-review step completion or a plan
+      // BODY rewrite changes nothing a column card renders, so they emit no
+      // shell delta.
       // They reach a client through board.subscribeCard / the MCP context tool.
       // (A step leaving `queued` always does so via `card-step-admitted` above,
       // so the badge clears there — never here; and a plan SET change rides

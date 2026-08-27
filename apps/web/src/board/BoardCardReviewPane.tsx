@@ -33,7 +33,7 @@ import {
 import { getCustomModelOptionsByInstance } from "../modelSelection";
 import { primaryServerProvidersAtom } from "../state/server";
 import { usePrimarySettings } from "../hooks/useSettings";
-import { ModelRow } from "../components/settings/BoardPipelineSection";
+import { ModelRow } from "../components/settings/BoardModelRow";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
@@ -513,6 +513,7 @@ export function BoardCardReviewPane({
   maxRounds,
   live,
   overrides,
+  roundsStarted,
   onSetRounds,
   onSetRoundModel,
   onAdvance,
@@ -529,6 +530,11 @@ export function BoardCardReviewPane({
   readonly live: boolean;
   /** The card's own review-loop settings (t3o-22, D2), or null. */
   readonly overrides?: BoardCardReviewOverrides | null | undefined;
+  /** The highest round the loop has STARTED, resolved by the caller — which is
+      the only layer that can see the card's live step. The `−` button's floor,
+      and it must equal the decider's or the button offers a write the server
+      refuses. Falls back to the ledger alone when absent. */
+  readonly roundsStarted?: number | undefined;
   /** Set the card's round budget. Absent leaves the loop read-only — the pane
       still reports a stalled loop, it just cannot offer to restart it. */
   readonly onSetRounds?: ((rounds: number) => void) | undefined;
@@ -559,8 +565,24 @@ export function BoardCardReviewPane({
   // meaning, so the pane must never let them read as a pass.
   const held = isBoardReviewLoopHeld(loop.status);
   // The floor the − button obeys, mirroring the decider's (t3o-22, D3): a round
-  // that has STARTED can never be removed.
-  const roundsStarted = Math.max(1, boardReviewRoundsStarted({ completions, liveStepId: null }));
+  // that has STARTED can never be removed. The caller resolves it against the
+  // card's live step; the ledger-only fallback is for callers that have no step
+  // state to offer, and can only ever be more permissive by one round.
+  const budgetFloor = Math.max(
+    1,
+    roundsStarted ?? boardReviewRoundsStarted({ completions, liveStepId: null }),
+  );
+  /**
+   * Whether round `n`'s settings can still be chosen.
+   *
+   * "Has no completion yet" is not the same as "is in the future": the round
+   * the executor has already dispatched has recorded nothing either, and its
+   * model was frozen onto the run row at `select-step`. Offering a picker there
+   * writes an override nothing will ever read. A round is plannable only when
+   * it is genuinely ahead of the floor — and only when there is somewhere to
+   * write it, so a read-only pane never takes an edit and drops it.
+   */
+  const plannable = (n: number) => onSetRoundModel !== undefined && n > budgetFloor;
   const counts = [
     `${loop.totals.raised} raised`,
     `${loop.totals.fixed} fixed`,
@@ -616,12 +638,19 @@ export function BoardCardReviewPane({
                         : "cursor-default text-muted-foreground/50 shadow-[inset_0_0_0_1px_var(--border)]",
                     n === shownRound && exists && !now ? "shadow-[0_0_0_2px_var(--ring)]" : "",
                   )}
+                  disabled={!exists && !plannable(n)}
                   onClick={() =>
                     exists
                       ? setOpenRound(n)
                       : setPlannedRound((current) => (current === n ? null : n))
                   }
-                  title={exists ? `Show round ${n}` : `Set the review model for round ${n}`}
+                  title={
+                    exists
+                      ? `Show round ${n}`
+                      : plannable(n)
+                        ? `Set the review model for round ${n}`
+                        : `Round ${n} is already in flight — its model was frozen when the step was dispatched`
+                  }
                   type="button"
                 >
                   R{n}
@@ -633,11 +662,11 @@ export function BoardCardReviewPane({
                 <button
                   aria-label="Remove a round"
                   className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/45"
-                  disabled={loop.maxRounds <= roundsStarted}
+                  disabled={loop.maxRounds <= budgetFloor}
                   onClick={() => onSetRounds(loop.maxRounds - 1)}
                   title={
-                    loop.maxRounds <= roundsStarted
-                      ? `Round ${roundsStarted} has already started and cannot be removed`
+                    loop.maxRounds <= budgetFloor
+                      ? `Round ${budgetFloor} has already started and cannot be removed`
                       : `Drop the budget to ${loop.maxRounds - 1} rounds`
                   }
                   type="button"
@@ -661,7 +690,7 @@ export function BoardCardReviewPane({
               </span>
             )}
           </div>
-          {plannedRound === null ? null : (
+          {plannedRound === null || !plannable(plannedRound) ? null : (
             <PlannedRoundSettings
               model={overrides?.roundModels[String(plannedRound)] ?? null}
               onChange={(model) => onSetRoundModel?.(plannedRound, model)}

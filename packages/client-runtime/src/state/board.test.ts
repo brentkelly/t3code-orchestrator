@@ -54,6 +54,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   threadLinks: [],
   externalRef: null,
   humanInLoop: null,
+  reviewOverrides: null,
   worktree: null,
   blocked: false,
   archivedAt: null,
@@ -315,6 +316,93 @@ describe("board shell reducer", () => {
       planCount: 9,
     });
     expect(stranger.cards).toEqual(held.cards);
+  });
+
+  it("card-review applies the whole review slice, and clears it as a whole", () => {
+    const held = snapshot({ cards: [cardShell("card-1")] });
+    const summary = {
+      roundCurrent: 3,
+      roundMax: 5,
+      outcome: "round-cap" as const,
+      heldOutcome: "round-cap" as const,
+      severityCritical: 2,
+      severityImprovement: 1,
+      severityNitpick: 4,
+      issuesFixed: 3,
+      issuesRejected: 1,
+      issuesOpen: 2,
+      issuesDisputed: 1,
+    };
+    const reviewed = applyShellStreamEvent(held, {
+      kind: "card-review",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      summary,
+    });
+    expect(reviewed.cards?.[0]?.roundCurrent).toBe(3);
+    expect(reviewed.cards?.[0]?.roundMax).toBe(5);
+    // The one field that is not a count: without it the card face renders a
+    // loop that ran out of road exactly like one that passed.
+    expect(reviewed.cards?.[0]?.reviewOutcome).toBe("round-cap");
+    expect(reviewed.cards?.[0]?.severityCritical).toBe(2);
+    expect(reviewed.cards?.[0]?.issuesDisputed).toBe(1);
+
+    const cleared = applyShellStreamEvent(reviewed, {
+      kind: "card-review",
+      sequence: 3,
+      cardId: BoardCardId.make("card-1"),
+      summary: null,
+    });
+    expect(cleared.cards?.[0]?.reviewOutcome).toBeUndefined();
+    expect(cleared.cards?.[0]?.roundCurrent).toBeUndefined();
+    expect(cleared.cards?.[0]?.severityCritical).toBeUndefined();
+
+    const stranger = applyShellStreamEvent(held, {
+      kind: "card-review",
+      sequence: 4,
+      cardId: BoardCardId.make("card-elsewhere"),
+      summary,
+    });
+    expect(stranger.cards).toEqual(held.cards);
+  });
+
+  it("a card upsert preserves the review slice it could not know", () => {
+    // The failure this prevents: a card mid-review that the user drags,
+    // retitles, or clicks "Run round N+1" on loses its pips and its
+    // NO CONVERGENCE flag until the next reconnect — and that click is itself
+    // one of the triggers, so the feature would blank itself exactly when it
+    // is being used. `boardCardShellFromCard` (every card-carrying delta's
+    // producer) cannot see the step-completion ledger, so it omits all ten
+    // keys and the reducer must carry them.
+    const reviewed = applyShellStreamEvent(snapshot({ cards: [cardShell("card-1")] }), {
+      kind: "card-review",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      summary: {
+        roundCurrent: 3,
+        roundMax: 5,
+        outcome: "round-cap" as const,
+        heldOutcome: "round-cap" as const,
+        severityCritical: 2,
+        severityImprovement: 1,
+        severityNitpick: 4,
+        issuesFixed: 3,
+        issuesRejected: 1,
+        issuesOpen: 2,
+        issuesDisputed: 1,
+      },
+    });
+
+    const dragged = applyShellStreamEvent(reviewed, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { orderKey: "z" }),
+    });
+    expect(dragged.cards?.[0]?.reviewOutcome).toBe("round-cap");
+    expect(dragged.cards?.[0]?.roundCurrent).toBe(3);
+    expect(dragged.cards?.[0]?.roundMax).toBe(5);
+    expect(dragged.cards?.[0]?.severityCritical).toBe(2);
+    expect(dragged.cards?.[0]?.issuesDisputed).toBe(1);
   });
 
   it("a card upsert preserves body-derived fields it could not know, and applies the ones it could", () => {

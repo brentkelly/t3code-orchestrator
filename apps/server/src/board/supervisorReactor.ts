@@ -1343,6 +1343,9 @@ const make = Effect.gen(function* () {
     // Same gate as every other spawn path: a stage the user drives by hand is
     // not started by an edit.
     if (!exec.autoExecute) return;
+    // Never trample a manually adopted thread for this stage — the same guard
+    // `beginStageRun` applies, and this path needs it for the same reason.
+    if (hasLiveStageThread(card, card.stage)) return;
     const completions = boardCardStepCompletions(board, card.id);
     const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
     const completedStepIds = completions
@@ -2425,7 +2428,16 @@ const make = Effect.gen(function* () {
     // plans `complete`, so a non-review stage is untouched — and a `complete`
     // plan must stay a no-op here regardless, because re-running the advance
     // path from an edit is exactly the double-advance this must not cause.
-    if (isBoardTerminalStepStatus(state.status)) return yield* replanSettledStage(card);
+    // Only a SUCCEEDED settle can have more to run. A terminal-but-unsuccessful
+    // step (`abandoned`, `stalled`, `failed`) is not a stage waiting on budget,
+    // and re-planning one is actively dangerous: `SimpleStageExecutor` decides
+    // from *succeeded* completions alone, so a card carrying an `abandoned`
+    // step at an auto-executing stage plans a fresh `run` — and a title edit
+    // would spawn a full stage run. Before this path existed, nothing happened.
+    if (isBoardTerminalStepStatus(state.status)) {
+      if (state.status !== "succeeded") return;
+      return yield* replanSettledStage(card);
+    }
     const stage = boardStageById(board, card.stage);
     const desired =
       stage?.role === "build" ? (card.humanInLoop ?? state.humanInLoop) : state.humanInLoop;

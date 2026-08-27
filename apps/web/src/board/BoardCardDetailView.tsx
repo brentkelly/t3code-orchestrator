@@ -212,6 +212,9 @@ export interface BoardCardDetailViewProps {
   readonly reviewMaxRounds?: number | undefined;
   /** The card's own review-loop settings (t3o-22, D2). */
   readonly reviewOverrides?: BoardCardReviewOverrides | null | undefined;
+  /** The highest round the card's loop has STARTED — the budget floor, matching
+      the decider's (t3o-22, D3). */
+  readonly reviewRoundsStarted?: number | undefined;
   readonly onSetReviewRounds?: ((rounds: number) => void) | undefined;
   readonly onSetReviewRoundModel?:
     | ((round: number, model: BoardModelSelection | null) => void)
@@ -1054,6 +1057,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onSetRoundModel={props.onSetReviewRoundModel}
                 onSetRounds={props.onSetReviewRounds}
                 overrides={props.reviewOverrides}
+                roundsStarted={props.reviewRoundsStarted}
                 onOpenThread={(threadId) => {
                   setSelectedThreadId(threadId);
                   setPane("thread");

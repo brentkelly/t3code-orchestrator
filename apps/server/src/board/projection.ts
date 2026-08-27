@@ -1771,11 +1771,11 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
    * cheap, the ledger is one card's worth of rows, and a from-scratch
    * recomputation is what makes the cache rebuildable and impossible to drift.
    *
-   * `maxRounds` comes from the card's own override when it has one. When it does
-   * not, the projection cannot see the board's review settings from here, so it
-   * falls back to the highest round the ledger shows: the counts and the
-   * convergence verdict stay exact, and only a still-running loop's pip count
-   * can under-report until the pane — which does have the settings — renders it.
+   * `maxRounds` is DISPLAY only — the walk itself runs to the ceiling, so a
+   * budget this layer cannot see (the projection has no access to the board's
+   * review settings) can never invert the verdict. The worst it can do is
+   * under-report a still-running loop's pip count until the pane, which does
+   * have the settings, renders the real budget.
    */
   const refreshReviewSummary = (card: BoardCard) =>
     Effect.gen(function* () {
@@ -2094,14 +2094,36 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
 
       case "board.card-step-completed":
         yield* upsertStep(event.payload.completion);
-        // Only a REVIEW step can move the review summary, and the lookup is
-        // skipped entirely for every other stage's steps.
+        // Only a REVIEW step can move the review summary, and every other
+        // stage's step skips this entirely.
+        //
+        // The decider folds the summary onto the event (t3o-22, D7), so the
+        // common path is a plain write of what the event already carries — the
+        // same value the client's `card-review` delta is applying, so the cache
+        // and the live shell cannot disagree. The recompute is the fallback for
+        // events written BEFORE t3o-22, which carry no summary: that is what
+        // makes a from-empty replay of an older log rebuild the cache correctly
+        // rather than leaving it null.
         if (parseReviewStepId(event.payload.completion.stepId) !== null) {
-          const cardRow = yield* queries
-            .findBoardCardRow(event.payload.cardId)
-            .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewCard:query")));
-          if (Option.isSome(cardRow)) {
-            yield* refreshReviewSummary(rowToBoardCard(cardRow.value, [], []));
+          const carried = event.payload.reviewSummary;
+          if (carried === undefined) {
+            const cardRow = yield* queries
+              .findBoardCardRow(event.payload.cardId)
+              .pipe(
+                Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewCard:query")),
+              );
+            if (Option.isSome(cardRow)) {
+              yield* refreshReviewSummary(rowToBoardCard(cardRow.value, [], []));
+            }
+          } else {
+            yield* queries
+              .updateBoardCardReviewSummaryRow({
+                cardId: event.payload.cardId,
+                reviewSummary: carried,
+              })
+              .pipe(
+                Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewSummary:query")),
+              );
           }
         }
         yield* recordActivity({

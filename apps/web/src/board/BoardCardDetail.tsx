@@ -24,6 +24,8 @@ import {
   type BoardCardThreadShell,
   type BoardState,
   type EnvironmentId,
+  BOARD_REVIEW_MAX_ROUNDS,
+  boardReviewLoopWalk,
   boardReviewRoundsStarted,
   effectiveBoardReviewRounds,
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
@@ -312,24 +314,6 @@ export function BoardCardDetail({
         })()
       : null;
 
-  // The review loop's configured round cap, for the Review pane's R1..Rn bar
-  // (t3o-16). Resolved from the same settings the executor reads, so the bar
-  // and the real loop can never disagree on the cap.
-  const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
-  // The EFFECTIVE budget (t3o-22, D3): the card's own override wins, floored at
-  // the highest round already started so the pane's `−` can never offer to
-  // strand a live run — the same clamp the decider enforces on the write.
-  const reviewMaxRounds = isBoardReviewStageExecution(reviewExecution)
-    ? effectiveBoardReviewRounds({
-        configured: reviewExecution.rounds,
-        overrides: card.reviewOverrides,
-        roundsStarted: boardReviewRoundsStarted({
-          completions: detail?.stepCompletions ?? [],
-          liveStepId: null,
-        }),
-      })
-    : undefined;
-
   /** Patch the card's review overrides, preserving the fields not being set.
       One write shape for all three controls (D8) — there is no second
       command. */
@@ -354,6 +338,42 @@ export function BoardCardDetail({
   // `boardCardThreadMenu.test.ts`); the in-flight proxy reads the card shell's
   // live status since the step-state read model is server-only.
   const cardShell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+
+  // The review loop's round budget, for the Review pane's R1..Rn bar. Resolved
+  // from the same settings the executor reads, so the bar and the real loop can
+  // never disagree on the cap.
+  const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
+  /**
+   * The highest round this card's loop has STARTED — the floor the budget
+   * cannot go below (t3o-22, D3), and it must be the SAME number the decider
+   * computes or the pane offers writes the server refuses.
+   *
+   * The ledger alone is not that number. A round whose review is dispatched and
+   * running has recorded nothing yet, and the decider counts it (it reads the
+   * card's live step). The detail payload carries completions but no step
+   * state, so the card shell's `stepRunning` — the durable "the executor is
+   * driving this card" flag — stands in for it: when it is lit, the round the
+   * walk is sitting on is in flight, not merely next.
+   */
+  const reviewRoundsStarted = (() => {
+    const completions = detail?.stepCompletions ?? [];
+    const recorded = boardReviewRoundsStarted({ completions, liveStepId: null });
+    if (cardShell?.stepRunning !== true) return recorded;
+    const walk = boardReviewLoopWalk({
+      completions,
+      maxRounds: BOARD_REVIEW_MAX_ROUNDS,
+      stopAfterRound: card.reviewOverrides?.stopAfterRound ?? null,
+    });
+    return Math.max(recorded, walk.currentRound);
+  })();
+  // The EFFECTIVE budget: the card's own override wins, clamped to that floor.
+  const reviewMaxRounds = isBoardReviewStageExecution(reviewExecution)
+    ? effectiveBoardReviewRounds({
+        configured: reviewExecution.rounds,
+        overrides: card.reviewOverrides,
+        roundsStarted: reviewRoundsStarted,
+      })
+    : undefined;
   const stageRestart = resolveBoardThreadStageRestart({
     autoExecute: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
     stageLabel: boardStageLabel(stages, card.stage),
@@ -553,12 +573,13 @@ export function BoardCardDetail({
       projectName={projectName ?? null}
       reviewMaxRounds={reviewMaxRounds}
       reviewOverrides={card.reviewOverrides}
+      reviewRoundsStarted={reviewRoundsStarted}
       onSetReviewRounds={(rounds) => patchReviewOverrides({ rounds })}
       onSetReviewRoundModel={(round, model) =>
         patchReviewOverrides({
           roundModels: Object.fromEntries(
             Object.entries({
-              ...(card.reviewOverrides?.roundModels ?? {}),
+              ...card.reviewOverrides?.roundModels,
               [String(round)]: model,
             }).filter(([, value]) => value !== null),
           ) as BoardCardReviewOverrides["roundModels"],
