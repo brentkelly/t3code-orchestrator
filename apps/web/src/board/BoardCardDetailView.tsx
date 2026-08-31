@@ -679,6 +679,7 @@ function ActionsSection({
   // link vanishes exactly when a merged card lands in Done.
   if (
     forward === null &&
+    !props.canApproveSplit &&
     !card.blocked &&
     humanInLoop === null &&
     displayed === null &&

@@ -1734,8 +1734,16 @@ export function boardCardUnfinishedChildren(
 export function boardCardPendingSplit(board: BoardState, cardId: BoardCardId): boolean {
   const card = board.cards.find((candidate) => candidate.id === cardId);
   if (card === undefined || card.parentCardId !== null || card.archivedAt !== null) return false;
-  if (boardCardChildren(board, cardId).length > 0) return false;
+  // Only LIVE children clear the pending state, matching the re-approval
+  // guard: a first round whose children all archived is gone from the board,
+  // so the card is pending its second-round split again — and the shell
+  // derivation, which can only ever see live children, agrees.
+  if (boardCardChildren(board, cardId).some((child) => child.archivedAt === null)) return false;
   if (boardCardPlans(board, cardId).length < 2) return false;
+  // A board with no materialisation floor cannot split at all (approval is
+  // refused there), so nothing on it is ever pending — pinning a card toward
+  // an approval the decider would refuse is a dead end, not a gate.
+  if (boardSubBoardFloorStage(board) === null) return false;
   const build = boardStageWithRole(board, "build");
   // Past the build role (built as one, plans now stale) — not pending.
   if (
@@ -1762,9 +1770,13 @@ export function boardCardShellPendingSplit(
   stages: ReadonlyArray<BoardStageDefinition>,
 ): boolean {
   if (card.parentCardId !== undefined) return false;
+  // `planTotal` is derived from LIVE children only (D6), which is exactly the
+  // read-model rule too: only live children clear the pending state.
   if (card.planTotal !== undefined) return false;
   if ((card.planCount ?? 0) < 2) return false;
   const stageState: BoardState = { cards: [], stages, nextCardNumberByProject: {} };
+  // Mirror the read model: a floor-less board can never split, so never pend.
+  if (boardSubBoardFloorStage(stageState) === null) return false;
   const build = boardStageWithRole(stageState, "build");
   if (
     build !== null &&

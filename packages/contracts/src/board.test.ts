@@ -874,6 +874,37 @@ describe("sub-boards (t3o-23)", () => {
       );
     });
 
+    it("pends again when the first round's children are ALL archived (second-round split)", () => {
+      // Matches the re-approval guard's live-children semantics — and the
+      // shell derivation, which only ever sees live children, agrees.
+      expect(
+        boardCardPendingSplit(
+          boardWithPlans(BOARD_SEED_STAGE_IDS.planning, 2, [
+            child("child-a", BOARD_SEED_STAGE_IDS.done, NOW),
+          ]),
+          parent.id,
+        ),
+      ).toBe(true);
+    });
+
+    it("never pends on a board with no materialisation floor", () => {
+      // Build-first board: approval itself is refused there, so pinning a
+      // card toward it would be a dead end.
+      const buildFirst: BoardState = {
+        ...boardWithPlans(BOARD_SEED_STAGE_IDS.building, 2),
+        stages: BOARD_SEED_STAGES.filter(
+          (stage) => stage.role === "build" || stage.role === "review" || stage.role === "done",
+        ),
+      };
+      expect(boardCardPendingSplit(buildFirst, parent.id)).toBe(false);
+      expect(
+        boardCardShellPendingSplit(
+          { stage: BOARD_SEED_STAGE_IDS.building, planCount: 2 },
+          buildFirst.stages ?? [],
+        ),
+      ).toBe(false);
+    });
+
     it("derives the same from the shell, and never for a child card", () => {
       expect(
         boardCardShellPendingSplit(

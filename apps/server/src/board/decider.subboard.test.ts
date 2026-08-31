@@ -256,6 +256,25 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
     }),
   );
 
+  it.effect("lets a retreated unapproved split return to planning — but no further", () =>
+    Effect.gen(function* () {
+      // The card was moved back to Sprint; coming home to Planning is a
+      // forward move but stays within the gate's ceiling (the plan-role
+      // stage). Skipping over planning to Ready is not.
+      const board = makeReadModel(makeBoard({ parent: { stage: "sprint" } }));
+      const back = yield* decideEvents(
+        moveCommand({ cardId: "card-parent", toStage: "planning" }),
+        board,
+      );
+      assert.strictEqual(back[0]!.type, "board.card-moved");
+      const past = yield* decideFail(
+        moveCommand({ cardId: "card-parent", toStage: "ready", override: true }),
+        board,
+      );
+      assert.include(String(past), "unapproved plans");
+    }),
+  );
+
   it.effect("a single-plan card is not a pending split and advances freely", () =>
     Effect.gen(function* () {
       const events = yield* decideEvents(
