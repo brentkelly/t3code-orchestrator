@@ -761,6 +761,16 @@ it.layer(NodeServices.layer)("sub-board child create (t3o-25)", (it) => {
     }),
   );
 
+  it.effect("refuses a parent belonging to a different project", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        createCommand({ parentCardId: "card-parent" }),
+        makeReadModel(makeBoard({ parent: { projectId: ProjectId.make("project-2") } })),
+      );
+      assert.include(String(failure), "different project");
+    }),
+  );
+
   it.effect("refuses nesting — a child of a child", () =>
     Effect.gen(function* () {
       const failure = yield* decideFail(

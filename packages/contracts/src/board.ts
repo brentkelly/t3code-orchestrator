@@ -2444,9 +2444,12 @@ export const BoardCardCreatedPayload = Schema.Struct({
       means the empty set, matching migration 903's `depends_on DEFAULT '[]'`,
       so a from-empty replay of a pre-t3o-06 log equals table rehydration. */
   dependsOn: Schema.optionalKey(Schema.Array(BoardCardId)),
-  /** Sub-board materialisation (t3o-23): the parent this child belongs to and
-      the plan it was cut from. Absent on every top-level create — only the
-      `board.plans.approve` decider emits creations carrying them. */
+  /** The parent this sub-board child belongs to (t3o-23): set by
+      `board.plans.approve` materialisation and by a `board.card.create`
+      carrying the t3o-25 child preset. `sourcePlanId` names the plan a
+      materialised child was cut from and remains approve-only — a
+      hand-created child has no source plan. Both absent on every top-level
+      create. */
   parentCardId: Schema.optionalKey(BoardCardId),
   sourcePlanId: Schema.optionalKey(BoardPlanId),
   /** A child arrives with its plan's BODY as its brief — but the decider has

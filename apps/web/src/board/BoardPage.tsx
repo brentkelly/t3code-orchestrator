@@ -198,12 +198,19 @@ function EnvironmentBoard({
     },
     [navigate],
   );
+  // Both drill-in and breadcrumb-back CARRY `?project` (a sub-board ignores
+  // it — its project is the parent's — but keeping it in the URL means the
+  // round trip lands back on the root board the user left, not "All
+  // projects"). `?card` and `?stalled` are per-board state and drop.
   const openSubBoard = useCallback(
     (parentCardId: string, cardId?: string, options?: { readonly replace?: boolean }) => {
       void navigate({
         to: "/board/$parentCardId",
         params: { parentCardId },
-        search: cardId === undefined ? {} : { card: cardId },
+        search: (previous: BoardSearch) => ({
+          ...(previous.project === undefined ? {} : { project: previous.project }),
+          ...(cardId === undefined ? {} : { card: cardId }),
+        }),
         replace: options?.replace === true,
       });
     },
@@ -213,7 +220,10 @@ function EnvironmentBoard({
     (cardId?: string, options?: { readonly replace?: boolean }) => {
       void navigate({
         to: "/board",
-        search: cardId === undefined ? {} : { card: cardId },
+        search: (previous: BoardSearch) => ({
+          ...(previous.project === undefined ? {} : { project: previous.project }),
+          ...(cardId === undefined ? {} : { card: cardId }),
+        }),
         replace: options?.replace === true,
       });
     },
