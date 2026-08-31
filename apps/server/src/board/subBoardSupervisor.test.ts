@@ -149,6 +149,52 @@ it.effect(
     ),
 );
 
+it.effect("provisions and runs a build step from a branch-only slice (parent review entry)", () =>
+  withGovernor(
+    {
+      // A split parent reaches its own review carrying the `branch-only`
+      // integration-branch slice from approval (t3o-23, D5). `schedule` must
+      // (re)provision it — a worktree that is neither ready nor mid-flight
+      // provisioning — rather than skip it and leave the review step wedged
+      // pending forever. Modelled at the build stage (auto-executes a single
+      // step), which shares the exact `schedule` gate.
+      board: {
+        cards: [
+          {
+            ...makeBoardCard({ id: "card-1", stage: "building", orderKey: "m" }),
+            worktree: { ...readyWorktree("card-1"), path: null, status: "branch-only" },
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board, slots }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(
+          cardMoved(
+            {
+              ...makeBoardCard({ id: "card-1", stage: "building", orderKey: "m" }),
+              worktree: { ...readyWorktree("card-1"), path: null, status: "branch-only" },
+            },
+            "ready",
+            "building",
+            1,
+          ),
+        );
+        const after = yield* board;
+        // The slice was re-provisioned to ready and the step spawned — not
+        // left pending behind an un-provisioned branch-only worktree.
+        assert.strictEqual(
+          after.cards.find((card) => card.id === BoardCardId.make("card-1"))?.worktree?.status,
+          "ready",
+        );
+        assert.strictEqual(stepStatus(after, BoardCardId.make("card-1")), "running");
+        assert.strictEqual(yield* slots.heldTotal, 1);
+      }),
+  ),
+);
+
 it.effect("counts an archived child as finished and advances the parent (D6)", () =>
   withGovernor(
     {

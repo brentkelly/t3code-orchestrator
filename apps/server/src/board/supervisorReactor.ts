@@ -983,14 +983,22 @@ const make = Effect.gen(function* () {
         if (state.status === "pending") yield* admitPlanStep({ card, state });
         continue;
       }
-      // A build-mode step needs a ready worktree to spawn into; a card whose
-      // worktree is still provisioning is re-offered once it lands. A null or
-      // FAILED worktree is retried right here (the decider permits
-      // re-provisioning a failed one), so a provisioning failure is a visible,
-      // retried step — never a silently wedged pending step.
+      // A build-mode step needs a ready worktree to spawn into. Anything that
+      // is not `ready` and not mid-flight `provisioning` is (re)provisioned
+      // right here, so a provisioning failure is a visible, retried step —
+      // never a silently wedged pending one. That set is: `null` (never
+      // provisioned), `failed` (retry), `reclaimed` (a card dragged back out
+      // of Done to be reworked), and `branch-only` (a split PARENT reaching
+      // its own review — its integration branch exists but no worktree does
+      // yet, t3o-23 D5). `ensureWorktree` is idempotent and attaches to an
+      // existing branch, so each of these resolves to a real worktree; only a
+      // slice already `provisioning` is left to be re-offered when it lands.
       let worktreePath =
         card.worktree !== null && card.worktree.status === "ready" ? card.worktree.path : null;
-      if (worktreePath === null && (card.worktree === null || card.worktree.status === "failed")) {
+      if (
+        worktreePath === null &&
+        (card.worktree === null || card.worktree.status !== "provisioning")
+      ) {
         worktreePath = yield* ensureWorktree(card);
       }
       if (worktreePath === null) continue;
