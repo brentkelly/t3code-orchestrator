@@ -21,6 +21,7 @@ import {
   boardReviewRoundsStarted,
   BoardReviewPayload,
   composeBoardReviewPhasePrompt,
+  composeBoardSyncPhasePrompt,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
   effectiveBoardReviewRounds,
   effectiveBoardRuntimeMode,
@@ -146,6 +147,15 @@ export function reviewLoopDecision(input: {
   /** The card's in-flight step id, so the budget floor counts a round that has
       STARTED but not yet recorded anything (D3). */
   readonly liveStepId: string | null;
+  /** Whether the card's base moved since the recorded `baseTipAtRoundStart`
+      (t3o-24, D1) — reactor-measured, always false for a top-level card. Read
+      only at the convergence arm: a converged round over a stale base plans
+      the sync step instead of completing, so the crossing into merge is never
+      reached with an unreviewed combined diff. */
+  readonly baseStale: boolean;
+  /** The card's recorded base branch, for the sync prompt; null when the card
+      has no worktree slice (in which case `baseStale` is false anyway). */
+  readonly baseRefName: string | null;
 }): BoardStagePlan {
   const { review, config, overrides } = input;
   const done = succeededReviewSteps(input.completions);
@@ -176,8 +186,10 @@ export function reviewLoopDecision(input: {
         round,
         // The EFFECTIVE budget, not the stage setting: the prompt tells the
         // agent which round of how many it is running, and a card whose budget
-        // was extended must not be told it is on the last round.
-        rounds,
+        // was extended must not be told it is on the last round. A gate round
+        // (t3o-24) runs PAST the budget, so the header is floored at the round
+        // itself rather than claiming "round 6 of up to 5".
+        rounds: Math.max(rounds, round),
         prompt: phaseConfig.prompt,
       }),
       model: resolvePhaseModel({
@@ -193,10 +205,41 @@ export function reviewLoopDecision(input: {
       }),
       timeoutMs: phaseConfig.timeoutMs,
       maxAttempts: phaseConfig.maxAttempts,
+      // Only a review phase STARTS a round (t3o-24, D1): the reactor records
+      // the base tip fresh when it starts and carries it forward for the
+      // round's later steps.
+      recordBaseTip: phase === "review",
     };
   };
 
-  for (let round = 1; round <= rounds; round++) {
+  // The sync-base step (t3o-24, D2): machinery, not a configured phase. It
+  // runs on the STAGE's model and limits with a compiled-in prompt — a
+  // conflicted rebase needs judgment, but which reviewer persona the user
+  // hired is irrelevant to it — and it never records a tip of its own: the
+  // gate round that follows re-measures when it starts.
+  const runSync = (round: number): BoardStagePlan => ({
+    kind: "run",
+    round,
+    stepId: reviewStepId("sync", round),
+    stepLabel: reviewStepLabel("sync", round),
+    prompt: composeBoardSyncPhasePrompt({
+      round,
+      baseRefName: input.baseRefName,
+    }),
+    model: config.model,
+    runtimeMode: config.runtimeMode,
+    timeoutMs: config.timeoutMs,
+    maxAttempts: config.maxAttempts,
+    recordBaseTip: false,
+  });
+
+  for (let round = 1; ; round++) {
+    // A gate round (t3o-24, D3) is owed by the previous round's recorded sync
+    // step and runs whatever the budget says — it is a gate, not a negotiation,
+    // so it consumes neither the `rounds` budget nor the card's overrides.
+    // Only a budget round is stopped by the cap.
+    const gateRound = round > 1 && done.get(reviewStepId("sync", round - 1)) !== undefined;
+    if (round > rounds && !gateRound) break;
     const reviewStep = done.get(reviewStepId("review", round));
     if (reviewStep === undefined) return runPhase("review", round);
 
@@ -232,8 +275,33 @@ export function reviewLoopDecision(input: {
     // agent's: another round runs only when this round raised a blocking
     // finding AND rounds remain. A non-blocking round CONVERGED — the one exit
     // that is a verdict, so it alone completes `succeeded` and lets the stage
-    // auto-advance.
+    // auto-advance. Unless the base moved underneath the reviewed diff
+    // (t3o-24): a recorded sync step at this round means the gate round that
+    // follows owns the verdict, so the walk moves on to it; a stale base with
+    // no sync yet plans one instead of completing — the crossing into merge is
+    // never offered a diff that was not reviewed against the base it merges
+    // into. `baseStale` is measured against the LAST round's recorded tip, so
+    // once a gate round starts (re-recording the tip) a base that stays put
+    // reads fresh again and this arm converges.
     if (!blocking) {
+      // A sync that already ran owes its gate round UNCONDITIONALLY — the
+      // branch was already rebased and force-pushed, and only the gate round
+      // restores review coverage over it — so the walk continues past every
+      // hold here.
+      if (done.get(reviewStepId("sync", round)) !== undefined) continue;
+      if (input.baseStale) {
+        // A stop the user asked for outranks the sync step exactly as it
+        // outranks rounds that merely remain (t3o-22, D5): an unattended
+        // rebase-and-force-push past an explicit hold is a decision someone
+        // already made against. Holding here is safe — the review→merge
+        // crossing and the Merge click re-measure, so nothing merges
+        // unreviewed while the card waits. Clearing the stop re-enters the
+        // loop and plans the sync.
+        if (overrides?.stopAfterRound === round) {
+          return { kind: "complete", outcome: "blocked" };
+        }
+        return runSync(round);
+      }
       return { kind: "complete", outcome: "succeeded" };
     }
     // The user asked the loop to hold after this round (t3o-22, D5). Checked
@@ -283,6 +351,9 @@ export const ReviewLoopExecutor: BoardStageExecutor = {
       // already passes, so the seam needs no new input field.
       overrides: input.card.reviewOverrides,
       liveStepId: input.runState.liveStepId,
+      // Reactor-measured (t3o-24, D1): pure planNext cannot rev-parse.
+      baseStale: input.runState.baseStale,
+      baseRefName: input.card.worktree?.baseRefName ?? null,
     });
   },
 };

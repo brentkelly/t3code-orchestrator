@@ -27,7 +27,7 @@
  * handles — unit-testable without a server, and safe to import from the web.
  */
 import type { BoardReviewPhaseId, BoardStageRole } from "./board.ts";
-import { BOARD_REVIEW_PHASE_LABELS } from "./board.ts";
+import { BOARD_REVIEW_PHASE_LABELS, DEFAULT_BOARD_SYNC_PHASE_PROMPT } from "./board.ts";
 
 /**
  * The wording for "ask through your question tool, never in prose" (D5).
@@ -223,4 +223,31 @@ export function composeBoardReviewPhasePrompt(input: {
   return [boardReviewPhasePreamble(input), input.prompt.trim(), boardReviewPhaseProtocol(input)]
     .filter((part) => part.trim().length > 0)
     .join("\n\n");
+}
+
+/**
+ * Compose the sync-base step's agent prompt (t3o-24, D2): a round header, the
+ * compiled-in rebase instructions with the card's concrete base ref, then the
+ * completion protocol. Entirely machinery — no user-editable part — which is
+ * why it does not ride `composeBoardReviewPhasePrompt`'s preamble/prompt/
+ * protocol split over a settings-owned prompt.
+ */
+export function composeBoardSyncPhasePrompt(input: {
+  readonly round: number;
+  /** The card's recorded base branch (`worktree.baseRefName`) — the parent's
+      integration branch for a sub-board child. Null when the card carries no
+      worktree slice: the sentence is omitted (the agent resolves the base from
+      its own checkout) rather than interpolating placeholder English into the
+      prompt as if it were a branch name. */
+  readonly baseRefName: string | null;
+}): string {
+  const header =
+    input.baseRefName === null
+      ? `Code review, Sync base step, after round ${input.round}.`
+      : `Code review, Sync base step, after round ${input.round}. This card's base branch is \`${input.baseRefName}\`.`;
+  return [
+    header,
+    DEFAULT_BOARD_SYNC_PHASE_PROMPT,
+    "To finish this step, complete with a succeeded outcome and a JSON payload { rebasedSha } naming the commit the rebased branch now points at. One review round then runs on the rebased diff before the card can merge — never skip the rebase or complete succeeded without having pushed it.",
+  ].join("\n\n");
 }

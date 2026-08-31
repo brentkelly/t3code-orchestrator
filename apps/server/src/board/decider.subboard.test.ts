@@ -389,6 +389,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
               attempt: 1,
               stallCount: 0,
               lastNudgeAt: null,
+              baseTipAtRoundStart: null,
               prompt: "build it",
               providerInstanceId: ProviderInstanceId.make("codex"),
               model: "gpt-5.4",
@@ -467,6 +468,48 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
       );
       assert.include(String(failure), "advances through its 1 plan card");
     }),
+  );
+
+  it.effect(
+    "t3o-24 D4: the freeze admits exactly the regression back to the build-role stage",
+    () =>
+      Effect.gen(function* () {
+        // A child dragged back out of Done leaves the parent ahead of reality:
+        // frozen (unfinished child) but sitting in review. The move that IS the
+        // freeze re-engaging — back to the build-role stage — must land, while
+        // every other move of the frozen parent stays refused.
+        const readModel = makeReadModel(
+          makeBoard({
+            parent: { stage: "review" },
+            extraCards: [makeChild("card-child", "building")],
+          }),
+        );
+        const regressed = yield* decideEvents(
+          moveCommand({ cardId: "card-parent", toStage: "building", override: true }),
+          readModel,
+        );
+        assert.strictEqual(regressed[0]?.type, "board.card-moved");
+
+        // Forward past the freeze is still a refusal…
+        const forward = yield* decideFail(
+          moveCommand({ cardId: "card-parent", toStage: "merge", override: true }),
+          readModel,
+        );
+        assert.include(String(forward), "advances through its 1 plan card");
+        // …and so is a FORWARD move into the build-role stage (a parent parked
+        // before it): only the regression is the derived truth.
+        const fromReady = makeReadModel(
+          makeBoard({
+            parent: { stage: "ready" },
+            extraCards: [makeChild("card-child", "building")],
+          }),
+        );
+        const forwardToBuild = yield* decideFail(
+          moveCommand({ cardId: "card-parent", toStage: "building" }),
+          fromReady,
+        );
+        assert.include(String(forwardToBuild), "advances through its 1 plan card");
+      }),
   );
 
   it.effect("unfreezes the parent when every child is done or archived", () =>

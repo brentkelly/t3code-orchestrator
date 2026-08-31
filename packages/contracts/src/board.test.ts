@@ -710,6 +710,18 @@ describe("BoardCardStepState decoding (t3o-19 D7)", () => {
     expect(decoded.stepLabel).toBe("Building");
   });
 
+  it("decodes a pre-t3o-24 payload that carries no baseTipAtRoundStart key (AC7)", () => {
+    // Same replay reason: an event written before t3o-24 has no key, and a
+    // null already MEANS "no tip recorded — not stale".
+    const decoded = Schema.decodeUnknownSync(BoardCardStepState)(legacyPayload);
+    expect(decoded.baseTipAtRoundStart).toBe(null);
+    const recorded = Schema.decodeUnknownSync(BoardCardStepState)({
+      ...legacyPayload,
+      baseTipAtRoundStart: "sha-round-start",
+    });
+    expect(recorded.baseTipAtRoundStart).toBe("sha-round-start");
+  });
+
   it("still decodes a post-t3o-19 payload, stepped or unstepped", () => {
     const unstepped = Schema.decodeUnknownSync(BoardCardStepState)({
       ...legacyPayload,

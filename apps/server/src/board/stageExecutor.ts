@@ -93,6 +93,17 @@ export interface BoardStageRunState {
       that protects a live run in production is the decider's, which reads the
       card's live step directly. */
   readonly liveStepId: string | null;
+  /** Whether the card's base branch has MOVED since its recorded
+      `baseTipAtRoundStart` (t3o-24, D1) — resolved by the reactor (one
+      `rev-parse` in the project root against the run row's recorded tip)
+      because `planNext` is pure and cannot measure. Always false for a card
+      with no recorded tip (staleness is measured, not assumed), and the
+      reactor only ever measures it for a sub-board child — a top-level card's
+      base moving is the universal condition of trunk development, out of the
+      gate's scope. The review-loop executor reads it at its convergence arm to
+      decide whether a sync-base step stands between the loop and `succeeded`;
+      every other executor ignores it. */
+  readonly baseStale: boolean;
 }
 
 /** What the executor decides the reactor should do next. */
@@ -117,6 +128,14 @@ export type BoardStagePlan =
       readonly runtimeMode: RuntimeMode;
       readonly timeoutMs: number;
       readonly maxAttempts: number;
+      /** Whether this step STARTS a review round (t3o-24, D1) — the executor's
+          signal to the reactor, which cannot be allowed to parse review step
+          ids itself (D15: the reactor learns nothing). `true` has the reactor
+          measure the base branch's current tip and record it onto the run row
+          as `baseTipAtRoundStart`; `false` carries the replaced row's recorded
+          tip forward, so a round's later steps keep the tip its review
+          started from. */
+      readonly recordBaseTip: boolean;
     }
   | { readonly kind: "complete"; readonly outcome: BoardStepOutcome }
   | { readonly kind: "escalate"; readonly question: string };
@@ -165,6 +184,9 @@ export const SimpleStageExecutor: BoardStageExecutor = {
       runtimeMode: config.runtimeMode,
       timeoutMs: config.timeoutMs,
       maxAttempts: config.maxAttempts,
+      // A single-step stage runs no review rounds; the row keeps whatever tip
+      // the card last recorded (t3o-24).
+      recordBaseTip: false,
     };
   },
 };

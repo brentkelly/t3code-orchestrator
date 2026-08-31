@@ -90,6 +90,7 @@ const runningState: BoardCardStepState = {
   attempt: 1,
   stallCount: 0,
   lastNudgeAt: null,
+  baseTipAtRoundStart: null,
   prompt: "do it",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",

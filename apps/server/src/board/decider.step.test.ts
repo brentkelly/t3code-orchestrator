@@ -31,6 +31,7 @@ const frozenConfig = {
   humanInLoop: false,
   maxAttempts: 3,
   timeoutMs: 1000,
+  baseTipAtRoundStart: null,
 };
 
 function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: string }): BoardCard {
@@ -134,6 +135,32 @@ it.effect("select-step records a pending step, freezing the stage's config onto 
       assert.strictEqual(event.payload.state.prompt, "do it");
       assert.strictEqual(event.payload.state.mode, "build");
       assert.strictEqual(event.payload.state.providerInstanceId, "codex");
+    }
+  }),
+);
+
+it.effect("select-step stamps the measured base tip onto the run row (t3o-24, D1)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const event = yield* decide(
+      {
+        type: "board.card.select-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "review@1",
+        stepLabel: "Review · round 1",
+        stageLabel: "Code review",
+        ...frozenConfig,
+        baseTipAtRoundStart: "sha-round-start",
+        createdAt: NOW,
+      },
+      makeReadModel({ cards: [card], nextCardNumberByProject: {} }),
+    );
+    assert.strictEqual(event.type, "board.card-step-selected");
+    if (event.type === "board.card-step-selected") {
+      // Verbatim, like every other frozen field — staleness at the crossing is
+      // a plain inequality against this.
+      assert.strictEqual(event.payload.state.baseTipAtRoundStart, "sha-round-start");
     }
   }),
 );

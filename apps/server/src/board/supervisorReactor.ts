@@ -108,6 +108,10 @@ export type BoardMergeAttemptResult =
   /** The card is not in the merge-role stage. The button only renders there,
       so this is a client that called the RPC without one. */
   | { readonly outcome: "wrong-stage" }
+  /** The card's base moved since its last review round started (t3o-24, D2):
+      the card went back to review to rebase and run one gate round instead of
+      merging an unreviewed combined diff. */
+  | { readonly outcome: "stale-base" }
   | { readonly outcome: "unknown-card" };
 
 export interface SupervisorReactorShape {
@@ -1026,6 +1030,67 @@ const make = Effect.gen(function* () {
     }
   });
 
+  // ── Base-tip measurement (t3o-24, D1) ──────────────────────────────────
+  // One `rev-parse` in the PROJECT ROOT — never the card's worktree, whose
+  // HEAD is the card branch — against the card's recorded base ref. Null is
+  // the honest failure signal (no worktree slice, no workspace root, an
+  // unresolvable ref): staleness is measured, never assumed, so an
+  // unmeasurable tip records nothing and intercepts nothing.
+  const measureBaseTip = Effect.fn("board-supervisor-measureBaseTip")(function* (card: BoardCard) {
+    const baseRefName = card.worktree?.baseRefName ?? null;
+    if (baseRefName === null) return null;
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const cwd = projectCwd(model, card);
+    if (cwd === null) return null;
+    const tip = yield* git
+      .execute({
+        operation: "boardBaseTip.resolve",
+        cwd,
+        args: ["rev-parse", "--verify", "--quiet", `refs/heads/${baseRefName}`],
+        timeoutMs: 10_000,
+        allowNonZeroExit: true,
+      })
+      .pipe(
+        Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
+        Effect.catchCause(() => Effect.succeed("")),
+      );
+    return tip.length > 0 ? tip : null;
+  });
+
+  // Whether the card's base has MOVED since the run row's recorded
+  // `baseTipAtRoundStart` (t3o-24, D1) — the reactor's one impure input to
+  // `planNext` and to the crossing/merge-click interceptions. Generic on
+  // purpose (D15): it compares two commit ids off the run row it already
+  // owns, and learns nothing about review rounds. Scoped to sub-board
+  // children: siblings are CREATED to collide on their shared base, while a
+  // top-level card's base moving is the universal condition of trunk
+  // development, reviewed at the human's discretion (t3o-24, scope).
+  const resolveBaseStale = Effect.fn("board-supervisor-resolveBaseStale")(function* (
+    card: BoardCard,
+  ) {
+    if (card.parentCardId === null) return false;
+    const board = yield* readBoard;
+    const recorded = boardCardStepState(board, card.id)?.baseTipAtRoundStart ?? null;
+    if (recorded === null) return false;
+    const tip = yield* measureBaseTip(card);
+    if (tip === null) return false;
+    return tip !== recorded;
+  });
+
+  // The tip a select-step command records (t3o-24, D1): measured fresh when
+  // the executor's plan STARTS a review round (`recordBaseTip` — the
+  // executor's signal, so the reactor never parses review step ids), else
+  // carried forward from the row being replaced, so a round's later steps
+  // keep the tip their round's review started from.
+  const baseTipForPlan = Effect.fn("board-supervisor-baseTipForPlan")(function* (
+    card: BoardCard,
+    recordBaseTip: boolean,
+  ) {
+    if (recordBaseTip) return yield* measureBaseTip(card);
+    const board = yield* readBoard;
+    return boardCardStepState(board, card.id)?.baseTipAtRoundStart ?? null;
+  });
+
   // Generic auto-kickoff (D7): a card entering a stage (drag or create), or an
   // on-demand thread request, resolves the stage's execution config, freezes it
   // onto the run row (select-step), and spawns. Auto-kickoff acts only when the
@@ -1146,7 +1211,12 @@ const make = Effect.gen(function* () {
       },
       completions,
       // Stage entry: nothing of this card's is in flight yet.
-      runState: { round: 1, completedStepIds: [], liveStepId: null },
+      runState: {
+        round: 1,
+        completedStepIds: [],
+        liveStepId: null,
+        baseStale: yield* resolveBaseStale(card),
+      },
     });
     if (plan.kind === "complete") {
       // The executor considers this entry already complete — a multi-step
@@ -1175,6 +1245,10 @@ const make = Effect.gen(function* () {
         humanInLoop: true,
         maxAttempts: exec.maxAttempts,
         timeoutMs: exec.timeoutMs,
+        // A re-entry conversation starts no review round: carry the recorded
+        // tip forward (t3o-24, D1) so a parked card's staleness stays
+        // answerable.
+        baseTipAtRoundStart: yield* baseTipForPlan(card, false),
         createdAt: yield* nowIso,
       });
       yield* schedule();
@@ -1202,6 +1276,9 @@ const make = Effect.gen(function* () {
       humanInLoop,
       maxAttempts: plan.maxAttempts,
       timeoutMs: plan.timeoutMs,
+      // Measured fresh when this plan starts a review round, carried forward
+      // otherwise (t3o-24, D1).
+      baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
       createdAt: yield* nowIso,
     });
     // Provisioning is `schedule`'s job, not a second call here: it already
@@ -1272,6 +1349,42 @@ const make = Effect.gen(function* () {
     });
   });
 
+  // The mirror check (t3o-24, D4): a child leaving the done-role stage while
+  // its parent sits PAST the build-role stage leaves the parent ahead of
+  // reality — its review (or merge, or Done) describes an integration branch
+  // whose children are no longer all finished. Move the parent back to the
+  // build-role stage: an ordinary move (the decider's freeze-guard admits
+  // exactly this regression), whose own `handleCardMoved` abandons any live
+  // parent review step through the existing abandon path. When the child
+  // finishes again, `advanceParentIfChildrenDone` re-advances the parent and
+  // its review starts a fresh round against the changed integration branch —
+  // D1–D3 applied one level up. Guarded on the freeze actually re-engaging
+  // (unfinished children exist), so it is a cheap no-op on every other move.
+  const regressParentIfChildLeftDone = Effect.fn("board-supervisor-regressParent")(function* (
+    parentCardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const parent = board.cards.find((candidate) => candidate.id === parentCardId);
+    if (parent === undefined || parent.archivedAt !== null) return;
+    const buildStage = boardStageWithRole(board, "build");
+    if (buildStage === null) return;
+    const parentIndex = boardStageIndex(board, parent.stage);
+    const buildIndex = boardStageIndex(board, buildStage.stageId);
+    if (parentIndex < 0 || buildIndex < 0 || parentIndex <= buildIndex) return;
+    if (boardCardUnfinishedChildren(board, parent.id).length === 0) return;
+    yield* dispatch({
+      type: "board.card.move",
+      commandId: yield* commandId("regress-parent"),
+      cardId: parent.id,
+      toStage: buildStage.stageId,
+      // The parent may be two or more stages ahead (merge, Done); the
+      // regression is machinery, not a drag, but it forces adjacency the same
+      // way.
+      override: true,
+      createdAt: yield* nowIso,
+    });
+  });
+
   // A step settled `succeeded`: ask the stage executor what runs NEXT before
   // advancing the card (t3o-16). For a single-step stage the executor reports
   // `complete` (its one step is done) and this advances exactly as before; for a
@@ -1315,7 +1428,12 @@ const make = Effect.gen(function* () {
       completions,
       // The step in `state` has just SETTLED, so nothing is in flight; its
       // round is already counted through its recorded completion.
-      runState: { round: 1, completedStepIds, liveStepId: null },
+      runState: {
+        round: 1,
+        completedStepIds,
+        liveStepId: null,
+        baseStale: yield* resolveBaseStale(card),
+      },
     });
     switch (plan.kind) {
       case "run": {
@@ -1372,6 +1490,9 @@ const make = Effect.gen(function* () {
           // would reset the per-stage-entry ceiling and the review loop's real
           // bound would become rounds × phases × ceiling.
           priorInvocations: boardStageEntryInvocationCount(board, card.id),
+          // Measured fresh when this plan starts a review round, carried
+          // forward otherwise (t3o-24, D1).
+          baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
           createdAt: yield* nowIso,
         });
         if (exec.mode === "build") yield* ensureWorktree(card);
@@ -1456,7 +1577,12 @@ const make = Effect.gen(function* () {
       },
       completions,
       // The stage is settled, so nothing of this card's is in flight.
-      runState: { round: 1, completedStepIds, liveStepId: null },
+      runState: {
+        round: 1,
+        completedStepIds,
+        liveStepId: null,
+        baseStale: yield* resolveBaseStale(card),
+      },
     });
     if (plan.kind !== "run") return;
     yield* dispatch({
@@ -1480,6 +1606,9 @@ const make = Effect.gen(function* () {
       // so the per-stage-entry ceiling still applies; a resume that stalls on it
       // is the stall guard working, and it surfaces on the card.
       priorInvocations: boardStageEntryInvocationCount(board, card.id),
+      // Measured fresh when this plan starts a review round, carried forward
+      // otherwise (t3o-24, D1).
+      baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
       createdAt: yield* nowIso,
     });
     if (exec.mode === "build") yield* ensureWorktree(card);
@@ -2188,6 +2317,41 @@ const make = Effect.gen(function* () {
       return { outcome: "wrong-stage" as const };
     }
 
+    // The merge-click staleness gate (t3o-24, D2): the crossing was checked
+    // when the card entered this stage, but the human may have PARKED it here
+    // while a sibling merged underneath — so the click re-measures. A stale
+    // child goes back to the review-role stage (where the sync-base step and
+    // the gate round run) instead of merging a diff that was never reviewed
+    // against the base it merges into. Skipped when the board has no
+    // review-role stage to send it to — there is then no loop to gate with.
+    if (fresh.parentCardId !== null && (yield* resolveBaseStale(fresh))) {
+      const reviewStage = boardStageWithRole(stages, "review");
+      if (reviewStage !== null) {
+        // A conflict-fix completion re-entering here must not leave the merge
+        // armed while the card walks back through review.
+        disarmPendingMerge(fresh.id);
+        yield* dispatch({
+          type: "board.card.record-note",
+          commandId: yield* commandId("stale-base-note"),
+          cardId: fresh.id,
+          kind: "card-base-stale",
+          detail: `Held the merge: base branch '${
+            fresh.worktree?.baseRefName ?? "?"
+          }' moved since the last review round started. Rebasing onto it, then one more review round.`,
+          createdAt: yield* nowIso,
+        });
+        yield* dispatch({
+          type: "board.card.move",
+          commandId: yield* commandId("stale-base-return"),
+          cardId: fresh.id,
+          toStage: reviewStage.stageId,
+          override: true,
+          createdAt: yield* nowIso,
+        });
+        return { outcome: "stale-base" } as const;
+      }
+    }
+
     const worktree = fresh.worktree;
     const model = yield* snapshotQuery.getCommandReadModel();
     // The card's own worktree when it still has one, else the project root:
@@ -2850,6 +3014,50 @@ const make = Effect.gen(function* () {
     // which is the one authority every other move path already trusts.
     const card = event.payload.card;
     const board = yield* readBoard;
+    // ── The review→merge crossing gate (t3o-24, D2) ────────────────────────
+    // A sub-board child ARRIVING at the merge-role stage on a forward move —
+    // the auto-advance that raced a sibling's merge, or a human drag — is
+    // checked against its recorded round-start tip. Stale sends it straight
+    // back to the review-role stage, where `beginStageRun`'s plan enqueues the
+    // sync-base step and the gate round: the merge-role stage means "reviewed
+    // and ready", and a card whose base moved under its reviewed diff is
+    // neither. The early return leaves any live step alone — the card is
+    // going back to the stage that owns it.
+    {
+      const toStage = boardStageById(board, event.payload.toStage);
+      const reviewStage = boardStageWithRole(board, "review");
+      const fromIndex = boardStageIndex(board, event.payload.fromStage);
+      const toIndex = boardStageIndex(board, event.payload.toStage);
+      if (
+        card.parentCardId !== null &&
+        toStage !== null &&
+        effectiveBoardStageRole(toStage) === "merge" &&
+        reviewStage !== null &&
+        fromIndex >= 0 &&
+        toIndex > fromIndex &&
+        (yield* resolveBaseStale(card))
+      ) {
+        yield* dispatch({
+          type: "board.card.record-note",
+          commandId: yield* commandId("stale-base-note"),
+          cardId: card.id,
+          kind: "card-base-stale",
+          detail: `Held the merge crossing: base branch '${
+            card.worktree?.baseRefName ?? "?"
+          }' moved since the last review round started. Rebasing onto it, then one more review round.`,
+          createdAt: yield* nowIso,
+        });
+        yield* dispatch({
+          type: "board.card.move",
+          commandId: yield* commandId("stale-base-return"),
+          cardId: card.id,
+          toStage: reviewStage.stageId,
+          override: true,
+          createdAt: yield* nowIso,
+        });
+        return;
+      }
+    }
     const existing = boardCardStepState(board, card.id);
     let kickoffCard = card;
     if (existing !== null && !isBoardTerminalStepStatus(existing.status)) {
@@ -2920,9 +3128,12 @@ const make = Effect.gen(function* () {
 
     // A child changing stage may have been the parent's last unfinished one
     // (t3o-23, D4) — the advance helper's own guards make a non-final move a
-    // cheap no-op.
+    // cheap no-op. The mirror (t3o-24, D4): the same move may have dragged a
+    // child back OUT of Done under a parent that already advanced — both
+    // helpers guard themselves, so both are safe to ask every time.
     if (card.parentCardId !== null) {
       yield* advanceParentIfChildrenDone(card.parentCardId);
+      yield* regressParentIfChildLeftDone(card.parentCardId);
     }
   });
 

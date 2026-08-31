@@ -29,11 +29,13 @@ import * as Schema from "effect/Schema";
 import {
   BoardStageExecution,
   boardReviewLoopWalk,
+  boardReviewRoundsStarted,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
   ProviderInstanceId,
   isBoardReviewBlockingSeverity,
   parseReviewStepId,
   reviewStepId,
+  reviewStepLabel,
   type BoardCardReviewOverrides,
   type BoardModelSelection,
   type BoardReviewFinding,
@@ -43,7 +45,7 @@ import {
 
 import { ReviewLoopExecutor } from "./reviewLoopExecutor.ts";
 import type { BoardStageExecutorConfig, BoardStagePlan } from "./stageExecutor.ts";
-import { makeBoardCard } from "./supervisorHarness.testkit.ts";
+import { makeBoardCard, readyWorktree } from "./supervisorHarness.testkit.ts";
 
 const globalModel: BoardModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -102,6 +104,7 @@ const plan = (
   execution?: BoardStageExecutionReview,
   overrides: BoardCardReviewOverrides | null = null,
   liveStepId: string | null = null,
+  baseStale = false,
 ): BoardStagePlan =>
   ReviewLoopExecutor.planNext({
     card: { ...card, reviewOverrides: overrides },
@@ -111,6 +114,7 @@ const plan = (
       round: 1,
       completedStepIds: completions.map((c) => c.stepId),
       liveStepId,
+      baseStale,
     },
   });
 
@@ -128,6 +132,13 @@ describe("reviewStepId / parseReviewStepId (D8)", () => {
     expect(parseReviewStepId("review")).toBeNull();
     expect(parseReviewStepId("review@0")).toBeNull();
     expect(parseReviewStepId("building")).toBeNull();
+  });
+
+  it("round-trips the sync step's id and labels it (t3o-24)", () => {
+    expect(reviewStepId("sync", 2)).toBe("sync@2");
+    expect(parseReviewStepId("sync@2")).toEqual({ phase: "sync", round: 2 });
+    expect(parseReviewStepId("sync@0")).toBeNull();
+    expect(reviewStepLabel("sync", 2)).toBe("Sync base · round 2");
   });
 });
 
@@ -438,6 +449,38 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
         rounds: 5,
         stopAfterRound: null,
       },
+      // t3o-24: recorded sync steps walk the same gate rounds in both copies.
+      {
+        name: "gate round due after a sync, past the budget",
+        completions: [
+          completion("review@1", reviewPayload([])),
+          completion("sync@1", { rebasedSha: "s" }),
+        ],
+        rounds: 1,
+        stopAfterRound: null,
+      },
+      {
+        name: "gate round converged",
+        completions: [
+          completion("review@1", reviewPayload([])),
+          completion("sync@1", { rebasedSha: "s" }),
+          completion("review@2", reviewPayload([])),
+        ],
+        rounds: 1,
+        stopAfterRound: null,
+      },
+      {
+        name: "gate round blocking, capped beyond the budget",
+        completions: [
+          completion("review@1", reviewPayload([])),
+          completion("sync@1", { rebasedSha: "s" }),
+          completion("review@2", reviewPayload([finding("critical")])),
+          completion("triage@2", { fixedSha: "s", dispositions: [] }),
+          completion("adjudicate@2", { verdicts: [] }),
+        ],
+        rounds: 1,
+        stopAfterRound: null,
+      },
     ];
 
     for (const scenario of scenarios) {
@@ -523,8 +566,168 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       card,
       config: { ...config(), execution: simple },
       completions: [],
-      runState: { round: 1, completedStepIds: [], liveStepId: null },
+      runState: { round: 1, completedStepIds: [], liveStepId: null, baseStale: false },
     });
     expect(result.kind === "run" && result.stepId).toBe("review@1");
+  });
+});
+
+describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
+  const cleanRound = (round: number) => [completion(`review@${round}`, reviewPayload([]))];
+  const syncDone = (round: number) => completion(`sync@${round}`, { rebasedSha: "sha-rebased" });
+
+  it("AC1: a converged loop over a fresh base completes succeeded — no sync step, no extra round", () => {
+    expect(plan(cleanRound(1))).toEqual({ kind: "complete", outcome: "succeeded" });
+  });
+
+  it("D2: a converged loop over a STALE base plans the sync step instead of completing", () => {
+    const result = plan(cleanRound(1), undefined, null, null, true);
+    expect(result.kind).toBe("run");
+    if (result.kind !== "run") return;
+    expect(result.stepId).toBe("sync@1");
+    expect(result.stepLabel).toBe(reviewStepLabel("sync", 1));
+    // Machinery, not a configured phase: the STAGE's model, mode and limits.
+    expect(result.model).toEqual(globalModel);
+    expect(result.runtimeMode).toBe("auto");
+    expect(result.timeoutMs).toBe(600_000);
+    expect(result.maxAttempts).toBe(3);
+    // The sync step never records a tip of its own — the gate round does.
+    expect(result.recordBaseTip).toBe(false);
+    expect(result.prompt).toContain("rebase");
+    expect(result.prompt).toContain("--force-with-lease");
+  });
+
+  it("the sync prompt names the card's recorded base branch", () => {
+    const withWorktree = { ...card, worktree: readyWorktree("card-1") };
+    const result = ReviewLoopExecutor.planNext({
+      card: withWorktree,
+      config: config(),
+      completions: cleanRound(1),
+      runState: { round: 1, completedStepIds: ["review@1"], liveStepId: null, baseStale: true },
+    });
+    expect(result.kind === "run" && result.prompt).toContain("`main`");
+  });
+
+  it("D5: the user's stop holds the sync step — no unattended rebase past an explicit hold", () => {
+    // Converged at the stopped round over a stale base: the loop holds
+    // (blocked) instead of planning the rebase-and-force-push. The crossing
+    // and Merge-click interceptions keep the merge safe while it waits.
+    const held = plan(cleanRound(1), undefined, overrides({ stopAfterRound: 1 }), null, true);
+    expect(held).toEqual({ kind: "complete", outcome: "blocked" });
+    // A stop for a different round leaves the sync step free to run.
+    const unheld = plan(cleanRound(1), undefined, overrides({ stopAfterRound: 3 }), null, true);
+    expect(unheld.kind === "run" && unheld.stepId).toBe("sync@1");
+    // A fresh base at the stopped round still converges — the stop never held
+    // a passing loop (t3o-22, D5 unchanged).
+    expect(plan(cleanRound(1), undefined, overrides({ stopAfterRound: 1 }))).toEqual({
+      kind: "complete",
+      outcome: "succeeded",
+    });
+  });
+
+  it("omits the base-branch sentence when the card records no base ref", () => {
+    // The fixture card carries no worktree slice: the prompt must not
+    // interpolate placeholder English where a branch name belongs.
+    const result = plan(cleanRound(1), undefined, null, null, true);
+    expect(result.kind === "run" && result.prompt).not.toContain("recorded base branch");
+    expect(result.kind === "run" && result.prompt).not.toContain("This card's base branch is");
+  });
+
+  it("a stale base never preempts a round still running its phases", () => {
+    const midRound = plan(
+      [completion("review@1", reviewPayload([finding("nitpick")]))],
+      undefined,
+      null,
+      null,
+      true,
+    );
+    // The boundary is the round's END (D2: never write into a live worktree's
+    // flow mid-phase): the nitpick's triage runs first, sync only at the
+    // convergence arm.
+    expect(midRound.kind === "run" && midRound.stepId).toBe("triage@1");
+  });
+
+  it("D3/AC5: the gate round runs past an exhausted budget — a gate, not a negotiation", () => {
+    // Converged on the budget's LAST round (rounds: 1); the recorded sync step
+    // owes a gate round the cap must not stop.
+    const result = plan([...cleanRound(1), syncDone(1)], reviewExec({ rounds: 1 }));
+    expect(result.kind === "run" && result.stepId).toBe("review@2");
+    // A review phase STARTS a round: the reactor re-measures the tip (D1).
+    expect(result.kind === "run" && result.recordBaseTip).toBe(true);
+  });
+
+  it("a clean gate round over a fresh base converges", () => {
+    expect(
+      plan([...cleanRound(1), syncDone(1), ...cleanRound(2)], reviewExec({ rounds: 1 })),
+    ).toEqual({ kind: "complete", outcome: "succeeded" });
+  });
+
+  it("a base that moved AGAIN during the gate round plans another sync at the gate round", () => {
+    const result = plan(
+      [...cleanRound(1), syncDone(1), ...cleanRound(2)],
+      reviewExec({ rounds: 1 }),
+      null,
+      null,
+      true,
+    );
+    expect(result.kind === "run" && result.stepId).toBe("sync@2");
+  });
+
+  it("D3: a blocking gate round re-enters the normal triage machinery", () => {
+    const result = plan(
+      [...cleanRound(1), syncDone(1), completion("review@2", reviewPayload([finding("critical")]))],
+      reviewExec({ rounds: 5 }),
+    );
+    expect(result.kind === "run" && result.stepId).toBe("triage@2");
+  });
+
+  it("a blocking gate round beyond the budget holds blocked after its phases, like any capped round", () => {
+    const completions = [
+      ...cleanRound(1),
+      syncDone(1),
+      completion("review@2", reviewPayload([finding("critical")])),
+      completion("triage@2", { fixedSha: "s", dispositions: [] }),
+      completion("adjudicate@2", { verdicts: [] }),
+    ];
+    expect(plan(completions, reviewExec({ rounds: 1 }))).toEqual({
+      kind: "complete",
+      outcome: "blocked",
+    });
+  });
+
+  it("a blocking gate round within the budget continues into the next normal round", () => {
+    const completions = [
+      ...cleanRound(1),
+      syncDone(1),
+      completion("review@2", reviewPayload([finding("critical")])),
+      completion("triage@2", { fixedSha: "s", dispositions: [] }),
+      completion("adjudicate@2", { verdicts: [] }),
+    ];
+    const result = plan(completions, reviewExec({ rounds: 5 }));
+    expect(result.kind === "run" && result.stepId).toBe("review@3");
+  });
+
+  it("AC5: a recorded sync step never inflates the started-rounds budget floor", () => {
+    expect(
+      boardReviewRoundsStarted({
+        completions: [...cleanRound(1), syncDone(1)],
+        liveStepId: null,
+      }),
+    ).toBe(1);
+    expect(boardReviewRoundsStarted({ completions: [], liveStepId: "sync@3" })).toBe(3);
+  });
+
+  it("D1: review phases record the base tip; triage and adjudicate carry it", () => {
+    const atReview = plan([]);
+    expect(atReview.kind === "run" && atReview.recordBaseTip).toBe(true);
+    const atTriage = plan([completion("review@1", reviewPayload([finding("critical")]))]);
+    expect(atTriage.kind === "run" && atTriage.stepId).toBe("triage@1");
+    expect(atTriage.kind === "run" && atTriage.recordBaseTip).toBe(false);
+    const atAdjudicate = plan([
+      completion("review@1", reviewPayload([finding("critical")])),
+      completion("triage@1", { fixedSha: "s", dispositions: [] }),
+    ]);
+    expect(atAdjudicate.kind === "run" && atAdjudicate.stepId).toBe("adjudicate@1");
+    expect(atAdjudicate.kind === "run" && atAdjudicate.recordBaseTip).toBe(false);
   });
 });

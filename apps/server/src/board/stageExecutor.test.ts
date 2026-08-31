@@ -48,7 +48,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [],
-      runState: { round: 1, completedStepIds: [], liveStepId: null },
+      runState: { round: 1, completedStepIds: [], liveStepId: null, baseStale: false },
     });
 
     expect(plan).toEqual({
@@ -63,6 +63,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       runtimeMode: "auto",
       timeoutMs: 600_000,
       maxAttempts: 3,
+      recordBaseTip: false,
     });
   });
 
@@ -71,7 +72,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [],
-      runState: { round: 4, completedStepIds: [], liveStepId: null },
+      runState: { round: 4, completedStepIds: [], liveStepId: null, baseStale: false },
     });
 
     expect(plan.kind).toBe("run");
@@ -83,7 +84,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [],
-      runState: { round: 1, completedStepIds: ["building"], liveStepId: null },
+      runState: { round: 1, completedStepIds: ["building"], liveStepId: null, baseStale: false },
     });
 
     expect(plan).toEqual({ kind: "complete", outcome: "succeeded" });
@@ -107,7 +108,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [priorSuccess],
-      runState: { round: 1, completedStepIds: [], liveStepId: null },
+      runState: { round: 1, completedStepIds: [], liveStepId: null, baseStale: false },
     });
 
     expect(plan.kind).toBe("run");
@@ -123,7 +124,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
         maxAttempts: 1,
       }),
       completions: [],
-      runState: { round: 2, completedStepIds: [], liveStepId: null },
+      runState: { round: 2, completedStepIds: [], liveStepId: null, baseStale: false },
     });
 
     expect(plan).toEqual({
@@ -138,6 +139,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       runtimeMode: "auto",
       timeoutMs: 600_000,
       maxAttempts: 1,
+      recordBaseTip: false,
     });
   });
 });
