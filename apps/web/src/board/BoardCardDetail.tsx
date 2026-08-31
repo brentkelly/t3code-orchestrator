@@ -31,6 +31,7 @@ import {
   effectiveBoardReviewRounds,
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   type BoardCardReviewOverrides,
+  type BoardCardStageModelOverride,
 } from "@t3tools/contracts";
 import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
 import {
@@ -43,7 +44,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Dialog } from "../components/ui/dialog";
 import { randomUUID } from "../lib/utils";
-import { resolveAppModelSelectionState } from "../modelSelection";
+import { getCustomModelOptionsByInstance, resolveAppModelSelectionState } from "../modelSelection";
+import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils";
 import { boardEnvironment } from "../state/board";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
@@ -298,6 +300,23 @@ export function BoardCardDetail({
   const providerEntries = useMemo(
     () => deriveProviderInstanceEntries(serverProviders ?? []),
     [serverProviders],
+  );
+  // Resolve an override's model slug to its display name for the header pill
+  // (t3o-29, D7), the same lookup the popover's placeholder uses — so the pill,
+  // its tooltip and the popover all name a model the same way.
+  const resolveModelDisplayName = useCallback(
+    (override: BoardCardStageModelOverride): string => {
+      const option = getCustomModelOptionsByInstance(
+        allSettings,
+        serverProviders ?? [],
+        override.instanceId,
+        override.model,
+      )
+        .get(override.instanceId)
+        ?.find((candidate) => candidate.slug === override.model);
+      return option ? getTriggerDisplayModelName(option) : override.model;
+    },
+    [allSettings, serverProviders],
   );
   const agents = useMemo<BoardActivityAgentLookup>(() => {
     const byId = new Map(providerEntries.map((entry) => [entry.instanceId, entry]));
@@ -667,6 +686,7 @@ export function BoardCardDetail({
       onSetModelOverrides={(modelOverrides) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, modelOverrides } }))
       }
+      resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running for this note's purpose: a queued step has
       // already been selected onto the run row, so its model and authority are
       // frozen (t3o-21, D4) and an edit now lands on the run AFTER it — exactly

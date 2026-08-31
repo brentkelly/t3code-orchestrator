@@ -28,6 +28,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  NOW,
   codexStep,
   makeBoardCard,
   readyWorktree,
@@ -36,6 +37,7 @@ import {
 } from "./supervisorHarness.testkit.ts";
 
 const building = String(BOARD_SEED_STAGE_IDS.building);
+const reviewStage = String(BOARD_SEED_STAGE_IDS.review);
 
 /** The on-demand kickoff signal, the cheapest way to drive one real spawn
     through `beginStageRun` without standing up a whole stage transition. */
@@ -188,6 +190,92 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
       const card = buildCard({ id: "card-1" });
       const step = yield* spawnedStep([other, card], card);
       assert.strictEqual(step.providerInstanceId, String(codexStep.providerInstanceId));
+    }),
+  );
+
+  it.effect("AC1: a re-entry into a spent review loop still runs on the card's override", () =>
+    Effect.gen(function* () {
+      // The SECOND application point (t3o-29, D7): a review loop that exhausted
+      // its rounds reports `complete` forever, so dragging the card back opens a
+      // clean human-in-the-loop conversation the reactor — not an executor —
+      // owns. That conversation is still this card's run of this stage, so a
+      // pinned model must survive the re-entry rather than snap back to the
+      // workspace default. Exercised through a real spawn because no executor
+      // plans a re-entry: only the reactor's `complete` arm does.
+      const cardId = BoardCardId.make("card-1");
+      const reviewOverride: BoardCardStageModelOverride = {
+        ...opus,
+        runtimeMode: "approval-required" as const,
+      };
+      const card: BoardCard = {
+        ...makeBoardCard({ id: "card-1", stage: reviewStage, orderKey: "m" }),
+        worktree: readyWorktree("card-1"),
+        reviewOverrides: { rounds: 1, stopAfterRound: null, roundModels: {} },
+        modelOverrides: { [reviewStage]: reviewOverride },
+      };
+      // One round, run in full, still carrying an unresolved critical: the
+      // budget is spent and the loop can never converge — `planNext` returns
+      // `complete` (blocked), which is exactly the re-entry precondition.
+      const reviewCompletion = (stepId: string, payload: unknown) => ({
+        cardId,
+        stepId,
+        outcome: "succeeded" as const,
+        summary: `did ${stepId}`,
+        payload: JSON.stringify(payload),
+        threadId: null,
+        completedAt: NOW,
+      });
+      const spentRound = [
+        reviewCompletion("review@1", {
+          reviewedSha: "sha-1",
+          findings: [
+            {
+              id: "f1",
+              severity: "critical",
+              file: "src/x.ts",
+              line: 1,
+              title: "broke",
+              detail: "",
+            },
+          ],
+        }),
+        reviewCompletion("triage@1", { fixedSha: "fix-1", dispositions: [] }),
+        reviewCompletion("adjudicate@1", { verdicts: [] }),
+      ];
+
+      let selected:
+        | (SelectedStep & { readonly humanInLoop: boolean; readonly prompt: string })
+        | null = null;
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card], stepCompletions: spentRound },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 4 }),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain({
+              type: "board.card-stage-thread-requested",
+              sequence: 1,
+              payload: { cardId: card.id, stage: card.stage },
+            } as unknown as OrchestrationEvent);
+            const steps = (yield* h.commands).filter(
+              (command) => command.type === "board.card.select-step",
+            );
+            assert.equal(steps.length, 1, "exactly one re-entry step should have been selected");
+            selected = steps[0] as unknown as typeof selected;
+          }),
+      );
+
+      assert.isNotNull(selected, "the reactor should have selected a re-entry step");
+      const step = selected as NonNullable<typeof selected>;
+      // The override rides the re-entry verbatim: model, provider AND access.
+      assert.strictEqual(step.model, reviewOverride.model);
+      assert.strictEqual(step.providerInstanceId, String(reviewOverride.instanceId));
+      assert.strictEqual(step.runtimeMode, "approval-required");
+      // ...and it is unmistakably the re-entry conversation, not a fresh run:
+      // no prompt injected, human-in-the-loop forced (D7).
+      assert.strictEqual(step.humanInLoop, true);
+      assert.strictEqual(step.prompt, "");
     }),
   );
 });

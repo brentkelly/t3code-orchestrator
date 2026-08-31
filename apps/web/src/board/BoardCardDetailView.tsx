@@ -46,6 +46,7 @@ import {
   type BoardLabelId,
   type BoardStageDefinition,
   type BoardCardModelOverrides,
+  type BoardCardStageModelOverride,
   type BoardSettings,
   type BoardStageId,
   type BoardState,
@@ -87,6 +88,7 @@ import {
   boardCardModelOverrideSummary,
   boardCardModelRows,
   hasBoardCardModelOverride,
+  type BoardCardModelRowSpec,
 } from "./boardCardModelRows";
 import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
@@ -335,6 +337,12 @@ export interface BoardCardDetailViewProps {
   readonly boardSettings: BoardSettings;
   /** Write this card's per-stage model overrides; null clears them. */
   readonly onSetModelOverrides: (next: BoardCardModelOverrides | null) => void;
+  /** Resolve an override's model slug to its display name for the header pill
+      and tooltip (t3o-29, D7). Passed from the container, which holds the
+      provider list; absent, the pill falls back to the raw slug. */
+  readonly resolveModelDisplayName?:
+    | ((override: BoardCardStageModelOverride) => string)
+    | undefined;
   /** Whether a step is in flight, so the popover can say that an edit applies
       to the next run rather than the live one (t3o-29, D6). */
   readonly stepRunning?: boolean | undefined;
@@ -1086,9 +1094,26 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   });
   const modelSummary = boardCardModelOverrideSummary(modelRows, card.modelOverrides);
   const modelOverridden = hasBoardCardModelOverride(modelRows, card.modelOverrides);
-  const modelPillTitle = modelRows
-    .filter((row) => card.modelOverrides?.[row.stageId] !== undefined)
-    .map((row) => `${row.label}: ${card.modelOverrides?.[row.stageId]?.model ?? ""}`)
+  // The kebab item names the STATE ("Build" / "Build · Review", AC9); the pill
+  // names the MODEL ("Build opus-5", or "Custom models" when both are set, D7)
+  // — the pill exists so an override that changes spend/authority is legible
+  // from the card without a hover. Resolving the slug to its display name needs
+  // the provider list, which the eager view deliberately does not hold; the
+  // container passes a resolver down, and the raw slug is the fallback.
+  const resolveOverrideName = (row: BoardCardModelRowSpec): string => {
+    const override = card.modelOverrides?.[row.stageId];
+    if (override === undefined) return "";
+    return props.resolveModelDisplayName?.(override) ?? override.model;
+  };
+  const overriddenRows = modelRows.filter(
+    (row) => card.modelOverrides?.[row.stageId] !== undefined,
+  );
+  const modelPillLabel =
+    overriddenRows.length === 1
+      ? `${overriddenRows[0].label} ${resolveOverrideName(overriddenRows[0])}`
+      : "Custom models";
+  const modelPillTitle = overriddenRows
+    .map((row) => `${row.label}: ${resolveOverrideName(row)}`)
     .join("\n");
 
   // Null means "whatever the card's stage says is latest" (Planning/Ready and
@@ -1191,7 +1216,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             type="button"
           >
             <SlidersHorizontalIcon className="size-2.5" />
-            {modelSummary}
+            {modelPillLabel}
           </button>
         ) : null}
         <span className="flex-1" />
