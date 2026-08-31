@@ -10,16 +10,26 @@
  */
 import { useState } from "react";
 
-import { ProviderInstanceId, type RuntimeMode } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  type ProviderDriverKind,
+  type ProviderOptionSelection,
+  type RuntimeMode,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import { ChevronDownIcon } from "lucide-react";
 
-import type { ProviderOptionSelection } from "@t3tools/contracts";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { sortProviderInstanceEntries } from "../../providerInstances";
 import { cn } from "../../lib/utils";
-import { AccessLevelPicker } from "../chat/AccessLevelPicker";
+import { runtimeModeConfig } from "../chat/AccessLevelPicker";
+import { CompactComposerControlsMenu } from "../chat/CompactComposerControlsMenu";
 import { ModelPickerContent } from "../chat/ModelPickerContent";
-import { TraitsPicker } from "../chat/TraitsPicker";
+import {
+  buildTraitsTriggerDisplay,
+  getTraitsSectionVisibility,
+  TraitsMenuContent,
+} from "../chat/TraitsPicker";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
@@ -32,6 +42,79 @@ export type ModelSelection = ActiveModel | null;
 
 /** The stand-in instance a row with nothing picked opens its popup on. */
 const EMPTY_INSTANCE_ID = ProviderInstanceId.make("none");
+
+// Sized like the model button beside it (Button `xs`), so the two read as one row.
+const CONTROLS_TRIGGER_CLASS =
+  "h-7 min-w-0 max-w-56 shrink-0 gap-1 px-[calc(--spacing(2)-1px)] text-sm text-foreground/90 hover:text-foreground sm:h-6 sm:text-xs";
+
+/**
+ * The row's one settings control: the chat composer's combined controls menu
+ * (reasoning, context window, fast mode, access — each section only when the
+ * model supports it or the row owns it), with the current picks summarised on
+ * the trigger the way the composer's traits button does, plus the access level.
+ */
+function ModelControlsMenu(props: {
+  ariaLabel: string;
+  provider: ProviderDriverKind;
+  models: ReadonlyArray<ServerProviderModel>;
+  model: string;
+  modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
+  onModelOptionsChange: (options: ReadonlyArray<ProviderOptionSelection> | undefined) => void;
+  runtimeMode: RuntimeMode | undefined;
+  onRuntimeModeChange: (mode: RuntimeMode) => void;
+}) {
+  const traits = getTraitsSectionVisibility({
+    provider: props.provider,
+    models: props.models,
+    model: props.model,
+    prompt: "",
+    modelOptions: props.modelOptions,
+    allowPromptInjectedEffort: false,
+  });
+  const labels: string[] = [];
+  if (traits.hasAnyControls) {
+    const display = buildTraitsTriggerDisplay({
+      provider: props.provider,
+      descriptors: traits.descriptors,
+      primarySelectDescriptorId: traits.primarySelectDescriptor?.id ?? null,
+      ultrathinkPromptControlled: false,
+    });
+    if (display.label.length > 0) labels.push(display.label);
+    if (display.showFastModeIcon) labels.push("Fast");
+  }
+  if (props.runtimeMode !== undefined) {
+    labels.push(runtimeModeConfig[props.runtimeMode].label);
+  }
+  if (labels.length === 0) {
+    return null;
+  }
+  return (
+    <CompactComposerControlsMenu
+      ariaLabel={props.ariaLabel}
+      triggerLabel={<span className="truncate">{labels.join(" · ")}</span>}
+      triggerVariant="outline"
+      triggerClassName={CONTROLS_TRIGGER_CLASS}
+      align="end"
+      traitsMenuContent={
+        traits.hasAnyControls ? (
+          <TraitsMenuContent
+            provider={props.provider}
+            models={props.models}
+            model={props.model}
+            prompt=""
+            onPromptChange={() => {}}
+            modelOptions={props.modelOptions}
+            allowPromptInjectedEffort={false}
+            onModelOptionsChange={props.onModelOptionsChange}
+          />
+        ) : undefined
+      }
+      {...(props.runtimeMode === undefined
+        ? {}
+        : { runtimeMode: props.runtimeMode, onRuntimeModeChange: props.onRuntimeModeChange })}
+    />
+  );
+}
 
 /**
  * The model row. A stage names the model it runs on EXPLICITLY — there is no
@@ -55,17 +138,16 @@ export function ModelRow(props: {
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
   onChange: (selection: ModelSelection) => void;
   /** Reasoning/effort selections for the chosen model, and the setter (t3o-21).
-      Rendered as the composer's TraitsPicker; hidden when no model is picked. */
+      Rendered inside the composer's combined controls menu; hidden when no
+      model is picked. */
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   onModelOptionsChange: (options: ReadonlyArray<ProviderOptionSelection> | undefined) => void;
-  /** The stage/phase agent authority (t3o-21) — the user's, on the same row as
-      the model, exactly like the chat composer. */
+  /** The stage/phase agent authority (t3o-21) — the user's, in the same menu
+      as the model's traits, exactly like the chat composer. */
   runtimeMode: RuntimeMode;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
-  /** Hide the access-level control. The card's per-round review override
-      (t3o-22, D4) re-points the reviewer's model and effort for one round; the
-      agent's filesystem authority is a stage-wide safety posture and stays with
-      the phase config, so that round's drawer offers only the two it owns. */
+  /** Hide the access-level section — the card's per-round review override
+      (t3o-22, D4) has nowhere to keep one until a model is picked. */
   hideRuntimeMode?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -152,25 +234,25 @@ export function ModelRow(props: {
             </PopoverPopup>
           </Popover>
           {props.selection !== null && activeEntry !== null ? (
-            <TraitsPicker
+            <ModelControlsMenu
+              ariaLabel={`${props.ariaLabel} settings`}
               provider={activeEntry.driverKind}
               models={activeEntry.models}
               model={active.model}
-              prompt=""
-              onPromptChange={() => {}}
               modelOptions={props.modelOptions}
-              allowPromptInjectedEffort={false}
-              triggerVariant="outline"
-              triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
               onModelOptionsChange={props.onModelOptionsChange}
+              runtimeMode={props.hideRuntimeMode === true ? undefined : props.runtimeMode}
+              onRuntimeModeChange={props.onRuntimeModeChange}
             />
-          ) : null}
-          {props.hideRuntimeMode === true ? null : (
-            <AccessLevelPicker
-              value={props.runtimeMode}
-              onChange={props.onRuntimeModeChange}
-              ariaLabel={`${props.ariaLabel} access level`}
-              triggerClassName="rounded-lg border border-input bg-popover shadow-xs"
+          ) : props.hideRuntimeMode === true ? null : (
+            <CompactComposerControlsMenu
+              ariaLabel={`${props.ariaLabel} settings`}
+              triggerLabel={runtimeModeConfig[props.runtimeMode].label}
+              triggerVariant="outline"
+              triggerClassName={CONTROLS_TRIGGER_CLASS}
+              align="end"
+              runtimeMode={props.runtimeMode}
+              onRuntimeModeChange={props.onRuntimeModeChange}
             />
           )}
         </div>

@@ -795,6 +795,19 @@ export const BoardCardReviewSummary = Schema.Struct({
 export type BoardCardReviewSummary = typeof BoardCardReviewSummary.Type;
 
 /**
+ * One round's review-phase override (t3o-22, D4): the model the reviewer runs
+ * on, plus optionally the access level it runs under. `runtimeMode` absent
+ * inherits the review phase's configured level, exactly as an absent
+ * `roundModels` entry inherits its model — the override only ever says what
+ * it changes.
+ */
+export const BoardReviewRoundOverride = Schema.Struct({
+  ...BoardModelSelection.fields,
+  runtimeMode: Schema.optional(RuntimeMode),
+});
+export type BoardReviewRoundOverride = typeof BoardReviewRoundOverride.Type;
+
+/**
  * A card's own review-loop settings (t3o-22, D2), overriding the board-wide
  * review stage config for THIS card's run. All three are the answers to a loop
  * that will not converge: give it more rounds, give the reviewer better eyes,
@@ -820,7 +833,7 @@ export const BoardCardReviewOverrides = Schema.Struct({
       re-modelling the author are different decisions. An absent key means
       "inherit", stored as no entry rather than a copied value, so changing the
       stage setting still moves un-overridden rounds with it. */
-  roundModels: Schema.Record(Schema.String, BoardModelSelection).pipe(
+  roundModels: Schema.Record(Schema.String, BoardReviewRoundOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
 });
@@ -1781,6 +1794,31 @@ export const BoardCardUnarchiveCommand = Schema.Struct({
 });
 export type BoardCardUnarchiveCommand = typeof BoardCardUnarchiveCommand.Type;
 
+/**
+ * Purge the card outright — the destructive counterpart of archive.
+ *
+ * Archive is reversible and keeps everything: the card, its threads, its
+ * dependency edges, its history. Delete keeps NOTHING. The card leaves the read
+ * model entirely, its rows are dropped from every `board_*` table, the threads
+ * on its links are deleted with it, and its worktree and `board/*` branches are
+ * reclaimed. Only the event log — which is never rewritten — remembers it.
+ *
+ * Accepted on an archived card too: the archive sheet is the natural place to
+ * decide something is never coming back, so the two verbs compose rather than
+ * excluding each other.
+ *
+ * Client-dispatchable, unlike most destructive board writes, because a human at
+ * a confirmation dialog is the only thing that may ever issue it. No agent
+ * write path exposes it: the MCP toolkit can archive, never delete.
+ */
+export const BoardCardDeleteCommand = Schema.Struct({
+  type: Schema.Literal("board.card.delete"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardDeleteCommand = typeof BoardCardDeleteCommand.Type;
+
 // ── Label commands (t3o-06a) ───────────────────────────────────────────
 // A second board aggregate: label commands carry `labelId` (client-generated,
 // like `cardId`, so an inline create-then-tag needs no round trip) and
@@ -2350,6 +2388,37 @@ export const BoardCardUnarchivedPayload = Schema.Struct({
   card: BoardCard,
 });
 export type BoardCardUnarchivedPayload = typeof BoardCardUnarchivedPayload.Type;
+
+/**
+ * The card is gone. Everything the deletion's follow-through needs rides here,
+ * because after this event nothing can be looked up: the card is not in the
+ * read model and its rows are not in the tables.
+ *
+ * That is why `card` carries the WHOLE pre-delete aggregate rather than an id.
+ * The supervisor reactor reclaims the worktree, deletes the branches and
+ * deletes the linked threads from this payload alone, and a projection rebuilt
+ * from an empty database replays to the same end state as the live one.
+ */
+export const BoardCardDeletedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  deletedAt: IsoDateTime,
+  /** The card exactly as it stood immediately before deletion. */
+  card: BoardCard,
+  /** The threads deleted along with the card — every id on `card.threadLinks`,
+      tombstoned links included (a tombstone means the thread is already gone,
+      and `thread.delete` on a gone thread is a no-op).
+
+      Denormalised out of `card.threadLinks` deliberately: the reactor's
+      contract with this event is "delete exactly these", and freezing the list
+      at decide time keeps replay and the live path identical. */
+  threadIds: Schema.Array(ThreadId),
+  /** The card's live step state at deletion, or null. Carried so the reactor
+      can release the concurrency slot the step held — an in-memory count that
+      no replay reconstructs and no later read could recover, since the step
+      state row goes with the card. */
+  stepState: Schema.NullOr(BoardCardStepState),
+});
+export type BoardCardDeletedPayload = typeof BoardCardDeletedPayload.Type;
 
 // ── Label event payloads (t3o-06a) ─────────────────────────────────────
 // Every label event carries the full post-change `label`, exactly as card
@@ -3217,8 +3286,10 @@ export function boardCardShellFromCard(
 
 /**
  * Card deltas on the shell stream, mirroring `thread-upserted` /
- * `thread-removed`. Archiving emits `card-removed` (the card leaves the
- * live board every client renders); unarchiving emits `card-upserted`.
+ * `thread-removed`. Archiving and deleting both emit `card-removed` (the card
+ * leaves the live board every client renders — reversibly for one, not for the
+ * other, which is a distinction the shell has no reason to draw);
+ * unarchiving emits `card-upserted`.
  * Deltas carry the bounded `BoardCardShell`, never the full aggregate —
  * the same payload discipline as the snapshot (D7).
  */
@@ -3443,6 +3514,7 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardCardUnlinkThreadCommand,
   BoardCardArchiveCommand,
   BoardCardUnarchiveCommand,
+  BoardCardDeleteCommand,
   BoardLabelCreateCommand,
   BoardLabelUpdateCommand,
   BoardLabelDeleteCommand,
@@ -3491,6 +3563,7 @@ export const BOARD_EVENT_TYPES = [
   "board.card-thread-unlinked",
   "board.card-archived",
   "board.card-unarchived",
+  "board.card-deleted",
   "board.label-created",
   "board.label-updated",
   "board.label-deleted",
@@ -3578,6 +3651,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-unarchived"),
       payload: BoardCardUnarchivedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-deleted"),
+      payload: BoardCardDeletedPayload,
     }),
     Schema.Struct({
       ...base,
@@ -3878,6 +3956,28 @@ export function boardCardArchiveNeedsConfirmation(input: {
 }): boolean {
   if (input.stage === "done") return false;
   return liveBoardCardDependents(input.dependents).length > 0;
+}
+
+/**
+ * Every thread a card delete takes with it: one id per link the card carries,
+ * tombstoned links included.
+ *
+ * Tombstoned links are in deliberately. A tombstone means the thread was
+ * already deleted, and `thread.delete` on a thread that is already gone is a
+ * no-op — so including them costs nothing and keeps the rule "the card's links
+ * are the list" with no exceptions to reason about.
+ *
+ * The list is what the CARD knows, which is not quite every thread the card
+ * ever had: unlinking a thread that is still alive removes the link outright
+ * (only a deleted thread's link tombstones), so a thread someone deliberately
+ * detached from the card survives the delete as a standalone thread. That is
+ * the right answer anyway — detaching is how you say "this thread is not part
+ * of the card".
+ */
+export function boardCardDeletableThreadIds(
+  card: Pick<BoardCard, "threadLinks">,
+): ReadonlyArray<ThreadId> {
+  return card.threadLinks.map((link) => link.threadId);
 }
 
 /**

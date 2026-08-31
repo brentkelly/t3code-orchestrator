@@ -41,7 +41,7 @@ export interface BoardBaseBranchSyncResult {
  */
 export const pullMergedBaseBranch = Effect.fn("pullMergedBaseBranch")(function* (input: {
   /** Passed in rather than read from context so this stays a leaf, matching
-      `deleteMergedCardBranch`: the reactor already holds the driver. */
+      `deleteCardBranch`: the reactor already holds the driver. */
   readonly git: GitVcsDriver.GitVcsDriver["Service"];
   readonly cwd: string;
   readonly baseBranch: string;

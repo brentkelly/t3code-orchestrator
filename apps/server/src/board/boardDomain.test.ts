@@ -4,6 +4,9 @@
  * threads, thread-deletion tombstoning, archive/unarchive — dispatched
  * through the real engine, with the projection tables, shell snapshot, and
  * a from-empty replay all agreeing at the end.
+ *
+ * Plus the destructive counterpart: a card DELETE, which is the only board
+ * write whose correctness rests on things being gone rather than present.
  */
 import {
   BoardCardId,
@@ -272,6 +275,115 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
         "board.card-reordered",
       ]);
 
+      let replayed = createEmptyReadModel(t0);
+      for (const event of events) {
+        replayed = yield* projectEvent(replayed, event);
+      }
+      assert.deepStrictEqual(replayed.board, rehydrated.board);
+    }),
+  );
+});
+
+it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete", (it) => {
+  it.effect("purges the card, rewrites the edges into it, and never re-issues its key", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      yield* engine.dispatch(createProject(projectA, "a"));
+      yield* engine.dispatch(
+        createCard({ cardId: cardOne, projectId: projectA, orderKey: "m", n: "one" }),
+      );
+      yield* engine.dispatch(
+        createCard({ cardId: cardTwo, projectId: projectA, orderKey: "t", n: "two" }),
+      );
+      // card-two depends on card-one, and carries a brief so the body table
+      // has a row of its own to prove untouched.
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-two-deps"),
+        cardId: cardTwo,
+        dependsOn: [cardOne],
+        brief: "Depends on card one.",
+        createdAt: t0,
+      });
+      // A brief and a linked thread on the card being deleted, so the purge
+      // has satellite rows to remove.
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-one-brief"),
+        cardId: cardOne,
+        brief: "The card that goes.",
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create"),
+        threadId,
+        projectId: projectA,
+        title: "Planning thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.link-thread",
+        commandId: CommandId.make("cmd-card-link"),
+        cardId: cardOne,
+        threadId,
+        role: "planning",
+        createdAt: t0,
+      });
+
+      yield* engine.dispatch({
+        type: "board.card.delete",
+        commandId: CommandId.make("cmd-card-delete"),
+        cardId: cardOne,
+        createdAt: t0,
+      });
+
+      // Gone from the read model — the difference from archive, which keeps
+      // the card with `archivedAt` set.
+      const afterDelete = yield* snapshotQuery.getCommandReadModel();
+      assert.deepStrictEqual(
+        afterDelete.board?.cards.map((card) => card.id),
+        [cardTwo],
+      );
+      // Gone from the live board too.
+      const shell = yield* snapshotQuery.getShellSnapshot();
+      assert.notInclude(shell.cards?.map((card) => card.cardId) ?? [], cardOne);
+
+      // The edge into it was REWRITTEN, not left dangling: an unresolvable
+      // dependency id counts as unmet forever, so leaving it would block
+      // card-two with nothing left that could ever unblock it.
+      assert.deepStrictEqual(afterDelete.board?.cards[0]?.dependsOn, []);
+
+      // The key stays spent. Without the number floor the next create in this
+      // project would re-issue CARD-1 and two cards would answer to it.
+      assert.deepStrictEqual(afterDelete.board?.nextCardNumberByProject, { [projectA]: 3 });
+      yield* engine.dispatch(
+        createCard({ cardId: cardOther, projectId: projectA, orderKey: "z", n: "other" }),
+      );
+      const afterRecreate = yield* snapshotQuery.getCommandReadModel();
+      assert.deepStrictEqual(
+        (afterRecreate.board?.cards ?? []).map((card) => card.key).toSorted(),
+        ["CARD-2", "CARD-3"],
+      );
+
+      // Replay from empty must reach the same place as the tables: the whole
+      // point of `board.card-deleted` carrying a removal the projector applies
+      // rather than the projection quietly dropping rows.
+      const rehydrated = yield* snapshotQuery.getCommandReadModel();
+      const events: OrchestrationEvent[] = Array.from(
+        yield* Stream.runCollect(engine.readEvents(0)),
+      );
+      assert.include(
+        events.map((event) => event.type),
+        "board.card-deleted",
+      );
       let replayed = createEmptyReadModel(t0);
       for (const event of events) {
         replayed = yield* projectEvent(replayed, event);

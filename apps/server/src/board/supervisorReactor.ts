@@ -76,7 +76,7 @@ import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts"
 import { boardSnapshotQueryMethodsOf } from "./projection.ts";
 import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { pullMergedBaseBranch } from "./baseBranchSync.ts";
-import { deleteMergedCardBranch } from "./branchCleanup.ts";
+import { deleteCardBranch } from "./branchCleanup.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
@@ -1779,7 +1779,7 @@ const make = Effect.gen(function* () {
     const cwd = projectCwd(model, card);
     if (cwd === null) return;
 
-    const result = yield* deleteMergedCardBranch({ git, cwd, branch: worktree.branch }).pipe(
+    const result = yield* deleteCardBranch({ git, cwd, branch: worktree.branch }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: branch cleanup failed", {
           cardId: card.id,
@@ -1905,7 +1905,7 @@ const make = Effect.gen(function* () {
    * the commits already live in the base branch, so neither the checkout nor
    * the branch holds anything that exists nowhere else.
    *
-   * THE ORDER IS THE POINT. `deleteMergedCardBranch` refuses to delete a local
+   * THE ORDER IS THE POINT. `deleteCardBranch` refuses to delete a local
    * branch a worktree still has checked out, and until this ran second that
    * refusal was the NORMAL outcome — every finished card left its local
    * `board/*` branch behind, permanently: archive reclaims a worktree but
@@ -2484,6 +2484,91 @@ const make = Effect.gen(function* () {
     yield* reclaimCardWorktree(card);
   });
 
+  /**
+   * A card was DELETED — the destructive follow-through archive never does.
+   *
+   * Everything here reads from the event payload and nothing from the board:
+   * the card left the read model and its rows left the tables in the same
+   * transaction that produced this event, so by the time the reactor runs there
+   * is nothing left to look up.
+   *
+   * The order is deliberate. Threads go first, so the agents writing into the
+   * worktree are stopped before it is pulled out from under them. The worktree
+   * goes next, FORCED — the normal clean-and-pushed refusal exists to protect
+   * work the user might still want, and the user has just said, at a dialog
+   * that spells it out, that they do not. The branches go last, because
+   * `deleteCardBranch` refuses a local branch a worktree still holds and the
+   * reclaim is what unholds it.
+   *
+   * Every step is best-effort and reports only to the log. There is no card to
+   * put an activity row on, and there is no useful way to fail: the card is
+   * already gone from the user's board, so an error here can only be tidied up
+   * by hand, never retried.
+   */
+  const handleCardDeleted = Effect.fn("board-supervisor-handleCardDeleted")(function* (
+    event: Extract<OrchestrationEvent, { type: "board.card-deleted" }>,
+  ) {
+    const card = event.payload.card;
+    // Per-card in-memory bookkeeping outlives the card unless it is reaped
+    // here — each entry is a leak the process never gets back.
+    settledAtDone.delete(String(card.id));
+    disarmPendingMerge(card.id);
+    // Release the slot the card's step held. NOT a `board.card.settle-step`
+    // dispatch: that command requires the card to exist, and it does not any
+    // more. The step state was frozen into the payload for exactly this — the
+    // slot count is in-memory, so nothing else could ever recover it and the
+    // board would run one step short of its ceiling for the rest of the
+    // process's life.
+    const stepState = event.payload.stepState;
+    if (stepState !== null) yield* releaseSlot(stepState);
+
+    for (const threadId of event.payload.threadIds) {
+      yield* dispatch({
+        type: "thread.delete",
+        commandId: yield* commandId("delete-card-thread"),
+        threadId,
+      });
+    }
+
+    const worktree = card.worktree;
+    if (worktree !== null) {
+      const model = yield* snapshotQuery.getCommandReadModel();
+      const cwd = projectCwd(model, card);
+      if (cwd !== null) {
+        if (worktree.status === "ready" && worktree.path !== null) {
+          yield* reclaimBoardCardWorktree({
+            projectCwd: cwd,
+            worktreePath: worktree.path,
+            force: true,
+          }).pipe(
+            Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("board supervisor: worktree removal on card delete failed", {
+                cardId: card.id,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+        }
+        // Attempted whatever the worktree's state — a card can carry a branch
+        // whose worktree was already reclaimed (at an earlier archive, or at
+        // Done), and that branch is exactly the one nothing else will collect.
+        yield* deleteCardBranch({ git, cwd, branch: worktree.branch }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board supervisor: branch cleanup on card delete failed", {
+              cardId: card.id,
+              branch: worktree.branch,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      }
+    }
+
+    // The released slot is capacity the board can hand to whatever is queued.
+    yield* schedule();
+  });
+
   // A card was created (D10): if it landed in an auto-executing stage, kick off
   // exactly as a drag would. The created payload is flat, so re-read the card.
   const handleCardCreated = Effect.fn("board-supervisor-handleCardCreated")(function* (
@@ -2752,6 +2837,8 @@ const make = Effect.gen(function* () {
         return handleStepCompleted(event);
       case "board.card-archived":
         return handleArchived(event);
+      case "board.card-deleted":
+        return handleCardDeleted(event);
       default:
         return Effect.void;
     }
@@ -2862,7 +2949,8 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-stage-thread-requested" &&
           event.type !== "board.card-updated" &&
           event.type !== "board.card-step-completed" &&
-          event.type !== "board.card-archived"
+          event.type !== "board.card-archived" &&
+          event.type !== "board.card-deleted"
         ) {
           return Effect.void;
         }

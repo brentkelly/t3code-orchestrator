@@ -16,8 +16,9 @@ import {
   boardReviewRoundsStarted,
   isBoardReviewLoopHeld,
   type BoardCardReviewOverrides,
-  type BoardModelSelection,
   type BoardReviewPhaseId,
+  type BoardReviewRoundOverride,
+  type RuntimeMode,
   type BoardStepCompletion,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -442,22 +443,26 @@ function NoConvergenceBlock({
 /**
  * The settings drawer a FUTURE round opens (t3o-22, D4).
  *
- * Model and reasoning effort only. The agent's access level is a stage-wide
- * safety posture rather than a per-round dial, so it stays on the phase config
- * where it is set once and reviewed as one decision — and the override it does
- * carry re-points the REVIEW phase alone, because escalating the reviewer and
- * re-modelling the author who fixes the code are different calls.
+ * The same combined controls menu as the chat composer: model, reasoning,
+ * whatever else the model supports, and the access level. The override
+ * re-points the REVIEW phase alone, because escalating the reviewer and
+ * re-modelling the author who fixes the code are different calls. Access
+ * shows the review phase's configured level until the round sets its own,
+ * and is offered only once a model is picked: an override entry is a model
+ * plus what it changes, and has nowhere to keep an access level alone.
  */
 function PlannedRoundSettings({
   round,
   previousRound,
   model,
+  phaseRuntimeMode,
   onChange,
 }: {
   readonly round: number;
   readonly previousRound: number;
-  readonly model: BoardModelSelection | null;
-  readonly onChange: (model: BoardModelSelection | null) => void;
+  readonly model: BoardReviewRoundOverride | null;
+  readonly phaseRuntimeMode: RuntimeMode;
+  readonly onChange: (model: BoardReviewRoundOverride | null) => void;
 }) {
   const settings = usePrimarySettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
@@ -476,7 +481,7 @@ function PlannedRoundSettings({
             active.model,
           )
         }
-        hideRuntimeMode
+        hideRuntimeMode={model === null}
         instanceEntries={instanceEntries}
         label={`Round ${round} review model`}
         modelOptions={model?.options}
@@ -487,6 +492,7 @@ function PlannedRoundSettings({
               : {
                   ...selection,
                   ...(model?.options === undefined ? {} : { options: model.options }),
+                  ...(model?.runtimeMode === undefined ? {} : { runtimeMode: model.runtimeMode }),
                 },
           )
         }
@@ -495,8 +501,10 @@ function PlannedRoundSettings({
             model === null ? null : { ...model, ...(options === undefined ? {} : { options }) },
           )
         }
-        onRuntimeModeChange={() => {}}
-        runtimeMode="auto"
+        onRuntimeModeChange={(runtimeMode) =>
+          onChange(model === null ? null : { ...model, runtimeMode })
+        }
+        runtimeMode={model?.runtimeMode ?? phaseRuntimeMode}
         selection={model === null ? null : { instanceId: model.instanceId, model: model.model }}
       />
       <p className="text-[11px] text-muted-foreground">
@@ -518,6 +526,7 @@ export function BoardCardReviewPane({
   onResume,
   onSetRounds,
   onSetRoundModel,
+  phaseRuntimeMode,
   onAdvance,
   onBackToThread,
   onOpenThread,
@@ -548,10 +557,13 @@ export function BoardCardReviewPane({
   /** Set the card's round budget. Absent leaves the loop read-only — the pane
       still reports a stalled loop, it just cannot offer to restart it. */
   readonly onSetRounds?: ((rounds: number) => void) | undefined;
-  /** Set (or clear, with null) a future round's review model. */
+  /** Set (or clear, with null) a future round's review model and access level. */
   readonly onSetRoundModel?:
-    | ((round: number, model: BoardModelSelection | null) => void)
+    | ((round: number, model: BoardReviewRoundOverride | null) => void)
     | undefined;
+  /** The review phase's EFFECTIVE access level, resolved by the caller — what
+      a round without its own shows and inherits. */
+  readonly phaseRuntimeMode?: RuntimeMode | undefined;
   /** Move the card on despite a loop that never converged (D8). */
   readonly onAdvance?: (() => void) | undefined;
   readonly onBackToThread: () => void;
@@ -708,6 +720,7 @@ export function BoardCardReviewPane({
             <PlannedRoundSettings
               model={overrides?.roundModels[String(plannedRound)] ?? null}
               onChange={(model) => onSetRoundModel?.(plannedRound, model)}
+              phaseRuntimeMode={phaseRuntimeMode ?? "auto"}
               previousRound={plannedRound - 1}
               round={plannedRound}
             />

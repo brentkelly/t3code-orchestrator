@@ -227,12 +227,24 @@ export interface BoardCardWorktreeReclaimResult {
  * Reclaim a card's worktree at archive (D6/D15): remove it only when it is
  * clean and pushed, otherwise leave it and report why so the card can flag it.
  * The caller records the outcome through `board.card.reclaim-worktree`.
+ *
+ * `force` bypasses BOTH the safety decision and git's own refusal to remove a
+ * dirty checkout, and exists for exactly one caller: card delete, where a human
+ * has confirmed at a dialog that the card and everything under it is going. The
+ * refusal this skips is the whole point of the normal path — it never destroys
+ * uncommitted work to save disk — so a forced reclaim always returns `removed`
+ * or fails; it can never come back `blocked`.
  */
 export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(function* (input: {
   readonly projectCwd: string;
   readonly worktreePath: string;
+  readonly force?: boolean | undefined;
 }) {
   const git = yield* GitVcsDriver.GitVcsDriver;
+  if (input.force === true) {
+    yield* git.removeWorktree({ cwd: input.projectCwd, path: input.worktreePath, force: true });
+    return { outcome: "removed", reason: null } satisfies BoardCardWorktreeReclaimResult;
+  }
   const status = yield* git.statusDetails(input.worktreePath);
   const decision = boardCardWorktreeReclaimDecision(status);
   if (!decision.safe) {

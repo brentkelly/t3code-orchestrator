@@ -160,7 +160,7 @@ function getSelectedTraits(
   };
 }
 
-function getTraitsSectionVisibility(input: {
+export function getTraitsSectionVisibility(input: {
   provider: ProviderDriverKind;
   models: ReadonlyArray<ServerProviderModel>;
   model: string | null | undefined;

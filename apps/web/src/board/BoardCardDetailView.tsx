@@ -49,7 +49,8 @@ import {
   type EnvironmentId,
   type ThreadId,
   type BoardCardReviewOverrides,
-  type BoardModelSelection,
+  type BoardReviewRoundOverride,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import {
@@ -68,6 +69,7 @@ import {
   MessageSquareIcon,
   SquareIcon,
   RefreshCcwIcon,
+  Trash2Icon,
   XIcon,
 } from "lucide-react";
 import { Suspense, lazy, useState } from "react";
@@ -79,6 +81,7 @@ import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
+import { BoardDeleteConfirmDialog } from "./BoardDeleteConfirmDialog";
 import { BoardLabelChips } from "./BoardLabelChips";
 import { BoardLabelField } from "./BoardLabelField";
 import {
@@ -233,8 +236,11 @@ export interface BoardCardDetailViewProps {
   readonly onResumeReview?: ((rounds: number) => void) | undefined;
   readonly onSetReviewRounds?: ((rounds: number) => void) | undefined;
   readonly onSetReviewRoundModel?:
-    | ((round: number, model: BoardModelSelection | null) => void)
+    | ((round: number, model: BoardReviewRoundOverride | null) => void)
     | undefined;
+  /** The review phase's effective access level (t3o-21), what a round override
+      without its own inherits. */
+  readonly reviewPhaseRuntimeMode?: RuntimeMode | undefined;
   readonly onStopAfterRound?: ((round: number | null) => void) | undefined;
   /** The thread pane `+` menu's restart affordance (t3o-14): present only when
       the card's current stage auto-executes, `null` otherwise. */
@@ -271,6 +277,9 @@ export interface BoardCardDetailViewProps {
       round trip can't be re-entered by a second click. */
   readonly merging: boolean;
   readonly onArchiveToggle: () => void;
+  /** Purge the card outright. Always behind `BoardDeleteConfirmDialog` — the
+      server does not ask, so this must never be reachable without one. */
+  readonly onDelete: () => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
 }
@@ -940,6 +949,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     dependents: props.detail.dependents,
   });
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   // Null means "whatever the card's stage says is latest" (Planning/Ready and
   // Build open on the thread, the review stages on the Review pane): the modal
@@ -1008,6 +1018,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
               {archived ? "Restore card" : "Archive card"}
             </MenuItem>
+            {/* Unconditionally confirmed, unlike archive: there is no version
+                of this the user can undo if they meant something else. */}
+            <MenuItem onClick={() => setDeleteConfirmOpen(true)} variant="destructive">
+              <Trash2Icon />
+              Delete card…
+            </MenuItem>
           </MenuPopup>
         </Menu>
         <BoardArchiveConfirmDialog
@@ -1016,6 +1032,15 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           onConfirm={props.onArchiveToggle}
           onOpenChange={setArchiveConfirmOpen}
           open={archiveConfirmOpen}
+        />
+        <BoardDeleteConfirmDialog
+          branch={card.worktree?.branch ?? null}
+          cardKey={card.key}
+          dependents={liveDependents}
+          onConfirm={props.onDelete}
+          onOpenChange={setDeleteConfirmOpen}
+          open={deleteConfirmOpen}
+          threadCount={card.threadLinks.length}
         />
         <button
           className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -1071,6 +1096,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 })()}
                 onBackToThread={() => setPane("thread")}
                 onSetRoundModel={props.onSetReviewRoundModel}
+                phaseRuntimeMode={props.reviewPhaseRuntimeMode}
                 onResume={props.onResumeReview}
                 onSetRounds={props.onSetReviewRounds}
                 overrides={props.reviewOverrides}

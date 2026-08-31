@@ -32,6 +32,8 @@ import {
   type BoardCardReviewOverrides,
   type BoardModelSelection,
   type BoardReviewPhaseExecution,
+  type BoardReviewRoundOverride,
+  type RuntimeMode,
   type BoardReviewPhaseId,
   type BoardStageExecutionReview,
   type BoardStepCompletion,
@@ -98,10 +100,28 @@ function resolvePhaseModel(input: {
   readonly phase: BoardReviewPhaseId;
   readonly phaseConfig: BoardReviewPhaseExecution;
   readonly fallback: BoardModelSelection;
-  readonly roundOverride: BoardModelSelection | undefined;
+  readonly roundOverride: BoardReviewRoundOverride | undefined;
 }): BoardModelSelection {
-  if (input.phase === "review" && input.roundOverride !== undefined) return input.roundOverride;
+  if (input.phase === "review" && input.roundOverride !== undefined) {
+    const { instanceId, model, options } = input.roundOverride;
+    return { instanceId, model, ...(options === undefined ? {} : { options }) };
+  }
   return input.phaseConfig.model ?? input.fallback;
+}
+
+/**
+ * The access level a phase runs under: the round override's when this is the
+ * review phase and the override names one, else the phase config's. The
+ * review stage is always build-mode (resolveBoardStageExecution forces it), so
+ * an unset level defaults to `auto` (t3o-21).
+ */
+function resolvePhaseRuntimeMode(input: {
+  readonly phase: BoardReviewPhaseId;
+  readonly phaseConfig: BoardReviewPhaseExecution;
+  readonly roundOverride: BoardReviewRoundOverride | undefined;
+}): RuntimeMode {
+  const override = input.phase === "review" ? input.roundOverride?.runtimeMode : undefined;
+  return effectiveBoardRuntimeMode(override ?? input.phaseConfig.runtimeMode, "build");
 }
 
 /**
@@ -166,9 +186,11 @@ export function reviewLoopDecision(input: {
         fallback: config.model,
         roundOverride: overrides?.roundModels[String(round)],
       }),
-      // The review stage is always build-mode (resolveBoardStageExecution forces
-      // it), so an unset phase access level defaults to `auto` (t3o-21).
-      runtimeMode: effectiveBoardRuntimeMode(phaseConfig.runtimeMode, "build"),
+      runtimeMode: resolvePhaseRuntimeMode({
+        phase,
+        phaseConfig,
+        roundOverride: overrides?.roundModels[String(round)],
+      }),
       timeoutMs: phaseConfig.timeoutMs,
       maxAttempts: phaseConfig.maxAttempts,
     };

@@ -27,6 +27,7 @@ import {
   boardCardPlans,
   boardCardPullRequestsEqual,
   BOARD_REVIEW_MAX_ROUNDS,
+  boardCardDeletableThreadIds,
   boardCardStepCompletions,
   boardCardStepState,
   boardReviewRoundsStarted,
@@ -108,7 +109,8 @@ type PlannedOrchestrationEvent = DistributiveOmit<OrchestrationEvent, "sequence"
  * What one board command decides. Almost every command decides a single
  * event; archive and unarchive decide a list, because releasing or re-arming
  * a dependency gate re-flags the cards on the other end of the edge (t3o-13,
- * D5). The engine accepts either.
+ * D5), and delete decides a list for the same reason plus the edge rewrites
+ * a permanent removal forces. The engine accepts either.
  */
 export type BoardDecision = PlannedOrchestrationEvent | ReadonlyArray<PlannedOrchestrationEvent>;
 
@@ -1099,6 +1101,72 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         unarchived,
         ...(yield* boardDependentBlockedEvents({ board, command, changed: nextCard })),
       ];
+    }
+
+    case "board.card.delete": {
+      // Archived cards delete too (the archive sheet is where "never coming
+      // back" gets decided), so this requires existence, not activity.
+      const card = yield* requireBoardCard({ board, command });
+      // The card is about to leave `board.cards`, so every derivation below is
+      // computed against the board WITHOUT it — the same list the projector
+      // and a from-empty replay will see.
+      const remaining = board.cards.filter((candidate) => candidate.id !== command.cardId);
+      const deleted: PlannedOrchestrationEvent = {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-deleted",
+        payload: {
+          cardId: command.cardId,
+          deletedAt: command.createdAt,
+          card,
+          threadIds: boardCardDeletableThreadIds(card),
+          stepState: boardCardStepState(board, command.cardId),
+        },
+      };
+      // Dependency edges pointing at the deleted card are REWRITTEN, not left
+      // to dangle — the one place delete and archive genuinely differ on
+      // dependencies (D1). An archived dependency stops gating because the
+      // archive is reversible and the edge must survive to be re-armed; a
+      // deleted one can never come back, and `unmetBoardCardDependencies`
+      // counts an unresolvable id as unmet forever, so leaving the edge would
+      // block every dependent permanently with no card left to unblock them.
+      const edited: Array<PlannedOrchestrationEvent> = [];
+      for (const dependent of remaining) {
+        if (!dependent.dependsOn.includes(command.cardId)) continue;
+        const dependsOn = dependent.dependsOn.filter((id) => id !== command.cardId);
+        const nextCard: BoardCard = {
+          ...dependent,
+          dependsOn,
+          blocked: deriveBoardCardBlocked({
+            board,
+            stage: dependent.stage,
+            dependsOn,
+            cards: remaining,
+          }),
+          updatedAt: command.createdAt,
+        };
+        edited.push({
+          ...(yield* makeBoardEventBase({
+            cardId: dependent.id,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "board.card-updated",
+          payload: {
+            cardId: dependent.id,
+            card: nextCard,
+          },
+        });
+      }
+      // The edits ride FIRST. Each carries a `card` the projector upserts
+      // wholesale, and an upsert of a dependent computed without the deleted
+      // card is only correct once — or before — the deleted card is gone;
+      // ordering them ahead of the removal makes that true on the live path
+      // and on replay alike.
+      return [...edited, deleted];
     }
 
     case "board.label.create": {

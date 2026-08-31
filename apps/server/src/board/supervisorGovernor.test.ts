@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import {
   buildingCard,
   cardArchived,
+  cardDeleted,
   codexStep,
   movedToBuilding,
   settingsWith,
@@ -150,6 +151,43 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
 
         // Over the whole run, accounting reconciles exactly to baseline.
         assert.strictEqual(yield* slots.heldTotal, baseline);
+      }),
+  ),
+);
+
+it.effect("a card DELETE releases the running step's slot and deletes its threads", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("doomed", "m")], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ slots, pumpDomain, board, commands }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(buildingCard("doomed", "m"), 1));
+        assert.strictEqual(yield* slots.heldTotal, 1);
+        const running = boardCardStepState(yield* board, BoardCardId.make("doomed"));
+        assert.strictEqual(running?.status, "running");
+        const spawned = running!.threadId!;
+
+        // The delete already happened: the card and its step-state row left the
+        // read model with the event, so the reactor gets exactly what the
+        // payload carries and nothing else. That is the whole reason the step
+        // state rides the payload — the slot count is in-memory, so no later
+        // read could recover it and the board would run one short of its
+        // ceiling for the rest of the process's life.
+        const deleted = (yield* board).cards.find(
+          (card) => card.id === BoardCardId.make("doomed"),
+        )!;
+        yield* pumpDomain(cardDeleted(deleted, 2, running!));
+
+        assert.strictEqual(yield* slots.heldTotal, 0);
+        const dispatched = yield* commands;
+        assert.deepStrictEqual(
+          dispatched
+            .filter((command) => command.type === "thread.delete")
+            .map((command) => command.threadId),
+          [spawned],
+        );
       }),
   ),
 );
