@@ -32,8 +32,13 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-const { BoardCardDetailPanel, boardCardIsDone, initialBoardCardPane, initialBoardCardThreadId } =
-  await import("./BoardCardDetailView");
+const {
+  BoardCardDetailPanel,
+  boardCardIsDone,
+  initialBoardCardPane,
+  initialBoardCardThreadId,
+  isBoardCardThreadLocked,
+} = await import("./BoardCardDetailView");
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const environmentId = "env-1" as never;
@@ -525,6 +530,31 @@ describe("initialBoardCardPane", () => {
       (stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.review,
     ).map((stage) => ({ ...stage, role: null }));
     expect(initialBoardCardPane(stages, BOARD_SEED_STAGE_IDS.done)).toBe("thread");
+  });
+
+  it("opens a split parent on its plans until review (t3o-28, D4)", () => {
+    // A parent's build IS its sub-board, so every stage short of review lands
+    // on the plan list rather than a thread that finished during planning.
+    for (const stage of [
+      BOARD_SEED_STAGE_IDS.planning,
+      BOARD_SEED_STAGE_IDS.ready,
+      BOARD_SEED_STAGE_IDS.building,
+    ]) {
+      expect(initialBoardCardPane(BOARD_SEED_STAGES, stage, 3)).toBe("plan");
+      expect(isBoardCardThreadLocked(BOARD_SEED_STAGES, stage, 3)).toBe(true);
+    }
+
+    // At review the parent's own thread wakes up — the final review runs on
+    // the integration branch — so the ordinary rules resume.
+    expect(initialBoardCardPane(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.review, 3)).toBe("review");
+    expect(isBoardCardThreadLocked(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.review, 3)).toBe(false);
+
+    // A card with no live children is untouched at every stage: a plain card,
+    // and a parent whose split has been fully archived away.
+    expect(initialBoardCardPane(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.building, 0)).toBe(
+      "thread",
+    );
+    expect(initialBoardCardPane(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.building)).toBe("thread");
   });
 });
 

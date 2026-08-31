@@ -4,7 +4,12 @@
  * advances to the next stage in order when the last child finishes — by
  * reaching Done, or by being archived (an archived child counts as done, D6).
  */
-import { BoardCardId, type BoardCard, type OrchestrationEvent } from "@t3tools/contracts";
+import {
+  BoardCardId,
+  BoardStageId,
+  type BoardCard,
+  type OrchestrationEvent,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 
 import * as Effect from "effect/Effect";
@@ -45,6 +50,24 @@ const cardCreated = (card: BoardCard, sequence: number): OrchestrationEvent =>
     },
   }) as unknown as OrchestrationEvent;
 
+/** A `board.plans-approved` event carrying the parent — the reactor's
+    `handlePlansApproved` reads only `payload.card`. */
+const plansApproved = (
+  card: BoardCard,
+  childCardIds: ReadonlyArray<BoardCardId>,
+  sequence: number,
+): OrchestrationEvent =>
+  ({
+    type: "board.plans-approved",
+    sequence,
+    payload: {
+      cardId: card.id,
+      card,
+      childCardIds,
+      approvedAt: card.updatedAt,
+    },
+  }) as unknown as OrchestrationEvent;
+
 const parentId = BoardCardId.make("card-parent");
 
 const parentCard = (): BoardCard => ({
@@ -62,6 +85,16 @@ const childCard = (id: string, stage: string, archivedAt: string | null = null):
   ...makeBoardCard({ id, stage, orderKey: "m" }),
   parentCardId: parentId,
   archivedAt,
+});
+
+/** A child waiting on a sibling, the shape the plan graph materialises. */
+const childWaitingOn = (
+  id: string,
+  stage: string,
+  dependsOn: ReadonlyArray<string>,
+): BoardCard => ({
+  ...childCard(id, stage),
+  dependsOn: dependsOn.map((candidate) => BoardCardId.make(candidate)),
 });
 
 it.effect(
@@ -214,6 +247,170 @@ it.effect("counts an archived child as finished and advances the parent (D6)", (
           cardArchived(childCard("card-stray", "building", "2026-01-01T00:00:00.000Z"), 1),
         );
         assert.strictEqual(cardStage(yield* board, parentId), "review");
+      }),
+  ),
+);
+// ── The cascade (t3o-28, D3) ───────────────────────────────────────────
+
+it.effect("starts every unblocked child when the PARENT arrives at the build stage", () =>
+  withGovernor(
+    {
+      // The plan graph the split materialised: #1 free, #2 and #3 waiting on
+      // it. The parent's Begin build should start #1 and only #1.
+      board: {
+        cards: [
+          parentCard(),
+          childCard("card-one", "ready"),
+          childWaitingOn("card-two", "ready", ["card-one"]),
+          childWaitingOn("card-three", "ready", ["card-one"]),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(parentCard(), 1));
+        const after = yield* board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), "building");
+        // Blocked siblings stay on the floor: the D11 gate would refuse them
+        // anyway, so the cascade never asks.
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "ready");
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-three")), "ready");
+        // And the parent itself still spawns nothing — its build IS the child.
+        assert.strictEqual(stepStatus(after, parentId), null);
+      }),
+  ),
+);
+
+it.effect("starts the siblings a finishing child unblocks, with no human in between", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          parentCard(),
+          childCard("card-one", "done"),
+          childWaitingOn("card-two", "ready", ["card-one"]),
+          childWaitingOn("card-three", "ready", ["card-one"]),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(cardMoved(childCard("card-one", "done"), "merge", "done", 1));
+        const after = yield* board;
+        // Both of #1's dependents go at once — the fan is the plan graph's,
+        // not a queue of one.
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "building");
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-three")), "building");
+        // The parent stays put: children are unfinished again.
+        assert.strictEqual(cardStage(after, parentId), "building");
+      }),
+  ),
+);
+
+it.effect("starts nothing while the parent is still short of the build stage", () =>
+  withGovernor(
+    {
+      // The children are materialised and unblocked, but the human has not
+      // pressed Begin build. Approval is not a start signal (D1).
+      board: {
+        cards: [
+          { ...parentCard(), stage: BoardStageId.make("planning") },
+          childCard("card-one", "ready"),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(
+          cardMoved(
+            { ...parentCard(), stage: BoardStageId.make("planning") },
+            "sprint",
+            "planning",
+            1,
+          ),
+        );
+        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "ready");
+      }),
+  ),
+);
+
+it.effect("leaves a child a human parked past the floor alone", () =>
+  withGovernor(
+    {
+      // Waiting on the floor is the only state the cascade starts. A child
+      // already in review is running its own loop and wants no move.
+      board: {
+        cards: [parentCard(), childCard("card-one", "review")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(parentCard(), 1));
+        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "review");
+      }),
+  ),
+);
+
+it.effect("restarts the sub-board when a corrected parent lands back on build (t3o-24)", () =>
+  withGovernor(
+    {
+      // A child dragged out of Done pulled the parent back from review; the
+      // regression is a move onto build like any other, so whatever is
+      // unblocked starts again.
+      board: {
+        cards: [parentCard(), childCard("card-one", "ready")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(cardMoved(parentCard(), "review", "building", 1));
+        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "building");
+      }),
+  ),
+);
+it.effect("starts the children when a split is APPROVED on a parent already at build", () =>
+  withGovernor(
+    {
+      // Approving from the build stage is legal (a card built conversationally
+      // can be split first) and emits no move, so the entering-build trigger
+      // never fires. handlePlansApproved must nudge the cascade itself, or the
+      // children strand on the floor with nothing to start them (t3o-28, D3).
+      // The parent's branch-only worktree makes ensureIntegrationBranch a
+      // no-op, so this exercises the cascade nudge and not the git path.
+      board: {
+        cards: [
+          parentCard(),
+          childCard("card-one", "ready"),
+          childWaitingOn("card-two", "ready", ["card-one"]),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(
+          plansApproved(
+            parentCard(),
+            [BoardCardId.make("card-one"), BoardCardId.make("card-two")],
+            1,
+          ),
+        );
+        const after = yield* board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), "building");
+        // The blocked sibling still waits — the nudge is the cascade, not a
+        // blanket start.
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "ready");
       }),
   ),
 );

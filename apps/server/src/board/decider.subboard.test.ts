@@ -173,15 +173,15 @@ const makeChild = (
 it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
   // ── The approve gate: materialisation shape ──────────────────────────
 
-  it.effect("materialises a two-plan split: children, parent move, approval record", () =>
+  it.effect("materialises a two-plan split: children and the approval record, no move", () =>
     Effect.gen(function* () {
       const events = yield* decideEvents(approve(), makeReadModel(makeBoard()));
       assert.deepStrictEqual(
         events.map((event) => event.type),
-        ["board.card-created", "board.card-created", "board.card-moved", "board.plans-approved"],
+        ["board.card-created", "board.card-created", "board.plans-approved"],
       );
 
-      const [first, second, moved, approved] = events;
+      const [first, second, approved] = events;
       assert.ok(first!.type === "board.card-created" && second!.type === "board.card-created");
       // Children land in the materialisation floor (the stage before the
       // build role — Ready on a seeded board), in ordinal order, with keys
@@ -201,19 +201,19 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
       // Sibling order keys sort in plan order.
       assert.ok(String(first.payload.orderKey) < String(second.payload.orderKey));
 
-      // The parent crosses into the build-role stage as part of the same act.
-      assert.ok(moved!.type === "board.card-moved");
-      expect(moved.payload.toStage).toBe(BOARD_SEED_STAGE_IDS.building);
-      expect(moved.payload.card.blocked).toBe(false);
-
+      // The parent does not move (t3o-28, D1): approving answers "is this the
+      // right split", and it stays in planning for the human to walk forward.
       assert.ok(approved!.type === "board.plans-approved");
       expect(approved.payload.childCardIds).toEqual([first.payload.cardId, second.payload.cardId]);
-      expect(approved.payload.card.stage).toBe(BOARD_SEED_STAGE_IDS.building);
+      expect(approved.payload.card.stage).toBe(BOARD_SEED_STAGE_IDS.planning);
     }),
   );
 
-  it.effect("skips the parent's move when it already sits in the build-role stage", () =>
+  it.effect("leaves a parent already sitting in the build-role stage where it is", () =>
     Effect.gen(function* () {
+      // Approving from build is still legal (a card built conversationally can
+      // be split before its build starts in earnest) and, since t3o-28, the
+      // event shape no longer depends on where the parent stands.
       const events = yield* decideEvents(
         approve(),
         makeReadModel(makeBoard({ parent: { stage: "building" } })),
@@ -222,6 +222,25 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
         events.map((event) => event.type),
         ["board.card-created", "board.card-created", "board.plans-approved"],
       );
+      const approved = events[2];
+      assert.ok(approved!.type === "board.plans-approved");
+      expect(approved.payload.card.stage).toBe(BOARD_SEED_STAGE_IDS.building);
+    }),
+  );
+
+  it.effect("does not clear the parent's blocked flag — it crosses no build boundary", () =>
+    Effect.gen(function* () {
+      // Pre-t3o-28 the approval cleared `blocked` because it WAS the crossing
+      // into build and re-ran the dependency gate on the way. It no longer
+      // crosses anything, so the flag is left exactly as it stands and the
+      // D11 gate has its say when the parent actually enters build.
+      const events = yield* decideEvents(
+        approve(),
+        makeReadModel(makeBoard({ parent: { blocked: true } })),
+      );
+      const approved = events[2];
+      assert.ok(approved!.type === "board.plans-approved");
+      expect(approved.payload.card.blocked).toBe(true);
     }),
   );
 
@@ -447,19 +466,37 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
     }),
   );
 
-  it.effect("refuses approval while the parent's own dependencies are unmet", () =>
+  it.effect("approves a split whose parent still has unmet dependencies (t3o-28, D1)", () =>
     Effect.gen(function* () {
+      // Pre-t3o-28 this was refused, because approval WAS the crossing into
+      // build and ran the D11 gate on the way. Approval crosses nothing now:
+      // planning a split while a dependency is outstanding is ordinary work,
+      // and the gate has its say when the parent tries to enter build.
       const blocker = makeCard({ id: "card-blocker", key: "T3-100", stage: "backlog" });
+      const readModel = makeReadModel(
+        makeBoard({
+          parent: { dependsOn: [blocker.id] },
+          extraCards: [blocker],
+        }),
+      );
+      const events = yield* decideEvents(approve(), readModel);
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["board.card-created", "board.card-created", "board.plans-approved"],
+      );
+
+      // …and the dependency gate still stops the build, one stage later. The
+      // board here is the post-approval one (children materialised), which is
+      // what the parent's own move into build actually meets.
       const failure = yield* decideFail(
-        approve(),
+        moveCommand({ cardId: "card-parent", toStage: "building", override: true }),
         makeReadModel(
           makeBoard({
-            parent: { dependsOn: [blocker.id] },
-            extraCards: [blocker],
+            parent: { stage: "ready", dependsOn: [blocker.id] },
+            extraCards: [blocker, makeChild("card-child", "ready")],
           }),
         ),
       );
-      assert.include(String(failure), "until its dependencies are done");
       assert.include(String(failure), "T3-100");
     }),
   );
@@ -584,7 +621,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
     }),
   );
 
-  it.effect("freezes the parent's stage while any child is unfinished, override included", () =>
+  it.effect("holds the parent at the build ceiling while any child is unfinished", () =>
     Effect.gen(function* () {
       const readModel = makeReadModel(
         makeBoard({
@@ -597,49 +634,73 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
         readModel,
       );
       assert.include(String(failure), "advances through its 1 plan card");
+      // The refusal names the children, so the sub-board to open is obvious.
+      assert.include(String(failure), "T3-1");
+      assert.include(String(failure), "cannot pass 'Building'");
     }),
   );
 
-  it.effect(
-    "t3o-24 D4: the freeze admits exactly the regression back to the build-role stage",
-    () =>
-      Effect.gen(function* () {
-        // A child dragged back out of Done leaves the parent ahead of reality:
-        // frozen (unfinished child) but sitting in review. The move that IS the
-        // freeze re-engaging — back to the build-role stage — must land, while
-        // every other move of the frozen parent stays refused.
-        const readModel = makeReadModel(
-          makeBoard({
-            parent: { stage: "review" },
-            extraCards: [makeChild("card-child", "building")],
-          }),
-        );
-        const regressed = yield* decideEvents(
-          moveCommand({ cardId: "card-parent", toStage: "building", override: true }),
-          readModel,
-        );
-        assert.strictEqual(regressed[0]?.type, "board.card-moved");
-
-        // Forward past the freeze is still a refusal…
-        const forward = yield* decideFail(
-          moveCommand({ cardId: "card-parent", toStage: "merge", override: true }),
-          readModel,
-        );
-        assert.include(String(forward), "advances through its 1 plan card");
-        // …and so is a FORWARD move into the build-role stage (a parent parked
-        // before it): only the regression is the derived truth.
-        const fromReady = makeReadModel(
+  it.effect("lets the parent walk UP TO the build stage while children wait (t3o-28, D2)", () =>
+    Effect.gen(function* () {
+      // The move that begins the whole sub-board. Pre-t3o-28 the pin refused
+      // it, which was survivable only because approval had already parked the
+      // parent in build; now it is the human's Begin build.
+      const events = yield* decideEvents(
+        moveCommand({ cardId: "card-parent", toStage: "building" }),
+        makeReadModel(
           makeBoard({
             parent: { stage: "ready" },
-            extraCards: [makeChild("card-child", "building")],
+            extraCards: [makeChild("card-child", "ready")],
           }),
-        );
-        const forwardToBuild = yield* decideFail(
-          moveCommand({ cardId: "card-parent", toStage: "building" }),
-          fromReady,
-        );
-        assert.include(String(forwardToBuild), "advances through its 1 plan card");
-      }),
+        ),
+      );
+      assert.strictEqual(events[0]?.type, "board.card-moved");
+    }),
+  );
+
+  it.effect("lets a parent with live children move backward and reorder freely", () =>
+    Effect.gen(function* () {
+      const readModel = makeReadModel(
+        makeBoard({
+          parent: { stage: "building" },
+          extraCards: [makeChild("card-child", "building")],
+        }),
+      );
+      // Backing the supervising card off does not stop the children; it says
+      // the parent is not ready, and the cascade starts nothing new from there.
+      const back = yield* decideEvents(
+        moveCommand({ cardId: "card-parent", toStage: "ready" }),
+        readModel,
+      );
+      assert.strictEqual(back[0]?.type, "board.card-moved");
+    }),
+  );
+
+  it.effect("t3o-24 D4: the regression back to the build-role stage still lands", () =>
+    Effect.gen(function* () {
+      // A child dragged back out of Done leaves the parent ahead of reality:
+      // sitting in review with an unfinished child. The reactor's correction —
+      // back to the build-role stage — must land. Under t3o-28's ceiling this
+      // needs no carve-out: the target IS the ceiling, not past it.
+      const readModel = makeReadModel(
+        makeBoard({
+          parent: { stage: "review" },
+          extraCards: [makeChild("card-child", "building")],
+        }),
+      );
+      const regressed = yield* decideEvents(
+        moveCommand({ cardId: "card-parent", toStage: "building", override: true }),
+        readModel,
+      );
+      assert.strictEqual(regressed[0]?.type, "board.card-moved");
+
+      // Anything past the ceiling is still refused, drag included.
+      const forward = yield* decideFail(
+        moveCommand({ cardId: "card-parent", toStage: "merge", override: true }),
+        readModel,
+      );
+      assert.include(String(forward), "advances through its 1 plan card");
+    }),
   );
 
   it.effect("unfreezes the parent when every child is done or archived", () =>

@@ -1387,10 +1387,9 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         createdAt: NOW,
         updatedAt: NOW,
       };
-      // A two-plan card in Planning for board.plans.approve — the one OTHER
-      // command allowed to emit a move into building (t3o-23, D4): approving
-      // a split is as user-originated as the drag, and the parent's crossing
-      // is part of that same human act.
+      // A two-plan card in Planning for board.plans.approve. Since t3o-28 (D1)
+      // approval materialises the children and moves NOTHING, so this fixture
+      // now proves the negative like every other entry.
       const splitCard = makeCard({ id: "card-split", stage: "planning" });
       const splitPlans: ReadonlyArray<BoardPlan> = ["s1", "s2"].map((key, index) => ({
         planId: boardPlanId(BoardCardId.make("card-split"), key),
@@ -1615,8 +1614,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           body: "new body",
           createdAt: NOW,
         },
-        // The split approval (t3o-23): user-originated, and the second
-        // legitimate emitter of a move into building — asserted below.
+        // The split approval (t3o-23, t3o-28 D1): materialises the children
+        // and leaves the parent's stage alone.
         "board.plans.approve": {
           type: "board.plans.approve",
           commandId: CommandId.make("cmd-approve"),
@@ -1789,12 +1788,12 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         },
       };
 
-      // The full decision is checked, not just the first event — approve
-      // emits its move mid-list. Exactly two commands may emit a
-      // board.card-moved, and both are explicit human acts (D18): the move
-      // itself, and the split approval whose parent-crossing is part of the
-      // same click (t3o-23, D4).
-      const mayMoveIntoBuilding = new Set(["board.card.move", "board.plans.approve"]);
+      // The full decision is checked, not just the first event. Since t3o-28
+      // (D1) took the parent-crossing out of split approval, EXACTLY ONE
+      // command may emit a board.card-moved: the move itself. A card changes
+      // stage because a human dragged it or pressed the button, and for no
+      // other reason (D18).
+      const mayMoveIntoBuilding = new Set(["board.card.move"]);
       for (const [commandType, command] of Object.entries(catalog)) {
         const events = yield* decideEvents(command, readModel);
         const movesIntoBuilding = events.some(
