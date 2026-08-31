@@ -81,6 +81,8 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly accentNameFor: (projectId: ProjectId) => string | null;
   /** Resolves a sub-board child's parent key for its chip (t3o-23). */
   readonly parentKeyFor: (cardId: string) => string | undefined;
+  /** Whether a card is awaiting split approval (t3o-27) — the amber state. */
+  readonly pendingSplitFor: (card: BoardCardShell) => boolean;
   /** Thread todo lists for one card (t3o-18) — built once by the page and read
       per card, so the column adds no state of its own. */
   readonly todosFor: (cardId: string) => BoardCardTodoContext;
@@ -145,6 +147,7 @@ function ExpandedColumn({
   addProjects,
   accentNameFor,
   parentKeyFor,
+  pendingSplitFor,
   draggedCardId,
   dragOverIndex,
   dragHeight,
@@ -251,6 +254,7 @@ function ExpandedColumn({
                   onReorder={onCardReorder}
                   accentName={accentNameFor(card.projectId)}
                   parentKey={parentKeyFor(card.cardId)}
+                  pendingSplit={pendingSplitFor(card)}
                   todos={todosFor(card.cardId)}
                   onOpenSubBoard={
                     onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card)

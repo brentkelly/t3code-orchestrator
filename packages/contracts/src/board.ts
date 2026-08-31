@@ -1718,6 +1718,77 @@ export function boardCardUnfinishedChildren(
 }
 
 /**
+ * A card is awaiting a human split approval (t3o-27): its planning produced a
+ * multi-part proposal (≥2 plans) that must be materialised into child cards
+ * before the work can advance, but nobody has approved it yet. True when the
+ * card is top-level (a child can never itself split — depth 1), has no
+ * children yet, carries two or more proposed plans, and still sits at or
+ * before the build-role stage (a card built conversationally as one and
+ * already past build is not retroactively trapped).
+ *
+ * A single-plan card is NEVER pending: one plan is simply the build brief, and
+ * most cards never split. The read model holds plan metadata (D8), so this is
+ * a pure decider predicate — the forward-move gate reads it, and the plan pane
+ * / card face surface the "Approve split" affordance from it.
+ */
+export function boardCardPendingSplit(board: BoardState, cardId: BoardCardId): boolean {
+  const card = board.cards.find((candidate) => candidate.id === cardId);
+  if (card === undefined || card.parentCardId !== null || card.archivedAt !== null) return false;
+  // Only LIVE children clear the pending state, matching the re-approval
+  // guard: a first round whose children all archived is gone from the board,
+  // so the card is pending its second-round split again — and the shell
+  // derivation, which can only ever see live children, agrees.
+  if (boardCardChildren(board, cardId).some((child) => child.archivedAt === null)) return false;
+  if (boardCardPlans(board, cardId).length < 2) return false;
+  // A board with no materialisation floor cannot split at all (approval is
+  // refused there), so nothing on it is ever pending — pinning a card toward
+  // an approval the decider would refuse is a dead end, not a gate.
+  if (boardSubBoardFloorStage(board) === null) return false;
+  const build = boardStageWithRole(board, "build");
+  // Past the build role (built as one, plans now stale) — not pending.
+  if (
+    build !== null &&
+    isBoardStageAtOrAfterBuild(board, card.stage) &&
+    card.stage !== build.stageId
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * The card-face counterpart of `boardCardPendingSplit`, derived CLIENT-SIDE
+ * from the bounded shell (t3o-27): a top-level card (`parentCardId` absent)
+ * with no children of its own (`planTotal` absent — the sub-board pip producer
+ * only sets it for parents that HAVE children) and two or more plans
+ * (`planCount`), still at or before the build stage. Lets a column card wear
+ * the amber "Needs approval" state without any extra payload — the same
+ * zero-cost derivation the plan pips use (D6).
+ */
+export function boardCardShellPendingSplit(
+  card: Pick<BoardCardShell, "stage" | "planCount" | "planTotal" | "parentCardId">,
+  stages: ReadonlyArray<BoardStageDefinition>,
+): boolean {
+  if (card.parentCardId !== undefined) return false;
+  // `planTotal` is derived from LIVE children only (D6), which is exactly the
+  // read-model rule too: only live children clear the pending state.
+  if (card.planTotal !== undefined) return false;
+  if ((card.planCount ?? 0) < 2) return false;
+  const stageState: BoardState = { cards: [], stages, nextCardNumberByProject: {} };
+  // Mirror the read model: a floor-less board can never split, so never pend.
+  if (boardSubBoardFloorStage(stageState) === null) return false;
+  const build = boardStageWithRole(stageState, "build");
+  if (
+    build !== null &&
+    isBoardStageAtOrAfterBuild(stageState, card.stage) &&
+    card.stage !== build.stageId
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Client-side producer for the shell's `planTotal` / `planDone` (t3o-23, D6).
  * Children are ordinary shell cards carrying `parentCardId` and `stage`, so
  * every client already holds the inputs — no server production, no delta

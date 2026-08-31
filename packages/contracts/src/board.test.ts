@@ -24,8 +24,11 @@ import {
   BoardCardShell,
   BoardLabelId,
   BoardLabelName,
+  boardCardPendingSplit,
+  boardCardShellPendingSplit,
   boardCardUnfinishedChildren,
   boardSubBoardFloorStage,
+  BoardPlanId,
   BOARD_SEED_STAGES,
   deriveBoardCardBlocked,
   deriveBoardCardPlanProgress,
@@ -36,6 +39,8 @@ import {
   makeBoardCardShell,
   unmetBoardCardDependencies,
   type BoardCard,
+  type BoardPlan,
+  type BoardState,
 } from "./board.ts";
 import { OrchestrationShellSnapshot } from "./orchestration.ts";
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
@@ -819,5 +824,108 @@ describe("sub-boards (t3o-23)", () => {
     expect(childShell.parentCardId).toBe(parent.id);
     const topLevel = boardCardShellFromCard(typicalCard(3));
     expect("parentCardId" in topLevel).toBe(false);
+  });
+
+  describe("pending split (t3o-27)", () => {
+    const withPlans = (planCount: number): BoardPlan[] =>
+      Array.from({ length: planCount }, (_, index) => ({
+        planId: BoardPlanId.make(`card-parent::p${index}`),
+        cardId: parent.id,
+        title: `Plan ${index}`,
+        summary: "s",
+        dependsOn: [],
+        ordinal: index,
+        locked: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }));
+    const boardWithPlans = (
+      stage: BoardCard["stage"],
+      planCount: number,
+      extra: ReadonlyArray<BoardCard> = [],
+    ): BoardState => ({
+      ...EMPTY_BOARD_STATE,
+      cards: [{ ...parent, stage }, ...extra],
+      plans: withPlans(planCount),
+    });
+
+    it("is true for a top-level planning card with ≥2 plans and no children", () => {
+      expect(
+        boardCardPendingSplit(boardWithPlans(BOARD_SEED_STAGE_IDS.planning, 2), parent.id),
+      ).toBe(true);
+    });
+
+    it("is false for a single plan, for children present, and past the build stage", () => {
+      expect(
+        boardCardPendingSplit(boardWithPlans(BOARD_SEED_STAGE_IDS.planning, 1), parent.id),
+      ).toBe(false);
+      expect(
+        boardCardPendingSplit(
+          boardWithPlans(BOARD_SEED_STAGE_IDS.planning, 2, [
+            child("child-a", BOARD_SEED_STAGE_IDS.ready),
+          ]),
+          parent.id,
+        ),
+      ).toBe(false);
+      // A card built as one that already reached review carries stale plans
+      // but is not retroactively pinned.
+      expect(boardCardPendingSplit(boardWithPlans(BOARD_SEED_STAGE_IDS.review, 2), parent.id)).toBe(
+        false,
+      );
+    });
+
+    it("pends again when the first round's children are ALL archived (second-round split)", () => {
+      // Matches the re-approval guard's live-children semantics — and the
+      // shell derivation, which only ever sees live children, agrees.
+      expect(
+        boardCardPendingSplit(
+          boardWithPlans(BOARD_SEED_STAGE_IDS.planning, 2, [
+            child("child-a", BOARD_SEED_STAGE_IDS.done, NOW),
+          ]),
+          parent.id,
+        ),
+      ).toBe(true);
+    });
+
+    it("never pends on a board with no materialisation floor", () => {
+      // Build-first board: approval itself is refused there, so pinning a
+      // card toward it would be a dead end.
+      const buildFirst: BoardState = {
+        ...boardWithPlans(BOARD_SEED_STAGE_IDS.building, 2),
+        stages: BOARD_SEED_STAGES.filter(
+          (stage) => stage.role === "build" || stage.role === "review" || stage.role === "done",
+        ),
+      };
+      expect(boardCardPendingSplit(buildFirst, parent.id)).toBe(false);
+      expect(
+        boardCardShellPendingSplit(
+          { stage: BOARD_SEED_STAGE_IDS.building, planCount: 2 },
+          buildFirst.stages ?? [],
+        ),
+      ).toBe(false);
+    });
+
+    it("derives the same from the shell, and never for a child card", () => {
+      expect(
+        boardCardShellPendingSplit(
+          { stage: BOARD_SEED_STAGE_IDS.planning, planCount: 2 },
+          BOARD_SEED_STAGES,
+        ),
+      ).toBe(true);
+      // A child (parentCardId set) or a parent-with-children (planTotal set) is
+      // never pending.
+      expect(
+        boardCardShellPendingSplit(
+          { stage: BOARD_SEED_STAGE_IDS.planning, planCount: 2, parentCardId: parent.id },
+          BOARD_SEED_STAGES,
+        ),
+      ).toBe(false);
+      expect(
+        boardCardShellPendingSplit(
+          { stage: BOARD_SEED_STAGE_IDS.planning, planCount: 2, planTotal: 2 },
+          BOARD_SEED_STAGES,
+        ),
+      ).toBe(false);
+    });
   });
 });

@@ -489,7 +489,9 @@ export function BoardCardDetail({
   const floorStage = boardSubBoardFloorStage(stageState);
   const canApproveSplit =
     detail.plans.length >= 2 &&
-    detail.children.length === 0 &&
+    // Live children only, matching the decider's re-approval guard: a first
+    // round whose children all archived may be re-split.
+    detail.children.every((child) => child.archivedAt !== null) &&
     card.parentCardId === null &&
     card.archivedAt === null &&
     floorStage !== null &&

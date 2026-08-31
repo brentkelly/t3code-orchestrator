@@ -679,6 +679,7 @@ function ActionsSection({
   // link vanishes exactly when a merged card lands in Done.
   if (
     forward === null &&
+    !props.canApproveSplit &&
     !card.blocked &&
     humanInLoop === null &&
     displayed === null &&
@@ -708,7 +709,22 @@ function ActionsSection({
           {stopRound.pending ? `Stopping after round ${stopRound.round}` : "Stop after this round"}
         </button>
       ) : null}
-      {forward !== null ? (
+      {props.canApproveSplit ? (
+        // A pending split (t3o-27): the forward stage button is REPLACED by
+        // Approve split, because the card cannot advance until the split is
+        // resolved — the decider refuses every forward move while it stands.
+        // Amber, matching the card face's "Needs approval" state (distinct
+        // from the blue "Input needed" a thread question raises).
+        <button
+          className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-amber-500/60 bg-amber-500/15 px-3 text-[13px] font-medium text-amber-700 shadow-xs hover:bg-amber-500/25 dark:text-amber-300"
+          onClick={() => props.onApproveSplit()}
+          title="This card's planning proposed a multi-part split; approve it to materialise the plan cards"
+          type="button"
+        >
+          <LayersIcon className="size-3.5" />
+          Approve split
+        </button>
+      ) : forward !== null ? (
         <button
           className={cn(
             "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border px-3 text-[13px] font-medium shadow-xs",
