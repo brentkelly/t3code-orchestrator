@@ -24,9 +24,14 @@ import {
   BoardCardShell,
   BoardLabelId,
   BoardLabelName,
+  boardCardUnfinishedChildren,
+  boardSubBoardFloorStage,
+  BOARD_SEED_STAGES,
   deriveBoardCardBlocked,
+  deriveBoardCardPlanProgress,
   deriveBoardCardThreadState,
   EMPTY_BOARD_STATE,
+  isBoardStageAtOrAfterSubBoardFloor,
   liveBoardCardDependents,
   makeBoardCardShell,
   unmetBoardCardDependencies,
@@ -721,5 +726,86 @@ describe("BoardCardStepState decoding (t3o-19 D7)", () => {
       stageLabel: "Code review",
     });
     expect(stepped.stepLabel).toBe("Review · round 1");
+  });
+});
+
+describe("sub-boards (t3o-23)", () => {
+  const NOW = "2026-01-01T00:00:00.000Z";
+  const parent = { ...typicalCard(1), id: BoardCardId.make("card-parent") };
+  const child = (id: string, stage: BoardCard["stage"], archivedAt: string | null = null) => ({
+    ...typicalCard(2),
+    id: BoardCardId.make(id),
+    stage,
+    archivedAt,
+    parentCardId: parent.id,
+  });
+  const boardWith = (cards: ReadonlyArray<BoardCard>) => ({ ...EMPTY_BOARD_STATE, cards });
+
+  it("resolves the materialisation floor to the stage before the build role", () => {
+    expect(boardSubBoardFloorStage(EMPTY_BOARD_STATE)?.stageId).toBe(BOARD_SEED_STAGE_IDS.ready);
+    // Build first: no floor.
+    const buildFirst = {
+      ...EMPTY_BOARD_STATE,
+      stages: BOARD_SEED_STAGES.filter(
+        (stage) => stage.role === "build" || stage.role === "review" || stage.role === "done",
+      ),
+    };
+    expect(boardSubBoardFloorStage(buildFirst)).toBe(null);
+    // With no floor the restriction falls back to build-onward.
+    expect(isBoardStageAtOrAfterSubBoardFloor(buildFirst, BOARD_SEED_STAGE_IDS.building)).toBe(
+      true,
+    );
+  });
+
+  it("opens the floor and everything after it to plan cards, and nothing before", () => {
+    expect(isBoardStageAtOrAfterSubBoardFloor(EMPTY_BOARD_STATE, BOARD_SEED_STAGE_IDS.ready)).toBe(
+      true,
+    );
+    expect(isBoardStageAtOrAfterSubBoardFloor(EMPTY_BOARD_STATE, BOARD_SEED_STAGE_IDS.done)).toBe(
+      true,
+    );
+    expect(
+      isBoardStageAtOrAfterSubBoardFloor(EMPTY_BOARD_STATE, BOARD_SEED_STAGE_IDS.planning),
+    ).toBe(false);
+  });
+
+  it("counts an archived child as finished, a done child as finished, and nothing else", () => {
+    const board = boardWith([
+      parent,
+      child("child-building", BOARD_SEED_STAGE_IDS.building),
+      child("child-done", BOARD_SEED_STAGE_IDS.done),
+      child("child-archived", BOARD_SEED_STAGE_IDS.building, NOW),
+    ]);
+    expect(boardCardUnfinishedChildren(board, parent.id).map((card) => String(card.id))).toEqual([
+      "child-building",
+    ]);
+  });
+
+  it("derives plan progress from shells, counting only done-role children", () => {
+    const shells = [
+      { cardId: BoardCardId.make("card-parent"), stage: BOARD_SEED_STAGE_IDS.building },
+      {
+        cardId: BoardCardId.make("child-a"),
+        stage: BOARD_SEED_STAGE_IDS.done,
+        parentCardId: BoardCardId.make("card-parent"),
+      },
+      {
+        cardId: BoardCardId.make("child-b"),
+        stage: BOARD_SEED_STAGE_IDS.building,
+        parentCardId: BoardCardId.make("card-parent"),
+      },
+      // A childless top-level card produces no entry at all.
+      { cardId: BoardCardId.make("card-other"), stage: BOARD_SEED_STAGE_IDS.done },
+    ];
+    const progress = deriveBoardCardPlanProgress({ cards: shells, stages: BOARD_SEED_STAGES });
+    expect(progress.get(BoardCardId.make("card-parent"))).toEqual({ total: 2, done: 1 });
+    expect(progress.size).toBe(1);
+  });
+
+  it("asserts parentCardId on a child's shell and omits the key on a top-level card", () => {
+    const childShell = boardCardShellFromCard(child("child-a", BOARD_SEED_STAGE_IDS.ready));
+    expect(childShell.parentCardId).toBe(parent.id);
+    const topLevel = boardCardShellFromCard(typicalCard(3));
+    expect("parentCardId" in topLevel).toBe(false);
   });
 });
