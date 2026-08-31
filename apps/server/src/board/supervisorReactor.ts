@@ -3213,8 +3213,11 @@ const make = Effect.gen(function* () {
     // restarts a corrected parent's sub-board — the helper is keyed on where
     // the parent now stands, not on how it got there. Gated on the card
     // HAVING children so an ordinary card's every move does not pay a board
-    // read to be told it has no sub-board.
-    else if (boardCardChildren(board, card.id).length > 0) {
+    // read to be told it has no sub-board. LIVE children only: a fully-wrapped
+    // split (every child archived) can cascade nothing, so it should not pay
+    // the helper's own board read to be told so — and `cascadeUnblockedChildren`
+    // only ever moves a live child off the floor anyway.
+    else if (boardCardChildren(board, card.id).some((child) => child.archivedAt === null)) {
       yield* cascadeUnblockedChildren(card.id);
     }
   });
