@@ -1806,6 +1806,14 @@ export const BoardCardCreateCommand = Schema.Struct({
   /** Overrides DEFAULT_BOARD_KEY_PREFIX; the t3o-07 settings surface will
       supply the per-project value. */
   keyPrefix: Schema.optional(TrimmedNonEmptyString),
+  /** Create the card as a sub-board child of this parent (t3o-25): the
+      drill-in view's create dialog presets it. The decider requires the
+      parent to be a live top-level card in the same project, restricts the
+      target stage to the materialisation floor onward (the same subset a
+      materialised child may occupy) and requires every dependency to be a
+      sibling — a child may only depend on siblings, exactly as materialised
+      edges are scoped. Absent creates an ordinary top-level card. */
+  parentCardId: Schema.optional(BoardCardId),
   createdAt: IsoDateTime,
 });
 export type BoardCardCreateCommand = typeof BoardCardCreateCommand.Type;
@@ -2436,9 +2444,12 @@ export const BoardCardCreatedPayload = Schema.Struct({
       means the empty set, matching migration 903's `depends_on DEFAULT '[]'`,
       so a from-empty replay of a pre-t3o-06 log equals table rehydration. */
   dependsOn: Schema.optionalKey(Schema.Array(BoardCardId)),
-  /** Sub-board materialisation (t3o-23): the parent this child belongs to and
-      the plan it was cut from. Absent on every top-level create — only the
-      `board.plans.approve` decider emits creations carrying them. */
+  /** The parent this sub-board child belongs to (t3o-23): set by
+      `board.plans.approve` materialisation and by a `board.card.create`
+      carrying the t3o-25 child preset. `sourcePlanId` names the plan a
+      materialised child was cut from and remains approve-only — a
+      hand-created child has no source plan. Both absent on every top-level
+      create. */
   parentCardId: Schema.optionalKey(BoardCardId),
   sourcePlanId: Schema.optionalKey(BoardPlanId),
   /** A child arrives with its plan's BODY as its brief — but the decider has

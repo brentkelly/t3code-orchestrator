@@ -592,14 +592,58 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         existing: [],
       });
 
+      // Child create (t3o-25): the drill-in's create dialog presets a parent.
+      // The card must land where a materialised child could live — a live
+      // top-level parent in the same project, a floor-onward stage — so a
+      // hand-created child is indistinguishable from an approved plan's.
+      if (command.parentCardId !== undefined) {
+        const parent = board.cards.find((existing) => existing.id === command.parentCardId);
+        if (parent === undefined || parent.archivedAt !== null) {
+          return yield* invariant(
+            command,
+            `Parent card '${command.parentCardId}' does not exist or is archived.`,
+          );
+        }
+        if (parent.parentCardId !== null) {
+          return yield* invariant(
+            command,
+            `Card '${parent.id}' is itself a sub-board child; sub-boards do not nest.`,
+          );
+        }
+        if (parent.projectId !== command.projectId) {
+          return yield* invariant(
+            command,
+            `Parent card '${parent.id}' belongs to a different project.`,
+          );
+        }
+        if (!isBoardStageAtOrAfterSubBoardFloor(board, stage)) {
+          return yield* invariant(
+            command,
+            `A sub-board child cannot be created in '${stage}'; children live from the materialisation floor onward.`,
+          );
+        }
+      }
+
       // Initial dependencies (t3o-06): dedupe and require each to exist. A
       // cycle is impossible at create — a brand-new card has no dependents, so
       // no existing edge can reach it — which is why create needs only the
       // existence check while `board.card.update` also gates cycles.
       const dependsOn = command.dependsOn === undefined ? [] : [...new Set(command.dependsOn)];
       for (const dependencyId of dependsOn) {
-        if (!board.cards.some((existing) => existing.id === dependencyId)) {
+        const dependency = board.cards.find((existing) => existing.id === dependencyId);
+        if (dependency === undefined) {
           return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
+        }
+        // A child may only depend on siblings (t3o-25, as materialised edges
+        // are scoped): never on a top-level card or another sub-board's child.
+        if (
+          command.parentCardId !== undefined &&
+          dependency.parentCardId !== command.parentCardId
+        ) {
+          return yield* invariant(
+            command,
+            `Dependency '${dependencyId}' is not a sibling in parent '${command.parentCardId}''s sub-board.`,
+          );
         }
       }
 
@@ -635,6 +679,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           // Body lives in `board_card_bodies` (D8); omit the key when no brief
           // was given, matching the payload's key-optional shape.
           ...(command.brief === undefined ? {} : { brief: command.brief }),
+          // A hand-created child (t3o-25) carries its parent exactly as a
+          // materialised one does; it just has no source plan.
+          ...(command.parentCardId === undefined ? {} : { parentCardId: command.parentCardId }),
           dependsOn,
           stage,
           orderKey: command.orderKey,

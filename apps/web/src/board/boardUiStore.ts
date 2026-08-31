@@ -9,7 +9,6 @@
  * key) so it participates in client-settings restore rather than being raw
  * `localStorage`.
  */
-import type { BoardStageId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -60,26 +59,31 @@ interface BoardUiState {
   /** Last location (href) seen in each mode, so toggling modes returns to
       where you were instead of that mode's root. */
   lastLocationByMode: Partial<Record<WorkspaceMode, string>>;
-  /** Explicit collapse overrides, keyed by stage id (t3o-15); stages without an
-      entry fall back to `isBoardColumnCollapsed`'s default (the first column
+  /** Explicit collapse overrides, keyed per scope (t3o-15, t3o-25): a bare
+      stage id on the root board, `boardScopeCollapseKey`'s `sub/…` composite
+      inside a sub-board — so a collapsed root Backlog does not collapse
+      inside every sub-board. Keys without an entry fall back to
+      `isBoardColumnCollapsed`'s default (the root board's first column
       collapsed). */
   collapsedByStage: Partial<Record<string, boolean>>;
 }
 
 interface BoardUiStore extends BoardUiState {
   recordModeLocation: (mode: WorkspaceMode, href: string) => void;
-  setColumnCollapsed: (stage: BoardStageId, collapsed: boolean) => void;
+  setColumnCollapsed: (stageKey: string, collapsed: boolean) => void;
 }
 
 /** The first column starts collapsed to a rail (D13): it is the one column that
     grows without bound (the intake/backlog) and it is not where attention
-    belongs. `isFirstStage` comes from the read-model stage order. */
+    belongs. `isFirstStage` comes from the read-model stage order — and is
+    passed false for every sub-board column (t3o-25), where the first rendered
+    column is the materialisation floor the children queue in, not an intake. */
 export function isBoardColumnCollapsed(
   collapsedByStage: Partial<Record<string, boolean>>,
-  stageId: BoardStageId,
+  stageKey: string,
   isFirstStage: boolean,
 ): boolean {
-  return collapsedByStage[stageId] ?? isFirstStage;
+  return collapsedByStage[stageKey] ?? isFirstStage;
 }
 
 export function migratePersistedBoardUiState(persistedState: unknown): BoardUiState {
@@ -137,15 +141,15 @@ export const useBoardUiStore = create<BoardUiStore>()(
             ? state
             : { mode, lastLocationByMode: { ...state.lastLocationByMode, [mode]: href } };
         }),
-      setColumnCollapsed: (stage, collapsed) =>
+      setColumnCollapsed: (stageKey, collapsed) =>
         set((state) =>
           // Skip only when the EXPLICIT stored value already matches — the
           // read-model default (first-column collapsed) lives in
           // `isBoardColumnCollapsed`, which needs the stage list this store
           // does not hold.
-          state.collapsedByStage[stage] === collapsed
+          state.collapsedByStage[stageKey] === collapsed
             ? state
-            : { collapsedByStage: { ...state.collapsedByStage, [stage]: collapsed } },
+            : { collapsedByStage: { ...state.collapsedByStage, [stageKey]: collapsed } },
         ),
     }),
     {

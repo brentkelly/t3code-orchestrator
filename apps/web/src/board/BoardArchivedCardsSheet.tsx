@@ -12,7 +12,7 @@
  */
 import { type BoardCardId, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { ArchiveRestoreIcon, Trash2Icon } from "lucide-react";
+import { ArchiveRestoreIcon, LayersIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -56,12 +56,14 @@ export function refreshBoardArchivedCards(environmentId: EnvironmentId): void {
  */
 function ArchivedCardList({
   environmentId,
+  liveCardKeyById,
   onDelete,
   onRestore,
   onSelectCard,
   scopeProjectId,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly liveCardKeyById: ReadonlyMap<string, string>;
   readonly onDelete: (cardId: BoardCardId) => void;
   readonly onRestore: (cardId: BoardCardId) => void;
   readonly onSelectCard: (cardId: BoardCardId) => void;
@@ -85,6 +87,18 @@ function ArchivedCardList({
     () => boardArchivedCardsInScope(snapshot?.cards ?? [], scopeProjectId),
     [snapshot, scopeProjectId],
   );
+
+  // Resolves a card id to a key for the parent badge (t3o-25, AC6): live
+  // parents come from the board's own key map, an archived parent from the
+  // very list this sheet is rendering. An id neither can name (the parent was
+  // purged) simply shows no badge.
+  const parentKeyOf = useMemo(() => {
+    const archivedKeyById = new Map(
+      (snapshot?.cards ?? []).map((card) => [String(card.cardId), card.key]),
+    );
+    return (parentCardId: string): string | undefined =>
+      liveCardKeyById.get(parentCardId) ?? archivedKeyById.get(parentCardId);
+  }, [liveCardKeyById, snapshot]);
 
   if (result.waiting && snapshot === null) {
     return <p className="text-[13px] text-muted-foreground">Loading…</p>;
@@ -114,6 +128,24 @@ function ArchivedCardList({
               <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
                 {card.key}
               </span>
+              {(() => {
+                const parentKey =
+                  card.parentCardId === undefined
+                    ? undefined
+                    : parentKeyOf(String(card.parentCardId));
+                return parentKey === undefined ? null : (
+                  // A sub-board child names its parent (t3o-25, AC6) — the
+                  // archive flattens every board into one list, so without
+                  // this the child reads as a stray top-level card.
+                  <span
+                    className="inline-flex h-4 shrink-0 items-center rounded bg-muted-foreground/14 px-1.5 text-[10px] font-medium text-muted-foreground"
+                    title={`Part of ${parentKey}'s sub-board`}
+                  >
+                    <LayersIcon className="mr-0.5 size-2.5" />
+                    {parentKey}
+                  </span>
+                );
+              })()}
               <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
                 {card.title}
               </span>
@@ -165,6 +197,7 @@ function ArchivedCardList({
 
 export function BoardArchivedCardsSheet({
   environmentId,
+  liveCardKeyById,
   onDelete,
   onOpenChange,
   onRestore,
@@ -173,6 +206,9 @@ export function BoardArchivedCardsSheet({
   scopeProjectId,
 }: {
   readonly environmentId: EnvironmentId;
+  /** Live card ids → keys, from the board (t3o-25): resolves an archived
+      child's badge when its parent is still on the live board. */
+  readonly liveCardKeyById: ReadonlyMap<string, string>;
   /** Purge the card outright — always behind this sheet's own confirmation. */
   readonly onDelete: (cardId: BoardCardId) => void;
   readonly onOpenChange: (open: boolean) => void;
@@ -201,6 +237,7 @@ export function BoardArchivedCardsSheet({
         <SheetPanel>
           <ArchivedCardList
             environmentId={environmentId}
+            liveCardKeyById={liveCardKeyById}
             onDelete={onDelete}
             onRestore={onRestore}
             onSelectCard={onSelectCard}

@@ -33,6 +33,7 @@ export function BoardCardPlanPane({
   canApproveSplit = false,
   approveTargetLabel = null,
   onApproveSplit,
+  onOpenChild,
 }: {
   readonly plans: ReadonlyArray<BoardPlanWithBody>;
   readonly cardKey: string;
@@ -46,6 +47,9 @@ export function BoardCardPlanPane({
   /** The floor stage's label, for the confirm copy ("land in Ready"). */
   readonly approveTargetLabel?: string | null;
   readonly onApproveSplit?: (() => void) | undefined;
+  /** Open one child inside this card's sub-board (t3o-25, AC4); absent keeps
+      the chips informational. */
+  readonly onOpenChild?: ((childCardId: string) => void) | undefined;
 }) {
   const [confirming, setConfirming] = useState(false);
   const childByPlan = new Map(
@@ -138,20 +142,28 @@ export function BoardCardPlanPane({
                   {child === undefined ? null : (
                     // The materialised child (t3o-23): its key and where it
                     // stands. Struck through when archived, so the pairing
-                    // survives without pretending the card is live.
-                    <span
+                    // survives without pretending the card is live. A button
+                    // when navigation is wired (t3o-25): it opens the child
+                    // inside this card's sub-board.
+                    <button
                       className={
-                        "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground" +
-                        (child.archivedAt === null ? "" : " line-through opacity-60")
+                        "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground disabled:pointer-events-none" +
+                        (child.archivedAt === null ? "" : " line-through opacity-60") +
+                        (onOpenChild === undefined ? "" : " hover:bg-muted-foreground/25")
                       }
-                      title={`${child.key} — ${child.title}`}
+                      disabled={onOpenChild === undefined}
+                      onClick={
+                        onOpenChild === undefined ? undefined : () => onOpenChild(child.cardId)
+                      }
+                      title={`${child.key} — ${child.title}${onOpenChild === undefined ? "" : " (open in the sub-board)"}`}
+                      type="button"
                     >
                       <LayersIcon className="size-2.5" />
                       {child.key}
                       <span className="font-normal text-muted-foreground">
                         {boardStageLabel(stages, child.stage)}
                       </span>
-                    </span>
+                    </button>
                   )}
                 </h3>
               )}

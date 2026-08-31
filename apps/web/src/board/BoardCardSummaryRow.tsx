@@ -96,7 +96,9 @@ function RoundPips({
   );
 }
 
-function PlanPips({ done, total }: { readonly done: number; readonly total: number }) {
+/** Exported for the sub-board parent header (t3o-25, D2), which wears the
+    same pips the parent's card face does. */
+export function PlanPips({ done, total }: { readonly done: number; readonly total: number }) {
   const shown = Math.min(total, MAX_SUMMARY_PIPS);
   return (
     <span

@@ -25,6 +25,21 @@ export interface BoardSearch {
   readonly stalled?: boolean;
 }
 
+/** Shared with the sub-board route (t3o-25) — the two scopes are the same
+    surface, so their search params must stay one grammar. */
+export function validateBoardSearch(search: Record<string, unknown>): BoardSearch {
+  const nonEmpty = (value: unknown): string | undefined =>
+    typeof value === "string" && value.length > 0 ? value : undefined;
+  const project = nonEmpty(search.project);
+  const card = nonEmpty(search.card);
+  const stalled = search.stalled === true || search.stalled === "true";
+  return {
+    ...(project === undefined ? {} : { project }),
+    ...(card === undefined ? {} : { card }),
+    ...(stalled ? { stalled: true } : {}),
+  };
+}
+
 function BoardRoute() {
   return (
     <Suspense fallback={null}>
@@ -34,18 +49,7 @@ function BoardRoute() {
 }
 
 export const Route = createFileRoute("/board")({
-  validateSearch: (search: Record<string, unknown>): BoardSearch => {
-    const nonEmpty = (value: unknown): string | undefined =>
-      typeof value === "string" && value.length > 0 ? value : undefined;
-    const project = nonEmpty(search.project);
-    const card = nonEmpty(search.card);
-    const stalled = search.stalled === true || search.stalled === "true";
-    return {
-      ...(project === undefined ? {} : { project }),
-      ...(card === undefined ? {} : { card }),
-      ...(stalled ? { stalled: true } : {}),
-    };
-  },
+  validateSearch: validateBoardSearch,
   beforeLoad: ({ context }) => {
     // Same gate as the threads surface (_chat.tsx): the board is workspace
     // chrome, not a public page.

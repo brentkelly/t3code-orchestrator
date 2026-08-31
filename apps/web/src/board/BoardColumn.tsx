@@ -88,6 +88,9 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly onSelectCard: (card: BoardCardShell) => void;
   /** Opens the create dialog onto this column's stage (t3o-06). */
   readonly onRequestCreate: (stage: BoardStageId) => void;
+  /** Drill into a split parent's sub-board (t3o-25); absent inside a
+      sub-board, where no card is a parent. */
+  readonly onOpenSubBoard?: ((card: BoardCardShell) => void) | undefined;
 }
 
 export function BoardColumn(props: BoardColumnProps) {
@@ -153,6 +156,7 @@ function ExpandedColumn({
   onCardDragStart,
   onCardDragEnd,
   onCardReorder,
+  onOpenSubBoard,
 }: BoardColumnProps) {
   // Cards may be created only into Backlog, Sprint or Planning (t3o-06a); the
   // add affordance is absent from the other five columns entirely.
@@ -248,6 +252,9 @@ function ExpandedColumn({
                   accentName={accentNameFor(card.projectId)}
                   parentKey={parentKeyFor(card.cardId)}
                   todos={todosFor(card.cardId)}
+                  onOpenSubBoard={
+                    onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card)
+                  }
                 />
               </Fragment>
             ))}
