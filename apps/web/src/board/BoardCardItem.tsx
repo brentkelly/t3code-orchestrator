@@ -220,10 +220,12 @@ export function BoardCardContent({
             Stalled
           </span>
         ) : null}
-        {card.awaitingInput ? (
+        {card.awaitingInput && !needsApproval ? (
           // A blue dot in the running-dot's slot, not an icon: the card reads
           // as "has a thread, and it needs you" — same indicator, different
-          // colour — with the "Input needed" label spelling it out.
+          // colour — with the "Input needed" label spelling it out. Suppressed
+          // under a pending split so the two chips never render together — the
+          // amber "Needs approval" wins, matching the tint precedence.
           <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-info-foreground">
             <span className="size-2 shrink-0 rounded-full bg-info" title="Input needed" />
             Input needed
