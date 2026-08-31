@@ -337,6 +337,19 @@ it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete"
         role: "planning",
         createdAt: t0,
       });
+      // A plan on the card being deleted, so the purge has a `board_plans` row
+      // to drop — and the `plans` slice, non-empty before the delete, empties
+      // to the SAME absent state on replay and on rehydration (both omit an
+      // empty slice). This is the D7 edge a card with no plan cannot exercise.
+      yield* engine.dispatch({
+        type: "board.plans.propose",
+        commandId: CommandId.make("cmd-one-plan"),
+        cardId: cardOne,
+        plans: [{ key: "p1", title: "Plan one", summary: "Do it", dependsOn: [], body: "# Plan" }],
+        createdAt: t0,
+      });
+      const withPlan = yield* snapshotQuery.getCommandReadModel();
+      assert.strictEqual(withPlan.board?.plans?.length, 1);
 
       yield* engine.dispatch({
         type: "board.card.delete",
@@ -355,6 +368,12 @@ it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete"
       // Gone from the live board too.
       const shell = yield* snapshotQuery.getShellSnapshot();
       assert.notInclude(shell.cards?.map((card) => card.cardId) ?? [], cardOne);
+
+      // The deleted card was the only plan-holder, so the slice empties — and
+      // is OMITTED, not left as `[]`, so it matches the rehydrated table (which
+      // drops an empty slice). The replay assertion at the end proves the two
+      // agree; this makes the intent explicit.
+      assert.isUndefined(afterDelete.board?.plans);
 
       // The edge into it was REWRITTEN, not left dangling: an unresolvable
       // dependency id counts as unmet forever, so leaving it would block

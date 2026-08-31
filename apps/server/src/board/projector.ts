@@ -216,21 +216,33 @@ function upsertCard(model: OrchestrationReadModel, card: BoardCard): Orchestrati
  */
 function removeCard(model: OrchestrationReadModel, cardId: BoardCardId): OrchestrationReadModel {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  // An ABSENT optional slice must stay absent, not become a present
-  // `undefined`: rehydration omits the key entirely, and the
-  // replay-equals-rehydration assertion compares with deepStrictEqual, which
-  // tells the two apart.
-  const without = <K extends "stepCompletions" | "stepStates" | "plans">(key: K) => {
-    const slice = board[key];
-    return slice === undefined ? {} : { [key]: slice.filter((entry) => entry.cardId !== cardId) };
+  // The three per-card slices are stripped from the base and RE-ADDED only when
+  // non-empty, so the result matches `loadBoardState`'s absent-vs-empty rule
+  // EXACTLY on both edges:
+  //  - an absent slice stays absent (rehydration omits the key), and
+  //  - a slice this delete empties is OMITTED, not left present as `[]`
+  //    (rehydration omits an empty table too — `plans.length > 0 ? … : {}`).
+  // Either mismatch is a replay-equals-rehydration divergence deepStrictEqual
+  // catches: deleting the last card holding a plan/step would otherwise leave
+  // replay with `plans: []` and rehydration with no key. Destructuring the keys
+  // out of `rest` is load-bearing — spreading an empty `readd()` over a base
+  // that still carried the key would NOT remove it.
+  const { stepCompletions, stepStates, plans, ...rest } = board;
+  const readd = <T extends { readonly cardId: BoardCardId }>(
+    key: "stepCompletions" | "stepStates" | "plans",
+    slice: ReadonlyArray<T> | undefined,
+  ) => {
+    if (slice === undefined) return {};
+    const kept = slice.filter((entry) => entry.cardId !== cardId);
+    return kept.length > 0 ? { [key]: kept } : {};
   };
   return {
     ...model,
     board: {
-      ...board,
-      ...without("stepCompletions"),
-      ...without("stepStates"),
-      ...without("plans"),
+      ...rest,
+      ...readd("stepCompletions", stepCompletions),
+      ...readd("stepStates", stepStates),
+      ...readd("plans", plans),
       cards: board.cards.filter((card) => card.id !== cardId),
     },
   };

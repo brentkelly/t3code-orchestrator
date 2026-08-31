@@ -2487,10 +2487,12 @@ const make = Effect.gen(function* () {
   /**
    * A card was DELETED — the destructive follow-through archive never does.
    *
-   * Everything here reads from the event payload and nothing from the board:
-   * the card left the read model and its rows left the tables in the same
-   * transaction that produced this event, so by the time the reactor runs there
-   * is nothing left to look up.
+   * The card itself comes entirely from the event payload: it left the read
+   * model and its rows left the tables in the same transaction that produced
+   * this event, so nothing about the card can be looked up any more. The one
+   * board read is for the project's workspace root (`projectCwd`) — the project
+   * outlives its cards, so it is still there — which the git work needs as its
+   * cwd.
    *
    * The order is deliberate. Threads go first, so the agents writing into the
    * worktree are stopped before it is pulled out from under them. The worktree

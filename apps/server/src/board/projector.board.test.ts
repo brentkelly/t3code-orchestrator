@@ -18,6 +18,9 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
+  type BoardCardStepState,
+  type BoardPlan,
+  type BoardStepCompletion,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -65,6 +68,59 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
+  };
+}
+
+/** A minimal-but-valid step state for a card, so a delete test can prove the
+    purge drops the deleted card's row while keeping a survivor's. */
+function makeStepState(id: string): BoardCardStepState {
+  return {
+    cardId: BoardCardId.make(id),
+    stepId: "s1",
+    stepLabel: "Build",
+    stageLabel: "Building",
+    attempt: 1,
+    stallCount: 0,
+    lastNudgeAt: null,
+    prompt: "",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5-codex",
+    mode: "build",
+    runtimeMode: "approval-required",
+    humanInLoop: false,
+    maxAttempts: 3,
+    timeoutMs: 1000,
+    threadId: null,
+    status: "succeeded",
+    slotHeld: false,
+    startedAt: null,
+    updatedAt: NOW,
+  };
+}
+
+function makeCompletion(id: string): BoardStepCompletion {
+  return {
+    cardId: BoardCardId.make(id),
+    stepId: "s1",
+    outcome: "succeeded",
+    summary: "done",
+    payload: null,
+    threadId: null,
+    completedAt: NOW,
+  };
+}
+
+function makePlan(id: string): BoardPlan {
+  return {
+    planId: BoardPlanId.make(`${id}::p1`),
+    cardId: BoardCardId.make(id),
+    title: "Plan",
+    summary: "Plan summary",
+    dependsOn: [],
+    ordinal: 0,
+    locked: false,
+    createdAt: NOW,
+    updatedAt: NOW,
   };
 }
 
@@ -351,6 +407,93 @@ describe("board projector", () => {
         sequence: 2,
         card: boardCardShellFromCard(restoredCard),
       });
+    }),
+  );
+
+  // Delete is archive's opposite: the card leaves the model along with every
+  // slice keyed on it, while a survivor's rows in those same slices stay
+  // untouched. This is the branch a full-engine replay test cannot reach
+  // without driving the step/plan machinery — so it is exercised directly.
+  it.effect("drops the deleted card and its step/completion/plan rows, keeping a survivor's", () =>
+    Effect.gen(function* () {
+      const survivorId = BoardCardId.make("card-2");
+      const deleted = makeCard({});
+      const survivor = makeCard({ id: survivorId, key: "CARD-2", cardNumber: 2 });
+      const event: BoardEvent = {
+        ...eventBase,
+        type: "board.card-deleted",
+        payload: { cardId, deletedAt: NOW, card: deleted, threadIds: [], stepState: null },
+      };
+
+      const model = yield* projectBoardEvent(
+        {
+          ...emptyModel(),
+          board: {
+            cards: [deleted, survivor],
+            labels: [],
+            nextCardNumberByProject: { [projectId]: 3 },
+            stepStates: [makeStepState(cardId), makeStepState(survivorId)],
+            stepCompletions: [makeCompletion(cardId), makeCompletion(survivorId)],
+            plans: [makePlan(cardId), makePlan(survivorId)],
+          },
+        },
+        event,
+      );
+
+      // The card is gone; the survivor stays.
+      assert.deepStrictEqual(model.board?.cards, [survivor]);
+      // Each per-card slice keeps EXACTLY the survivor's row — the present,
+      // non-empty branch of the purge (a bug that filtered by identity would
+      // drop or keep the wrong one).
+      assert.deepStrictEqual(model.board?.stepStates, [makeStepState(survivorId)]);
+      assert.deepStrictEqual(model.board?.stepCompletions, [makeCompletion(survivorId)]);
+      assert.deepStrictEqual(model.board?.plans, [makePlan(survivorId)]);
+
+      // The shell sees a plain removal — indistinguishable from an archive.
+      assert.deepStrictEqual(Option.getOrNull(boardShellStreamEvent(event)), {
+        kind: "card-removed",
+        sequence: 1,
+        cardId,
+      });
+    }),
+  );
+
+  // The absent-vs-empty rule `loadBoardState` enforces on rehydration must
+  // hold on the replay edge too, or D7's replay-equals-rehydration (compared
+  // with deepStrictEqual) breaks. Two ways it could:
+  //  - an absent slice becoming a present `undefined`, and
+  //  - a slice the delete EMPTIES becoming a present `[]` instead of omitted
+  //    (rehydration drops an empty table — deleting the last plan-holder would
+  //    otherwise leave replay with `plans: []` and rehydration with no key).
+  it.effect("omits a slice the delete empties, and leaves an absent slice absent", () =>
+    Effect.gen(function* () {
+      // The deleted card is the SOLE holder of every per-card slice; plans is
+      // simply absent. After the delete, the emptied slices are OMITTED (not
+      // `[]`) and the absent one stays absent.
+      const event: BoardEvent = {
+        ...eventBase,
+        type: "board.card-deleted",
+        payload: { cardId, deletedAt: NOW, card: makeCard({}), threadIds: [], stepState: null },
+      };
+      const model = yield* projectBoardEvent(
+        {
+          ...emptyModel(),
+          board: {
+            cards: [makeCard({})],
+            labels: [],
+            nextCardNumberByProject: { [projectId]: 2 },
+            stepStates: [makeStepState(cardId)],
+            stepCompletions: [makeCompletion(cardId)],
+          },
+        },
+        event,
+      );
+      assert.deepStrictEqual(model.board?.cards, []);
+      // Emptied → omitted, exactly as rehydration would leave them.
+      assert.isFalse(Object.hasOwn(model.board ?? {}, "stepStates"));
+      assert.isFalse(Object.hasOwn(model.board ?? {}, "stepCompletions"));
+      // Never a holder → still absent.
+      assert.isFalse(Object.hasOwn(model.board ?? {}, "plans"));
     }),
   );
 
