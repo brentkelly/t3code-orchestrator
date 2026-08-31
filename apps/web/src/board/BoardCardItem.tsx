@@ -17,7 +17,7 @@ import type {
   BoardLabelId,
   ThreadId,
 } from "@t3tools/contracts";
-import { LayersIcon, LockIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronRightIcon, LayersIcon, LockIcon, TriangleAlertIcon } from "lucide-react";
 import type { DragEvent } from "react";
 
 import { cn } from "../lib/utils";
@@ -69,6 +69,7 @@ export function BoardCardContent({
   accentName,
   todos,
   parentKey,
+  onOpenSubBoard,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -83,6 +84,10 @@ export function BoardCardContent({
       (the archive sheet, the drag ghost), where the card renders exactly as it
       did before. */
   readonly todos?: BoardCardTodoContext | undefined;
+  /** Drill into this card's sub-board (t3o-25). Only a split parent renders
+      the stack affordance, and only where the handler is supplied (the live
+      root board — not the ghost, not the archive sheet). */
+  readonly onOpenSubBoard?: (() => void) | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
@@ -110,6 +115,11 @@ export function BoardCardContent({
   // Muting a Done card wins over it: a finished card is not asking for
   // anything, whatever its last thread state said.
   const awaiting = card.awaitingInput && !summary.muted;
+  // A split parent wears the stack (t3o-25, AC1): the card reads as the top
+  // sheet of a pile, and the strip below drills into the sub-board. Both key
+  // off the client-derived `planTotal`, exactly like the pips.
+  const wearsStack =
+    onOpenSubBoard !== undefined && card.planTotal !== undefined && card.planTotal > 0;
   return (
     <article
       className={cn(
@@ -135,6 +145,11 @@ export function BoardCardContent({
           : "bg-card shadow-xs/5 hover:border-foreground/18 dark:bg-[#1c1c20]",
         // Done recedes: finished work is muted and lower-contrast (D15 stage).
         summary.muted && "bg-card/60 opacity-70",
+        // The stacked-sheet edges: two offset underlines painted with
+        // box-shadow, so the pile costs no layout and never disturbs the
+        // drag-index math (shadows paint into the existing card gap).
+        wearsStack &&
+          "shadow-[0_5px_0_-2px_color-mix(in_srgb,var(--foreground)_16%,var(--background)),0_9px_0_-5px_color-mix(in_srgb,var(--foreground)_9%,var(--background))]",
       )}
       data-board-card={card.cardId}
       data-board-card-stage={card.stage}
@@ -260,6 +275,29 @@ export function BoardCardContent({
       {/* Last, always: the meta row is the card's footer, so it sits below the
           stage summary and the todo strip however tall those grow. */}
       <BoardCardMetaRow meta={boardCardMeta(card, todoThreads.length)} />
+      {wearsStack ? (
+        // The drill-in door (t3o-25, AC2). A real button so it is focusable
+        // on its own; clicks and keys stop here so the card underneath does
+        // not also open its detail sheet.
+        <button
+          className="mt-0.5 flex items-center gap-1.5 rounded-md border border-border/70 bg-muted/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenSubBoard();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+          }}
+          title="Open this card's sub-board"
+          type="button"
+        >
+          <LayersIcon className="size-3" />
+          {card.planTotal} {card.planTotal === 1 ? "card" : "cards"}
+          {card.planDone !== undefined && card.planDone > 0 ? ` · ${card.planDone} done` : ""}
+          <span className="flex-1" />
+          <ChevronRightIcon className="size-3" />
+        </button>
+      ) : null}
     </article>
   );
 }
@@ -285,6 +323,7 @@ export function DraggableBoardCard({
   accentName,
   todos,
   parentKey,
+  onOpenSubBoard,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -299,6 +338,7 @@ export function DraggableBoardCard({
   readonly accentName?: string | null | undefined;
   readonly todos?: BoardCardTodoContext | undefined;
   readonly parentKey?: string | undefined;
+  readonly onOpenSubBoard?: (() => void) | undefined;
 }) {
   return (
     // Keyboard path: the card is a focusable button-role element — Enter/Space
@@ -342,6 +382,7 @@ export function DraggableBoardCard({
         accentName={accentName}
         todos={todos}
         parentKey={parentKey}
+        onOpenSubBoard={onOpenSubBoard}
       />
     </div>
   );

@@ -21,6 +21,7 @@ import {
   BoardLabelId,
   assignBoardKeyPrefix,
   boardStagesInOrder,
+  isBoardStageAtOrAfterSubBoardFloor,
   resolveBoardProjectAccent,
   resolveBoardStageExecution,
   type BoardStageDefinition,
@@ -80,6 +81,7 @@ export function BoardCardCreateDialog({
   projects,
   defaultProjectId,
   defaultStage,
+  subBoardParentId = null,
 }: {
   readonly environmentId: EnvironmentId;
   readonly open: boolean;
@@ -87,6 +89,11 @@ export function BoardCardCreateDialog({
   readonly projects: ReadonlyArray<BoardCreateProject>;
   readonly defaultProjectId: ProjectId | null;
   readonly defaultStage: BoardStageId;
+  /** Create a child of this parent (t3o-25): the sub-board's dialog presets
+      it, which narrows the stage picker to the floor-onward stages a child
+      may occupy and the dependency picker to siblings. Null creates an
+      ordinary top-level card. */
+  readonly subBoardParentId?: BoardCardId | null;
 }) {
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
@@ -134,16 +141,27 @@ export function BoardCardCreateDialog({
   }, [open, defaultProjectId, defaultStage, projects]);
 
   // Dependencies stay inside one project, so the picker only offers cards from
-  // the project this card is being created in.
-  const dependencyOptions = useMemo(
-    () =>
-      allCards
-        .filter(
-          (card) => card.projectId === projectId && !dependsOn.includes(card.cardId as BoardCardId),
-        )
-        .map((card) => ({ id: card.cardId, key: card.key, title: card.title })),
-    [allCards, dependsOn, projectId],
-  );
+  // the project this card is being created in. A child's picker is narrower
+  // still (t3o-25): siblings only — the decider refuses anything else — while
+  // a top-level card's options badge any child with its parent's key.
+  const dependencyOptions = useMemo(() => {
+    const keyById = new Map(allCards.map((card) => [String(card.cardId), card.key]));
+    return allCards
+      .filter(
+        (card) =>
+          card.projectId === projectId &&
+          !dependsOn.includes(card.cardId as BoardCardId) &&
+          (subBoardParentId === null || card.parentCardId === subBoardParentId),
+      )
+      .map((card) => ({
+        id: card.cardId,
+        key: card.key,
+        title: card.title,
+        ...(subBoardParentId === null && card.parentCardId !== undefined
+          ? { parentKey: keyById.get(String(card.parentCardId)) }
+          : {}),
+      }));
+  }, [allCards, dependsOn, projectId, subBoardParentId]);
 
   /** The chosen dependencies as the card modal's rows — same shape, same
       renderer, so an unresolvable id reads the same in both sheets. */
@@ -160,6 +178,19 @@ export function BoardCardCreateDialog({
       archived: false,
     };
   });
+
+  // The stages a card may be created into: every stage (D10) for a top-level
+  // card, the materialisation floor onward for a sub-board child (t3o-25) —
+  // the same subset the decider lets a child occupy.
+  const stageOptions = useMemo(() => {
+    const stageState = stageStateOf(stages);
+    const ordered = boardStagesInOrder(stageState);
+    return subBoardParentId === null
+      ? ordered
+      : ordered.filter((definition) =>
+          isBoardStageAtOrAfterSubBoardFloor(stageState, definition.stageId),
+        );
+  }, [stages, subBoardParentId]);
 
   const canSubmit = title.trim().length > 0 && projectId !== null && !submitting;
 
@@ -201,6 +232,9 @@ export function BoardCardCreateDialog({
         labels: labelIds,
         dependsOn,
         ...(trimmedBrief.length === 0 ? {} : { brief: trimmedBrief }),
+        // The child preset (t3o-25): a card created inside a drill-in is that
+        // parent's child, exactly as if a plan had materialised it.
+        ...(subBoardParentId === null ? {} : { parentCardId: subBoardParentId }),
         keyPrefix: prefix,
         orderKey: boardColumnAppendOrderKey(targetColumn),
       },
@@ -222,7 +256,7 @@ export function BoardCardCreateDialog({
         <div className="flex shrink-0 items-center gap-[9px] px-4 pt-4 pr-11">
           <DialogTitle className="text-[17px]/[1.25] tracking-[-0.01em]">New card</DialogTitle>
           <Select
-            items={boardStagesInOrder(stageStateOf(stages)).map((definition) => ({
+            items={stageOptions.map((definition) => ({
               value: definition.stageId as string,
               label: definition.label,
             }))}
@@ -236,7 +270,7 @@ export function BoardCardCreateDialog({
               <SelectValue />
             </SelectTrigger>
             <SelectPopup>
-              {boardStagesInOrder(stageStateOf(stages)).map((definition) => (
+              {stageOptions.map((definition) => (
                 <SelectItem key={definition.stageId} value={definition.stageId}>
                   {definition.label}
                 </SelectItem>

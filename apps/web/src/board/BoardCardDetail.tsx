@@ -104,10 +104,15 @@ export function BoardCardDetail({
   environmentId,
   cardId,
   onClose,
+  onOpenSubBoard,
 }: {
   readonly environmentId: EnvironmentId;
   readonly cardId: BoardCardId;
   readonly onClose: () => void;
+  /** Navigate into a parent's sub-board (t3o-25), optionally with a card's
+      sheet open there — wired to the child sheet's "part of" chip and the
+      parent plan pane's child chips. */
+  readonly onOpenSubBoard?: ((parentCardId: string, cardId?: string) => void) | undefined;
 }) {
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
@@ -221,15 +226,40 @@ export function BoardCardDetail({
   }, [card, detail]);
 
   // A dependency only ever names a card in the same project — the picker never
-  // offers one from another project.
+  // offers one from another project. A sub-board child's picker is narrower
+  // still (t3o-25): siblings only, as materialised edges are scoped; the
+  // decider refuses anything else on create, and offering it here would only
+  // teach the rule by refusal. Children offered to a TOP-LEVEL card carry
+  // their parent's key as a badge instead.
   const dependencyOptions = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
+    const shells = snapshot?.cards ?? [];
+    const keyById = new Map(shells.map((shell) => [String(shell.cardId), shell.key]));
     const existing = new Set<string>([card.id, ...card.dependsOn]);
-    return (snapshot?.cards ?? [])
+    return shells
       .filter(
-        (candidate) => candidate.projectId === card.projectId && !existing.has(candidate.cardId),
+        (candidate) =>
+          candidate.projectId === card.projectId &&
+          !existing.has(candidate.cardId) &&
+          (card.parentCardId === null || candidate.parentCardId === card.parentCardId),
       )
-      .map((candidate) => ({ id: candidate.cardId, key: candidate.key, title: candidate.title }));
+      .map((candidate) => ({
+        id: candidate.cardId,
+        key: candidate.key,
+        title: candidate.title,
+        ...(card.parentCardId === null && candidate.parentCardId !== undefined
+          ? { parentKey: keyById.get(String(candidate.parentCardId)) }
+          : {}),
+      }));
+  }, [card, snapshot]);
+
+  // The child's parent, resolved for the sheet's "part of" chip (t3o-25). An
+  // archived parent is off the live shell and its sub-board would redirect
+  // straight back out — no chip rather than a dead door.
+  const parentCard = useMemo(() => {
+    if (card === null || card.parentCardId === null) return null;
+    const parent = (snapshot?.cards ?? []).find((shell) => shell.cardId === card.parentCardId);
+    return parent === undefined ? null : { cardId: String(parent.cardId), key: parent.key };
   }, [card, snapshot]);
 
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
@@ -645,6 +675,15 @@ export function BoardCardDetail({
       onStopAfterRound={(round) => patchReviewOverrides({ stopAfterRound: round })}
       threadLinks={threadLinks}
       threadTodos={threadTodos}
+      parentCard={parentCard}
+      onOpenParentSubBoard={
+        onOpenSubBoard === undefined || parentCard === null
+          ? undefined
+          : () => onOpenSubBoard(parentCard.cardId, card.id)
+      }
+      onOpenChildInSubBoard={
+        onOpenSubBoard === undefined ? undefined : (childId) => onOpenSubBoard(card.id, childId)
+      }
     />
   );
 }

@@ -65,6 +65,7 @@ import {
   ExternalLinkIcon,
   FileIcon,
   FileTextIcon,
+  LayersIcon,
   LockIcon,
   MessageSquareIcon,
   SquareIcon,
@@ -287,6 +288,15 @@ export interface BoardCardDetailViewProps {
   readonly onApproveSplit: () => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
+  /** The parent this card is a child of (t3o-25), for the identity row's
+      "part of" chip; null on top-level cards and when the parent is off the
+      live board. */
+  readonly parentCard?: { readonly cardId: string; readonly key: string } | null | undefined;
+  /** Navigate into the parent's sub-board with this card's sheet open. */
+  readonly onOpenParentSubBoard?: (() => void) | undefined;
+  /** Navigate into THIS card's sub-board with one child's sheet open — the
+      plan pane's child chips (t3o-25, AC4). */
+  readonly onOpenChildInSubBoard?: ((childCardId: string) => void) | undefined;
 }
 
 export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
@@ -989,6 +999,20 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       {/* Identity row: key, the card's labels, its stage. */}
       <div className="flex shrink-0 items-center gap-[9px] px-4 pt-4">
         <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">{card.key}</span>
+        {props.parentCard != null ? (
+          // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
+          // back into the sub-board it lives on, with this sheet still open.
+          <button
+            className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
+            disabled={props.onOpenParentSubBoard === undefined}
+            onClick={props.onOpenParentSubBoard}
+            title={`Part of ${props.parentCard.key}'s sub-board — open it`}
+            type="button"
+          >
+            <LayersIcon className="size-2.5" />
+            {props.parentCard.key}
+          </button>
+        ) : null}
         <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
         <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground">
           {boardStageLabel(props.stages, card.stage)}
@@ -1124,6 +1148,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 canApproveSplit={props.canApproveSplit}
                 approveTargetLabel={props.approveSplitTargetLabel}
                 onApproveSplit={props.onApproveSplit}
+                onOpenChild={props.onOpenChildInSubBoard}
               />
             </Suspense>
           ) : (
