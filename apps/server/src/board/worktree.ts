@@ -50,30 +50,32 @@ export function boardCardWorktreeBranchName(card: Pick<BoardCard, "key">): strin
  * the wrong base. Pure, so it is decided in the read model, never by querying
  * git.
  *
- * A parent whose pull request has MERGED is no longer a base. Its branch is
- * deleted on arrival at Done, so cutting from it would fail on a ref that no
- * longer exists. The replacement is the pull request's own `baseRef` — the
- * branch the parent's work actually merged INTO — rather than the project
- * default: on a sub-board the parent may well have merged into an integration
- * branch, and cutting the child from the default branch would silently drop
- * every sibling already integrated there. `baseRef` is recorded on the card, so
- * this stays pure and needs no git query.
+ * Precedence (t3o-23): a LIVE parent branch always wins. `branch-only`,
+ * `provisioning` and `ready` are the statuses under which the branch ref
+ * exists (or is being created right now), and for a split parent that branch
+ * IS the integration base its children were approved onto — including a
+ * SECOND-ROUND split, where a previously merged parent was dragged back and
+ * re-approved: its fresh `branch-only` slice must beat the retired round's
+ * merged pull request, or every child would silently cut from (and PR into)
+ * the old round's base, bypassing the integration branch and the final
+ * integration review. `failed` and `reclaimed` are NOT live — a failed
+ * provision may never have created the ref, and a reclaimed slice's branch
+ * was (or is about to be) deleted — so they fall through rather than name a
+ * ref that may not exist; the caller's null-path re-runs the integration
+ * branch machinery for exactly those states.
  *
- * Read through `boardCardDisplayPullRequest`, not `parent.pullRequest`, because
- * a parent dragged back out of Done has had its merged pull request RETIRED
- * into the history — `pullRequest` is null from that moment until its new round
- * opens one. Consulting only the current link would miss exactly that parent
- * and fall through to `worktree.branch`, which is the branch that was just
- * deleted, in the window before the parent re-provisions.
+ * With no live branch, a parent whose pull request has MERGED yields the pull
+ * request's own `baseRef` — the branch the parent's work actually merged
+ * INTO, not the project default: on a nested sub-board the parent may have
+ * merged into an integration branch, and cutting the child from the default
+ * would silently drop every sibling already integrated there. Read through
+ * `boardCardDisplayPullRequest`, not `parent.pullRequest`, because a parent
+ * dragged back out of Done has had its merged pull request RETIRED into the
+ * history — `pullRequest` is null from that moment until the new round opens
+ * one.
  *
- * The tradeoff, stated: while a parent is mid-second-round, a child cuts from
- * where the parent's FINISHED work landed rather than from its in-flight
- * branch. That is the safer reading — the alternative pulls unreviewed,
- * unmerged work into a sibling — and sub-board integration branches are
- * post-MVP anyway.
- *
- * A parent that reached Done without a merged pull request keeps its branch and
- * keeps being the base, unchanged.
+ * A parent that reached Done without a merged pull request keeps its branch
+ * (nothing deleted it) and keeps being the base, unchanged.
  */
 export function resolveBoardCardBaseRef(input: {
   readonly card: Pick<BoardCard, "parentCardId">;
@@ -84,9 +86,18 @@ export function resolveBoardCardBaseRef(input: {
 }): string | null {
   if (input.card.parentCardId === null) return input.defaultBranch;
   const parent = input.cards.find((candidate) => candidate.id === input.card.parentCardId);
+  const worktree = parent?.worktree ?? null;
+  const liveBranch =
+    worktree !== null &&
+    (worktree.status === "ready" ||
+      worktree.status === "provisioning" ||
+      worktree.status === "branch-only")
+      ? worktree.branch
+      : null;
+  if (liveBranch !== null) return liveBranch;
   const finished = parent === undefined ? null : boardCardDisplayPullRequest(parent);
   if (finished?.state === "merged") return finished.baseRef;
-  return parent?.worktree?.branch ?? null;
+  return null;
 }
 
 export interface BoardCardWorktreeProvisionResult {

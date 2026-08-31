@@ -120,6 +120,7 @@ export const makeBoardCard = (input: {
   briefRef: null,
   dependsOn: [],
   parentCardId: null,
+  sourcePlanId: null,
   threadLinks: [],
   externalRef: null,
   humanInLoop: null,
@@ -498,6 +499,20 @@ export function withGovernor(
         }),
       removeWorktree: (request: { readonly path: string }) =>
         Ref.update(removedWorktrees, (paths) => [...paths, request.path]),
+      // Worktree provisioning (t3o-23): fixtures that pre-provide a `ready`
+      // worktree never reach these — `ensureWorktree` early-returns — but a
+      // card carrying a non-ready slice (a split parent's `branch-only`
+      // integration branch reaching its own review) provisions here. No branch
+      // is locally present in the stub, so `createWorktree` cuts a fresh one at
+      // a synthetic path.
+      listLocalBranchNames: () => Effect.succeed([] as string[]),
+      createWorktree: (request: { readonly branch?: string; readonly refName?: string }) =>
+        Effect.succeed({
+          worktree: {
+            path: `/tmp/worktrees/${request.branch ?? request.refName ?? "wt"}`,
+            refName: request.branch ?? request.refName ?? "board/wt",
+          },
+        }),
       execute: (request: { readonly args?: ReadonlyArray<string> }) =>
         input.notAGitRepo === true
           ? Effect.succeed({

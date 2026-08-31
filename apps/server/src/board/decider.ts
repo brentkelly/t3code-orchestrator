@@ -24,7 +24,13 @@ import {
   areBoardStagesAdjacent,
   BOARD_CARD_BRIEF_BODY_KIND,
   BOARD_CARD_LABELS_MAX,
+  boardAppendOrderKey,
+  boardCardChildren,
   boardCardPlans,
+  boardCardUnfinishedChildren,
+  BoardCardId,
+  boardSubBoardFloorStage,
+  isBoardStageAtOrAfterSubBoardFloor,
   boardCardPullRequestsEqual,
   BOARD_REVIEW_MAX_ROUNDS,
   boardCardDeletableThreadIds,
@@ -53,8 +59,8 @@ import {
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
-  type BoardCardId,
   type BoardCardReviewOverrides,
+  type BoardPlanId,
   type BoardCardPullRequestTransition,
   type BoardCardStepState,
   type BoardLabel,
@@ -658,13 +664,33 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Stage move '${card.stage}' -> '${command.toStage}' is not adjacent; a drag sends override to force it.`,
         );
       }
-      // Sub-board plan cards (D11) are materialised work, restricted to the
-      // `build` role and beyond; no override reopens the earlier stages.
-      if (card.parentCardId !== null && !isBoardStageAtOrAfterBuild(board, command.toStage)) {
+      // Sub-board plan cards (t3o-23, D3) are materialised work, restricted
+      // to the materialisation floor and beyond — draggable back out of
+      // Building to the floor (reverse states), but no override reopens the
+      // ideation stages.
+      if (
+        card.parentCardId !== null &&
+        !isBoardStageAtOrAfterSubBoardFloor(board, command.toStage)
+      ) {
         return yield* invariant(
           command,
           `Card '${command.cardId}' is a sub-board plan card and cannot enter '${command.toStage}'.`,
         );
+      }
+      // A split parent's stage is DERIVED while children are unfinished
+      // (t3o-23, D4): it advances when its last child finishes, and nothing
+      // else moves it — override included, because the freeze is a truth
+      // about the card, not a convenience gate.
+      {
+        const unfinished = boardCardUnfinishedChildren(board, card.id);
+        if (unfinished.length > 0) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' advances through its ${unfinished.length} plan card${
+              unfinished.length === 1 ? "" : "s"
+            }; move those instead.`,
+          );
+        }
       }
       // Dependency blocking is unconditional from the `build` role onward (D11):
       // a card with unmet dependencies cannot enter the build-role stage or
@@ -1038,6 +1064,19 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       if (card.archivedAt !== null) {
         return yield* invariant(command, `Card '${command.cardId}' is already archived.`);
       }
+      // Archiving the supervisor of running work strands it (t3o-23, D7). A
+      // parent whose children are all done/archived archives normally.
+      {
+        const unfinished = boardCardUnfinishedChildren(board, card.id);
+        if (unfinished.length > 0) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' still has ${unfinished.length} unfinished plan card${
+              unfinished.length === 1 ? "" : "s"
+            } (${unfinished.map((child) => child.key).join(", ")}); finish or archive those first.`,
+          );
+        }
+      }
       const nextCard: BoardCard = {
         ...card,
         archivedAt: command.createdAt,
@@ -1107,6 +1146,21 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // Archived cards delete too (the archive sheet is where "never coming
       // back" gets decided), so this requires existence, not activity.
       const card = yield* requireBoardCard({ board, command });
+      // A parent deletes only after its children are gone (t3o-23, D7):
+      // cascading N cards, branches and worktrees off one confirm is the
+      // destructive surprise the dialog exists to prevent, and each child
+      // delete already rewrites sibling edges and reclaims its own state.
+      {
+        const children = boardCardChildren(board, card.id);
+        if (children.length > 0) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' has ${children.length} materialised plan card${
+              children.length === 1 ? "" : "s"
+            } (${children.map((child) => child.key).join(", ")}); delete those first.`,
+          );
+        }
+      }
       // The card is about to leave `board.cards`, so every derivation below is
       // computed against the board WITHOUT it — the same list the projector
       // and a from-empty replay will see.
@@ -1552,6 +1606,17 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
 
     case "board.plans.propose": {
       yield* requireActiveBoardCard({ board, command });
+      // An approved split freezes the plans (t3o-23, D7): they are the record
+      // of what was materialised, and the work now lives on the child cards.
+      // Only LIVE children freeze — a fully-archived round is gone and a
+      // second round may re-plan (consistent with the re-approval guard).
+      // Distinct from `locked` (t3o-12's file handover, below).
+      if (boardCardChildren(board, command.cardId).some((child) => child.archivedAt === null)) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has materialised child cards; the plans are frozen. Work happens on the child cards now.`,
+        );
+      }
       // A locked plan means the card's plans are materialised to .plans/ at
       // Building entry (t3o-12); re-proposing over them would silently drop the
       // handover, so it is refused as a whole (edit the files).
@@ -1622,6 +1687,14 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
 
     case "board.plan.write": {
       yield* requireActiveBoardCard({ board, command });
+      // Frozen after approval, exactly as re-proposal is (t3o-23, D7) — and,
+      // like it, only by LIVE children.
+      if (boardCardChildren(board, command.cardId).some((child) => child.archivedAt === null)) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has materialised child cards; the plans are frozen. Work happens on the child cards now.`,
+        );
+      }
       const plan = boardCardPlans(board, command.cardId).find(
         (candidate) => candidate.planId === command.planId,
       );
@@ -1656,6 +1729,216 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       };
     }
 
+    case "board.plans.approve": {
+      // The human gate D12 promised (t3o-23): materialise the split. One
+      // decision, three kinds of event — the children's ordinary creations,
+      // the parent's move into the build-role stage, and the approval record
+      // the reactor keys the integration branch off.
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (card.parentCardId !== null) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' is itself a sub-board plan card; splits do not nest (D12).`,
+        );
+      }
+      // A parent with a run in flight cannot be frozen under it: the live
+      // agent would keep writing the very branch the children are about to
+      // fork from, and its completion would race the freeze. Finish or stop
+      // the run first — the freeze then holds a quiet card.
+      {
+        const state = boardCardStepState(board, command.cardId);
+        if (state !== null && !isBoardTerminalStepStatus(state.status)) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' has a live step ('${state.stepLabel}', ${state.status}); finish or stop it before approving a split.`,
+          );
+        }
+      }
+      {
+        // Only LIVE (non-archived) children block re-approval. An archived
+        // child is finished-and-gone (the archived-is-gone principle, t3o-13
+        // D1) — so a fully-wrapped first round does not wedge a SECOND-ROUND
+        // split, the case the reclaimed-slice path in `resolveBoardCardBaseRef`
+        // and `ensureIntegrationBranch` exists to serve. A Done-but-unarchived
+        // child still counts: it is on the board and part of the live split.
+        const live = boardCardChildren(board, card.id).filter((child) => child.archivedAt === null);
+        if (live.length > 0) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' already has ${live.length} materialised plan card${
+              live.length === 1 ? "" : "s"
+            } on the board; a split is approved once.`,
+          );
+        }
+      }
+      const plans = boardCardPlans(board, command.cardId).toSorted(
+        (left, right) => left.ordinal - right.ordinal,
+      );
+      if (plans.length < 2) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has ${plans.length} plan${
+            plans.length === 1 ? "" : "s"
+          }; a split needs at least two — move the card onward instead.`,
+        );
+      }
+      const buildStage = boardStageWithRole(board, "build");
+      if (buildStage === null) {
+        return yield* invariant(command, "The board has no build-role stage.");
+      }
+      // A parent already past Building has left the zone a split supervises;
+      // sitting AT Building is fine (a card built conversationally can still
+      // be split before its build starts in earnest).
+      if (isBoardStageAtOrAfterBuild(board, card.stage) && card.stage !== buildStage.stageId) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' is already past '${buildStage.label}'; a split supervises unbuilt work.`,
+        );
+      }
+      const floor = boardSubBoardFloorStage(board);
+      if (floor === null) {
+        return yield* invariant(
+          command,
+          `The board has no stage before '${buildStage.label}' to hold materialised plan cards; add one first.`,
+        );
+      }
+      // The parent crosses into the build zone now, so its own dependency
+      // gate applies here exactly as it would on the drag (D11).
+      {
+        const unmet = unmetBoardCardDependencies({
+          board,
+          dependsOn: card.dependsOn,
+          cards: board.cards,
+        });
+        if (unmet.length > 0) {
+          const names = unmet.map((dependencyId) => {
+            const dependency = board.cards.find((existing) => existing.id === dependencyId);
+            return dependency === undefined ? `'${dependencyId}'` : dependency.key;
+          });
+          return yield* invariant(
+            command,
+            `Card '${card.key}' cannot approve its split until its dependencies are done: ${names.join(", ")}.`,
+          );
+        }
+      }
+      // The graph is agent-authored and therefore re-validated at the gate
+      // (D12) — propose checked it on ingest, but the gate is where a human
+      // commits to it.
+      const cycle = findProposedPlanCycle(
+        plans.map((plan) => ({ key: plan.planId, dependsOn: plan.dependsOn })),
+      );
+      if (cycle !== null) {
+        return yield* invariant(
+          command,
+          `Plan dependency edge '${cycle.from} -> ${cycle.to}' is a cycle: ${cycle.path.join(" -> ")}.`,
+        );
+      }
+
+      const crypto = yield* Crypto.Crypto;
+      // Children share the parent's key sequence — its prefix, the project's
+      // next numbers — exactly as if each had been created by hand.
+      const lastDash = card.key.lastIndexOf("-");
+      const keyPrefix = lastDash > 0 ? card.key.slice(0, lastDash) : DEFAULT_BOARD_KEY_PREFIX;
+      let nextNumber = board.nextCardNumberByProject[card.projectId] ?? 1;
+      // Appended at the bottom of the floor column in ordinal order; each key
+      // feeds the next so siblings sort in plan order.
+      const floorOrderKeys = board.cards
+        .filter((existing) => existing.stage === floor.stageId && existing.archivedAt === null)
+        .map((existing) => existing.orderKey);
+      const childIdByPlan = new Map<BoardPlanId, BoardCardId>();
+      for (const plan of plans) {
+        childIdByPlan.set(plan.planId, BoardCardId.make(yield* crypto.randomUUIDv4));
+      }
+      const events: Array<PlannedOrchestrationEvent> = [];
+      const childCardIds: Array<BoardCardId> = [];
+      for (const plan of plans) {
+        const childId = childIdByPlan.get(plan.planId)!;
+        childCardIds.push(childId);
+        const orderKey = boardAppendOrderKey(floorOrderKeys);
+        floorOrderKeys.push(orderKey);
+        const cardNumber = nextNumber;
+        nextNumber += 1;
+        events.push({
+          ...(yield* makeBoardEventBase({
+            cardId: childId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "board.card-created",
+          payload: {
+            cardId: childId,
+            projectId: card.projectId,
+            title: plan.title,
+            key: `${keyPrefix}-${cardNumber}`,
+            cardNumber,
+            labels: card.labels,
+            // The plan BODY becomes the child's brief — by pointer, because
+            // bodies never ride the read model (D8); the SQL projector copies
+            // it inside the same transaction.
+            briefFromPlanId: plan.planId,
+            dependsOn: plan.dependsOn.map((dependency) => childIdByPlan.get(dependency)!),
+            parentCardId: card.id,
+            sourcePlanId: plan.planId,
+            stage: floor.stageId,
+            orderKey,
+            createdAt: command.createdAt,
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      // The parent's crossing into Building is part of the same human act —
+      // its build IS the children (D4). Skipped when it already sits there.
+      const parentAfterMove: BoardCard = {
+        ...card,
+        stage: buildStage.stageId,
+        ...(card.stage === buildStage.stageId
+          ? {}
+          : {
+              orderKey: boardAppendOrderKey(
+                board.cards
+                  .filter(
+                    (existing) =>
+                      existing.stage === buildStage.stageId && existing.archivedAt === null,
+                  )
+                  .map((existing) => existing.orderKey),
+              ),
+            }),
+        blocked: false,
+        updatedAt: command.createdAt,
+      };
+      if (card.stage !== buildStage.stageId) {
+        events.push({
+          ...(yield* makeBoardEventBase({
+            cardId: card.id,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "board.card-moved",
+          payload: {
+            cardId: card.id,
+            fromStage: card.stage,
+            toStage: buildStage.stageId,
+            card: parentAfterMove,
+          },
+        });
+      }
+      events.push({
+        ...(yield* makeBoardEventBase({
+          cardId: card.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.plans-approved",
+        payload: {
+          cardId: card.id,
+          card: parentAfterMove,
+          childCardIds,
+          approvedAt: command.createdAt,
+        },
+      });
+      return events;
+    }
+
     // ── Worktree lifecycle (t3o-09, D6) ──────────────────────────────
     // These are server-internal commands (BOARD_INTERNAL_COMMANDS): the
     // worktree lifecycle service dispatches them after the effectful git
@@ -1681,11 +1964,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       if (
         card.worktree !== null &&
         card.worktree.status !== "failed" &&
-        card.worktree.status !== "reclaimed"
+        card.worktree.status !== "reclaimed" &&
+        card.worktree.status !== "branch-only"
       ) {
         return yield* invariant(
           command,
-          `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed or reclaimed worktree can be re-provisioned.`,
+          `Card '${command.cardId}' worktree is '${card.worktree.status}'; only a failed, reclaimed or branch-only worktree can be re-provisioned.`,
         );
       }
       // Those two admitted states mean different things:
@@ -1695,6 +1979,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       //  - `reclaimed` is a fresh provision for a card that has been dragged
       //    back out of Done, so `attempts` restarts and keeps meaning "retries
       //    of THIS provision" rather than a lifetime tally across every round.
+      //  - `branch-only` (t3o-23, D5) is a split parent reaching its own
+      //    review: the integration branch exists, the worktree attaches to it
+      //    now. A fresh provision, so `attempts` restarts here too.
       //
       // Neither touches the card's pull request. The ROUND boundary — retiring
       // a merged pull request and raising `pullRequestFloor` — belongs to the
@@ -1703,7 +1990,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // worktree survived Done is never re-provisioned at all, so a boundary
       // hung here would simply not fire for it.
       const attempts =
-        card.worktree === null || card.worktree.status === "reclaimed"
+        card.worktree === null ||
+        card.worktree.status === "reclaimed" ||
+        card.worktree.status === "branch-only"
           ? 1
           : card.worktree.attempts + 1;
       const nextCard: BoardCard = {
@@ -1726,6 +2015,54 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           commandId: command.commandId,
         })),
         type: "board.card-worktree-provisioning",
+        payload: {
+          cardId: command.cardId,
+          branch: command.branch,
+          baseRefName: command.baseRefName,
+          card: nextCard,
+        },
+      };
+    }
+
+    case "board.card.record-integration-branch": {
+      // A split parent's integration branch now exists on disk (t3o-23, D5) —
+      // the reactor created it off the plans-approved event and reports back,
+      // same effect-then-record discipline as record-worktree. `branch-only`:
+      // real branch, no worktree until the parent's own review entry.
+      const card = yield* requireActiveBoardCard({ board, command });
+      // `failed` is a retry; `reclaimed` is a second-round split whose old
+      // branch was deleted at Done (t3o-23, D5). A live slice — branch-only,
+      // provisioning, ready — must not be overwritten behind its own back.
+      if (
+        card.worktree !== null &&
+        card.worktree.status !== "failed" &&
+        card.worktree.status !== "reclaimed"
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' worktree is '${card.worktree.status}'; an integration branch is recorded only while no live branch exists.`,
+        );
+      }
+      const nextCard: BoardCard = {
+        ...card,
+        worktree: {
+          branch: command.branch,
+          baseRefName: command.baseRefName,
+          path: null,
+          status: "branch-only",
+          attempts: 1,
+          lastError: null,
+          reclaimBlockedReason: null,
+        },
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-integration-branch-recorded",
         payload: {
           cardId: command.cardId,
           branch: command.branch,

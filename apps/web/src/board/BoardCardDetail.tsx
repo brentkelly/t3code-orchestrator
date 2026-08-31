@@ -20,6 +20,8 @@ import {
   activeBoardCardThreadId,
   areBoardStagesAdjacent,
   boardStageWithRole,
+  boardSubBoardFloorStage,
+  isBoardStageAtOrAfterBuild,
   deriveBoardCardThreadState,
   resolveBoardStageExecution,
   type BoardCardThreadShell,
@@ -117,6 +119,7 @@ export function BoardCardDetail({
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
   const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
+  const approvePlans = useAtomCommand(boardEnvironment.approvePlans);
   const linkThread = useAtomCommand(boardEnvironment.linkThread);
   const unlinkThread = useAtomCommand(boardEnvironment.unlinkThread);
   // Restart and blank-thread creation report their own failures (D4: log and
@@ -445,6 +448,24 @@ export function BoardCardDetail({
     return ok ? threadId : null;
   };
 
+  // The approve gate (t3o-23, D1): two or more plans, nothing materialised
+  // yet, a top-level card at or before the build stage, and a floor stage for
+  // the children to land in. These are the cheap STRUCTURAL checks only — the
+  // decider additionally gates on unmet dependencies, plan-graph cycles and a
+  // live step, and a refusal from any of those surfaces through the shared
+  // command feedback, so the button may offer an approval the decider still
+  // declines with a reason.
+  const buildStage = boardStageWithRole(stageState, "build");
+  const floorStage = boardSubBoardFloorStage(stageState);
+  const canApproveSplit =
+    detail.plans.length >= 2 &&
+    detail.children.length === 0 &&
+    card.parentCardId === null &&
+    card.archivedAt === null &&
+    floorStage !== null &&
+    buildStage !== null &&
+    (!isBoardStageAtOrAfterBuild(stageState, card.stage) || card.stage === buildStage.stageId);
+
   return (
     <BoardCardDetailView
       adoptableThreads={adoptableThreads}
@@ -457,6 +478,9 @@ export function BoardCardDetail({
         runCommand(updateCard({ environmentId, input: { cardId: card.id, humanInLoop: value } }))
       }
       stages={stages}
+      canApproveSplit={canApproveSplit}
+      approveSplitTargetLabel={floorStage?.label ?? null}
+      onApproveSplit={() => runCommand(approvePlans({ environmentId, input: { cardId: card.id } }))}
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}

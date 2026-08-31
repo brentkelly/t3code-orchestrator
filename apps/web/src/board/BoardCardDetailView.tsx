@@ -280,6 +280,11 @@ export interface BoardCardDetailViewProps {
   /** Purge the card outright. Always behind `BoardDeleteConfirmDialog` — the
       server does not ask, so this must never be reachable without one. */
   readonly onDelete: () => void;
+  /** The plan pane's approve gate (t3o-23, D1): whether it renders, the
+      floor stage's label for the confirm copy, and the dispatch. */
+  readonly canApproveSplit: boolean;
+  readonly approveSplitTargetLabel: string | null;
+  readonly onApproveSplit: () => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
 }
@@ -1114,6 +1119,11 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 cardKey={card.key}
                 onBackToThread={() => setPane("thread")}
                 plans={props.detail.plans}
+                childCards={props.detail.children}
+                stages={props.stages}
+                canApproveSplit={props.canApproveSplit}
+                approveTargetLabel={props.approveSplitTargetLabel}
+                onApproveSplit={props.onApproveSplit}
               />
             </Suspense>
           ) : (

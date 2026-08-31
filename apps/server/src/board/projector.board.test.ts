@@ -55,6 +55,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     briefRef: null,
     dependsOn: [],
     parentCardId: null,
+    sourcePlanId: null,
     threadLinks: [],
     externalRef: null,
     humanInLoop: null,
@@ -775,6 +776,96 @@ describe("board projector", () => {
         stalled: false,
         stepRunning: false,
       });
+    }),
+  );
+
+  // ── Sub-boards (t3o-23) ──────────────────────────────────────────────
+
+  it.effect("projects a sub-board child creation: parent link, source plan, brief pointer", () =>
+    Effect.gen(function* () {
+      const parentId = BoardCardId.make("card-parent");
+      const planId = BoardPlanId.make("card-parent::p1");
+      const event: BoardEvent = {
+        ...eventBase,
+        type: "board.card-created",
+        payload: {
+          cardId,
+          projectId,
+          title: "Part one",
+          key: "T3-191",
+          cardNumber: 191,
+          labels: [],
+          briefFromPlanId: planId,
+          dependsOn: [],
+          parentCardId: parentId,
+          sourcePlanId: planId,
+          stage: BoardStageId.make("ready"),
+          orderKey: "m",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      };
+      const model = yield* projectBoardEvent(emptyModel(), event);
+      const card = model.board?.cards.find((existing) => existing.id === cardId);
+      assert.ok(card !== undefined);
+      assert.strictEqual(card.parentCardId, parentId);
+      assert.strictEqual(card.sourcePlanId, planId);
+      // A brief-by-pointer still means the card HAS a brief — the SQL
+      // projector resolves the body in the same transaction.
+      assert.notStrictEqual(card.briefRef, null);
+
+      // The child's shell delta carries its parent for the "part of" chip.
+      const delta = Option.getOrThrow(boardShellStreamEvent(event));
+      assert.ok(delta.kind === "card-upserted");
+      assert.strictEqual(delta.card.parentCardId, parentId);
+    }),
+  );
+
+  it.effect("projects plans-approved and the integration-branch record via the carried card", () =>
+    Effect.gen(function* () {
+      const parent = makeCard({ stage: BoardStageId.make("building") });
+      const approved: BoardEvent = {
+        ...eventBase,
+        type: "board.plans-approved",
+        payload: {
+          cardId,
+          card: parent,
+          childCardIds: [BoardCardId.make("card-a"), BoardCardId.make("card-b")],
+          approvedAt: NOW,
+        },
+      };
+      const afterApproval = yield* projectBoardEvent(emptyModel(), approved);
+      assert.strictEqual(
+        afterApproval.board?.cards.find((existing) => existing.id === cardId)?.stage,
+        parent.stage,
+      );
+      const approvedDelta = Option.getOrThrow(boardShellStreamEvent(approved));
+      assert.strictEqual(approvedDelta.kind, "card-upserted");
+
+      const withBranch = makeCard({
+        stage: BoardStageId.make("building"),
+        worktree: {
+          branch: "board/card-1",
+          baseRefName: "main",
+          path: null,
+          status: "branch-only",
+          attempts: 1,
+          lastError: null,
+          reclaimBlockedReason: null,
+        },
+      });
+      const recorded: BoardEvent = {
+        ...eventBase,
+        type: "board.card-integration-branch-recorded",
+        payload: { cardId, branch: "board/card-1", baseRefName: "main", card: withBranch },
+      };
+      const afterRecord = yield* projectBoardEvent(afterApproval, recorded);
+      assert.strictEqual(
+        afterRecord.board?.cards.find((existing) => existing.id === cardId)?.worktree?.status,
+        "branch-only",
+      );
+      const recordedDelta = Option.getOrThrow(boardShellStreamEvent(recorded));
+      assert.strictEqual(recordedDelta.kind, "card-upserted");
     }),
   );
 });

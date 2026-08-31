@@ -144,6 +144,9 @@ const BoardCardDbRow = Schema.Struct({
   briefRef: BoardCard.fields.briefRef,
   dependsOn: Schema.fromJsonString(Schema.Array(BoardCardId)),
   parentCardId: BoardCard.fields.parentCardId,
+  /** NULL for every row written before migration 027 and for every top-level
+      card — indistinguishable on purpose (replay equals rehydration). */
+  sourcePlanId: Schema.NullOr(BoardPlanId),
   externalRef: Schema.NullOr(Schema.fromJsonString(BoardCardExternalRef)),
   // Per-card human-in-the-loop override (D6): 0/1/NULL (SQLite has no boolean;
   // NULL means untouched).
@@ -472,6 +475,12 @@ const BoardCardDependencyRefDbRow = Schema.Struct({
   archivedAt: BoardCard.fields.archivedAt,
 });
 
+/** The dependency-ref shape plus the plan a child was cut from (t3o-23). */
+const BoardCardChildRefDbRow = Schema.Struct({
+  ...BoardCardDependencyRefDbRow.fields,
+  sourcePlanId: Schema.NullOr(BoardPlanId),
+});
+
 function boardCardToRow(card: BoardCard): BoardCardDbRow {
   return {
     cardId: card.id,
@@ -484,6 +493,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     briefRef: card.briefRef,
     dependsOn: card.dependsOn,
     parentCardId: card.parentCardId,
+    sourcePlanId: card.sourcePlanId,
     externalRef: card.externalRef,
     humanInLoop: card.humanInLoop === null ? null : card.humanInLoop ? 1 : 0,
     worktree: card.worktree,
@@ -518,6 +528,7 @@ function rowToBoardCard(
     briefRef: row.briefRef,
     dependsOn: row.dependsOn,
     parentCardId: row.parentCardId,
+    sourcePlanId: row.sourcePlanId,
     externalRef: row.externalRef,
     humanInLoop: row.humanInLoop === null ? null : row.humanInLoop !== 0,
     worktree: row.worktree,
@@ -572,6 +583,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         brief_ref,
         depends_on,
         parent_card_id,
+        source_plan_id,
         external_ref,
         human_in_loop,
         worktree,
@@ -595,6 +607,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.briefRef},
         ${row.dependsOn},
         ${row.parentCardId},
+        ${row.sourcePlanId},
         ${row.externalRef},
         ${row.humanInLoop},
         ${row.worktree},
@@ -618,6 +631,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         brief_ref = excluded.brief_ref,
         depends_on = excluded.depends_on,
         parent_card_id = excluded.parent_card_id,
+        source_plan_id = excluded.source_plan_id,
         external_ref = excluded.external_ref,
         human_in_loop = excluded.human_in_loop,
         worktree = excluded.worktree,
@@ -651,6 +665,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         brief_ref AS "briefRef",
         depends_on AS "dependsOn",
         parent_card_id AS "parentCardId",
+        source_plan_id AS "sourcePlanId",
         external_ref AS "externalRef",
         human_in_loop AS "humanInLoop",
         worktree,
@@ -828,6 +843,25 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // A split parent's children (t3o-23), in materialisation order — card_number
+  // is allocated in plan `ordinal` order at approval, so it IS that order.
+  const listBoardCardChildRefRows = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardChildRefDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        card_id AS "cardId",
+        key,
+        title,
+        stage,
+        archived_at AS "archivedAt",
+        source_plan_id AS "sourcePlanId"
+      FROM board_cards
+      WHERE parent_card_id = ${cardId}
+      ORDER BY card_number
+    `,
+  });
+
   const findBoardCardRow = SqlSchema.findOneOption({
     Request: BoardCardId,
     Result: BoardCardDbRow,
@@ -843,6 +877,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         brief_ref AS "briefRef",
         depends_on AS "dependsOn",
         parent_card_id AS "parentCardId",
+        source_plan_id AS "sourcePlanId",
         external_ref AS "externalRef",
         human_in_loop AS "humanInLoop",
         worktree,
@@ -1610,6 +1645,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listArchivedBoardCardShellRows,
     listBoardCardDependencyRefRows,
     listBoardCardDependentRefRows,
+    listBoardCardChildRefRows,
     findBoardCardRow,
     listBoardCardThreadLinkRowsForCard,
     findBoardCardBodyRow,
@@ -2019,6 +2055,28 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
             })
             .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.body:query")));
         }
+        // A sub-board child's brief is its plan's body, carried by pointer
+        // because the decider cannot read bodies (t3o-23, D2/D8). Resolved
+        // here, in the same transaction that projected the approval; the
+        // plans-proposed event precedes this one in any replay and approval
+        // froze the plans, so the copy is deterministic. A missing plan row
+        // (impossible short of hand-edited tables) leaves the child briefless
+        // rather than failing the projection.
+        if (event.payload.briefFromPlanId !== undefined) {
+          const planRow = yield* queries
+            .findBoardPlanRow(event.payload.briefFromPlanId)
+            .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.planBody:query")));
+          if (Option.isSome(planRow)) {
+            yield* queries
+              .upsertBoardCardBodyRow({
+                cardId: event.payload.cardId,
+                kind: BOARD_CARD_BRIEF_BODY_KIND,
+                body: planRow.value.body,
+                updatedAt: event.payload.updatedAt,
+              })
+              .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.body:query")));
+          }
+        }
         yield* recordActivity({
           event,
           cardId: card.id,
@@ -2286,6 +2344,26 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
           payload: { planCount: event.payload.plans.length },
           threadId: null,
         });
+        return;
+
+      case "board.plans-approved":
+        // Children and the parent's move ride their own events (t3o-23, D2);
+        // this re-asserts the post-approval parent (covering the skipped-move
+        // shape) and writes the rail's "approved the split" row.
+        yield* upsertCard(event.payload.card);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "plans-approved",
+          payload: { planCount: event.payload.childCardIds.length },
+          threadId: null,
+        });
+        return;
+
+      case "board.card-integration-branch-recorded":
+        // Detail-only state (the worktree slice); the rail says nothing — the
+        // approval row above already covers the moment.
+        yield* upsertCard(event.payload.card);
         return;
 
       case "board.plan-written":
@@ -2754,6 +2832,7 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardLabelRowsForCard(cardId),
       queries.listBoardCardDependencyRefRows(cardId),
       queries.listBoardCardDependentRefRows(cardId),
+      queries.listBoardCardChildRefRows(cardId),
       queries.listBoardPlanRowsForCard(cardId),
       queries.listBoardCardStepRowsForCard(cardId),
       queries.listBoardCardActivityRowsForCard(cardId),
@@ -2766,6 +2845,7 @@ export function makeBoardCardDetailLoader(
           labelRows,
           dependencyRows,
           dependentRows,
+          childRows,
           planRows,
           stepRows,
           activityRows,
@@ -2804,6 +2884,9 @@ export function makeBoardCardDetailLoader(
             dependents: dependentRows,
             hasPlan: plans.length > 0,
             plans,
+            // Materialised children (t3o-23) in plan order, archived included
+            // — the pane strikes them through rather than losing the pairing.
+            children: childRows,
             // The card's completions in completion order (t3o-16, D9), from the
             // per-card step query — the same rows the read model's
             // `stepCompletions` slice is built from — sorted so the modal renders

@@ -60,6 +60,7 @@ const card: BoardCard = {
   briefRef: null,
   dependsOn: [],
   parentCardId: null,
+  sourcePlanId: null,
   threadLinks: [],
   externalRef: null,
   humanInLoop: null,

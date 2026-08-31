@@ -57,6 +57,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
+  approveBoardPlans,
   archiveBoardCard,
   createBoardCard,
   createBoardLabel,
@@ -77,6 +78,7 @@ import {
   unlinkBoardCardThread,
   updateBoardCard,
   updateBoardLabel,
+  type ApproveBoardPlansInput,
   type ArchiveBoardCardInput,
   type CreateBoardCardInput,
   type CreateBoardLabelInput,
@@ -105,6 +107,7 @@ import {
 import { pinOrderKeyBetween, planPinnedReorder } from "./threadSort.ts";
 
 export type {
+  ApproveBoardPlansInput,
   ArchiveBoardCardInput,
   CreateBoardCardInput,
   CreateBoardLabelInput,
@@ -832,6 +835,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
     deleteCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:delete-card",
       execute: (input: DeleteBoardCardInput) => deleteBoardCard(input),
+    }),
+    approvePlans: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:approve-plans",
+      execute: (input: ApproveBoardPlansInput) => approveBoardPlans(input),
     }),
     createLabel: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:create-label",

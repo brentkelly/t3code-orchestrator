@@ -93,6 +93,7 @@ const expectedCard = {
   briefRef: null,
   dependsOn: [],
   parentCardId: null,
+  sourcePlanId: null,
   threadLinks: [],
   externalRef: null,
   humanInLoop: null,
@@ -131,8 +132,13 @@ const expectedCardShell = {
   threadState: "none",
   awaitingInput: false,
   activeThreadId: null,
-  // Sub-board and review summary fields are key-optional and absent until
-  // their producing specs land — zero wire bytes per unsourced field.
+  // The SNAPSHOT producer holds the brief bodies and the plan slice, so it
+  // asserts their real values — false and zero for a bare card — unlike the
+  // card-carrying deltas, which omit the keys (absent-means-preserve).
+  briefHasImage: false,
+  planCount: 0,
+  // planTotal / planDone stay absent: derived client-side from the children
+  // the shell already carries (t3o-23, D6), never produced by the server.
 } as const;
 
 it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking skeleton", (it) => {

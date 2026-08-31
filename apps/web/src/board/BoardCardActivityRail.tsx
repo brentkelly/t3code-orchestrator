@@ -31,8 +31,10 @@ import {
   CircleAlertIcon,
   CircleSlashIcon,
   FileTextIcon,
+  CloudOffIcon,
   GitMergeIcon,
   GitPullRequestIcon,
+  LayersIcon,
   ListTreeIcon,
   MoveRightIcon,
   PlusCircleIcon,
@@ -92,6 +94,8 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <ListTreeIcon className={className} />;
     case "plan-written":
       return <FileTextIcon className={className} />;
+    case "plans-approved":
+      return <LayersIcon className={className} />;
     case "card-step-completed":
       return <CheckCircle2Icon className={className} />;
     case "card-input-requested":
@@ -111,6 +115,8 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <ScissorsIcon className={className} />;
     case "card-merge-refused":
       return <TriangleAlertIcon className={cn(className, "text-destructive-foreground")} />;
+    case "card-branch-push-skipped":
+      return <CloudOffIcon className={className} />;
   }
 }
 
@@ -172,6 +178,15 @@ function activitySentence(
       ) : (
         <>drafted the plan “{payload.planTitle}”</>
       );
+    case "plans-approved":
+      return payload.planCount === undefined ? (
+        <>approved the split</>
+      ) : (
+        <>
+          approved the split into {payload.planCount}{" "}
+          {payload.planCount === 1 ? "plan card" : "plan cards"}
+        </>
+      );
     case "card-step-completed":
       return (
         <>
@@ -225,6 +240,12 @@ function activitySentence(
     case "card-merge-refused":
       return payload.detail === undefined ? (
         <>could not merge the pull request</>
+      ) : (
+        <>{payload.detail}</>
+      );
+    case "card-branch-push-skipped":
+      return payload.detail === undefined ? (
+        <>created the integration branch but could not push it</>
       ) : (
         <>{payload.detail}</>
       );
