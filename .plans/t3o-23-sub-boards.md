@@ -209,23 +209,26 @@ is unchanged.
 
 ### D6 — `planTotal` / `planDone` get their producer; archived children count as done
 
-`planTotal` = the card's non-deleted children. `planDone` = those in the done-role stage **or
-archived**. An archived child counts as done for the same reason an archived dependency stops
+**Server-side gating:** an unfinished child is one that is neither archived nor in the done-role
+stage. An archived child counts as finished for the same reason an archived dependency stops
 gating (t3o-13 D1): archive is how finished work leaves the board, and D15 auto-archives Done
-cards after seven days — a parent must not watch its pips run backwards because a child aged out.
-A deleted child leaves both counts. The same predicate ("unfinished child") drives D4's freeze and
-advance, stated once in contracts (`boardCardUnfinishedChildren(board, cardId)`).
+cards after seven days — a parent must not re-freeze because a finished child aged out. The
+predicate is stated once in contracts (`boardCardUnfinishedChildren(board, cardId)`) and drives
+D4's freeze, kickoff suppression and advance.
 
-Production, following the `planCount` precedent:
+**Pip production is client-side, not server-side.** The children are ordinary shell cards
+already carrying `parentCardId` and `stage`, so every client holds the inputs — a pure
+`deriveBoardCardPlanProgress(cards, stages)` computes the counts with zero extra payload, no SQL
+subqueries and no delta machinery (the per-event shell mapping is deliberately model-blind, so a
+parent recount delta would have meant re-plumbing it for nothing the client cannot already
+compute). The board page injects the derived counts onto the parents' shells, and the
+pre-existing summary → progress-block → `PlanPips` chain lights up unchanged. Archived children
+are not on the live shell, so they simply leave both counts — "2/2" after a done child
+auto-archives is truthful and reads correctly; the server-side advance gate above is what counts
+them as done where it matters.
 
-- `listBoardCardShellRows` computes both by subquery against `board_cards` + the done-role stage.
-- The shell **delta** rides the existing `card-plans` shell event, widened with key-optional
-  `planTotal` / `planDone`: any child transition that changes the counts (created, moved across
-  the done boundary, archived, unarchived, deleted) has the projector emit a `card-plans` delta
-  **for the parent** alongside the child's own delta. The client-side reducer already merges
-  `card-plans` fields by presence.
-- `BoardCardDetail` gains `children: [{ cardId, key, title, stage, sourcePlanId }]` so the plan
-  pane can chip each plan with its child.
+- `BoardCardDetail` gains `children: [{ cardId, key, title, stage, archivedAt, sourcePlanId }]`
+  so the plan pane can chip each plan with its child.
 
 `PlanPips` and `boardCardSummary`'s plans row need no change — that is the point of producing the
 fields they already consume. `BoardCardShell` additionally gains key-optional `parentCardId` so a
@@ -303,8 +306,9 @@ per the table below.
 10. When the last unfinished child reaches Done (or is archived, or deleted), the parent advances
     to the next stage in order exactly once; on a seeded board its review loop runs and its final
     PR targets the **default** branch.
-11. Pips: `planDone` counts done-role and archived children; deleting a child shrinks
-    `planTotal`; every transition updates the parent's shell without a reconnect.
+11. Pips: the client derives `planTotal` / `planDone` from the children on the shell it already
+    holds; a child's move, archive or delete updates the parent's pips without a reconnect and
+    without any new wire bytes.
 12. Parent delete is refused with child keys while any child exists; parent archive is refused
     while any child is live; both succeed once children are done/archived.
 13. The plan pane shows Approve split only in the D1 conditions, and afterwards chips each plan
@@ -333,7 +337,7 @@ per the table below.
 | `packages/contracts/src/board.ts` | `board.plans.approve` + `board.card.record-integration-branch` commands; `board.plans-approved` + `board.card-integration-branch-recorded` events; `branch-only` status; `BoardCard.sourcePlanId`; shell `parentCardId` + widened `card-plans` delta; `boardSubBoardFloorStage`, `boardCardChildren`, `boardCardUnfinishedChildren`; detail `children` |
 | `apps/server/src/board/decider.ts` | approve validation + materialisation events; floor-based plan-card restriction; parent freeze/delete/archive/propose/write guards; integration-branch record |
 | `apps/server/src/board/projector.ts` | new event cases; parent `card-plans` deltas on child transitions |
-| `apps/server/src/board/projection.ts` | `source_plan_id` column; `planTotal`/`planDone` subqueries; detail `children` |
+| `apps/server/src/board/projection.ts` | `source_plan_id` column; brief-by-pointer resolution; detail `children` |
 | `apps/server/src/board/migrations/027_BoardCardsSourcePlan.ts` | nullable `source_plan_id` |
 | `apps/server/src/board/supervisorReactor.ts` | `plans-approved` handler (branch create/push/record); `beginStageRun` live-children guard; child-transition watcher advancing the parent |
 | `apps/server/src/board/worktree.ts` | branch-only aware provisioning/reclaim edges (attach path already exists) |
