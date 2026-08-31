@@ -195,6 +195,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         humanInLoop: false,
         maxAttempts: 3,
         timeoutMs: 60_000,
+        baseTipAtRoundStart: null,
         createdAt: t0,
       });
       const first = yield* boardHandlers
@@ -299,6 +300,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       humanInLoop: false,
       maxAttempts: 3,
       timeoutMs: 60_000,
+      baseTipAtRoundStart: null,
       createdAt: t0,
     });
     yield* engine.dispatch({
@@ -569,6 +571,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         humanInLoop: false,
         maxAttempts: 3,
         timeoutMs: 60_000,
+        baseTipAtRoundStart: null,
         createdAt: t0,
       });
       yield* engine.dispatch({

@@ -48,6 +48,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   attempt: 1,
   stallCount: 0,
   lastNudgeAt: null,
+  baseTipAtRoundStart: null,
   prompt: "build it",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",

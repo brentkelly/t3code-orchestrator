@@ -290,6 +290,10 @@ export type Harness = {
   readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every worktree path the reactor removed, in order. */
   readonly removedWorktrees: Effect.Effect<ReadonlyArray<string>>;
+  /** Move a branch tip in the stubbed driver (t3o-24): what
+      `rev-parse refs/heads/<ref>` answers from now on. Every unset ref answers
+      the stub's historic "main", so existing fixtures never read stale. */
+  readonly setBaseTip: (ref: string, tip: string) => void;
 };
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
@@ -482,6 +486,9 @@ export function withGovernor(
     // reaching Done gave its checkout back — and, just as importantly, that a
     // card whose tree is dirty did not.
     const removedWorktrees = yield* Ref.make<ReadonlyArray<string>>([]);
+    // Movable branch tips for the rev-parse stub (t3o-24) — a plain map, so a
+    // test can slide a base tip between pumps without an Effect.
+    const baseTips = new Map<string, string>();
     const gitStub = {
       // Branch cleanup's first call. Its absence used to make
       // `deleteCardBranch` throw straight into the reactor's catch-all,
@@ -513,20 +520,33 @@ export function withGovernor(
             refName: request.branch ?? request.refName ?? "board/wt",
           },
         }),
-      execute: (request: { readonly args?: ReadonlyArray<string> }) =>
-        input.notAGitRepo === true
-          ? Effect.succeed({
-              stdout: "",
-              stderr: "fatal: not a git repository (or any of the parent directories): .git",
-              exitCode: 128,
-            })
-          : Effect.succeed({
-              // `git log -1 --format=%cI` answers the configured commit time (the
-              // sweep's commit-liveness signal); every other call answers "main".
-              stdout: request.args?.[0] === "log" ? (input.latestCommitIso ?? "") : "main",
-              stderr: "",
-              exitCode: 0,
-            }),
+      execute: (request: { readonly args?: ReadonlyArray<string> }) => {
+        if (input.notAGitRepo === true) {
+          return Effect.succeed({
+            stdout: "",
+            stderr: "fatal: not a git repository (or any of the parent directories): .git",
+            exitCode: 128,
+          });
+        }
+        // A `rev-parse refs/heads/<ref>` answers the movable tip fixture
+        // (t3o-24): `setBaseTip` moves it mid-test, and an unset ref answers
+        // the stub's historic "main" so nothing existing reads differently.
+        const ref = request.args?.find((arg) => arg.startsWith("refs/heads/"));
+        if (request.args?.[0] === "rev-parse" && ref !== undefined) {
+          return Effect.succeed({
+            stdout: baseTips.get(ref.slice("refs/heads/".length)) ?? "main",
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+        return Effect.succeed({
+          // `git log -1 --format=%cI` answers the configured commit time (the
+          // sweep's commit-liveness signal); every other call answers "main".
+          stdout: request.args?.[0] === "log" ? (input.latestCommitIso ?? "") : "main",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
     } as unknown as GitVcsDriver.GitVcsDriver["Service"];
 
     const setupStub = {
@@ -621,6 +641,7 @@ export function withGovernor(
           decided: Ref.get(decided),
           mergeAttempts: Ref.get(mergeAttempts),
           removedWorktrees: Ref.get(removedWorktrees),
+          setBaseTip: (ref, tip) => void baseTips.set(ref, tip),
         });
       }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
     );

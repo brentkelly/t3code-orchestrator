@@ -42,6 +42,7 @@ import {
   boardLabelCatalogue,
   boardPlanId,
   boardStageById,
+  boardStageIndex,
   boardStages,
   boardStagesInOrder,
   boardStageWithRole,
@@ -680,16 +681,27 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // A split parent's stage is DERIVED while children are unfinished
       // (t3o-23, D4): it advances when its last child finishes, and nothing
       // else moves it — override included, because the freeze is a truth
-      // about the card, not a convenience gate.
+      // about the card, not a convenience gate. The one exception (t3o-24,
+      // D4) is the move that IS the freeze re-engaging: a regression back to
+      // the build-role stage, the position the approval parked the parent in.
+      // That is how the reactor corrects a parent left ahead of reality by a
+      // child dragged back out of Done — and a human dragging a frozen parent
+      // home to Building asks for nothing more than the derived truth.
       {
         const unfinished = boardCardUnfinishedChildren(board, card.id);
         if (unfinished.length > 0) {
-          return yield* invariant(
-            command,
-            `Card '${card.key}' advances through its ${unfinished.length} plan card${
-              unfinished.length === 1 ? "" : "s"
-            }; move those instead.`,
-          );
+          const buildStageId = boardStageWithRole(board, "build")?.stageId ?? null;
+          const regressionToBuild =
+            command.toStage === buildStageId &&
+            boardStageIndex(board, command.toStage) < boardStageIndex(board, card.stage);
+          if (!regressionToBuild) {
+            return yield* invariant(
+              command,
+              `Card '${card.key}' advances through its ${unfinished.length} plan card${
+                unfinished.length === 1 ? "" : "s"
+              }; move those instead.`,
+            );
+          }
         }
       }
       // Dependency blocking is unconditional from the `build` role onward (D11):
@@ -2367,6 +2379,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         humanInLoop: command.humanInLoop,
         maxAttempts: command.maxAttempts,
         timeoutMs: command.timeoutMs,
+        // Measured or carried by the reactor (t3o-24, D1); stamped verbatim
+        // like every other frozen field.
+        baseTipAtRoundStart: command.baseTipAtRoundStart,
         threadId: null,
         status: "pending",
         slotHeld: false,

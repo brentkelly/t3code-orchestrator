@@ -181,6 +181,7 @@ const leftoverStep = (stepId: string): BoardCardStepState => ({
   attempt: 5,
   stallCount: 5,
   lastNudgeAt: NOW,
+  baseTipAtRoundStart: null,
   prompt: "old run",
   providerInstanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-opus-5",

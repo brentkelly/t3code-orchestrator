@@ -117,6 +117,8 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <TriangleAlertIcon className={cn(className, "text-destructive-foreground")} />;
     case "card-branch-push-skipped":
       return <CloudOffIcon className={className} />;
+    case "card-base-stale":
+      return <GitPullRequestIcon className={cn(className, "text-info-foreground")} />;
   }
 }
 
@@ -246,6 +248,12 @@ function activitySentence(
     case "card-branch-push-skipped":
       return payload.detail === undefined ? (
         <>created the integration branch but could not push it</>
+      ) : (
+        <>{payload.detail}</>
+      );
+    case "card-base-stale":
+      return payload.detail === undefined ? (
+        <>held the merge while the base branch is rebased and re-reviewed</>
       ) : (
         <>{payload.detail}</>
       );

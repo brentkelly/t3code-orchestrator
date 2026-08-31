@@ -83,6 +83,7 @@ function makeStepStateFor(cardId: string): BoardCardStepState {
     attempt: 1,
     stallCount: 0,
     lastNudgeAt: null,
+    baseTipAtRoundStart: null,
     prompt: "do it",
     providerInstanceId: ProviderInstanceId.make("codex"),
     model: "gpt-5.4",
@@ -566,6 +567,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
                   attempt: 1,
                   stallCount: 0,
                   lastNudgeAt: null,
+                  baseTipAtRoundStart: null,
                   prompt: "review it",
                   providerInstanceId: ProviderInstanceId.make("codex"),
                   model: "gpt-5.4",
@@ -1445,6 +1447,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         humanInLoop: false,
         maxAttempts: 3,
         timeoutMs: 1000,
+        baseTipAtRoundStart: null,
       };
       const makeStepState = (
         cardId: string,
@@ -2253,6 +2256,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       attempt: 1,
       stallCount: 0,
       lastNudgeAt: null,
+      baseTipAtRoundStart: null,
       prompt: "do it",
       providerInstanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.4",

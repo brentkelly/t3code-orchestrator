@@ -131,6 +131,39 @@ describe("boardReviewLoopWalk", () => {
     // A failed phase is the reactor's to retry, not a phase that happened.
     assert.deepStrictEqual(walk([failed], 5).next, { phase: "review", round: 1 });
   });
+
+  it("t3o-24: a recorded sync step moves the verdict to the gate round", () => {
+    const synced = [review(1, []), completion("sync@1", { rebasedSha: "s" })];
+    // The converged round no longer converges — the gate round is due, PAST
+    // the budget (a gate, not a negotiation).
+    assert.deepStrictEqual(walk(synced, 1), {
+      next: { phase: "review", round: 2 },
+      status: "running",
+      currentRound: 2,
+    });
+    // A clean gate round with no further sync converges.
+    assert.strictEqual(walk([...synced, review(2, [])], 1).status, "converged");
+    // A base that moved again gates again.
+    assert.deepStrictEqual(
+      walk([...synced, review(2, []), completion("sync@2", { rebasedSha: "s2" })], 1).next,
+      { phase: "review", round: 3 },
+    );
+  });
+
+  it("t3o-24: a blocking gate round beyond the budget caps like any other round", () => {
+    const capped = walk(
+      [
+        review(1, []),
+        completion("sync@1", { rebasedSha: "s" }),
+        review(2, [finding("critical")]),
+        completion("triage@2", { fixedSha: "s", dispositions: [] }),
+        completion("adjudicate@2", { verdicts: [] }),
+      ],
+      1,
+    );
+    assert.strictEqual(capped.status, "round-cap");
+    assert.strictEqual(capped.currentRound, 2);
+  });
 });
 
 describe("deriveBoardCardReviewSummary", () => {

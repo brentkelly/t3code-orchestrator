@@ -213,6 +213,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         humanInLoop: false,
         maxAttempts: 3,
         timeoutMs: 60_000,
+        baseTipAtRoundStart: null,
         createdAt,
       } as const;
 
@@ -242,7 +243,10 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         stageLabel: "Planning",
         ...frozen,
       });
-      // Post-t3o-19 shape: the review loop, which genuinely has steps.
+      // Post-t3o-19 shape: the review loop, which genuinely has steps — and,
+      // since t3o-24, a recorded round-start base tip (AC7: the tip must
+      // survive replay/rehydration identically, which the deep-equality below
+      // pins for both the null and the recorded shape).
       yield* engine.dispatch({
         type: "board.card.select-step",
         commandId: CommandId.make("cmd-select-stepped"),
@@ -251,6 +255,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         stepLabel: "Review · round 1",
         stageLabel: "Code review",
         ...frozen,
+        baseTipAtRoundStart: "tip-abc123",
       });
       // The shape migration 020 leaves behind: a label, but no frozen stage
       // label, because the row predates the freeze.
@@ -275,6 +280,16 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         { stepId: "review@1", stepLabel: "Review · round 1", stageLabel: "Code review" },
         { stepId: "building", stepLabel: "Building", stageLabel: null },
       ]);
+      // The recorded round-start tip rehydrates from its column (t3o-24, AC7);
+      // the rows that recorded none stay null.
+      const tips = new Map(
+        (rehydrated.board?.stepStates ?? []).map((state) => [
+          state.stepId,
+          state.baseTipAtRoundStart,
+        ]),
+      );
+      assert.strictEqual(tips.get("review@1"), "tip-abc123");
+      assert.strictEqual(tips.get("planning"), null);
 
       const events: OrchestrationEvent[] = Array.from(
         yield* Stream.runCollect(engine.readEvents(0)),

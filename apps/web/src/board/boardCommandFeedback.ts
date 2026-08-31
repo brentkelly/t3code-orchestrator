@@ -56,6 +56,8 @@ export function describeBoardMergeOutcome(result: BoardMergeCardPullRequestResul
       return "This card has no workspace to merge from.";
     case "wrong-stage":
       return "Move the card to the merge stage before merging.";
+    case "stale-base":
+      return "The base branch moved since this card's last review round. The card went back to review to rebase and re-review before merging.";
     case "unknown-card":
       return "This card no longer exists.";
   }

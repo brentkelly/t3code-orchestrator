@@ -381,6 +381,9 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // JSON-encoded ProviderOptionSelections, or null. Carried verbatim like the
   // completion `payload` (t3o-21).
   modelOptions: Schema.NullOr(Schema.String),
+  // NULLABLE in the DB: rows written before migration 028 have no value, and a
+  // null already MEANS "no tip recorded" (t3o-24, D1), so no resolution shim.
+  baseTipAtRoundStart: BoardCardStepState.fields.baseTipAtRoundStart,
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -1461,13 +1464,14 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     execute: (row) => sql`
       INSERT INTO board_card_step_state (
         card_id, step_id, step_label, stage_label, attempt, stall_count, last_nudge_at, prompt,
-        provider_instance_id, model, mode, runtime_mode, model_options,
+        provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, started_at, updated_at
       )
       VALUES (
         ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.stageLabel}, ${row.attempt}, ${row.stallCount},
         ${row.lastNudgeAt}, ${row.prompt},
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
+        ${row.baseTipAtRoundStart},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.startedAt}, ${row.updatedAt}
       )
@@ -1485,6 +1489,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         mode = excluded.mode,
         runtime_mode = excluded.runtime_mode,
         model_options = excluded.model_options,
+        base_tip_at_round_start = excluded.base_tip_at_round_start,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -1514,6 +1519,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         mode,
         runtime_mode AS "runtimeMode",
         model_options AS "modelOptions",
+        base_tip_at_round_start AS "baseTipAtRoundStart",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -1951,6 +1957,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         mode: state.mode,
         runtimeMode: state.runtimeMode,
         modelOptions: state.modelOptions === undefined ? null : JSON.stringify(state.modelOptions),
+        baseTipAtRoundStart: state.baseTipAtRoundStart,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -2516,6 +2523,7 @@ export function loadBoardState(
               mode: row.mode,
               runtimeMode: resolveStoredStepRuntimeMode(row.runtimeMode, row.mode),
               ...stepModelOptionsPatch(row.modelOptions),
+              baseTipAtRoundStart: row.baseTipAtRoundStart,
               humanInLoop: row.humanInLoop !== 0,
               maxAttempts: row.maxAttempts,
               timeoutMs: row.timeoutMs,
