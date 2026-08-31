@@ -18,6 +18,7 @@
  */
 import {
   boardCardChildren,
+  boardBuildHumanInLoopDefault,
   boardCardPlans,
   boardSubBoardFloorStage,
   unmetBoardCardDependencies,
@@ -385,15 +386,15 @@ const make = Effect.gen(function* () {
 
   /** The build stage's per-card human-in-the-loop default (D6): a card with a
       plan uses `humanInLoopWithPlan`, one without uses `humanInLoopWithoutPlan`
-      — so writing a plan moves the default with it. */
+      — so writing a plan moves the default with it. A sub-board child counts
+      as planned (its approved plan became its brief, so it owns no plan row):
+      `boardBuildHumanInLoopDefault` is the one rule, shared with the card
+      detail so the toggle's hint and the run agree. */
   const buildHumanInLoopDefault = (
     board: BoardState,
     exec: BoardStageExecution,
-    cardId: BoardCard["id"],
-  ): boolean =>
-    boardCardPlans(board, cardId).length > 0
-      ? exec.humanInLoopWithPlan
-      : exec.humanInLoopWithoutPlan;
+    card: BoardCard,
+  ): boolean => boardBuildHumanInLoopDefault(exec, card, boardCardPlans(board, card.id).length > 0);
 
   /** The resolved human-in-the-loop stance for a fresh (first-entry) run of a
       stage (D5/D6). The build role reads the per-card toggle over its two
@@ -408,7 +409,7 @@ const make = Effect.gen(function* () {
   ): boolean => {
     const stage = boardStageById(board, card.stage);
     if (stage?.role === "build") {
-      return card.humanInLoop ?? buildHumanInLoopDefault(board, exec, card.id);
+      return card.humanInLoop ?? buildHumanInLoopDefault(board, exec, card);
     }
     return exec.humanInLoop;
   };

@@ -23,6 +23,7 @@ import {
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterBuild,
   deriveBoardCardThreadState,
+  boardBuildHumanInLoopDefault,
   resolveBoardStageExecution,
   type BoardCardThreadShell,
   type BoardState,
@@ -377,14 +378,20 @@ export function BoardCardDetail({
 
   // Per-card human-in-the-loop stance on the Build role (D6): shown only when
   // the card is on the build stage. The default flips on whether the card has a
-  // plan; an explicit override wins over it.
+  // plan — a sub-board child counts as planned (t3o-23: its approved plan is
+  // its brief) — and an explicit override wins over it. The same rule the
+  // reactor runs the step under, so the hint here never contradicts the run.
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
   const humanInLoop =
     buildStageId !== null && card.stage === buildStageId
       ? (() => {
           const exec = resolveBoardStageExecution(boardSettings, buildStageId);
-          const fallback = detail.hasPlan ? exec.humanInLoopWithPlan : exec.humanInLoopWithoutPlan;
-          return { value: card.humanInLoop ?? fallback, explicit: card.humanInLoop !== null };
+          const fallback = boardBuildHumanInLoopDefault(exec, card, detail.hasPlan);
+          return {
+            value: card.humanInLoop ?? fallback,
+            explicit: card.humanInLoop !== null,
+            basis: card.parentCardId !== null ? "child" : detail.hasPlan ? "plan" : "no-plan",
+          } as const;
         })()
       : null;
 

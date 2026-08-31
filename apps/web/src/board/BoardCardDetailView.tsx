@@ -239,8 +239,14 @@ export interface BoardCardDetailViewProps {
   /** The computed human-in-the-loop stance for this card on the Build stage
       (D6) — `null` when the card is not on the build role (no toggle shown).
       `value` is the effective boolean; `explicit` is whether the card has an
-      explicit override (vs the computed default). */
-  readonly humanInLoop: { readonly value: boolean; readonly explicit: boolean } | null;
+      explicit override (vs the computed default), and `basis` names why the
+      default applies — the card has a plan, has none, or is a sub-board child
+      (planned by its parent's approved split). */
+  readonly humanInLoop: {
+    readonly value: boolean;
+    readonly explicit: boolean;
+    readonly basis: "plan" | "no-plan" | "child";
+  } | null;
   readonly onSetHumanInLoop: (value: boolean) => void;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   /** Project title, or null when the project is not on disk (archived card). */
@@ -860,9 +866,7 @@ function ActionsSection({
                 ? humanInLoop.value
                   ? "You drive the build in conversation."
                   : "The build runs unattended."
-                : humanInLoop.value
-                  ? "Default: conversation (no plan yet)."
-                  : "Default: unattended (a plan exists)."}
+                : humanInLoopDefaultHint(humanInLoop)}
             </span>
           </span>
           <input
@@ -876,6 +880,25 @@ function ActionsSection({
       ) : null}
     </div>
   );
+}
+
+/** The toggle's hint for a card running on the DEFAULT stance: names the
+    default and the reason it applies, so a user reading "conversation" on a
+    sub-board child knows it came from the with-plan setting, not from a plan
+    they forgot to write. */
+function humanInLoopDefaultHint(humanInLoop: {
+  readonly value: boolean;
+  readonly basis: "plan" | "no-plan" | "child";
+}): string {
+  const stance = humanInLoop.value ? "conversation" : "unattended";
+  switch (humanInLoop.basis) {
+    case "child":
+      return `Default: ${stance} (sub-board child; its approved plan is its brief).`;
+    case "plan":
+      return `Default: ${stance} (a plan exists).`;
+    case "no-plan":
+      return `Default: ${stance} (no plan yet).`;
+  }
 }
 
 function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {

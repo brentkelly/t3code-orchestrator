@@ -5,9 +5,13 @@
  * reaching Done, or by being archived (an archived child counts as done, D6).
  */
 import {
+  BOARD_SEED_STAGE_IDS,
   BoardCardId,
   BoardStageId,
+  boardCardStepState,
+  boardPlanId,
   type BoardCard,
+  type BoardSettings,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -411,6 +415,100 @@ it.effect("starts the children when a split is APPROVED on a parent already at b
         // The blocked sibling still waits — the nudge is the cascade, not a
         // blanket start.
         assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "ready");
+      }),
+  ),
+);
+
+// ── A child's human-in-the-loop stance ─────────────────────────────────
+
+/** The shipped Build stage defaults: a card WITHOUT a plan pauses for a human,
+    one WITH a plan runs unattended (D6). The harness turns both off, so this
+    re-arms the one that bit: a materialised child owns no `board_plans` row
+    (its plan became its brief), and read as plan-less it would pause. */
+const settingsPausingPlanless = (): BoardSettings => {
+  const settings = settingsWith({ building: [codexStep], globalMaxConcurrent: 3 });
+  const building = settings.pipeline[BOARD_SEED_STAGE_IDS.building]!;
+  return {
+    ...settings,
+    pipeline: {
+      ...settings.pipeline,
+      [BOARD_SEED_STAGE_IDS.building]: {
+        ...building,
+        humanInLoopWithPlan: false,
+        humanInLoopWithoutPlan: true,
+      },
+    },
+  };
+};
+
+/** A child as `board.plans.approve` materialises it: cut from one of the
+    parent's plans, no plan rows of its own, no explicit stance. */
+const materialisedChild = (id: string, stage: string): BoardCard => ({
+  ...childCard(id, stage),
+  sourcePlanId: boardPlanId(parentId, id),
+  humanInLoop: null,
+});
+
+it.effect(
+  "runs a cascaded child unattended even though it owns no plan row (its plan is its brief)",
+  () =>
+    withGovernor(
+      {
+        board: {
+          cards: [parentCard(), materialisedChild("card-one", "ready")],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsPausingPlanless(),
+      },
+      ({ pumpDomain, board }) =>
+        Effect.gen(function* () {
+          // Begin build on the parent cascades #1 onto the build stage …
+          yield* pumpDomain(movedToBuilding(parentCard(), 1));
+          const childId = BoardCardId.make("card-one");
+          assert.strictEqual(cardStage(yield* board, childId), "building");
+          // … and the child's own arrival there (the reactor's dispatched
+          // move, observed as any move is) selects its build step.
+          yield* pumpDomain(
+            movedToBuilding(
+              { ...materialisedChild("card-one", "building"), worktree: readyWorktree("card-one") },
+              2,
+            ),
+          );
+          const state = boardCardStepState(yield* board, childId);
+          assert.isNotNull(state);
+          // The whole point of the sub-board: dependency resolution → build →
+          // PR → merge with no human in between (t3o-28, D3). A materialised
+          // child is a planned build — the plan-less pause must not apply.
+          assert.strictEqual(state!.humanInLoop, false);
+        }),
+    ),
+);
+
+it.effect("still pauses a child a human explicitly put in the loop", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), { ...materialisedChild("card-one", "ready"), humanInLoop: true }],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsPausingPlanless(),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(parentCard(), 1));
+        yield* pumpDomain(
+          movedToBuilding(
+            {
+              ...materialisedChild("card-one", "building"),
+              humanInLoop: true,
+              worktree: readyWorktree("card-one"),
+            },
+            2,
+          ),
+        );
+        const state = boardCardStepState(yield* board, BoardCardId.make("card-one"));
+        assert.isNotNull(state);
+        assert.strictEqual(state!.humanInLoop, true);
       }),
   ),
 );

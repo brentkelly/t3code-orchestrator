@@ -1592,6 +1592,31 @@ export function boardCardPlans(board: BoardState, cardId: BoardCardId): Readonly
 }
 
 /**
+ * The Build stage's per-card human-in-the-loop DEFAULT (t3o-15, D6): the value
+ * a card with no explicit `humanInLoop` runs under. A card with a plan reads
+ * `humanInLoopWithPlan`, one without reads `humanInLoopWithoutPlan` — so
+ * writing a plan moves the default with it.
+ *
+ * A sub-board child (t3o-23) is a PLANNED build whatever its own plan rows say:
+ * materialisation cut it from one of the parent's approved plans and made that
+ * plan's body its brief, so it owns no `board_plans` row of its own — and read
+ * as plan-less it would take the without-plan pause. The cascade (t3o-28, D3)
+ * exists to run children through build → PR → merge "with no human in
+ * between"; the human act was Begin build on the parent. So a child reads the
+ * with-plan default. `hasPlan` still decides for a top-level card. The
+ * explicit per-card toggle is applied by the caller and wins over both.
+ */
+export function boardBuildHumanInLoopDefault(
+  exec: Pick<BoardStageExecution, "humanInLoopWithPlan" | "humanInLoopWithoutPlan">,
+  card: Pick<BoardCard, "parentCardId">,
+  hasPlan: boolean,
+): boolean {
+  return hasPlan || card.parentCardId !== null
+    ? exec.humanInLoopWithPlan
+    : exec.humanInLoopWithoutPlan;
+}
+
+/**
  * The card a live (non-tombstoned) thread link owns, or null when the thread
  * is unlinked (D9: one thread, one card). The card-resolution primitive the
  * MCP board toolkit authorizes card-scoped tools against — an agent never
