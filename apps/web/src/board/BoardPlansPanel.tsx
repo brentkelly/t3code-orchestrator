@@ -159,7 +159,7 @@ function PlanRow({
           </span>
         ) : null}
       </span>
-      {row.live?.stalled === true ? (
+      {row.done ? null : row.live?.stalled === true ? (
         <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-warning-foreground">
           <CircleAlertIcon className="size-3" />
           Stalled
