@@ -44,6 +44,8 @@ import {
   type BoardLabel,
   type BoardLabelId,
   type BoardStageDefinition,
+  type BoardCardModelOverrides,
+  type BoardSettings,
   type BoardStageId,
   type BoardState,
   type EnvironmentId,
@@ -70,6 +72,7 @@ import {
   MessageSquareIcon,
   SquareIcon,
   RefreshCcwIcon,
+  SlidersHorizontalIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
@@ -77,7 +80,13 @@ import { Suspense, lazy, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Dialog, DialogPopup } from "../components/ui/dialog";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
+import { PopoverTrigger } from "../components/ui/popover";
+import {
+  boardCardModelOverrideSummary,
+  boardCardModelRows,
+  hasBoardCardModelOverride,
+} from "./boardCardModelRows";
 import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -131,6 +140,19 @@ const BoardCardPlanPane = lazy(() =>
  */
 const BoardCardReviewPane = lazy(() =>
   import("./BoardCardReviewPane").then((module) => ({ default: module.BoardCardReviewPane })),
+);
+
+/**
+ * The per-card model overrides (t3o-29). Lazy for the same reason as its
+ * siblings and then some: it pulls the model list, the traits menu and the
+ * access picker, and this is a deliberate, occasional gesture — most cards
+ * never open it. The kebab's summary comes from `boardCardModelRows`, which is
+ * picker-free and eager, so the menu item renders without paying for any of it.
+ */
+const BoardCardModelsPopover = lazy(() =>
+  import("./BoardCardModelsPopover").then((module) => ({
+    default: module.BoardCardModelsPopover,
+  })),
 );
 
 /**
@@ -297,6 +319,14 @@ export interface BoardCardDetailViewProps {
   /** Navigate into THIS card's sub-board with one child's sheet open — the
       plan pane's child chips (t3o-25, AC4). */
   readonly onOpenChildInSubBoard?: ((childCardId: string) => void) | undefined;
+  /** The workspace pipeline config (t3o-29), for resolving what each override
+      row falls back to when this card sets nothing. */
+  readonly boardSettings: BoardSettings;
+  /** Write this card's per-stage model overrides; null clears them. */
+  readonly onSetModelOverrides: (next: BoardCardModelOverrides | null) => void;
+  /** Whether a step is in flight, so the popover can say that an edit applies
+      to the next run rather than the live one (t3o-29, D6). */
+  readonly stepRunning?: boolean | undefined;
 }
 
 export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
@@ -1016,6 +1046,28 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   });
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
+
+  // The two rows the card can override, and what each falls back to (t3o-29).
+  // Derived eagerly — it is picker-free, and the kebab needs the summary to
+  // render its item whether or not anyone opens the popover.
+  const modelRows = boardCardModelRows({
+    stages: props.stages,
+    boardSettings: props.boardSettings,
+    // The parent's key comes from the board's shells (the "part of" chip's
+    // source), its overrides from the detail payload — only together do they
+    // let a child's row say "(from T3O-41)".
+    parentCard:
+      props.parentCard == null || props.detail.parentModelOverrides === null
+        ? null
+        : { key: props.parentCard.key, modelOverrides: props.detail.parentModelOverrides },
+  });
+  const modelSummary = boardCardModelOverrideSummary(modelRows, card.modelOverrides);
+  const modelOverridden = hasBoardCardModelOverride(modelRows, card.modelOverrides);
+  const modelPillTitle = modelRows
+    .filter((row) => card.modelOverrides?.[row.stageId] !== undefined)
+    .map((row) => `${row.label}: ${card.modelOverrides?.[row.stageId]?.model ?? ""}`)
+    .join("\n");
 
   // Null means "whatever the card's stage says is latest" (Planning/Ready and
   // Build open on the thread, the review stages on the Review pane): the modal
@@ -1086,6 +1138,21 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             Archived
           </span>
         ) : null}
+        {/* Shown only once this card actually overrides something (t3o-29, D7).
+            An override changes what the card spends and what authority it runs
+            under; that should not be invisible from the card. It costs nothing
+            on a card that has not set one. */}
+        {modelOverridden ? (
+          <button
+            className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={() => setModelsOpen(true)}
+            title={modelPillTitle}
+            type="button"
+          >
+            <SlidersHorizontalIcon className="size-2.5" />
+            {modelSummary}
+          </button>
+        ) : null}
         <span className="flex-1" />
         {wide ? (
           <PaneTabs
@@ -1105,6 +1172,22 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <EllipsisVerticalIcon className="size-[15px]" />
           </MenuTrigger>
           <MenuPopup align="end" className="min-w-42">
+            {/* Opening the overrides CLOSES this menu (t3o-29, D7): the popover
+                contains a model picker that is itself a popover, and selecting
+                from it is an outside-pointerdown on any menu still holding it
+                open. Base UI closes the menu; the row's selection is lost. */}
+            {modelRows.length > 0 ? (
+              <>
+                <MenuItem onClick={() => setModelsOpen(true)}>
+                  <SlidersHorizontalIcon />
+                  <span className="flex-1">Models</span>
+                  <span className="font-mono text-[11px] font-medium text-muted-foreground">
+                    {modelSummary}
+                  </span>
+                </MenuItem>
+                <MenuSeparator />
+              </>
+            ) : null}
             <MenuItem
               onClick={() => {
                 if (!archived && archiveNeedsConfirmation) {
@@ -1125,6 +1208,23 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </MenuItem>
           </MenuPopup>
         </Menu>
+        {/* Mounted only while open, so the lazy chunk is never fetched for a
+            card nobody overrides. The anchor is a zero-size span sitting where
+            the kebab is, which is what puts the popover under the kebab for
+            both doors into it — the menu item and the header pill. */}
+        {modelsOpen ? (
+          <Suspense fallback={null}>
+            <BoardCardModelsPopover
+              anchor={<PopoverTrigger render={<span aria-hidden className="block size-0" />} />}
+              onChange={props.onSetModelOverrides}
+              onOpenChange={setModelsOpen}
+              open={modelsOpen}
+              overrides={card.modelOverrides}
+              rows={modelRows}
+              stepRunning={props.stepRunning === true}
+            />
+          </Suspense>
+        ) : null}
         <BoardArchiveConfirmDialog
           cardKey={card.key}
           dependents={liveDependents}

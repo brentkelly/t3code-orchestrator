@@ -29,6 +29,7 @@
  */
 import type {
   BoardCard,
+  BoardCardStageModelOverride,
   BoardModelSelection,
   BoardStageExecution,
   BoardStageRole,
@@ -36,6 +37,7 @@ import type {
   BoardStepOutcome,
   RuntimeMode,
 } from "@t3tools/contracts";
+import { boardModelSelectionOfOverride } from "@t3tools/contracts";
 
 import { ReviewLoopExecutor } from "./reviewLoopExecutor.ts";
 
@@ -59,6 +61,21 @@ export interface BoardStageExecutorConfig {
   /** The resolved agent authority for the run (t3o-21). The reactor resolves
       it (never derives it from `mode`) and freezes it onto the run row. */
   readonly runtimeMode: RuntimeMode;
+  /**
+   * This card's own override of the model and access level for THIS stage
+   * (t3o-29), already resolved through the parent for a sub-board child; null
+   * when the workspace config governs.
+   *
+   * Carried BESIDE `model` rather than folded into it, because what an override
+   * means is the executor's business, not the reactor's. Folding it in would
+   * make the card's "Review model" also re-model triage and adjudication — both
+   * default to a null per-phase model and so fall through to `model` — which is
+   * exactly what t3o-22 D4 refused, and the reactor cannot special-case the
+   * review role without becoming the role branch the seam exists to prevent.
+   * So the reactor resolves it (only it can see the board and the parent) and
+   * each executor decides what it governs.
+   */
+  readonly cardOverride: BoardCardStageModelOverride | null;
   readonly timeoutMs: number;
   readonly maxAttempts: number;
   /**
@@ -180,8 +197,15 @@ export const SimpleStageExecutor: BoardStageExecutor = {
       // just echo the stage (t3o-19, D4).
       stepLabel: null,
       prompt: config.prompt,
-      model: config.model,
-      runtimeMode: config.runtimeMode,
+      // A single-step stage has one run, so the card's override governs it
+      // outright (t3o-29): the model when it names one, and the access level
+      // only when it names that too — an override says what it changes and
+      // nothing more.
+      model:
+        config.cardOverride === null
+          ? config.model
+          : boardModelSelectionOfOverride(config.cardOverride),
+      runtimeMode: config.cardOverride?.runtimeMode ?? config.runtimeMode,
       timeoutMs: config.timeoutMs,
       maxAttempts: config.maxAttempts,
       // A single-step stage runs no review rounds; the row keeps whatever tip

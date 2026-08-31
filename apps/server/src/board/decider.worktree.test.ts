@@ -49,6 +49,7 @@ function makeCard(
     externalRef: null,
     humanInLoop: null,
     reviewOverrides: null,
+    modelOverrides: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

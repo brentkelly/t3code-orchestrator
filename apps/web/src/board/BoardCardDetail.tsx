@@ -651,6 +651,11 @@ export function BoardCardDetail({
       projectName={projectName ?? null}
       reviewMaxRounds={reviewMaxRounds}
       reviewOverrides={card.reviewOverrides}
+      boardSettings={boardSettings}
+      onSetModelOverrides={(modelOverrides) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, modelOverrides } }))
+      }
+      stepRunning={cardShell?.stepRunning === true}
       reviewPhaseRuntimeMode={reviewPhaseRuntimeMode}
       reviewRoundsStarted={reviewRoundsRecorded}
       reviewStepActive={cardShell?.stepRunning === true || cardShell?.queued === true}

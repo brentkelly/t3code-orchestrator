@@ -65,6 +65,7 @@ const card: BoardCard = {
   externalRef: null,
   humanInLoop: null,
   reviewOverrides: null,
+  modelOverrides: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",

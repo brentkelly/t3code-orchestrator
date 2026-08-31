@@ -58,6 +58,7 @@ function makeCard(
     externalRef: null,
     humanInLoop: null,
     reviewOverrides: null,
+    modelOverrides: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -654,6 +655,62 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       if (event.type !== "board.card-updated") return;
       assert.strictEqual(event.payload.card.reviewOverrides?.stopAfterRound, null);
       assert.strictEqual(event.payload.card.reviewOverrides?.rounds, 3);
+    }),
+  );
+
+  // ── Per-card model overrides (t3o-29, D1) ────────────────────────────
+
+  const setModelOverrides = (modelOverrides: BoardCard["modelOverrides"]) =>
+    ({
+      type: "board.card.update",
+      commandId: CommandId.make("cmd-models"),
+      cardId: BoardCardId.make("card-a"),
+      modelOverrides,
+      createdAt: NOW,
+    }) satisfies BoardCommand;
+
+  const opusOverride = {
+    instanceId: ProviderInstanceId.make("anthropic"),
+    model: "claude-opus-5",
+  };
+
+  it.effect("t3o-29: accepts an override keyed by a stage the board has", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        setModelOverrides({ [BOARD_SEED_STAGE_IDS.building]: opusOverride }),
+        reviewCardBoard({}),
+      );
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.deepStrictEqual(event.payload.card.modelOverrides, {
+        [BOARD_SEED_STAGE_IDS.building]: opusOverride,
+      });
+    }),
+  );
+
+  it.effect("t3o-29 AC7: rejects an override naming a stage the board does not have", () =>
+    Effect.gen(function* () {
+      // A stale popover, held open while the pipeline was edited elsewhere,
+      // would otherwise write an entry no resolver could ever read — the user
+      // sets a model and watches the card run on a different one, with nothing
+      // saying why.
+      const failure = yield* decideFail(
+        setModelOverrides({ [BoardStageId.make("stage-that-was-deleted")]: opusOverride }),
+        reviewCardBoard({}),
+      );
+      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.include(String(failure), "does not exist on this board");
+    }),
+  );
+
+  it.effect("t3o-29: normalises an emptied map to null, matching a never-set card", () =>
+    Effect.gen(function* () {
+      // "Cleared" and "never set" must be indistinguishable in the read model,
+      // or a replayed card stops matching a rehydrated one (the column is NULL).
+      const event = yield* decide(setModelOverrides({}), reviewCardBoard({ overrides: null }));
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.card.modelOverrides, null);
     }),
   );
 

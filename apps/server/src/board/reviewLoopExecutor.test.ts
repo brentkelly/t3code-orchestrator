@@ -38,6 +38,7 @@ import {
   reviewStepLabel,
   type BoardCardReviewOverrides,
   type BoardModelSelection,
+  type BoardCardStageModelOverride,
   type BoardReviewFinding,
   type BoardStageExecutionReview,
   type BoardStepCompletion,
@@ -56,11 +57,13 @@ const card = makeBoardCard({ id: "card-1", stage: "review", orderKey: "a0" });
 
 const config = (
   execution: BoardStageExecutionReview = DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
+  cardOverride: BoardCardStageModelOverride | null = null,
 ): BoardStageExecutorConfig => ({
   stepId: "review",
   stageLabel: "Code review",
   prompt: "",
   model: globalModel,
+  cardOverride,
   timeoutMs: 600_000,
   maxAttempts: 3,
   runtimeMode: "auto",
@@ -105,10 +108,11 @@ const plan = (
   overrides: BoardCardReviewOverrides | null = null,
   liveStepId: string | null = null,
   baseStale = false,
+  cardOverride: BoardCardStageModelOverride | null = null,
 ): BoardStagePlan =>
   ReviewLoopExecutor.planNext({
     card: { ...card, reviewOverrides: overrides },
-    config: config(execution ?? DEFAULT_BOARD_REVIEW_STAGE_EXECUTION),
+    config: config(execution ?? DEFAULT_BOARD_REVIEW_STAGE_EXECUTION, cardOverride),
     completions,
     runState: {
       round: 1,
@@ -367,6 +371,111 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(triage2.kind).toBe("run");
     if (triage2.kind !== "run") return;
     expect(triage2.runtimeMode).toBe("auto");
+  });
+
+  // ── The card-level override (t3o-29, D3) ─────────────────────────────
+  //
+  // One rung below the per-round override and one above the phase config. The
+  // tests below pin every rung of that ladder, because the whole value of the
+  // card-level row is that it takes effect without silently outranking a round
+  // the user escalated by hand.
+  it("t3o-29 AC2: the card's review override re-points EVERY round's review phase", () => {
+    const opus: BoardCardStageModelOverride = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-opus-5",
+    };
+    const exec = reviewExec({ rounds: 5 });
+
+    for (const [completions, stepId] of [
+      [[], "review@1"],
+      [cappedRound(1), "review@2"],
+    ] as const) {
+      const next = plan(completions, exec, null, null, false, opus);
+      expect(next.kind).toBe("run");
+      if (next.kind !== "run") return;
+      expect(next.stepId).toBe(stepId);
+      expect(next.model).toEqual(opus);
+    }
+  });
+
+  it("t3o-29 AC2: the card's review override leaves triage and adjudicate alone", () => {
+    // The rule t3o-22 D4 set and this spec inherits: "Review model" escalates
+    // the reviewer. Triage rewrites the code, so re-modelling it is a different
+    // decision and must not ride along on this one. Triage here has NO
+    // configured model, so it falls to the stage fallback — the case that would
+    // break if the override were folded into `config.model`.
+    const opus: BoardCardStageModelOverride = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-opus-5",
+    };
+    const triage = plan(
+      [completion("review@1", reviewPayload([finding("critical", "f1")]))],
+      reviewExec({ rounds: 5 }),
+      null,
+      null,
+      false,
+      opus,
+    );
+    expect(triage.kind).toBe("run");
+    if (triage.kind !== "run") return;
+    expect(triage.stepId).toBe("triage@1");
+    expect(triage.model).toEqual(globalModel);
+  });
+
+  it("t3o-29 AC3: a per-round override still beats the card's", () => {
+    const cardOpus: BoardCardStageModelOverride = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-opus-5",
+    };
+    const roundHaiku: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-haiku-4-5",
+    };
+    const exec = reviewExec({ rounds: 5 });
+    const withRound = overrides({ roundModels: { "2": roundHaiku } });
+
+    // Round 1 has no round entry, so the card's override governs...
+    const review1 = plan([], exec, withRound, null, false, cardOpus);
+    expect(review1.kind).toBe("run");
+    if (review1.kind !== "run") return;
+    expect(review1.model).toEqual(cardOpus);
+
+    // ...and round 2, which the user escalated by hand, keeps its own.
+    const review2 = plan(cappedRound(1), exec, withRound, null, false, cardOpus);
+    expect(review2.kind).toBe("run");
+    if (review2.kind !== "run") return;
+    expect(review2.model).toEqual(roundHaiku);
+  });
+
+  it("t3o-29: the card override's access level applies, and its absence inherits", () => {
+    const base: BoardCardStageModelOverride = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-opus-5",
+    };
+    const exec = reviewExec({ rounds: 5 });
+
+    // No level named: the phase's own (`auto`) stands rather than the override
+    // dragging its own absence along.
+    const inherited = plan([], exec, null, null, false, base);
+    expect(inherited.kind).toBe("run");
+    if (inherited.kind !== "run") return;
+    expect(inherited.runtimeMode).toBe("auto");
+
+    const named = plan([], exec, null, null, false, {
+      ...base,
+      runtimeMode: "approval-required",
+    });
+    expect(named.kind).toBe("run");
+    if (named.kind !== "run") return;
+    expect(named.runtimeMode).toBe("approval-required");
+  });
+
+  it("t3o-29 AC8: a card that overrides nothing runs exactly the configured loop", () => {
+    const next = plan([], reviewExec({ rounds: 5 }), null, null, false, null);
+    expect(next.kind).toBe("run");
+    if (next.kind !== "run") return;
+    expect(next.model).toEqual(globalModel);
+    expect(next.runtimeMode).toBe("auto");
   });
 
   it("t3o-22 D4: an un-overridden round inherits the stage's review model", () => {

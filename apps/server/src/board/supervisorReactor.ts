@@ -45,6 +45,9 @@ import {
   MessageId,
   resolveBoardStageExecution,
   resolveBoardStageModelSelection,
+  resolveBoardCardStageModelOverride,
+  boardModelSelectionOfOverride,
+  type BoardCardStageModelOverride,
   ThreadId,
   type BoardCard,
   type BoardCardId,
@@ -161,6 +164,35 @@ function threadIsAlive(shell: OrchestrationThreadShell): boolean {
   return (
     shell.hasPendingUserInput || (shell.session !== null && shell.session.activeTurnId !== null)
   );
+}
+
+/**
+ * The model/access override in force for a card's CURRENT stage (t3o-29),
+ * resolved through the parent for a sub-board child, or null when the
+ * workspace config governs.
+ *
+ * The reactor resolves it because it is the only layer that can see both the
+ * card and the board it sits on; what the override then GOVERNS is the
+ * executor's call, so this is handed down on the config rather than folded into
+ * `model` (see `BoardStageExecutorConfig.cardOverride`). That is what keeps the
+ * reactor from having to know that a review stage treats it differently.
+ *
+ * Free: the parent is already in the aggregate every caller holds, so this is
+ * an in-memory find, not a read. Sub-boards are one level deep, so there is no
+ * chain to walk.
+ */
+function cardStageModelOverride(
+  board: BoardState,
+  card: BoardCard,
+): BoardCardStageModelOverride | null {
+  return resolveBoardCardStageModelOverride({
+    card,
+    parent:
+      card.parentCardId === null
+        ? null
+        : (board.cards.find((candidate) => candidate.id === card.parentCardId) ?? null),
+    stageId: card.stage,
+  });
 }
 
 const make = Effect.gen(function* () {
@@ -1194,6 +1226,7 @@ const make = Effect.gen(function* () {
     // not re-open on every server restart.
     if (bootPass && !firstEntry) return;
     const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const cardOverride = cardStageModelOverride(board, card);
     // Ask the stage executor what runs next (D15): the reactor delegates the
     // "what to execute" decision rather than computing it inline. A card
     // entering its stage has no completed step for this run, so a simple stage
@@ -1209,6 +1242,7 @@ const make = Effect.gen(function* () {
         timeoutMs: exec.timeoutMs,
         maxAttempts: exec.maxAttempts,
         runtimeMode: exec.runtimeMode,
+        cardOverride,
         execution: exec,
       },
       completions,
@@ -1229,6 +1263,8 @@ const make = Effect.gen(function* () {
       // the stage's own step id, exactly as a simple-stage re-entry does.
       // Never from the boot pass, though — a restart is not a human action.
       if (bootPass) return;
+      const reentryModel =
+        cardOverride === null ? model : boardModelSelectionOfOverride(cardOverride);
       yield* dispatch({
         type: "board.card.select-step",
         commandId: yield* commandId("select-step"),
@@ -1239,10 +1275,16 @@ const make = Effect.gen(function* () {
         stepLabel: null,
         stageLabel: stage.label,
         prompt: "",
-        providerInstanceId: model.instanceId,
-        model: model.model,
-        runtimeMode: exec.runtimeMode,
-        ...(model.options === undefined ? {} : { modelOptions: model.options }),
+        // The card's override governs its re-entry conversation too (t3o-29):
+        // this is still this card's run of this stage, and a user who pinned
+        // the model would not expect dragging the card back to silently drop
+        // it. Applied here rather than by an executor because no executor plans
+        // a re-entry — the reactor owns it (D7) — and it is unconditional, so
+        // it teaches the reactor nothing about stage kinds.
+        providerInstanceId: reentryModel.instanceId,
+        model: reentryModel.model,
+        runtimeMode: cardOverride?.runtimeMode ?? exec.runtimeMode,
+        ...(reentryModel.options === undefined ? {} : { modelOptions: reentryModel.options }),
         mode: exec.mode,
         humanInLoop: true,
         maxAttempts: exec.maxAttempts,
@@ -1469,6 +1511,7 @@ const make = Effect.gen(function* () {
     const exec = resolveBoardStageExecution(settings, card.stage);
     const completions = boardCardStepCompletions(board, card.id);
     const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const cardOverride = cardStageModelOverride(board, card);
     const completedStepIds = completions
       .filter((completion) => completion.outcome === "succeeded")
       .map((completion) => completion.stepId);
@@ -1482,6 +1525,7 @@ const make = Effect.gen(function* () {
         timeoutMs: exec.timeoutMs,
         maxAttempts: exec.maxAttempts,
         runtimeMode: exec.runtimeMode,
+        cardOverride,
         execution: exec,
       },
       completions,
@@ -1619,6 +1663,7 @@ const make = Effect.gen(function* () {
     if (hasLiveStageThread(card, card.stage)) return;
     const completions = boardCardStepCompletions(board, card.id);
     const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const cardOverride = cardStageModelOverride(board, card);
     const completedStepIds = completions
       .filter((completion) => completion.outcome === "succeeded")
       .map((completion) => completion.stepId);
@@ -1632,6 +1677,7 @@ const make = Effect.gen(function* () {
         timeoutMs: exec.timeoutMs,
         maxAttempts: exec.maxAttempts,
         runtimeMode: exec.runtimeMode,
+        cardOverride,
         execution: exec,
       },
       completions,

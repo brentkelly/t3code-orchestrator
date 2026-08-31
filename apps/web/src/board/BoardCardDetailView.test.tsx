@@ -10,6 +10,7 @@
 import {
   BOARD_SEED_STAGE_IDS,
   BOARD_SEED_STAGES,
+  DEFAULT_SERVER_SETTINGS,
   BoardCardId,
   BoardLabelId,
   BoardStageId,
@@ -66,6 +67,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     externalRef: null,
     humanInLoop: null,
     reviewOverrides: null,
+    modelOverrides: null,
     worktree: null,
     blocked: false,
     archivedAt: null,
@@ -92,6 +94,7 @@ function detail(
     dependencies: edges?.dependencies ?? [],
     dependents: edges?.dependents ?? [],
     activity: edges?.activity ?? [],
+    parentModelOverrides: null,
     stepCompletions: edges?.stepCompletions ?? [],
   };
 }
@@ -137,6 +140,8 @@ const baseProps = {
   onApproveSplit: noop,
   onLinkThread: noop,
   onUnlinkThread: noop,
+  boardSettings: DEFAULT_SERVER_SETTINGS.board,
+  onSetModelOverrides: noop,
 } as const;
 
 /** The pane switch's selected tab — the one tab styled active (`bg-card`) —

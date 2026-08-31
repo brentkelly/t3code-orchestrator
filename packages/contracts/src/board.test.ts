@@ -18,6 +18,9 @@ import {
   BOARD_CARD_SHELL_TITLE_MAX_BYTES,
   BOARD_LABEL_NAME_MAX_LENGTH,
   BOARD_SEED_STAGE_IDS,
+  boardModelSelectionOfOverride,
+  isEmptyBoardCardModelOverrides,
+  resolveBoardCardStageModelOverride,
   BoardCardId,
   boardCardArchiveNeedsConfirmation,
   boardCardShellFromCard,
@@ -44,6 +47,7 @@ import {
 } from "./board.ts";
 import { OrchestrationShellSnapshot } from "./orchestration.ts";
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 const encodeShell = Schema.encodeUnknownSync(BoardCardShell);
 const decodeShell = Schema.decodeUnknownSync(BoardCardShell);
@@ -125,6 +129,7 @@ const typicalCard = (index: number): BoardCard => ({
   pullRequestHistory: [],
   pullRequestFloor: null,
   reviewOverrides: null,
+  modelOverrides: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",
@@ -927,5 +932,72 @@ describe("sub-boards (t3o-23)", () => {
         ),
       ).toBe(false);
     });
+  });
+});
+
+describe("per-card model overrides (t3o-29)", () => {
+  const build = BOARD_SEED_STAGE_IDS.building;
+  const review = BOARD_SEED_STAGE_IDS.review;
+  const opus = { instanceId: ProviderInstanceId.make("anthropic"), model: "claude-opus-5" };
+  const haiku = { instanceId: ProviderInstanceId.make("anthropic"), model: "claude-haiku-4-5" };
+
+  // AC8 (the pre-t3o-29 payload decoding to null) lives in
+  // `boardReviewLoop.test.ts`, alongside the identical t3o-22 assertion and the
+  // legacy card fixture both share.
+  it("an empty map overrides nothing, exactly as null does", () => {
+    expect(isEmptyBoardCardModelOverrides(null)).toBe(true);
+    expect(isEmptyBoardCardModelOverrides({})).toBe(true);
+    expect(isEmptyBoardCardModelOverrides({ [build]: opus })).toBe(false);
+  });
+
+  it("resolves the card's own override ahead of its parent's", () => {
+    expect(
+      resolveBoardCardStageModelOverride({
+        card: { modelOverrides: { [build]: opus } },
+        parent: { modelOverrides: { [build]: haiku } },
+        stageId: build,
+      }),
+    ).toEqual(opus);
+  });
+
+  it("AC4: a child with no override of its own resolves its parent's", () => {
+    expect(
+      resolveBoardCardStageModelOverride({
+        card: { modelOverrides: null },
+        parent: { modelOverrides: { [build]: haiku } },
+        stageId: build,
+      }),
+    ).toEqual(haiku);
+  });
+
+  it("resolves per stage, so a parent's Build override never leaks into Review", () => {
+    expect(
+      resolveBoardCardStageModelOverride({
+        card: { modelOverrides: null },
+        parent: { modelOverrides: { [build]: haiku } },
+        stageId: review,
+      }),
+    ).toBeNull();
+  });
+
+  it("resolves null for a top-level card that overrides nothing", () => {
+    expect(
+      resolveBoardCardStageModelOverride({
+        card: { modelOverrides: null },
+        parent: null,
+        stageId: build,
+      }),
+    ).toBeNull();
+  });
+
+  it("narrows an override to its model half, dropping the access level", () => {
+    // The access level rides the override but is NOT part of the model
+    // selection the spawn carries; conflating them would put a runtimeMode key
+    // into a BoardModelSelection that no decoder expects.
+    expect(boardModelSelectionOfOverride({ ...opus, runtimeMode: "approval-required" })).toEqual(
+      opus,
+    );
+    const withOptions = { ...opus, options: [{ id: "reasoning", value: "high" }] } as const;
+    expect(boardModelSelectionOfOverride(withOptions)).toEqual(withOptions);
   });
 });

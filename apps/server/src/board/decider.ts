@@ -30,6 +30,8 @@ import {
   boardCardPlans,
   boardCardUnfinishedChildren,
   BoardCardId,
+  BoardCardModelOverrides,
+  isEmptyBoardCardModelOverrides,
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterSubBoardFloor,
   boardCardPullRequestsEqual,
@@ -356,6 +358,39 @@ const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(fun
     });
   }
   return events;
+});
+
+/**
+ * Per-card model overrides (t3o-29, D1). One rule: every key must name a stage
+ * the board actually has.
+ *
+ * The client is not the guard. The popover only ever writes the build- and
+ * review-role stage ids, but a stale one — held open while the pipeline was
+ * edited in another tab — would write an id for a stage that no longer exists,
+ * and the entry would then sit in the column where no resolver could ever read
+ * it. The user would have set a model and be watching the card run on a
+ * different one, with nothing anywhere saying why. Rejecting is the only
+ * outcome that cannot lie.
+ *
+ * An emptied map normalises to `null` so a cleared override and one that was
+ * never set stay indistinguishable in the read model — the same rule the
+ * projection's NULL column encodes, and what keeps replay equal to rehydration.
+ */
+const validateModelOverrides = Effect.fn("validateModelOverrides")(function* (input: {
+  readonly board: BoardState;
+  readonly command: BoardCardCommand;
+  readonly proposed: BoardCardModelOverrides;
+}) {
+  const { board, command, proposed } = input;
+  for (const stageId of Object.keys(proposed)) {
+    if (!boardStages(board).some((stage) => stage.stageId === stageId)) {
+      return yield* invariant(
+        command,
+        `Model override names stage '${stageId}', which does not exist on this board.`,
+      );
+    }
+  }
+  return isEmptyBoardCardModelOverrides(proposed) ? null : proposed;
 });
 
 /**
@@ -963,7 +998,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.dependsOn === undefined &&
         command.externalRef === undefined &&
         command.humanInLoop === undefined &&
-        command.reviewOverrides === undefined
+        command.reviewOverrides === undefined &&
+        command.modelOverrides === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -1015,6 +1051,19 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                 proposed: command.reviewOverrides,
               });
 
+      // Per-stage model overrides, validated before the card is built for the
+      // same reason (t3o-29, D1): an entry keyed by a stage the board does not
+      // have would sit in the column where nothing ever reads it, so a stale
+      // popover writing one is rejected outright rather than half-applied. An
+      // emptied map normalises to null so "cleared" and "never set" stay
+      // indistinguishable in the read model.
+      const modelOverrides =
+        command.modelOverrides === undefined
+          ? card.modelOverrides
+          : command.modelOverrides === null
+            ? null
+            : yield* validateModelOverrides({ board, command, proposed: command.modelOverrides });
+
       const dependsOn = proposedDependsOn ?? card.dependsOn;
       const nextCard: BoardCard = {
         ...card,
@@ -1034,6 +1083,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             : deriveBoardCardBlocked({ board, stage: card.stage, dependsOn, cards: board.cards }),
         humanInLoop: command.humanInLoop === undefined ? card.humanInLoop : command.humanInLoop,
         reviewOverrides,
+        modelOverrides,
         updatedAt: command.createdAt,
       };
       return {
