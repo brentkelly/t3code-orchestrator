@@ -70,6 +70,7 @@ export function BoardCardContent({
   todos,
   parentKey,
   onOpenSubBoard,
+  pendingSplit,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -88,6 +89,11 @@ export function BoardCardContent({
       the stack affordance, and only where the handler is supplied (the live
       root board — not the ghost, not the archive sheet). */
   readonly onOpenSubBoard?: (() => void) | undefined;
+  /** The card's planning proposed a multi-part split nobody has approved yet
+      (t3o-27): the card is pinned until a human approves it, so it wears the
+      amber "Needs approval" state. Derived client-side by the board page from
+      the shell + stage list. */
+  readonly pendingSplit?: boolean | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
@@ -115,6 +121,11 @@ export function BoardCardContent({
   // Muting a Done card wins over it: a finished card is not asking for
   // anything, whatever its last thread state said.
   const awaiting = card.awaitingInput && !summary.muted;
+  // A pending split (t3o-27) pins the card until a human approves — an amber
+  // "Needs approval" state, ranked above the blue awaiting-input tint when
+  // both somehow hold (approval is the blocking gate). Muted (Done) wins over
+  // both, as it does for awaiting.
+  const needsApproval = pendingSplit === true && !summary.muted;
   // A split parent wears the stack (t3o-25, AC1): the card reads as the top
   // sheet of a pile, and the strip below drills into the sub-board. Both key
   // off the client-derived `planTotal`, exactly like the pips.
@@ -133,16 +144,24 @@ export function BoardCardContent({
         // Selection darkens the card's own border rather than adding a ring:
         // `ring-2 ring-ring` painted the accent blue outside the card and read
         // as a focus ring on click.
-        selected ? "border-foreground/40" : awaiting ? "border-info/55" : "border-border",
+        selected
+          ? "border-foreground/40"
+          : needsApproval
+            ? "border-amber-500/60"
+            : awaiting
+              ? "border-info/55"
+              : "border-border",
         // The tint is a colour-MIX into the card fill, not a translucent
         // overlay, so it reads the same over the light `--card` and the dark
         // lift below — a flat `bg-info/7` would wash out on one of them.
         // `dark:bg-[#1c1c20]` lifts the card above the column beneath it. The
         // stock `--card` in dark is ~3% off the page background, which landed
         // BELOW the column's fill and left cards darker than the board.
-        awaiting
-          ? "bg-[color-mix(in_srgb,var(--info)_7%,var(--card))] shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent)] dark:bg-[color-mix(in_srgb,var(--info)_9%,#1c1c20)]"
-          : "bg-card shadow-xs/5 hover:border-foreground/18 dark:bg-[#1c1c20]",
+        needsApproval
+          ? "bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent)] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]"
+          : awaiting
+            ? "bg-[color-mix(in_srgb,var(--info)_7%,var(--card))] shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent)] dark:bg-[color-mix(in_srgb,var(--info)_9%,#1c1c20)]"
+            : "bg-card shadow-xs/5 hover:border-foreground/18 dark:bg-[#1c1c20]",
         // Done recedes: finished work is muted and lower-contrast (D15 stage).
         summary.muted && "bg-card/60 opacity-70",
         // The stacked-sheet edges: two offset underlines painted with
@@ -208,6 +227,19 @@ export function BoardCardContent({
           <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-info-foreground">
             <span className="size-2 shrink-0 rounded-full bg-info" title="Input needed" />
             Input needed
+          </span>
+        ) : null}
+        {needsApproval ? (
+          // A pending split (t3o-27): amber, spelled out, distinct from the
+          // blue "Input needed" so the human reads it as "approve this split",
+          // not "answer a thread question". The card cannot advance until it
+          // clears, so it earns a face chip like Stalled / Input needed.
+          <span
+            className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-semibold text-amber-700 dark:text-amber-300"
+            title="Planning proposed a multi-part split — approve it to materialise the plan cards"
+          >
+            <LayersIcon className="size-3" />
+            Needs approval
           </span>
         ) : null}
         <span className="flex-1" />
@@ -324,6 +356,7 @@ export function DraggableBoardCard({
   todos,
   parentKey,
   onOpenSubBoard,
+  pendingSplit,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -339,6 +372,7 @@ export function DraggableBoardCard({
   readonly todos?: BoardCardTodoContext | undefined;
   readonly parentKey?: string | undefined;
   readonly onOpenSubBoard?: (() => void) | undefined;
+  readonly pendingSplit?: boolean | undefined;
 }) {
   return (
     // Keyboard path: the card is a focusable button-role element — Enter/Space
@@ -383,6 +417,7 @@ export function DraggableBoardCard({
         todos={todos}
         parentKey={parentKey}
         onOpenSubBoard={onOpenSubBoard}
+        pendingSplit={pendingSplit}
       />
     </div>
   );

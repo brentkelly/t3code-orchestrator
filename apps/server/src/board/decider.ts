@@ -26,6 +26,7 @@ import {
   BOARD_CARD_LABELS_MAX,
   boardAppendOrderKey,
   boardCardChildren,
+  boardCardPendingSplit,
   boardCardPlans,
   boardCardUnfinishedChildren,
   BoardCardId,
@@ -750,6 +751,25 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             );
           }
         }
+      }
+      // An unapproved split blocks ALL forward advancement (t3o-27): a card
+      // whose planning produced ≥2 plans cannot leave for a later stage until
+      // the split is approved (materialising the child cards) or the human
+      // re-proposes down to a single plan. Realistically the work cannot
+      // proceed until the split is resolved, so — unlike dependency blocking,
+      // which only guards the build boundary — this holds the card in place
+      // from wherever it sits. Backward moves and reorders are unaffected
+      // (they are how you get back to fix the plans). Drag sends `override`,
+      // which does NOT bypass this: the gate is a truth about the card, and
+      // the modal replaces its forward button with "Approve split" to match.
+      if (
+        boardCardPendingSplit(board, command.cardId) &&
+        boardStageIndex(board, command.toStage) > boardStageIndex(board, card.stage)
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has ${boardCardPlans(board, command.cardId).length} unapproved plans; approve the split (or re-propose a single plan) before advancing it.`,
+        );
       }
       // Dependency blocking is unconditional from the `build` role onward (D11):
       // a card with unmet dependencies cannot enter the build-role stage or

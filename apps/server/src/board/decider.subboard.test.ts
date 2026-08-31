@@ -225,6 +225,49 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
     }),
   );
 
+  // ── The pending-split forward-move gate (t3o-27) ─────────────────────
+
+  it.effect("pins an unapproved split in place — every forward move refused, drag included", () =>
+    Effect.gen(function* () {
+      // makeBoard()'s parent sits in planning with two plans and no children:
+      // a pending split. It cannot advance to any later stage.
+      const board = makeReadModel(makeBoard());
+      const ready = yield* decideFail(
+        moveCommand({ cardId: "card-parent", toStage: "ready" }),
+        board,
+      );
+      assert.include(String(ready), "unapproved plans");
+      // A drag (override) into building does not bypass the gate.
+      const building = yield* decideFail(
+        moveCommand({ cardId: "card-parent", toStage: "building", override: true }),
+        board,
+      );
+      assert.include(String(building), "unapproved plans");
+    }),
+  );
+
+  it.effect("lets an unapproved split move backward — that is how you fix the plans", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        moveCommand({ cardId: "card-parent", toStage: "sprint" }),
+        makeReadModel(makeBoard()),
+      );
+      assert.strictEqual(events[0]!.type, "board.card-moved");
+    }),
+  );
+
+  it.effect("a single-plan card is not a pending split and advances freely", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        moveCommand({ cardId: "card-parent", toStage: "ready" }),
+        makeReadModel(
+          makeBoard({ plans: [makePlan({ cardId: parentId, key: "p1", ordinal: 0 })] }),
+        ),
+      );
+      assert.strictEqual(events[0]!.type, "board.card-moved");
+    }),
+  );
+
   // ── The approve gate: validation matrix ──────────────────────────────
 
   it.effect("refuses a split of fewer than two plans", () =>

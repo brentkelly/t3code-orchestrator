@@ -14,6 +14,7 @@ import {
   areBoardStagesAdjacent,
   boardStageWithRole,
   deriveBoardCardPlanProgress,
+  boardCardShellPendingSplit,
   deriveBoardCardThreadState,
   resolveBoardProjectAccent,
   type BoardCardShell,
@@ -351,6 +352,13 @@ function EnvironmentBoard({
     // would be forty copies of the header — resolve nothing there (D2).
     (cardId: string) => (scope.kind === "root" ? parentKeyById.get(cardId) : undefined),
     [parentKeyById, scope],
+  );
+  // Awaiting split approval (t3o-27) — derived client-side from the shell +
+  // stage list, no extra payload (a child card carries `parentCardId` and so
+  // is never pending). Amber "Needs approval" on the card face.
+  const pendingSplitFor = useCallback(
+    (card: BoardCardShell) => boardCardShellPendingSplit(card, orderedStages),
+    [orderedStages],
   );
 
   // The parent this sub-board drills into, as a live (decorated) shell — null
@@ -1008,6 +1016,7 @@ function EnvironmentBoard({
             <BoardColumn
               accentNameFor={accentNameFor}
               parentKeyFor={parentKeyFor}
+              pendingSplitFor={pendingSplitFor}
               addProjects={addProjects}
               cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
               labelsById={labelsById}
