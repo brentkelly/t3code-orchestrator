@@ -11,6 +11,7 @@ import {
   boardPlanId,
   CommandId,
   ProjectId,
+  ProviderInstanceId,
   type BoardCard,
   type BoardPlan,
   type BoardState,
@@ -319,6 +320,43 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
         makeReadModel(makeBoard({ parent: { stage: "building" }, stages })),
       );
       assert.include(String(failure), "no stage before");
+    }),
+  );
+
+  it.effect("refuses approval while the parent has a live step", () =>
+    Effect.gen(function* () {
+      const board = makeBoard({ parent: { stage: "building" } });
+      const failure = yield* decideFail(
+        approve(),
+        makeReadModel({
+          ...board,
+          stepStates: [
+            {
+              cardId: parentId,
+              stepId: "building",
+              stepLabel: "Build",
+              stageLabel: "Building",
+              attempt: 1,
+              stallCount: 0,
+              lastNudgeAt: null,
+              prompt: "build it",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.4",
+              mode: "build",
+              runtimeMode: "auto",
+              humanInLoop: false,
+              maxAttempts: 3,
+              timeoutMs: 1000,
+              threadId: null,
+              status: "running",
+              slotHeld: true,
+              startedAt: NOW,
+              updatedAt: NOW,
+            },
+          ],
+        }),
+      );
+      assert.include(String(failure), "live step");
     }),
   );
 

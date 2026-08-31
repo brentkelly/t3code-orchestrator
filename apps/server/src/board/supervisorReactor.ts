@@ -435,6 +435,45 @@ const make = Effect.gen(function* () {
   // `failWorktree` first, so the card carries a visible, retryable reason (a
   // `failed` worktree once one exists, an activity row when provisioning never
   // got that far) rather than being a silent wedge.
+  // The project checkout's DEFAULT branch — not whatever it happens to have
+  // checked out. origin/HEAD names it when a remote exists; a purely local
+  // repo falls back to the current branch, with a detached HEAD (`rev-parse`
+  // answers the literal string 'HEAD') treated as a resolution failure rather
+  // than a branch. Shared by worktree provisioning and integration-branch
+  // creation; `defaultBranch === ""` is the failure signal, `detachedHead`
+  // disambiguates the message.
+  const resolveDefaultBranch = Effect.fn("board-supervisor-resolveDefaultBranch")(function* (
+    cwd: string,
+  ) {
+    const gitRef = (args: ReadonlyArray<string>) =>
+      git
+        .execute({
+          operation: "boardCardWorktree.defaultBranch",
+          cwd,
+          args: [...args],
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
+          Effect.catchCause(() => Effect.succeed("")),
+        );
+    const originHead = yield* gitRef([
+      "symbolic-ref",
+      "--quiet",
+      "--short",
+      "refs/remotes/origin/HEAD",
+    ]);
+    const currentBranch = yield* gitRef(["rev-parse", "--abbrev-ref", "HEAD"]);
+    const defaultBranch =
+      originHead.startsWith("origin/") && originHead.length > "origin/".length
+        ? originHead.slice("origin/".length)
+        : currentBranch === "HEAD"
+          ? ""
+          : currentBranch;
+    return { defaultBranch, detachedHead: currentBranch === "HEAD" };
+  });
+
   const ensureWorktree = Effect.fn("board-supervisor-ensureWorktree")(function* (card: BoardCard) {
     if (card.worktree !== null && card.worktree.status === "ready" && card.worktree.path !== null) {
       return card.worktree.path;
@@ -451,43 +490,34 @@ const make = Effect.gen(function* () {
       return null;
     }
     const branch = boardCardWorktreeBranchName(card);
-    // The base ref for a top-level card is the project's DEFAULT branch — not
-    // whatever the project checkout happens to have checked out. origin/HEAD
-    // names it when a remote exists; a purely local repo falls back to the
-    // current branch, with a detached HEAD (`rev-parse` answers the literal
-    // string 'HEAD') treated as a resolution failure rather than a branch. A
-    // sub-board plan card branches off its parent's integration branch (D12).
-    const gitRef = (args: ReadonlyArray<string>) =>
-      git
-        .execute({
-          operation: "boardCardWorktree.defaultBranch",
-          cwd,
-          args: [...args],
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-        })
-        .pipe(
-          Effect.map((result) => result.stdout.trim()),
-          Effect.catchCause(() => Effect.succeed("")),
-        );
-    const originHead = yield* gitRef([
-      "symbolic-ref",
-      "--quiet",
-      "--short",
-      "refs/remotes/origin/HEAD",
-    ]);
-    const currentBranch = yield* gitRef(["rev-parse", "--abbrev-ref", "HEAD"]);
-    const defaultBranch =
-      originHead.startsWith("origin/") && originHead.length > "origin/".length
-        ? originHead.slice("origin/".length)
-        : currentBranch === "HEAD"
-          ? ""
-          : currentBranch;
-    const baseRefName = resolveBoardCardBaseRef({
+    // A sub-board plan card branches off its parent's integration branch
+    // (D12); a top-level card off the project default.
+    const { defaultBranch, detachedHead } = yield* resolveDefaultBranch(cwd);
+    let baseRefName = resolveBoardCardBaseRef({
       card,
       cards: (yield* readBoard).cards,
       defaultBranch,
     });
+    // A child whose parent has no branch retries the integration-branch
+    // creation HERE (t3o-23, D5): approval fires it once, but the reactor may
+    // have been down or git transiently broken at that moment, and a
+    // fire-once side effect with no second chance would leave every child
+    // failing the same way forever. Each child build attempt is the organic
+    // retry; `ensureIntegrationBranch` is idempotent, so a raced pair of
+    // children converges on the one branch.
+    if (baseRefName === null && card.parentCardId !== null) {
+      const parent = (yield* readBoard).cards.find(
+        (candidate) => candidate.id === card.parentCardId,
+      );
+      if (parent !== undefined && parent.archivedAt === null) {
+        yield* ensureIntegrationBranch(parent);
+        baseRefName = resolveBoardCardBaseRef({
+          card,
+          cards: (yield* readBoard).cards,
+          defaultBranch,
+        });
+      }
+    }
     if (baseRefName === null || defaultBranch === "") {
       // Say WHICH of the three ways base-ref resolution failed — "could not
       // resolve the base branch" is true but unactionable, and the three have
@@ -497,7 +527,7 @@ const make = Effect.gen(function* () {
         card,
         baseRefName === null
           ? "The parent card has no branch yet, so there is no base to cut this card's branch from."
-          : currentBranch === "HEAD"
+          : detachedHead
             ? `The project checkout at ${cwd} is on a detached HEAD, so there is no branch to cut the card's branch from.`
             : `${cwd} is not a git repository, or has no commits yet, so there is no branch to cut the card's branch from.`,
       );
@@ -2626,20 +2656,26 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // A card was created (D10): if it landed in an auto-executing stage, kick off
-  // exactly as a drag would. The created payload is flat, so re-read the card.
-  // A split was approved (t3o-23, D5): create the integration branch NOW —
-  // branch only, no worktree, no setup script — so the first child to begin
-  // building has a base to cut from, and push it so child pull requests have
-  // a remote target. Effect-then-record, like every worktree mutation: the
-  // git work happens first, `record-integration-branch` reports it. A failed
-  // PUSH is a note, not a failure — a local-only project still builds and
-  // reviews locally, and the missing remote base surfaces at the child's
-  // review step with the forge CLI's own words (the t3o-20 stance).
-  const handlePlansApproved = Effect.fn("board-supervisor-handlePlansApproved")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.plans-approved" }>,
+  // The split's integration branch (t3o-23, D5): create it — branch only, no
+  // worktree, no setup script — so the first child to begin building has a
+  // base to cut from, and push it so child pull requests have a remote
+  // target. Effect-then-record, like every worktree mutation: the git work
+  // happens first, `record-integration-branch` reports it. A failed PUSH is a
+  // note, not a failure — a local-only project still builds and reviews
+  // locally, and the missing remote base surfaces at the child's review step
+  // with the forge CLI's own words (the t3o-20 stance).
+  //
+  // IDEMPOTENT and multi-entry: approval fires it, and any child whose base
+  // resolution finds no parent branch fires it again (`ensureWorktree`), so a
+  // reactor that was down at approval — or a transient git failure — heals on
+  // the next build attempt instead of stranding the split. A parent that
+  // already carries a worktree slice (approved after a conversational build,
+  // or a completed earlier attempt) is left alone: its branch exists and IS
+  // the integration branch.
+  const ensureIntegrationBranch = Effect.fn("board-supervisor-ensureIntegrationBranch")(function* (
+    card: BoardCard,
   ) {
-    const card = event.payload.card;
+    if (card.worktree !== null && card.worktree.status !== "failed") return;
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
     if (cwd === null) {
@@ -2660,19 +2696,7 @@ const make = Effect.gen(function* () {
           Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
           Effect.catchCause(() => Effect.succeed("")),
         );
-    const originHead = yield* gitRef([
-      "symbolic-ref",
-      "--quiet",
-      "--short",
-      "refs/remotes/origin/HEAD",
-    ]);
-    const currentBranch = yield* gitRef(["rev-parse", "--abbrev-ref", "HEAD"]);
-    const defaultBranch =
-      originHead.startsWith("origin/") && originHead.length > "origin/".length
-        ? originHead.slice("origin/".length)
-        : currentBranch === "HEAD"
-          ? ""
-          : currentBranch;
+    const { defaultBranch } = yield* resolveDefaultBranch(cwd);
     if (defaultBranch === "") {
       yield* failWorktree(
         card,
@@ -2742,6 +2766,14 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const handlePlansApproved = Effect.fn("board-supervisor-handlePlansApproved")(function* (
+    event: Extract<OrchestrationEvent, { type: "board.plans-approved" }>,
+  ) {
+    yield* ensureIntegrationBranch(event.payload.card);
+  });
+
+  // A card was created (D10): if it landed in an auto-executing stage, kick off
+  // exactly as a drag would. The created payload is flat, so re-read the card.
   const handleCardCreated = Effect.fn("board-supervisor-handleCardCreated")(function* (
     event: Extract<OrchestrationEvent, { type: "board.card-created" }>,
   ) {

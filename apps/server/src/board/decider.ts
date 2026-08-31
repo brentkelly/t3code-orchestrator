@@ -1738,6 +1738,19 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${card.key}' is itself a sub-board plan card; splits do not nest (D12).`,
         );
       }
+      // A parent with a run in flight cannot be frozen under it: the live
+      // agent would keep writing the very branch the children are about to
+      // fork from, and its completion would race the freeze. Finish or stop
+      // the run first — the freeze then holds a quiet card.
+      {
+        const state = boardCardStepState(board, command.cardId);
+        if (state !== null && !isBoardTerminalStepStatus(state.status)) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' has a live step ('${state.stepLabel}', ${state.status}); finish or stop it before approving a split.`,
+          );
+        }
+      }
       {
         const children = boardCardChildren(board, card.id);
         if (children.length > 0) {

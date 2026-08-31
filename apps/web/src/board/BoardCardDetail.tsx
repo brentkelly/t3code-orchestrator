@@ -450,8 +450,11 @@ export function BoardCardDetail({
 
   // The approve gate (t3o-23, D1): two or more plans, nothing materialised
   // yet, a top-level card at or before the build stage, and a floor stage for
-  // the children to land in. Mirrors the decider's validation so the button
-  // only offers what would be accepted.
+  // the children to land in. These are the cheap STRUCTURAL checks only — the
+  // decider additionally gates on unmet dependencies, plan-graph cycles and a
+  // live step, and a refusal from any of those surfaces through the shared
+  // command feedback, so the button may offer an approval the decider still
+  // declines with a reason.
   const buildStage = boardStageWithRole(stageState, "build");
   const floorStage = boardSubBoardFloorStage(stageState);
   const canApproveSplit =
