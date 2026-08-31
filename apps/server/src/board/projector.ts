@@ -47,7 +47,9 @@ import {
   BoardLabelDeletedPayload,
   BoardLabelUndeletedPayload,
   BoardLabelUpdatedPayload,
+  BoardPlansApprovedPayload,
   BoardPlansProposedPayload,
+  BoardCardIntegrationBranchRecordedPayload,
   BoardPlanWrittenPayload,
   BoardStageCreatedPayload,
   BoardStageDeletedPayload,
@@ -103,6 +105,10 @@ const decodeBoardCardStepCompletedPayload = Schema.decodeUnknownEffect(
 );
 const decodeBoardPlansProposedPayload = Schema.decodeUnknownEffect(BoardPlansProposedPayload);
 const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWrittenPayload);
+const decodeBoardPlansApprovedPayload = Schema.decodeUnknownEffect(BoardPlansApprovedPayload);
+const decodeBoardCardIntegrationBranchRecordedPayload = Schema.decodeUnknownEffect(
+  BoardCardIntegrationBranchRecordedPayload,
+);
 const decodeBoardCardWorktreeProvisioningPayload = Schema.decodeUnknownEffect(
   BoardCardWorktreeProvisioningPayload,
 );
@@ -170,9 +176,15 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // itself lives only in `board_card_bodies` (D8), written by the SQL
     // projector. `dependsOn` rides the payload; a creation-stage card is
     // always before Ready, so it is never blocked at birth (D18).
-    briefRef: payload.brief === undefined ? null : BOARD_CARD_BRIEF_BODY_KIND,
+    briefRef:
+      payload.brief === undefined && payload.briefFromPlanId === undefined
+        ? null
+        : BOARD_CARD_BRIEF_BODY_KIND,
     dependsOn: boardCardCreatedDependsOn(payload),
-    parentCardId: null,
+    // Sub-board materialisation (t3o-23): set only on the child creations the
+    // approve decider emits; absent on every other create.
+    parentCardId: payload.parentCardId ?? null,
+    sourcePlanId: payload.sourcePlanId ?? null,
     threadLinks: [],
     externalRef: null,
     // Per-card human-in-the-loop override is untouched at birth (D6), and so
@@ -529,6 +541,22 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertPlan(model, payload.plan)),
       );
 
+    case "board.plans-approved":
+      // The children rode their own card-created events and the parent's move
+      // its card-moved (t3o-23, D2); this event re-asserts the post-approval
+      // parent so replay is whole even if the move was skipped (parent
+      // already sitting in Building).
+      return decodeBoardPlansApprovedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-integration-branch-recorded":
+      return decodeBoardCardIntegrationBranchRecordedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     case "board.card-worktree-provisioning":
       return decodeBoardCardWorktreeProvisioningPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
@@ -699,6 +727,12 @@ export function boardShellStreamEvent(
     case "board.card-worktree-ready":
     case "board.card-worktree-failed":
     case "board.card-worktree-reclaimed":
+    // Sub-board approval (t3o-23): the parent's stage moved and its shell
+    // `parentCardId`-derived fields may render differently; the children ride
+    // their own card-created deltas. The integration branch is detail, but the
+    // event carries the whole card, so the re-upsert costs nothing extra.
+    case "board.plans-approved":
+    case "board.card-integration-branch-recorded":
     // The PR link IS on the bounded shell (`hasPr` / `prNumber`), and it rides
     // the card aggregate — so this delta carries the real value like any other
     // card field, with no absent-means-preserve dance.

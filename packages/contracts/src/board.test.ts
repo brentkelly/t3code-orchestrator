@@ -120,6 +120,7 @@ const typicalCard = (index: number): BoardCard => ({
   briefRef: "brief",
   dependsOn: [],
   parentCardId: null,
+  sourcePlanId: null,
   threadLinks: [
     {
       threadId: ThreadId.make(`thread-${index}-4e5f-6789-abcd-ef0123456789`),

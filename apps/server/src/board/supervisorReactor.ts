@@ -17,9 +17,11 @@
  * server will restart mid-step.
  */
 import {
+  boardCardChildren,
   boardCardPlans,
   boardCardPullRequestsEqual,
   boardCardStepCompletions,
+  boardCardUnfinishedChildren,
   boardCardStepState,
   boardRunLabel,
   boardNextStageId,
@@ -994,6 +996,13 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const stage = boardStageById(board, card.stage);
     if (stage === null) return;
+    // A split parent builds THROUGH its children (t3o-23, D4): while any
+    // child is unfinished, no run starts for it — not the build stage's
+    // auto-execute (its move into Building is part of the approval), and not
+    // an on-demand start either, because a thread spawned for a frozen card
+    // could only watch. Its review-stage entry, which only happens after the
+    // last child finished, kicks off normally.
+    if (boardCardUnfinishedChildren(board, card.id).length > 0) return;
     // One step at a time (D4): do not start a run while one is live. The one
     // exception is `stalled` (t3o-17): supervision has given up and nothing is
     // running, so an EXPLICIT on-demand start is the human's retry affordance
@@ -1176,6 +1185,39 @@ const make = Effect.gen(function* () {
       type: "board.card.move",
       commandId: yield* commandId("advance"),
       cardId: input.card.id,
+      toStage: next,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  // A split parent advances when its last child finishes (t3o-23, D4; the
+  // D18 carve-out "a parent card advances when its last child plan card
+  // reaches Done"). Rides the ordinary move like `advanceStage` — the
+  // decider's freeze has lifted (no unfinished children left), and the target
+  // is the NEXT stage in order, not a hardcoded review, so a custom stage
+  // between Build and Review is not skipped. Only a parent still sitting in
+  // the build-role stage advances: that is the position the approval parked
+  // it in, so a parent the human already dragged onward (or one that never
+  // split) is left alone — which is also what makes a raced double-fire
+  // harmless, the second call finding the parent already moved.
+  const advanceParentIfChildrenDone = Effect.fn("board-supervisor-advanceParent")(function* (
+    parentCardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const parent = board.cards.find((candidate) => candidate.id === parentCardId);
+    if (parent === undefined || parent.archivedAt !== null) return;
+    const buildStage = boardStageWithRole(board, "build");
+    if (buildStage === null || parent.stage !== buildStage.stageId) return;
+    // All children deleted is NOT completion — the parent unfreezes where it
+    // stands and the human decides what the empty split means.
+    if (boardCardChildren(board, parent.id).length === 0) return;
+    if (boardCardUnfinishedChildren(board, parent.id).length > 0) return;
+    const next = boardNextStageId(board, parent.stage);
+    if (next === null) return;
+    yield* dispatch({
+      type: "board.card.move",
+      commandId: yield* commandId("advance-parent"),
+      cardId: parent.id,
       toStage: next,
       createdAt: yield* nowIso,
     });
@@ -2482,6 +2524,11 @@ const make = Effect.gen(function* () {
     // is reclaimed EARLIER, at Done, and never whether it is reclaimed at all.
     // A worktree may not outlive its card.
     yield* reclaimCardWorktree(card);
+    // An archived child counts as finished (t3o-23, D6), so this may have
+    // been the parent's last unfinished one.
+    if (card.parentCardId !== null) {
+      yield* advanceParentIfChildrenDone(card.parentCardId);
+    }
   });
 
   /**
@@ -2569,10 +2616,132 @@ const make = Effect.gen(function* () {
 
     // The released slot is capacity the board can hand to whatever is queued.
     yield* schedule();
+
+    // Deleting a child removes it from the parent's unfinished set (t3o-23,
+    // D4) — if it was the last one standing, the parent advances (the helper
+    // itself refuses when NO children remain: an emptied split unfreezes and
+    // waits for the human).
+    if (card.parentCardId !== null) {
+      yield* advanceParentIfChildrenDone(card.parentCardId);
+    }
   });
 
   // A card was created (D10): if it landed in an auto-executing stage, kick off
   // exactly as a drag would. The created payload is flat, so re-read the card.
+  // A split was approved (t3o-23, D5): create the integration branch NOW —
+  // branch only, no worktree, no setup script — so the first child to begin
+  // building has a base to cut from, and push it so child pull requests have
+  // a remote target. Effect-then-record, like every worktree mutation: the
+  // git work happens first, `record-integration-branch` reports it. A failed
+  // PUSH is a note, not a failure — a local-only project still builds and
+  // reviews locally, and the missing remote base surfaces at the child's
+  // review step with the forge CLI's own words (the t3o-20 stance).
+  const handlePlansApproved = Effect.fn("board-supervisor-handlePlansApproved")(function* (
+    event: Extract<OrchestrationEvent, { type: "board.plans-approved" }>,
+  ) {
+    const card = event.payload.card;
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const cwd = projectCwd(model, card);
+    if (cwd === null) {
+      yield* failWorktree(card, "The card's project has no workspace folder on this server.");
+      return;
+    }
+    const branch = boardCardWorktreeBranchName(card);
+    const gitRef = (args: ReadonlyArray<string>) =>
+      git
+        .execute({
+          operation: "boardIntegrationBranch.ref",
+          cwd,
+          args: [...args],
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
+          Effect.catchCause(() => Effect.succeed("")),
+        );
+    const originHead = yield* gitRef([
+      "symbolic-ref",
+      "--quiet",
+      "--short",
+      "refs/remotes/origin/HEAD",
+    ]);
+    const currentBranch = yield* gitRef(["rev-parse", "--abbrev-ref", "HEAD"]);
+    const defaultBranch =
+      originHead.startsWith("origin/") && originHead.length > "origin/".length
+        ? originHead.slice("origin/".length)
+        : currentBranch === "HEAD"
+          ? ""
+          : currentBranch;
+    if (defaultBranch === "") {
+      yield* failWorktree(
+        card,
+        `Could not resolve a default branch in ${cwd} to cut the integration branch from.`,
+      );
+      return;
+    }
+    // Idempotent on retry: an existing branch is the desired state, not an
+    // error (an earlier attempt may have created it and died before the
+    // record landed).
+    const exists = yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    if (exists === "") {
+      const created = yield* git
+        .execute({
+          operation: "boardIntegrationBranch.create",
+          cwd,
+          args: ["branch", branch, defaultBranch],
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board supervisor: integration branch creation failed", {
+              cardId: card.id,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(null)),
+          ),
+        );
+      if (created === null || created.exitCode !== 0) {
+        yield* failWorktree(
+          card,
+          `Could not create the integration branch '${branch}' from '${defaultBranch}'.`,
+        );
+        return;
+      }
+    }
+    const pushed = yield* git.resolvePrimaryRemoteName(cwd).pipe(
+      Effect.flatMap((remoteName) =>
+        git.execute({
+          operation: "boardIntegrationBranch.push",
+          cwd,
+          args: ["push", remoteName, branch],
+          timeoutMs: 60_000,
+          allowNonZeroExit: true,
+        }),
+      ),
+      Effect.map((result) => result.exitCode === 0),
+      Effect.catch(() => Effect.succeed(false)),
+    );
+    if (!pushed) {
+      yield* dispatch({
+        type: "board.card.record-note",
+        commandId: yield* commandId("push-skipped"),
+        cardId: card.id,
+        kind: "card-branch-push-skipped",
+        detail: `Created '${branch}' locally but could not push it; child pull requests will have no remote base until it is pushed.`,
+        createdAt: yield* nowIso,
+      });
+    }
+    yield* dispatch({
+      type: "board.card.record-integration-branch",
+      commandId: yield* commandId("record-integration-branch"),
+      cardId: card.id,
+      branch,
+      baseRefName: defaultBranch,
+      createdAt: yield* nowIso,
+    });
+  });
+
   const handleCardCreated = Effect.fn("board-supervisor-handleCardCreated")(function* (
     event: Extract<OrchestrationEvent, { type: "board.card-created" }>,
   ) {
@@ -2668,6 +2837,13 @@ const make = Effect.gen(function* () {
     yield* refreshCardPullRequest(card, card.stage);
 
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
+
+    // A child changing stage may have been the parent's last unfinished one
+    // (t3o-23, D4) — the advance helper's own guards make a non-final move a
+    // cheap no-op.
+    if (card.parentCardId !== null) {
+      yield* advanceParentIfChildrenDone(card.parentCardId);
+    }
   });
 
   // On-demand kickoff request (D7): start a thread for the card's current stage.
@@ -2841,6 +3017,9 @@ const make = Effect.gen(function* () {
         return handleArchived(event);
       case "board.card-deleted":
         return handleCardDeleted(event);
+      case "board.plans-approved":
+        // The split's integration branch (t3o-23, D5).
+        return handlePlansApproved(event);
       default:
         return Effect.void;
     }
@@ -2952,7 +3131,8 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-updated" &&
           event.type !== "board.card-step-completed" &&
           event.type !== "board.card-archived" &&
-          event.type !== "board.card-deleted"
+          event.type !== "board.card-deleted" &&
+          event.type !== "board.plans-approved"
         ) {
           return Effect.void;
         }

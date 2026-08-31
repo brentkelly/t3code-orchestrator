@@ -17,7 +17,7 @@ import type {
   BoardLabelId,
   ThreadId,
 } from "@t3tools/contracts";
-import { LockIcon, TriangleAlertIcon } from "lucide-react";
+import { LayersIcon, LockIcon, TriangleAlertIcon } from "lucide-react";
 import type { DragEvent } from "react";
 
 import { cn } from "../lib/utils";
@@ -68,11 +68,15 @@ export function BoardCardContent({
   selected,
   accentName,
   todos,
+  parentKey,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly queueSlot: BoardCardQueueSlot | undefined;
   readonly selected: boolean;
+  /** The parent card's key when this is a sub-board child (t3o-23); absent on
+      surfaces that do not resolve it (the drag ghost, the archive sheet). */
+  readonly parentKey?: string | undefined;
   /** Configured project accent (t3o-07); falls back to the hash colour. */
   readonly accentName?: string | null | undefined;
   /** Thread todo lists (t3o-18). Absent on surfaces that do not carry them
@@ -144,6 +148,18 @@ export function BoardCardContent({
         >
           {card.key}
         </span>
+        {parentKey !== undefined ? (
+          // Sub-board membership (t3o-23): a child card names its parent so a
+          // mixed column still reads as a whole. The chip is informational —
+          // navigation stays the card click; drill-in is t3o-25.
+          <span
+            className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+            title={`Part of ${parentKey}'s sub-board`}
+          >
+            <LayersIcon className="mr-0.5 size-2.5" />
+            {parentKey}
+          </span>
+        ) : null}
         {card.threadState === "working" || card.stepRunning ? (
           // Green while the agent is working. `threadState === "working"` lights
           // only while a single linked thread is mid-turn; `stepRunning` is the
@@ -268,6 +284,7 @@ export function DraggableBoardCard({
   onReorder,
   accentName,
   todos,
+  parentKey,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -281,6 +298,7 @@ export function DraggableBoardCard({
   readonly onReorder: (card: BoardCardShell, direction: -1 | 1) => void;
   readonly accentName?: string | null | undefined;
   readonly todos?: BoardCardTodoContext | undefined;
+  readonly parentKey?: string | undefined;
 }) {
   return (
     // Keyboard path: the card is a focusable button-role element — Enter/Space
@@ -323,6 +341,7 @@ export function DraggableBoardCard({
         selected={selected}
         accentName={accentName}
         todos={todos}
+        parentKey={parentKey}
       />
     </div>
   );

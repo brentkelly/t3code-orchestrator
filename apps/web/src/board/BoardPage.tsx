@@ -13,6 +13,7 @@ import {
   BOARD_SEED_STAGES,
   areBoardStagesAdjacent,
   boardStageWithRole,
+  deriveBoardCardPlanProgress,
   deriveBoardCardThreadState,
   resolveBoardProjectAccent,
   type BoardCardShell,
@@ -221,10 +222,43 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
       return remaining.length === current.length ? current : remaining;
     });
   }, [liveColumns]);
-  const columns = useMemo(
+  const placedColumns = useMemo(
     () => applyBoardCardPlacements(liveColumns, placements),
     [liveColumns, placements],
   );
+
+  // Sub-board pips (t3o-23, D6): `planTotal` / `planDone` are DERIVED here,
+  // client-side, from the children the shell already carries — the server
+  // never produces them. Injected onto the parents' shells so the summary /
+  // progress-block chain (which predates the data) lights up unchanged.
+  // `parentKeyById` feeds the children's "part of <key>" chip.
+  const { columns, parentKeyById } = useMemo(() => {
+    const cards = Object.values(placedColumns).flat();
+    const progress = deriveBoardCardPlanProgress({ cards, stages: orderedStages });
+    const keyById = new Map(cards.map((card) => [card.cardId, card.key]));
+    const parents = new Map<string, string>();
+    for (const card of cards) {
+      if (card.parentCardId === undefined) continue;
+      const parentKey = keyById.get(card.parentCardId);
+      if (parentKey !== undefined) parents.set(String(card.cardId), parentKey);
+    }
+    if (progress.size === 0) {
+      return { columns: placedColumns, parentKeyById: parents };
+    }
+    const decorated = Object.fromEntries(
+      Object.entries(placedColumns).map(([stageId, stageCards]) => [
+        stageId,
+        stageCards.map((card) => {
+          const counts = progress.get(card.cardId);
+          return counts === undefined
+            ? card
+            : { ...card, planTotal: counts.total, planDone: counts.done };
+        }),
+      ]),
+    ) as typeof placedColumns;
+    return { columns: decorated, parentKeyById: parents };
+  }, [placedColumns, orderedStages]);
+  const parentKeyFor = useCallback((cardId: string) => parentKeyById.get(cardId), [parentKeyById]);
 
   const buildColumn = buildStageId === null ? EMPTY_CARDS : (columns[buildStageId] ?? EMPTY_CARDS);
   const queueSlots = useMemo(() => boardBuildingQueueInfo(buildColumn), [buildColumn]);
@@ -789,6 +823,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
           {orderedStages.map((stage, index) => (
             <BoardColumn
               accentNameFor={accentNameFor}
+              parentKeyFor={parentKeyFor}
               addProjects={addProjects}
               cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
               labelsById={labelsById}

@@ -562,12 +562,17 @@ export function boardBriefHasImage(brief: string): boolean {
  *   the step (`attempts` counts them).
  * - `reclaimed` — the worktree was removed (D6/D15: reclaimed at archive);
  *   `path` returns to null. This is the reverse state worktree creation owes.
+ * - `branch-only` — the branch exists but no worktree ever has (t3o-23, D5):
+ *   a split parent's integration branch is created at approval so children
+ *   can cut from it, while the worktree waits for the parent's own review
+ *   entry. Provisioning from here attaches a worktree to the existing branch.
  */
 export const BoardCardWorktreeStatus = Schema.Literals([
   "provisioning",
   "ready",
   "failed",
   "reclaimed",
+  "branch-only",
 ]);
 export type BoardCardWorktreeStatus = typeof BoardCardWorktreeStatus.Type;
 
@@ -862,6 +867,10 @@ export function isEmptyBoardCardReviewOverrides(
 }
 
 // ── Card aggregate ─────────────────────────────────────────────────────
+// Declared ahead of `BoardCard` (which carries `sourcePlanId`) — the plan
+// structs themselves live with the rest of the plan vocabulary below.
+export const BoardPlanId = TrimmedNonEmptyString.pipe(Schema.brand("BoardPlanId"));
+export type BoardPlanId = typeof BoardPlanId.Type;
 
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
@@ -888,9 +897,14 @@ export const BoardCard = Schema.Struct({
       ride the read model); null when the card has no brief. */
   briefRef: Schema.NullOr(TrimmedNonEmptyString),
   dependsOn: Schema.Array(BoardCardId),
-  /** Null for top-level cards; set for sub-board plan cards. Schema only in
-      MVP — no t3o-03 command writes it (D12 materialisation is post-MVP). */
+  /** Null for top-level cards; set for sub-board plan cards materialised by
+      `board.plans.approve` (t3o-23, D12). Depth 1: a parented card can never
+      itself approve a split. */
   parentCardId: Schema.NullOr(BoardCardId),
+  /** The plan a sub-board child was materialised from (t3o-23, D2), so the
+      parent's plan pane can chip each plan with its card. Null for top-level
+      cards and for pre-t3o-23 rows. */
+  sourcePlanId: Schema.NullOr(BoardPlanId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   threadLinks: Schema.Array(BoardCardThreadLink),
   externalRef: Schema.NullOr(BoardCardExternalRef),
   /** Per-card human-in-the-loop override on the Build stage (D6). `null` means
@@ -1208,9 +1222,6 @@ export const BoardCardStepState = Schema.Struct({
 });
 export type BoardCardStepState = typeof BoardCardStepState.Type;
 
-export const BoardPlanId = TrimmedNonEmptyString.pipe(Schema.brand("BoardPlanId"));
-export type BoardPlanId = typeof BoardPlanId.Type;
-
 /**
  * Plan metadata in the read model (D8: plan status, `dependsOn`, `locked` and
  * order gate approval / blocking / parent auto-advance, so they live here; the
@@ -1286,6 +1297,7 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   "card-moved",
   "plans-proposed",
   "plan-written",
+  "plans-approved",
   "card-step-completed",
   "card-input-requested",
   "card-archived",
@@ -1300,6 +1312,10 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   /** A Merge click that ended without a merge and without a conflict fix left
       running — the one outcome that would otherwise be invisible. */
   "card-merge-refused",
+  /** An integration branch created locally but not pushed (t3o-23, D5) — a
+      local-only board still works, but child PRs will have no remote base
+      until someone pushes, so the skip must not be silent. */
+  "card-branch-push-skipped",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -1620,6 +1636,96 @@ export function isBoardStageAtOrAfterBuild(board: BoardState, stageId: BoardStag
   const buildIndex = boardStageIndex(board, build.stageId);
   const stageIndex = boardStageIndex(board, stageId);
   return stageIndex >= 0 && buildIndex >= 0 && stageIndex >= buildIndex;
+}
+
+// ── Sub-boards (t3o-23) ────────────────────────────────────────────────
+
+/**
+ * The materialisation floor (t3o-23, D3): the stage immediately preceding the
+ * build-role stage, where approved plan cards land and queue for their
+ * individual "Begin build" (D18 — approving a split is one act, and must not
+ * start N builds). Null when the build-role stage is the board's first —
+ * approval is refused on such a board rather than materialising work into a
+ * stage that would auto-start it.
+ */
+export function boardSubBoardFloorStage(board: BoardState): BoardStageDefinition | null {
+  const build = boardStageWithRole(board, "build");
+  if (build === null) return null;
+  const ordered = boardStagesInOrder(board);
+  const buildIndex = ordered.findIndex((stage) => stage.stageId === build.stageId);
+  return buildIndex > 0 ? ordered[buildIndex - 1]! : null;
+}
+
+/** A sub-board plan card may occupy the materialisation floor or anything
+    after it (t3o-23, D3) — draggable back out of Building to the floor
+    (reverse states), never into ideation stages. Falls back to the
+    build-onward rule when the build stage is first (no floor exists, which
+    also means no card can have been materialised on this board). */
+export function isBoardStageAtOrAfterSubBoardFloor(
+  board: BoardState,
+  stageId: BoardStageId,
+): boolean {
+  const floor = boardSubBoardFloorStage(board);
+  if (floor === null) return isBoardStageAtOrAfterBuild(board, stageId);
+  const floorIndex = boardStageIndex(board, floor.stageId);
+  const stageIndex = boardStageIndex(board, stageId);
+  return stageIndex >= 0 && floorIndex >= 0 && stageIndex >= floorIndex;
+}
+
+/** Every non-deleted child of `cardId`, archived included. Deleted children
+    have left `board.cards` entirely, so membership is the whole test. */
+export function boardCardChildren(
+  board: BoardState,
+  cardId: BoardCardId,
+): ReadonlyArray<BoardCard> {
+  return board.cards.filter((card) => card.parentCardId === cardId);
+}
+
+/**
+ * The children still standing between a split parent and its own review
+ * (t3o-23, D4/D6): not archived and not in the done-role stage. An archived
+ * child counts as finished for the same reason an archived dependency stops
+ * gating (t3o-13, D1) — and D15 auto-archives Done cards, so a parent must
+ * not re-freeze because a finished child aged out. While this list is
+ * non-empty the parent cannot be moved, auto-kickoff skips it, and its plans
+ * are frozen.
+ */
+export function boardCardUnfinishedChildren(
+  board: BoardState,
+  cardId: BoardCardId,
+): ReadonlyArray<BoardCard> {
+  const done = boardStageWithRole(board, "done");
+  return boardCardChildren(board, cardId).filter(
+    (child) => child.archivedAt === null && (done === null || child.stage !== done.stageId),
+  );
+}
+
+/**
+ * Client-side producer for the shell's `planTotal` / `planDone` (t3o-23, D6).
+ * Children are ordinary shell cards carrying `parentCardId` and `stage`, so
+ * every client already holds the inputs — no server production, no delta
+ * machinery, no payload. Archived children are not on the live shell, so they
+ * simply leave both counts; the truthful degenerate case ("2/2" after a done
+ * child auto-archives) reads correctly. Returns only parents with at least
+ * one child.
+ */
+export function deriveBoardCardPlanProgress(input: {
+  readonly cards: ReadonlyArray<
+    Pick<BoardCardShell, "cardId" | "stage"> & { readonly parentCardId?: BoardCardId }
+  >;
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+}): ReadonlyMap<BoardCardId, { readonly total: number; readonly done: number }> {
+  const doneStageId =
+    input.stages.find((stage) => effectiveBoardStageRole(stage) === "done")?.stageId ?? null;
+  const progress = new Map<BoardCardId, { total: number; done: number }>();
+  for (const card of input.cards) {
+    if (card.parentCardId === undefined) continue;
+    const entry = progress.get(card.parentCardId) ?? { total: 0, done: 0 };
+    entry.total += 1;
+    if (doneStageId !== null && card.stage === doneStageId) entry.done += 1;
+    progress.set(card.parentCardId, entry);
+  }
+  return progress;
 }
 
 // ── Key allocation ─────────────────────────────────────────────────────
@@ -2013,6 +2119,22 @@ export const BoardPlanWriteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardPlanWriteCommand = typeof BoardPlanWriteCommand.Type;
+
+/**
+ * Approve a card's proposed split (t3o-23, D1/D2): materialise each of its
+ * plans as a real child card in the materialisation floor stage, move the
+ * parent into the build-role stage, and trigger the integration branch. The
+ * human gate D12 promised — client-dispatched from the plan pane, never by an
+ * agent, so the split (and the parent's crossing into the build zone) is an
+ * explicit human act (D18).
+ */
+export const BoardPlansApproveCommand = Schema.Struct({
+  type: Schema.Literal("board.plans.approve"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardPlansApproveCommand = typeof BoardPlansApproveCommand.Type;
 // ── Worktree lifecycle commands (t3o-09, D6) ───────────────────────────
 // Server-INTERNAL commands (BOARD_INTERNAL_COMMANDS, never
 // BOARD_CLIENT_COMMANDS): the worktree lifecycle service dispatches them
@@ -2043,6 +2165,27 @@ export const BoardCardRecordWorktreeCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardRecordWorktreeCommand = typeof BoardCardRecordWorktreeCommand.Type;
+
+/**
+ * Record a split parent's integration branch (t3o-23, D5). Dispatched by the
+ * reactor after it has actually created `board/<key>` in the project root —
+ * same effect-then-record discipline as `record-worktree`, and internal for
+ * the same reason. The card's worktree slice becomes `branch-only`: branch
+ * real, `path` null, worktree deferred to the parent's own review entry.
+ */
+export const BoardCardRecordIntegrationBranchCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-integration-branch"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  /** The branch that now exists locally (`board/<key>`). */
+  branch: TrimmedNonEmptyString,
+  /** What it was cut from — the project default branch resolved at creation
+      time, recorded so the parent's eventual PR targets the right base. */
+  baseRefName: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordIntegrationBranchCommand =
+  typeof BoardCardRecordIntegrationBranchCommand.Type;
 
 export const BoardCardFailWorktreeCommand = Schema.Struct({
   type: Schema.Literal("board.card.fail-worktree"),
@@ -2093,7 +2236,11 @@ export type BoardCardRecordPullRequestCommand = typeof BoardCardRecordPullReques
 
 /** The activity kinds that are pure REPORTING — the board telling the user
     what it did to their repository, with no card field behind it. */
-export const BoardCardNoteKind = Schema.Literals(["card-branch-deleted", "card-merge-refused"]);
+export const BoardCardNoteKind = Schema.Literals([
+  "card-branch-deleted",
+  "card-merge-refused",
+  "card-branch-push-skipped",
+]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
 
 /**
@@ -2289,6 +2436,19 @@ export const BoardCardCreatedPayload = Schema.Struct({
       means the empty set, matching migration 903's `depends_on DEFAULT '[]'`,
       so a from-empty replay of a pre-t3o-06 log equals table rehydration. */
   dependsOn: Schema.optionalKey(Schema.Array(BoardCardId)),
+  /** Sub-board materialisation (t3o-23): the parent this child belongs to and
+      the plan it was cut from. Absent on every top-level create — only the
+      `board.plans.approve` decider emits creations carrying them. */
+  parentCardId: Schema.optionalKey(BoardCardId),
+  sourcePlanId: Schema.optionalKey(BoardPlanId),
+  /** A child arrives with its plan's BODY as its brief — but the decider has
+      no SQL client and bodies never ride the read model (D8), so the created
+      payload carries this pointer instead of the text and the SQL projector
+      copies `board_plans.body` into `board_card_bodies` in the same
+      transaction. Replay-safe: the plans-proposed event precedes this one in
+      the log, and approval freezes the plans, so the body resolved at any
+      replay equals the body at approval. Mutually exclusive with `brief`. */
+  briefFromPlanId: Schema.optionalKey(BoardPlanId),
   stage: BoardStageId.pipe(
     Schema.withDecodingDefault(Effect.succeed(BOARD_SEED_STAGE_IDS.backlog)),
   ),
@@ -2533,6 +2693,34 @@ export const BoardPlanWrittenPayload = Schema.Struct({
   plan: BoardPlan,
 });
 export type BoardPlanWrittenPayload = typeof BoardPlanWrittenPayload.Type;
+
+/**
+ * The split was approved (t3o-23). Rides AFTER the children's own
+ * `board.card-created` events and the parent's `board.card-moved` in the same
+ * decision, so `card` is the fully post-approval parent. Carries the child
+ * ids for the activity rail and the reactor's integration-branch trigger —
+ * the children themselves ride their creation events.
+ */
+export const BoardPlansApprovedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  /** The post-approval parent card. */
+  card: BoardCard,
+  /** The materialised children, in plan `ordinal` order. */
+  childCardIds: Schema.Array(BoardCardId),
+  approvedAt: IsoDateTime,
+});
+export type BoardPlansApprovedPayload = typeof BoardPlansApprovedPayload.Type;
+
+/** The integration branch now exists (t3o-23, D5); `card` carries the
+    `branch-only` worktree slice. */
+export const BoardCardIntegrationBranchRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  branch: TrimmedNonEmptyString,
+  baseRefName: TrimmedNonEmptyString,
+  card: BoardCard,
+});
+export type BoardCardIntegrationBranchRecordedPayload =
+  typeof BoardCardIntegrationBranchRecordedPayload.Type;
 // Worktree lifecycle payloads (t3o-09). Each carries the whole post-change
 // card, like every other non-created board event, so the shell-delta mapping
 // stays a pure function of the event and the projectors upsert exactly what
@@ -2953,10 +3141,17 @@ export const BoardCardShell = Schema.Struct({
       as `briefHasImage`: the snapshot and the `card-plans` delta are
       authoritative and card-carrying deltas omit the key. */
   planCount: Schema.optionalKey(NonNegativeInt),
-  // Sub-board summary — absent until post-MVP sub-boards (D12
-  // materialisation).
+  // Sub-board summary (t3o-23, D6). DERIVED CLIENT-SIDE, never produced by
+  // the server: the children are ordinary shell cards carrying `parentCardId`
+  // and `stage`, so every client already holds the inputs and
+  // `deriveBoardCardPlanProgress` computes the counts with zero extra payload
+  // and no delta machinery. The fields stay on the schema so the summary
+  // renderer consumes one shape whether the counts were injected or absent.
   planTotal: Schema.optionalKey(NonNegativeInt),
   planDone: Schema.optionalKey(NonNegativeInt),
+  /** Set on sub-board children (t3o-23) so a child's face can wear its
+      "part of <parent key>" chip and t3o-25's drill-in can scope by it. */
+  parentCardId: Schema.optionalKey(BoardCardId),
   /** The card's linked pull request number, absent when it has none. Sourced
       from `BoardCard.pullRequest`, so — unlike `briefHasImage` / `planCount` —
       it is on the aggregate and every card-carrying delta asserts it; there is
@@ -3154,6 +3349,11 @@ export function makeBoardCardShell(input: {
       producer holds it and asserts it unconditionally rather than
       absent-means-preserve. */
   readonly prNumber?: number | null | undefined;
+  /** The sub-board parent (t3o-23), or null for a top-level card. Rides the
+      card aggregate like `prNumber`, so every producer asserts it; the key is
+      omitted for top-level cards to keep their shells byte-identical to
+      pre-sub-board payloads. */
+  readonly parentCardId?: BoardCardId | null | undefined;
   /** The card's review-loop summary (t3o-22, D7), or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -3200,6 +3400,9 @@ export function makeBoardCardShell(input: {
     // omitted when there is no PR, which is what keeps a PR-less board's shell
     // payload exactly the size it was before this field existed.
     ...(input.prNumber == null ? {} : { prNumber: input.prNumber }),
+    // Sub-board membership (t3o-23): on the aggregate, so asserted whenever
+    // present; omitted for top-level cards (see the input doc).
+    ...(input.parentCardId == null ? {} : { parentCardId: input.parentCardId }),
     // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -3268,6 +3471,7 @@ export function boardCardShellFromCard(
     // SQL producer COALESCEs to the same fallback; the pair is asserted by
     // `cardMetaShellFields.test.ts`.
     prNumber: boardCardDisplayPullRequest(card)?.number ?? null,
+    parentCardId: card.parentCardId,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined
@@ -3527,6 +3731,7 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardCardCompleteStepCommand,
   BoardPlansProposeCommand,
   BoardPlanWriteCommand,
+  BoardPlansApproveCommand,
 ] as const;
 
 /**
@@ -3542,6 +3747,7 @@ export const BOARD_CLIENT_COMMANDS = [
 export const BOARD_INTERNAL_COMMANDS = [
   BoardCardProvisionWorktreeCommand,
   BoardCardRecordWorktreeCommand,
+  BoardCardRecordIntegrationBranchCommand,
   BoardCardFailWorktreeCommand,
   BoardCardReclaimWorktreeCommand,
   BoardCardRecordPullRequestCommand,
@@ -3576,6 +3782,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-step-completed",
   "board.plans-proposed",
   "board.plan-written",
+  "board.plans-approved",
+  "board.card-integration-branch-recorded",
   "board.card-worktree-provisioning",
   "board.card-worktree-ready",
   "board.card-worktree-failed",
@@ -3716,6 +3924,16 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.plan-written"),
       payload: BoardPlanWrittenPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.plans-approved"),
+      payload: BoardPlansApprovedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-integration-branch-recorded"),
+      payload: BoardCardIntegrationBranchRecordedPayload,
     }),
     Schema.Struct({
       ...base,
@@ -3889,6 +4107,14 @@ export const BoardCardDependencyRef = Schema.Struct({
 });
 export type BoardCardDependencyRef = typeof BoardCardDependencyRef.Type;
 
+/** A materialised child on the parent's detail (t3o-23): the dependency-ref
+    shape plus which plan it was cut from, so the pane pairs them. */
+export const BoardCardChildRef = Schema.Struct({
+  ...BoardCardDependencyRef.fields,
+  sourcePlanId: Schema.NullOr(BoardPlanId),
+});
+export type BoardCardChildRef = typeof BoardCardChildRef.Type;
+
 export const BoardCardDetail = Schema.Struct({
   card: BoardCard,
   /** Brief body text, or null when the card has no brief. */
@@ -3904,6 +4130,11 @@ export const BoardCardDetail = Schema.Struct({
       `board_plans` (D8), so it rides here rather than on the read-model
       `BoardPlan` metadata. Decodes to `[]` on legacy detail payloads. */
   plans: Schema.Array(BoardPlanWithBody).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** The card's materialised children (t3o-23), archived included, in plan
+      `ordinal` order — so the plan pane can chip each plan with its child's
+      key and stage. Empty for every card without a split. Decodes to `[]` on
+      legacy detail payloads. */
+  children: Schema.Array(BoardCardChildRef).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** `card.dependsOn` resolved, in `dependsOn` order. Archived dependencies
       are included — they no longer gate, but they are still real cards and
       must read as such rather than as a dangling id. An id with no row left

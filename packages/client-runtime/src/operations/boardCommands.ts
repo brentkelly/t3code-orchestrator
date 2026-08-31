@@ -59,6 +59,7 @@ export type RenameBoardStageInput = CommandInput<"board.stage.rename">;
 export type ReorderBoardStageInput = CommandInput<"board.stage.reorder">;
 export type DeleteBoardStageInput = CommandInput<"board.stage.delete">;
 export type StartBoardStageThreadInput = CommandInput<"board.card.start-stage-thread">;
+export type ApproveBoardPlansInput = CommandInput<"board.plans.approve">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -202,6 +203,20 @@ export const deleteBoardCard: (input: DeleteBoardCardInput) => CommandEffect = E
   return yield* dispatch({
     ...input,
     type: "board.card.delete",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** Approve a card's proposed split (t3o-23): materialise its plans as child
+    cards and start the sub-board. Human-only — no MCP tool dispatches this. */
+export const approveBoardPlans: (input: ApproveBoardPlansInput) => CommandEffect = Effect.fn(
+  "BoardCommands.approveBoardPlans",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.plans.approve",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

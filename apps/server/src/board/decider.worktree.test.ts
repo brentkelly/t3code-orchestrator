@@ -44,6 +44,7 @@ function makeCard(
     briefRef: null,
     dependsOn: [],
     parentCardId: null,
+    sourcePlanId: null,
     threadLinks: [],
     externalRef: null,
     humanInLoop: null,
@@ -373,7 +374,10 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
         },
       });
       const failure = yield* decideFail(provision("card-1"), makeReadModel(boardWith([card])));
-      assert.match(String(failure), /only a failed or reclaimed worktree can be re-provisioned/);
+      assert.match(
+        String(failure),
+        /only a failed, reclaimed or branch-only worktree can be re-provisioned/,
+      );
     }),
   );
 

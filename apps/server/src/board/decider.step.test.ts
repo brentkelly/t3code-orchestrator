@@ -45,6 +45,7 @@ function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: str
     briefRef: null,
     dependsOn: [],
     parentCardId: null,
+    sourcePlanId: null,
     threadLinks: [],
     externalRef: null,
     humanInLoop: null,

@@ -53,6 +53,7 @@ function makeCard(
     briefRef: null,
     dependsOn: [],
     parentCardId: null,
+    sourcePlanId: null,
     threadLinks: [],
     externalRef: null,
     humanInLoop: null,
@@ -1384,6 +1385,22 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         createdAt: NOW,
         updatedAt: NOW,
       };
+      // A two-plan card in Planning for board.plans.approve — the one OTHER
+      // command allowed to emit a move into building (t3o-23, D4): approving
+      // a split is as user-originated as the drag, and the parent's crossing
+      // is part of that same human act.
+      const splitCard = makeCard({ id: "card-split", stage: "planning" });
+      const splitPlans: ReadonlyArray<BoardPlan> = ["s1", "s2"].map((key, index) => ({
+        planId: boardPlanId(BoardCardId.make("card-split"), key),
+        cardId: BoardCardId.make("card-split"),
+        title: `Split ${key}`,
+        summary: `Part ${key}`,
+        dependsOn: [],
+        ordinal: index,
+        locked: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }));
       // Worktree lifecycle fixtures (t3o-09): each succeeds and none emits a
       // move — worktree provisioning is gated on Building but never advances a
       // stage (D18).
@@ -1469,9 +1486,10 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             awaitCard,
             recoverCard,
             settleCard,
+            splitCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
-          plans: [readyPlan],
+          plans: [readyPlan, ...splitPlans],
           stepStates: [
             makeStepState("card-admit", "pending"),
             makeStepState("card-await", "running"),
@@ -1592,6 +1610,24 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           cardId: BoardCardId.make("card-ready"),
           planId: boardPlanId(BoardCardId.make("card-ready"), "p1"),
           body: "new body",
+          createdAt: NOW,
+        },
+        // The split approval (t3o-23): user-originated, and the second
+        // legitimate emitter of a move into building — asserted below.
+        "board.plans.approve": {
+          type: "board.plans.approve",
+          commandId: CommandId.make("cmd-approve"),
+          cardId: BoardCardId.make("card-split"),
+          createdAt: NOW,
+        },
+        // Records the integration branch the reactor created (t3o-23, D5) —
+        // a worktree-slice write, never a move.
+        "board.card.record-integration-branch": {
+          type: "board.card.record-integration-branch",
+          commandId: CommandId.make("cmd-record-integration"),
+          cardId: BoardCardId.make("card-ready"),
+          branch: "board/card-ready",
+          baseRefName: "main",
           createdAt: NOW,
         },
         "board.card.provision-worktree": {
@@ -1750,17 +1786,25 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         },
       };
 
+      // The full decision is checked, not just the first event — approve
+      // emits its move mid-list. Exactly two commands may emit a
+      // board.card-moved, and both are explicit human acts (D18): the move
+      // itself, and the split approval whose parent-crossing is part of the
+      // same click (t3o-23, D4).
+      const mayMoveIntoBuilding = new Set(["board.card.move", "board.plans.approve"]);
       for (const [commandType, command] of Object.entries(catalog)) {
-        const event = yield* decide(command, readModel);
-        const movesIntoBuilding =
-          event.type === "board.card-moved" && event.payload.toStage === "building";
-        if (commandType === "board.card.move") {
+        const events = yield* decideEvents(command, readModel);
+        const movesIntoBuilding = events.some(
+          (event) => event.type === "board.card-moved" && event.payload.toStage === "building",
+        );
+        if (mayMoveIntoBuilding.has(commandType)) {
           expect(movesIntoBuilding).toBe(true);
         } else {
-          // Not merely "no move into building": nothing but board.card.move
-          // may emit a board.card-moved at all.
-          expect(event.type).not.toBe("board.card-moved");
-          expect(movesIntoBuilding).toBe(false);
+          // Not merely "no move into building": nothing else may emit a
+          // board.card-moved at all.
+          for (const event of events) {
+            expect(event.type).not.toBe("board.card-moved");
+          }
         }
       }
     }),

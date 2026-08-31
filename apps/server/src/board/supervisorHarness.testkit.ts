@@ -120,6 +120,7 @@ export const makeBoardCard = (input: {
   briefRef: null,
   dependsOn: [],
   parentCardId: null,
+  sourcePlanId: null,
   threadLinks: [],
   externalRef: null,
   humanInLoop: null,

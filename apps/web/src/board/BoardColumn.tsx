@@ -79,6 +79,8 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly addProjects: ReadonlyArray<BoardAddProject>;
   /** Resolves a project's configured accent name (t3o-07); hash fallback when null. */
   readonly accentNameFor: (projectId: ProjectId) => string | null;
+  /** Resolves a sub-board child's parent key for its chip (t3o-23). */
+  readonly parentKeyFor: (cardId: string) => string | undefined;
   /** Thread todo lists for one card (t3o-18) — built once by the page and read
       per card, so the column adds no state of its own. */
   readonly todosFor: (cardId: string) => BoardCardTodoContext;
@@ -139,6 +141,7 @@ function ExpandedColumn({
   selectedCardId,
   addProjects,
   accentNameFor,
+  parentKeyFor,
   draggedCardId,
   dragOverIndex,
   dragHeight,
@@ -243,6 +246,7 @@ function ExpandedColumn({
                   onDragEnd={onCardDragEnd}
                   onReorder={onCardReorder}
                   accentName={accentNameFor(card.projectId)}
+                  parentKey={parentKeyFor(card.cardId)}
                   todos={todosFor(card.cardId)}
                 />
               </Fragment>
