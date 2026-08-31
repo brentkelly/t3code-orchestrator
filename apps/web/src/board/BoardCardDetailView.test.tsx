@@ -17,6 +17,7 @@ import {
   ProjectId,
   ThreadId,
   boardPlanId,
+  makeBoardCardShell,
   type BoardCard,
   type BoardCardDetail,
   type BoardCardThreadLink,
@@ -97,6 +98,63 @@ function detail(
     parentModelOverrides: null,
     stepCompletions: edges?.stepCompletions ?? [],
   };
+}
+
+/** A parent with `childCount` plans, and one materialised child per plan from
+    `archivedFrom` onward marked archived (t3o-29). */
+function splitDetail(options: {
+  readonly childCount: number;
+  readonly archivedFrom?: number;
+  readonly stage?: BoardStageId;
+}): BoardCardDetail {
+  const count = Math.max(options.childCount, 1);
+  const plans = Array.from({ length: count }, (_, index) => ({
+    planId: boardPlanId(cardId, `p${index}`),
+    cardId,
+    title: `Plan ${index + 1}`,
+    summary: `Summary ${index + 1}`,
+    dependsOn: index === 0 ? [] : [boardPlanId(cardId, "p0")],
+    ordinal: index,
+    locked: false,
+    createdAt: NOW,
+    updatedAt: NOW,
+    body: `# Plan ${index + 1}`,
+  })) as BoardCardDetail["plans"];
+  const children =
+    options.childCount === 0
+      ? []
+      : (Array.from({ length: options.childCount }, (_, index) => ({
+          cardId: BoardCardId.make(`child-${index}`),
+          key: `T3-1${index}`,
+          title: `Plan ${index + 1}`,
+          stage: BOARD_SEED_STAGE_IDS.ready,
+          archivedAt:
+            options.archivedFrom !== undefined && index >= options.archivedFrom ? NOW : null,
+          sourcePlanId: boardPlanId(cardId, `p${index}`),
+        })) as BoardCardDetail["children"]);
+  return {
+    ...detail({ stage: options.stage ?? BOARD_SEED_STAGE_IDS.planning }, null, { plans }),
+    children,
+  };
+}
+
+/** The children's shells, as the unscoped snapshot carries them. */
+function splitShells(count: number) {
+  return Array.from({ length: count }, (_, index) =>
+    makeBoardCardShell({
+      cardId: BoardCardId.make(`child-${index}`),
+      key: `T3-1${index}`,
+      projectId: ProjectId.make("project-gone"),
+      labelIds: [],
+      stage: BOARD_SEED_STAGE_IDS.ready,
+      orderKey: "m",
+      title: `Plan ${index + 1}`,
+      blocked: false,
+      dependencyCount: 0,
+      hasBrief: false,
+      activeThreadId: null,
+    }),
+  );
 }
 
 const noop = () => {};
@@ -443,6 +501,72 @@ describe("BoardCardDetailPanel", () => {
       />,
     );
     expect(withPlan).toContain(">Plan</button>");
+  });
+
+  // t3o-29, D2: the Plans panel replaces the markdown pane once — and only
+  // once — children exist. The plan pill then labels its pane by what the
+  // pane holds.
+  it("labels the plan pill Plan before a split is approved, and by count after", () => {
+    const beforeApproval = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        canApproveSplit
+        detail={splitDetail({ childCount: 0 })}
+        projectName="P"
+      />,
+    );
+    expect(beforeApproval).toContain(">Plan</button>");
+    expect(beforeApproval).not.toContain("plans</button>");
+
+    const afterApproval = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        childShells={splitShells(3)}
+        detail={splitDetail({ childCount: 3 })}
+        projectName="P"
+      />,
+    );
+    expect(afterApproval).toContain(">3 plans</button>");
+    expect(afterApproval).not.toContain(">Plan</button>");
+  });
+
+  it("counts the rows, not the surviving cards, so an archived child does not renumber the pill", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        // Three plans, three children, one of them archived — the panel still
+        // shows three rows (D4), so the pill still says three.
+        childShells={splitShells(2)}
+        detail={splitDetail({ childCount: 3, archivedFrom: 2 })}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain(">3 plans</button>");
+  });
+
+  it("opens a split parent on its plans, with the Thread pill disabled", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        childShells={splitShells(3)}
+        detail={splitDetail({ childCount: 3, stage: BOARD_SEED_STAGE_IDS.building })}
+        projectName="P"
+      />,
+    );
+    expect(selectedTab(html)).toBe("3 plans");
+    expect(html).toContain("This card builds through its plan cards");
+  });
+
+  it("singularises a one-plan split", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        childShells={splitShells(1)}
+        detail={splitDetail({ childCount: 1 })}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain(">1 plan</button>");
   });
 
   it("renders the whole stage ladder with the card's stage marked current", () => {

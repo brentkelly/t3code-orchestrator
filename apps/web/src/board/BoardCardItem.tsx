@@ -17,7 +17,7 @@ import type {
   BoardLabelId,
   ThreadId,
 } from "@t3tools/contracts";
-import { ChevronRightIcon, LayersIcon, LockIcon, TriangleAlertIcon } from "lucide-react";
+import { LayersIcon, LockIcon, TriangleAlertIcon } from "lucide-react";
 import type { DragEvent } from "react";
 
 import { cn } from "../lib/utils";
@@ -31,6 +31,7 @@ import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
   BoardCardMetaRow,
+  BoardCardPlansRow,
   BoardCardSummaryRow,
   BoardCardTodoStrip,
   BoardCardTodoThreadRow,
@@ -86,8 +87,9 @@ export function BoardCardContent({
       did before. */
   readonly todos?: BoardCardTodoContext | undefined;
   /** Drill into this card's sub-board (t3o-25). Only a split parent renders
-      the stack affordance, and only where the handler is supplied (the live
-      root board — not the ghost, not the archive sheet). */
+      the plan row's drill-in chip as a live button, and only where the
+      handler is supplied (the live root board — not the ghost, not the
+      archive sheet, where the chip is a static twin). */
   readonly onOpenSubBoard?: (() => void) | undefined;
   /** The card's planning proposed a multi-part split nobody has approved yet
       (t3o-27): the card is pinned until a human approves it, so it wears the
@@ -127,17 +129,17 @@ export function BoardCardContent({
   // both, as it does for awaiting.
   const needsApproval = pendingSplit === true && !summary.muted;
   // A split parent wears the stack (t3o-25, AC1): the card reads as the top
-  // sheet of a pile, and the strip below drills into the sub-board. Both key
-  // off the client-derived `planTotal`, exactly like the pips.
-  const wearsStack =
-    onOpenSubBoard !== undefined && card.planTotal !== undefined && card.planTotal > 0;
+  // sheet of a pile. Purely visual now — the drill-in affordance is the plan
+  // row's chip — so it keys off `planTotal` alone and the drag ghost / archive
+  // sheet keep the pile.
+  const wearsStack = card.planTotal !== undefined && card.planTotal > 0;
   return (
     <article
       className={cn(
         // `transition-colors` alone could not animate the lift — box-shadow is
         // not a colour property, so the hover shadow snapped in. Transition
-        // both, and use the prototype's lifted shadow.
-        "flex cursor-pointer flex-col gap-1.5 rounded-[10px] border px-[11px] py-2.5 transition-[color,background-color,border-color,box-shadow] duration-[120ms] ease-[ease] hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]",
+        // both; the hover lift itself rides the per-state shadow branch below.
+        "flex cursor-pointer flex-col gap-1.5 rounded-[10px] border px-[11px] py-2.5 transition-[color,background-color,border-color,box-shadow] duration-[120ms] ease-[ease]",
         // One border class, chosen here rather than layered: Tailwind resolves
         // competing `border-*` utilities by stylesheet order, not by the order
         // they appear in the class list, so stacking them decides nothing.
@@ -158,17 +160,29 @@ export function BoardCardContent({
         // stock `--card` in dark is ~3% off the page background, which landed
         // BELOW the column's fill and left cards darker than the board.
         needsApproval
-          ? "bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent)] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]"
+          ? "bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]"
           : awaiting
-            ? "bg-[color-mix(in_srgb,var(--info)_7%,var(--card))] shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent)] dark:bg-[color-mix(in_srgb,var(--info)_9%,#1c1c20)]"
-            : "bg-card shadow-xs/5 hover:border-foreground/18 dark:bg-[#1c1c20]",
+            ? "bg-[color-mix(in_srgb,var(--info)_7%,var(--card))] dark:bg-[color-mix(in_srgb,var(--info)_9%,#1c1c20)]"
+            : "bg-card hover:border-foreground/18 dark:bg-[#1c1c20]",
         // Done recedes: finished work is muted and lower-contrast (D15 stage).
         summary.muted && "bg-card/60 opacity-70",
-        // The stacked-sheet edges: two offset underlines painted with
-        // box-shadow, so the pile costs no layout and never disturbs the
-        // drag-index math (shadows paint into the existing card gap).
-        wearsStack &&
-          "shadow-[0_5px_0_-2px_color-mix(in_srgb,var(--foreground)_16%,var(--background)),0_9px_0_-5px_color-mix(in_srgb,var(--foreground)_9%,var(--background))]",
+        // EXACTLY one box-shadow branch per card — shadow utilities conflict by
+        // stylesheet order, not class order, so each state carries its own
+        // resting AND hover shadow. Precedence is the prototype's: the stack
+        // beats the approval/awaiting ring beats the resting shadow.
+        //
+        // The stacked-sheet edges (t3o-25, AC1) are the prototype's: two full
+        // card-coloured sheets each closed by a 1px border line — not grey
+        // underlines, which read as bars rather than cards. `--sheet` tracks
+        // the card fill (`dark:bg-[#1c1c20]` above, where `--card` is wrong in
+        // dark), and the pile gets the prototype's 8px of breathing room below.
+        wearsStack
+          ? "mb-2 [--sheet:var(--card)] dark:[--sheet:#1c1c20] shadow-[0_5px_0_-1px_var(--sheet),0_5px_0_0_var(--border),0_10px_0_-2px_var(--sheet),0_10px_0_-1px_var(--border)] hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35),0_5px_0_-1px_var(--sheet),0_5px_0_0_var(--border),0_10px_0_-2px_var(--sheet),0_10px_0_-1px_var(--border)]"
+          : needsApproval
+            ? "shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]"
+            : awaiting
+              ? "shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]"
+              : "shadow-xs/5 hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]",
       )}
       data-board-card={card.cardId}
       data-board-card-stage={card.stage}
@@ -287,6 +301,22 @@ export function BoardCardContent({
         {card.title}
       </div>
       <BoardCardSummaryRow items={summary.items} />
+      {progress.kind === "subcards"
+        ? // The plan bar with its drill-in chip (t3o-25, AC2) — the D8 progress
+          // block a split parent shows. The chip is the sub-board door where the
+          // handler is supplied (the live root board); elsewhere it is static.
+          (() => {
+            const plans = progress.items.find((item) => item.kind === "plans");
+            return plans === undefined ? null : (
+              <BoardCardPlansRow
+                done={plans.done}
+                onOpen={onOpenSubBoard}
+                statuses={plans.statuses}
+                total={plans.total}
+              />
+            );
+          })()
+        : null}
       {progress.kind === "todos" ? (
         <BoardCardTodoStrip
           expanded={todos?.expanded ?? false}
@@ -309,29 +339,6 @@ export function BoardCardContent({
       {/* Last, always: the meta row is the card's footer, so it sits below the
           stage summary and the todo strip however tall those grow. */}
       <BoardCardMetaRow meta={boardCardMeta(card, todoThreads.length)} />
-      {wearsStack ? (
-        // The drill-in door (t3o-25, AC2). A real button so it is focusable
-        // on its own; clicks and keys stop here so the card underneath does
-        // not also open its detail sheet.
-        <button
-          className="mt-0.5 flex items-center gap-1.5 rounded-md border border-border/70 bg-muted/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenSubBoard();
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-          }}
-          title="Open this card's sub-board"
-          type="button"
-        >
-          <LayersIcon className="size-3" />
-          {card.planTotal} {card.planTotal === 1 ? "card" : "cards"}
-          {card.planDone !== undefined && card.planDone > 0 ? ` · ${card.planDone} done` : ""}
-          <span className="flex-1" />
-          <ChevronRightIcon className="size-3" />
-        </button>
-      ) : null}
     </article>
   );
 }

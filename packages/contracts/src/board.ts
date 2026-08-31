@@ -1829,29 +1829,56 @@ export function boardCardShellPendingSplit(
 }
 
 /**
- * Client-side producer for the shell's `planTotal` / `planDone` (t3o-23, D6).
- * Children are ordinary shell cards carrying `parentCardId` and `stage`, so
- * every client already holds the inputs — no server production, no delta
- * machinery, no payload. Archived children are not on the live shell, so they
- * simply leave both counts; the truthful degenerate case ("2/2" after a done
- * child auto-archives) reads correctly. Returns only parents with at least
- * one child.
+ * Client-side producer for the shell's `planTotal` / `planDone` /
+ * `planStatuses` (t3o-23, D6). Children are ordinary shell cards carrying
+ * `parentCardId` and `stage`, so every client already holds the inputs — no
+ * server production, no delta machinery, no payload. Archived children are not
+ * on the live shell, so they simply leave the counts; the truthful degenerate
+ * case ("2/2" after a done child auto-archives) reads correctly. Returns only
+ * parents with at least one child.
+ *
+ * `statuses` is one character per child, in the todo-status alphabet the pip
+ * renderers already speak: `d` for a done-role child, `i` for one at or after
+ * the build role (work has started), `p` before it. Ordered `d → i → p` — the
+ * row is a progress bar, not a positional ledger, and the caller's card order
+ * (grouped by column) carries no per-plan identity worth preserving.
+ * `stages` must be in board order, as `boardStagesInOrder` returns them.
  */
 export function deriveBoardCardPlanProgress(input: {
   readonly cards: ReadonlyArray<
     Pick<BoardCardShell, "cardId" | "stage"> & { readonly parentCardId?: BoardCardId }
   >;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
-}): ReadonlyMap<BoardCardId, { readonly total: number; readonly done: number }> {
+}): ReadonlyMap<
+  BoardCardId,
+  { readonly total: number; readonly done: number; readonly statuses: string }
+> {
   const doneStageId =
     input.stages.find((stage) => effectiveBoardStageRole(stage) === "done")?.stageId ?? null;
-  const progress = new Map<BoardCardId, { total: number; done: number }>();
+  const stageIndex = new Map(input.stages.map((stage, index) => [stage.stageId, index]));
+  const buildStage = input.stages.find((stage) => effectiveBoardStageRole(stage) === "build");
+  const buildIndex = buildStage === undefined ? null : (stageIndex.get(buildStage.stageId) ?? null);
+  const tally = new Map<BoardCardId, { total: number; done: number; started: number }>();
   for (const card of input.cards) {
     if (card.parentCardId === undefined) continue;
-    const entry = progress.get(card.parentCardId) ?? { total: 0, done: 0 };
+    const entry = tally.get(card.parentCardId) ?? { total: 0, done: 0, started: 0 };
     entry.total += 1;
     if (doneStageId !== null && card.stage === doneStageId) entry.done += 1;
-    progress.set(card.parentCardId, entry);
+    else if (buildIndex !== null && (stageIndex.get(card.stage) ?? -1) >= buildIndex) {
+      entry.started += 1;
+    }
+    tally.set(card.parentCardId, entry);
+  }
+  const progress = new Map<BoardCardId, { total: number; done: number; statuses: string }>();
+  for (const [cardId, entry] of tally) {
+    progress.set(cardId, {
+      total: entry.total,
+      done: entry.done,
+      statuses:
+        BOARD_THREAD_TODO_STATUS_DONE.repeat(entry.done) +
+        BOARD_THREAD_TODO_STATUS_IN_PROGRESS.repeat(entry.started) +
+        BOARD_THREAD_TODO_STATUS_PENDING.repeat(entry.total - entry.done - entry.started),
+    });
   }
   return progress;
 }
@@ -3306,6 +3333,10 @@ export const BoardCardShell = Schema.Struct({
   // renderer consumes one shape whether the counts were injected or absent.
   planTotal: Schema.optionalKey(NonNegativeInt),
   planDone: Schema.optionalKey(NonNegativeInt),
+  /** One todo-alphabet character per child (`d`/`i`/`p`, ordered done →
+      started → pending) so the parent's plan bar can colour each segment.
+      Client-derived beside `planTotal`/`planDone`, never on the wire. */
+  planStatuses: Schema.optionalKey(Schema.String),
   /** Set on sub-board children (t3o-23) so a child's face can wear its
       "part of <parent key>" chip and t3o-25's drill-in can scope by it. */
   parentCardId: Schema.optionalKey(BoardCardId),

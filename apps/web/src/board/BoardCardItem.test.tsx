@@ -101,6 +101,28 @@ describe("BoardCardContent (D7)", () => {
     expect(gated).toContain("Depends on 2 cards");
   });
 
+  it("wears the plan bar with its drill-in chip on a split parent, at any stage", () => {
+    // The prototype's treatment (t3o-25): a segment bar — one flex segment per
+    // child, coloured done/started/pending — with the "N/M plans" chip beside
+    // it. No footer "N cards" button, and the row shows outside Building too.
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("ready", { planTotal: 6, planDone: 2, planStatuses: "ddiipp" })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    expect(html).toContain("2/6 plans");
+    expect(html).toContain("2 of 6 plans done");
+    expect(html).toContain("bg-emerald-500");
+    expect(html).toContain("bg-info/60");
+    expect(html).not.toContain("6 cards");
+    // Without the drill handler (the ghost, the archive sheet) the chip is a
+    // static span, not a button.
+    expect(html).not.toContain("Open this card&#x27;s sub-board");
+  });
+
   it("spells out every meta indicator in a tooltip, since a bare glyph and a number mean nothing", () => {
     const html = renderToStaticMarkup(
       <BoardCardContent
