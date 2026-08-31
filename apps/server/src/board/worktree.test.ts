@@ -130,19 +130,20 @@ it.effect("resolves a plan card's base to its parent's integration branch", () =
   }),
 );
 
-it.effect("falls back to the default branch when the parent's pull request has merged", () =>
+it.effect("falls back to the merged base only when the parent has no live branch", () =>
   Effect.sync(() => {
-    // A merged parent loses its branch on arrival at Done, so cutting from it
-    // would fail on a ref that no longer exists. The default branch is not a
-    // guess: a merged parent's commits ARE in it, by the same argument that
-    // made deleting the branch safe.
+    // A merged parent loses its branch on arrival at Done — worktree
+    // reclaimed, branch deleted, slice left `reclaimed` — so cutting from it
+    // would fail on a ref that no longer exists. The merged pull request's
+    // own baseRef is not a guess: the parent's commits ARE in it, by the same
+    // argument that made deleting the branch safe.
     const parent = {
       id: "parent" as never,
       worktree: {
         branch: "feat/parent",
         baseRefName: "main",
-        path: "/tmp/worktrees/parent",
-        status: "ready" as const,
+        path: null,
+        status: "reclaimed" as const,
         attempts: 1,
         lastError: null,
         reclaimBlockedReason: null,
@@ -200,10 +201,13 @@ it.effect("falls back to the default branch when the parent's pull request has m
       "main",
     );
 
-    // An UNMERGED parent keeps its branch and keeps being the base. The
-    // fallback is gated on exactly the condition that deletes the branch, so
-    // it can never fire while the branch is still there.
-    const unmerged = { ...parent, pullRequest: { ...parent.pullRequest, state: "open" as const } };
+    // An UNMERGED parent keeps its branch (nothing deleted it — the slice is
+    // still `ready`) and keeps being the base.
+    const unmerged = {
+      ...parent,
+      worktree: { ...parent.worktree, path: "/tmp/worktrees/parent", status: "ready" as const },
+      pullRequest: { ...parent.pullRequest, state: "open" as const },
+    };
     assert.strictEqual(
       resolveBoardCardBaseRef({
         card: { parentCardId: "parent" as never },
@@ -211,6 +215,24 @@ it.effect("falls back to the default branch when the parent's pull request has m
         defaultBranch: "main",
       }),
       "feat/parent",
+    );
+
+    // A SECOND-ROUND split (t3o-23): the parent was merged and dragged back,
+    // then re-approved — its fresh `branch-only` integration branch must beat
+    // the retired round's merged pull request, or every child would silently
+    // cut from (and PR into) the old round's base, bypassing the integration
+    // branch and the final integration review.
+    const secondRound = {
+      ...reopened,
+      worktree: { ...parent.worktree, branch: "board/parent-2", status: "branch-only" as const },
+    };
+    assert.strictEqual(
+      resolveBoardCardBaseRef({
+        card: { parentCardId: "parent" as never },
+        cards: [secondRound],
+        defaultBranch: "main",
+      }),
+      "board/parent-2",
     );
   }),
 );

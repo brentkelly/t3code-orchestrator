@@ -174,8 +174,11 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     title: payload.title,
     // A brief captured at creation (t3o-06) sets the sentinel ref; the body
     // itself lives only in `board_card_bodies` (D8), written by the SQL
-    // projector. `dependsOn` rides the payload; a creation-stage card is
-    // always before Ready, so it is never blocked at birth (D18).
+    // projector. `dependsOn` rides the payload. `blocked` is false at birth
+    // for every creation path: the decider refuses creating a card into a
+    // build-or-later stage with unmet dependencies, and approve-materialised
+    // children (t3o-23) land in the pre-build floor stage, where the
+    // build-onward blocking rule (D11) does not yet apply.
     briefRef:
       payload.brief === undefined && payload.briefFromPlanId === undefined
         ? null

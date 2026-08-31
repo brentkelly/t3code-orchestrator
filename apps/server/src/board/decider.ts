@@ -2021,10 +2021,17 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // same effect-then-record discipline as record-worktree. `branch-only`:
       // real branch, no worktree until the parent's own review entry.
       const card = yield* requireActiveBoardCard({ board, command });
-      if (card.worktree !== null && card.worktree.status !== "failed") {
+      // `failed` is a retry; `reclaimed` is a second-round split whose old
+      // branch was deleted at Done (t3o-23, D5). A live slice — branch-only,
+      // provisioning, ready — must not be overwritten behind its own back.
+      if (
+        card.worktree !== null &&
+        card.worktree.status !== "failed" &&
+        card.worktree.status !== "reclaimed"
+      ) {
         return yield* invariant(
           command,
-          `Card '${command.cardId}' worktree is '${card.worktree.status}'; an integration branch is recorded only before any worktree exists.`,
+          `Card '${command.cardId}' worktree is '${card.worktree.status}'; an integration branch is recorded only while no live branch exists.`,
         );
       }
       const nextCard: BoardCard = {

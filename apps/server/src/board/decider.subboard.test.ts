@@ -557,7 +557,32 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           }),
         ),
       );
-      assert.include(String(failure), "only before any worktree exists");
+      assert.include(String(failure), "only while no live branch exists");
+
+      // A second-round split (t3o-23, D5): the old branch was deleted at
+      // Done, the slice reads `reclaimed`, and a fresh record is admitted.
+      const secondRound = yield* decideEvents(
+        record,
+        makeReadModel(
+          makeBoard({
+            parent: {
+              stage: "building",
+              worktree: {
+                branch: "board/t3-190",
+                baseRefName: "main",
+                path: null,
+                status: "reclaimed",
+                attempts: 1,
+                lastError: null,
+                reclaimBlockedReason: null,
+              },
+            },
+          }),
+        ),
+      );
+      const secondEvent = secondRound[0]!;
+      assert.ok(secondEvent.type === "board.card-integration-branch-recorded");
+      expect(secondEvent.payload.card.worktree?.status).toBe("branch-only");
     }),
   );
 

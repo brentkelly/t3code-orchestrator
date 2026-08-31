@@ -84,7 +84,7 @@ export function BoardCardPlanPane({
           Back to thread
         </button>
       </div>
-      {confirming && onApproveSplit !== undefined ? (
+      {confirming && canApproveSplit && onApproveSplit !== undefined ? (
         <div className="shrink-0 border-b border-border bg-popover px-4.5 py-3">
           <p className="text-[12.5px] font-medium text-foreground">
             Materialise {plans.length} plan cards

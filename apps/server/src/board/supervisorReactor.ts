@@ -2668,14 +2668,22 @@ const make = Effect.gen(function* () {
   // IDEMPOTENT and multi-entry: approval fires it, and any child whose base
   // resolution finds no parent branch fires it again (`ensureWorktree`), so a
   // reactor that was down at approval — or a transient git failure — heals on
-  // the next build attempt instead of stranding the split. A parent that
-  // already carries a worktree slice (approved after a conversational build,
-  // or a completed earlier attempt) is left alone: its branch exists and IS
-  // the integration branch.
+  // the next build attempt instead of stranding the split. A parent whose
+  // slice says the branch is live (`branch-only` / `provisioning` / `ready`)
+  // is left alone — its branch exists and IS the integration branch — while
+  // `failed` and `reclaimed` proceed: a failed attempt retries, and a
+  // reclaimed slice is a SECOND-ROUND split (a merged parent dragged back and
+  // re-approved) whose old branch was deleted at Done and needs a fresh one.
   const ensureIntegrationBranch = Effect.fn("board-supervisor-ensureIntegrationBranch")(function* (
     card: BoardCard,
   ) {
-    if (card.worktree !== null && card.worktree.status !== "failed") return;
+    if (
+      card.worktree !== null &&
+      card.worktree.status !== "failed" &&
+      card.worktree.status !== "reclaimed"
+    ) {
+      return;
+    }
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
     if (cwd === null) {
