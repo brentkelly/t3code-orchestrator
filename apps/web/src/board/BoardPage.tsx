@@ -341,7 +341,12 @@ function EnvironmentBoard({
           const counts = progress.get(card.cardId);
           return counts === undefined
             ? card
-            : { ...card, planTotal: counts.total, planDone: counts.done };
+            : {
+                ...card,
+                planTotal: counts.total,
+                planDone: counts.done,
+                planStatuses: counts.statuses,
+              };
         }),
       ]),
     ) as typeof placedColumns;

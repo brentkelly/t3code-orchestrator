@@ -22,6 +22,7 @@ import {
 import {
   BOARD_THREAD_TODO_STATUS_DONE,
   BOARD_THREAD_TODO_STATUS_IN_PROGRESS,
+  BOARD_THREAD_TODO_STATUS_PENDING,
 } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -93,6 +94,91 @@ function RoundPips({
         </span>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * The split parent's plan bar (t3o-25, prototype `hasPlans`): one segment per
+ * child plan card at `flex:1`, coloured by where that plan stands — done,
+ * started (at or after the build role), not started — with the drill-in chip
+ * on the right. This row IS the sub-board affordance: the chip replaces the
+ * old full-width "N cards" footer button the prototype never had.
+ *
+ * `statuses` is the derived `d`/`i`/`p` string; a shell that was never
+ * decorated with it (the archive sheet) falls back to done-then-pending from
+ * the counts. Without `onOpen` (the drag ghost, the archive sheet) the chip
+ * renders as a static twin so the card face does not reflow between surfaces.
+ */
+export function BoardCardPlansRow({
+  done,
+  total,
+  statuses,
+  onOpen,
+}: {
+  readonly done: number;
+  readonly total: number;
+  readonly statuses: string | undefined;
+  readonly onOpen?: (() => void) | undefined;
+}) {
+  const chars =
+    statuses !== undefined && statuses.length === total
+      ? statuses
+      : BOARD_THREAD_TODO_STATUS_DONE.repeat(Math.min(done, total)) +
+        BOARD_THREAD_TODO_STATUS_PENDING.repeat(Math.max(0, total - done));
+  const label = `${done}/${total} plans`;
+  const chipClass =
+    "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 text-[10.5px] font-medium text-muted-foreground";
+  const chipBody = (
+    <>
+      {label}
+      <ChevronRightIcon className="size-3" />
+    </>
+  );
+  return (
+    <div
+      aria-label={`${done} of ${total} plans done`}
+      className="flex items-center gap-2"
+      title={`${done} of ${total} plans done`}
+    >
+      <span className="flex min-w-0 flex-1 items-center gap-[3px]">
+        {Array.from(chars, (status, index) => (
+          <span
+            className={cn(
+              "h-[3px] min-w-[2px] flex-1 rounded-[2px]",
+              status === BOARD_THREAD_TODO_STATUS_DONE
+                ? "bg-emerald-500"
+                : status === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
+                  ? "bg-info/60"
+                  : "bg-muted-foreground/25",
+            )}
+            key={index}
+          />
+        ))}
+      </span>
+      {onOpen === undefined ? (
+        <span className={chipClass}>{chipBody}</span>
+      ) : (
+        // A real button so it is focusable on its own; clicks and keys stop
+        // here so the card underneath does not also open its detail sheet.
+        <button
+          className={cn(
+            chipClass,
+            "cursor-pointer transition-colors hover:bg-accent hover:text-foreground",
+          )}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+          }}
+          title="Open this card's sub-board"
+          type="button"
+        >
+          {chipBody}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -180,7 +266,9 @@ function SummaryItem({ item }: { readonly item: BoardCardSummaryItem }) {
         </span>
       );
     case "plans":
-      return <PlanPips done={item.done} total={item.total} />;
+      // Not inline: the plan bar is its own full-width row (`BoardCardPlansRow`,
+      // rendered by the card itself) so its segments can stretch the card.
+      return null;
     case "round":
       return <RoundPips current={item.current} max={item.max} outcome={item.outcome} />;
     case "step":
@@ -214,10 +302,13 @@ export function BoardCardSummaryRow({
 }: {
   readonly items: ReadonlyArray<BoardCardSummaryItem>;
 }) {
-  if (items.length === 0) return null;
+  // Plans render as their own row (`BoardCardPlansRow`); counting them here
+  // would leave an empty div claiming a slot of the card's column gap.
+  const inline = items.filter((item) => item.kind !== "plans");
+  if (inline.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-      {items.map((item) => (
+      {inline.map((item) => (
         <SummaryItem item={item} key={item.kind} />
       ))}
     </div>

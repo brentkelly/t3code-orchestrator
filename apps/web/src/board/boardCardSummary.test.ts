@@ -68,10 +68,15 @@ describe("boardCardSummary", () => {
     ]);
   });
 
-  it("shows plan progress on a Building parent card", () => {
-    expect(boardCardSummary(shell("building", { planTotal: 6, planDone: 2 })).items).toEqual([
-      { kind: "plans", done: 2, total: 6 },
-    ]);
+  it("shows plan progress on a split parent at every stage", () => {
+    // Stage-independent (the prototype's treatment): the parent is a pile of
+    // plans wherever it sits, so the bar rides the card face at every stage.
+    for (const stage of ["backlog", "sprint", "planning", "ready", "building", "done"] as const) {
+      expect(
+        boardCardSummary(shell(stage, { planTotal: 6, planDone: 2, planStatuses: "ddiipp" }))
+          .items[0],
+      ).toEqual({ kind: "plans", done: 2, total: 6, statuses: "ddiipp" });
+    }
     // Not a parent (no planTotal): degrade to base.
     expect(boardCardSummary(shell("building")).items).toEqual([]);
   });

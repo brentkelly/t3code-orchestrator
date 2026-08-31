@@ -40,7 +40,7 @@ const waiting: BoardTodoThreadState = { awaitingInput: true, running: false, sto
 describe("boardCardProgressBlock (D8)", () => {
   it("AC 11: returns exactly one block, subcards outranking review outranking todos", () => {
     const subcards = summary([
-      { kind: "plans", done: 1, total: 3 },
+      { kind: "plans", done: 1, total: 3, statuses: "dip" },
       { kind: "round", current: 1, max: 3, outcome: undefined },
     ]);
     expect(boardCardProgressBlock(subcards, todo("t1")).kind).toBe("subcards");

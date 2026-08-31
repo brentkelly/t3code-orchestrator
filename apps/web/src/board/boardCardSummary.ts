@@ -29,7 +29,14 @@ import {
     the scalars the shell provides — the renderer maps it to a chip/pip row. */
 export type BoardCardSummaryItem =
   | { readonly kind: "attachments"; readonly count: number }
-  | { readonly kind: "plans"; readonly done: number; readonly total: number }
+  | {
+      readonly kind: "plans";
+      readonly done: number;
+      readonly total: number;
+      /** Per-child segment colours (`d`/`i`/`p`, `deriveBoardCardPlanProgress`);
+          absent on a shell that was never decorated (the archive sheet). */
+      readonly statuses: string | undefined;
+    }
   | {
       readonly kind: "round";
       readonly current: number;
@@ -86,12 +93,10 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
       break;
 
     case "building":
-      // Plan progress pips when this card is a parent of a sub-board (D12);
-      // absent until sub-boards materialise post-MVP. Queue position and
-      // thread state are rendered by the card chrome, not the summary.
-      if (card.planTotal !== undefined && card.planTotal > 0) {
-        items.push({ kind: "plans", done: card.planDone ?? 0, total: card.planTotal });
-      }
+      // Queue position and thread state are rendered by the card chrome, not
+      // the summary. Plan progress moved below the switch: a split parent
+      // wears its bar at EVERY stage (the prototype's treatment), not only
+      // while the parent itself sits in Building.
       break;
 
     case "review":
@@ -162,6 +167,18 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
 
     case "done":
       break;
+  }
+  // Sub-board plan progress (t3o-23, D12) is stage-INDEPENDENT: where the
+  // parent sits does not change that it is a pile of plans, so the bar rides
+  // the card face at every stage. First in the items so the progress-block
+  // precedence (subcards > review > todos, D8) reads off array order too.
+  if (card.planTotal !== undefined && card.planTotal > 0) {
+    items.unshift({
+      kind: "plans",
+      done: card.planDone ?? 0,
+      total: card.planTotal,
+      statuses: card.planStatuses,
+    });
   }
   return { muted: card.stage === "done", items };
 }

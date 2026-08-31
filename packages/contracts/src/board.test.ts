@@ -815,7 +815,13 @@ describe("sub-boards (t3o-23)", () => {
       { cardId: BoardCardId.make("card-other"), stage: BOARD_SEED_STAGE_IDS.done },
     ];
     const progress = deriveBoardCardPlanProgress({ cards: shells, stages: BOARD_SEED_STAGES });
-    expect(progress.get(BoardCardId.make("card-parent"))).toEqual({ total: 2, done: 1 });
+    // Statuses: child-a is done (`d`), child-b sits in the build-role stage —
+    // started but not finished (`i`).
+    expect(progress.get(BoardCardId.make("card-parent"))).toEqual({
+      total: 2,
+      done: 1,
+      statuses: "di",
+    });
     expect(progress.size).toBe(1);
   });
 
