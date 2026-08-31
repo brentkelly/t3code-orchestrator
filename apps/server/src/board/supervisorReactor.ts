@@ -493,31 +493,42 @@ const make = Effect.gen(function* () {
     // A sub-board plan card branches off its parent's integration branch
     // (D12); a top-level card off the project default.
     const { defaultBranch, detachedHead } = yield* resolveDefaultBranch(cwd);
-    let baseRefName = resolveBoardCardBaseRef({
+    // A child of a LIVE split retries the integration-branch creation HERE,
+    // BEFORE resolving its base (t3o-23, D5): approval fires the creation
+    // once, but the reactor may have been down or git transiently broken at
+    // that moment, and a fire-once side effect with no second chance would
+    // strand the split. The trigger is the parent's state, not a null
+    // resolution — a second-round parent (reclaimed slice, merged pull
+    // request retired into history) resolves to the OLD round's base rather
+    // than null, so a null-trigger would silently route every child there. A
+    // live split parent is exactly one thing: frozen in the build-role stage
+    // with a slice that names no live branch. A DONE parent is not touched —
+    // its merged baseRef below is the right base for a straggler child.
+    // Each child build attempt is the organic retry; `ensureIntegrationBranch`
+    // is idempotent, so a raced pair of children converges on the one branch.
+    if (card.parentCardId !== null) {
+      const board = yield* readBoard;
+      const parent = board.cards.find((candidate) => candidate.id === card.parentCardId);
+      const buildStage = boardStageWithRole(board, "build");
+      const branchLive =
+        parent?.worktree != null &&
+        parent.worktree.status !== "failed" &&
+        parent.worktree.status !== "reclaimed";
+      if (
+        parent !== undefined &&
+        parent.archivedAt === null &&
+        buildStage !== null &&
+        parent.stage === buildStage.stageId &&
+        !branchLive
+      ) {
+        yield* ensureIntegrationBranch(parent);
+      }
+    }
+    const baseRefName = resolveBoardCardBaseRef({
       card,
       cards: (yield* readBoard).cards,
       defaultBranch,
     });
-    // A child whose parent has no branch retries the integration-branch
-    // creation HERE (t3o-23, D5): approval fires it once, but the reactor may
-    // have been down or git transiently broken at that moment, and a
-    // fire-once side effect with no second chance would leave every child
-    // failing the same way forever. Each child build attempt is the organic
-    // retry; `ensureIntegrationBranch` is idempotent, so a raced pair of
-    // children converges on the one branch.
-    if (baseRefName === null && card.parentCardId !== null) {
-      const parent = (yield* readBoard).cards.find(
-        (candidate) => candidate.id === card.parentCardId,
-      );
-      if (parent !== undefined && parent.archivedAt === null) {
-        yield* ensureIntegrationBranch(parent);
-        baseRefName = resolveBoardCardBaseRef({
-          card,
-          cards: (yield* readBoard).cards,
-          defaultBranch,
-        });
-      }
-    }
     if (baseRefName === null || defaultBranch === "") {
       // Say WHICH of the three ways base-ref resolution failed — "could not
       // resolve the base branch" is true but unactionable, and the three have
