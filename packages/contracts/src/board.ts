@@ -800,17 +800,48 @@ export const BoardCardReviewSummary = Schema.Struct({
 export type BoardCardReviewSummary = typeof BoardCardReviewSummary.Type;
 
 /**
- * One round's review-phase override (t3o-22, D4): the model the reviewer runs
- * on, plus optionally the access level it runs under. `runtimeMode` absent
- * inherits the review phase's configured level, exactly as an absent
- * `roundModels` entry inherits its model — the override only ever says what
+ * An override of what an agent run uses: the model, its reasoning `options`,
+ * and optionally the access level it runs under. `runtimeMode` absent inherits
+ * whatever the next level down configured — the override only ever says what
  * it changes.
+ *
+ * A model PLUS what it changes, never an access level alone: with no model
+ * there is no record. That is why every writer of one is model-gated, and why
+ * `ModelRow` takes a `hideRuntimeMode` prop for exactly this state.
+ *
+ * Used at two levels, deliberately the same shape (t3o-29, D2): one round's
+ * review phase (t3o-22, D4) and one card's whole stage (t3o-29).
  */
-export const BoardReviewRoundOverride = Schema.Struct({
+export const BoardCardStageModelOverride = Schema.Struct({
   ...BoardModelSelection.fields,
   runtimeMode: Schema.optional(RuntimeMode),
 });
-export type BoardReviewRoundOverride = typeof BoardReviewRoundOverride.Type;
+export type BoardCardStageModelOverride = typeof BoardCardStageModelOverride.Type;
+
+/** t3o-22's name for the same shape, kept so every round-override reader is
+    untouched by t3o-29's generalisation. */
+export const BoardReviewRoundOverride = BoardCardStageModelOverride;
+export type BoardReviewRoundOverride = BoardCardStageModelOverride;
+
+/**
+ * A card's own per-stage model overrides (t3o-29, D1), overriding the workspace
+ * pipeline config for THIS card's runs. Keyed by STAGE ID, though the popover
+ * offers only the `build`- and `review`-role rows: two rows is a judgement
+ * about what belongs in a popover, not a claim about the schema, and t3o-15 D13
+ * deleted the fixed stage map precisely so nothing keys persistence on a fixed
+ * set of stages. Keyed this way, a third row is a UI change with no migration.
+ *
+ * An absent entry means "inherit", stored as no entry rather than a copied
+ * value, so changing the workspace setting still moves un-overridden cards.
+ */
+export const BoardCardModelOverrides = Schema.Record(BoardStageId, BoardCardStageModelOverride);
+export type BoardCardModelOverrides = typeof BoardCardModelOverrides.Type;
+
+/** True when the map overrides nothing, so the card stores `null` rather than
+    an empty object and the two never diverge in the read model. */
+export function isEmptyBoardCardModelOverrides(overrides: BoardCardModelOverrides | null): boolean {
+  return overrides === null || Object.keys(overrides).length === 0;
+}
 
 /**
  * A card's own review-loop settings (t3o-22, D2), overriding the board-wide
@@ -970,6 +1001,15 @@ export const BoardCard = Schema.Struct({
       `worktree` and `pullRequest` make, and migration 025's `review_overrides`
       column defaults to NULL to the same end. Only the review role reads it. */
   reviewOverrides: Schema.NullOr(BoardCardReviewOverrides).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** This card's own per-stage model overrides (t3o-29, D1); null when the card
+      has never set one, which is the same as an empty map. Decodes to null on
+      every event payload written before t3o-29, so a from-empty replay of an
+      older log matches the table-rehydrated model — the same guarantee
+      `reviewOverrides` makes, with migration 029's `model_overrides` column
+      defaulting to NULL to the same end. */
+  modelOverrides: Schema.NullOr(BoardCardModelOverrides).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
@@ -1984,6 +2024,12 @@ export const BoardCardUpdateCommand = Schema.Struct({
       loop has already STARTED (D3), and raising it past a pending stop clears
       the stop (D5) — so a stale pane cannot strand a running round. */
   reviewOverrides: Schema.optional(Schema.NullOr(BoardCardReviewOverrides)),
+  /** Per-card, per-stage model overrides (t3o-29, D1). Absent leaves them
+      unchanged; `null` clears them back to the workspace defaults; a map writes
+      them whole. The decider rejects an entry keyed by a stage the board does
+      not have, so a stale popover cannot strand an override on a deleted
+      stage where nothing would ever read it. */
+  modelOverrides: Schema.optional(Schema.NullOr(BoardCardModelOverrides)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -4266,6 +4312,18 @@ export const BoardCardDetail = Schema.Struct({
   card: BoardCard,
   /** Brief body text, or null when the card has no brief. */
   brief: Schema.NullOr(TrimmedNonEmptyString),
+  /** The PARENT card's per-stage model overrides (t3o-29, D4) for a sub-board
+      child; null for a top-level card, or a parent that overrides nothing.
+
+      Carried on the detail rather than read off the board's card shells because
+      the shells do not carry overrides and this is the only place that needs
+      them. A child with no override of its own RUNS its parent's, and the
+      popover has to name that (D5) — without this the child's row would claim
+      the workspace default while the card ran on something else. Decodes to
+      null on every detail payload written before t3o-29. */
+  parentModelOverrides: Schema.NullOr(BoardCardModelOverrides).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Whether the card has any proposed plan (t3o-15, D6): the Build stage's
       per-card human-in-the-loop default flips on this — a card with a plan
       defaults to `humanInLoopWithPlan`, one without to `humanInLoopWithoutPlan`.
@@ -5582,6 +5640,47 @@ export function resolveBoardStageModelSelection(
   fallback: BoardModelSelection,
 ): BoardModelSelection {
   return model ?? fallback;
+}
+
+/** The model half of an override, dropping the access level it rides with.
+    Shared so the reactor and the review executor can never disagree about how
+    an override narrows to a `BoardModelSelection`. */
+export function boardModelSelectionOfOverride(
+  override: BoardCardStageModelOverride,
+): BoardModelSelection {
+  const { instanceId, model, options } = override;
+  return { instanceId, model, ...(options === undefined ? {} : { options }) };
+}
+
+/**
+ * The model override in force for a card's stage (t3o-29, D1/D4), or null when
+ * nothing overrides it and the workspace config governs.
+ *
+ * A card's own entry wins; failing that, a sub-board child resolves its
+ * PARENT's. The parent lookup is live rather than a copy taken at split time,
+ * so editing the parent moves every child that has not set its own — "this work
+ * needs a stronger model" is a property of the work, and a split fans one piece
+ * of work into many cards.
+ *
+ * Consequence, accepted (D4): on a child, "no entry" means "inherit the
+ * parent", so clearing a child re-inherits rather than falling back to the
+ * workspace. The popover makes that visible by naming the source (D5).
+ *
+ * Sub-boards are one level deep — the decider rejects a grandchild — so there
+ * is no chain to walk and no cycle to guard against.
+ */
+export function resolveBoardCardStageModelOverride(input: {
+  readonly card: Pick<BoardCard, "modelOverrides">;
+  /** The card's parent, for a sub-board child; null for a top-level card or
+      when the caller could not resolve it. */
+  readonly parent: Pick<BoardCard, "modelOverrides"> | null;
+  readonly stageId: BoardStageId;
+}): BoardCardStageModelOverride | null {
+  return (
+    input.card.modelOverrides?.[input.stageId] ??
+    input.parent?.modelOverrides?.[input.stageId] ??
+    null
+  );
 }
 
 /** The per-project key prefix as STORED, falling back to the compiled-in

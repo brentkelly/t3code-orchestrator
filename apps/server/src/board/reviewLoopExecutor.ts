@@ -34,6 +34,8 @@ import {
   type BoardModelSelection,
   type BoardReviewPhaseExecution,
   type BoardReviewRoundOverride,
+  type BoardCardStageModelOverride,
+  boardModelSelectionOfOverride,
   type RuntimeMode,
   type BoardReviewPhaseId,
   type BoardStageExecutionReview,
@@ -102,10 +104,19 @@ function resolvePhaseModel(input: {
   readonly phaseConfig: BoardReviewPhaseExecution;
   readonly fallback: BoardModelSelection;
   readonly roundOverride: BoardReviewRoundOverride | undefined;
+  readonly cardOverride: BoardCardStageModelOverride | null;
 }): BoardModelSelection {
-  if (input.phase === "review" && input.roundOverride !== undefined) {
-    const { instanceId, model, options } = input.roundOverride;
-    return { instanceId, model, ...(options === undefined ? {} : { options }) };
+  if (input.phase === "review") {
+    // Narrowest first (t3o-29, D3): the round the user named, then the card's
+    // standing choice, then the configured phase model. The card override sits
+    // BELOW the round override so escalating one round still wins, and ABOVE
+    // the phase config so setting it on the card actually takes effect.
+    if (input.roundOverride !== undefined) {
+      return boardModelSelectionOfOverride(input.roundOverride);
+    }
+    if (input.cardOverride !== null) {
+      return boardModelSelectionOfOverride(input.cardOverride);
+    }
   }
   return input.phaseConfig.model ?? input.fallback;
 }
@@ -120,8 +131,15 @@ function resolvePhaseRuntimeMode(input: {
   readonly phase: BoardReviewPhaseId;
   readonly phaseConfig: BoardReviewPhaseExecution;
   readonly roundOverride: BoardReviewRoundOverride | undefined;
+  readonly cardOverride: BoardCardStageModelOverride | null;
 }): RuntimeMode {
-  const override = input.phase === "review" ? input.roundOverride?.runtimeMode : undefined;
+  // Same ladder as the model (t3o-29, D3), and independently resolved: an
+  // override that names a model but no access level inherits the level from
+  // the next rung down rather than dragging its own absence with it.
+  const override =
+    input.phase === "review"
+      ? (input.roundOverride?.runtimeMode ?? input.cardOverride?.runtimeMode)
+      : undefined;
   return effectiveBoardRuntimeMode(override ?? input.phaseConfig.runtimeMode, "build");
 }
 
@@ -197,11 +215,13 @@ export function reviewLoopDecision(input: {
         phaseConfig,
         fallback: config.model,
         roundOverride: overrides?.roundModels[String(round)],
+        cardOverride: config.cardOverride,
       }),
       runtimeMode: resolvePhaseRuntimeMode({
         phase,
         phaseConfig,
         roundOverride: overrides?.roundModels[String(round)],
+        cardOverride: config.cardOverride,
       }),
       timeoutMs: phaseConfig.timeoutMs,
       maxAttempts: phaseConfig.maxAttempts,

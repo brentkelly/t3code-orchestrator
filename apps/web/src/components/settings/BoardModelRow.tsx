@@ -149,6 +149,17 @@ export function ModelRow(props: {
   /** Hide the access-level section — the card's per-round review override
       (t3o-22, D4) has nowhere to keep one until a model is picked. */
   hideRuntimeMode?: boolean;
+  /**
+   * What the trigger reads with nothing picked. Defaults to "Select a model",
+   * which is right for a stage that MUST name one; an override row instead
+   * names the value it is inheriting and where from — `Sonnet 4.7 (default)`
+   * for the workspace, `Opus 4.8 (from T3O-41)` for a parent card (t3o-29, D5).
+   *
+   * Not cosmetic: once a card can inherit from a parent, "nothing picked" is
+   * three different situations, and a row that renders them identically leaves
+   * a user unable to tell which model their card will actually run on.
+   */
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   // With nothing picked the popup still needs an instance to open on: use the
@@ -168,7 +179,7 @@ export function ModelRow(props: {
     ?.find((option) => option.slug === active.model);
   const triggerLabel =
     props.selection === null
-      ? "Select a model"
+      ? (props.placeholder ?? "Select a model")
       : selectedOption
         ? getTriggerDisplayModelName(selectedOption)
         : active.model;

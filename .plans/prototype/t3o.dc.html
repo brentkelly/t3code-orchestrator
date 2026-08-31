@@ -663,6 +663,12 @@ a:hover{text-decoration:underline}
               Awaiting input
             </span>
           </sc-if>
+          <sc-if value="{{ cardModelsSet }}" hint-placeholder-val="{{ false }}">
+            <button type="button" onClick="{{ openCardModels }}" title="{{ cardModelsTip }}" style="display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 7px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--muted);color:var(--muted-fg);font:500 10.5px var(--font-mono);white-space:nowrap;cursor:pointer" style-hover="color:var(--fg);background:var(--accent)">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10"></path><path d="M18 6h2"></path><path d="M4 12h4"></path><path d="M12 12h8"></path><path d="M4 18h10"></path><path d="M18 18h2"></path></svg>
+              {{ cardModelsPill }}
+            </button>
+          </sc-if>
           <span style="flex:1"></span>
           <sc-if value="{{ hasBack }}" hint-placeholder-val="{{ false }}">
             <button type="button" onClick="{{ goBack }}" style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;flex:none;white-space:nowrap;border:1px solid var(--input);border-radius:7px;background:var(--popover);color:var(--muted-fg);font:500 11.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent);color:var(--fg)">
@@ -707,10 +713,49 @@ a:hover{text-decoration:underline}
             <sc-if value="{{ cardMenuOpen }}" hint-placeholder-val="{{ false }}">
               <div onClick="{{ closeCardMenu }}" style="position:fixed;inset:0;z-index:55"></div>
               <div style="position:absolute;top:32px;right:0;z-index:60;min-width:168px;padding:5px;border:1px solid var(--border);border-radius:11px;background:var(--popover);box-shadow:0 18px 34px -20px rgb(0 0 0 / 55%);display:flex;flex-direction:column;gap:1px">
+                <button type="button" onClick="{{ openCardModels }}" style="display:inline-flex;align-items:center;gap:9px;height:30px;padding:0 9px;border:none;border-radius:8px;background:transparent;color:var(--fg);font:500 12.5px var(--font-sans);text-align:left;cursor:pointer" style-hover="background:var(--accent)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10"></path><path d="M18 6h2"></path><path d="M4 12h4"></path><path d="M12 12h8"></path><path d="M4 18h10"></path><path d="M18 18h2"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="16" cy="18" r="2"></circle></svg>
+                  <span style="flex:1">Models</span>
+                  <span style="font:500 11px var(--font-mono);color:var(--muted-fg)">{{ cardModelsSummary }}</span>
+                </button>
+                <div style="height:1px;margin:3px 7px;background:var(--border)"></div>
                 <button type="button" onClick="{{ archiveCard }}" style="display:inline-flex;align-items:center;gap:9px;height:30px;padding:0 9px;border:none;border-radius:8px;background:transparent;color:var(--fg);font:500 12.5px var(--font-sans);text-align:left;cursor:pointer" style-hover="background:var(--accent)">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="4" x="3" y="4" rx="1"></rect><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"></path><path d="M10 12h4"></path></svg>
                   <span style="flex:1">Archive card</span>
                 </button>
+              </div>
+            </sc-if>
+            <sc-if value="{{ cardModelsOpen }}" hint-placeholder-val="{{ false }}">
+              <div onClick="{{ closeCardModels }}" style="position:fixed;inset:0;z-index:55"></div>
+              <div style="position:absolute;top:32px;right:0;z-index:60;width:328px;padding:12px 13px 13px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:0 18px 34px -20px rgb(0 0 0 / 55%);display:flex;flex-direction:column;gap:11px;text-align:left">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Models for this card</span>
+                  <span style="flex:1"></span>
+                  <sc-if value="{{ cardModelsSet }}" hint-placeholder-val="{{ false }}">
+                    <button type="button" onClick="{{ cardModelsReset }}" style="height:22px;padding:0 7px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);font:500 11.5px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">Reset</button>
+                  </sc-if>
+                </div>
+                <div style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Overrides the workspace defaults from Settings for this card only.</div>
+                <sc-for list="{{ cardModelRows }}" as="row" hint-placeholder-count="2">
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <div style="display:flex;align-items:baseline;gap:7px">
+                      <span style="font:500 11.5px var(--font-sans);color:var(--fg)">{{ row.label }}</span>
+                      <span style="font:400 11px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.note }}</span>
+                    </div>
+                    <div style="display:flex;gap:6px">
+                      <select value="{{ row.model }}" onChange="{{ row.pickModel }}" style="flex:1.5;height:28px;min-width:0;padding:0 24px 0 9px;border:1px solid var(--input);border-radius:8px;background:var(--card);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted-fg) 50%),linear-gradient(135deg,var(--muted-fg) 50%,transparent 50%);background-position:calc(100% - 13px) 12px,calc(100% - 9px) 12px;background-size:4px 4px,4px 4px;background-repeat:no-repeat">
+                        <sc-for list="{{ row.modelOpts }}" as="mo" hint-placeholder-count="4">
+                          <option value="{{ mo.value }}">{{ mo.label }}</option>
+                        </sc-for>
+                      </select>
+                      <select value="{{ row.effort }}" onChange="{{ row.pickEffort }}" style="flex:1;height:28px;min-width:0;padding:0 24px 0 9px;border:1px solid var(--input);border-radius:8px;background:var(--card);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted-fg) 50%),linear-gradient(135deg,var(--muted-fg) 50%,transparent 50%);background-position:calc(100% - 13px) 12px,calc(100% - 9px) 12px;background-size:4px 4px,4px 4px;background-repeat:no-repeat">
+                        <sc-for list="{{ row.effortOpts }}" as="eo" hint-placeholder-count="5">
+                          <option value="{{ eo.value }}">{{ eo.label }}</option>
+                        </sc-for>
+                      </select>
+                    </div>
+                  </div>
+                </sc-for>
               </div>
             </sc-if>
           </div>
@@ -742,7 +787,12 @@ a:hover{text-decoration:underline}
               <div style="flex:none;display:flex;flex-direction:column;gap:7px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
                 <div style="display:flex;align-items:center;gap:4px">
                   <sc-for list="{{ review.segs }}" as="sg" hint-placeholder-count="5">
-                    <button type="button" onClick="{{ sg.open }}" title="{{ sg.tip }}" style="{{ sg.style }}" style-hover="{{ sg.hoverStyle }}">{{ sg.label }}</button>
+                    <sc-if value="{{ sg.isFuture }}" hint-placeholder-val="{{ false }}">
+                      <button type="button" onClick="{{ sg.open }}" title="{{ sg.tip }}" style="{{ sg.style }}" style-hover="background:color-mix(in srgb,var(--fg) 8%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 22%,transparent);color:var(--fg)">{{ sg.label }}</button>
+                    </sc-if>
+                    <sc-if value="{{ sg.isPast }}" hint-placeholder-val="{{ true }}">
+                      <button type="button" onClick="{{ sg.open }}" title="{{ sg.tip }}" style="{{ sg.style }}" style-hover="filter:brightness(1.08)">{{ sg.label }}</button>
+                    </sc-if>
                   </sc-for>
                   <div style="display:flex;align-items:center;gap:1px;flex:none;margin-left:5px;padding:1px;border:1px solid var(--input);border-radius:7px;background:var(--popover)">
                     <button type="button" onClick="{{ review.limitDown }}" title="{{ review.limitDownTip }}" style="{{ review.limitDownStyle }}">−</button>
@@ -1812,6 +1862,8 @@ class Component extends DCLogic {
       cardMaxed: false,
       rvModel: "inherit",
       rvEffort: "inherit",
+      cardModelsOpen: false,
+      cardModels: {},
       rvLimit: {},
       rvStop: {},
       rvPlan: null,
@@ -2079,7 +2131,9 @@ class Component extends DCLogic {
       (i) => i.resolution === "open" || i.verdict === "disputed",
     ).length;
     const limit = this.state.rvLimit[c.id] !== undefined ? this.state.rvLimit[c.id] : rv.max;
-    const exhausted = !stepId && cur.n >= limit && unsettled > 0;
+    // Nothing running and the last round closed dirty: the loop is stalled and
+    // holds, whether or not the user has since raised the budget.
+    const exhausted = !stepId && unsettled > 0;
     return {
       rv,
       cur,
@@ -2254,6 +2308,66 @@ class Component extends DCLogic {
   }
 
   // "Same as previous round" resolves against the last round that actually ran.
+  // Per-card model overrides for the Build and Review stages. Anything left on
+  // "inherit" follows the workspace defaults in Settings.
+  cardModelVals(active) {
+    const MODELS = ["Opus 4.8", "Sonnet 4.7", "Haiku 4.5"];
+    const EFFORTS = ["Low", "Medium", "High", "Max"];
+    const WS = { build: { model: "Sonnet 4.7", effort: "High" }, review: { model: "Opus 4.8", effort: "High" } };
+    const ov = (active && this.state.cardModels[active.id]) || {};
+    const get = (stage, key) => ov[stage + key] || "inherit";
+    const set = (stage, key, value) => {
+      if (!active) return;
+      this.setState((s) => ({
+        cardModels: { ...s.cardModels, [active.id]: { ...(s.cardModels[active.id] || {}), [stage + key]: value } },
+      }));
+    };
+    const short = (m) => m.toLowerCase().replace(/\s+/g, "-");
+    const stages = [
+      { id: "build", label: "Build", note: "Runs the plan in the worktree" },
+      { id: "review", label: "Review", note: "Adversarial review rounds" },
+    ];
+    const touched = stages.filter((s) => get(s.id, "Model") !== "inherit" || get(s.id, "Effort") !== "inherit");
+    const selStyle =
+      "height:28px;min-width:0;padding:0 24px 0 9px;border:1px solid var(--input);border-radius:8px;background:var(--card);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted-fg) 50%),linear-gradient(135deg,var(--muted-fg) 50%,transparent 50%);background-position:calc(100% - 13px) 12px,calc(100% - 9px) 12px;background-size:4px 4px,4px 4px;background-repeat:no-repeat";
+    return {
+      cardModelsOpen: !!this.state.cardModelsOpen && !!active,
+      openCardModels: () => this.setState({ cardModelsOpen: true, cardMenuOpen: false }),
+      closeCardModels: () => this.setState({ cardModelsOpen: false }),
+      cardModelsSet: touched.length > 0,
+      cardModelsSummary: touched.length ? touched.map((s) => s.label).join(" · ") : "Default",
+      cardModelsPill: touched.length === 1 ? touched[0].label + " " + short(get(touched[0].id, "Model") === "inherit" ? WS[touched[0].id].model : get(touched[0].id, "Model")) : "Custom models",
+      cardModelsTip: touched.length
+        ? touched
+            .map((s) => {
+              const m = get(s.id, "Model");
+              const e = get(s.id, "Effort");
+              return s.label + ": " + (m === "inherit" ? WS[s.id].model + " (default)" : m) + " · " + (e === "inherit" ? WS[s.id].effort.toLowerCase() + " (default)" : e.toLowerCase());
+            })
+            .join("\n")
+        : "",
+      cardModelsReset: () => {
+        if (!active) return;
+        this.setState((s) => {
+          const next = { ...s.cardModels };
+          delete next[active.id];
+          return { cardModels: next };
+        });
+      },
+      cardModelRows: stages.map((s) => ({
+        label: s.label,
+        note: s.note,
+        model: get(s.id, "Model"),
+        effort: get(s.id, "Effort"),
+        selStyle,
+        modelOpts: [{ value: "inherit", label: WS[s.id].model + " (default)" }].concat(MODELS.map((m) => ({ value: m, label: m }))),
+        effortOpts: [{ value: "inherit", label: WS[s.id].effort.toLowerCase() + " (default)" }].concat(EFFORTS.map((e) => ({ value: e, label: e }))),
+        pickModel: (e) => set(s.id, "Model", e.target.value),
+        pickEffort: (e) => set(s.id, "Effort", e.target.value),
+      })),
+    };
+  }
+
   resolvedModel(rv) {
     if (this.state.rvModel !== "inherit") return this.state.rvModel;
     for (let i = rv.rounds.length - 1; i >= 0; i--) if (rv.rounds[i].model) return rv.rounds[i].model;
@@ -2272,8 +2386,6 @@ class Component extends DCLogic {
     if (!rs) return;
     const next = Math.min(10, Math.max(rs.cur.n, 1, rs.limit + delta));
     if (next === rs.limit) return;
-    // Raising the budget on a stalled loop is the same intent as resuming it.
-    if (rs.exhausted && delta > 0) return this.extendReview(card, delta);
     this.setState((s) => ({ rvLimit: { ...s.rvLimit, [card.id]: next } }));
   }
 
@@ -3671,9 +3783,8 @@ class Component extends DCLogic {
             tip: exists
               ? "Jump to round " + n
               : "Set the model and effort for round " + n,
-            hoverStyle: exists
-              ? "filter:brightness(1.06)"
-              : "background:color-mix(in srgb,var(--fg) 8%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 22%,transparent);color:var(--fg)",
+            isFuture: !exists,
+            isPast: exists,
             open: exists
               ? () => showRound(n)
               : () => this.setState((s) => ({ rvPlan: s.rvPlan === n ? null : n })),
@@ -3819,7 +3930,7 @@ class Component extends DCLogic {
         exhausted: reviewData.exhausted,
         showCta: !reviewData.exhausted,
         holdNote:
-          "All " + reviewData.limit + " rounds ran and round " + reviewData.cur.n +
+          "All " + rv.max + " rounds ran and round " + reviewData.cur.n +
           " still closed with " + reviewData.unsettled + " unsettled " +
           (reviewData.unsettled === 1 ? "issue" : "issues") +
           ". The loop stops here and will not hand the task to Ready for merge on its own.",
@@ -4076,7 +4187,11 @@ class Component extends DCLogic {
           ",calc(100vw - 64px));max-width:calc(100vw - 64px);" +
           (hasThreadPane ? "height:86vh" : "max-height:86vh") +
           ";border-radius:16px;border:1px solid color-mix(in srgb,var(--fg) 10%,transparent)") +
-        ";display:flex;flex-direction:column;background:var(--card);box-shadow:var(--shadow-pop);overflow:hidden;animation:t3pop 180ms cubic-bezier(.2,.8,.2,1)",
+        ";display:flex;flex-direction:column;" +
+        (active && active.status === "done"
+          ? "--card:color-mix(in srgb,#84cc16 5%,var(--popover));"
+          : "") +
+        "background:var(--card);box-shadow:var(--shadow-pop);overflow:hidden;animation:t3pop 180ms cubic-bezier(.2,.8,.2,1)",
       cardBodyStyle: hasThreadPane
         ? "display:grid;grid-template-columns:minmax(0,1fr) 336px;min-height:0;flex:1;margin-top:12px;border-top:1px solid var(--border)"
         : "display:flex;flex-direction:column;min-height:0;flex:0 1 auto;overflow-y:auto;margin-top:12px;border-top:1px solid var(--border)",
@@ -4286,8 +4401,9 @@ class Component extends DCLogic {
         }
       },
       cardMenuOpen: !!st.cardMenuOpen,
-      toggleCardMenu: () => this.setState((s) => ({ cardMenuOpen: !s.cardMenuOpen })),
+      toggleCardMenu: () => this.setState((s) => ({ cardMenuOpen: !s.cardMenuOpen, cardModelsOpen: false })),
       closeCardMenu: () => this.setState({ cardMenuOpen: false }),
+      ...this.cardModelVals(active),
       archiveCard: () => {
         if (!active) return;
         this.patchCard(active.id, { archived: true });
@@ -4296,6 +4412,7 @@ class Component extends DCLogic {
       closeCard: () =>
         this.setState({
           cardMenuOpen: false,
+          cardModelsOpen: false,
           activeId: null,
           back: null,
           cardMaxed: false,

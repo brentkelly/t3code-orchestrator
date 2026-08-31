@@ -434,5 +434,10 @@ describe("replay equals rehydration for a pre-t3o-22 log", () => {
       updatedAt: "2026-08-27T00:00:00.000Z",
     };
     assert.strictEqual(decodeBoardCard(legacy).reviewOverrides, null);
+    // t3o-29 AC8, the identical guarantee one spec later: migration 029's
+    // `model_overrides` column also defaults to NULL, so the same payload must
+    // decode to null overrides rather than an empty map — `{}` and `null` would
+    // make a replayed card and a rehydrated one compare unequal.
+    assert.strictEqual(decodeBoardCard(legacy).modelOverrides, null);
   });
 });

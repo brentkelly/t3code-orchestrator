@@ -48,11 +48,13 @@ import {
   compareBoardStages,
   BoardCardWorktree,
   BoardCardPullRequest,
+  BoardCardModelOverrides,
   BoardCardReviewOverrides,
   BoardCardReviewSummary,
   deriveBoardCardReviewSummary,
   parseReviewStepId,
   isBoardEvent,
+  isEmptyBoardCardModelOverrides,
   makeBoardCardShell,
   ProviderInstanceId,
   sortBoardCardThreadLinks,
@@ -163,6 +165,10 @@ const BoardCardDbRow = Schema.Struct({
       indistinguishable, which is what makes replay equal rehydration (t3o-22,
       D2). */
   reviewOverrides: Schema.NullOr(Schema.fromJsonString(BoardCardReviewOverrides)),
+  /** NULL for every row written before migration 029, and for every card that
+      has never set a per-stage model override — indistinguishable on purpose,
+      exactly as `reviewOverrides` is, so replay equals rehydration (t3o-29). */
+  modelOverrides: Schema.NullOr(Schema.fromJsonString(BoardCardModelOverrides)),
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -512,6 +518,12 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     pullRequestHistory: card.pullRequestHistory.length === 0 ? null : card.pullRequestHistory,
     pullRequestFloor: card.pullRequestFloor,
     reviewOverrides: card.reviewOverrides,
+    // An empty map is stored as NULL, never `{}`: a card that set an override
+    // and then cleared it must be indistinguishable from one that never had
+    // one, or rehydration would depend on which of the two it is looking at.
+    modelOverrides: isEmptyBoardCardModelOverrides(card.modelOverrides)
+      ? null
+      : card.modelOverrides,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -544,6 +556,7 @@ function rowToBoardCard(
     pullRequestHistory: row.pullRequestHistory ?? [],
     pullRequestFloor: row.pullRequestFloor,
     reviewOverrides: row.reviewOverrides,
+    modelOverrides: row.modelOverrides,
     blocked: row.blocked !== 0,
     threadLinks,
     archivedAt: row.archivedAt,
@@ -599,6 +612,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request_history,
         pull_request_floor,
         review_overrides,
+        model_overrides,
         blocked,
         archived_at,
         created_at,
@@ -623,6 +637,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.pullRequestHistory},
         ${row.pullRequestFloor},
         ${row.reviewOverrides},
+        ${row.modelOverrides},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -647,6 +662,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request_history = excluded.pull_request_history,
         pull_request_floor = excluded.pull_request_floor,
         review_overrides = excluded.review_overrides,
+        model_overrides = excluded.model_overrides,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -681,6 +697,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request_history AS "pullRequestHistory",
         pull_request_floor AS "pullRequestFloor",
         review_overrides AS "reviewOverrides",
+        model_overrides AS "modelOverrides",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -895,6 +912,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request_history AS "pullRequestHistory",
         pull_request_floor AS "pullRequestFloor",
         review_overrides AS "reviewOverrides",
+        model_overrides AS "modelOverrides",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -2918,8 +2936,28 @@ export function makeBoardCardDetailLoader(
             // and live because `board.subscribeCard` re-emits the whole detail on
             // every board event for this card.
             activity: activityRows.map(toBoardCardActivityEntry),
+            // Filled below for a sub-board child; a top-level card has no
+            // parent to inherit from and keeps the null.
+            parentModelOverrides: null,
           };
         },
+      ),
+      // The parent's model overrides (t3o-29, D4), for a child that inherits
+      // them. A second lookup rather than a join because it is conditional on
+      // the card being a child at all — a top-level card, which is most of
+      // them, pays nothing — and the id is only known once the card row has
+      // resolved, so it cannot ride in the `Effect.all` above.
+      Effect.flatMap((detail) =>
+        detail === null || detail.card.parentCardId === null
+          ? Effect.succeed(detail)
+          : queries.findBoardCardRow(detail.card.parentCardId).pipe(
+              Effect.map((parentRow) => ({
+                ...detail,
+                parentModelOverrides: Option.isNone(parentRow)
+                  ? null
+                  : parentRow.value.modelOverrides,
+              })),
+            ),
       ),
       Effect.mapError(toPersistenceSqlError("BoardCardsProjection.detail:query")),
     );

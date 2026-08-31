@@ -191,10 +191,14 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     threadLinks: [],
     externalRef: null,
     // Per-card human-in-the-loop override is untouched at birth (D6), and so
-    // are the review-loop overrides (t3o-22, D2) — a new card runs the board's
-    // configured loop until someone says otherwise.
+    // are the review-loop overrides (t3o-22, D2) and the per-stage model
+    // overrides (t3o-29, D1) — a new card runs the board's configured loop on
+    // the workspace's configured models until someone says otherwise. A split
+    // child is created through this same path and so starts with no override of
+    // its own, which is exactly what makes it resolve its parent's (t3o-29, D4).
     humanInLoop: null,
     reviewOverrides: null,
+    modelOverrides: null,
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
     worktree: null,
