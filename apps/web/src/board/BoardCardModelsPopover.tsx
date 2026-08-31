@@ -133,7 +133,7 @@ export function BoardCardModelsPopover({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       {anchor}
-      <PopoverPopup align="end" className="w-[328px] p-3">
+      <PopoverPopup align="end" className="w-[440px] p-3">
         <div className="flex items-center gap-2">
           <span className="text-[12.5px] font-semibold text-foreground">Models for this card</span>
           <span className="flex-1" />
