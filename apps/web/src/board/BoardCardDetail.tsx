@@ -655,7 +655,12 @@ export function BoardCardDetail({
       onSetModelOverrides={(modelOverrides) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, modelOverrides } }))
       }
-      stepRunning={cardShell?.stepRunning === true}
+      // Queued counts as running for this note's purpose: a queued step has
+      // already been selected onto the run row, so its model and authority are
+      // frozen (t3o-21, D4) and an edit now lands on the run AFTER it — exactly
+      // what the note exists to say. The review pane's step-active flag reads
+      // the pair the same way.
+      stepRunning={cardShell?.stepRunning === true || cardShell?.queued === true}
       reviewPhaseRuntimeMode={reviewPhaseRuntimeMode}
       reviewRoundsStarted={reviewRoundsRecorded}
       reviewStepActive={cardShell?.stepRunning === true || cardShell?.queued === true}

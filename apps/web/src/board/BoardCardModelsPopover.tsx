@@ -44,14 +44,23 @@ import { primaryServerProvidersAtom } from "../state/server";
 import { usePrimarySettings } from "../hooks/useSettings";
 import type { BoardCardModelRowSpec } from "./boardCardModelRows";
 
-/** The trigger text for a row with no override: the value it will actually run
-    on, and where that came from (D5). Three situations that would otherwise all
-    render as "Select a model". */
+/**
+ * The trigger text for a row with no override: the value it will actually run
+ * on, and where that came from (D5). Three situations that would otherwise all
+ * render as "Select a model".
+ *
+ * The unnamed case matters most. `ModelRow`'s own default placeholder is
+ * "Select a model", which is right where a stage MUST name one — but on an
+ * override row it is a lie in both directions: it reads as a required field
+ * when leaving it blank is the whole point, and it hides that the workspace
+ * has not named a model either. So an override row never says "Select"; it
+ * says what it is deferring to, and the place to go fix it.
+ */
 function placeholderFor(
   row: BoardCardModelRowSpec,
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance,
 ): string {
-  if (row.inheritedModel === null) return "Select a model";
+  if (row.inheritedModel === null) return "Default (unset in Settings)";
   const active: ActiveModel = {
     instanceId: row.inheritedModel.instanceId,
     model: row.inheritedModel.model,
@@ -110,6 +119,17 @@ export function BoardCardModelsPopover({
     onChange(Object.keys(rest).length === 0 ? null : rest);
   };
 
+  /** Clear this card's overrides — but only for the rows this popover actually
+      shows. The map is keyed by stage id and can in principle hold an entry for
+      a stage with no row here; wiping something the user cannot see, and was
+      never told about, is not what "Reset" offers to do. It is also the rule
+      the summary and the pill already follow, which count visible rows only. */
+  const reset = () => {
+    const rest = { ...overrides };
+    for (const row of rows) delete rest[row.stageId];
+    onChange(Object.keys(rest).length === 0 ? null : rest);
+  };
+
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       {anchor}
@@ -120,7 +140,7 @@ export function BoardCardModelsPopover({
           {anySet ? (
             <button
               className="h-[22px] shrink-0 rounded-md px-[7px] text-[11.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={() => onChange(null)}
+              onClick={reset}
               type="button"
             >
               Reset
@@ -166,14 +186,18 @@ export function BoardCardModelsPopover({
                         },
                   )
                 }
-                onModelOptionsChange={(options) =>
+                onModelOptionsChange={(options) => {
+                  if (current === null) return;
+                  // `undefined` means the user CLEARED the reasoning selection,
+                  // which is a real edit and not "no change": spreading `{}` for
+                  // it would leave the stale `options` in place, so clearing
+                  // reasoning would silently do nothing.
+                  const { options: _dropped, ...withoutOptions } = current;
                   setRow(
                     row.stageId,
-                    current === null
-                      ? null
-                      : { ...current, ...(options === undefined ? {} : { options }) },
-                  )
-                }
+                    options === undefined ? withoutOptions : { ...current, options },
+                  );
+                }}
                 onRuntimeModeChange={(runtimeMode) =>
                   setRow(row.stageId, current === null ? null : { ...current, runtimeMode })
                 }
