@@ -170,8 +170,9 @@ every stage.
 | --- | --- |
 | `apps/server/src/board/decider.ts` | `board.plans.approve` drops the parent move and its dependency gate; the freeze in `board.card.move` becomes a past-build ceiling |
 | `apps/server/src/board/supervisorReactor.ts` | `cascadeUnblockedChildren`, wired into `handleCardMoved` (parent into build, child into done) and the archive/delete arms; `advanceParentIfChildrenDone` and `regressParentIfChildLeftDone` re-read against the new ceiling |
-| `apps/web/src/board/BoardCardDetailView.tsx` | `initialBoardCardPane` takes the child count; Plans default and disabled Thread pill for a split parent before review |
-| `apps/web/src/board/BoardCardDetail.tsx` | passes `detail.children` through to the pane rule |
+| `apps/web/src/board/BoardCardDetailView.tsx` | `isBoardCardThreadLocked`; `initialBoardCardPane` takes the live-child count; Plans default and disabled Thread pill for a split parent before review (the panel already holds `detail.children`, so no plumbing) |
 | `apps/server/src/board/decider.subboard.test.ts` | approval is stage-neutral; the ceiling matrix replaces the pin matrix |
+| `apps/server/src/board/decider.board.test.ts` | `board.card.move` becomes the ONLY command that may emit a `board.card-moved` |
+| `apps/web/src/board/BoardCardDetailView.test.tsx` | the pane lock and its release at review |
 | `apps/server/src/board/subBoardSupervisor.test.ts` | the cascade: parent into build, sibling unblocking, the parked-child and blocked-child refusals |
 | `apps/server/src/board/syncBaseSupervisor.test.ts` | parents no longer arrive in build by approval |

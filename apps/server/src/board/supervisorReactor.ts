@@ -19,6 +19,8 @@
 import {
   boardCardChildren,
   boardCardPlans,
+  boardSubBoardFloorStage,
+  unmetBoardCardDependencies,
   boardCardPullRequestsEqual,
   boardCardStepCompletions,
   boardCardUnfinishedChildren,
@@ -1316,16 +1318,73 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * The sub-board runs itself once the parent starts it (t3o-28, D3).
+   *
+   * The parent's arrival at the build-role stage is the Begin build for the
+   * WHOLE split, so every child the plan graph does not block moves off the
+   * materialisation floor into build — and every later call starts whatever
+   * the last finisher unblocked, so a four-plan chain walks itself from #1 to
+   * #4 with no human in between.
+   *
+   * Each child rides an ordinary `board.card.move` (floor → build is adjacent
+   * by construction, so no override), which means `handleCardMoved` does the
+   * rest exactly as it does for a drag: step selection, a worktree cut from
+   * the integration branch, the thread spawn, and the governor's slots. A
+   * cascaded child is indistinguishable from a dragged one — including when
+   * there is no slot free, where it simply queues.
+   *
+   * D18's "approving a split cannot fan out into N running agents" is intact:
+   * `handleCardCreated` still refuses to start a materialised child. The
+   * fan-out moved to the gesture that means it.
+   */
+  const cascadeUnblockedChildren = Effect.fn("board-supervisor-cascadeChildren")(function* (
+    parentCardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const parent = board.cards.find((candidate) => candidate.id === parentCardId);
+    if (parent === undefined || parent.archivedAt !== null) return;
+    const buildStage = boardStageWithRole(board, "build");
+    const floor = boardSubBoardFloorStage(board);
+    if (buildStage === null || floor === null) return;
+    // Only while the parent SITS at build. Before it, the human has not said
+    // begin yet; after it, the split is finished (or the regression helper is
+    // about to bring the parent home, which calls back here).
+    if (parent.stage !== buildStage.stageId) return;
+    for (const child of boardCardChildren(board, parent.id)) {
+      if (child.archivedAt !== null) continue;
+      // Waiting on the floor is the only state this starts. A child further
+      // along is already running, done, or parked somewhere by a human — and
+      // none of those want a move.
+      if (child.stage !== floor.stageId) continue;
+      // The D11 dependency gate would refuse this move anyway; skipping it
+      // here keeps the cascade from teaching the rule by refusal.
+      const unmet = unmetBoardCardDependencies({
+        board,
+        dependsOn: child.dependsOn,
+        cards: board.cards,
+      });
+      if (unmet.length > 0) continue;
+      yield* dispatch({
+        type: "board.card.move",
+        commandId: yield* commandId("cascade-child"),
+        cardId: child.id,
+        toStage: buildStage.stageId,
+        createdAt: yield* nowIso,
+      });
+    }
+  });
+
   // A split parent advances when its last child finishes (t3o-23, D4; the
   // D18 carve-out "a parent card advances when its last child plan card
   // reaches Done"). Rides the ordinary move like `advanceStage` — the
-  // decider's freeze has lifted (no unfinished children left), and the target
+  // decider's ceiling has lifted (no unfinished children left), and the target
   // is the NEXT stage in order, not a hardcoded review, so a custom stage
   // between Build and Review is not skipped. Only a parent still sitting in
-  // the build-role stage advances: that is the position the approval parked
-  // it in, so a parent the human already dragged onward (or one that never
-  // split) is left alone — which is also what makes a raced double-fire
-  // harmless, the second call finding the parent already moved.
+  // the build-role stage advances: that is where the human's Begin build put
+  // it (t3o-28, D1/D3), so a parent still short of build, one already dragged
+  // onward, or one that never split is left alone — which is also what makes
+  // a raced double-fire harmless, the second call finding the parent moved.
   const advanceParentIfChildrenDone = Effect.fn("board-supervisor-advanceParent")(function* (
     parentCardId: BoardCardId,
   ) {
@@ -2738,8 +2797,10 @@ const make = Effect.gen(function* () {
     // A worktree may not outlive its card.
     yield* reclaimCardWorktree(card);
     // An archived child counts as finished (t3o-23, D6), so this may have
-    // been the parent's last unfinished one.
+    // been the parent's last unfinished one — or the one whose finishing
+    // unblocks a sibling still waiting on the floor (t3o-28, D3).
     if (card.parentCardId !== null) {
+      yield* cascadeUnblockedChildren(card.parentCardId);
       yield* advanceParentIfChildrenDone(card.parentCardId);
     }
   });
@@ -2831,10 +2892,11 @@ const make = Effect.gen(function* () {
     yield* schedule();
 
     // Deleting a child removes it from the parent's unfinished set (t3o-23,
-    // D4) — if it was the last one standing, the parent advances (the helper
-    // itself refuses when NO children remain: an emptied split unfreezes and
-    // waits for the human).
+    // D4) — which may release a sibling that depended on it (t3o-28, D3), and
+    // if it was the last one standing, advances the parent (the helper itself
+    // refuses when NO children remain: an emptied split waits for the human).
     if (card.parentCardId !== null) {
+      yield* cascadeUnblockedChildren(card.parentCardId);
       yield* advanceParentIfChildrenDone(card.parentCardId);
     }
   });
@@ -3128,12 +3190,24 @@ const make = Effect.gen(function* () {
 
     // A child changing stage may have been the parent's last unfinished one
     // (t3o-23, D4) — the advance helper's own guards make a non-final move a
-    // cheap no-op. The mirror (t3o-24, D4): the same move may have dragged a
-    // child back OUT of Done under a parent that already advanced — both
-    // helpers guard themselves, so both are safe to ask every time.
+    // cheap no-op — or the one whose finishing frees a sibling to start
+    // (t3o-28, D3). The mirror (t3o-24, D4): the same move may have dragged a
+    // child back OUT of Done under a parent that already advanced. Every
+    // helper guards itself, so all three are safe to ask every time.
     if (card.parentCardId !== null) {
+      yield* cascadeUnblockedChildren(card.parentCardId);
       yield* advanceParentIfChildrenDone(card.parentCardId);
       yield* regressParentIfChildLeftDone(card.parentCardId);
+    }
+    // The PARENT itself arriving at the build-role stage is the Begin build
+    // for the whole split (t3o-28, D3): start every child the plan graph does
+    // not block. This is also how the t3o-24 regression back to build
+    // restarts a corrected parent's sub-board — the helper is keyed on where
+    // the parent now stands, not on how it got there. Gated on the card
+    // HAVING children so an ordinary card's every move does not pay a board
+    // read to be told it has no sub-board.
+    else if (boardCardChildren(board, card.id).length > 0) {
+      yield* cascadeUnblockedChildren(card.id);
     }
   });
 

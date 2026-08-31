@@ -726,28 +726,35 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' is a sub-board plan card and cannot enter '${command.toStage}'.`,
         );
       }
-      // A split parent's stage is DERIVED while children are unfinished
-      // (t3o-23, D4): it advances when its last child finishes, and nothing
-      // else moves it — override included, because the freeze is a truth
-      // about the card, not a convenience gate. The one exception (t3o-24,
-      // D4) is the move that IS the freeze re-engaging: a regression back to
-      // the build-role stage, the position the approval parked the parent in.
-      // That is how the reactor corrects a parent left ahead of reality by a
-      // child dragged back out of Done — and a human dragging a frozen parent
-      // home to Building asks for nothing more than the derived truth.
+      // A split parent's review describes an integration branch (t3o-28, D2),
+      // so it cannot pass the build-role stage while a child is still working
+      // — that description would be a lie. Everything BELOW that ceiling is
+      // free: the parent walks Planning → Ready → Building on the ordinary
+      // forward button (its arrival in build is what starts the sub-board,
+      // t3o-28 D3), retreats as freely as any other card, and reorders where
+      // it stands.
+      //
+      // This replaces t3o-23 D4's pin, which froze the parent at one stage
+      // outright. The pin only ever made sense while approval PARKED the
+      // parent in Building; now that approval leaves it alone (D1), the pin
+      // would forbid the very move that begins the build. The t3o-24 D4
+      // regression back to build — how the reactor corrects a parent left
+      // ahead of reality by a child dragged out of Done — needs no carve-out
+      // here either: it lands on the ceiling, not past it.
       {
         const unfinished = boardCardUnfinishedChildren(board, card.id);
-        if (unfinished.length > 0) {
-          const buildStageId = boardStageWithRole(board, "build")?.stageId ?? null;
-          const regressionToBuild =
-            command.toStage === buildStageId &&
-            boardStageIndex(board, command.toStage) < boardStageIndex(board, card.stage);
-          if (!regressionToBuild) {
+        const buildStage = unfinished.length > 0 ? boardStageWithRole(board, "build") : null;
+        if (buildStage !== null) {
+          const buildIndex = boardStageIndex(board, buildStage.stageId);
+          const targetIndex = boardStageIndex(board, command.toStage);
+          if (buildIndex >= 0 && targetIndex > buildIndex) {
             return yield* invariant(
               command,
               `Card '${card.key}' advances through its ${unfinished.length} plan card${
                 unfinished.length === 1 ? "" : "s"
-              }; move those instead.`,
+              } (${unfinished
+                .map((child) => child.key)
+                .join(", ")}); it cannot pass '${buildStage.label}' until those finish.`,
             );
           }
         }
@@ -1831,10 +1838,14 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     }
 
     case "board.plans.approve": {
-      // The human gate D12 promised (t3o-23): materialise the split. One
-      // decision, three kinds of event — the children's ordinary creations,
-      // the parent's move into the build-role stage, and the approval record
-      // the reactor keys the integration branch off.
+      // The human gate D12 promised (t3o-23): materialise the split. Two
+      // kinds of event — the children's ordinary creations, and the approval
+      // record the reactor keys the integration branch off.
+      //
+      // NOT a stage move (t3o-28, D1). Approving answers "is this the right
+      // split", not "start building it"; the parent stays where the human
+      // left it and walks forward on the ordinary button, and its arrival in
+      // the build-role stage is what starts the sub-board (D3).
       const card = yield* requireActiveBoardCard({ board, command });
       if (card.parentCardId !== null) {
         return yield* invariant(
@@ -1842,10 +1853,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${card.key}' is itself a sub-board plan card; splits do not nest (D12).`,
         );
       }
-      // A parent with a run in flight cannot be frozen under it: the live
+      // A parent with a run in flight cannot be split under it: the live
       // agent would keep writing the very branch the children are about to
-      // fork from, and its completion would race the freeze. Finish or stop
-      // the run first — the freeze then holds a quiet card.
+      // fork from, and its completion would race the materialisation. Finish
+      // or stop the run first — the split then cuts from a quiet card.
       {
         const state = boardCardStepState(board, command.cardId);
         if (state !== null && !isBoardTerminalStepStatus(state.status)) {
@@ -1902,25 +1913,6 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           command,
           `The board has no stage before '${buildStage.label}' to hold materialised plan cards; add one first.`,
         );
-      }
-      // The parent crosses into the build zone now, so its own dependency
-      // gate applies here exactly as it would on the drag (D11).
-      {
-        const unmet = unmetBoardCardDependencies({
-          board,
-          dependsOn: card.dependsOn,
-          cards: board.cards,
-        });
-        if (unmet.length > 0) {
-          const names = unmet.map((dependencyId) => {
-            const dependency = board.cards.find((existing) => existing.id === dependencyId);
-            return dependency === undefined ? `'${dependencyId}'` : dependency.key;
-          });
-          return yield* invariant(
-            command,
-            `Card '${card.key}' cannot approve its split until its dependencies are done: ${names.join(", ")}.`,
-          );
-        }
       }
       // The graph is agent-authored and therefore re-validated at the gate
       // (D12) — propose checked it on ingest, but the gate is where a human
@@ -1987,42 +1979,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           },
         });
       }
-      // The parent's crossing into Building is part of the same human act —
-      // its build IS the children (D4). Skipped when it already sits there.
-      const parentAfterMove: BoardCard = {
+      // The parent is untouched but for its timestamp (t3o-28, D1): no stage
+      // move, and `blocked` is left exactly as it stands — approval crosses no
+      // build boundary, so it has no dependency verdict to record.
+      const parentAfterApproval: BoardCard = {
         ...card,
-        stage: buildStage.stageId,
-        ...(card.stage === buildStage.stageId
-          ? {}
-          : {
-              orderKey: boardAppendOrderKey(
-                board.cards
-                  .filter(
-                    (existing) =>
-                      existing.stage === buildStage.stageId && existing.archivedAt === null,
-                  )
-                  .map((existing) => existing.orderKey),
-              ),
-            }),
-        blocked: false,
         updatedAt: command.createdAt,
       };
-      if (card.stage !== buildStage.stageId) {
-        events.push({
-          ...(yield* makeBoardEventBase({
-            cardId: card.id,
-            occurredAt: command.createdAt,
-            commandId: command.commandId,
-          })),
-          type: "board.card-moved",
-          payload: {
-            cardId: card.id,
-            fromStage: card.stage,
-            toStage: buildStage.stageId,
-            card: parentAfterMove,
-          },
-        });
-      }
       events.push({
         ...(yield* makeBoardEventBase({
           cardId: card.id,
@@ -2032,7 +1995,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         type: "board.plans-approved",
         payload: {
           cardId: card.id,
-          card: parentAfterMove,
+          card: parentAfterApproval,
           childCardIds,
           approvedAt: command.createdAt,
         },
