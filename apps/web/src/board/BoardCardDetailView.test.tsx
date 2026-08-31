@@ -12,6 +12,7 @@ import {
   BOARD_SEED_STAGES,
   BoardCardId,
   BoardLabelId,
+  BoardStageId,
   ProjectId,
   ThreadId,
   boardPlanId,
@@ -31,7 +32,7 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-const { BoardCardDetailPanel, initialBoardCardPane, initialBoardCardThreadId } =
+const { BoardCardDetailPanel, boardCardIsDone, initialBoardCardPane, initialBoardCardThreadId } =
   await import("./BoardCardDetailView");
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -518,6 +519,32 @@ describe("initialBoardCardPane", () => {
       (stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.review,
     ).map((stage) => ({ ...stage, role: null }));
     expect(initialBoardCardPane(stages, BOARD_SEED_STAGE_IDS.done)).toBe("thread");
+  });
+});
+
+describe("boardCardIsDone", () => {
+  it("follows the done role, not the column's name or position", () => {
+    expect(boardCardIsDone(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.done)).toBe(true);
+    expect(boardCardIsDone(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.merge)).toBe(false);
+
+    // A renamed done column still wears the wash; a custom column past it,
+    // holding no role, wears none however it is labelled.
+    const shippedId = BoardStageId.make("stage-shipped");
+    const stages = [
+      ...BOARD_SEED_STAGES.map((stage) =>
+        stage.stageId === BOARD_SEED_STAGE_IDS.done ? { ...stage, label: "Complete" } : stage,
+      ),
+      {
+        stageId: shippedId,
+        label: "Shipped",
+        role: null,
+        orderKey: "r",
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    ];
+    expect(boardCardIsDone(stages, BOARD_SEED_STAGE_IDS.done)).toBe(true);
+    expect(boardCardIsDone(stages, shippedId)).toBe(false);
   });
 });
 

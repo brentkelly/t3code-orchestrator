@@ -144,6 +144,19 @@ export function boardCardHasThreadPane(
   return boardStageIndex(stageStateOf(stages), stage) >= 2;
 }
 
+/**
+ * A finished card reads as finished from across the room: the whole sheet
+ * wears a lime wash while the card sits on the done-role stage, and loses it
+ * the moment the card moves back off. Keyed on the ROLE, never the label (D3),
+ * so a renamed or re-ordered done column keeps the wash.
+ */
+export function boardCardIsDone(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stage: BoardStageId,
+): boolean {
+  return boardStageWithRole(stageStateOf(stages), "done")?.stageId === stage;
+}
+
 /** Named for the modal that first rendered it; the shape is shared with the
     create dialog, so it lives in `BoardCardFields`. */
 export type BoardDetailDependency = BoardDependencyEntry;
@@ -1207,6 +1220,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   const [maximised, setMaximised] = useState(false);
   const wide = boardCardHasThreadPane(props.stages, props.detail.card.stage);
+  const done = boardCardIsDone(props.stages, props.detail.card.stage);
   return (
     <Dialog
       open
@@ -1214,7 +1228,12 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
         if (!open) props.onClose();
       }}
     >
-      <BoardCardDetailPopup cardId={props.detail.card.id} maximised={wide && maximised} wide={wide}>
+      <BoardCardDetailPopup
+        cardId={props.detail.card.id}
+        done={done}
+        maximised={wide && maximised}
+        wide={wide}
+      >
         <BoardCardDetailPanel
           {...props}
           maximised={maximised}
@@ -1233,11 +1252,13 @@ export function BoardCardDetailPopup({
   cardId,
   wide = false,
   maximised = false,
+  done = false,
   children,
 }: {
   readonly cardId: BoardCardId | null;
   readonly wide?: boolean;
   readonly maximised?: boolean;
+  readonly done?: boolean;
   readonly children: React.ReactNode;
 }) {
   return (
@@ -1245,6 +1266,7 @@ export function BoardCardDetailPopup({
       aria-labelledby={CARD_TITLE_ID}
       className={cn(
         "overflow-hidden p-0",
+        done && "board-card-done",
         maximised
           ? "fixed inset-0 h-screen max-h-none w-screen max-w-none rounded-none border-0"
           : wide

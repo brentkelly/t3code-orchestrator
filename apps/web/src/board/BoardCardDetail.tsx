@@ -61,6 +61,7 @@ import {
   BoardCardDetailPopup,
   BoardCardDetailView,
   boardCardHasThreadPane,
+  boardCardIsDone,
   type BoardDetailDependency,
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
@@ -71,7 +72,15 @@ import { readLocalApi } from "../localApi";
 
 /** The modal frame, empty, while `board.subscribeCard` opens — same sheet, so
     nothing jumps when the detail lands. */
-function LoadingModal({ onClose, wide }: { readonly onClose: () => void; readonly wide: boolean }) {
+function LoadingModal({
+  onClose,
+  wide,
+  done,
+}: {
+  readonly onClose: () => void;
+  readonly wide: boolean;
+  readonly done: boolean;
+}) {
   return (
     <Dialog
       open
@@ -79,7 +88,7 @@ function LoadingModal({ onClose, wide }: { readonly onClose: () => void; readonl
         if (!open) onClose();
       }}
     >
-      <BoardCardDetailPopup cardId={null} wide={wide}>
+      <BoardCardDetailPopup cardId={null} done={done} wide={wide}>
         <div className="flex items-center gap-2 px-4 py-16">
           <span className="flex-1 text-center text-sm text-muted-foreground">Loading card…</span>
         </div>
@@ -284,6 +293,7 @@ export function BoardCardDetail({
     const shell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
     return (
       <LoadingModal
+        done={shell !== undefined && boardCardIsDone(stages, shell.stage)}
         onClose={onClose}
         wide={shell !== undefined && boardCardHasThreadPane(stages, shell.stage)}
       />
