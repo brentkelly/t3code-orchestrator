@@ -671,3 +671,112 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
     }),
   );
 });
+
+// ── Child create (t3o-25): the drill-in's create preset ─────────────────
+
+it.layer(NodeServices.layer)("sub-board child create (t3o-25)", (it) => {
+  const createCommand = (input?: {
+    readonly stage?: string;
+    readonly parentCardId?: string;
+    readonly dependsOn?: ReadonlyArray<string>;
+    readonly projectId?: string;
+  }): BoardCommand => ({
+    type: "board.card.create",
+    commandId: CommandId.make("cmd-create-child"),
+    cardId: BoardCardId.make("card-new-child"),
+    projectId: ProjectId.make(input?.projectId ?? String(projectId)),
+    title: "Hand-made child",
+    stage: BoardStageId.make(input?.stage ?? "ready"),
+    orderKey: "m",
+    ...(input?.parentCardId === undefined
+      ? {}
+      : { parentCardId: BoardCardId.make(input.parentCardId) }),
+    ...(input?.dependsOn === undefined
+      ? {}
+      : { dependsOn: input.dependsOn.map((id) => BoardCardId.make(id)) }),
+    createdAt: NOW,
+  });
+
+  it.effect("creates a child carrying its parent, exactly as a materialised one does", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        createCommand({ parentCardId: "card-parent" }),
+        makeReadModel(makeBoard()),
+      );
+      const event = events[0]!;
+      assert.ok(event.type === "board.card-created");
+      expect(event.payload.parentCardId).toBe(parentId);
+      expect(event.payload.sourcePlanId).toBeUndefined();
+      expect(event.payload.stage).toBe(BOARD_SEED_STAGE_IDS.ready);
+    }),
+  );
+
+  it.effect("accepts a sibling dependency", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        createCommand({ parentCardId: "card-parent", dependsOn: ["card-sibling"] }),
+        makeReadModel(makeBoard({ extraCards: [makeChild("card-sibling", "ready")] })),
+      );
+      const event = events[0]!;
+      assert.ok(event.type === "board.card-created");
+      expect(event.payload.dependsOn).toEqual([BoardCardId.make("card-sibling")]);
+    }),
+  );
+
+  it.effect("refuses a child created before the materialisation floor", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        createCommand({ parentCardId: "card-parent", stage: "planning" }),
+        makeReadModel(makeBoard()),
+      );
+      assert.include(String(failure), "materialisation floor");
+    }),
+  );
+
+  it.effect("refuses a dependency on a non-sibling — a child depends on siblings only", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        createCommand({ parentCardId: "card-parent", dependsOn: ["card-top"] }),
+        makeReadModel(
+          makeBoard({ extraCards: [makeCard({ id: "card-top", key: "T3-1", stage: "ready" })] }),
+        ),
+      );
+      assert.include(String(failure), "not a sibling");
+    }),
+  );
+
+  it.effect("refuses a missing or archived parent", () =>
+    Effect.gen(function* () {
+      const missing = yield* decideFail(
+        createCommand({ parentCardId: "card-ghost" }),
+        makeReadModel(makeBoard()),
+      );
+      assert.include(String(missing), "does not exist or is archived");
+
+      const archived = yield* decideFail(
+        createCommand({ parentCardId: "card-parent" }),
+        makeReadModel(makeBoard({ parent: { archivedAt: NOW } })),
+      );
+      assert.include(String(archived), "does not exist or is archived");
+    }),
+  );
+
+  it.effect("refuses nesting — a child of a child", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        createCommand({ parentCardId: "card-child" }),
+        makeReadModel(makeBoard({ extraCards: [makeChild("card-child", "ready")] })),
+      );
+      assert.include(String(failure), "do not nest");
+    }),
+  );
+
+  it.effect("still creates a plain top-level card when no parent is preset", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(createCommand(), makeReadModel(makeBoard()));
+      const event = events[0]!;
+      assert.ok(event.type === "board.card-created");
+      expect(event.payload.parentCardId).toBeUndefined();
+    }),
+  );
+});

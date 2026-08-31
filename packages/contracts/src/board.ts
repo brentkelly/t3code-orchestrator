@@ -1806,6 +1806,14 @@ export const BoardCardCreateCommand = Schema.Struct({
   /** Overrides DEFAULT_BOARD_KEY_PREFIX; the t3o-07 settings surface will
       supply the per-project value. */
   keyPrefix: Schema.optional(TrimmedNonEmptyString),
+  /** Create the card as a sub-board child of this parent (t3o-25): the
+      drill-in view's create dialog presets it. The decider requires the
+      parent to be a live top-level card in the same project, restricts the
+      target stage to the materialisation floor onward (the same subset a
+      materialised child may occupy) and requires every dependency to be a
+      sibling — a child may only depend on siblings, exactly as materialised
+      edges are scoped. Absent creates an ordinary top-level card. */
+  parentCardId: Schema.optional(BoardCardId),
   createdAt: IsoDateTime,
 });
 export type BoardCardCreateCommand = typeof BoardCardCreateCommand.Type;
