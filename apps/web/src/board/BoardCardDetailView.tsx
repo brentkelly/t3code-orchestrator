@@ -38,6 +38,7 @@ import {
   sortBoardCardThreadLinks,
   type BoardCardDetail,
   type BoardCardId,
+  type BoardCardShell,
   type BoardCardThreadLink,
   type BoardCardThreadShell,
   type BoardCardThreadState,
@@ -73,7 +74,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useMemo, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Dialog, DialogPopup } from "../components/ui/dialog";
@@ -94,6 +95,7 @@ import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPi
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
+import { deriveBoardPlanRows } from "./boardPlanRows";
 import { boardStageLabel } from "./boardStages";
 import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
 
@@ -122,6 +124,15 @@ const BoardCardThreadPane = lazy(() =>
  */
 const BoardCardPlanPane = lazy(() =>
   import("./BoardCardPlanPane").then((module) => ({ default: module.BoardCardPlanPane })),
+);
+
+/**
+ * The Plans panel (t3o-29): the plan pane a split parent gets once its
+ * children exist. Lazy for the same reason as its siblings — it pulls in the
+ * dependency chart, which no card without a split will ever draw.
+ */
+const BoardPlansPanel = lazy(() =>
+  import("./BoardPlansPanel").then((module) => ({ default: module.BoardPlansPanel })),
 );
 
 /**
@@ -295,8 +306,14 @@ export interface BoardCardDetailViewProps {
   /** Navigate into the parent's sub-board with this card's sheet open. */
   readonly onOpenParentSubBoard?: (() => void) | undefined;
   /** Navigate into THIS card's sub-board with one child's sheet open — the
-      plan pane's child chips (t3o-25, AC4). */
+      plan pane's child chips (t3o-25, AC4) and the Plans panel's rows. */
   readonly onOpenChildInSubBoard?: ((childCardId: string) => void) | undefined;
+  /** Navigate into THIS card's sub-board with no sheet — the Plans panel's
+      Board button (t3o-29). */
+  readonly onOpenOwnSubBoard?: (() => void) | undefined;
+  /** The children's shells, for the Plans panel's live per-child state
+      (t3o-29, D1). Empty on every card without a split. */
+  readonly childShells?: ReadonlyArray<BoardCardShell> | undefined;
 }
 
 export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
@@ -939,12 +956,17 @@ function PaneTabs({
   pane,
   hasReview,
   hasPlan,
+  planCount,
   threadLocked,
   onSelect,
 }: {
   readonly pane: BoardCardPane;
   readonly hasReview: boolean;
   readonly hasPlan: boolean;
+  /** Non-null once the card has materialised children (t3o-29): the plan pill
+      then labels the Plans panel by how many rows it holds — "4 plans", not
+      "Plan" — because the pill names its pane's contents. */
+  readonly planCount: number | null;
   readonly threadLocked: boolean;
   readonly onSelect: (pane: BoardCardPane) => void;
 }) {
@@ -984,8 +1006,8 @@ function PaneTabs({
       ) : null}
       {hasPlan ? (
         <button className={tab("plan")} onClick={() => onSelect("plan")} type="button">
-          <FileIcon className="size-3" />
-          Plan
+          {planCount === null ? <FileIcon className="size-3" /> : <LayersIcon className="size-3" />}
+          {planCount === null ? "Plan" : `${planCount} ${planCount === 1 ? "plan" : "plans"}`}
         </button>
       ) : null}
       <button className={tab("brief")} onClick={() => onSelect("brief")} type="button">
@@ -1027,6 +1049,25 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // fully-wrapped split leaves the parent an ordinary card again.
   const liveChildCount = props.detail.children.filter((child) => child.archivedAt === null).length;
   const threadLocked = isBoardCardThreadLocked(props.stages, card.stage, liveChildCount);
+  // The Plans panel replaces the markdown pane once, and only once, children
+  // exist (t3o-29, D2) — the same predicate that locks the thread, so the
+  // pane's contents and the pane's lock can never disagree. Before approval
+  // the markdown IS the surface: it is what the human reads to decide whether
+  // the split is right, and the Approve split gate lives on it. After, the
+  // markdown is each child's brief, one drill-in away.
+  const isSplitParent = liveChildCount > 0;
+  const planRows = useMemo(
+    () =>
+      isSplitParent
+        ? deriveBoardPlanRows({
+            plans: props.detail.plans,
+            children: props.detail.children,
+            cards: props.childShells ?? [],
+            stages: props.stages,
+          })
+        : null,
+    [isSplitParent, props.detail.plans, props.detail.children, props.childShells, props.stages],
+  );
   const pane = paneChoice ?? initialBoardCardPane(props.stages, card.stage, liveChildCount);
   // The plan is a first-class entity, so its pill only exists once one is
   // written; if the card loses its plans while the pane is open, fall back to
@@ -1093,6 +1134,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             hasReview={hasReview}
             onSelect={setPane}
             pane={activePane}
+            planCount={planRows === null ? null : planRows.rows.length}
             threadLocked={threadLocked}
           />
         ) : null}
@@ -1205,6 +1247,15 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   setSelectedThreadId(threadId);
                   setPane("thread");
                 }}
+              />
+            </Suspense>
+          ) : activePane === "plan" && planRows !== null ? (
+            <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
+              <BoardPlansPanel
+                integrationBranch={card.worktree?.branch ?? null}
+                onOpenChild={props.onOpenChildInSubBoard}
+                onOpenSubBoard={props.onOpenOwnSubBoard}
+                planRows={planRows}
               />
             </Suspense>
           ) : activePane === "plan" ? (

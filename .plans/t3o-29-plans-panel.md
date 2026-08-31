@@ -133,7 +133,10 @@ Three states, all reachable:
   same as a plan that was never approved, and the panel should not quietly
   drop a row and change the numbering under the human.
 
-Only live children count toward the footer and the `N plans` label.
+Only live children count toward the **footer**: it describes the integration
+branch, and an archived or deleted plan card will never land on it. The
+`N plans` **label** counts ROWS, because a pill names its pane's contents —
+approving four plans and archiving one must not silently read as three.
 
 ### D5 — The footer states; it does not act
 

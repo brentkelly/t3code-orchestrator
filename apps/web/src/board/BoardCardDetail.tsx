@@ -262,6 +262,18 @@ export function BoardCardDetail({
     return parent === undefined ? null : { cardId: String(parent.cardId), key: parent.key };
   }, [card, snapshot]);
 
+  // THIS card's children, as shells (t3o-29, D1). The snapshot is unscoped —
+  // a child is filtered out of the root board's COLUMNS by
+  // `filterBoardColumnsByScope`, never out of the shell list — so the parent's
+  // own modal can read every child's live stage, PR and step state without a
+  // second subscription or a byte on the wire. Archived children are not here
+  // (they leave the snapshot, D15); the Plans panel renders those from
+  // `detail.children` instead.
+  const childShells = useMemo(() => {
+    if (card === null) return [];
+    return (snapshot?.cards ?? []).filter((shell) => shell.parentCardId === card.id);
+  }, [card, snapshot]);
+
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
     if (card === null) return [];
     const threads = snapshot?.threads ?? [];
@@ -686,6 +698,8 @@ export function BoardCardDetail({
       onOpenChildInSubBoard={
         onOpenSubBoard === undefined ? undefined : (childId) => onOpenSubBoard(card.id, childId)
       }
+      onOpenOwnSubBoard={onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card.id)}
+      childShells={childShells}
     />
   );
 }
