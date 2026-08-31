@@ -235,11 +235,18 @@ export function composeBoardReviewPhasePrompt(input: {
 export function composeBoardSyncPhasePrompt(input: {
   readonly round: number;
   /** The card's recorded base branch (`worktree.baseRefName`) — the parent's
-      integration branch for a sub-board child. */
-  readonly baseRefName: string;
+      integration branch for a sub-board child. Null when the card carries no
+      worktree slice: the sentence is omitted (the agent resolves the base from
+      its own checkout) rather than interpolating placeholder English into the
+      prompt as if it were a branch name. */
+  readonly baseRefName: string | null;
 }): string {
+  const header =
+    input.baseRefName === null
+      ? `Code review, Sync base step, after round ${input.round}.`
+      : `Code review, Sync base step, after round ${input.round}. This card's base branch is \`${input.baseRefName}\`.`;
   return [
-    `Code review, Sync base step, after round ${input.round}. This card's base branch is \`${input.baseRefName}\`.`,
+    header,
     DEFAULT_BOARD_SYNC_PHASE_PROMPT,
     "To finish this step, complete with a succeeded outcome and a JSON payload { rebasedSha } naming the commit the rebased branch now points at. One review round then runs on the rebased diff before the card can merge — never skip the rebase or complete succeeded without having pushed it.",
   ].join("\n\n");

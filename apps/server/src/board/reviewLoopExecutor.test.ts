@@ -608,6 +608,31 @@ describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
     expect(result.kind === "run" && result.prompt).toContain("`main`");
   });
 
+  it("D5: the user's stop holds the sync step — no unattended rebase past an explicit hold", () => {
+    // Converged at the stopped round over a stale base: the loop holds
+    // (blocked) instead of planning the rebase-and-force-push. The crossing
+    // and Merge-click interceptions keep the merge safe while it waits.
+    const held = plan(cleanRound(1), undefined, overrides({ stopAfterRound: 1 }), null, true);
+    expect(held).toEqual({ kind: "complete", outcome: "blocked" });
+    // A stop for a different round leaves the sync step free to run.
+    const unheld = plan(cleanRound(1), undefined, overrides({ stopAfterRound: 3 }), null, true);
+    expect(unheld.kind === "run" && unheld.stepId).toBe("sync@1");
+    // A fresh base at the stopped round still converges — the stop never held
+    // a passing loop (t3o-22, D5 unchanged).
+    expect(plan(cleanRound(1), undefined, overrides({ stopAfterRound: 1 }))).toEqual({
+      kind: "complete",
+      outcome: "succeeded",
+    });
+  });
+
+  it("omits the base-branch sentence when the card records no base ref", () => {
+    // The fixture card carries no worktree slice: the prompt must not
+    // interpolate placeholder English where a branch name belongs.
+    const result = plan(cleanRound(1), undefined, null, null, true);
+    expect(result.kind === "run" && result.prompt).not.toContain("recorded base branch");
+    expect(result.kind === "run" && result.prompt).not.toContain("This card's base branch is");
+  });
+
   it("a stale base never preempts a round still running its phases", () => {
     const midRound = plan(
       [completion("review@1", reviewPayload([finding("nitpick")]))],

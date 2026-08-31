@@ -224,7 +224,7 @@ export function reviewLoopDecision(input: {
     stepLabel: reviewStepLabel("sync", round),
     prompt: composeBoardSyncPhasePrompt({
       round,
-      baseRefName: input.baseRefName ?? "the card's recorded base branch",
+      baseRefName: input.baseRefName,
     }),
     model: config.model,
     runtimeMode: config.runtimeMode,
@@ -284,8 +284,24 @@ export function reviewLoopDecision(input: {
     // once a gate round starts (re-recording the tip) a base that stays put
     // reads fresh again and this arm converges.
     if (!blocking) {
+      // A sync that already ran owes its gate round UNCONDITIONALLY — the
+      // branch was already rebased and force-pushed, and only the gate round
+      // restores review coverage over it — so the walk continues past every
+      // hold here.
       if (done.get(reviewStepId("sync", round)) !== undefined) continue;
-      if (input.baseStale) return runSync(round);
+      if (input.baseStale) {
+        // A stop the user asked for outranks the sync step exactly as it
+        // outranks rounds that merely remain (t3o-22, D5): an unattended
+        // rebase-and-force-push past an explicit hold is a decision someone
+        // already made against. Holding here is safe — the review→merge
+        // crossing and the Merge click re-measure, so nothing merges
+        // unreviewed while the card waits. Clearing the stop re-enters the
+        // loop and plans the sync.
+        if (overrides?.stopAfterRound === round) {
+          return { kind: "complete", outcome: "blocked" };
+        }
+        return runSync(round);
+      }
       return { kind: "complete", outcome: "succeeded" };
     }
     // The user asked the loop to hold after this round (t3o-22, D5). Checked
