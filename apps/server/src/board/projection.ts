@@ -459,6 +459,11 @@ const BoardCardShellDbRow = Schema.Struct({
       pulling the URL and state onto every card would spend wire bytes the
       column view has nothing to do with. */
   prNumber: Schema.NullOr(Schema.Int),
+  /** The card's sub-board parent (t3o-23), NULL for a top-level card. Like
+      `prNumber` this is a plain column on the aggregate, and like it the SQL
+      snapshot is its SECOND producer — the delta path derives it in JS. Both
+      must carry it or a reload flattens every sub-board onto the root board. */
+  parentCardId: BoardCard.fields.parentCardId,
   /** The review-summary CACHE (t3o-22, D7); NULL for a card with no review
       history. Its `outcome` is provisional — `resolveBoardCardReviewOutcome`
       settles it against the card's live step at assembly. */
@@ -761,6 +766,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           json_extract(pull_request, '$.number'),
           json_extract(pull_request_history, '$[#-1].number')
         ) AS "prNumber",
+        parent_card_id AS "parentCardId",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -800,6 +806,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           json_extract(pull_request, '$.number'),
           json_extract(pull_request_history, '$[#-1].number')
         ) AS "prNumber",
+        parent_card_id AS "parentCardId",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -2663,6 +2670,12 @@ export function withBoardShellCards(
           briefHasImage: row.briefHasImage !== 0,
           planCount: row.planCount,
           prNumber: row.prNumber,
+          // Sub-board membership (t3o-23, D1/D6): the client scopes the root
+          // board and the sub-board off this key, and derives a parent's plan
+          // pips from its children's. Omitted here, every child looked
+          // top-level after a reconnect — on the root board, and no longer
+          // counted against its parent.
+          parentCardId: row.parentCardId,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
           // it here as well would give the snapshot and the `card-review`
@@ -2747,6 +2760,7 @@ export function withBoardArchivedShellCards(
             dependencyCount: row.dependencyCount,
             hasBrief: row.hasBrief !== 0,
             prNumber: row.prNumber,
+            parentCardId: row.parentCardId,
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),

@@ -467,3 +467,75 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
     }),
   );
 });
+
+it.layer(makeTestLayer("t3o-card-meta-4-"))("sub-board parent, snapshot vs delta", (it) => {
+  it.effect("carries a child's parentCardId on the SNAPSHOT, not only on deltas", () =>
+    Effect.gen(function* () {
+      // The same failure the PR-number pair exists to catch, one field over and
+      // with worse consequences: `parentCardId` derived only on the delta path
+      // holds the sub-board together while the client stays connected, then
+      // every reload flattens it — the children reappear on the ROOT board
+      // (`isBoardCardInScope` reads a top-level card), the parent loses its
+      // plan pips and its drill-in door (`deriveBoardCardPlanProgress` skips a
+      // parentless card), and, because the shell's pending-split derivation
+      // keys on those same pips, an already-approved parent goes back to
+      // wearing "Needs approval" with no approval left to give.
+      const engine = yield* seedCard();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      yield* engine.dispatch({
+        type: "board.plans.propose",
+        commandId: CommandId.make("cmd-split-propose"),
+        cardId,
+        plans: [
+          { key: "one", title: "First", summary: "s", dependsOn: [], body: "# One" },
+          { key: "two", title: "Second", summary: "s", dependsOn: ["one"], body: "# Two" },
+        ],
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.plans.approve",
+        commandId: CommandId.make("cmd-split-approve"),
+        cardId,
+        createdAt,
+      });
+
+      const cards = cardsOf(yield* snapshotQuery.getShellSnapshot());
+      const children = cards.filter((entry) => entry.parentCardId === cardId);
+      assert.strictEqual(children.length, 2, "both materialised children name their parent");
+      // Omitted for a top-level card, which is what keeps a split-less board's
+      // shell payload byte-identical to its pre-sub-board self.
+      const parent = cards.find((entry) => entry.cardId === cardId);
+      assert.strictEqual("parentCardId" in (parent ?? {}), false);
+    }),
+  );
+
+  it.effect("carries the parent onto the ARCHIVED shell too", () =>
+    Effect.gen(function* () {
+      // The archive's own query and mapper, the third producer: restoring a
+      // child has to put it back in its sub-board, not on the root board.
+      const engine = yield* seedCard();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const childId = BoardCardId.make("card-archived-child");
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-archived-child-create"),
+        cardId: childId,
+        projectId,
+        title: "A child, archived",
+        orderKey: "z",
+        parentCardId: cardId,
+        stage: BOARD_SEED_STAGE_IDS.ready,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.archive",
+        commandId: CommandId.make("cmd-archive-child"),
+        cardId: childId,
+        createdAt,
+      });
+
+      const archived = cardsOf(yield* snapshotQuery.getArchivedShellSnapshot());
+      assert.strictEqual(archived.find((entry) => entry.cardId === childId)?.parentCardId, cardId);
+    }),
+  );
+});
