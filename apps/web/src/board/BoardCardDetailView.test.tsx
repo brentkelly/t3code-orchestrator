@@ -124,6 +124,7 @@ const baseProps = {
   onRemoveDependency: noop,
   onMoveStage: noop,
   onArchiveToggle: noop,
+  onDelete: noop,
   onLinkThread: noop,
   onUnlinkThread: noop,
 } as const;

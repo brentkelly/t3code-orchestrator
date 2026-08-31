@@ -1,11 +1,18 @@
 /**
- * Branch cleanup when a card reaches Done with a merged pull request.
+ * Branch cleanup for a card that is finished with its branch.
  *
- * Deleting a branch is irreversible, so the whole module is built around one
- * rule: **only ever delete a branch whose work is already somewhere else.**
- * The caller gates on `pullRequest.state === "merged"`, which means the
- * commits live in the base branch — so the branch itself is spent. Nothing
- * here runs for an unmerged or closed PR, or for a card with no PR at all.
+ * Deleting a branch is irreversible, so nothing here decides on its own that a
+ * branch is spent — the CALLER carries that burden, and there are exactly two,
+ * with two different justifications:
+ *
+ * - **Arrival at Done with a merged pull request.** The commits already live in
+ *   the base branch, so the branch holds nothing that exists nowhere else. This
+ *   caller runs for no other card state: not an unmerged or closed PR, not a
+ *   card with no PR at all.
+ * - **Card delete.** No merge is involved and unmerged commits really can be
+ *   lost. What makes it legitimate is that a human confirmed the destruction of
+ *   the card at a dialog that says so; the card is being erased, and a branch
+ *   named after a card that no longer exists has no owner left.
  *
  * Two deletions, with different risk:
  *
@@ -61,14 +68,14 @@ export function parseWorktreeBranches(porcelain: string): ReadonlyArray<string> 
 }
 
 /**
- * Delete a merged card's branch.
+ * Delete a card's branch, local and remote.
  *
  * `cwd` is the repository the deletion runs in — the PROJECT root, not the
  * card's worktree: a worktree checked out on the very branch being deleted is
  * the one place the local delete is guaranteed to be refused, and it may
  * already have been reclaimed.
  */
-export const deleteMergedCardBranch = Effect.fn("deleteMergedCardBranch")(function* (input: {
+export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: {
   /** Taken as a parameter rather than pulled from context so this stays a
       leaf: the supervisor reactor already holds the driver, and requiring it
       here would push `GitVcsDriver` back into the reactor's requirements. */
@@ -94,7 +101,7 @@ export const deleteMergedCardBranch = Effect.fn("deleteMergedCardBranch")(functi
     // and the two cases are indistinguishable afterwards anyway.
     const result = yield* git
       .execute({
-        operation: "board.deleteMergedCardBranch.remote",
+        operation: "board.deleteCardBranch.remote",
         cwd: input.cwd,
         args: ["push", remoteName, "--delete", input.branch],
         allowNonZeroExit: true,
@@ -120,7 +127,7 @@ export const deleteMergedCardBranch = Effect.fn("deleteMergedCardBranch")(functi
   // ── Local ───────────────────────────────────────────────────────────
   const porcelain = yield* git
     .execute({
-      operation: "board.deleteMergedCardBranch.worktrees",
+      operation: "board.deleteCardBranch.worktrees",
       cwd: input.cwd,
       args: ["worktree", "list", "--porcelain"],
       allowNonZeroExit: true,
@@ -141,11 +148,12 @@ export const deleteMergedCardBranch = Effect.fn("deleteMergedCardBranch")(functi
   } else {
     // `-D`, not `-d`: a SQUASH merge (the default strategy) rewrites the work
     // into a single new commit, so git cannot see the branch's own commits as
-    // merged and `-d` would refuse every time. The force is safe precisely
-    // because the caller already proved the PR is merged.
+    // merged and `-d` would refuse every time. The force is the caller's
+    // decision to own — the Done caller has proved the PR is merged, and the
+    // delete caller has a human's explicit confirmation.
     const result = yield* git
       .execute({
-        operation: "board.deleteMergedCardBranch.local",
+        operation: "board.deleteCardBranch.local",
         cwd: input.cwd,
         args: ["branch", "-D", input.branch],
         allowNonZeroExit: true,

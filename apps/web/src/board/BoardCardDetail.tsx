@@ -15,6 +15,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ThreadId,
+  effectiveBoardRuntimeMode,
   isBoardReviewStageExecution,
   activeBoardCardThreadId,
   areBoardStagesAdjacent,
@@ -115,6 +116,7 @@ export function BoardCardDetail({
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
+  const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
   const linkThread = useAtomCommand(boardEnvironment.linkThread);
   const unlinkThread = useAtomCommand(boardEnvironment.unlinkThread);
   // Restart and blank-thread creation report their own failures (D4: log and
@@ -377,6 +379,9 @@ export function BoardCardDetail({
         roundsStarted: reviewRoundsRecorded,
       })
     : undefined;
+  const reviewPhaseRuntimeMode = isBoardReviewStageExecution(reviewExecution)
+    ? effectiveBoardRuntimeMode(reviewExecution.phases.review.runtimeMode, "build")
+    : undefined;
   const stageRestart = resolveBoardThreadStageRestart({
     autoExecute: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
     stageLabel: boardStageLabel(stages, card.stage),
@@ -475,6 +480,20 @@ export function BoardCardDetail({
           }),
         )
       }
+      onDelete={() => {
+        // Closed only once the delete LANDS. The modal is the card's last
+        // remaining surface — its detail subscription resolves nothing after
+        // the purge — so closing on dispatch would hide a refusal behind an
+        // empty board. Staying open on failure leaves the inline feedback where
+        // the user is already looking.
+        void deleteCard({ environmentId, input: { cardId: card.id } }).then((result) => {
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+            return;
+          }
+          onClose();
+        });
+      }}
       onClose={onClose}
       onCreateLabel={(name) => {
         // Create the label, then tag this card with it in one gesture — a
@@ -576,6 +595,7 @@ export function BoardCardDetail({
       projectName={projectName ?? null}
       reviewMaxRounds={reviewMaxRounds}
       reviewOverrides={card.reviewOverrides}
+      reviewPhaseRuntimeMode={reviewPhaseRuntimeMode}
       reviewRoundsStarted={reviewRoundsRecorded}
       reviewStepActive={cardShell?.stepRunning === true || cardShell?.queued === true}
       onSetReviewRounds={(rounds) => patchReviewOverrides({ rounds })}

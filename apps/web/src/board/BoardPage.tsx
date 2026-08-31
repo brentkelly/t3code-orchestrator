@@ -647,6 +647,27 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
     [environmentId, unarchiveCard],
   );
 
+  // Deleting from the archive: the natural place to decide something is never
+  // coming back is the list of things that already went away. The sheet owns
+  // the confirmation; this only dispatches and re-reads the list.
+  const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
+  const handleDeleteCard = useCallback(
+    (cardId: BoardCardId) => {
+      void deleteCard({ environmentId, input: { cardId } }).then((result) => {
+        if (result._tag === "Failure") {
+          if (isAtomCommandInterrupted(result)) return;
+          toastManager.add({
+            title: "Could not delete card",
+            description: describeBoardCommandFailure(result),
+          });
+          return;
+        }
+        refreshBoardArchivedCards(environmentId);
+      });
+    },
+    [deleteCard, environmentId],
+  );
+
   const addProjects = useMemo(
     () =>
       (scopeProjectId === null
@@ -809,6 +830,7 @@ function EnvironmentBoard({ environmentId }: { readonly environmentId: Environme
       ) : null}
       <BoardArchivedCardsSheet
         environmentId={environmentId}
+        onDelete={handleDeleteCard}
         onOpenChange={setArchiveOpen}
         onRestore={handleRestoreCard}
         onSelectCard={(cardId) => {

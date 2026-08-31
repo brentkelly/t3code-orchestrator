@@ -200,10 +200,12 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
               Stream.make(detailItem(initial)),
               Stream.fromQueue(liveBuffer).pipe(
                 Stream.mapEffect(() => readDetail(input.cardId)),
-                // A null mid-stream cannot happen today (cards are never
-                // deleted, only archived, and archived cards still
-                // resolve); dropping the frame keeps the viewer open if
-                // that changes.
+                // A null mid-stream means the card was DELETED under an open
+                // viewer — an archived card still resolves, so nothing else
+                // produces one. The frame is dropped rather than closing the
+                // stream: the client that issued the delete closes its own
+                // modal, and another device's viewer keeps rendering the last
+                // frame, which beats a dialog that vanishes mid-read.
                 Stream.flatMap((detail) =>
                   detail === null ? Stream.empty : Stream.make(detailItem(detail)),
                 ),
@@ -319,8 +321,8 @@ export function boardActorStamp(deps: {
  * - a card's link set changing (`board.card-thread-linked` / `-unlinked`), since
  *   the set membership is what the delta carries.
  *
- * A card archive needs none: `card-removed` already drops the card, and the
- * client drops its thread entries with it.
+ * A card archive or delete needs none: `card-removed` already drops the card,
+ * and the client drops its thread entries with it.
  *
  * Best-effort: every failure yields no delta rather than breaking the shell
  * stream, and the next snapshot repairs the view.

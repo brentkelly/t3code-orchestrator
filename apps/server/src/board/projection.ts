@@ -884,9 +884,14 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
-  // MAX over ALL rows — archived cards keep their numbers reserved, so a
-  // future D15 cleanup that drops archived cards from the read model can
-  // never re-issue a key.
+  // MAX over ALL rows — archived cards keep their numbers reserved, so the
+  // archive can never cause a key to be re-issued.
+  //
+  // UNIONed with `board_card_number_floor` (migration 026) because DELETED
+  // cards have no row to reserve their number: the floor table is the only
+  // remaining record that a deleted card's number was ever issued, and without
+  // it deleting the newest card in a project would hand its key to the next
+  // card created there.
   const listNextCardNumberRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: NextCardNumberDbRow,
@@ -894,8 +899,71 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       SELECT
         project_id AS "projectId",
         MAX(card_number) AS "maxCardNumber"
-      FROM board_cards
+      FROM (
+        SELECT project_id, card_number FROM board_cards
+        UNION ALL
+        SELECT project_id, max_card_number AS card_number FROM board_card_number_floor
+      )
       GROUP BY project_id
+    `,
+  });
+
+  // ── Purge (card delete) ──────────────────────────────────────────────
+  // One statement per table keyed on the card. There are no foreign keys
+  // between the `board_*` tables, so nothing cascades and every table a card
+  // writes to has to be named here — a table added later without a line here
+  // leaks a row per deleted card.
+
+  const deleteBoardCardRow = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_cards
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  const deleteBoardCardBodiesForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_card_bodies
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  const deleteBoardCardActivityForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_card_activity
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  const deleteBoardCardStepsForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_card_steps
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  const deleteBoardCardStepStateForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_card_step_state
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  /** Record a deleted card's number as permanently spent (migration 026), so
+      the key it held can never be handed to another card. Monotonic: deleting
+      an OLD card must not lower a floor a newer delete already raised. */
+  const raiseBoardCardNumberFloor = SqlSchema.void({
+    Request: Schema.Struct({ projectId: ProjectId, cardNumber: BoardCard.fields.cardNumber }),
+    execute: (row) => sql`
+      INSERT INTO board_card_number_floor (project_id, max_card_number)
+      VALUES (${row.projectId}, ${row.cardNumber})
+      ON CONFLICT (project_id)
+      DO UPDATE SET max_card_number = MAX(max_card_number, excluded.max_card_number)
     `,
   });
 
@@ -1546,6 +1614,12 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardThreadLinkRowsForCard,
     findBoardCardBodyRow,
     listNextCardNumberRows,
+    deleteBoardCardRow,
+    deleteBoardCardBodiesForCard,
+    deleteBoardCardActivityForCard,
+    deleteBoardCardStepsForCard,
+    deleteBoardCardStepStateForCard,
+    raiseBoardCardNumberFloor,
     deleteBoardCardThreadLinksForCard,
     insertBoardCardThreadLinkRow,
     upsertBoardCardBodyRow,
@@ -1594,6 +1668,32 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
     queries
       .upsertBoardCardRow(boardCardToRow(card))
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.upsert:query")));
+
+  /**
+   * Erase a card from every board table (card delete).
+   *
+   * Sequenced so that a failure part-way through can only ever leave MORE
+   * data than intended, never a re-issuable key: the number floor goes in
+   * first, then the card row, then the satellites. A leftover satellite row is
+   * invisible (nothing joins to a card that is gone, and the boot sweep
+   * collects orphaned todo rows); a re-issued key is a permanent collision.
+   */
+  const purgeCard = (card: BoardCard) =>
+    Effect.gen(function* () {
+      yield* queries.raiseBoardCardNumberFloor({
+        projectId: card.projectId,
+        cardNumber: card.cardNumber,
+      });
+      yield* queries.deleteBoardCardRow(card.id);
+      yield* queries.deleteBoardCardBodiesForCard(card.id);
+      yield* queries.deleteBoardCardThreadLinksForCard(card.id);
+      yield* queries.deleteBoardCardLabelsForCard(card.id);
+      yield* queries.deleteBoardCardActivityForCard(card.id);
+      yield* queries.deleteBoardCardStepsForCard(card.id);
+      yield* queries.deleteBoardCardStepStateForCard(card.id);
+      yield* queries.deleteBoardThreadTodoRowsForCard(card.id);
+      yield* queries.deleteBoardPlansForCard(card.id);
+    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.purge:query")));
 
   // Wholesale rewrite of a card's link rows from the event's card state:
   // idempotent, and structurally incapable of drifting from the read model.
@@ -1963,6 +2063,13 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
           payload: {},
           threadId: null,
         });
+        return;
+
+      case "board.card-deleted":
+        // A purge, not a state change: every table keyed on the card is
+        // emptied and NO activity is recorded — the rail is per-card, and the
+        // card it would hang off no longer exists.
+        yield* purgeCard(event.payload.card);
         return;
 
       case "board.card-worktree-failed":

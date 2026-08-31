@@ -30,6 +30,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
+  type BoardCardStepState,
   DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
   type BoardCardPullRequest,
   type BoardStageExecutionMerge,
@@ -482,7 +483,7 @@ export function withGovernor(
     const removedWorktrees = yield* Ref.make<ReadonlyArray<string>>([]);
     const gitStub = {
       // Branch cleanup's first call. Its absence used to make
-      // `deleteMergedCardBranch` throw straight into the reactor's catch-all,
+      // `deleteCardBranch` throw straight into the reactor's catch-all,
       // so the cleanup at Done silently did nothing in every test that reached
       // it — which is why nothing in these suites asserted that it fires.
       resolvePrimaryRemoteName: () => Effect.succeed("origin"),
@@ -661,6 +662,28 @@ export const cardArchived = (card: BoardCard, sequence: number): OrchestrationEv
     type: "board.card-archived",
     sequence,
     payload: { cardId: card.id, archivedAt: NOW, card },
+  }) as unknown as OrchestrationEvent;
+
+/** A card DELETE. Unlike archive, the reactor cannot re-read anything — the
+    card is gone by the time this arrives — so the payload has to carry the
+    step state whose slot is being released and the threads being deleted. The
+    caller passes the step state it wants released; `null` is a card with no
+    live step. */
+export const cardDeleted = (
+  card: BoardCard,
+  sequence: number,
+  stepState: BoardCardStepState | null,
+): OrchestrationEvent =>
+  ({
+    type: "board.card-deleted",
+    sequence,
+    payload: {
+      cardId: card.id,
+      deletedAt: NOW,
+      card,
+      threadIds: card.threadLinks.map((link) => link.threadId),
+      stepState,
+    },
   }) as unknown as OrchestrationEvent;
 
 export const turnCompleted = (threadId: ThreadId): ProviderRuntimeEvent =>

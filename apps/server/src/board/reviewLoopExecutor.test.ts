@@ -323,6 +323,41 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(triage2.model).toEqual(triageModel);
   });
 
+  it("a round override's access level applies to that round's review alone", () => {
+    const opus: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-opus-5",
+    };
+    const exec = reviewExec({ rounds: 5 });
+    const withOverride = overrides({
+      roundModels: { "2": { ...opus, runtimeMode: "full-access" } },
+    });
+
+    // Round 1 has no override and runs on the phase's default (`auto`).
+    const review1 = plan([], exec, withOverride);
+    expect(review1.kind).toBe("run");
+    if (review1.kind !== "run") return;
+    expect(review1.runtimeMode).toBe("auto");
+
+    // Round 2's review takes the override's level, and its model without the
+    // level tagging along.
+    const review2 = plan(cappedRound(1), exec, withOverride);
+    expect(review2.kind).toBe("run");
+    if (review2.kind !== "run") return;
+    expect(review2.runtimeMode).toBe("full-access");
+    expect(review2.model).toEqual(opus);
+
+    // Round 2's triage keeps the phase's own level.
+    const triage2 = plan(
+      [...cappedRound(1), completion("review@2", reviewPayload([finding("critical", "f2")]))],
+      exec,
+      withOverride,
+    );
+    expect(triage2.kind).toBe("run");
+    if (triage2.kind !== "run") return;
+    expect(triage2.runtimeMode).toBe("auto");
+  });
+
   it("t3o-22 D4: an un-overridden round inherits the stage's review model", () => {
     const exec = reviewExec({ rounds: 5 });
     const first = plan(

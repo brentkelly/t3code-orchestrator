@@ -61,6 +61,7 @@ import {
   createBoardCard,
   createBoardLabel,
   createBoardStage,
+  deleteBoardCard,
   deleteBoardLabel,
   deleteBoardStage,
   linkBoardCardThread,
@@ -80,6 +81,7 @@ import {
   type CreateBoardCardInput,
   type CreateBoardLabelInput,
   type CreateBoardStageInput,
+  type DeleteBoardCardInput,
   type DeleteBoardLabelInput,
   type DeleteBoardStageInput,
   type LinkBoardCardThreadInput,
@@ -107,6 +109,7 @@ export type {
   CreateBoardCardInput,
   CreateBoardLabelInput,
   CreateBoardStageInput,
+  DeleteBoardCardInput,
   DeleteBoardLabelInput,
   DeleteBoardStageInput,
   LinkBoardCardThreadInput,
@@ -823,6 +826,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
     unarchiveCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:unarchive-card",
       execute: (input: UnarchiveBoardCardInput) => unarchiveBoardCard(input),
+    }),
+    /** Irreversible: the card, its threads, its worktree and its branches all
+        go. Only ever wire this to a confirmed user action. */
+    deleteCard: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:delete-card",
+      execute: (input: DeleteBoardCardInput) => deleteBoardCard(input),
     }),
     createLabel: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:create-label",

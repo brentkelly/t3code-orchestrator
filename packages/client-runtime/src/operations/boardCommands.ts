@@ -49,6 +49,7 @@ export type LinkBoardCardThreadInput = CommandInput<"board.card.link-thread">;
 export type UnlinkBoardCardThreadInput = CommandInput<"board.card.unlink-thread">;
 export type ArchiveBoardCardInput = CommandInput<"board.card.archive">;
 export type UnarchiveBoardCardInput = CommandInput<"board.card.unarchive">;
+export type DeleteBoardCardInput = CommandInput<"board.card.delete">;
 export type CreateBoardLabelInput = CommandInput<"board.label.create">;
 export type UpdateBoardLabelInput = CommandInput<"board.label.update">;
 export type DeleteBoardLabelInput = CommandInput<"board.label.delete">;
@@ -187,6 +188,20 @@ export const unarchiveBoardCard: (input: UnarchiveBoardCardInput) => CommandEffe
   return yield* dispatch({
     ...input,
     type: "board.card.unarchive",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** Purge a card — irreversible, and the caller is expected to have confirmed
+    it with the user first (the server does not, and cannot, ask). */
+export const deleteBoardCard: (input: DeleteBoardCardInput) => CommandEffect = Effect.fn(
+  "BoardCommands.deleteBoardCard",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.delete",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

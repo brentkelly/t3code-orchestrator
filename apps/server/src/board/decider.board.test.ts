@@ -71,6 +71,33 @@ function makeCard(
   };
 }
 
+/** A running step state for a card — the shape the delete payload freezes so
+    the reactor can release the concurrency slot after the card is gone. */
+function makeStepStateFor(cardId: string): BoardCardStepState {
+  return {
+    cardId: BoardCardId.make(cardId),
+    stepId: "s1",
+    stepLabel: "Build",
+    stageLabel: "Building",
+    attempt: 1,
+    stallCount: 0,
+    lastNudgeAt: null,
+    prompt: "do it",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5.4",
+    mode: "build",
+    runtimeMode: "auto",
+    humanInLoop: false,
+    maxAttempts: 3,
+    timeoutMs: 1000,
+    threadId: ThreadId.make("thread-live"),
+    status: "running",
+    slotHeld: true,
+    startedAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
 function makeThread(input: {
   readonly id: string;
   readonly deletedAt?: string | null;
@@ -137,14 +164,15 @@ function makeReadModel(input: {
   };
 }
 
-/** Every event a command decides. Archive and unarchive decide several —
-    the card's own, plus a `blocked` re-flag per affected dependent (t3o-13,
-    D5) — while every other command decides exactly one. */
+/** Every event a command decides. Archive, unarchive and delete decide
+    several — the card's own, plus one per affected dependent (a `blocked`
+    re-flag for archive/unarchive per t3o-13 D5, an edge rewrite for delete) —
+    while every other command decides exactly one. */
 const decideEvents = (command: BoardCommand, readModel: OrchestrationReadModel) =>
   decideBoardCommand({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
 
-/** The first (and, for every command but archive/unarchive, only) decided
-    event. */
+/** The first (and, for every command but archive/unarchive/delete, only)
+    decided event. */
 const decide = (command: BoardCommand, readModel: OrchestrationReadModel) =>
   decideEvents(command, readModel).pipe(Effect.map((events) => events[0]!));
 
@@ -971,6 +999,133 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  // ── Delete ───────────────────────────────────────────────────────────
+
+  it.effect("deletes a card, freezing what the follow-through needs into the payload", () =>
+    Effect.gen(function* () {
+      const card = makeCard({
+        id: "card-a",
+        stage: "building",
+        threadLinks: [
+          {
+            threadId: ThreadId.make("thread-live"),
+            role: "build",
+            linkedAt: NOW,
+            tombstonedAt: null,
+          },
+          // A tombstoned link is still listed: the thread is already gone, so
+          // deleting it again is a no-op, and excluding it would mean the
+          // reactor's rule had an exception in it.
+          {
+            threadId: ThreadId.make("thread-dead"),
+            role: "plan",
+            linkedAt: NOW,
+            tombstonedAt: NOW,
+          },
+        ],
+      });
+      const stepState: BoardCardStepState = makeStepStateFor("card-a");
+      const events = yield* decideEvents(
+        {
+          type: "board.card.delete",
+          commandId: CommandId.make("cmd-delete"),
+          cardId: BoardCardId.make("card-a"),
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: { cards: [card], stepStates: [stepState], nextCardNumberByProject: {} },
+        }),
+      );
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["board.card-deleted"],
+      );
+      const event = events[0]!;
+      if (event.type !== "board.card-deleted") return;
+      assert.strictEqual(event.payload.deletedAt, NOW);
+      assert.deepStrictEqual(event.payload.card, card);
+      assert.deepStrictEqual(event.payload.threadIds, [
+        ThreadId.make("thread-live"),
+        ThreadId.make("thread-dead"),
+      ]);
+      // The slot the step holds is in-memory on the server; nothing else could
+      // recover it once the step-state row goes with the card.
+      assert.deepStrictEqual(event.payload.stepState, stepState);
+    }),
+  );
+
+  it.effect("deletes an ARCHIVED card — the archive is where 'never coming back' is decided", () =>
+    Effect.gen(function* () {
+      const archived = makeCard({ id: "card-a", archivedAt: NOW });
+      const event = yield* decide(
+        {
+          type: "board.card.delete",
+          commandId: CommandId.make("cmd-delete"),
+          cardId: BoardCardId.make("card-a"),
+          createdAt: NOW,
+        },
+        makeReadModel({ board: { cards: [archived], nextCardNumberByProject: {} } }),
+      );
+      assert.strictEqual(event.type, "board.card-deleted");
+    }),
+  );
+
+  it.effect("strips the deleted card from every dependent's dependsOn and re-derives blocked", () =>
+    Effect.gen(function* () {
+      // `card-dep` is in building — at or after the build role, so its unmet
+      // dependency really is blocking it. Deleting `card-a` is the ONE case
+      // where the edge cannot survive: an unresolvable id counts as unmet
+      // forever, so leaving it would block the dependent with no card left to
+      // unblock it.
+      const target = makeCard({ id: "card-a" });
+      const dependent = makeCard({
+        id: "card-dep",
+        stage: "building",
+        dependsOn: [BoardCardId.make("card-a"), BoardCardId.make("card-other")],
+        blocked: true,
+      });
+      const other = makeCard({ id: "card-other", stage: BOARD_SEED_STAGE_IDS.done });
+      const events = yield* decideEvents(
+        {
+          type: "board.card.delete",
+          commandId: CommandId.make("cmd-delete"),
+          cardId: BoardCardId.make("card-a"),
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: { cards: [target, dependent, other], nextCardNumberByProject: {} },
+        }),
+      );
+      // The dependent's rewrite lands BEFORE the removal, so a projector
+      // applying the list in order never upserts a card computed against a
+      // board it has not caught up with.
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["board.card-updated", "board.card-deleted"],
+      );
+      const updated = events[0]!;
+      if (updated.type !== "board.card-updated") return;
+      assert.deepStrictEqual(updated.payload.card.dependsOn, [BoardCardId.make("card-other")]);
+      // Its only remaining dependency is done, so it unblocks in the same commit.
+      assert.strictEqual(updated.payload.card.blocked, false);
+    }),
+  );
+
+  it.effect("refuses deleting a card that does not exist", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        {
+          type: "board.card.delete",
+          commandId: CommandId.make("cmd-delete"),
+          cardId: BoardCardId.make("card-missing"),
+          createdAt: NOW,
+        },
+        makeReadModel({ board: { cards: [], nextCardNumberByProject: {} } }),
+      );
+      assert.include(String(failure), "does not exist");
+    }),
+  );
+
   // ── Archive / unarchive ──────────────────────────────────────────────
 
   it.effect("archives and unarchives, rejecting the redundant direction each time", () =>
@@ -1373,6 +1528,14 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.card.unarchive",
           commandId: CommandId.make("cmd-unarchive"),
           cardId: BoardCardId.make("card-archived"),
+          createdAt: NOW,
+        },
+        // Delete removes the card and rewrites the edges pointing at it —
+        // `board.card-updated` on the dependents, never a move.
+        "board.card.delete": {
+          type: "board.card.delete",
+          commandId: CommandId.make("cmd-delete"),
+          cardId: BoardCardId.make("card-ready"),
           createdAt: NOW,
         },
         // Label commands aggregate on the label and never move a card.

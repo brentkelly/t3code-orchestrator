@@ -10,7 +10,9 @@
  *
  * Archived cards stay in the read model with `archivedAt` set — the shell
  * drops them (`card-removed`), but the model keeps them so unarchive can
- * restore the card on a from-empty replay.
+ * restore the card on a from-empty replay. DELETED cards leave the model as
+ * well, along with every slice keyed on them; the counter they allocated their
+ * key from is the one thing that stays, so a deleted key is never re-issued.
  */
 import {
   BOARD_CARD_BRIEF_BODY_KIND,
@@ -18,6 +20,7 @@ import {
   boardCardCreatedDependsOn,
   boardCardCreatedLabels,
   BoardCardCreatedPayload,
+  BoardCardDeletedPayload,
   BoardCardMovedPayload,
   BoardCardReorderedPayload,
   BoardCardStepCompletedPayload,
@@ -56,6 +59,7 @@ import {
   EMPTY_BOARD_STATE,
   isBoardEvent,
   type BoardCard,
+  type BoardCardId,
   type BoardCardStepState,
   type BoardLabel,
   type BoardPlan,
@@ -88,6 +92,7 @@ const decodeBoardCardThreadUnlinkedPayload = Schema.decodeUnknownEffect(
   BoardCardThreadUnlinkedPayload,
 );
 const decodeBoardCardArchivedPayload = Schema.decodeUnknownEffect(BoardCardArchivedPayload);
+const decodeBoardCardDeletedPayload = Schema.decodeUnknownEffect(BoardCardDeletedPayload);
 const decodeBoardCardUnarchivedPayload = Schema.decodeUnknownEffect(BoardCardUnarchivedPayload);
 const decodeBoardLabelCreatedPayload = Schema.decodeUnknownEffect(BoardLabelCreatedPayload);
 const decodeBoardLabelUpdatedPayload = Schema.decodeUnknownEffect(BoardLabelUpdatedPayload);
@@ -198,6 +203,49 @@ function upsertCard(model: OrchestrationReadModel, card: BoardCard): Orchestrati
       : [...board.cards, card]
   ).toSorted(compareBoardCards);
   return { ...model, board: { ...board, cards } };
+}
+
+/**
+ * Drop a card and every read-model slice keyed on it (t3o card delete).
+ *
+ * `nextCardNumberByProject` is pointedly NOT touched. It is a high-water mark,
+ * not a count: rolling it back would re-issue the deleted card's key to the
+ * next card created in that project, and two cards sharing a key breaks every
+ * human reference to either. Deleting the newest card in a project therefore
+ * leaves a gap in the key sequence, which is the correct trade.
+ */
+function removeCard(model: OrchestrationReadModel, cardId: BoardCardId): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  // The three per-card slices are stripped from the base and RE-ADDED only when
+  // non-empty, so the result matches `loadBoardState`'s absent-vs-empty rule
+  // EXACTLY on both edges:
+  //  - an absent slice stays absent (rehydration omits the key), and
+  //  - a slice this delete empties is OMITTED, not left present as `[]`
+  //    (rehydration omits an empty table too — `plans.length > 0 ? … : {}`).
+  // Either mismatch is a replay-equals-rehydration divergence deepStrictEqual
+  // catches: deleting the last card holding a plan/step would otherwise leave
+  // replay with `plans: []` and rehydration with no key. Destructuring the keys
+  // out of `rest` is load-bearing — spreading an empty `readd()` over a base
+  // that still carried the key would NOT remove it.
+  const { stepCompletions, stepStates, plans, ...rest } = board;
+  const readd = <T extends { readonly cardId: BoardCardId }>(
+    key: "stepCompletions" | "stepStates" | "plans",
+    slice: ReadonlyArray<T> | undefined,
+  ) => {
+    if (slice === undefined) return {};
+    const kept = slice.filter((entry) => entry.cardId !== cardId);
+    return kept.length > 0 ? { [key]: kept } : {};
+  };
+  return {
+    ...model,
+    board: {
+      ...rest,
+      ...readd("stepCompletions", stepCompletions),
+      ...readd("stepStates", stepStates),
+      ...readd("plans", plans),
+      cards: board.cards.filter((card) => card.id !== cardId),
+    },
+  };
 }
 
 /** Upsert a label into the read model's catalogue, kept in canonical
@@ -421,6 +469,15 @@ export function projectBoardEvent(
       return decodeBoardCardUnarchivedPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-deleted":
+      // The opposite of archive: the card leaves the model for good, so a
+      // from-empty replay of a log containing this event reaches a state with
+      // no trace of the card — matching the tables the projection just purged.
+      return decodeBoardCardDeletedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => removeCard(model, payload.cardId)),
       );
 
     case "board.label-created":
@@ -671,7 +728,11 @@ export function boardShellStreamEvent(
       });
 
     case "board.card-archived":
-      // Archiving removes the card from the live board every client renders.
+    case "board.card-deleted":
+      // Both take the card off the live board every client renders. The shell
+      // has no reason to tell them apart — a client that cannot see the card
+      // renders the same nothing either way — and the archive page, which does
+      // care, is a separate read that only one of them appears in.
       return Option.some({
         kind: "card-removed",
         sequence: event.sequence,

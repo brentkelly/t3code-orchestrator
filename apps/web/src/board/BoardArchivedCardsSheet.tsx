@@ -12,8 +12,8 @@
  */
 import { type BoardCardId, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { ArchiveRestoreIcon } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { ArchiveRestoreIcon, Trash2Icon } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 
@@ -30,6 +30,7 @@ import { orchestrationEnvironment } from "../state/orchestration";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { boardArchivedCardsInScope } from "./boardArchivedCards";
+import { BoardDeleteConfirmDialog } from "./BoardDeleteConfirmDialog";
 import { boardStageLabel } from "./boardStages";
 
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
@@ -55,15 +56,24 @@ export function refreshBoardArchivedCards(environmentId: EnvironmentId): void {
  */
 function ArchivedCardList({
   environmentId,
+  onDelete,
   onRestore,
   onSelectCard,
   scopeProjectId,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly onDelete: (cardId: BoardCardId) => void;
   readonly onRestore: (cardId: BoardCardId) => void;
   readonly onSelectCard: (cardId: BoardCardId) => void;
   readonly scopeProjectId: ProjectId | null;
 }) {
+  /** The card the confirmation is currently about; null when closed. Held as
+      the card rather than a boolean so the dialog can name it, and cleared on
+      close so a re-open cannot inherit the previous row. */
+  const [pendingDelete, setPendingDelete] = useState<{
+    readonly cardId: BoardCardId;
+    readonly key: string;
+  } | null>(null);
   useEffect(() => {
     refreshBoardArchivedCards(environmentId);
   }, [environmentId]);
@@ -89,48 +99,73 @@ function ArchivedCardList({
     return <p className="text-[13px] text-muted-foreground">No archived cards.</p>;
   }
   return (
-    <ul className="flex flex-col gap-1.5">
-      {cards.map((card) => (
-        <li
-          className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
-          key={card.cardId}
-        >
-          <button
-            className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
-            onClick={() => onSelectCard(card.cardId)}
-            type="button"
+    <>
+      <ul className="flex flex-col gap-1.5">
+        {cards.map((card) => (
+          <li
+            className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
+            key={card.cardId}
           >
-            <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
-              {card.key}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
-              {card.title}
-            </span>
-            <span className="shrink-0 text-[11px] text-muted-foreground">
-              {boardStageLabel(snapshot?.boardStages ?? [], card.stage)}
-            </span>
-            {card.archivedAt === null ? null : (
-              <span className="shrink-0 text-[11px] text-muted-foreground">
-                {formatRelativeTimeLabel(card.archivedAt)}
+            <button
+              className="flex min-w-0 flex-1 items-center gap-[9px] text-left"
+              onClick={() => onSelectCard(card.cardId)}
+              type="button"
+            >
+              <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+                {card.key}
               </span>
-            )}
-          </button>
-          <Button
-            onClick={() => onRestore(card.cardId)}
-            size="icon-xs"
-            title="Restore card"
-            variant="ghost"
-          >
-            <ArchiveRestoreIcon />
-          </Button>
-        </li>
-      ))}
-    </ul>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+                {card.title}
+              </span>
+              <span className="shrink-0 text-[11px] text-muted-foreground">
+                {boardStageLabel(snapshot?.boardStages ?? [], card.stage)}
+              </span>
+              {card.archivedAt === null ? null : (
+                <span className="shrink-0 text-[11px] text-muted-foreground">
+                  {formatRelativeTimeLabel(card.archivedAt)}
+                </span>
+              )}
+            </button>
+            <Button
+              onClick={() => onRestore(card.cardId)}
+              size="icon-xs"
+              title="Restore card"
+              variant="ghost"
+            >
+              <ArchiveRestoreIcon />
+            </Button>
+            <Button
+              onClick={() => setPendingDelete({ cardId: card.cardId, key: card.key })}
+              size="icon-xs"
+              title="Delete card permanently"
+              variant="ghost"
+            >
+              <Trash2Icon />
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {/* The archive snapshot is the bounded card shell, which carries neither
+          a thread count nor a branch, so the dialog is told nothing rather than
+          told zero — its copy stays general in that case. */}
+      <BoardDeleteConfirmDialog
+        cardKey={pendingDelete?.key ?? ""}
+        dependents={[]}
+        onConfirm={() => {
+          if (pendingDelete !== null) onDelete(pendingDelete.cardId);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        open={pendingDelete !== null}
+      />
+    </>
   );
 }
 
 export function BoardArchivedCardsSheet({
   environmentId,
+  onDelete,
   onOpenChange,
   onRestore,
   onSelectCard,
@@ -138,6 +173,8 @@ export function BoardArchivedCardsSheet({
   scopeProjectId,
 }: {
   readonly environmentId: EnvironmentId;
+  /** Purge the card outright — always behind this sheet's own confirmation. */
+  readonly onDelete: (cardId: BoardCardId) => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly onRestore: (cardId: BoardCardId) => void;
   readonly onSelectCard: (cardId: BoardCardId) => void;
@@ -153,7 +190,8 @@ export function BoardArchivedCardsSheet({
           <SheetTitle>Archived cards</SheetTitle>
           <SheetDescription>
             Restoring a card returns it to the stage it was archived from. Cards that depend on it
-            are blocked again if it is not done.
+            are blocked again if it is not done. Deleting one erases it, its threads and its
+            branches for good.
           </SheetDescription>
         </SheetHeader>
         {/* No `open` gate here: the portal renders while `mounted`, which is
@@ -163,6 +201,7 @@ export function BoardArchivedCardsSheet({
         <SheetPanel>
           <ArchivedCardList
             environmentId={environmentId}
+            onDelete={onDelete}
             onRestore={onRestore}
             onSelectCard={onSelectCard}
             scopeProjectId={scopeProjectId}
