@@ -275,6 +275,74 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
     }),
   );
 
+  it.effect("backward moves are always free for a pending split, even from Building", () =>
+    Effect.gen(function* () {
+      // A pending-split card sitting AT the build stage (approve allows that
+      // position) retreats to Ready — a backward move above the plan stage,
+      // which AC2 promises stays open.
+      const events = yield* decideEvents(
+        moveCommand({ cardId: "card-parent", toStage: "ready" }),
+        makeReadModel(makeBoard({ parent: { stage: "building" } })),
+      );
+      assert.strictEqual(events[0]!.type, "board.card-moved");
+    }),
+  );
+
+  it.effect("a plan stage reordered after Building never opens the build stage", () =>
+    Effect.gen(function* () {
+      // Stage reordering only pins build<review and done-last, so the plan
+      // stage can legally sit after Building. The gate's ceiling clamps below
+      // the build role, so the pending card still cannot enter it.
+      const stages = [
+        {
+          stageId: BoardStageId.make("backlog"),
+          label: "Backlog",
+          role: null,
+          orderKey: "b",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          stageId: BoardStageId.make("building"),
+          label: "Building",
+          role: "build" as const,
+          orderKey: "d",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          stageId: BoardStageId.make("planning"),
+          label: "Planning",
+          role: "plan" as const,
+          orderKey: "f",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          stageId: BoardStageId.make("review"),
+          label: "Review",
+          role: "review" as const,
+          orderKey: "h",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          stageId: BoardStageId.make("done"),
+          label: "Done",
+          role: "done" as const,
+          orderKey: "j",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ];
+      const failure = yield* decideFail(
+        moveCommand({ cardId: "card-parent", toStage: "building" }),
+        makeReadModel(makeBoard({ parent: { stage: "backlog" }, stages })),
+      );
+      assert.include(String(failure), "unapproved plans");
+    }),
+  );
+
   it.effect("a single-plan card is not a pending split and advances freely", () =>
     Effect.gen(function* () {
       const events = yield* decideEvents(

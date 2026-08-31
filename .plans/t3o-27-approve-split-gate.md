@@ -18,21 +18,33 @@ surfaces the approval where the human already is and makes the gate real.
 ### D1 — "Pending split" is the read-model truth
 
 A card is **pending a split** when it is top-level (`parentCardId === null`),
-has no children yet, carries **≥2 proposed plans**, and still sits at or before
-the build-role stage. A single plan is never a split — it is the build brief,
-and most cards never split. Plan metadata lives in the read model (D8), so this
-is a pure decider predicate (`boardCardPendingSplit`) with a zero-payload
-client-side shell counterpart (`boardCardShellPendingSplit`, derived from
-`planCount` / `planTotal` / `parentCardId`, exactly like the D6 pips).
+has no **live** (non-archived) children, carries **≥2 proposed plans**, still
+sits at or before the build-role stage, and the board has a materialisation
+floor (a floor-less board cannot split, so nothing on it is ever pinned toward
+an approval the decider would refuse). Live-children semantics match the
+re-approval guard: a first round whose children all archived is gone from the
+board, so the card pends its second-round split again. A single plan is never
+a split — it is the build brief, and most cards never split. Plan metadata
+lives in the read model (D8), so this is a pure decider predicate
+(`boardCardPendingSplit`) with a zero-payload client-side shell counterpart
+(`boardCardShellPendingSplit`, derived from `planCount` / `planTotal` /
+`parentCardId`, exactly like the D6 pips — and agreeing with it by
+construction, since `planTotal` is itself live-children-only).
 
-### D2 — Block ALL forward advancement while pending
+### D2 — Block forward advancement past planning while pending
 
 Unlike dependency blocking (which only guards the build boundary), a pending
-split holds the card wherever it sits: the decider refuses **every** forward
-`board.card.move` — planning→ready, →building, all of it — until the split is
-approved or the human re-proposes a single plan. `override` (a drag) does not
-bypass it; the gate is a truth about the card, not a convenience. Backward
-moves and reorders stay free — that is how you get back to fix the plans.
+split cannot advance past the plan-role stage: the decider refuses every
+**forward** `board.card.move` whose target lies beyond it — planning→ready,
+→building, all of it — until the split is approved or the human re-proposes a
+single plan. `override` (a drag) does not bypass it; the gate is a truth about
+the card, not a convenience. The span up to and including the plan stage stays
+reachable (a card retreated to Sprint can come home to Planning), and
+**backward moves and reorders are always free** — that is how you get back to
+fix the plans. The ceiling is clamped below the build role, so a plan stage
+reordered after Building (legal — only build<review and done-last are spine
+invariants) never opens the build stage; a board with no plan-role stage pins
+the card where it sits.
 
 ### D3 — The modal replaces its forward button with "Approve split"
 

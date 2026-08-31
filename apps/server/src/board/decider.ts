@@ -758,25 +758,39 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // cards) or the human re-proposes down to a single plan. Realistically
       // the work cannot proceed until the split is resolved, so — unlike
       // dependency blocking, which only guards the build boundary — this
-      // holds the card at planning. The whole span up to and including the
-      // plan stage stays open in BOTH directions: a card retreated to Sprint
-      // must be able to come back to Planning to finish planning, and
-      // backward moves are how you get back to fix the plans. Drag sends
-      // `override`, which does NOT bypass this: the gate is a truth about the
-      // card, and the modal replaces its forward button with "Approve split"
-      // to match. A board with no plan-role stage falls back to pinning the
-      // card where it sits (no planning home exists to return to).
+      // holds the card at planning. Backward moves are always free (they are
+      // how you get back to fix the plans), and forward moves stay open up to
+      // the plan stage — a card retreated to Sprint can come home to Planning
+      // to finish planning. Drag sends `override`, which does NOT bypass
+      // this: the gate is a truth about the card, and the modal replaces its
+      // forward button with "Approve split" to match. A board with no
+      // plan-role stage falls back to pinning the card where it sits (no
+      // planning home exists to return to).
       if (boardCardPendingSplit(board, command.cardId)) {
-        const planStage = boardStageWithRole(board, "plan");
-        const ceiling =
-          planStage === null
-            ? boardStageIndex(board, card.stage)
-            : boardStageIndex(board, planStage.stageId);
-        if (boardStageIndex(board, command.toStage) > ceiling) {
-          return yield* invariant(
-            command,
-            `Card '${card.key}' has ${boardCardPlans(board, command.cardId).length} unapproved plans; approve the split (or re-propose a single plan) before advancing it.`,
-          );
+        const currentIndex = boardStageIndex(board, card.stage);
+        const targetIndex = boardStageIndex(board, command.toStage);
+        // FORWARD moves only — backward moves stay free in every case (AC2:
+        // retreating is how you get back to fix the plans, wherever the card
+        // sits). The ceiling is the plan-role stage, CLAMPED below the build
+        // role: stage reordering can legally place the plan stage after
+        // Building (only build<review and done-last are spine invariants), and
+        // an unclamped ceiling would then open the build stage to a pending
+        // split — the one crossing this gate exists to refuse. The floor is
+        // non-null whenever a card is pending (the predicate requires it).
+        if (targetIndex > currentIndex) {
+          const planStage = boardStageWithRole(board, "plan");
+          const floor = boardSubBoardFloorStage(board);
+          const floorIndex = floor === null ? currentIndex : boardStageIndex(board, floor.stageId);
+          const ceiling =
+            planStage === null
+              ? currentIndex
+              : Math.min(boardStageIndex(board, planStage.stageId), floorIndex);
+          if (targetIndex > ceiling) {
+            return yield* invariant(
+              command,
+              `Card '${card.key}' has ${boardCardPlans(board, command.cardId).length} unapproved plans; approve the split (or re-propose a single plan) before advancing it.`,
+            );
+          }
         }
       }
       // Dependency blocking is unconditional from the `build` role onward (D11):
