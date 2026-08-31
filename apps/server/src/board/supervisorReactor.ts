@@ -2745,11 +2745,23 @@ const make = Effect.gen(function* () {
           ),
         );
       if (created === null || created.exitCode !== 0) {
-        yield* failWorktree(
-          card,
-          `Could not create the integration branch '${branch}' from '${defaultBranch}'.`,
-        );
-        return;
+        // A raced sibling (two children retrying at once) may have created the
+        // branch between the check above and this create — `git branch` then
+        // exits non-zero with "already exists". Re-check rather than treat it
+        // as fatal: an existing branch IS the desired state (idempotent).
+        const nowExists = yield* gitRef([
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          `refs/heads/${branch}`,
+        ]);
+        if (nowExists === "") {
+          yield* failWorktree(
+            card,
+            `Could not create the integration branch '${branch}' from '${defaultBranch}'.`,
+          );
+          return;
+        }
       }
     }
     const pushed = yield* git.resolvePrimaryRemoteName(cwd).pipe(
@@ -2799,6 +2811,15 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     if (card === undefined) return;
+    // A sub-board child materialised by `board.plans.approve` (t3o-23, D3/D18)
+    // must NOT auto-start on arrival, even if its floor stage auto-executes:
+    // approving a split is one human act and cannot fan out into N running
+    // agents. Each child's build is a deliberate later "Begin build" — a drag
+    // (`board.card-moved`) which DOES kick off. The decider cannot enforce
+    // this (it has no settings, D8), so the reactor does, keyed on the child's
+    // `parentCardId`. An ordinary card created straight into an auto stage
+    // (D10) has no parent and still kicks off here.
+    if (card.parentCardId !== null) return;
     yield* beginStageRun({ card, onDemand: false });
   });
 

@@ -249,6 +249,56 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
     }),
   );
 
+  it.effect(
+    "allows a second-round re-approval once the first round's children are all archived",
+    () =>
+      Effect.gen(function* () {
+        // A merged parent dragged back and re-approved (t3o-23, D5): the first
+        // round's children are archived (finished-and-gone), so they neither
+        // freeze the plans nor block re-approval — the reclaimed-slice branch
+        // machinery would otherwise be unreachable.
+        const events = yield* decideEvents(
+          approve(),
+          makeReadModel(
+            makeBoard({
+              parent: {
+                stage: "building",
+                worktree: {
+                  branch: "board/t3-190",
+                  baseRefName: "main",
+                  path: null,
+                  status: "reclaimed",
+                  attempts: 1,
+                  lastError: null,
+                  reclaimBlockedReason: null,
+                },
+              },
+              extraCards: [makeChild("card-old", "done", { archivedAt: NOW })],
+            }),
+          ),
+        );
+        assert.deepStrictEqual(
+          events.map((event) => event.type),
+          ["board.card-created", "board.card-created", "board.plans-approved"],
+        );
+      }),
+  );
+
+  it.effect("still refuses re-approval while a Done-but-unarchived child is on the board", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        approve(),
+        makeReadModel(
+          makeBoard({
+            parent: { stage: "building" },
+            extraCards: [makeChild("card-done", "done")],
+          }),
+        ),
+      );
+      assert.include(String(failure), "on the board; a split is approved once");
+    }),
+  );
+
   it.effect("refuses a split on a card that is itself a plan card (depth 1)", () =>
     Effect.gen(function* () {
       const board = makeBoard({

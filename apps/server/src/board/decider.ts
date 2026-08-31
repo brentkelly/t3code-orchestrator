@@ -1608,8 +1608,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       yield* requireActiveBoardCard({ board, command });
       // An approved split freezes the plans (t3o-23, D7): they are the record
       // of what was materialised, and the work now lives on the child cards.
+      // Only LIVE children freeze — a fully-archived round is gone and a
+      // second round may re-plan (consistent with the re-approval guard).
       // Distinct from `locked` (t3o-12's file handover, below).
-      if (boardCardChildren(board, command.cardId).length > 0) {
+      if (boardCardChildren(board, command.cardId).some((child) => child.archivedAt === null)) {
         return yield* invariant(
           command,
           `Card '${command.cardId}' has materialised child cards; the plans are frozen. Work happens on the child cards now.`,
@@ -1685,8 +1687,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
 
     case "board.plan.write": {
       yield* requireActiveBoardCard({ board, command });
-      // Frozen after approval, exactly as re-proposal is (t3o-23, D7).
-      if (boardCardChildren(board, command.cardId).length > 0) {
+      // Frozen after approval, exactly as re-proposal is (t3o-23, D7) — and,
+      // like it, only by LIVE children.
+      if (boardCardChildren(board, command.cardId).some((child) => child.archivedAt === null)) {
         return yield* invariant(
           command,
           `Card '${command.cardId}' has materialised child cards; the plans are frozen. Work happens on the child cards now.`,
@@ -1752,13 +1755,19 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         }
       }
       {
-        const children = boardCardChildren(board, card.id);
-        if (children.length > 0) {
+        // Only LIVE (non-archived) children block re-approval. An archived
+        // child is finished-and-gone (the archived-is-gone principle, t3o-13
+        // D1) — so a fully-wrapped first round does not wedge a SECOND-ROUND
+        // split, the case the reclaimed-slice path in `resolveBoardCardBaseRef`
+        // and `ensureIntegrationBranch` exists to serve. A Done-but-unarchived
+        // child still counts: it is on the board and part of the live split.
+        const live = boardCardChildren(board, card.id).filter((child) => child.archivedAt === null);
+        if (live.length > 0) {
           return yield* invariant(
             command,
-            `Card '${card.key}' already has ${children.length} materialised plan card${
-              children.length === 1 ? "" : "s"
-            }; a split is approved once.`,
+            `Card '${card.key}' already has ${live.length} materialised plan card${
+              live.length === 1 ? "" : "s"
+            } on the board; a split is approved once.`,
           );
         }
       }

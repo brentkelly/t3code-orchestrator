@@ -4,7 +4,7 @@
  * advances to the next stage in order when the last child finishes — by
  * reaching Done, or by being archived (an archived child counts as done, D6).
  */
-import { BoardCardId, type BoardCard } from "@t3tools/contracts";
+import { BoardCardId, type BoardCard, type OrchestrationEvent } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 
 import * as Effect from "effect/Effect";
@@ -21,6 +21,29 @@ import {
   stepStatus,
   withGovernor,
 } from "./supervisorHarness.testkit.ts";
+
+/** A `board.card-created` event carrying the given card as its payload —
+    enough for the reactor's `handleCardCreated`, which re-reads the card. */
+const cardCreated = (card: BoardCard, sequence: number): OrchestrationEvent =>
+  ({
+    type: "board.card-created",
+    sequence,
+    payload: {
+      cardId: card.id,
+      projectId: card.projectId,
+      title: card.title,
+      key: card.key,
+      cardNumber: card.cardNumber,
+      labels: card.labels,
+      dependsOn: card.dependsOn,
+      ...(card.parentCardId === null ? {} : { parentCardId: card.parentCardId }),
+      ...(card.sourcePlanId === null ? {} : { sourcePlanId: card.sourcePlanId }),
+      stage: card.stage,
+      orderKey: card.orderKey,
+      createdAt: card.createdAt,
+      updatedAt: card.updatedAt,
+    },
+  }) as unknown as OrchestrationEvent;
 
 const parentId = BoardCardId.make("card-parent");
 
@@ -99,6 +122,31 @@ it.effect("does not advance the parent while another child is still unfinished",
         assert.strictEqual(cardStage(yield* board, parentId), "building");
       }),
   ),
+);
+
+it.effect(
+  "does not auto-start a freshly materialised child, even into an auto-executing stage",
+  () =>
+    withGovernor(
+      {
+        // The child is created straight into the auto-executing build stage — the
+        // worst case for D18 (approving a split must not fan out into N running
+        // agents). handleCardCreated must skip kickoff for a card with a parent.
+        board: {
+          cards: [parentCard()],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      },
+      ({ pumpDomain, board, slots }) =>
+        Effect.gen(function* () {
+          const child = childCard("card-child", "building");
+          yield* pumpDomain(cardCreated(child, 1));
+          const after = yield* board;
+          assert.strictEqual(stepStatus(after, BoardCardId.make("card-child")), null);
+          assert.strictEqual(yield* slots.heldTotal, 0);
+        }),
+    ),
 );
 
 it.effect("counts an archived child as finished and advances the parent (D6)", () =>
