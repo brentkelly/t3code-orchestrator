@@ -50,6 +50,24 @@ const cardCreated = (card: BoardCard, sequence: number): OrchestrationEvent =>
     },
   }) as unknown as OrchestrationEvent;
 
+/** A `board.plans-approved` event carrying the parent — the reactor's
+    `handlePlansApproved` reads only `payload.card`. */
+const plansApproved = (
+  card: BoardCard,
+  childCardIds: ReadonlyArray<BoardCardId>,
+  sequence: number,
+): OrchestrationEvent =>
+  ({
+    type: "board.plans-approved",
+    sequence,
+    payload: {
+      cardId: card.id,
+      card,
+      childCardIds,
+      approvedAt: card.updatedAt,
+    },
+  }) as unknown as OrchestrationEvent;
+
 const parentId = BoardCardId.make("card-parent");
 
 const parentCard = (): BoardCard => ({
@@ -357,6 +375,42 @@ it.effect("restarts the sub-board when a corrected parent lands back on build (t
       Effect.gen(function* () {
         yield* pumpDomain(cardMoved(parentCard(), "review", "building", 1));
         assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "building");
+      }),
+  ),
+);
+it.effect("starts the children when a split is APPROVED on a parent already at build", () =>
+  withGovernor(
+    {
+      // Approving from the build stage is legal (a card built conversationally
+      // can be split first) and emits no move, so the entering-build trigger
+      // never fires. handlePlansApproved must nudge the cascade itself, or the
+      // children strand on the floor with nothing to start them (t3o-28, D3).
+      // The parent's branch-only worktree makes ensureIntegrationBranch a
+      // no-op, so this exercises the cascade nudge and not the git path.
+      board: {
+        cards: [
+          parentCard(),
+          childCard("card-one", "ready"),
+          childWaitingOn("card-two", "ready", ["card-one"]),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(
+          plansApproved(
+            parentCard(),
+            [BoardCardId.make("card-one"), BoardCardId.make("card-two")],
+            1,
+          ),
+        );
+        const after = yield* board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), "building");
+        // The blocked sibling still waits — the nudge is the cascade, not a
+        // blanket start.
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "ready");
       }),
   ),
 );

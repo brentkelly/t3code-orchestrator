@@ -3035,6 +3035,14 @@ const make = Effect.gen(function* () {
     event: Extract<OrchestrationEvent, { type: "board.plans-approved" }>,
   ) {
     yield* ensureIntegrationBranch(event.payload.card);
+    // Approval normally leaves the parent short of build (t3o-28, D1), and the
+    // cascade waits for its later move into the build stage (D3). But approving
+    // a split on a parent ALREADY sitting at build (legal — a card built
+    // conversationally can be split before its build starts in earnest) emits
+    // no move, so that trigger never comes. Nudge the cascade here: the helper
+    // no-ops unless the parent is at the build stage, so the ordinary
+    // approve-from-planning path pays nothing and only this one path starts.
+    yield* cascadeUnblockedChildren(event.payload.card.id);
   });
 
   // A card was created (D10): if it landed in an auto-executing stage, kick off
