@@ -78,6 +78,7 @@ import {
   type BoardScope,
 } from "./boardScope";
 import { BoardSubBoardHeader } from "./BoardSubBoardHeader";
+import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
 import { projectAccent } from "./projectAccent";
 import type { BoardSearch } from "../routes/board";
@@ -376,6 +377,17 @@ function EnvironmentBoard({
         : null,
     [columns, scope],
   );
+
+  // Every live shell, flat — the sub-board's plan strip resolves this
+  // parent's children out of it (t3o-29, D1). The FULL columns, not the
+  // scoped ones: a child is filtered out of what renders, never out of what
+  // the client knows.
+  const allCards = useMemo(() => Object.values(columns).flat(), [columns]);
+
+  // The sub-board's dependency chart (t3o-29, D6). Ephemeral: the page
+  // remounts per navigation, and persisted board UI state has already caused
+  // a navigation bug in this codebase (D9).
+  const [subBoardChartOpen, setSubBoardChartOpen] = useState(false);
 
   const buildColumn = buildStageId === null ? EMPTY_CARDS : (columns[buildStageId] ?? EMPTY_CARDS);
   const queueSlots = useMemo(() => boardBuildingQueueInfo(buildColumn), [buildColumn]);
@@ -898,8 +910,10 @@ function EnvironmentBoard({
             </Button>
             <BoardSubBoardHeader
               accentName={parentShell === null ? null : accentNameFor(parentShell.projectId)}
+              chartOpen={subBoardChartOpen}
               environmentId={environmentId}
               onOpenParentCard={() => openRootBoard(scope.parentCardId)}
+              onToggleChart={() => setSubBoardChartOpen((open) => !open)}
               parentCardId={scope.parentCardId}
               parentShell={parentShell}
             />
@@ -1012,6 +1026,20 @@ function EnvironmentBoard({
           </Button>
         ) : null}
       </div>
+      {/* The chart and the final-review footer sit between the header row and
+          the columns (t3o-29), the order the prototype's drill-in uses. */}
+      {scope.kind === "sub-board" ? (
+        <BoardSubBoardPlanStrip
+          cards={allCards}
+          chartOpen={subBoardChartOpen}
+          environmentId={environmentId}
+          onOpenChild={(childCardId) =>
+            patchSearch((previous) => ({ ...previous, card: childCardId }))
+          }
+          parentCardId={scope.parentCardId}
+          stages={orderedStages}
+        />
+      ) : null}
       <div className="flex min-h-0 flex-1">
         {/* `items-start` lets each column size to its cards; a collapsed rail
             opts back into full height with `self-stretch`. The row scrolls in

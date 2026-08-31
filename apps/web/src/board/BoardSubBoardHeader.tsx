@@ -12,7 +12,7 @@
  */
 import type { BoardCardId, BoardCardShell, EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { GitBranchIcon, GitPullRequestIcon } from "lucide-react";
+import { GitBranchIcon, GitPullRequestIcon, Link2Icon } from "lucide-react";
 
 import { cn } from "../lib/utils";
 import { boardEnvironment } from "../state/board";
@@ -25,6 +25,8 @@ export function BoardSubBoardHeader({
   parentShell,
   accentName,
   onOpenParentCard,
+  chartOpen,
+  onToggleChart,
 }: {
   readonly environmentId: EnvironmentId;
   readonly parentCardId: BoardCardId;
@@ -35,6 +37,11 @@ export function BoardSubBoardHeader({
   /** The parent's own sheet lives on the ROOT board (D2) — clicking the
       title goes there with the sheet open. */
   readonly onOpenParentCard: () => void;
+  /** The dependency chart's toggle (t3o-29): the button lives here, in the
+      header row, and the chart itself renders below in
+      `BoardSubBoardPlanStrip` — so the state is the page's, not ours. */
+  readonly chartOpen: boolean;
+  readonly onToggleChart: () => void;
 }) {
   const detail = useAtomValue(
     boardEnvironment.cardDetailValueAtom({ environmentId, cardId: parentCardId }),
@@ -86,6 +93,27 @@ export function BoardSubBoardHeader({
         <span className="hidden shrink-0 text-[11.5px] text-muted-foreground lg:inline">
           Holds its stage until every card here is done.
         </span>
+      ) : null}
+      {/* The chart is drawn from the parent's PLANS (t3o-29, D3), so the
+          toggle only exists once there are some — a split whose plans are
+          gone has no shape left to draw. */}
+      {(detail?.plans.length ?? 0) > 0 ? (
+        <>
+          <span className="flex-1" />
+          <button
+            className={cn(
+              "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border px-2.5 text-[11.5px] font-medium whitespace-nowrap shadow-xs",
+              chartOpen
+                ? "border-input bg-accent text-foreground"
+                : "border-border bg-popover text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+            onClick={onToggleChart}
+            type="button"
+          >
+            <Link2Icon className="size-3" />
+            {chartOpen ? "Hide chart" : "Dependency chart"}
+          </button>
+        </>
       ) : null}
     </div>
   );
