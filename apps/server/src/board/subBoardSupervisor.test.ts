@@ -12,7 +12,9 @@ import {
   boardPlanId,
   type BoardCard,
   type BoardSettings,
+  type OrchestrationCommand,
   type OrchestrationEvent,
+  type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 
@@ -509,6 +511,165 @@ it.effect("still pauses a child a human explicitly put in the loop", () =>
         const state = boardCardStepState(yield* board, BoardCardId.make("card-one"));
         assert.isNotNull(state);
         assert.strictEqual(state!.humanInLoop, true);
+      }),
+  ),
+);
+
+// ── Merging a child down (t3o-23 D4, t3o-28 D3) ────────────────────────
+//
+// The sub-board's whole promise is dependency resolution → build → PR → merge
+// with NO human in between. The human act was Begin build on the parent; a
+// child that sits at the merge stage waiting to be clicked breaks the chain
+// and strands every sibling that depends on it.
+
+const openPr: VcsStatusChangeRequest = {
+  number: 284,
+  title: "Services index page",
+  url: "https://github.com/acme/repo/pull/284",
+  baseRef: "board/tt-9",
+  headRef: "board/card-one",
+  state: "open",
+};
+
+/** The merge-role and done-role stage ids, as the seed board names them. */
+const MERGE = String(BOARD_SEED_STAGE_IDS.merge);
+const DONE = String(BOARD_SEED_STAGE_IDS.done);
+
+/** A child sitting at the merge stage with the branch its pull request is
+    open on — the state the review stage's auto-advance leaves it in. */
+const childAtMerge = (id: string): BoardCard => ({
+  ...childCard(id, MERGE),
+  worktree: readyWorktree(id),
+});
+
+/** A child arriving at the merge stage off its review auto-advance. */
+const childReachedMerge = (id: string, sequence: number): OrchestrationEvent =>
+  cardMoved(childAtMerge(id), "review", MERGE, sequence);
+
+/** The same card shape with no parent: a top-level card at the merge stage. */
+const soloAtMerge = (): BoardCard =>
+  makeBoardCard({
+    id: "card-solo",
+    stage: MERGE,
+    orderKey: "m",
+    worktree: readyWorktree("card-solo"),
+  });
+
+const mergeRefusedNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+  commands.filter(
+    (command) => command.type === "board.card.record-note" && command.kind === "card-merge-refused",
+  );
+
+it.effect("merges a child that reaches the merge stage and lands it in Done", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(childReachedMerge("card-one", 1));
+        // The forge was actually asked — the card did not merely move.
+        assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), DONE);
+      }),
+  ),
+);
+
+it.effect("leaves a TOP-LEVEL card at the merge stage for a human to click Merge", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [soloAtMerge()],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        // The merge spec's line holds everywhere the sub-board is not: no merge
+        // happens that a human did not initiate.
+        yield* h.pumpDomain(cardMoved(soloAtMerge(), "review", MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-solo")), MERGE);
+      }),
+  ),
+);
+
+it.effect("resolves the dependency tree off the merge: the freed sibling goes to build", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          parentCard(),
+          childAtMerge("card-one"),
+          childWaitingOn("card-two", "ready", ["card-one"]),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(childReachedMerge("card-one", 1));
+        const after = yield* h.board;
+        // One event, the whole chain: merge → Done → the dependency the merge
+        // just satisfied → the sibling into build.
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), DONE);
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "building");
+        // The parent stays put — it still has an unfinished child.
+        assert.strictEqual(cardStage(after, parentId), "building");
+      }),
+  ),
+);
+
+it.effect("advances the parent when the LAST child merges itself down", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childCard("card-done", "done"), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(childReachedMerge("card-one", 1));
+        const after = yield* h.board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), DONE);
+        assert.strictEqual(cardStage(after, parentId), "review");
+      }),
+  ),
+);
+
+it.effect("stops at a merge the forge REFUSES, and says so on the card", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+      mergeFailure: "Required status check 'test' is failing.",
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(childReachedMerge("card-one", 1));
+        // A policy block needs a human (the merge spec's rule, unchanged): the
+        // card holds at merge and the reason is on the activity rail rather
+        // than in a server log nobody is reading.
+        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
+        const notes = mergeRefusedNotes(yield* h.commands);
+        assert.strictEqual(notes.length, 1);
+        assert.include(String((notes[0] as { readonly detail: string }).detail), "status check");
       }),
   ),
 );

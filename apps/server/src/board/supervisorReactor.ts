@@ -1487,6 +1487,64 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * Merge a sub-board child down, on its arrival at the merge-role stage.
+   *
+   * The merge spec's rule — "no merge happens that a human did not initiate" —
+   * is about a card whose merge nobody asked for. A sub-board child is not
+   * that card. The human DID initiate it: Begin build on the parent is the one
+   * act that fans a split out, and t3o-28 D3 spends the rest of the lifecycle
+   * making good on it ("finishing #1 starts #2 and #3 with no human in
+   * between"). A child parked at the merge stage waiting to be clicked breaks
+   * that chain and strands every sibling whose dependency it holds — the split
+   * stops being automation and becomes N buttons.
+   *
+   * So the carve-out is exactly one card shape: `parentCardId !== null`. A
+   * top-level card still merges only on a click, which is what every merge
+   * test outside the sub-board suite pins.
+   *
+   * What it does NOT change is what happens when the forge says no. A conflict
+   * still starts the conflict-resolution step (and that step's success still
+   * finishes the merge), and a policy block — failing checks, a missing
+   * approval — still stops and hands the card to a human, because that block
+   * needs a decision the board does not have. The one addition is that an
+   * unattended refusal has to be legible: nobody is watching the return value
+   * of an auto-merge, so the reason goes on the activity rail.
+   */
+  const autoMergeChild = Effect.fn("board-supervisor-autoMergeChild")(function* (card: BoardCard) {
+    const outcome = yield* mergeCardPullRequest(card.id);
+    switch (outcome.outcome) {
+      // Landed, or already in hand: the merge advanced the card to Done, a
+      // conflict step is running and will finish the merge itself, and a stale
+      // base has already sent the card back for one more review round.
+      case "merged":
+      case "conflict":
+      case "stale-base":
+        return;
+      default:
+        break;
+    }
+    // Everything else is the card stopping where it stands. Say why on the
+    // card: this merge had no click behind it, so there is no return value for
+    // a human to read and no dialog to put it in.
+    const detail =
+      outcome.outcome === "refused"
+        ? outcome.detail
+        : outcome.outcome === "not-open"
+          ? `Its pull request is ${outcome.state}, so there was nothing to merge.`
+          : outcome.outcome === "no-pull-request"
+            ? "It has no pull request to merge."
+            : `The merge could not run (${outcome.outcome}).`;
+    yield* dispatch({
+      type: "board.card.record-note",
+      commandId: yield* commandId("auto-merge-refused"),
+      cardId: card.id,
+      kind: "card-merge-refused",
+      detail: `Held the sub-board merge. ${detail}`,
+      createdAt: yield* nowIso,
+    });
+  });
+
   // A step settled `succeeded`: ask the stage executor what runs NEXT before
   // advancing the card (t3o-16). For a single-step stage the executor reports
   // `complete` (its one step is done) and this advances exactly as before; for a
@@ -3242,6 +3300,20 @@ const make = Effect.gen(function* () {
     yield* refreshCardPullRequest(card, card.stage);
 
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
+
+    // A sub-board child reaching the merge-role stage merges itself down
+    // (see `autoMergeChild`). Deliberately BEFORE the cascade block below
+    // rather than left to the move it dispatches: a successful merge advances
+    // the card to Done, and running the three sub-board helpers on the far
+    // side of that means one arrival resolves the whole chain — merge → Done →
+    // the dependency it satisfied → the freed siblings into build — instead of
+    // waiting for the Done move to come back around the event loop.
+    if (
+      card.parentCardId !== null &&
+      boardStageWithRole(board, "merge")?.stageId === event.payload.toStage
+    ) {
+      yield* autoMergeChild(card);
+    }
 
     // A child changing stage may have been the parent's last unfinished one
     // (t3o-23, D4) — the advance helper's own guards make a non-final move a
