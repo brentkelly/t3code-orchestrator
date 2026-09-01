@@ -5,10 +5,16 @@
  * reaching Done, or by being archived (an archived child counts as done, D6).
  */
 import {
+  BOARD_SEED_STAGE_IDS,
   BoardCardId,
   BoardStageId,
+  boardCardStepState,
+  boardPlanId,
   type BoardCard,
+  type BoardSettings,
+  type OrchestrationCommand,
   type OrchestrationEvent,
+  type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 
@@ -414,3 +420,299 @@ it.effect("starts the children when a split is APPROVED on a parent already at b
       }),
   ),
 );
+
+// ── A child's human-in-the-loop stance ─────────────────────────────────
+
+/** The shipped Build stage defaults: a card WITHOUT a plan pauses for a human,
+    one WITH a plan runs unattended (D6). The harness turns both off, so this
+    re-arms the one that bit: a materialised child owns no `board_plans` row
+    (its plan became its brief), and read as plan-less it would pause. */
+const settingsPausingPlanless = (): BoardSettings => {
+  const settings = settingsWith({ building: [codexStep], globalMaxConcurrent: 3 });
+  const building = settings.pipeline[BOARD_SEED_STAGE_IDS.building]!;
+  return {
+    ...settings,
+    pipeline: {
+      ...settings.pipeline,
+      [BOARD_SEED_STAGE_IDS.building]: {
+        ...building,
+        humanInLoopWithPlan: false,
+        humanInLoopWithoutPlan: true,
+      },
+    },
+  };
+};
+
+/** A child as `board.plans.approve` materialises it: cut from one of the
+    parent's plans, no plan rows of its own, no explicit stance. */
+const materialisedChild = (id: string, stage: string): BoardCard => ({
+  ...childCard(id, stage),
+  sourcePlanId: boardPlanId(parentId, id),
+  humanInLoop: null,
+});
+
+it.effect(
+  "runs a cascaded child unattended even though it owns no plan row (its plan is its brief)",
+  () =>
+    withGovernor(
+      {
+        board: {
+          cards: [parentCard(), materialisedChild("card-one", "ready")],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsPausingPlanless(),
+      },
+      ({ pumpDomain, board }) =>
+        Effect.gen(function* () {
+          // Begin build on the parent cascades #1 onto the build stage …
+          yield* pumpDomain(movedToBuilding(parentCard(), 1));
+          const childId = BoardCardId.make("card-one");
+          assert.strictEqual(cardStage(yield* board, childId), "building");
+          // … and the child's own arrival there (the reactor's dispatched
+          // move, observed as any move is) selects its build step.
+          yield* pumpDomain(
+            movedToBuilding(
+              { ...materialisedChild("card-one", "building"), worktree: readyWorktree("card-one") },
+              2,
+            ),
+          );
+          const state = boardCardStepState(yield* board, childId);
+          assert.isNotNull(state);
+          // The whole point of the sub-board: dependency resolution → build →
+          // PR → merge with no human in between (t3o-28, D3). A materialised
+          // child is a planned build — the plan-less pause must not apply.
+          assert.strictEqual(state!.humanInLoop, false);
+        }),
+    ),
+);
+
+it.effect("still pauses a child a human explicitly put in the loop", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), { ...materialisedChild("card-one", "ready"), humanInLoop: true }],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsPausingPlanless(),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(parentCard(), 1));
+        yield* pumpDomain(
+          movedToBuilding(
+            {
+              ...materialisedChild("card-one", "building"),
+              humanInLoop: true,
+              worktree: readyWorktree("card-one"),
+            },
+            2,
+          ),
+        );
+        const state = boardCardStepState(yield* board, BoardCardId.make("card-one"));
+        assert.isNotNull(state);
+        assert.strictEqual(state!.humanInLoop, true);
+      }),
+  ),
+);
+
+// ── Merging a child down (t3o-23 D4, t3o-28 D3) ────────────────────────
+//
+// The sub-board's whole promise is dependency resolution → build → PR → merge
+// with NO human in between. The human act was Begin build on the parent; a
+// child that sits at the merge stage waiting to be clicked breaks the chain
+// and strands every sibling that depends on it.
+
+const openPr: VcsStatusChangeRequest = {
+  number: 284,
+  title: "Services index page",
+  url: "https://github.com/acme/repo/pull/284",
+  baseRef: "board/tt-9",
+  headRef: "board/card-one",
+  state: "open",
+};
+
+/** The merge-role and done-role stage ids, as the seed board names them. */
+const MERGE = String(BOARD_SEED_STAGE_IDS.merge);
+const DONE = String(BOARD_SEED_STAGE_IDS.done);
+
+/** A child sitting at the merge stage with the branch its pull request is
+    open on — the state the review stage's auto-advance leaves it in. */
+const childAtMerge = (id: string): BoardCard => ({
+  ...childCard(id, MERGE),
+  worktree: readyWorktree(id),
+});
+
+/** A child arriving at the merge stage off its review auto-advance. */
+const childReachedMerge = (id: string, sequence: number): OrchestrationEvent =>
+  cardMoved(childAtMerge(id), "review", MERGE, sequence);
+
+/** The same card shape with no parent: a top-level card at the merge stage. */
+const soloAtMerge = (): BoardCard =>
+  makeBoardCard({
+    id: "card-solo",
+    stage: MERGE,
+    orderKey: "m",
+    worktree: readyWorktree("card-solo"),
+  });
+
+const mergeRefusedNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+  commands.filter(
+    (command) => command.type === "board.card.record-note" && command.kind === "card-merge-refused",
+  );
+
+it.effect("merges a child that reaches the merge stage and lands it in Done", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(childReachedMerge("card-one", 1));
+        // The forge was actually asked — the card did not merely move.
+        assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), DONE);
+      }),
+  ),
+);
+
+it.effect("leaves a TOP-LEVEL card at the merge stage for a human to click Merge", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [soloAtMerge()],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        // The merge spec's line holds everywhere the sub-board is not: no merge
+        // happens that a human did not initiate.
+        yield* h.pumpDomain(cardMoved(soloAtMerge(), "review", MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-solo")), MERGE);
+      }),
+  ),
+);
+
+it.effect("resolves the dependency tree off the merge: the freed sibling goes to build", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          parentCard(),
+          childAtMerge("card-one"),
+          childWaitingOn("card-two", "ready", ["card-one"]),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(childReachedMerge("card-one", 1));
+        const after = yield* h.board;
+        // One event, the whole chain: merge → Done → the dependency the merge
+        // just satisfied → the sibling into build.
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), DONE);
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "building");
+        // The parent stays put — it still has an unfinished child.
+        assert.strictEqual(cardStage(after, parentId), "building");
+      }),
+  ),
+);
+
+it.effect("advances the parent when the LAST child merges itself down", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childCard("card-done", "done"), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(childReachedMerge("card-one", 1));
+        const after = yield* h.board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), DONE);
+        assert.strictEqual(cardStage(after, parentId), "review");
+      }),
+  ),
+);
+
+it.effect("stops at a merge the forge REFUSES, and says so on the card", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+      mergeFailure: "Required status check 'test' is failing.",
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(childReachedMerge("card-one", 1));
+        // A policy block needs a human (the merge spec's rule, unchanged): the
+        // card holds at merge and the reason is on the activity rail rather
+        // than in a server log nobody is reading.
+        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
+        const notes = mergeRefusedNotes(yield* h.commands);
+        assert.strictEqual(notes.length, 1);
+        assert.include(String((notes[0] as { readonly detail: string }).detail), "status check");
+      }),
+  ),
+);
+
+it("does not merge a child a human pulled BACK out of Done", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        // A backward drag is an UNDO. Answering it by immediately re-merging on
+        // the forge is both surprising and irreversible, so the hook takes
+        // forward arrivals only — the same condition the t3o-24 crossing gate
+        // applies just above it.
+        yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), DONE, MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
+      }),
+  ));
+
+it("does not merge a child a human dragged straight from Building, skipping review", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        // A forward JUMP is a human overriding the pipeline, not the pipeline
+        // delivering the card. Merging here would land a diff no review round
+        // has ever seen — irreversibly, off one drag.
+        yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), "building", MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
+      }),
+  ));

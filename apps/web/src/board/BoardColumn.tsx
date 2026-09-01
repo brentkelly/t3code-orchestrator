@@ -10,6 +10,8 @@
  * bounded enough to render in full.
  */
 import {
+  type BoardCardAttention,
+  type BoardCardChildAttention,
   type BoardCardShell,
   type BoardLabel,
   type BoardLabelId,
@@ -81,8 +83,11 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly accentNameFor: (projectId: ProjectId) => string | null;
   /** Resolves a sub-board child's parent key for its chip (t3o-23). */
   readonly parentKeyFor: (cardId: string) => string | undefined;
-  /** Whether a card is awaiting split approval (t3o-27) — the amber state. */
-  readonly pendingSplitFor: (card: BoardCardShell) => boolean;
+  /** Why a card is waiting on a human, or null (`boardCardAttention`), and the
+      same for its children — both resolved by the page, which holds the stage
+      list and the whole card set. */
+  readonly attentionFor: (card: BoardCardShell) => BoardCardAttention | null;
+  readonly childAttentionFor: (card: BoardCardShell) => BoardCardChildAttention | undefined;
   /** Thread todo lists for one card (t3o-18) — built once by the page and read
       per card, so the column adds no state of its own. */
   readonly todosFor: (cardId: string) => BoardCardTodoContext;
@@ -147,7 +152,8 @@ function ExpandedColumn({
   addProjects,
   accentNameFor,
   parentKeyFor,
-  pendingSplitFor,
+  attentionFor,
+  childAttentionFor,
   draggedCardId,
   dragOverIndex,
   dragHeight,
@@ -254,7 +260,8 @@ function ExpandedColumn({
                   onReorder={onCardReorder}
                   accentName={accentNameFor(card.projectId)}
                   parentKey={parentKeyFor(card.cardId)}
-                  pendingSplit={pendingSplitFor(card)}
+                  attention={attentionFor(card)}
+                  childAttention={childAttentionFor(card)}
                   todos={todosFor(card.cardId)}
                   onOpenSubBoard={
                     onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card)

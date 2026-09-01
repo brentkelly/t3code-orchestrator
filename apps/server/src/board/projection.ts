@@ -55,6 +55,7 @@ import {
   parseReviewStepId,
   isBoardEvent,
   isEmptyBoardCardModelOverrides,
+  isBoardTerminalStepStatus,
   makeBoardCardShell,
   ProviderInstanceId,
   sortBoardCardThreadLinks,
@@ -2653,6 +2654,7 @@ export function withBoardShellCards(
       const queuedByCard = new Set<BoardCardId>();
       const stalledByCard = new Set<BoardCardId>();
       const runningByCard = new Set<BoardCardId>();
+      const heldByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
         // The second step-state field on the bounded shell (t3o-17, D3): a card
@@ -2662,6 +2664,13 @@ export function withBoardShellCards(
         // running, so the card dot stays lit across a loop stage's per-phase
         // thread spin-up gaps rather than only while a single thread is mid-turn.
         if (row.status === "running") runningByCard.add(row.cardId);
+        // The quiet counterpart of `stalled`: the step SETTLED and the card is
+        // still sitting on it, so the pipeline is finished and only a human
+        // moves it on. Terminal covers `succeeded` (a human-in-the-loop build
+        // that ran to the end, a card parked at merge) as well as `failed` /
+        // `abandoned`; `stalled` is terminal-adjacent but has its own louder
+        // flag, and the shared `boardCardAttention` ranks it first regardless.
+        if (isBoardTerminalStepStatus(row.status)) heldByCard.add(row.cardId);
       }
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
@@ -2704,6 +2713,7 @@ export function withBoardShellCards(
           queued: queuedByCard.has(row.cardId),
           stalled: stalledByCard.has(row.cardId),
           stepRunning: runningByCard.has(row.cardId),
+          held: heldByCard.has(row.cardId),
           thread: liveThreads,
         });
       });

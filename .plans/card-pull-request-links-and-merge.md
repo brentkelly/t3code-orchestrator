@@ -41,8 +41,18 @@ PR (`board.ts:3577`) but reports nothing back. This spec is the producer.
 
 ### Out
 
-- Any **automatic** merge. Merging is always a deliberate human click. The
-  merge-role stage does not auto-execute.
+- Any **automatic** merge for a **top-level** card. Merging one is always a
+  deliberate human click, and the merge-role stage does not auto-execute.
+
+  Amended by t3o-28 for **sub-board children only** (`parentCardId` set): a
+  child merges itself down on arrival at the merge-role stage. The human act
+  there is Begin build on the parent, which D3 already spends the rest of the
+  split's lifecycle making good on ("finishing #1 starts #2 and #3 with no
+  human in between") — a child parked at merge waiting to be clicked strands
+  every sibling that depends on it and turns the split back into N buttons.
+  Everything a refusal does is unchanged: a conflict starts the resolution
+  step, a policy block stops and hands the card to a human, and because no
+  click is watching, the reason is recorded on the card's activity rail.
 - Any **periodic** PR polling. Refresh is event-driven only (D2).
 - Merge on GitLab / Bitbucket / Azure DevOps. PR *lookup* is provider-agnostic
   and works on all of them; `mergeChangeRequest` is GitHub-only in v1, matching
@@ -203,7 +213,9 @@ up".
 
 - On a **success** outcome, the reactor retries the merge and, on success,
   advances to Done — finishing the job the human's click asked for. This is not
-  auto-merge: no merge happens that a human did not initiate.
+  auto-merge: for a top-level card, no merge happens that a human did not
+  initiate (for a child, the initiating act is Begin build on the parent — see
+  the amendment under **Out**).
 - On **failure, timeout or exhausted attempts**, the button re-enables and the
   reason is surfaced.
 

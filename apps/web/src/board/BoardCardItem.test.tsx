@@ -7,10 +7,13 @@
  * is the payload-discipline line D7 draws, asserted here.
  */
 import {
+  BOARD_SEED_STAGES,
   BoardCardId,
   BoardStageId,
   ProjectId,
   ThreadId,
+  boardCardAttention,
+  deriveBoardCardChildAttention,
   makeBoardCardShell,
   type BoardCardShell,
   type BoardLabel,
@@ -41,6 +44,12 @@ function shell(stage: string, overrides?: Partial<BoardCardShell>): BoardCardShe
 }
 
 const emptyLabels = new Map<BoardLabelId, BoardLabel>();
+
+/** The card's own attention, resolved exactly as the board page resolves it —
+    the renderer takes it as a prop (it has no stage list of its own), so a test
+    that wants the real treatment has to compute the real answer. */
+const attentionOf = (card: BoardCardShell) =>
+  boardCardAttention({ card, stages: BOARD_SEED_STAGES });
 
 describe("BoardCardContent (D7)", () => {
   it("renders the whole card from shell data with no environment or subscription", () => {
@@ -187,6 +196,7 @@ describe("BoardCardContent (D7)", () => {
         labelsById={emptyLabels}
         queueSlot={undefined}
         selected={false}
+        attention={attentionOf(shell("building", { awaitingInput: true }))}
       />,
     );
     // Not just the badge: the fill, the border and the ring all go info-blue,
@@ -201,6 +211,7 @@ describe("BoardCardContent (D7)", () => {
         labelsById={emptyLabels}
         queueSlot={undefined}
         selected={false}
+        attention={attentionOf(shell("building"))}
       />,
     );
     expect(calm).toContain("border-border");
@@ -227,6 +238,7 @@ describe("BoardCardContent (D7)", () => {
         labelsById={emptyLabels}
         queueSlot={undefined}
         selected={false}
+        attention={attentionOf(shell("building", { stalled: true }))}
       />,
     );
     // The loud, human-needed signal — distinct from the blue "Input needed".
@@ -242,6 +254,7 @@ describe("BoardCardContent (D7)", () => {
         labelsById={emptyLabels}
         queueSlot={undefined}
         selected={false}
+        attention={attentionOf(shell("building", { awaitingInput: true }))}
       />,
     );
     expect(awaiting).toContain("Input needed");
@@ -292,5 +305,208 @@ describe("BoardCardContent (D7)", () => {
       />,
     );
     expect(html).toContain("opacity-70");
+  });
+});
+
+describe("cards that need a human (attention)", () => {
+  it("paints a PARKED card amber and names it, where before it looked healthy", () => {
+    // The quiet one: a human-in-the-loop build ran to the end, or the forge
+    // refused a merge. Nothing is running, nothing stalled, no question asked
+    // — the card face used to say nothing at all and the card sat mid-pipeline
+    // looking exactly like a card being worked on.
+    const parked = shell("building", { held: true });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={parked}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(parked)}
+      />,
+    );
+    expect(html).toContain("Needs a human");
+    expect(html).toContain("border-amber-500/60");
+    expect(html).not.toContain("border-border");
+  });
+
+  it("does not flag a held step that is running again, nor one that reached Done", () => {
+    // `held` rests on the shell until the next select-step clears it, so the
+    // renderer must not treat a re-started card as parked…
+    const restarted = shell("building", { held: true, stepRunning: true });
+    expect(attentionOf(restarted)).toBeNull();
+    // …and a finished card is not asking for anything, whatever its last step
+    // status said.
+    const done = shell("done", { held: true });
+    expect(attentionOf(done)).toBeNull();
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={done}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(done)}
+      />,
+    );
+    expect(html).not.toContain("Needs a human");
+  });
+
+  it("ranks the loudest reason when a card qualifies for several", () => {
+    // A stalled step whose thread also has a pending question: one chip, and it
+    // is the stalled one.
+    const both = shell("building", { stalled: true, awaitingInput: true, held: true });
+    const attention = attentionOf(both);
+    expect(attention?.reason).toBe("stalled");
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={both}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attention}
+      />,
+    );
+    expect(html).toContain("Stalled");
+    expect(html).not.toContain("Input needed");
+    expect(html).not.toContain("Needs a human");
+  });
+
+  it("flows a child's block up to the parent, tone and all", () => {
+    // The rule the sub-board needs: a parent builds THROUGH its children, so a
+    // child waiting on a human blocks the parent too. The parent has no problem
+    // of its own — before this it rendered as a perfectly healthy card while
+    // its split sat dead.
+    const parent = shell("building");
+    const child = {
+      ...shell("building", { stalled: true }),
+      cardId: BoardCardId.make("card-2"),
+      parentCardId: parent.cardId,
+    };
+    const byParent = deriveBoardCardChildAttention({
+      cards: [parent, child],
+      stages: BOARD_SEED_STAGES,
+    });
+    const inherited = byParent.get(parent.cardId);
+    expect(inherited?.reason).toBe("stalled");
+    expect(inherited?.childCount).toBe(1);
+
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={parent}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(parent)}
+        childAttention={inherited}
+      />,
+    );
+    // The child's RED, not a generic warning — the colour keeps meaning one
+    // thing wherever it appears.
+    expect(html).toContain("border-destructive/60");
+    expect(html).toContain("1 child needs you");
+  });
+
+  it("keeps a blue child's question blue on the parent, and counts siblings", () => {
+    const parent = shell("building");
+    const asking = {
+      ...shell("building", { awaitingInput: true }),
+      cardId: BoardCardId.make("card-2"),
+      parentCardId: parent.cardId,
+    };
+    const alsoAsking = {
+      ...shell("review", { awaitingInput: true }),
+      cardId: BoardCardId.make("card-3"),
+      parentCardId: parent.cardId,
+    };
+    const inherited = deriveBoardCardChildAttention({
+      cards: [parent, asking, alsoAsking],
+      stages: BOARD_SEED_STAGES,
+    }).get(parent.cardId);
+    expect(inherited?.tone).toBe("info");
+    expect(inherited?.childCount).toBe(2);
+
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={parent}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(parent)}
+        childAttention={inherited}
+      />,
+    );
+    expect(html).toContain("border-info/55");
+    expect(html).toContain("2 children need you");
+  });
+
+  it("lets the parent's OWN problem win over an inherited one", () => {
+    const parent = shell("building", { stalled: true });
+    const child = {
+      ...shell("building", { awaitingInput: true }),
+      cardId: BoardCardId.make("card-2"),
+      parentCardId: parent.cardId,
+    };
+    const inherited = deriveBoardCardChildAttention({
+      cards: [parent, child],
+      stages: BOARD_SEED_STAGES,
+    }).get(parent.cardId);
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={parent}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(parent)}
+        childAttention={inherited}
+      />,
+    );
+    // Its own stall is the actionable thing on THIS card; the child's question
+    // is actionable on the child.
+    expect(html).toContain("Stalled");
+    expect(html).not.toContain("child needs you");
+  });
+});
+
+describe("held review loop chip suppression", () => {
+  /** A card whose review loop ran every round without converging. */
+  const heldLoopCard = (stage: string): BoardCardShell =>
+    shell(stage, {
+      roundCurrent: 3,
+      roundMax: 3,
+      reviewOutcome: "running",
+      reviewHeldOutcome: "round-cap",
+      reviewRoundComplete: true,
+    });
+
+  it("skips the chip only where the round row actually explains the tint", () => {
+    // On the review stage the summary renders "No convergence" beside the round
+    // pips, so a second chip saying the same thing is noise.
+    const onReview = heldLoopCard("review");
+    const reviewHtml = renderToStaticMarkup(
+      <BoardCardContent
+        card={onReview}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(onReview)}
+      />,
+    );
+    expect(attentionOf(onReview)?.reason).toBe("review-held");
+    expect(reviewHtml).toContain("No convergence");
+    expect(reviewHtml).toContain("border-amber-500/60");
+
+    // Off it, the round row is not rendered at all — so the card must NOT be
+    // left tinted amber with nothing saying why.
+    const offReview = heldLoopCard("building");
+    const offHtml = renderToStaticMarkup(
+      <BoardCardContent
+        card={offReview}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(offReview)}
+      />,
+    );
+    expect(offHtml).toContain("border-amber-500/60");
+    expect(offHtml).toContain("No convergence");
   });
 });

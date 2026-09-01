@@ -209,6 +209,7 @@ describe("board shell reducer", () => {
       cardId: BoardCardId.make("card-1"),
       stalled: true,
       stepRunning: false,
+      held: false,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     expect(stalled.snapshotSequence).toBe(2);
@@ -218,6 +219,7 @@ describe("board shell reducer", () => {
       cardId: BoardCardId.make("card-1"),
       stalled: false,
       stepRunning: false,
+      held: false,
     });
     expect(cleared.cards?.[0]?.stalled).toBe(false);
   });
@@ -244,6 +246,7 @@ describe("board shell reducer", () => {
       cardId: BoardCardId.make("card-1"),
       stalled: true,
       stepRunning: false,
+      held: false,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     expect(stalled.cards?.[0]?.queued).toBe(false);
@@ -268,6 +271,7 @@ describe("board shell reducer", () => {
       cardId: BoardCardId.make("card-1"),
       stalled: false,
       stepRunning: false,
+      held: false,
     });
     expect(cleared.cards?.[0]?.queued).toBe(true);
   });
@@ -281,6 +285,7 @@ describe("board shell reducer", () => {
         cardId: BoardCardId.make("card-1"),
         stalled: true,
         stepRunning: false,
+        held: false,
       },
     );
     expect(stalled.cards?.[0]?.stalled).toBe(true);

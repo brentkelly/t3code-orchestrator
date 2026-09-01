@@ -282,13 +282,22 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.stepRunning === withStalled.stepRunning
           ? withStalled
           : { ...withStalled, stepRunning: existing.stepRunning };
+      // `held` is derived from the same step-state slice, so a card-carrying
+      // delta rests it at false too — preserve the last known value, or a plain
+      // title edit on a parked card would clear the one flag saying it needs a
+      // human. The authoritative flips arrive on `card-stalled` (settle raises
+      // it, select/recover clear it) and the snapshot.
+      const withHeld =
+        existing === undefined || existing.held === withStepRunning.held
+          ? withStepRunning
+          : { ...withStepRunning, held: existing.held };
       // `briefHasImage` and `planCount` are derived from slices the card
       // aggregate does not carry (the brief BODY, the plan set), so a
       // card-carrying delta that cannot see them OMITS the key rather than
       // asserting a false/zero — absent means "unchanged, keep what you have".
       // A present key is authoritative, including `false`/`0`: clearing an
       // image out of a brief has to clear the icon.
-      const withBodyDerived = preserveAbsentShellFields(withStepRunning, existing);
+      const withBodyDerived = preserveAbsentShellFields(withHeld, existing);
       const card = withDerivedThreadFields(
         withBodyDerived,
         (threadId) => snapshot.threads.find((thread) => thread.id === threadId),
@@ -334,9 +343,16 @@ export function applyBoardShellStreamEvent(
         const queued = event.stalled ? false : card.queued;
         return card.stalled === event.stalled &&
           card.queued === queued &&
-          card.stepRunning === event.stepRunning
+          card.stepRunning === event.stepRunning &&
+          card.held === event.held
           ? card
-          : { ...card, stalled: event.stalled, queued, stepRunning: event.stepRunning };
+          : {
+              ...card,
+              stalled: event.stalled,
+              queued,
+              stepRunning: event.stepRunning,
+              held: event.held,
+            };
       });
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
     }

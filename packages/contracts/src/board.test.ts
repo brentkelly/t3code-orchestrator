@@ -27,6 +27,10 @@ import {
   BoardCardShell,
   BoardLabelId,
   BoardLabelName,
+  boardBuildHumanInLoopDefault,
+  boardCardAttention,
+  boardCardChildAttentionLabel,
+  deriveBoardCardChildAttention,
   boardCardPendingSplit,
   boardCardShellPendingSplit,
   boardCardUnfinishedChildren,
@@ -96,6 +100,7 @@ const fullyPopulatedShell = {
   queued: true,
   stalled: true,
   stepRunning: true,
+  held: true,
   threadState: "waiting",
   awaitingInput: true,
   activeThreadId: ThreadId.make("thread-0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
@@ -1005,5 +1010,209 @@ describe("per-card model overrides (t3o-29)", () => {
     );
     const withOptions = { ...opus, options: [{ id: "reasoning", value: "high" }] } as const;
     expect(boardModelSelectionOfOverride(withOptions)).toEqual(withOptions);
+  });
+});
+
+describe("build-stage human-in-the-loop default (t3o-15 D6, sub-board children)", () => {
+  // The shipped defaults: a plan-less card pauses for a human, a planned one
+  // runs unattended.
+  const shipped = { humanInLoopWithPlan: false, humanInLoopWithoutPlan: true };
+  const topLevel = { parentCardId: null };
+  const child = { parentCardId: BoardCardId.make("card-parent") };
+
+  it("flips a top-level card's default on whether it has a plan", () => {
+    expect(boardBuildHumanInLoopDefault(shipped, topLevel, false)).toBe(true);
+    expect(boardBuildHumanInLoopDefault(shipped, topLevel, true)).toBe(false);
+  });
+
+  it("reads the with-plan default for a sub-board child that owns no plan row", () => {
+    // Materialisation made the child's plan its brief; it has no plan of its
+    // own, and the plan-less pause must not park the cascade (t3o-28, D3).
+    expect(boardBuildHumanInLoopDefault(shipped, child, false)).toBe(false);
+    expect(boardBuildHumanInLoopDefault(shipped, child, true)).toBe(false);
+  });
+
+  it("still honours a with-plan pause the user switched on, for children too", () => {
+    const pauseAll = { humanInLoopWithPlan: true, humanInLoopWithoutPlan: true };
+    expect(boardBuildHumanInLoopDefault(pauseAll, child, false)).toBe(true);
+    expect(boardBuildHumanInLoopDefault(pauseAll, topLevel, true)).toBe(true);
+  });
+});
+
+describe("cards that need a human (boardCardAttention)", () => {
+  const card = (overrides: Partial<BoardCardShell>): BoardCardShell => ({
+    ...fullyPopulatedShell,
+    stage: BOARD_SEED_STAGE_IDS.building,
+    stalled: false,
+    held: false,
+    awaitingInput: false,
+    stepRunning: false,
+    queued: false,
+    archivedAt: null,
+    planCount: 0,
+    // The base fixture is a split parent (it populates every field); zero the
+    // child counts so the default card is an ordinary one and only the cases
+    // that ask for a split get one.
+    planTotal: 0,
+    planDone: 0,
+    ...overrides,
+  });
+  /** The base fixture is fully populated, review summary included — strip it
+      unless the case under test is about the loop, or every card would read as
+      a held review. */
+  const attention = (overrides: Partial<BoardCardShell>) => {
+    const { reviewOutcome, reviewHeldOutcome, reviewRoundComplete, ...rest } = card(overrides);
+    return boardCardAttention({
+      card:
+        overrides.reviewOutcome === undefined
+          ? rest
+          : { ...rest, reviewOutcome, reviewHeldOutcome, reviewRoundComplete },
+      stages: BOARD_SEED_STAGES,
+    });
+  };
+
+  it("ranks the reasons, loudest first", () => {
+    // The ranking IS the contract: a card can satisfy several at once and the
+    // face has room for one.
+    expect(attention({ stalled: true, held: true, awaitingInput: true })?.reason).toBe("stalled");
+    expect(attention({ held: true, awaitingInput: true })?.reason).toBe("held");
+    expect(attention({ awaitingInput: true })?.reason).toBe("input");
+    expect(attention({})).toBeNull();
+  });
+
+  it("keeps its tones apart — a question is not a failure", () => {
+    expect(attention({ stalled: true })?.tone).toBe("danger");
+    expect(attention({ held: true })?.tone).toBe("warning");
+    expect(attention({ awaitingInput: true })?.tone).toBe("info");
+  });
+
+  it("never flags a finished or archived card", () => {
+    // A card in Done has a settled step by definition, so without this every
+    // finished card on the board would light up.
+    expect(
+      boardCardAttention({
+        card: card({ stage: BOARD_SEED_STAGE_IDS.done, held: true, stalled: true }),
+        stages: BOARD_SEED_STAGES,
+      }),
+    ).toBeNull();
+    expect(attention({ archivedAt: "2026-01-01T00:00:00.000Z", stalled: true })).toBeNull();
+  });
+
+  it("ignores a held flag on a card sitting before the build role", () => {
+    // `held` rests on the shell until the next select-step clears it, so a card
+    // that ran a step and was dragged back to the backlog still carries it —
+    // and a card in Ready waiting for Begin build is the resting state of the
+    // whole backlog, not a card the pipeline parked.
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.backlog, held: true })).toBeNull();
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.ready, held: true })).toBeNull();
+    // From the build role onward it means what it says.
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.building, held: true })?.reason).toBe("held");
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.merge, held: true })?.reason).toBe("held");
+    // The other reasons are real wherever the card sits — a question asked from
+    // a backlog card is still a question.
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.backlog, awaitingInput: true })?.reason).toBe(
+      "input",
+    );
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.backlog, stalled: true })?.reason).toBe(
+      "stalled",
+    );
+  });
+
+  it("never parks a split parent that is building through its children", () => {
+    // The parent keeps its planning step's terminal row for the whole split —
+    // `beginStageRun` refuses to start a run for it until the last child
+    // finishes — so `held` alone would flag it "Needs a human" for the entire
+    // build, when the split is exactly what is making progress.
+    expect(attention({ held: true, planTotal: 3, planDone: 1 })).toBeNull();
+    expect(attention({ held: true, planTotal: 3, planDone: 0 })).toBeNull();
+    // Once every child is done the counts converge and a parked parent flags
+    // normally — at that point nothing else is going to move it.
+    expect(attention({ held: true, planTotal: 3, planDone: 3 })?.reason).toBe("held");
+    // A card that is not a split parent is unaffected.
+    expect(attention({ held: true, planTotal: 0 })?.reason).toBe("held");
+  });
+
+  it("lets a stuck child's roll-up reach a parent that is mid-split", () => {
+    // The regression this pairs with: an own reason outranks an inherited one
+    // in the renderer, so a parent that self-flagged `held` would permanently
+    // shadow the roll-up of a genuinely stuck child.
+    const parent = card({
+      cardId: BoardCardId.make("card-parent"),
+      held: true,
+      planTotal: 2,
+      planDone: 0,
+    });
+    const stuck = {
+      ...card({ stalled: true }),
+      cardId: BoardCardId.make("c1"),
+      parentCardId: parent.cardId,
+    };
+    expect(boardCardAttention({ card: parent, stages: BOARD_SEED_STAGES })).toBeNull();
+    expect(
+      deriveBoardCardChildAttention({ cards: [parent, stuck], stages: BOARD_SEED_STAGES }).get(
+        parent.cardId,
+      )?.reason,
+    ).toBe("stalled");
+  });
+
+  it("treats a held flag as stale while the step is live again", () => {
+    // `held` rests on the shell until the next select-step clears it, and the
+    // snapshot can arrive mid-flight.
+    expect(attention({ held: true, stepRunning: true })).toBeNull();
+    expect(attention({ held: true, queued: true })).toBeNull();
+  });
+
+  it("reads a review loop that ran out of rounds as needing a human", () => {
+    const heldLoop = attention({
+      stage: BOARD_SEED_STAGE_IDS.review,
+      reviewOutcome: "running",
+      reviewHeldOutcome: "round-cap",
+      reviewRoundComplete: true,
+    });
+    expect(heldLoop?.reason).toBe("review-held");
+    expect(heldLoop?.label).toBe("No convergence");
+    // …but a loop still going is not: `running` on the wire only means the
+    // ledger's rounds are accounted for.
+    expect(
+      attention({
+        stage: BOARD_SEED_STAGE_IDS.review,
+        reviewOutcome: "running",
+        reviewHeldOutcome: "round-cap",
+        reviewRoundComplete: true,
+        stepRunning: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("rolls the WORST child up to the parent, with a count", () => {
+    const parent = card({ cardId: BoardCardId.make("card-parent") });
+    const children = [
+      {
+        ...card({ awaitingInput: true }),
+        cardId: BoardCardId.make("c1"),
+        parentCardId: parent.cardId,
+      },
+      { ...card({ stalled: true }), cardId: BoardCardId.make("c2"), parentCardId: parent.cardId },
+      { ...card({}), cardId: BoardCardId.make("c3"), parentCardId: parent.cardId },
+    ];
+    const rolled = deriveBoardCardChildAttention({
+      cards: [parent, ...children],
+      stages: BOARD_SEED_STAGES,
+    }).get(parent.cardId);
+    // The stall outranks the question, and the healthy child is not counted.
+    expect(rolled?.reason).toBe("stalled");
+    expect(rolled?.childCount).toBe(2);
+    expect(boardCardChildAttentionLabel(rolled!)).toBe("2 children need you");
+  });
+
+  it("rolls nothing up for a parent whose children are all fine", () => {
+    const parent = card({ cardId: BoardCardId.make("card-parent") });
+    const healthy = { ...card({}), cardId: BoardCardId.make("c1"), parentCardId: parent.cardId };
+    expect(
+      deriveBoardCardChildAttention({
+        cards: [parent, healthy],
+        stages: BOARD_SEED_STAGES,
+      }).size,
+    ).toBe(0);
   });
 });
