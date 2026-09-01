@@ -10,7 +10,10 @@ import {
   BoardStageId,
   boardCardStepState,
   boardPlanId,
+  ProviderInstanceId,
+  ThreadId,
   type BoardCard,
+  type BoardCardStepState,
   type BoardSettings,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -29,6 +32,7 @@ import {
   movedToBuilding,
   readyWorktree,
   settingsWith,
+  stepCompleted,
   stepStatus,
   withGovernor,
 } from "./supervisorHarness.testkit.ts";
@@ -674,7 +678,7 @@ it.effect("stops at a merge the forge REFUSES, and says so on the card", () =>
   ),
 );
 
-it("does not merge a child a human pulled BACK out of Done", () =>
+it.effect("does not merge a child a human pulled BACK out of Done", () =>
   withGovernor(
     {
       board: {
@@ -694,9 +698,10 @@ it("does not merge a child a human pulled BACK out of Done", () =>
         assert.deepStrictEqual(yield* h.mergeAttempts, []);
         assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
       }),
-  ));
+  ),
+);
 
-it("does not merge a child a human dragged straight from Building, skipping review", () =>
+it.effect("does not merge a child a human dragged straight from Building, skipping review", () =>
   withGovernor(
     {
       board: {
@@ -715,4 +720,294 @@ it("does not merge a child a human dragged straight from Building, skipping revi
         assert.deepStrictEqual(yield* h.mergeAttempts, []);
         assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
       }),
-  ));
+  ),
+);
+
+// ── The pipeline end-to-end (the reported failure) ─────────────────────
+//
+// Every test above pumps ONE event and asserts the immediate handler. That
+// proves each handler in isolation but NOT the chain: in production a handler
+// DISPATCHES a command, the engine persists the resulting event and REPUBLISHES
+// it (OrchestrationEngine `eventPubSub`), and the reactor's own subscription
+// routes it back through `handleCardMoved` / `handleStepCompleted`. The test
+// engine double does not republish — `applyDecided` updates the model but never
+// re-feeds the reactor — so a chain that only works because a dispatched move
+// re-enters the reactor is GREEN here and BROKEN in the app.
+//
+// `drainBus` closes that gap: it re-feeds every newly-decided domain event back
+// through the reactor until the bus goes quiet, exactly as the real PubSub does.
+// Step completions are excluded — the reactor never dispatches one, and pumping
+// it would re-project a completion already folded in.
+const REFEED_TYPES = new Set<string>([
+  "board.card-moved",
+  "board.card-created",
+  "board.plans-approved",
+  "board.card-archived",
+  "board.card-deleted",
+]);
+
+const drainBus = (
+  h: {
+    readonly decided: Effect.Effect<ReadonlyArray<OrchestrationEvent>>;
+    readonly pumpDomain: (e: OrchestrationEvent) => Effect.Effect<void>;
+  },
+  fed: { value: number },
+) =>
+  Effect.gen(function* () {
+    for (let guard = 0; guard < 100; guard += 1) {
+      const decided = yield* h.decided;
+      const fresh = decided.slice(fed.value);
+      fed.value = decided.length;
+      const toFeed = fresh.filter((event) => REFEED_TYPES.has(event.type));
+      if (toFeed.length === 0) return;
+      for (const event of toFeed) yield* h.pumpDomain(event);
+    }
+    throw new Error("drainBus did not settle in 100 iterations");
+  });
+
+it.effect("PIPELINE 4: a MANUALLY merged child cascades its freed siblings into build", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          parentCard(),
+          childAtMerge("card-one"),
+          childWaitingOn("card-two", "ready", ["card-one"]),
+          childWaitingOn("card-three", "ready", ["card-one"]),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const fed = { value: (yield* h.decided).length };
+        // The human clicks Merge — the RPC path, not an auto-merge on arrival.
+        const result = yield* h.reactor.mergePullRequest(BoardCardId.make("card-one"));
+        assert.strictEqual(result.outcome, "merged");
+        // The real PubSub now re-feeds the child's move-to-Done through the
+        // reactor. Model that; without it the chain below never runs.
+        yield* drainBus(h, fed);
+        const after = yield* h.board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), DONE);
+        // The reported failure: both freed siblings must now be building.
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "building");
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-three")), "building");
+        // And unattended — the whole point of the sub-board.
+        assert.strictEqual(
+          boardCardStepState(after, BoardCardId.make("card-two"))?.humanInLoop,
+          false,
+        );
+      }),
+  ),
+);
+
+// ── The stranded split (the reported production bug) ────────────────────
+//
+// The dev DB that surfaced this: a parent dragged back to the floor (`ready`)
+// while its children were mid-flight. One child then reached Done, but its
+// freed siblings never cascaded — the cascade gated on the parent sitting
+// EXACTLY at the build stage, and a begun split whose parent a human parked
+// below build silently stopped. The split must run to completion regardless of
+// where the parent is parked.
+
+/** A parent parked at the floor (`ready`) — below the build stage — while its
+    split is already underway. */
+const parentParkedAtFloor = (): BoardCard => ({
+  ...parentCard(),
+  stage: BoardStageId.make("ready"),
+});
+
+it.effect("cascades a freed sibling even when the parent was parked below build", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          parentParkedAtFloor(),
+          // A child that already reached Done — proof the split has begun.
+          childCard("card-one", DONE),
+          // Its freed sibling, unblocked now that card-one is done.
+          childWaitingOn("card-two", "ready", ["card-one"]),
+          // A still-blocked grandchild dependency stays put.
+          childWaitingOn("card-three", "ready", ["card-two"]),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const fed = { value: (yield* h.decided).length };
+        // card-one arriving at Done is the trigger the reactor keys on.
+        yield* h.pumpDomain(cardMoved(childCard("card-one", DONE), "merge", DONE, 1));
+        // Let the freed sibling's own move-into-build re-enter the reactor, as
+        // the real event bus does, so its build step actually starts.
+        yield* drainBus(h, fed);
+        const after = yield* h.board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "building");
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-three")), "ready");
+        // …and it started unattended — the whole point of the sub-board.
+        assert.strictEqual(
+          boardCardStepState(after, BoardCardId.make("card-two"))?.humanInLoop,
+          false,
+        );
+      }),
+  ),
+);
+
+it.effect("still waits for Begin build on a split that has NOT begun", () =>
+  withGovernor(
+    {
+      // Parent parked at the floor, every child still on the floor — nobody has
+      // pressed Begin build, so approval alone must start nothing (t3o-28 D1).
+      board: {
+        cards: [
+          parentParkedAtFloor(),
+          childCard("card-one", "ready"),
+          childCard("card-two", "ready"),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(cardMoved(parentParkedAtFloor(), "planning", "ready", 1));
+        const after = yield* board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), "ready");
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "ready");
+      }),
+  ),
+);
+
+// ── Point 2: a child's build auto-advances to review, which auto-starts ──
+//
+// Faithful chain: the child finishes building, the completion re-enters the
+// reactor via the bus, the build stage auto-advances the card to review, and
+// the review-role stage — which auto-executes — selects the first review step
+// with no human. The bare-pump tests elsewhere prove each hop; this proves they
+// connect.
+
+/** A running build step for a child, the state right after admission. */
+const runningBuildStep = (cardId: BoardCardId): BoardCardStepState => ({
+  cardId,
+  stepId: String(BOARD_SEED_STAGE_IDS.building),
+  stepLabel: "Building",
+  stageLabel: "Building",
+  attempt: 1,
+  stallCount: 0,
+  lastNudgeAt: null,
+  baseTipAtRoundStart: null,
+  prompt: "implement the card",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5-codex",
+  mode: "build",
+  runtimeMode: "auto",
+  humanInLoop: false,
+  maxAttempts: 3,
+  timeoutMs: 1_000,
+  threadId: ThreadId.make("thread-build-one"),
+  status: "running",
+  slotHeld: true,
+  startedAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+});
+
+it.effect("PIPELINE 2: a child's finished build auto-advances to review and it auto-starts", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          parentCard(),
+          { ...childCard("card-one", "building"), worktree: readyWorktree("card-one") },
+        ],
+        stepStates: [runningBuildStep(BoardCardId.make("card-one"))],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: new Map([["thread-build-one", { id: "thread-build-one" } as never]]),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const fed = { value: (yield* h.decided).length };
+        // The build reports success. The completion re-enters the reactor, the
+        // build stage auto-advances, and review auto-starts — all off one event.
+        yield* h.pumpDomain(stepCompleted(BoardCardId.make("card-one"), "succeeded", 2));
+        yield* drainBus(h, fed);
+        const after = yield* h.board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), "review");
+        // A review step is live — the loop started with no human in between.
+        const step = boardCardStepState(after, BoardCardId.make("card-one"));
+        assert.isNotNull(step);
+        assert.strictEqual(step!.humanInLoop, false);
+      }),
+  ),
+);
+
+// ── Point 3: a child's converged review auto-merges to Done ─────────────
+//
+// The capstone chain: a one-round review converges, the loop advances the
+// child to the merge stage, and — because it is a sub-board child — it merges
+// itself down to Done with no human. Each hop has a bare-pump test; this proves
+// the review verdict flows all the way to Done off one completion.
+
+/** A running first-round review step for a child. */
+const runningReviewStep = (cardId: BoardCardId): BoardCardStepState => ({
+  ...runningBuildStep(cardId),
+  stepId: "review@1",
+  stepLabel: "Review",
+  stageLabel: "Code review",
+  threadId: ThreadId.make("thread-review-one"),
+});
+
+/** A converged review completion (a round that ran with no blocking finding). */
+const convergedReviewCompleted = (cardId: BoardCardId, sequence: number): OrchestrationEvent =>
+  ({
+    type: "board.card-step-completed",
+    sequence,
+    payload: {
+      cardId,
+      completion: {
+        cardId,
+        stepId: "review@1",
+        outcome: "succeeded",
+        summary: "review converged",
+        payload: JSON.stringify({ reviewedSha: "sha-1", findings: [] }),
+        threadId: ThreadId.make("thread-review-one"),
+        completedAt: "2026-01-01T00:00:00.000Z",
+      },
+    },
+  }) as unknown as OrchestrationEvent;
+
+it.effect("PIPELINE 3: a child's converged review auto-merges it through to Done", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          parentCard(),
+          {
+            ...childCard("card-one", "review"),
+            worktree: readyWorktree("card-one"),
+            reviewOverrides: { rounds: 1, stopAfterRound: null, roundModels: {} },
+          },
+        ],
+        stepStates: [runningReviewStep(BoardCardId.make("card-one"))],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+      initialShells: new Map([["thread-review-one", { id: "thread-review-one" } as never]]),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const fed = { value: (yield* h.decided).length };
+        yield* h.pumpDomain(convergedReviewCompleted(BoardCardId.make("card-one"), 2));
+        yield* drainBus(h, fed);
+        const after = yield* h.board;
+        // Converged → advanced to merge → auto-merged → Done, no human.
+        assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), DONE);
+      }),
+  ),
+);

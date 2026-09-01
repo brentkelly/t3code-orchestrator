@@ -667,8 +667,10 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           extraCards: [makeChild("card-child", "building")],
         }),
       );
-      // Backing the supervising card off does not stop the children; it says
-      // the parent is not ready, and the cascade starts nothing new from there.
+      // Backing the supervising card off is allowed by the DECIDER — it does not
+      // stop the children. (The reactor's cascade no longer pauses here: once a
+      // child is underway the split runs to completion wherever the parent is
+      // parked — see subBoardSupervisor.test.ts "parked below build".)
       const back = yield* decideEvents(
         moveCommand({ cardId: "card-parent", toStage: "ready" }),
         readModel,

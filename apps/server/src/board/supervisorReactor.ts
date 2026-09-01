@@ -33,6 +33,7 @@ import {
   boardStageById,
   boardStageEntryInvocationCount,
   boardStageIndex,
+  isBoardStageAtOrAfterBuild,
   boardStageWithRole,
   CommandId,
   BOARD_ENVELOPE_QUESTION_MECHANISM,
@@ -1390,10 +1391,22 @@ const make = Effect.gen(function* () {
     const buildStage = boardStageWithRole(board, "build");
     const floor = boardSubBoardFloorStage(board);
     if (buildStage === null || floor === null) return;
-    // Only while the parent SITS at build. Before it, the human has not said
-    // begin yet; after it, the split is finished (or the regression helper is
-    // about to bring the parent home, which calls back here).
-    if (parent.stage !== buildStage.stageId) return;
+    // Fire once the split has BEGUN — not only while the parent sits exactly at
+    // build. "Begun" = some live child has already left the floor for the build
+    // stage or beyond (a building, reviewing, merging or done child). Before
+    // that, approval alone must start nothing (t3o-28 D1) — the human has not
+    // pressed Begin build. But once a child is underway, the split runs to
+    // completion no matter WHERE the human parked the parent: dragging the
+    // supervising card back to the floor must not silently strand the freed
+    // siblings, which is the production bug this replaced. The parent arriving
+    // at build (its own move) still triggers the first cascade; this only widens
+    // the child-finished / child-deleted re-runs to survive a parked parent.
+    const begun =
+      parent.stage === buildStage.stageId ||
+      boardCardChildren(board, parent.id).some(
+        (child) => child.archivedAt === null && isBoardStageAtOrAfterBuild(board, child.stage),
+      );
+    if (!begun) return;
     for (const child of boardCardChildren(board, parent.id)) {
       if (child.archivedAt !== null) continue;
       // Waiting on the floor is the only state this starts. A child further
@@ -1435,18 +1448,33 @@ const make = Effect.gen(function* () {
     const parent = board.cards.find((candidate) => candidate.id === parentCardId);
     if (parent === undefined || parent.archivedAt !== null) return;
     const buildStage = boardStageWithRole(board, "build");
-    if (buildStage === null || parent.stage !== buildStage.stageId) return;
+    if (buildStage === null) return;
     // All children deleted is NOT completion — the parent unfreezes where it
     // stands and the human decides what the empty split means.
     if (boardCardChildren(board, parent.id).length === 0) return;
     if (boardCardUnfinishedChildren(board, parent.id).length > 0) return;
-    const next = boardNextStageId(board, parent.stage);
+    // The parent's build-through-children is finished, so it advances to the
+    // stage after build — its own integration review — from WHEREVER it sits.
+    // A human may have parked it back on the floor (`ready`) while the children
+    // ran; leaving it there once every child is done is the mirror of the
+    // stranded-cascade bug, so the target is the stage after build rather than
+    // the stage after the parent's current position. A parent already at or
+    // past that target (its review has started, or it is further on) needs no
+    // move.
+    const next = boardNextStageId(board, buildStage.stageId);
     if (next === null) return;
+    const parentIndex = boardStageIndex(board, parent.stage);
+    const targetIndex = boardStageIndex(board, next);
+    if (parentIndex < 0 || targetIndex < 0 || parentIndex >= targetIndex) return;
     yield* dispatch({
       type: "board.card.move",
       commandId: yield* commandId("advance-parent"),
       cardId: parent.id,
       toStage: next,
+      // The parent may be parked several stages below build; the advance is
+      // machinery, not a drag, but it forces adjacency the same way the t3o-24
+      // regression does.
+      override: true,
       createdAt: yield* nowIso,
     });
   });
