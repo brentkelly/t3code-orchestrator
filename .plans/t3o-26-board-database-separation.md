@@ -30,11 +30,12 @@ No eject script, no cleanup step, no decode failures.
 
 | Thing | Where | Status |
 | --- | --- | --- |
-| Separate board migration lineage + ledger | `board/migrations/index.ts`, `t3o_sql_migrations` | Done, retargeted in P1 |
-| Board tables carry **zero** foreign keys | all 26 board migrations | Done, nothing to sever |
-| Every board SQL `JOIN` is board↔board | `projection.ts:1311`, `:1332` | Done, untouched |
-| Retired `board.*` event types survive replay | `OrchestrationEventStore.ts` `decodeReadRow` | Done, prerequisite met |
-| Board events are namespaced `board.*` | `contracts/board.ts:3557` | Done, the partition key |
+| Separate board migration lineage + ledger | `board/migrations/index.ts`, `t3o_sql_migrations` (030 and counting) | Done, retargeted in P1 |
+| Board tables carry **zero** foreign keys | all 30 board migrations | Done, nothing to sever |
+| Every board SQL `JOIN` is board↔board | `projection.ts:1378`, `:1399` | Done, untouched |
+| Retired `board.*` event types survive replay | `OrchestrationEventStore.ts` `decodeReadRow` | **NOT done** — written, then lost to a shared-checkout overwrite; recoverable from checkpoint `a5898e344`. Reapply as part of P0 |
+| Board events are namespaced `board.*` | `contracts/board.ts:4280` (35 types) | Done, the partition key |
+| Sub-boards, splits, plans panel, model overrides (t3o-23, 27-30) | board-owned modules only | Done, **zero** new upstream surface |
 | No t3o migrations in upstream's lineage | `persistence/Migrations/` | Done, upstream schema is pristine |
 | Board projector is already a separate module | `board/projection.ts`, spread at `ProjectionPipeline.ts:1642` | Done, unhooked in P2 |
 | Board commands already carry their own aggregate refs | `OrchestrationEngine.ts`, `boardCommandAggregateRef` | Done, retargeted in P2 |
@@ -78,8 +79,8 @@ a genuine loss and D3 is what makes it survivable.
 ### D3 — The board tails upstream's log read-only; the watermark lives in `boards.sqlite`
 
 The board projector consumes exactly two upstream event types — `thread.activity-appended` and
-`thread.deleted` (`projection.ts:1985`, `:1997`) — and both feed only `board_thread_todos`, a
-cache with an existing boot orphan sweep (`projection.ts:1281`).
+`thread.deleted` (`projection.ts:2077`, `:2089`) — and both feed only `board_thread_todos`, a
+cache with an existing boot orphan sweep (`projection.ts:1348`).
 
 So the board keeps reading `main.orchestration_events`, filtered to those two types, with its
 cursor stored in `boards.projection_state` under a distinct projector name. Reading is not
@@ -87,10 +88,14 @@ writing; the promise holds.
 
 Everything else the supervisor learns from thread events it *records as a board event* before it
 matters, so board replay needs the board log and nothing else. This is what makes two logs
-tractable at all — verify it holds before building P2, because the whole design rests on it.
+tractable at all, and it is the assumption most likely to be broken by future board work.
+**Re-verified against the sub-board, split, plans-panel and model-override work (t3o-23,
+t3o-27..t3o-30): still exactly those two types, and still exactly one cross-schema SQL reference in
+the whole codebase.** Re-check before building P2, and again whenever the board starts observing
+something new about threads.
 
 The one cross-schema SQL reference in the codebase — the orphan sweep's
-`SELECT thread_id FROM projection_threads` (`projection.ts:1290`) — becomes
+`SELECT thread_id FROM projection_threads` (`projection.ts:1357`) — becomes
 `main.projection_threads` and is otherwise unchanged.
 
 ### D4 — The board gets its own subscription, not a widened shell sequence
@@ -115,8 +120,9 @@ proves too large to land in one go, this is the fallback, not the plan.
 
 ### D5 — What the promise does not cover
 
-The board's job is to drive thread work. `supervisorReactor.ts` dispatches `thread.create` (`:604`),
-`thread.turn.start` (`:622`), `thread.settle` (`:1254`) and `thread.delete` (`:640`). Those run
+The board's job is to drive thread work. `supervisorReactor.ts` dispatches `thread.create`, `thread.turn.start`, `thread.settle`,
+`thread.delete` and `thread.turn.interrupt` — and, verified against the sub-board and split work,
+**nothing else**: no `project.*` command is dispatched by non-test board code. Those run
 through upstream's engine and write ordinary thread events to `state.sqlite`. A card that runs a
 build has to create a thread.
 
@@ -178,7 +184,7 @@ For the board's own engine instance, `makeOrchestrationEngine` (`OrchestrationEn
 module-private but already takes every dependency as an injected Effect service — export it and
 build a board-scoped layer in `board/`.
 
-The event store needs more than an export. `makeEventStore` (`OrchestrationEventStore.ts:167`)
+The event store needs more than an export. `makeEventStore` (`OrchestrationEventStore.ts:107`)
 hardcodes the `orchestration_events` table name in its SQL, and under D1 there is only one
 `SqlClient`, so a board instance cannot be obtained by swapping the client. It must be
 parameterised over its schema-qualified table name. Parameterise the event schema in the same pass
@@ -266,7 +272,12 @@ Per D4: a board subscription with its own snapshot, sequence and resume cursor; 
 the shell stream; `BoardState` and friends off the shell snapshot schema; web and mobile clients
 updated to consume it.
 
-Largest and riskiest phase. Scope it on its own once P2 is real.
+**P2 forces P3 — they land together.** `ws.ts:604` maps board events into the shell stream by
+reading them off `orchestrationEngine.streamDomainEvents`. Once P2 gives the board its own engine
+and PubSub, board events leave that stream entirely and the board UI goes dark until this phase
+replaces it. There is no intermediate state where P2 ships alone and the client still works.
+
+Largest and riskiest phase; only P0 and P4 are genuinely separable.
 
 ### P4 — Settings split and the guarantee as a gate
 
@@ -312,9 +323,8 @@ before assuming the gate runs.
 
 ## Open questions
 
-1. **D3 is load-bearing and unverified.** Confirm that no board projector or supervisor path
-   depends on upstream events beyond the two named types before building P2. If a third dependency
-   exists, the two-log design needs revisiting, not patching.
+1. ~~**D3 is load-bearing and unverified.**~~ Verified against t3o-23 and t3o-27..t3o-30 (see D3).
+   A standing re-check before P2, no longer an open question.
 2. **Test harness shape.** Tests run on `:memory:` (`Sqlite.ts:71`); each attached `:memory:` is a
    distinct database. Every test that seeds board tables directly needs the attach in place.
 3. **P3 sizing.** Unknown until P2 lands. The existing sibling-sequence TODO (`ws.ts:719`) is in
