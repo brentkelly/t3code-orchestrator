@@ -3308,16 +3308,27 @@ const make = Effect.gen(function* () {
     // side of that means one arrival resolves the whole chain — merge → Done →
     // the dependency it satisfied → the freed siblings into build — instead of
     // waiting for the Done move to come back around the event loop.
-    // FORWARD arrivals only, matching the t3o-24 crossing gate's own condition
-    // above. A forward move is the pipeline delivering the card (review's
-    // auto-advance, or a human dragging it on); a BACKWARD one is a human
-    // pulling the card out of Done, which is an undo, and answering an undo by
-    // immediately re-merging on the forge is both surprising and irreversible.
+    // One ordinary forward STEP into the merge stage — the pipeline delivering
+    // the card — and nothing else. Merging is irreversible, so the two shapes
+    // this excludes both matter:
+    //
+    //  - BACKWARD (a human pulling the card out of Done) is an undo, and
+    //    answering an undo by re-merging on the forge is surprising at best.
+    //  - A forward JUMP that skipped stages is a human overriding the pipeline
+    //    (`override: true` on a non-adjacent drag). Dragging a child from
+    //    Building straight onto Merge would otherwise merge a diff no review
+    //    round has ever seen.
+    //
+    // Adjacency rather than "came from the review-role stage": a board with no
+    // review stage advances Building → Merge as its ORDINARY path, and keying
+    // on the review role would silently disable the sub-board's auto-merge
+    // there — breaking the automation on exactly the boards that opted out of
+    // reviewing.
     if (
       card.parentCardId !== null &&
       boardStageWithRole(board, "merge")?.stageId === event.payload.toStage &&
       fromIndex >= 0 &&
-      toIndex > fromIndex
+      toIndex === fromIndex + 1
     ) {
       yield* autoMergeChild(card);
     }

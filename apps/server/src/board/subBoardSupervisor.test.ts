@@ -695,3 +695,24 @@ it("does not merge a child a human pulled BACK out of Done", () =>
         assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
       }),
   ));
+
+it("does not merge a child a human dragged straight from Building, skipping review", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        // A forward JUMP is a human overriding the pipeline, not the pipeline
+        // delivering the card. Merging here would land a diff no review round
+        // has ever seen — irreversibly, off one drag.
+        yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), "building", MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
+      }),
+  ));
