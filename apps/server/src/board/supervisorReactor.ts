@@ -233,6 +233,41 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** `dispatch`, but a REFUSAL is an expected answer rather than a fault.
+   *
+   *  A handful of the supervisor's writes are speculative by design: the
+   *  reactor cannot know whether the command still applies by the time the
+   *  decider sees it, so it asks and accepts "no". The graduation sweep fires a
+   *  settle at every thread the card holds without checking which are still
+   *  running; the review loop settles the phase it just left; a refresh records
+   *  a pull request another trigger may have recorded a moment earlier. In each
+   *  case the decider's refusal IS the guard the caller is relying on, and the
+   *  plain helper logging it at WARN turns the normal path into a stream of
+   *  warnings about nothing.
+   *
+   *  Only an invariant refusal is demoted — that is the decider saying "this
+   *  command does not apply", which is what these callers asked about. Anything
+   *  else (a storage failure, a defect) is still a warning, because none of
+   *  these call sites is speculating about THAT. */
+  const dispatchOptional = (command: Parameters<typeof engine.dispatch>[0]) =>
+    engine.dispatch(command).pipe(
+      Effect.catchCause((cause) => {
+        const refusal = Cause.findErrorOption(cause).pipe(
+          Option.filter((error) => error._tag === "OrchestrationCommandInvariantError"),
+          Option.getOrUndefined,
+        );
+        return refusal === undefined
+          ? Effect.logWarning("board supervisor dispatch failed", {
+              commandType: (command as { readonly type?: string }).type,
+              cause: Cause.pretty(cause),
+            })
+          : Effect.logDebug("board supervisor dispatch refused", {
+              commandType: (command as { readonly type?: string }).type,
+              detail: refusal.detail,
+            });
+      }),
+    );
+
   /** `dispatch`, but the caller learns whether the command LANDED. The plain
       helper above swallows a rejection, which is right for best-effort writes
       and wrong for the two commands a spawn is built from: a thread that was
@@ -1649,7 +1684,7 @@ const make = Effect.gen(function* () {
         // this arm (it `complete`s → advances), so its thread is settled by the
         // graduation sweep in `handleCardMoved` instead.
         if (state.threadId !== null) {
-          yield* dispatch({
+          yield* dispatchOptional({
             type: "thread.settle",
             commandId: yield* commandId("settle-phase"),
             threadId: state.threadId,
@@ -2075,6 +2110,16 @@ const make = Effect.gen(function* () {
               checkedAt: yield* nowIso,
             } satisfies BoardCardPullRequest);
 
+      // Re-read before deciding. The lookup above is a forge round trip, and
+      // the card handed in was read BEFORE it — so every trigger this card has
+      // (a card opening in one browser tab, the same card opening in another, a
+      // review step boundary, a stage move) spends that whole window holding a
+      // pull request state that another trigger may have already recorded. The
+      // guards below are all comparisons against what the card holds NOW, so
+      // they have to run against the freshest read available or they compare
+      // against a state that has already been superseded.
+      const current = (yield* readCard(card.id)) ?? card;
+
       // A pull request at or below the floor belongs to a round this card has
       // already finished (see `BoardCard.pullRequestFloor`). The decider refuses
       // it too — that refusal is the load-bearing one — but a card on its second
@@ -2085,13 +2130,13 @@ const make = Effect.gen(function* () {
       // the branch's live pull request rather than a finished round's, and the
       // second is how a link adopted while open records its own merge.
       const isCurrentLink =
-        next !== null && card.pullRequest !== null && card.pullRequest.number === next.number;
+        next !== null && current.pullRequest !== null && current.pullRequest.number === next.number;
       if (
         next !== null &&
         !isCurrentLink &&
         next.state !== "open" &&
-        card.pullRequestFloor !== null &&
-        next.number <= card.pullRequestFloor
+        current.pullRequestFloor !== null &&
+        next.number <= current.pullRequestFloor
       ) {
         // Logged rather than dropped in silence. A card that keeps resolving a
         // retired pull request and never adopting one shows no pull request at
@@ -2100,16 +2145,18 @@ const make = Effect.gen(function* () {
           cardId: card.id,
           number: next.number,
           state: next.state,
-          floor: card.pullRequestFloor,
+          floor: current.pullRequestFloor,
         });
         return;
       }
       // The decider rejects a no-op too, but checking here keeps the common case
       // — a refresh that found exactly what we already knew — from generating a
-      // rejected dispatch and a warning log on every card open.
-      if (boardCardPullRequestsEqual(card.pullRequest, next)) return;
+      // rejected dispatch on every card open. It cannot close the window
+      // entirely: two refreshes that overlap can both pass this and only one
+      // can land, which is why the dispatch below tolerates the refusal.
+      if (boardCardPullRequestsEqual(current.pullRequest, next)) return;
 
-      yield* dispatch({
+      yield* dispatchOptional({
         type: "board.card.record-pull-request",
         commandId: yield* commandId("record-pr"),
         cardId: card.id,
@@ -2760,7 +2807,7 @@ const make = Effect.gen(function* () {
               threadId: state.threadId,
               createdAt: yield* nowIso,
             });
-            yield* dispatch({
+            yield* dispatchOptional({
               type: "thread.settle",
               commandId: yield* commandId("settle-conflict-fix"),
               threadId: state.threadId,
@@ -3312,7 +3359,7 @@ const make = Effect.gen(function* () {
     if (fromIndex >= 0 && toIndex > fromIndex) {
       for (const link of kickoffCard.threadLinks) {
         if (link.tombstonedAt !== null) continue;
-        yield* dispatch({
+        yield* dispatchOptional({
           type: "thread.settle",
           commandId: yield* commandId("settle-graduated"),
           threadId: link.threadId,

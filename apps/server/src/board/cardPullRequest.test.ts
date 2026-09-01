@@ -169,6 +169,60 @@ describe("card ↔ pull request link", () => {
     ),
   );
 
+  it.effect("records nothing when the link lands WHILE the lookup is in flight", () =>
+    Effect.gen(function* () {
+      // The lookup is a forge round trip, and the card the refresh is holding
+      // was read BEFORE it. Two triggers overlapping across that window is
+      // ordinary — the same card opening in two browser tabs, a review step
+      // boundary landing on top of a stage move — and only one of them can
+      // record. The refresh therefore re-reads the card once the lookup answers,
+      // so the one that loses the race recognises its own answer already on the
+      // card instead of dispatching a command the decider can only refuse.
+      let duringLookup: Effect.Effect<void> = Effect.void;
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: openPr,
+          onPullRequestLookup: Effect.suspend(() => duringLookup),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            // Stand in for the trigger that got there first: the link is on the
+            // card by the time our lookup answers. Fires once — the refresh
+            // path may look up again, and a hook that kept re-writing would be
+            // asserting about the hook rather than the reactor.
+            duringLookup = Ref.update(h.model, (model) => ({
+              ...model,
+              board: {
+                ...model.board!,
+                cards: model.board!.cards.map((card) => ({
+                  ...card,
+                  pullRequest: {
+                    number: openPr.number,
+                    url: openPr.url,
+                    state: openPr.state,
+                    headBranch: openPr.headRef,
+                    baseRef: openPr.baseRef,
+                    checkedAt: "2026-01-01T00:00:00.000Z",
+                  },
+                })),
+              },
+            })).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  duringLookup = Effect.void;
+                }),
+              ),
+            );
+            yield* h.reactor.refreshPullRequest(cardInMerge().id);
+            assert.deepEqual(recordedPullRequests(yield* h.commands), []);
+            assert.equal((yield* h.board).cards[0]!.pullRequest?.number, openPr.number);
+          }),
+      );
+    }),
+  );
+
   it.effect("keeps the last known link when the lookup FAILS", () =>
     Effect.gen(function* () {
       // First establish a link, then re-run with a failing gateway. A rate

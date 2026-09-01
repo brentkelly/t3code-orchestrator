@@ -321,6 +321,12 @@ export function withGovernor(
         "no pull request"; a `detail` string makes the lookup FAIL, which is a
         different answer the reactor must not confuse with "there is none". */
     readonly pullRequest?: VcsStatusChangeRequest | { readonly failWith: string } | null;
+    /** Run before every branch pull-request lookup answers. The lookup is the
+        reactor's one forge round trip on the refresh path, so it is the window
+        another trigger can record a link in — a test that wants to drive that
+        interleaving deterministically, rather than racing two fibers, holds the
+        lookup here and mutates `model` while it waits. */
+    readonly onPullRequestLookup?: Effect.Effect<void>;
     /** What a merge attempt answers: `undefined` succeeds, a string is the
         forge's refusal detail (a conflict when it reads like one). */
     readonly mergeFailure?: string;
@@ -558,15 +564,21 @@ export function withGovernor(
     // refusal did NOT silently retry and that a conflict fix did.
     const mergeAttempts = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     const pullRequestStub = BoardPullRequestGateway.of({
-      find: () => {
-        const configured = input.pullRequest;
-        if (configured !== undefined && configured !== null && "failWith" in configured) {
-          return Effect.fail(
-            new BoardPullRequestGatewayError({ operation: "find", detail: configured.failWith }),
-          );
-        }
-        return Effect.succeed(configured ?? null);
-      },
+      find: () =>
+        (input.onPullRequestLookup ?? Effect.void).pipe(
+          Effect.andThen(() => {
+            const configured = input.pullRequest;
+            if (configured !== undefined && configured !== null && "failWith" in configured) {
+              return Effect.fail(
+                new BoardPullRequestGatewayError({
+                  operation: "find",
+                  detail: configured.failWith,
+                }),
+              );
+            }
+            return Effect.succeed(configured ?? null);
+          }),
+        ),
       merge: (request) =>
         Ref.update(mergeAttempts, (attempts) => [...attempts, { number: request.number }]).pipe(
           Effect.andThen(
