@@ -1908,6 +1908,221 @@ export function deriveBoardCardPlanProgress(input: {
   return progress;
 }
 
+/**
+ * Why a card is waiting on a human, if it is (the "where am I needed" answer).
+ *
+ * Ordered by precedence, loudest first — a card can satisfy several at once
+ * (a stalled step whose thread also has a pending question) and the face has
+ * room for one, so the list IS the ranking.
+ */
+export const BOARD_CARD_ATTENTION_REASONS = [
+  /** Recovery gave up on the step (t3o-17, D3). */
+  "stalled",
+  /** Planning proposed a split nobody has approved yet (t3o-27). */
+  "approval",
+  /** The review loop stopped without a clean pass (t3o-22): `round-cap` or
+      `stopped`. More specific than `held`, so it outranks it. */
+  "review-held",
+  /** The step settled and left the card where it stands: a human-in-the-loop
+      build that finished, a failed step, a merge the forge refused. */
+  "held",
+  /** A live thread asked the human a question (t3o-18, D13). */
+  "input",
+] as const;
+export type BoardCardAttentionReason = (typeof BOARD_CARD_ATTENTION_REASONS)[number];
+
+/** How loudly a reason reads on the card face. Per-reason rather than one
+    colour for all: blue already means "a thread is waiting on you" and amber
+    "a decision is waiting on you", and collapsing them would cost information
+    the board has been carrying since t3o-18. */
+export type BoardCardAttentionTone = "danger" | "warning" | "info";
+
+export type BoardCardAttention = {
+  readonly reason: BoardCardAttentionReason;
+  readonly tone: BoardCardAttentionTone;
+  /** The chip's words, e.g. "Stalled" / "No convergence" / "Needs a human". */
+  readonly label: string;
+  /** The long form, for the chip's tooltip. */
+  readonly detail: string;
+};
+
+const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> = {
+  stalled: "danger",
+  approval: "warning",
+  "review-held": "warning",
+  held: "warning",
+  input: "info",
+};
+
+/**
+ * Whether a card is waiting on a human, and why (null when it is not).
+ *
+ * ONE definition, shared by the card face, the parent's roll-up and any test
+ * that wants to ask the question — because "needs a human" was previously
+ * spread across four independent conditions in the renderer, and two of them
+ * (`stalled`, a held review loop) drew a chip while leaving the card itself
+ * looking exactly like a healthy one.
+ *
+ * A card in the DONE-role stage never qualifies, whatever its flags say: a
+ * finished card is not asking for anything, which is the same rule the summary
+ * already applies when it mutes Done. Archived cards are likewise out.
+ */
+export function boardCardAttention(input: {
+  readonly card: Pick<
+    BoardCardShell,
+    "stage" | "stalled" | "held" | "awaitingInput" | "stepRunning" | "queued" | "archivedAt"
+    // `| undefined` throughout, not bare optionals: under
+    // `exactOptionalPropertyTypes` a caller that spreads a shell it built by
+    // destructuring holds `T | undefined` on these keys, and a bare optional
+    // would refuse the very shape the board page passes.
+  > & {
+    readonly planCount?: number | undefined;
+    readonly planTotal?: number | undefined;
+    readonly parentCardId?: BoardCardId | undefined;
+    readonly reviewOutcome?: BoardReviewLoopOutcome | undefined;
+    readonly reviewHeldOutcome?: BoardReviewLoopOutcome | undefined;
+    readonly reviewRoundComplete?: boolean | undefined;
+  };
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+}): BoardCardAttention | null {
+  const { card } = input;
+  if (card.archivedAt !== null) return null;
+  const stage = input.stages.find((entry) => entry.stageId === card.stage);
+  if (stage !== undefined && effectiveBoardStageRole(stage) === "done") return null;
+
+  if (card.stalled) {
+    return {
+      reason: "stalled",
+      tone: ATTENTION_TONES.stalled,
+      label: "Stalled",
+      detail: "Stalled — recovery gave up; needs a human to retry or take over",
+    };
+  }
+  // Rebuilt key-by-key rather than passed through: `boardCardAttention` accepts
+  // `T | undefined` on its optional keys (see above) and the pending-split
+  // helper takes bare optionals, which `exactOptionalPropertyTypes` keeps
+  // apart.
+  const splitShape = {
+    stage: card.stage,
+    ...(card.planCount === undefined ? {} : { planCount: card.planCount }),
+    ...(card.planTotal === undefined ? {} : { planTotal: card.planTotal }),
+    ...(card.parentCardId === undefined ? {} : { parentCardId: card.parentCardId }),
+  };
+  if (boardCardShellPendingSplit(splitShape, input.stages)) {
+    return {
+      reason: "approval",
+      tone: ATTENTION_TONES.approval,
+      label: "Needs approval",
+      detail: "Planning proposed a multi-part split — approve it to materialise the plan cards",
+    };
+  }
+  // The loop's own verdict, settled against the live step exactly as the
+  // summary row settles it (t3o-22, D7): `running` on the wire only means the
+  // ledger's rounds are accounted for.
+  if (card.reviewOutcome !== undefined) {
+    const outcome = resolveBoardCardReviewOutcome({
+      summary: {
+        outcome: card.reviewOutcome,
+        heldOutcome: card.reviewHeldOutcome ?? card.reviewOutcome,
+        roundComplete: card.reviewRoundComplete ?? false,
+      },
+      stepActive: card.stepRunning || card.queued,
+    });
+    if (isBoardReviewLoopHeld(outcome)) {
+      return {
+        reason: "review-held",
+        tone: ATTENTION_TONES["review-held"],
+        label: outcome === "stopped" ? "Stopped" : "No convergence",
+        detail:
+          outcome === "stopped"
+            ? "The review loop stopped without a clean pass — needs a human"
+            : "The review loop ran every round without converging — needs a human",
+      };
+    }
+  }
+  // `held` is the step fact; a card actively working or waiting for a slot is
+  // not held, whatever a stale flag says.
+  if (card.held && !card.stepRunning && !card.queued) {
+    return {
+      reason: "held",
+      tone: ATTENTION_TONES.held,
+      label: "Needs a human",
+      detail: "This stage finished without moving the card on — it needs a human to continue it",
+    };
+  }
+  if (card.awaitingInput) {
+    return {
+      reason: "input",
+      tone: ATTENTION_TONES.input,
+      label: "Input needed",
+      detail: "A thread on this card is waiting on your answer",
+    };
+  }
+  return null;
+}
+
+/** A parent's roll-up of its children's attention (see
+    `deriveBoardCardChildAttention`). */
+export type BoardCardChildAttention = BoardCardAttention & {
+  /** How many live children are waiting on a human. */
+  readonly childCount: number;
+};
+
+/**
+ * Each parent's most urgent child attention, keyed by parent card id.
+ *
+ * A sub-board parent builds THROUGH its children (t3o-23, D4): while one of
+ * them is stuck, the parent cannot advance either, so the two are blocked by
+ * the same thing and the board should say so on both. Without this the parent
+ * reads as healthy and the stuck child is somewhere in a column the human is
+ * not looking at — which is exactly how a split stalls silently.
+ *
+ * Client-side and free, following `deriveBoardCardPlanProgress`: every input
+ * is already on the shells the board holds, so a parent's roll-up costs no
+ * payload, no delta and no server round trip. The parent takes its worst
+ * child's reason AND tone verbatim — a child waiting on an answer tints its
+ * parent the same blue, so the colour keeps meaning one thing wherever it
+ * appears.
+ */
+export function deriveBoardCardChildAttention(input: {
+  readonly cards: ReadonlyArray<
+    Parameters<typeof boardCardAttention>[0]["card"] & {
+      readonly cardId: BoardCardId;
+    }
+  >;
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+}): ReadonlyMap<BoardCardId, BoardCardChildAttention> {
+  const worstByParent = new Map<BoardCardId, BoardCardChildAttention>();
+  for (const card of input.cards) {
+    if (card.parentCardId === undefined) continue;
+    const attention = boardCardAttention({ card, stages: input.stages });
+    if (attention === null) continue;
+    const current = worstByParent.get(card.parentCardId);
+    if (current === undefined) {
+      worstByParent.set(card.parentCardId, { ...attention, childCount: 1 });
+      continue;
+    }
+    const childCount = current.childCount + 1;
+    const rank = (reason: BoardCardAttentionReason) => BOARD_CARD_ATTENTION_REASONS.indexOf(reason);
+    worstByParent.set(
+      card.parentCardId,
+      rank(attention.reason) < rank(current.reason)
+        ? { ...attention, childCount }
+        : { ...current, childCount },
+    );
+  }
+  return worstByParent;
+}
+
+/** The parent chip's words for a child roll-up. Deliberately count-first and
+    reason-free — the TONE carries the reason and the tooltip spells it out, so
+    the chip never has to conjugate "1 child needs" vs "3 children need". */
+export function boardCardChildAttentionLabel(attention: BoardCardChildAttention): string {
+  return attention.childCount === 1
+    ? "1 child needs you"
+    : `${attention.childCount} children need you`;
+}
+
 // ── Key allocation ─────────────────────────────────────────────────────
 
 /**
@@ -3316,6 +3531,26 @@ export const BoardCardShell = Schema.Struct({
       false and the client preserves the last known value
       (`applyBoardShellStreamEvent`). */
   stepRunning: Schema.Boolean,
+  /** Whether the card's step has SETTLED and left the card where it stands —
+      the pipeline is finished with it and only a human moves it on. The quiet
+      counterpart to `stalled`: a build that ran to `succeeded` in
+      human-in-the-loop mode, a step that `failed`, a card parked at the merge
+      stage whose merge the forge refused. None of those is stalled (nothing
+      gave up) and none is running, so before this the card face said nothing
+      at all and the card sat silently mid-pipeline.
+
+      `stalled` is excluded deliberately — it is the same situation with a
+      louder cause and its own badge, and `boardCardAttention` ranks it first
+      anyway. Done is NOT excluded here: the producer reports the step fact and
+      the renderer decides it does not matter on a finished card, which keeps
+      this field a fact about the STEP rather than a view of the board.
+
+      Derived from the step-state read-model slice the card aggregate does not
+      carry, so — exactly like `queued`/`stalled`/`stepRunning` — it rides the
+      snapshot and the `card-stalled` delta, and card-carrying deltas rest it
+      at false while the client preserves the last known value
+      (`applyBoardShellStreamEvent`). */
+  held: Schema.Boolean,
   // Thread-derived — joined from `board_card_thread_links` (902) and the
   // linked thread's shell; no new plumbing (t3o-04).
   threadState: BoardCardThreadState,
@@ -3547,6 +3782,9 @@ export function makeBoardCardShell(input: {
   /** Whether the card's live step is admitted and running (the executor is
       driving it now). Real on the snapshot; rests false on card deltas. */
   readonly stepRunning?: boolean | undefined;
+  /** Whether the card's step has settled and left the card where it stands.
+      Real on the snapshot; rests false on card deltas. */
+  readonly held?: boolean | undefined;
   /** Whether the brief carries a picture. Omitted by producers that do not
       have the brief body in hand, which leaves the key absent so the client
       preserves its last known value. */
@@ -3598,6 +3836,7 @@ export function makeBoardCardShell(input: {
     attachmentCount: 0, // t3o-11
     queued: input.queued ?? false, // t3o-11 (D11): real on the snapshot, rests false on card deltas
     stalled: input.stalled ?? false, // t3o-17 (D3): real on the snapshot, rests false on card deltas
+    held: input.held ?? false, // real on the snapshot, rests false on card deltas
     stepRunning: input.stepRunning ?? false, // durable "being worked" flag: real on the snapshot, rests false on card deltas
     threadState,
     awaitingInput,
@@ -3771,6 +4010,13 @@ export const BoardCardStalledShellEvent = Schema.Struct({
       a recovered-to-running step sets it true; a stalled, freshly-selected
       (pending) or settled (terminal) step sets it false. */
   stepRunning: Schema.Boolean,
+  /** And the quiet counterpart, `held` — raised by the SETTLE that ends a
+      step and cleared by the next select or recovery. It rides this delta
+      rather than one of its own because the three events that already emit
+      `card-stalled` (settled / selected / recovered) are exactly the three
+      that change it; `card-queued` needs no copy, because a step is always
+      SELECTED (clearing `held`) before it can be admitted. */
+  held: Schema.Boolean,
 });
 export type BoardCardStalledShellEvent = typeof BoardCardStalledShellEvent.Type;
 

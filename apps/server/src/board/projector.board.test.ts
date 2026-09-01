@@ -670,6 +670,8 @@ describe("board projector", () => {
         cardId,
         stalled: false,
         stepRunning: false,
+        // A settled step is the card parking: `held` is raised here.
+        held: true,
       });
     }),
   );
@@ -751,6 +753,7 @@ describe("board projector", () => {
         cardId,
         stalled: true,
         stepRunning: false,
+        held: false,
       });
       // An ordinary retry (status running) clears the badge.
       const retryRecover: BoardEvent = {
@@ -764,6 +767,7 @@ describe("board projector", () => {
         cardId,
         stalled: false,
         stepRunning: true,
+        held: false,
       });
       // A fresh stage run (select-step) also clears any lingering stalled badge.
       const selected: BoardEvent = {
@@ -780,6 +784,7 @@ describe("board projector", () => {
         cardId,
         stalled: false,
         stepRunning: false,
+        held: false,
       });
     }),
   );

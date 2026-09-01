@@ -14,7 +14,8 @@ import {
   areBoardStagesAdjacent,
   boardStageWithRole,
   deriveBoardCardPlanProgress,
-  boardCardShellPendingSplit,
+  boardCardAttention,
+  deriveBoardCardChildAttention,
   deriveBoardCardThreadState,
   resolveBoardProjectAccent,
   type BoardCardShell,
@@ -359,12 +360,29 @@ function EnvironmentBoard({
     (cardId: string) => (scope.kind === "root" ? parentKeyById.get(cardId) : undefined),
     [parentKeyById, scope],
   );
-  // Awaiting split approval (t3o-27) — derived client-side from the shell +
-  // stage list, no extra payload (a child card carries `parentCardId` and so
-  // is never pending). Amber "Needs approval" on the card face.
-  const pendingSplitFor = useCallback(
-    (card: BoardCardShell) => boardCardShellPendingSplit(card, orderedStages),
+  // "Needs a human", derived client-side from the shell + stage list with no
+  // extra payload (t3o-27's split approval is one of its reasons). The card
+  // face turns this into a border, a fill tint and one chip.
+  const attentionFor = useCallback(
+    (card: BoardCardShell) => boardCardAttention({ card, stages: orderedStages }),
     [orderedStages],
+  );
+  // …and the same question asked of each parent's CHILDREN, folded once for the
+  // whole board rather than per card: a split parent builds through its
+  // children, so a child that needs a human blocks the parent too and the
+  // parent wears the child's tone. Free, like the plan pips beside it — every
+  // input is already on the shells the board holds.
+  const childAttentionByParent = useMemo(
+    () =>
+      deriveBoardCardChildAttention({
+        cards: Object.values(columns).flat(),
+        stages: orderedStages,
+      }),
+    [columns, orderedStages],
+  );
+  const childAttentionFor = useCallback(
+    (card: BoardCardShell) => childAttentionByParent.get(card.cardId),
+    [childAttentionByParent],
   );
 
   // The parent this sub-board drills into, as a live (decorated) shell — null
@@ -1049,7 +1067,8 @@ function EnvironmentBoard({
             <BoardColumn
               accentNameFor={accentNameFor}
               parentKeyFor={parentKeyFor}
-              pendingSplitFor={pendingSplitFor}
+              attentionFor={attentionFor}
+              childAttentionFor={childAttentionFor}
               addProjects={addProjects}
               cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
               labelsById={labelsById}

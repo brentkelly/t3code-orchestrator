@@ -28,6 +28,9 @@ import {
   BoardLabelId,
   BoardLabelName,
   boardBuildHumanInLoopDefault,
+  boardCardAttention,
+  boardCardChildAttentionLabel,
+  deriveBoardCardChildAttention,
   boardCardPendingSplit,
   boardCardShellPendingSplit,
   boardCardUnfinishedChildren,
@@ -97,6 +100,7 @@ const fullyPopulatedShell = {
   queued: true,
   stalled: true,
   stepRunning: true,
+  held: true,
   threadState: "waiting",
   awaitingInput: true,
   activeThreadId: ThreadId.make("thread-0b8a2c3d-4e5f-6789-abcd-ef0123456789"),
@@ -1032,5 +1036,121 @@ describe("build-stage human-in-the-loop default (t3o-15 D6, sub-board children)"
     const pauseAll = { humanInLoopWithPlan: true, humanInLoopWithoutPlan: true };
     expect(boardBuildHumanInLoopDefault(pauseAll, child, false)).toBe(true);
     expect(boardBuildHumanInLoopDefault(pauseAll, topLevel, true)).toBe(true);
+  });
+});
+
+describe("cards that need a human (boardCardAttention)", () => {
+  const card = (overrides: Partial<BoardCardShell>): BoardCardShell => ({
+    ...fullyPopulatedShell,
+    stage: BOARD_SEED_STAGE_IDS.building,
+    stalled: false,
+    held: false,
+    awaitingInput: false,
+    stepRunning: false,
+    queued: false,
+    archivedAt: null,
+    planCount: 0,
+    ...overrides,
+  });
+  /** The base fixture is fully populated, review summary included — strip it
+      unless the case under test is about the loop, or every card would read as
+      a held review. */
+  const attention = (overrides: Partial<BoardCardShell>) => {
+    const { reviewOutcome, reviewHeldOutcome, reviewRoundComplete, ...rest } = card(overrides);
+    return boardCardAttention({
+      card:
+        overrides.reviewOutcome === undefined
+          ? rest
+          : { ...rest, reviewOutcome, reviewHeldOutcome, reviewRoundComplete },
+      stages: BOARD_SEED_STAGES,
+    });
+  };
+
+  it("ranks the reasons, loudest first", () => {
+    // The ranking IS the contract: a card can satisfy several at once and the
+    // face has room for one.
+    expect(attention({ stalled: true, held: true, awaitingInput: true })?.reason).toBe("stalled");
+    expect(attention({ held: true, awaitingInput: true })?.reason).toBe("held");
+    expect(attention({ awaitingInput: true })?.reason).toBe("input");
+    expect(attention({})).toBeNull();
+  });
+
+  it("keeps its tones apart — a question is not a failure", () => {
+    expect(attention({ stalled: true })?.tone).toBe("danger");
+    expect(attention({ held: true })?.tone).toBe("warning");
+    expect(attention({ awaitingInput: true })?.tone).toBe("info");
+  });
+
+  it("never flags a finished or archived card", () => {
+    // A card in Done has a settled step by definition, so without this every
+    // finished card on the board would light up.
+    expect(
+      boardCardAttention({
+        card: card({ stage: BOARD_SEED_STAGE_IDS.done, held: true, stalled: true }),
+        stages: BOARD_SEED_STAGES,
+      }),
+    ).toBeNull();
+    expect(attention({ archivedAt: "2026-01-01T00:00:00.000Z", stalled: true })).toBeNull();
+  });
+
+  it("treats a held flag as stale while the step is live again", () => {
+    // `held` rests on the shell until the next select-step clears it, and the
+    // snapshot can arrive mid-flight.
+    expect(attention({ held: true, stepRunning: true })).toBeNull();
+    expect(attention({ held: true, queued: true })).toBeNull();
+  });
+
+  it("reads a review loop that ran out of rounds as needing a human", () => {
+    const heldLoop = attention({
+      stage: BOARD_SEED_STAGE_IDS.review,
+      reviewOutcome: "running",
+      reviewHeldOutcome: "round-cap",
+      reviewRoundComplete: true,
+    });
+    expect(heldLoop?.reason).toBe("review-held");
+    expect(heldLoop?.label).toBe("No convergence");
+    // …but a loop still going is not: `running` on the wire only means the
+    // ledger's rounds are accounted for.
+    expect(
+      attention({
+        stage: BOARD_SEED_STAGE_IDS.review,
+        reviewOutcome: "running",
+        reviewHeldOutcome: "round-cap",
+        reviewRoundComplete: true,
+        stepRunning: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("rolls the WORST child up to the parent, with a count", () => {
+    const parent = card({ cardId: BoardCardId.make("card-parent") });
+    const children = [
+      {
+        ...card({ awaitingInput: true }),
+        cardId: BoardCardId.make("c1"),
+        parentCardId: parent.cardId,
+      },
+      { ...card({ stalled: true }), cardId: BoardCardId.make("c2"), parentCardId: parent.cardId },
+      { ...card({}), cardId: BoardCardId.make("c3"), parentCardId: parent.cardId },
+    ];
+    const rolled = deriveBoardCardChildAttention({
+      cards: [parent, ...children],
+      stages: BOARD_SEED_STAGES,
+    }).get(parent.cardId);
+    // The stall outranks the question, and the healthy child is not counted.
+    expect(rolled?.reason).toBe("stalled");
+    expect(rolled?.childCount).toBe(2);
+    expect(boardCardChildAttentionLabel(rolled!)).toBe("2 children need you");
+  });
+
+  it("rolls nothing up for a parent whose children are all fine", () => {
+    const parent = card({ cardId: BoardCardId.make("card-parent") });
+    const healthy = { ...card({}), cardId: BoardCardId.make("c1"), parentCardId: parent.cardId };
+    expect(
+      deriveBoardCardChildAttention({
+        cards: [parent, healthy],
+        stages: BOARD_SEED_STAGES,
+      }).size,
+    ).toBe(0);
   });
 });

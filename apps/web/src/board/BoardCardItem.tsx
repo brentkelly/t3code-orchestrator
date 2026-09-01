@@ -10,15 +10,20 @@
  * reads at a glance. The same dot slot turns to a static blue dot when the card
  * is awaiting input.
  */
+import { boardCardChildAttentionLabel } from "@t3tools/contracts";
 import type {
+  BoardCardAttention,
+  BoardCardAttentionReason,
+  BoardCardAttentionTone,
+  BoardCardChildAttention,
   BoardCardShell,
   BoardCardThreadShell,
   BoardLabel,
   BoardLabelId,
   ThreadId,
 } from "@t3tools/contracts";
-import { LayersIcon, LockIcon, TriangleAlertIcon } from "lucide-react";
-import type { DragEvent } from "react";
+import { LayersIcon, LockIcon, PauseIcon, TriangleAlertIcon } from "lucide-react";
+import type { DragEvent, ReactNode } from "react";
 
 import { cn } from "../lib/utils";
 import {
@@ -62,6 +67,60 @@ export interface BoardCardQueueSlot {
   readonly startsNext: boolean;
 }
 
+/**
+ * The three attention tones as card-level treatments: border, fill tint, and
+ * the 1px ring. One entry per tone rather than a branch per reason — the
+ * reason picks the tone (`boardCardAttention`), and the card only ever renders
+ * a tone.
+ *
+ * The tint is a colour-MIX into the card fill, not a translucent overlay, so it
+ * reads the same over the light `--card` and the dark lift — a flat `bg-info/7`
+ * would wash out on one of them. Each table is a COMPLETE class per tone
+ * because Tailwind resolves competing utilities by stylesheet order, not class
+ * order, so a card must carry exactly one border / fill / shadow class.
+ */
+const TONE_BORDER: Record<BoardCardAttentionTone, string> = {
+  danger: "border-destructive/60",
+  warning: "border-amber-500/60",
+  info: "border-info/55",
+};
+
+const TONE_TINT: Record<BoardCardAttentionTone, string> = {
+  danger:
+    "bg-[color-mix(in_srgb,var(--destructive)_9%,var(--card))] dark:bg-[color-mix(in_srgb,var(--destructive)_12%,#1c1c20)]",
+  warning:
+    "bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]",
+  info: "bg-[color-mix(in_srgb,var(--info)_7%,var(--card))] dark:bg-[color-mix(in_srgb,var(--info)_9%,#1c1c20)]",
+};
+
+const TONE_RING: Record<BoardCardAttentionTone, string> = {
+  danger:
+    "shadow-[0_0_0_1px_color-mix(in_srgb,var(--destructive)_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--destructive)_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
+  warning:
+    "shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
+  info: "shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
+};
+
+/** The chip's leading mark per reason. The blue question keeps its DOT rather
+    than an icon — the card reads as "has a thread, and it needs you", the same
+    indicator as the running dot in a different colour — while the states where
+    nothing is running at all wear an icon. */
+const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
+  stalled: <TriangleAlertIcon className="size-3" />,
+  approval: <LayersIcon className="size-3" />,
+  "review-held": <TriangleAlertIcon className="size-3" />,
+  held: <PauseIcon className="size-3" />,
+  input: <span className="size-2 shrink-0 rounded-full bg-info" />,
+};
+
+/** The chip's own colours, which are text-weight rather than surface-weight —
+    the card fill is already carrying the tone. */
+const TONE_CHIP: Record<BoardCardAttentionTone, string> = {
+  danger: "text-destructive-foreground",
+  warning: "text-amber-700 dark:text-amber-300",
+  info: "text-info-foreground",
+};
+
 export function BoardCardContent({
   card,
   labelsById,
@@ -71,7 +130,8 @@ export function BoardCardContent({
   todos,
   parentKey,
   onOpenSubBoard,
-  pendingSplit,
+  attention,
+  childAttention,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -91,11 +151,16 @@ export function BoardCardContent({
       handler is supplied (the live root board — not the ghost, not the
       archive sheet, where the chip is a static twin). */
   readonly onOpenSubBoard?: (() => void) | undefined;
-  /** The card's planning proposed a multi-part split nobody has approved yet
-      (t3o-27): the card is pinned until a human approves it, so it wears the
-      amber "Needs approval" state. Derived client-side by the board page from
-      the shell + stage list. */
-  readonly pendingSplit?: boolean | undefined;
+  /** Why this card is waiting on a human, or null when it is not
+      (`boardCardAttention`). Derived client-side by the board page, which is
+      the surface that holds the stage list; absent on the surfaces that do not
+      resolve it (the drag ghost, the archive sheet), where the card renders as
+      it always did. */
+  readonly attention?: BoardCardAttention | null | undefined;
+  /** The same question asked of this card's CHILDREN (`deriveBoardCardChildAttention`).
+      A split parent builds through its children, so one stuck child blocks the
+      parent too and the parent wears the child's tone. */
+  readonly childAttention?: BoardCardChildAttention | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
@@ -117,17 +182,37 @@ export function BoardCardContent({
     progress.kind === "todos" && todos?.expanded === true
       ? todoThreads.filter((entry) => entry.threadId !== progress.todo.threadId)
       : EMPTY_TODO_THREADS;
-  // Blue means "this card is waiting on you" — the whole card, not just the
-  // badge, so a board of forty cards answers "where am I needed" at a glance
-  // (the prototype's treatment: tinted fill, info border, a 1px info ring).
-  // Muting a Done card wins over it: a finished card is not asking for
+  // "This card is waiting on you" — the whole card, not just a badge, so a
+  // board of forty cards answers "where am I needed" at a glance (the
+  // prototype's treatment: tinted fill, coloured border, a 1px ring). The
+  // reason picks the colour: red for a stalled step, amber for a decision, blue
+  // for a thread's question — one vocabulary, ranked by `boardCardAttention`.
+  //
+  // A parent with no problem of its own inherits its worst child's, tone and
+  // all: a split parent builds THROUGH its children (t3o-23, D4), so while one
+  // is stuck the parent cannot advance either and the board has to say so on
+  // both — otherwise the parent reads healthy and the stuck child is buried in
+  // a column nobody is looking at.
+  //
+  // Muting a Done card wins over all of it: a finished card is not asking for
   // anything, whatever its last thread state said.
-  const awaiting = card.awaitingInput && !summary.muted;
-  // A pending split (t3o-27) pins the card until a human approves — an amber
-  // "Needs approval" state, ranked above the blue awaiting-input tint when
-  // both somehow hold (approval is the blocking gate). Muted (Done) wins over
-  // both, as it does for awaiting.
-  const needsApproval = pendingSplit === true && !summary.muted;
+  const own = summary.muted ? null : (attention ?? null);
+  const inherited = summary.muted || own !== null ? null : (childAttention ?? null);
+  const flag = own ?? inherited;
+  const tone = flag?.tone ?? null;
+  // What the chip actually says. A review loop that stopped without converging
+  // already spells itself out in the summary row's round pips ("No convergence"
+  // / "Stopped"), so it tints the card and skips the chip rather than saying
+  // the same thing twice on one card.
+  const chip =
+    flag === null || (own !== null && own.reason === "review-held")
+      ? null
+      : {
+          tone: flag.tone,
+          label: inherited === null ? flag.label : boardCardChildAttentionLabel(inherited),
+          title: inherited === null ? flag.detail : `A child of this card: ${inherited.detail}`,
+          icon: ATTENTION_ICON[flag.reason],
+        };
   // A split parent wears the stack (t3o-25, AC1): the card reads as the top
   // sheet of a pile. Purely visual now — the drill-in affordance is the plan
   // row's chip — so it keys off `planTotal` alone and the drag ghost / archive
@@ -146,24 +231,14 @@ export function BoardCardContent({
         // Selection darkens the card's own border rather than adding a ring:
         // `ring-2 ring-ring` painted the accent blue outside the card and read
         // as a focus ring on click.
-        selected
-          ? "border-foreground/40"
-          : needsApproval
-            ? "border-amber-500/60"
-            : awaiting
-              ? "border-info/55"
-              : "border-border",
+        selected ? "border-foreground/40" : tone === null ? "border-border" : TONE_BORDER[tone],
         // The tint is a colour-MIX into the card fill, not a translucent
         // overlay, so it reads the same over the light `--card` and the dark
         // lift below — a flat `bg-info/7` would wash out on one of them.
         // `dark:bg-[#1c1c20]` lifts the card above the column beneath it. The
         // stock `--card` in dark is ~3% off the page background, which landed
         // BELOW the column's fill and left cards darker than the board.
-        needsApproval
-          ? "bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]"
-          : awaiting
-            ? "bg-[color-mix(in_srgb,var(--info)_7%,var(--card))] dark:bg-[color-mix(in_srgb,var(--info)_9%,#1c1c20)]"
-            : "bg-card hover:border-foreground/18 dark:bg-[#1c1c20]",
+        tone === null ? "bg-card hover:border-foreground/18 dark:bg-[#1c1c20]" : TONE_TINT[tone],
         // Done recedes: finished work is muted and lower-contrast (D15 stage).
         summary.muted && "bg-card/60 opacity-70",
         // EXACTLY one box-shadow branch per card — shadow utilities conflict by
@@ -178,11 +253,9 @@ export function BoardCardContent({
         // dark), and the pile gets the prototype's 8px of breathing room below.
         wearsStack
           ? "mb-2 [--sheet:var(--card)] dark:[--sheet:#1c1c20] shadow-[0_5px_0_-1px_var(--sheet),0_5px_0_0_var(--border),0_10px_0_-2px_var(--sheet),0_10px_0_-1px_var(--border)] hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35),0_5px_0_-1px_var(--sheet),0_5px_0_0_var(--border),0_10px_0_-2px_var(--sheet),0_10px_0_-1px_var(--border)]"
-          : needsApproval
-            ? "shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]"
-            : awaiting
-              ? "shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]"
-              : "shadow-xs/5 hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]",
+          : tone === null
+            ? "shadow-xs/5 hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]"
+            : TONE_RING[tone],
       )}
       data-board-card={card.cardId}
       data-board-card-stage={card.stage}
@@ -223,41 +296,23 @@ export function BoardCardContent({
             title="Thread running"
           />
         ) : null}
-        {card.stalled ? (
-          // Stalled (t3o-17, D3): recovery gave up — loud and distinct from the
-          // blue "Input needed", because nobody is working until a human acts.
+        {chip === null ? null : (
+          // ONE chip, whatever the reason: the card face has room for a single
+          // status word, and rendering two was what let "Stalled" and "Input
+          // needed" fight for the same slot. `boardCardAttention` already
+          // ranked them, so the chip just says what won — and on a parent with
+          // no problem of its own, it names the child that has one.
           <span
-            className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-semibold text-destructive-foreground"
-            title="Stalled — recovery gave up; needs a human to retry or take over"
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1 text-[10.5px] font-semibold",
+              TONE_CHIP[chip.tone],
+            )}
+            title={chip.title}
           >
-            <TriangleAlertIcon className="size-3" />
-            Stalled
+            {chip.icon}
+            {chip.label}
           </span>
-        ) : null}
-        {card.awaitingInput && !needsApproval ? (
-          // A blue dot in the running-dot's slot, not an icon: the card reads
-          // as "has a thread, and it needs you" — same indicator, different
-          // colour — with the "Input needed" label spelling it out. Suppressed
-          // under a pending split so the two chips never render together — the
-          // amber "Needs approval" wins, matching the tint precedence.
-          <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-info-foreground">
-            <span className="size-2 shrink-0 rounded-full bg-info" title="Input needed" />
-            Input needed
-          </span>
-        ) : null}
-        {needsApproval ? (
-          // A pending split (t3o-27): amber, spelled out, distinct from the
-          // blue "Input needed" so the human reads it as "approve this split",
-          // not "answer a thread question". The card cannot advance until it
-          // clears, so it earns a face chip like Stalled / Input needed.
-          <span
-            className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-semibold text-amber-700 dark:text-amber-300"
-            title="Planning proposed a multi-part split — approve it to materialise the plan cards"
-          >
-            <LayersIcon className="size-3" />
-            Needs approval
-          </span>
-        ) : null}
+        )}
         <span className="flex-1" />
         {queueSlot !== undefined ? (
           <span
@@ -365,7 +420,8 @@ export function DraggableBoardCard({
   todos,
   parentKey,
   onOpenSubBoard,
-  pendingSplit,
+  attention,
+  childAttention,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -381,7 +437,8 @@ export function DraggableBoardCard({
   readonly todos?: BoardCardTodoContext | undefined;
   readonly parentKey?: string | undefined;
   readonly onOpenSubBoard?: (() => void) | undefined;
-  readonly pendingSplit?: boolean | undefined;
+  readonly attention?: BoardCardAttention | null | undefined;
+  readonly childAttention?: BoardCardChildAttention | undefined;
 }) {
   return (
     // Keyboard path: the card is a focusable button-role element — Enter/Space
@@ -426,7 +483,8 @@ export function DraggableBoardCard({
         todos={todos}
         parentKey={parentKey}
         onOpenSubBoard={onOpenSubBoard}
-        pendingSplit={pendingSplit}
+        attention={attention}
+        childAttention={childAttention}
       />
     </div>
   );

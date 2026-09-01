@@ -827,6 +827,10 @@ export function boardShellStreamEvent(
         // Recovery either put the step back to running (dot re-lights) or landed
         // it stalled (dot dark) — carry the durable flag on the same delta.
         stepRunning: event.payload.state.status === "running",
+        // Recovery is the step being SUPERVISED, never settled, so it always
+        // clears `held`: a step that gave up is `stalled`, which is its own
+        // louder flag, and one that retried is running again.
+        held: false,
       });
 
     case "board.card-step-selected":
@@ -841,6 +845,10 @@ export function boardShellStreamEvent(
         // A freshly-selected step is `pending` — admitted-and-running has not
         // happened yet — so the durable dot is off until `card-step-admitted`.
         stepRunning: false,
+        // …and it is the card moving again, which is precisely what clears
+        // `held`. This is also why `card-queued` needs no copy of the flag: a
+        // step is always selected before it can be admitted.
+        held: false,
       });
 
     case "board.card-step-settled":
@@ -858,6 +866,11 @@ export function boardShellStreamEvent(
         // A settled step is terminal — not running — so the durable dot goes
         // dark here (a converged loop that stops running turns stops being lit).
         stepRunning: false,
+        // And it is the moment `held` is RAISED: the stage is finished with the
+        // card. If the stage auto-advances, the destination's own select-step
+        // clears it a beat later; if nothing advances the card, the flag is the
+        // whole point — it is the only trace a parked card leaves.
+        held: true,
       });
 
     case "board.plans-proposed":

@@ -130,6 +130,7 @@ const expectedCardShell = {
   queued: false,
   stalled: false,
   stepRunning: false,
+  held: false,
   threadState: "none",
   awaitingInput: false,
   activeThreadId: null,
