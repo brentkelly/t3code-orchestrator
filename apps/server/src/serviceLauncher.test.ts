@@ -376,3 +376,74 @@ it.effect("refuses to back up when the primary database is missing", () =>
     assert.equal(outcome, "refused");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+// The restore can meet a snapshot written by the PREVIOUS launcher — its layout
+// was `database`/`database-wal`/`database-shm` for a single db — because
+// snapshots are durable across launcher restarts. Recognising nothing must
+// refuse, never delete: this path's entire purpose is reversibility.
+it.effect("restores a legacy-layout snapshot instead of deleting the live databases", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped();
+    const stateDir = path.join(baseDir, "userdata");
+    const backupDir = path.join(baseDir, "runtime", "db-backup", "update-legacy");
+    yield* fs.makeDirectory(stateDir, { recursive: true });
+    yield* fs.makeDirectory(backupDir, { recursive: true });
+
+    const dbPath = path.join(stateDir, "state.sqlite");
+    yield* fs.writeFileString(dbPath, "state-v2");
+    yield* fs.writeFileString(path.join(stateDir, "boards.sqlite"), "boards-v2");
+    // Old layout: one database, fixed names.
+    yield* fs.writeFileString(path.join(backupDir, "database"), "state-v1");
+    yield* fs.writeFileString(path.join(backupDir, "database-wal"), "state-wal-v1");
+
+    const pending = {
+      id: "update-legacy",
+      fromVersion: "1.0.0",
+      targetVersion: "1.1.0",
+      dbPath,
+      status: "pending",
+    } as const;
+    yield* Effect.promise(() => restoreDatabaseBackup(baseDir, pending));
+
+    assert.equal(yield* fs.readFileString(dbPath), "state-v1");
+    assert.equal(yield* fs.readFileString(`${dbPath}-wal`), "state-wal-v1");
+    // A database with no entry in the snapshot still reverts by deletion — the
+    // legacy snapshot predates boards.sqlite, so the pre-update state had none.
+    assert.isFalse(yield* fs.exists(path.join(stateDir, "boards.sqlite")));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("refuses to restore an unrecognisable snapshot layout", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped();
+    const stateDir = path.join(baseDir, "userdata");
+    const backupDir = path.join(baseDir, "runtime", "db-backup", "update-odd");
+    yield* fs.makeDirectory(stateDir, { recursive: true });
+    yield* fs.makeDirectory(backupDir, { recursive: true });
+
+    const dbPath = path.join(stateDir, "state.sqlite");
+    yield* fs.writeFileString(dbPath, "state-live");
+    yield* fs.writeFileString(path.join(backupDir, "something-else"), "???");
+
+    const pending = {
+      id: "update-odd",
+      fromVersion: "1.0.0",
+      targetVersion: "1.1.0",
+      dbPath,
+      status: "pending",
+    } as const;
+    const outcome = yield* Effect.promise(() =>
+      restoreDatabaseBackup(baseDir, pending).then(
+        () => "restored" as const,
+        () => "refused" as const,
+      ),
+    );
+    assert.equal(outcome, "refused");
+    // Refusal must leave the live database untouched.
+    assert.equal(yield* fs.readFileString(dbPath), "state-live");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

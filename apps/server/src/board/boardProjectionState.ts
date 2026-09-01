@@ -48,6 +48,19 @@ export const BOARD_PROJECTOR_NAME_PREFIX = "projection.board-";
 export const isBoardProjectorName = (projector: string): boolean =>
   projector.startsWith(BOARD_PROJECTOR_NAME_PREFIX);
 
+/**
+ * The prefix as a LIKE pattern, used to EXCLUDE board rows from every main-side
+ * read. A stale `projection.board-*` row can exist in `main` — migration 031's
+ * cross-database transaction can tear leaving its DELETE uncommitted, and a
+ * downgrade/upgrade cycle writes one back — and since `upsert` routes board
+ * names to `boards`, a shadowing read would never self-heal: the projector
+ * would bootstrap from the frozen `main` watermark on every boot, replaying an
+ * ever-growing tail of the log forever. Excluding it in the reads makes the
+ * stale row unreachable no matter how it got there. (`_` matters in LIKE, but
+ * the prefix contains none.)
+ */
+const BOARD_PROJECTOR_NAME_LIKE = `${BOARD_PROJECTOR_NAME_PREFIX}%`;
+
 const MinRowSchema = Schema.Struct({
   minLastAppliedSequence: Schema.NullOr(NonNegativeInt),
 });
@@ -83,6 +96,7 @@ const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
     execute: () => sql`
       SELECT projector, last_applied_sequence AS "lastAppliedSequence", updated_at AS "updatedAt"
       FROM main.projection_state
+      WHERE projector NOT LIKE ${BOARD_PROJECTOR_NAME_LIKE}
       UNION ALL
       SELECT projector, last_applied_sequence AS "lastAppliedSequence", updated_at AS "updatedAt"
       FROM boards.projection_state
@@ -94,7 +108,9 @@ const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
     Result: ProjectionState,
     execute: ({ projector }) => sql`
       SELECT projector, last_applied_sequence AS "lastAppliedSequence", updated_at AS "updatedAt"
-      FROM main.projection_state WHERE projector = ${projector}
+      FROM main.projection_state
+      WHERE projector = ${projector}
+        AND projector NOT LIKE ${BOARD_PROJECTOR_NAME_LIKE}
       UNION ALL
       SELECT projector, last_applied_sequence AS "lastAppliedSequence", updated_at AS "updatedAt"
       FROM boards.projection_state WHERE projector = ${projector}
@@ -107,6 +123,7 @@ const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
     execute: () => sql`
       SELECT MIN(last_applied_sequence) AS "minLastAppliedSequence" FROM (
         SELECT last_applied_sequence FROM main.projection_state
+        WHERE projector NOT LIKE ${BOARD_PROJECTOR_NAME_LIKE}
         UNION ALL
         SELECT last_applied_sequence FROM boards.projection_state
       )

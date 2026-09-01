@@ -145,6 +145,12 @@ export const relocateBoardSchema = Effect.fn("relocateBoardSchema")(function* ()
   // Indexes, and also views and triggers: the board schema defines none today,
   // but `DROP TABLE` would take any that existed with it, and silently losing a
   // database object mid-migration is not a failure mode worth leaving open.
+  //
+  // Known limit: for a view, `tbl_name` is the view's OWN name, so only views
+  // following the `board_` naming convention are discovered. Deciding by
+  // definition text instead is not mechanically sound — a view joining board and
+  // upstream tables belongs in neither file, and relocating it would break it —
+  // so a view over board tables must be named `board_*` to move with them.
   const companions = yield* sql<{
     readonly name: string;
     readonly tbl_name: string;

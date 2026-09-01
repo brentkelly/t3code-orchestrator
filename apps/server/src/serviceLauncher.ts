@@ -187,19 +187,39 @@ export async function restoreDatabaseBackup(
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (!(await pathExists(backupDir))) return;
 
-  await markDatabaseRestorePending(backupDir);
   const directory = NodePath.dirname(pending.dbPath);
+  const primaryName = NodePath.basename(pending.dbPath);
+  const entries = await NodeFSP.readdir(backupDir).catch(() => [] as ReadonlyArray<string>);
+  const backedUpNames = entries.filter((entry) => entry.endsWith(".sqlite"));
+  // Snapshots are durable across launcher restarts, so this restore can meet a
+  // directory written by the PREVIOUS launcher, whose layout was a single
+  // database stored as `database` / `database-wal` / `database-shm`. Map that
+  // layout to the primary database. And if the directory matches NEITHER layout,
+  // refuse loudly before touching anything: below this point live files with no
+  // snapshot entry are deleted, and a restore that recognises nothing would
+  // delete the databases and restore nothing. Failing is recoverable by hand;
+  // deleting is not.
+  const legacyLayout = entries.includes("database");
+  if (legacyLayout) {
+    backedUpNames.push(primaryName);
+  } else if (!backedUpNames.includes(primaryName)) {
+    throw new Error(
+      `refusing to restore database backup ${backupDir}: no entry for ${primaryName} in a recognised layout`,
+    );
+  }
+
+  await markDatabaseRestorePending(backupDir);
   // Union of what was backed up and what is live now: a database the trial update
   // CREATED has no backup entry and must be removed, or the reverted build would
   // read a database from the future.
   const liveNames = await databaseBaseNames(pending.dbPath);
-  const backedUpNames = (
-    await NodeFSP.readdir(backupDir).catch(() => [] as ReadonlyArray<string>)
-  ).filter((entry) => entry.endsWith(".sqlite"));
   for (const baseName of new Set([...liveNames, ...backedUpNames])) {
     for (const suffix of DB_FILE_SUFFIXES) {
       const target = NodePath.join(directory, `${baseName}${suffix}`);
-      const source = databaseBackupFile(backupDir, baseName, suffix);
+      const source =
+        legacyLayout && baseName === primaryName
+          ? databaseBackupFile(backupDir, "database", suffix)
+          : databaseBackupFile(backupDir, baseName, suffix);
       if (await pathExists(source)) {
         await NodeFSP.copyFile(source, target);
         await syncFile(target);

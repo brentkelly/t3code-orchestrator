@@ -18,7 +18,11 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import * as NodeSqliteClient from "../src/persistence/NodeSqliteClient.ts";
 // T3o-26: board tables live in an attached boards.sqlite, so this tool has to
 // attach it too or every `board_*` query fails with "no such table".
-import { attachBoardDatabase, BOARD_SCHEMA } from "../src/board/boardDatabase.ts";
+import {
+  attachBoardDatabase,
+  BOARD_SCHEMA,
+  resolveBoardDatabasePath,
+} from "../src/board/boardDatabase.ts";
 
 export const SqliteStateOperation = Schema.Literals(["query", "exec"]);
 export type SqliteStateOperation = typeof SqliteStateOperation.Type;
@@ -206,13 +210,20 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
     const sql = yield* SqlClient.SqlClient;
     yield* sql.unsafe("PRAGMA busy_timeout = 5000").unprepared;
 
-    // Tolerated rather than required: a database that predates t3o-26, or a
-    // read-only run against a state directory with no board file, has nothing to
-    // attach and should still answer questions about `main`.
-    const boardAttached = yield* attachBoardDatabase().pipe(
-      Effect.as(true),
-      Effect.orElseSucceed(() => false),
-    );
+    // Attach only when the board file already exists. `ATTACH` on a writable
+    // connection CREATES a missing file, and a diagnostic tool must not mutate
+    // the directory it inspects — a pre-t3o-26 database, or a state directory
+    // with no board file, should simply answer questions about `main`. The
+    // `orElseSucceed` is a last resort for an attach failing for other reasons
+    // (a corrupt or unreadable board file), where main-only answers still beat
+    // none.
+    const boardDatabaseExists = yield* fs.exists(resolveBoardDatabasePath(databasePath));
+    const boardAttached =
+      boardDatabaseExists &&
+      (yield* attachBoardDatabase().pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      ));
 
     if (input.operation === "query") {
       const rows = yield* sql.unsafe<RawSqliteRow>(source).unprepared.pipe(

@@ -105,4 +105,36 @@ layer("board-aware projection state", (it) => {
       assert.strictEqual(yield* repository.minLastAppliedSequence(), 4);
     }),
   );
+  // Migration 031's cross-database transaction can tear leaving a stale board
+  // row in main (its DELETE uncommitted while boards + ledger land), and a
+  // downgrade/upgrade cycle writes one back. Since upsert routes board names to
+  // boards, a shadowing read would never self-heal — so the reads must make the
+  // stale row unreachable, not trust the cleanup.
+  it.effect("ignores a stale board watermark stranded in main", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const repository = yield* ProjectionStateRepository;
+
+      yield* repository.upsert(at("projection.board-cards", 500));
+      // The stranded row: same projector, frozen at an old sequence, in main.
+      yield* sql`
+        INSERT INTO main.projection_state (projector, last_applied_sequence, updated_at)
+        VALUES ('projection.board-cards', ${100}, '2025-01-01T00:00:00.000Z')
+      `;
+
+      const read = yield* repository.getByProjector({ projector: "projection.board-cards" });
+      assert.strictEqual(Option.getOrNull(read)?.lastAppliedSequence, 500);
+
+      const all = yield* repository.listAll();
+      assert.deepStrictEqual(
+        all
+          .filter((row) => row.projector === "projection.board-cards")
+          .map((row) => row.lastAppliedSequence),
+        [500],
+      );
+      // The stale row must not pin the catch-up minimum either.
+      yield* repository.upsert(at("projection.threads", 400));
+      assert.strictEqual(yield* repository.minLastAppliedSequence(), 400);
+    }),
+  );
 });
