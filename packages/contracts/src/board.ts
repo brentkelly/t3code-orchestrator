@@ -4616,9 +4616,13 @@ export const BoardCardDetail = Schema.Struct({
   parentModelOverrides: Schema.NullOr(BoardCardModelOverrides).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  /** Whether the card has any proposed plan (t3o-15, D6): the Build stage's
-      per-card human-in-the-loop default flips on this — a card with a plan
-      defaults to `humanInLoopWithPlan`, one without to `humanInLoopWithoutPlan`.
+  /** Whether the card has any proposed plan row of its own (t3o-15, D6) — it
+      is `plans.length > 0`, nothing more. It is ONE INPUT to the Build stage's
+      per-card human-in-the-loop default, not the whole rule: a sub-board child
+      owns no plan row (materialisation copied its plan's body into its brief)
+      and still takes `humanInLoopWithPlan`. Ask `boardBuildHumanInLoopDefault`,
+      which weighs this alongside `parentCardId`; reading `hasPlan` alone would
+      promise `humanInLoopWithoutPlan` for exactly the cards that do not get it.
       Decodes to false on legacy detail payloads. */
   hasPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** The card's proposed plans with their markdown bodies (t3o-08), in ordinal
