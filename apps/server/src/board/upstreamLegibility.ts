@@ -8,7 +8,11 @@
  *
  *   > t3o writes nothing to your database that stock t3code cannot read.
  *
- * This module is the instrument that checks it.
+ * This module is the instrument that checks it. Stock t3code decodes
+ * `orchestration_events` through closed `Schema.Literals` unions, so a row whose
+ * `event_type` or `aggregate_kind` it does not know is not a degraded read — it
+ * is a hard decode failure that takes down replay. Anything this reports is
+ * therefore a row that would break stock t3code, not merely confuse it.
  *
  * Every read is qualified to `main`: with a second database attached, "what is in
  * the file stock t3code reads?" is the actual question, and an unqualified name
@@ -19,11 +23,7 @@
  * point at which it can report clean. It is also too expensive for the boot path:
  * the grouped read is a full scan with a temp B-tree — measured at ~2.8s over a
  * 202k-event production log — so calling it on every start would be a visible
- * regression in return for a check that only changes answer across an upgrade. Stock t3code decodes
- * `orchestration_events` through closed `Schema.Literals` unions, so a row whose
- * `event_type` or `aggregate_kind` it does not know is not a degraded read — it
- * is a hard decode failure that takes down replay. Anything this reports is
- * therefore a row that would break stock t3code, not merely confuse it.
+ * regression in return for a check that only changes answer across an upgrade.
  *
  * The upstream event-type set is derived by SUBTRACTING `BOARD_EVENT_TYPES` from
  * the union t3o ships, rather than being written out by hand, so a board event
