@@ -66,6 +66,13 @@ _created_ has no snapshot entry and is **deleted** on restore, because leaving i
 reverted build read a database from the future — migrated by the newer version, with a migration
 ledger claiming it is current, so nothing re-runs to reconcile it.
 
+Because snapshots are durable across launcher restarts, a restore can meet a directory written by an
+older launcher, whose layout was a single database stored as `database` / `database-wal` /
+`database-shm`. That layout is recognised and mapped to the primary database. A directory matching
+_neither_ layout makes the restore **refuse loudly** rather than proceed: past that point, live
+files with no snapshot entry are deleted, and a restore that recognises nothing would delete the
+databases and restore nothing. Failing is recoverable by hand; deleting is not.
+
 This makes trial migrations and writes reversible without requiring down migrations. The snapshot is
 retained across launcher restarts and is removed only after commit or after both restore and the
 terminal rollback state are durable.

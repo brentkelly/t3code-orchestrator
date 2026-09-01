@@ -149,10 +149,15 @@ describe("board database", () => {
       yield* seedLegacyLayout;
       yield* attachBoardDatabase();
 
-      // Simulate the interrupted run: one table copied, `main` still intact.
+      // Simulate the interrupted run: the copy transaction committed — a table
+      // AND a view landed in `boards` — but the drop-from-main did not.
       yield* sql`CREATE TABLE boards.board_cards (card_id TEXT NOT NULL PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL)`;
       yield* sql`INSERT INTO boards.board_cards VALUES ('card-1', 'proj', 'Half-copied')`;
+      yield* sql`CREATE VIEW main.board_titles AS SELECT title FROM board_cards`;
+      yield* sql`CREATE VIEW boards.board_titles AS SELECT title FROM board_cards`;
 
+      // The table drop cannot discard a view, so the retry must drop it by name
+      // before recreating it — or this call dies on "view already exists".
       yield* relocateBoardSchema();
 
       assert.deepStrictEqual(yield* tableNames("main"), []);

@@ -190,6 +190,13 @@ export const relocateBoardSchema = Effect.fn("relocateBoardSchema")(function* ()
       // — SQLite recreates those from the table DDL, and they cannot be created
       // by hand.
       if (companion.sql === null) continue;
+      // Indexes and triggers were discarded by the table drops above, but a VIEW
+      // survives them — `DROP TABLE IF EXISTS` cannot remove a view — so a
+      // relocation resumed after the copy committed would otherwise die on
+      // "view already exists", on the boot path.
+      if (/^CREATE\s+VIEW/i.test(companion.sql)) {
+        yield* sql.unsafe(`DROP VIEW IF EXISTS ${BOARD_SCHEMA}.${quoted(companion.name)}`);
+      }
       yield* sql.unsafe(
         companion.sql.replace(
           /^CREATE\s+(UNIQUE\s+)?(INDEX|VIEW|TRIGGER)\s+/i,
