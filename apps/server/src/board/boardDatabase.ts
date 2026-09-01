@@ -89,13 +89,19 @@ export const attachBoardDatabase = Effect.fn("attachBoardDatabase")(function* ()
   const journal = yield* sql<{ readonly journal_mode: string }>`
     PRAGMA boards.journal_mode = WAL
   `;
-  yield* Effect.logDebug("Attached board database").pipe(
-    Effect.annotateLogs({
-      schema: BOARD_SCHEMA,
-      path: target,
-      journalMode: journal[0]?.journal_mode ?? "unknown",
-    }),
-  );
+  // A board file that refuses WAL is a durability regression, and Debug sits
+  // below the default minimum level — so the unexpected case is a warning, not a
+  // line nobody sees. ':memory:' reports `memory` and cannot take WAL at all,
+  // which is expected rather than notable.
+  const journalMode = journal[0]?.journal_mode ?? "unknown";
+  const expected = target === ":memory:" ? "memory" : "wal";
+  yield* journalMode === expected
+    ? Effect.logDebug("Attached board database").pipe(
+        Effect.annotateLogs({ schema: BOARD_SCHEMA, path: target, journalMode }),
+      )
+    : Effect.logWarning("Board database is not in the expected journal mode").pipe(
+        Effect.annotateLogs({ schema: BOARD_SCHEMA, path: target, journalMode, expected }),
+      );
 });
 
 /**

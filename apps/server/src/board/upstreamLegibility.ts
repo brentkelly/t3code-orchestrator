@@ -8,21 +8,36 @@
  *
  *   > t3o writes nothing to your database that stock t3code cannot read.
  *
- * This module is the instrument that checks it. Stock t3code decodes
+ * This module is the instrument that checks it.
+ *
+ * It has no production caller yet, and deliberately so. The plan (t3o-26 P4)
+ * makes it a CI gate once P2 has moved the board's rows out, which is the first
+ * point at which it can report clean. It is also too expensive for the boot path:
+ * the grouped read is a full scan with a temp B-tree — measured at ~2.8s over a
+ * 202k-event production log — so calling it on every start would be a visible
+ * regression in return for a check that only changes answer across an upgrade. Stock t3code decodes
  * `orchestration_events` through closed `Schema.Literals` unions, so a row whose
  * `event_type` or `aggregate_kind` it does not know is not a degraded read — it
  * is a hard decode failure that takes down replay. Anything this reports is
  * therefore a row that would break stock t3code, not merely confuse it.
  *
  * The upstream event-type set is derived by SUBTRACTING `BOARD_EVENT_TYPES` from
- * the union t3o ships, rather than being written out by hand. That covers one
- * direction automatically: a board event type added later is excluded without
- * anyone remembering to update this file. It does NOT cover the other — a type
- * upstream adds only appears here once the fork rebases, and a board type
- * RETIRED from `BOARD_EVENT_TYPES` stops being recognised as board-owned, so
- * rows for it read as unknown rather than as t3o's doing. Both err toward
- * reporting more than is strictly illegible, which is the safe direction for a
- * check whose job is to refuse to say "clean" when it is not sure.
+ * the union t3o ships, rather than being written out by hand, so a board event
+ * type added later is excluded without anyone remembering to update this file.
+ *
+ * The derivation has one gap, and it is the dangerous direction: a type t3o adds
+ * to `OrchestrationEventType` WITHOUT adding it to `BOARD_EVENT_TYPES` — a
+ * t3o-invented `thread.*` type, say — is subtracted from nothing and counts as
+ * upstream-legible. Rows for it would then be reported CLEAN while stock t3code
+ * could not decode them. Nothing like that exists today (t3o adds no non-board
+ * event type; every one of its 35 is `board.*`-namespaced), and the invariant to
+ * hold is: anything t3o adds to `OrchestrationEventType` also goes in
+ * `BOARD_EVENT_TYPES`. If that ever stops being true, this set needs a different
+ * derivation.
+ *
+ * The remaining gaps all err the safe way, toward over-reporting: a type upstream
+ * adds appears here only after a rebase, and a board type retired from
+ * `BOARD_EVENT_TYPES` reads as unknown rather than as t3o's doing.
  */
 import { BOARD_EVENT_TYPES, OrchestrationEventType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

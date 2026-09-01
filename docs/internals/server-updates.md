@@ -35,7 +35,8 @@ Every write uses same-directory replacement plus file and directory fsync.
 4. The active child sends `request-update`. The launcher validates the child and target, writes
    pending state, generates the update ID, then replies `update-accepted`.
 5. After a short response-flush grace period, the launcher stops the active child.
-6. With SQLite quiescent, the launcher snapshots the database, WAL, and shared-memory files.
+6. With SQLite quiescent, the launcher snapshots every database in the state directory, along with
+   their WAL and shared-memory files.
 7. The launcher starts the target as a trial and gives it the pending update over IPC.
 8. The trial runs migrations, acquires dependencies, binds HTTP, starts every long-running root
    fiber, and verifies that each root is parked at the activation gate.
@@ -55,10 +56,19 @@ applies.
 
 ## Database Rollback
 
-The launcher snapshots `state.sqlite`, `state.sqlite-wal`, and `state.sqlite-shm` after the old
-server stops and before the trial starts. This makes trial migrations and writes reversible without
-requiring down migrations. The snapshot is retained across launcher restarts and is removed only
-after commit or after both restore and the terminal rollback state are durable.
+The launcher snapshots **every `*.sqlite` file in the state directory**, along with each one's
+`-wal` and `-shm` sidecars, after the old server stops and before the trial starts. The set is
+discovered from disk rather than named, so a database added later is covered without the launcher
+having to know what it is for — today that means `state.sqlite` and t3o's `boards.sqlite`.
+
+Restoring covers the union of what was backed up and what is live. A database the trial update
+_created_ has no snapshot entry and is **deleted** on restore, because leaving it would let the
+reverted build read a database from the future — migrated by the newer version, with a migration
+ledger claiming it is current, so nothing re-runs to reconcile it.
+
+This makes trial migrations and writes reversible without requiring down migrations. The snapshot is
+retained across launcher restarts and is removed only after commit or after both restore and the
+terminal rollback state are durable.
 
 The protocol version is part of the safety boundary. A target that requires database snapshots is
 blocked when the installed launcher is too old. Upgrade the launcher once with:
