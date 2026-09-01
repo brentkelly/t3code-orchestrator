@@ -108,7 +108,12 @@ The one cross-schema SQL reference in the codebase — the orphan sweep's
 
 This is the hard part, and the reason P3 is its own phase.
 
-The client's shell protocol assumes **one monotonic sequence space**. Board events are mapped into
+The client's shell protocol assumes **one monotonic sequence space**, and the guard is confirmed
+GLOBAL, not per-entity: `shellReducer.ts:18` drops any event with
+`sequence <= snapshot.snapshotSequence`, and every applied event advances that single counter. Two
+sequence spaces in one stream therefore cannot work, and no offsetting trick rescues it — board
+sequences drawn from a second counter would either be dropped or would swallow every later thread
+event. Board events are mapped into
 the shell stream carrying `event.sequence` (`ws.ts:604`), the client drops anything at or below its
 snapshot sequence (`ws.ts:710-726`), and resume replays from the durable log after `afterSequence`
 against `orchestrationEngine.latestSequence` (`ws.ts:1251`). Two logs means two counters, and a
@@ -252,7 +257,7 @@ This is the definition of done for every later phase, and it is the artifact tha
 checkable rather than aspirational. It also has standalone value today: it is the regression test
 for the retired-event-type class of bug.
 
-### P1 — `boards.sqlite`, attached, with the board tables in it
+### P1 — `boards.sqlite`, attached, with the board tables in it — **DONE**
 
 Provision and attach the file, retarget the board migration lineage at it, move the 12 tables and
 the ledger with their data, qualify the orphan sweep's subquery.
