@@ -939,11 +939,13 @@ export const BoardCard = Schema.Struct({
   threadLinks: Schema.Array(BoardCardThreadLink),
   externalRef: Schema.NullOr(BoardCardExternalRef),
   /** Per-card human-in-the-loop override on the Build stage (D6). `null` means
-      untouched — the effective value is computed from the build stage's
-      `humanInLoopWithPlan` / `humanInLoopWithoutPlan` settings and whether the
-      card has a plan, so writing a plan moves the default with it. Flipping the
-      toggle writes an explicit boolean that survives. Decodes to null on legacy
-      payloads. Only the build role reads it. */
+      untouched — the effective value is `boardBuildHumanInLoopDefault`, computed
+      from the build stage's `humanInLoopWithPlan` / `humanInLoopWithoutPlan`
+      settings and whether the card counts as planned, so writing a plan moves
+      the default with it. A sub-board child always counts as planned: its
+      approved plan became its brief, so it owns no plan row of its own.
+      Flipping the toggle writes an explicit boolean that survives. Decodes to
+      null on legacy payloads. Only the build role reads it. */
   humanInLoop: Schema.NullOr(Schema.Boolean).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Branch + worktree the card owns once it enters Building (D6, t3o-09);
       null for every card that has not — planning is worktree-free. Decodes
@@ -1584,7 +1586,10 @@ export function boardStalledStepStates(board: BoardState): ReadonlyArray<BoardCa
 }
 
 /** A card's proposed plans (t3o-08), in `ordinal` order. Absent slice means
-    none. */
+    none. Note that a sub-board child owns NO plan row — materialisation copies
+    its plan's body into the child's brief and records `sourcePlanId` instead —
+    so "does this card have a plan?" is `boardBuildHumanInLoopDefault`, not the
+    length of this list. */
 export function boardCardPlans(board: BoardState, cardId: BoardCardId): ReadonlyArray<BoardPlan> {
   return (board.plans ?? [])
     .filter((plan) => plan.cardId === cardId)
@@ -1998,6 +2003,7 @@ export function boardCardAttention(input: {
       detail: "Stalled — recovery gave up; needs a human to retry or take over",
     };
   }
+  const stageState: BoardState = { cards: [], stages: input.stages, nextCardNumberByProject: {} };
   // Rebuilt key-by-key rather than passed through: `boardCardAttention` accepts
   // `T | undefined` on its optional keys (see above) and the pending-split
   // helper takes bare optionals, which `exactOptionalPropertyTypes` keeps
@@ -2042,7 +2048,22 @@ export function boardCardAttention(input: {
   }
   // `held` is the step fact; a card actively working or waiting for a slot is
   // not held, whatever a stale flag says.
-  if (card.held && !card.stepRunning && !card.queued) {
+  //
+  // And it only MEANS anything from the build role onward. `held` rests on the
+  // shell until the next select-step clears it, so a card that ran a step and
+  // was then dragged back to Backlog / Sprint / Ready still carries it — and a
+  // card sitting in Ready is waiting for a human to press Begin build, which is
+  // the normal resting state of the whole backlog, not a card the pipeline
+  // parked. Without this every previously-built card dragged back would read
+  // "Needs a human" for the rest of its life. The other reasons need no such
+  // guard: a thread question, a stalled step and a pending split are all real
+  // wherever the card sits.
+  if (
+    card.held &&
+    !card.stepRunning &&
+    !card.queued &&
+    isBoardStageAtOrAfterBuild(stageState, card.stage)
+  ) {
     return {
       reason: "held",
       tone: ATTENTION_TONES.held,
@@ -5553,10 +5574,14 @@ export const DEFAULT_BOARD_MERGE_CONFLICT_PROMPT =
  * merge role owns.
  *
  * `autoExecute` is FORCED off by `resolveBoardStageExecution` and is not
- * offered in the settings card: nothing in this stage runs on entry. Merging
- * is always a deliberate human click, so the only agent run this stage ever
- * starts is the conflict-resolution step, and only after a merge attempt has
- * actually been refused for conflicts.
+ * offered in the settings card: nothing in this stage runs on entry. The only
+ * agent run this stage ever starts is the conflict-resolution step, and only
+ * after a merge attempt has actually been refused for conflicts.
+ *
+ * Merging a TOP-LEVEL card is always a deliberate human click. A sub-board
+ * child merges itself down on arrival (t3o-28 — the initiating act was Begin
+ * build on the parent, and a child parked here strands every sibling that
+ * depends on it); see `autoMergeChild` in the supervisor reactor.
  */
 export const BoardStageExecutionMerge = Schema.Struct({
   kind: Schema.Literal("merge"),

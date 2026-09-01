@@ -465,3 +465,48 @@ describe("cards that need a human (attention)", () => {
     expect(html).not.toContain("child needs you");
   });
 });
+
+describe("held review loop chip suppression", () => {
+  /** A card whose review loop ran every round without converging. */
+  const heldLoopCard = (stage: string): BoardCardShell =>
+    shell(stage, {
+      roundCurrent: 3,
+      roundMax: 3,
+      reviewOutcome: "running",
+      reviewHeldOutcome: "round-cap",
+      reviewRoundComplete: true,
+    });
+
+  it("skips the chip only where the round row actually explains the tint", () => {
+    // On the review stage the summary renders "No convergence" beside the round
+    // pips, so a second chip saying the same thing is noise.
+    const onReview = heldLoopCard("review");
+    const reviewHtml = renderToStaticMarkup(
+      <BoardCardContent
+        card={onReview}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(onReview)}
+      />,
+    );
+    expect(attentionOf(onReview)?.reason).toBe("review-held");
+    expect(reviewHtml).toContain("No convergence");
+    expect(reviewHtml).toContain("border-amber-500/60");
+
+    // Off it, the round row is not rendered at all — so the card must NOT be
+    // left tinted amber with nothing saying why.
+    const offReview = heldLoopCard("building");
+    const offHtml = renderToStaticMarkup(
+      <BoardCardContent
+        card={offReview}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(offReview)}
+      />,
+    );
+    expect(offHtml).toContain("border-amber-500/60");
+    expect(offHtml).toContain("No convergence");
+  });
+});

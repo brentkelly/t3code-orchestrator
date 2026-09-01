@@ -10,7 +10,7 @@
  * reads at a glance. The same dot slot turns to a static blue dot when the card
  * is awaiting input.
  */
-import { boardCardChildAttentionLabel } from "@t3tools/contracts";
+import { boardCardChildAttentionLabel, isBoardReviewLoopHeld } from "@t3tools/contracts";
 import type {
   BoardCardAttention,
   BoardCardAttentionReason,
@@ -200,12 +200,19 @@ export function BoardCardContent({
   const inherited = summary.muted || own !== null ? null : (childAttention ?? null);
   const flag = own ?? inherited;
   const tone = flag?.tone ?? null;
-  // What the chip actually says. A review loop that stopped without converging
-  // already spells itself out in the summary row's round pips ("No convergence"
-  // / "Stopped"), so it tints the card and skips the chip rather than saying
-  // the same thing twice on one card.
+  // A held review loop already spells itself out in the summary's round row
+  // ("No convergence" / "Stopped"), so it tints the card and skips the chip
+  // rather than saying the same thing twice. Keyed on the row ACTUALLY being
+  // rendered, not on the reason alone: the round row is stage-conditional, so
+  // on a board whose review-role stage is not the seed `review` stage the row
+  // is absent — and suppressing on the reason would leave the card tinted amber
+  // with nothing on it saying why.
+  const roundRowExplainsIt = summary.items.some(
+    (item) =>
+      item.kind === "round" && item.outcome !== undefined && isBoardReviewLoopHeld(item.outcome),
+  );
   const chip =
-    flag === null || (own !== null && own.reason === "review-held")
+    flag === null || (own !== null && own.reason === "review-held" && roundRowExplainsIt)
       ? null
       : {
           tone: flag.tone,

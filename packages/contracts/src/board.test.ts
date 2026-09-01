@@ -1093,6 +1093,26 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(attention({ archivedAt: "2026-01-01T00:00:00.000Z", stalled: true })).toBeNull();
   });
 
+  it("ignores a held flag on a card sitting before the build role", () => {
+    // `held` rests on the shell until the next select-step clears it, so a card
+    // that ran a step and was dragged back to the backlog still carries it —
+    // and a card in Ready waiting for Begin build is the resting state of the
+    // whole backlog, not a card the pipeline parked.
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.backlog, held: true })).toBeNull();
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.ready, held: true })).toBeNull();
+    // From the build role onward it means what it says.
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.building, held: true })?.reason).toBe("held");
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.merge, held: true })?.reason).toBe("held");
+    // The other reasons are real wherever the card sits — a question asked from
+    // a backlog card is still a question.
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.backlog, awaitingInput: true })?.reason).toBe(
+      "input",
+    );
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.backlog, stalled: true })?.reason).toBe(
+      "stalled",
+    );
+  });
+
   it("treats a held flag as stale while the step is live again", () => {
     // `held` rests on the shell until the next select-step clears it, and the
     // snapshot can arrive mid-flight.
