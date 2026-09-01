@@ -1266,6 +1266,21 @@ export const BoardCardStepState = Schema.Struct({
   ),
   /** The step's thread; null before spawn and while `queued`. */
   threadId: Schema.NullOr(ThreadId),
+  /** Why this step stopped, when it stopped for a reason a human needs to read
+      (t3o-30, D2) — today the provider's own error text when the step's turn
+      never started at all (a CLI that is not installed, a session that failed to
+      spawn, a model the instance rejects).
+   *
+   * Recorded because that failure is otherwise invisible: the thread carries the
+   * error, but a card whose step died at spawn shows a spinner and names no
+   * thread worth opening. Cleared on every ordinary retry, so it always
+   * describes the CURRENT stop rather than an old one.
+   *
+   * A DECODING DEFAULT for the same replay reason as `stageLabel`: this struct
+   * is a replayed event payload and rows written before t3o-30 have no key. */
+  lastError: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   status: BoardStepStatus,
   /** Whether the step currently holds a concurrency slot (t3o-11). Tracked so
       release happens exactly once at every terminal outcome, including a crash
@@ -2820,6 +2835,13 @@ export const BoardCardRecoverStepCommand = Schema.Struct({
       when true, or increments it when false. Kept out of the pure
       `recoveryDecision` — git and SQL stay in the reactor. */
   progressed: Schema.Boolean,
+  /** Why the step stopped, recorded onto the run row for the card to render
+      (t3o-30, D2). Present only when the reason is one a human needs — the
+      provider's error text for a turn that never started. ABSENT means "no new
+      reason", and the decider then CLEARS any reason already on the row, so a
+      plain nudge never leaves a stale error attached to a step that is running
+      again. */
+  lastError: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardCardRecoverStepCommand = typeof BoardCardRecoverStepCommand.Type;
@@ -4676,6 +4698,17 @@ export const BoardCardDetail = Schema.Struct({
   activity: Schema.Array(BoardCardActivityEntry).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /** The live step's `lastError` (t3o-30, D2), or null when it has none — the
+      text the card's failure banner renders.
+   *
+   * On the detail rather than the card shell on purpose: the shell is byte-
+   * budgeted and broadcast for every card on the board (D7), while this is a
+   * paragraph of provider error text only ever read on the card that is open.
+   * The shell's `stalled` flag is what the board itself renders. Decodes to null
+   * on every detail payload written before t3o-30. */
+  stepError: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
 
@@ -5770,6 +5803,23 @@ export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
 
 export const BoardSettings = Schema.Struct({
   projects: BoardProjectSettingsMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** The workspace default model (t3o-30, D1): what a stage that names no model
+      of its own runs on.
+   *
+   * The board used to fall through to the app's `textGenerationModelSelection`,
+   * whose compiled-in value is a codex pair. On a machine with no codex CLI that
+   * spawned a step onto a provider that could not start, and nothing in the
+   * settings UI ever said which model an unset stage would take. This is that
+   * fallback made explicit and user-owned: null means "nothing chosen", and only
+   * then does the app-wide text-generation selection still apply.
+   *
+   * Deliberately NOT a stage default that gets copied into new stages — it is
+   * read live at stage entry, so changing it moves every unset stage at once. A
+   * stage that names a model is unaffected, and a card already running keeps the
+   * pair frozen onto its run row (D12). */
+  defaultModel: Schema.NullOr(BoardModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   pipeline: BoardPipeline.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_PIPELINE))),
   concurrency: BoardConcurrencySettings.pipe(
     Schema.withDecodingDefault(
@@ -5819,6 +5869,10 @@ export type BoardLifecycleSettingsPatch = typeof BoardLifecycleSettingsPatch.Typ
 
 export const BoardSettingsPatch = Schema.Struct({
   projects: Schema.optionalKey(BoardProjectSettingsMap),
+  /** Nullable, and a null is meaningful: it CLEARS the workspace default rather
+      than meaning "leave alone" (t3o-30, D1). `deepMerge` cannot delete a key,
+      so this follows the same retained-null convention as a project override. */
+  defaultModel: Schema.optionalKey(Schema.NullOr(BoardModelSelection)),
   pipeline: Schema.optionalKey(BoardPipeline),
   concurrency: Schema.optionalKey(BoardConcurrencySettingsPatch),
   lifecycle: Schema.optionalKey(BoardLifecycleSettingsPatch),
@@ -5955,6 +6009,58 @@ export function resolveBoardStageModelSelection(
   fallback: BoardModelSelection,
 ): BoardModelSelection {
   return model ?? fallback;
+}
+
+/**
+ * The pair an unset stage falls back to (t3o-30, D1): the board's own
+ * `defaultModel` when the user has chosen one, and only otherwise the app-wide
+ * text-generation selection the caller reads off server settings.
+ *
+ * Two levels rather than one because the app-wide selection is a real fallback
+ * — it names a provider instance the user configured — but it is chosen for
+ * summarising and commit messages, not for driving a build agent, and its
+ * compiled-in value is a codex pair that a machine without the codex CLI cannot
+ * spawn at all. A board default the user picked is strictly better information;
+ * this keeps the old behaviour underneath it for anyone who never sets one.
+ */
+/** How much of a provider error the run row keeps (t3o-30, D2). Generous enough
+    for a message plus its root cause, short enough that the card's banner stays a
+    banner. */
+export const BOARD_STEP_ERROR_MAX_CHARS = 400;
+
+/**
+ * Condense a raw provider failure into the line a human needs (t3o-30, D2).
+ *
+ * The provider hands over a full nested error — message, JS stack, then one or
+ * more `[cause]:` frames — and the actionable sentence is almost never the
+ * outermost one. `Provider adapter process error (codex) ...` says which layer
+ * noticed; `Error: spawn codex ENOENT` says what to fix. So this keeps the first
+ * line AND the innermost cause, and drops the stack frames between them.
+ *
+ * Returns null when there is nothing to show, so the caller stores a null rather
+ * than an empty string the schema would reject.
+ */
+export function boardStepErrorSummary(detail: string): string | null {
+  const lines = detail
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("at "));
+  const head = lines[0];
+  if (head === undefined) return null;
+  // The innermost cause is the LAST one: each nesting level prints its own.
+  const cause = lines.findLast((line) => line.startsWith("[cause]:"));
+  const causeText = cause?.slice("[cause]:".length).trim() ?? "";
+  const summary = causeText.length > 0 && causeText !== head ? `${head}\n\n${causeText}` : head;
+  return summary.length > BOARD_STEP_ERROR_MAX_CHARS
+    ? `${summary.slice(0, BOARD_STEP_ERROR_MAX_CHARS - 1).trimEnd()}\u2026`
+    : summary;
+}
+
+export function resolveBoardDefaultModelSelection(
+  settings: Pick<BoardSettings, "defaultModel">,
+  appFallback: BoardModelSelection,
+): BoardModelSelection {
+  return settings.defaultModel ?? appFallback;
 }
 
 /** The model half of an override, dropping the access level it rides with.

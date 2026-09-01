@@ -117,6 +117,25 @@ function ModelControlsMenu(props: {
 }
 
 /**
+ * A selection's display name — the same label `ModelRow`'s trigger shows for a
+ * picked model, resolved for a selection the row is not itself rendering.
+ *
+ * Exported so a row that INHERITS a model can name it (t3o-30, D1): "Opus 5
+ * (default)" only reads as a real answer if it is the same name the picker uses.
+ * Falls back to the raw slug for a model the instance no longer lists, which is
+ * still more use than "Select a model".
+ */
+export function boardModelDisplayName(
+  selection: ActiveModel,
+  getModelOptions: (active: ActiveModel) => ModelOptionsByInstance,
+): string {
+  const option = getModelOptions(selection)
+    .get(selection.instanceId)
+    ?.find((entry) => entry.slug === selection.model);
+  return option ? getTriggerDisplayModelName(option) : selection.model;
+}
+
+/**
  * The model row. A stage names the model it runs on EXPLICITLY — there is no
  * "Default" state to fall into, because the board never had a default worth
  * advertising: the old one was a compiled-in codex + `gpt-5.6-luna` pair the

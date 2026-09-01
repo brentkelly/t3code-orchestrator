@@ -391,6 +391,9 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULLABLE in the DB: rows written before migration 028 have no value, and a
   // null already MEANS "no tip recorded" (t3o-24, D1), so no resolution shim.
   baseTipAtRoundStart: BoardCardStepState.fields.baseTipAtRoundStart,
+  // NULLABLE in the DB: rows written before migration 030 have no value, and a
+  // null already MEANS "stopped for no recorded reason" (t3o-30, D2).
+  lastError: BoardCardStepState.fields.lastError,
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -1491,6 +1494,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       INSERT INTO board_card_step_state (
         card_id, step_id, step_label, stage_label, attempt, stall_count, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
+        last_error,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, started_at, updated_at
       )
       VALUES (
@@ -1498,6 +1502,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.lastNudgeAt}, ${row.prompt},
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
+        ${row.lastError},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.startedAt}, ${row.updatedAt}
       )
@@ -1516,6 +1521,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         runtime_mode = excluded.runtime_mode,
         model_options = excluded.model_options,
         base_tip_at_round_start = excluded.base_tip_at_round_start,
+        last_error = excluded.last_error,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -1546,6 +1552,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         runtime_mode AS "runtimeMode",
         model_options AS "modelOptions",
         base_tip_at_round_start AS "baseTipAtRoundStart",
+        last_error AS "lastError",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -1555,6 +1562,20 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         started_at AS "startedAt",
         updated_at AS "updatedAt"
       FROM board_card_step_state
+    `,
+  });
+
+  /** ONE card's live-step stop reason (t3o-30, D2) — the card detail's failure
+      banner and nothing else. A one-column read rather than a second use of
+      `listBoardCardStepStateRows`: the banner needs the text, never the frozen
+      run config, and the detail already runs a bundle of per-card queries. */
+  const findBoardCardStepErrorRow = SqlSchema.findOneOption({
+    Request: BoardCardId,
+    Result: Schema.Struct({ lastError: BoardCardStepState.fields.lastError }),
+    execute: (cardId) => sql`
+      SELECT last_error AS "lastError"
+      FROM board_card_step_state
+      WHERE card_id = ${cardId}
     `,
   });
 
@@ -1717,6 +1738,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardStepRows,
     upsertBoardCardStepStateRow,
     listBoardCardStepStateRows,
+    findBoardCardStepErrorRow,
     deleteBoardPlansForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
@@ -1984,6 +2006,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         runtimeMode: state.runtimeMode,
         modelOptions: state.modelOptions === undefined ? null : JSON.stringify(state.modelOptions),
         baseTipAtRoundStart: state.baseTipAtRoundStart,
+        lastError: state.lastError,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -2550,6 +2573,7 @@ export function loadBoardState(
               runtimeMode: resolveStoredStepRuntimeMode(row.runtimeMode, row.mode),
               ...stepModelOptionsPatch(row.modelOptions),
               baseTipAtRoundStart: row.baseTipAtRoundStart,
+              lastError: row.lastError,
               humanInLoop: row.humanInLoop !== 0,
               maxAttempts: row.maxAttempts,
               timeoutMs: row.timeoutMs,
@@ -2886,6 +2910,7 @@ export function makeBoardCardDetailLoader(
       queries.listBoardPlanRowsForCard(cardId),
       queries.listBoardCardStepRowsForCard(cardId),
       queries.listBoardCardActivityRowsForCard(cardId),
+      queries.findBoardCardStepErrorRow(cardId),
     ]).pipe(
       Effect.map(
         ([
@@ -2899,6 +2924,7 @@ export function makeBoardCardDetailLoader(
           planRows,
           stepRows,
           activityRows,
+          stepErrorRow,
         ]) => {
           if (Option.isNone(cardRow)) return null;
           const links = sortBoardCardThreadLinks(
@@ -2946,6 +2972,9 @@ export function makeBoardCardDetailLoader(
             // and live because `board.subscribeCard` re-emits the whole detail on
             // every board event for this card.
             activity: activityRows.map(toBoardCardActivityEntry),
+            // Why the live step stopped (t3o-30, D2), or null when it is
+            // healthy or absent — the failure banner's text.
+            stepError: Option.getOrNull(stepErrorRow)?.lastError ?? null,
             // Filled below for a sub-board child; a top-level card has no
             // parent to inherit from and keeps the null.
             parentModelOverrides: null,

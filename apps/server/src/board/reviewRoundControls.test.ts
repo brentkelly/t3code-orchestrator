@@ -58,6 +58,7 @@ const abandonedStep = (stage: string): BoardCardStepState => ({
   stallCount: 0,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
+  lastError: null,
   prompt: "do it",
   providerInstanceId: codexStep.providerInstanceId,
   model: "gpt-5-codex",

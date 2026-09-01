@@ -103,6 +103,7 @@ import {
   type BoardDependencyEntry,
 } from "./BoardCardFields";
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
+import { BoardCardStepFailure } from "./BoardCardStepFailure";
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
@@ -287,6 +288,11 @@ export interface BoardCardDetailViewProps {
   /** The thread pane `+` menu's restart affordance (t3o-14): present only when
       the card's current stage auto-executes, `null` otherwise. */
   readonly stageRestart: BoardThreadStageRestart | null;
+  /** The card's stalled step (t3o-30, D3), or null while nothing has given up —
+      the failure banner's whole input. Resolved by the container, which is the
+      only layer that can see both the card shell's `stalled` flag and the
+      detail's `stepError` text. */
+  readonly stepFailure: { readonly stageLabel: string; readonly error: string | null } | null;
   /** Dispatch `board.card.start-stage-thread` for the card's current stage. */
   readonly onRestartStage: () => void;
   /** Create a blank server thread, link it, and resolve to its id (or `null` on
@@ -1444,6 +1450,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           {/* The rail: everything about the card that is not the conversation. */}
           <div className="flex min-h-0 flex-col overflow-y-auto [&>*:first-child]:border-t-0">
             <ActionsSection props={props} unmet={unmet} />
+            {props.stepFailure !== null ? (
+              <BoardCardStepFailure
+                className="mx-3.5 mb-3.5"
+                stageLabel={props.stepFailure.stageLabel}
+                error={props.stepFailure.error}
+                onRestart={props.stageRestart?.disabledReason == null ? props.onRestartStage : null}
+              />
+            ) : null}
             {props.feedback !== null ? (
               <p className="mx-3.5 mb-3.5 rounded-md bg-destructive/10 px-2 py-1.5 text-[12px] text-destructive-foreground">
                 {props.feedback}
@@ -1480,6 +1494,15 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           <div className="flex items-stretch">
             {/* ── Left: what the card is ─────────────────────────────── */}
             <div className="flex min-w-0 flex-1 flex-col gap-[18px] px-5 pt-4 pb-5">
+              {props.stepFailure !== null ? (
+                <BoardCardStepFailure
+                  stageLabel={props.stepFailure.stageLabel}
+                  error={props.stepFailure.error}
+                  onRestart={
+                    props.stageRestart?.disabledReason == null ? props.onRestartStage : null
+                  }
+                />
+              ) : null}
               {props.feedback !== null ? (
                 <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[12px] text-destructive-foreground">
                   {props.feedback}

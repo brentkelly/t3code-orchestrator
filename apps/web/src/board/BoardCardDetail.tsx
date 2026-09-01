@@ -207,6 +207,13 @@ export function BoardCardDetail({
     () => (snapshot?.cards ?? []).find((shell) => shell.cardId === cardId)?.stepRunning === true,
     [snapshot, cardId],
   );
+  /** Whether the card's live step has given up (t3o-17, D3) — the failure
+      banner's gate and the reason a non-auto-executing stage still offers a
+      restart (t3o-30, D3). */
+  const stepStalled = useMemo(
+    () => (snapshot?.cards ?? []).find((shell) => shell.cardId === cardId)?.stalled === true,
+    [snapshot, cardId],
+  );
 
   // Resolved server-side (t3o-13, D4): the shell snapshot drops archived
   // cards, so resolving here would render every archived dependency as an
@@ -457,7 +464,17 @@ export function BoardCardDetail({
     autoExecute: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
     stageLabel: boardStageLabel(stages, card.stage),
     runInFlight: isBoardCardRunInFlight(cardShell),
+    stalled: stepStalled,
   });
+  /** What the failure banner renders (t3o-30, D3). Gated on `stalled` rather
+      than on `stepError` alone: the error text sits on the run row until the
+      next step replaces it, so a card that has since recovered would otherwise
+      keep showing the stop it recovered from. A stall with no recorded reason —
+      recovery exhausting its budget — still gets a banner, with the sentence
+      that describes it. */
+  const stepFailure = stepStalled
+    ? { stageLabel: boardStageLabel(stages, card.stage), error: detail?.stepError ?? null }
+    : null;
 
   // Restart is a server command (D2): the reactor runs the stage's configured
   // prompt through the same envelope the automatic trigger uses, so the two
@@ -540,6 +557,7 @@ export function BoardCardDetail({
     <BoardCardDetailView
       adoptableThreads={adoptableThreads}
       stageRestart={stageRestart}
+      stepFailure={stepFailure}
       onRestartStage={restartStage}
       onCreateBlankThread={createBlankThread}
       branch={branch}

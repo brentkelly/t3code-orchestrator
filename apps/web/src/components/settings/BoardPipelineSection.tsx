@@ -84,6 +84,7 @@ import {
 } from "../../providerInstances";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
+  boardModelDisplayName,
   ModelRow,
   type ActiveModel,
   type InstanceEntries,
@@ -650,6 +651,12 @@ export function BoardPipelineSection() {
     update({ board: { pipeline: setBoardStageExecution(board, stageId, patch) } });
   };
 
+  // The workspace default (t3o-30, D1) — what every stage below that names no
+  // model of its own actually runs on.
+  const defaultModel = board.defaultModel;
+  const inheritedModelName =
+    defaultModel === null ? null : boardModelDisplayName(defaultModel, getModelOptions);
+
   const onRename = (stage: BoardStageDefinition, label: string) => {
     if (environmentId === null || label.length === 0 || label === stage.label) return;
     void renameStage({ environmentId, input: { stageId: stage.stageId, label } });
@@ -714,6 +721,42 @@ export function BoardPipelineSection() {
           Connect an environment to add, rename, reorder, or delete stages.
         </p>
       ) : null}
+      <div
+        id="board-default-model"
+        className="mx-3 rounded-xl border border-border bg-card px-4 py-1 shadow-xs sm:mx-4"
+      >
+        <ModelRow
+          label="Default model"
+          ariaLabel="Board default model"
+          selection={defaultModel}
+          placeholder="Select a model"
+          instanceEntries={instanceEntries}
+          getModelOptions={getModelOptions}
+          onChange={(model) => update({ board: { defaultModel: model } })}
+          modelOptions={defaultModel?.options}
+          onModelOptionsChange={(options) => {
+            if (defaultModel === null) return;
+            update({
+              board: {
+                defaultModel:
+                  options === undefined
+                    ? { instanceId: defaultModel.instanceId, model: defaultModel.model }
+                    : { instanceId: defaultModel.instanceId, model: defaultModel.model, options },
+              },
+            });
+          }}
+          // The default carries no access level: a stage's own posture is a
+          // per-stage decision (t3o-21) and every stage already names one, so
+          // there is nothing here for a default to fill in.
+          hideRuntimeMode
+          runtimeMode="approval-required"
+          onRuntimeModeChange={() => {}}
+        />
+        <p className="pb-2 text-xs leading-[1.5] text-muted-foreground/80">
+          What a stage below runs on when it names no model of its own. Leave it unset and each
+          stage must pick one; a stage that picks one always wins.
+        </p>
+      </div>
       <div className="mx-3 overflow-hidden rounded-xl border border-border bg-card shadow-xs sm:mx-4">
         <DndContext
           sensors={sensors}
@@ -735,6 +778,7 @@ export function BoardPipelineSection() {
                 crudEnabled={crudEnabled}
                 instanceEntries={instanceEntries}
                 getModelOptions={getModelOptions}
+                inheritedModelName={inheritedModelName}
                 onToggle={() =>
                   setOpenStageId((current) => (current === stage.stageId ? null : stage.stageId))
                 }
@@ -759,6 +803,20 @@ export function BoardPipelineSection() {
   );
 }
 
+/**
+ * A `ModelRow`'s inheritance props (t3o-30, D1). With a name to inherit the row
+ * shows it as the placeholder and is no longer required; with nothing to inherit
+ * it keeps the required-field language it had before there was a default.
+ */
+function inheritedModelRowProps(
+  inheritedName: string | null,
+  requiredMessage: string,
+): { placeholder?: string; requiredMessage: string | null } {
+  return inheritedName === null
+    ? { requiredMessage }
+    : { placeholder: `${inheritedName} (default)`, requiredMessage: null };
+}
+
 function StageAccordionRow(props: {
   stage: BoardStageDefinition;
   index: number;
@@ -767,6 +825,12 @@ function StageAccordionRow(props: {
   crudEnabled: boolean;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
+  /** The workspace default's display name (t3o-30, D1), or null when nothing is
+      set. A row with no model of its own inherits it, so the row names it
+      instead of reading "Select a model" — three different situations rendered
+      identically is what left a stage silently running on a codex pair nobody
+      picked. */
+  inheritedModelName: string | null;
   onToggle: () => void;
   onRename: (label: string) => void;
   onDelete: () => void;
@@ -874,6 +938,7 @@ function StageAccordionRow(props: {
               exec={exec}
               instanceEntries={props.instanceEntries}
               getModelOptions={props.getModelOptions}
+              inheritedModelName={props.inheritedModelName}
               updateStage={props.updateStage}
             />
           ) : isMerge ? (
@@ -882,6 +947,7 @@ function StageAccordionRow(props: {
               exec={exec}
               instanceEntries={props.instanceEntries}
               getModelOptions={props.getModelOptions}
+              inheritedModelName={props.inheritedModelName}
               updateStage={props.updateStage}
             />
           ) : (
@@ -891,6 +957,7 @@ function StageAccordionRow(props: {
               exec={exec}
               instanceEntries={props.instanceEntries}
               getModelOptions={props.getModelOptions}
+              inheritedModelName={props.inheritedModelName}
               updateStage={props.updateStage}
             />
           )}
@@ -927,6 +994,7 @@ function MergeStageBody(props: {
   exec: BoardStageExecutionMerge;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
+  inheritedModelName: string | null;
   updateStage: (stageId: BoardStageId, patch: Partial<BoardStageExecution>) => void;
 }) {
   const { stage, exec } = props;
@@ -987,7 +1055,10 @@ function MergeStageBody(props: {
         label="Model"
         ariaLabel="Conflict resolution model"
         selection={exec.model}
-        requiredMessage="Pick the model conflict resolution runs on."
+        {...inheritedModelRowProps(
+          props.inheritedModelName,
+          "Pick the model conflict resolution runs on.",
+        )}
         instanceEntries={props.instanceEntries}
         getModelOptions={props.getModelOptions}
         onChange={(model) => set({ model })}
@@ -1019,6 +1090,7 @@ function SimpleStageBody(props: {
   exec: Exclude<BoardStageExecution, BoardStageExecutionReview>;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
+  inheritedModelName: string | null;
   updateStage: (stageId: BoardStageId, patch: Partial<BoardStageExecution>) => void;
 }) {
   const { stage, role, exec } = props;
@@ -1074,7 +1146,10 @@ function SimpleStageBody(props: {
             label="Model"
             ariaLabel="Stage model"
             selection={exec.model}
-            requiredMessage="Pick the model this stage runs on."
+            {...inheritedModelRowProps(
+              props.inheritedModelName,
+              "Pick the model this stage runs on.",
+            )}
             instanceEntries={props.instanceEntries}
             getModelOptions={props.getModelOptions}
             onChange={(model) => set({ model })}
@@ -1180,6 +1255,7 @@ function ReviewStageBody(props: {
   exec: BoardStageExecutionReview;
   instanceEntries: InstanceEntries;
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
+  inheritedModelName: string | null;
   updateStage: (stageId: BoardStageId, patch: Partial<BoardStageExecution>) => void;
 }) {
   const { stage, exec } = props;
@@ -1187,6 +1263,14 @@ function ReviewStageBody(props: {
     props.updateStage(stage.stageId, patch as Partial<BoardStageExecution>);
   const setPhase = (phaseId: BoardReviewPhaseId, patch: Partial<BoardReviewPhaseExecution>) =>
     set({ phases: { ...exec.phases, [phaseId]: { ...exec.phases[phaseId], ...patch } } });
+  // A phase with no model of its own runs on the review STAGE's model, and only
+  // if that is unset on the workspace default (`resolvePhaseModel`). Name the
+  // nearer one — saying "default" when the stage above actually decides would be
+  // a lie the user cannot check.
+  const phaseInheritedName =
+    exec.model === null
+      ? props.inheritedModelName
+      : boardModelDisplayName(exec.model, props.getModelOptions);
 
   return (
     <>
@@ -1278,7 +1362,10 @@ function ReviewStageBody(props: {
                   label="Model"
                   ariaLabel={`${BOARD_REVIEW_PHASE_LABELS[phaseId]} model`}
                   selection={phase.model}
-                  requiredMessage="Pick the model this phase runs on."
+                  {...inheritedModelRowProps(
+                    phaseInheritedName,
+                    "Pick the model this phase runs on.",
+                  )}
                   instanceEntries={props.instanceEntries}
                   getModelOptions={props.getModelOptions}
                   onChange={(model) => setPhase(phaseId, { model })}

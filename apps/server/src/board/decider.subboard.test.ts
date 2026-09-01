@@ -558,6 +558,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
               stallCount: 0,
               lastNudgeAt: null,
               baseTipAtRoundStart: null,
+              lastError: null,
               prompt: "build it",
               providerInstanceId: ProviderInstanceId.make("codex"),
               model: "gpt-5.4",

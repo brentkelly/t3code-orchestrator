@@ -23,6 +23,7 @@ import {
   DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
   DEFAULT_BOARD_STEP_TIMEOUT_MS,
+  DEFAULT_SERVER_SETTINGS,
   DEFAULT_TEXT_GENERATION_MODEL,
   isBoardCommand,
   isBoardEvent,
@@ -248,6 +249,9 @@ export const settingsWith = (input: {
   readonly reclaimWorktreeOnDone?: boolean;
 }): BoardSettings => ({
   projects: {},
+  // The board has no workspace default in the harness: every test stage names
+  // its own model, so a fallback firing would be a bug the suite should see.
+  defaultModel: null,
   pipeline: {
     [BOARD_SEED_STAGE_IDS.building]: buildingStageExecution(input.building[0]!),
     ...(input.planning === undefined
@@ -485,8 +489,16 @@ export function withGovernor(
       streamEvents: Stream.fromQueue(runtimeQueue),
     } as unknown as ProviderService["Service"];
 
+    // Shaped like the real settings, not just the board slice: the reactor reads
+    // `textGenerationModelSelection` as the LAST fallback for a stage that names
+    // no model (t3o-30, D1), and a stub without it made that read throw into the
+    // reactor's catch-all — so every board-default path resolved to the
+    // compiled-in pair no matter what the test set.
     const settingsStub = {
-      getSettings: Effect.succeed({ board: input.settings }),
+      getSettings: Effect.succeed({
+        board: input.settings,
+        textGenerationModelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+      }),
     } as unknown as ServerSettingsService["Service"];
 
     // Every worktree the reactor removed, so a test can assert that a card

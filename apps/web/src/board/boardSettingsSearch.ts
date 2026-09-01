@@ -25,6 +25,12 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-projects",
   },
   { id: "board-pipeline", title: "Pipeline", to: "/settings/board" },
+  {
+    id: "board-default-model",
+    title: "Board default model",
+    to: "/settings/board",
+    targetId: "board-pipeline",
+  },
   { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
   {
     id: "board-reclaim-worktree-on-done",

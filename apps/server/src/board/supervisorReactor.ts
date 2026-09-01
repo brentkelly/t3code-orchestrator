@@ -32,6 +32,7 @@ import {
   boardSeedStageRole,
   boardStageById,
   boardStageEntryInvocationCount,
+  boardStepErrorSummary,
   boardStageIndex,
   isBoardStageAtOrAfterBuild,
   boardStageWithRole,
@@ -46,6 +47,7 @@ import {
   isBoardTerminalStepStatus,
   MessageId,
   resolveBoardStageExecution,
+  resolveBoardDefaultModelSelection,
   resolveBoardStageModelSelection,
   resolveBoardCardStageModelOverride,
   boardModelSelectionOfOverride,
@@ -157,6 +159,16 @@ type SupervisorInput =
   | { readonly source: "timeout-sweep" };
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+/** The `detail` string off a `provider.*.failed` activity payload, which the
+    activity schema types as `unknown` (t3o-30, D2). Anything else reads as an
+    empty detail rather than throwing — a malformed payload must not stop the
+    board from landing the step. */
+function providerFailureDetail(payload: unknown): string {
+  if (payload === null || typeof payload !== "object") return "";
+  const detail = (payload as { readonly detail?: unknown }).detail;
+  return typeof detail === "string" ? detail : "";
+}
 
 /** Whether a step's thread is still doing live work — an active turn or a
     pending question a human can still answer. A present-but-idle thread (turn
@@ -295,17 +307,23 @@ const make = Effect.gen(function* () {
     Effect.catchCause(() => Effect.succeed(DEFAULT_BOARD_SETTINGS)),
   );
 
-  /** What a stage with no model of its own runs on. The board has no
-      compiled-in model pair — a hardcoded one is a pair the user may not have
-      enabled — so an unset stage falls back to the app's OWN text-generation
-      selection, which is a provider instance and model the user has already
-      configured. The settings card asks for an explicit per-stage model; this
-      is only what a never-configured stage lands on. */
+  /** What a stage with no model of its own runs on: the board's own default
+      model when the user has set one (t3o-30, D1), and only otherwise the app's
+      text-generation selection.
+   *
+   * The board still has no compiled-in pair — a hardcoded one is a pair the user
+   * may not have enabled, which is exactly how a conflict-resolution step came
+   * to spawn onto a codex CLI that was not installed. `Settings → Board` now
+   * names the fallback, so an unset stage runs on something the user chose and
+   * can see. The per-stage picker is still the recommended answer; this is what
+   * a never-configured stage lands on. */
   const fallbackModelSelection = serverSettings.getSettings.pipe(
-    Effect.map((settings) => ({
-      instanceId: settings.textGenerationModelSelection.instanceId,
-      model: settings.textGenerationModelSelection.model,
-    })),
+    Effect.map((settings) =>
+      resolveBoardDefaultModelSelection(settings.board ?? DEFAULT_BOARD_SETTINGS, {
+        instanceId: settings.textGenerationModelSelection.instanceId,
+        model: settings.textGenerationModelSelection.model,
+      }),
+    ),
     Effect.catchCause(() =>
       Effect.succeed({
         instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
@@ -3444,6 +3462,82 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * A step whose turn NEVER STARTED (t3o-30, D2).
+   *
+   * The provider reactor reports this as a `provider.turn.start.failed` activity
+   * on the step's thread — the CLI is not installed, the session would not
+   * spawn, the instance rejected the model. It is categorically different from a
+   * turn that ran and went quiet, which is what the recovery ladder is for:
+   * there is no agent to nudge, and no amount of waiting makes one appear, so
+   * the ladder would spend `timeoutMs` per rung re-sending turns into a provider
+   * that cannot start one. Meanwhile the card renders a spinner for a thread
+   * that is already dead — the lying spinner this whole path exists to avoid.
+   *
+   * So it lands `stalled` immediately, carrying the provider's own error text
+   * onto the run row for the card to render, and releases the slot. Stalled is
+   * the right terminus rather than `failed`: it is non-terminal and the on-
+   * demand restart path already SUPERSEDES a stalled step, so the card's Restart
+   * button works with no new command. A merge card additionally gets its Merge
+   * button back, because that button is gated on a live step.
+   *
+   * Never retried automatically, even onto the board's default model. The stage
+   * names the model it runs on; silently running the work somewhere else is a
+   * worse outcome than saying plainly that the chosen one could not start.
+   */
+  const failStepAtSpawn = Effect.fn("board-supervisor-failStepAtSpawn")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly detail: string;
+  }) {
+    const board = yield* readBoard;
+    const state = (board.stepStates ?? []).find(
+      (candidate) => candidate.threadId === input.threadId,
+    );
+    // Not a board step's thread, or a step that has already settled — a human's
+    // own thread failing to start is theirs to see in the thread itself.
+    if (state === undefined || isBoardTerminalStepStatus(state.status)) return;
+    // Already stalled for this same reason: the provider reactor can append the
+    // activity more than once for one dead session, and re-landing would inflate
+    // `attempt` and double-release the slot.
+    if (state.status === "stalled") return;
+    const card = board.cards.find((candidate) => candidate.id === state.cardId);
+    if (card === undefined || card.archivedAt !== null) return;
+
+    const summary = boardStepErrorSummary(input.detail);
+    yield* Effect.logWarning("board supervisor: step provider failed to start", {
+      cardId: card.id,
+      stepId: state.stepId,
+      providerInstanceId: state.providerInstanceId,
+      model: state.model,
+      detail: input.detail,
+    });
+    // Same reason escalation disarms (see `recoverStep`): a conflict fix that
+    // never ran must not leave the card armed, or some later merge-stage step
+    // succeeding turns into a merge nobody asked for.
+    disarmPendingMerge(card.id);
+    yield* dispatch({
+      type: "board.card.recover-step",
+      commandId: yield* commandId("fail-step-at-spawn"),
+      cardId: card.id,
+      stepId: state.stepId,
+      threadId: state.threadId,
+      escalateToHuman: true,
+      // No turn ran, so nothing progressed. This also increments `stallCount`,
+      // which is right: a stage pointed at a provider that cannot start is
+      // exactly the state the ceiling exists to stop cards cycling through.
+      progressed: false,
+      // Absent when the provider gave us nothing renderable — the key is
+      // optional, and the decider reads "absent" as "no reason".
+      ...(summary === null ? {} : { lastError: summary }),
+      createdAt: yield* nowIso,
+    });
+    // Release exactly once, riding the same machinery as escalation: the
+    // pre-stall state's `slotHeld` gates it, and the decider has already set the
+    // persisted flag false.
+    yield* releaseSlot(state);
+    yield* schedule();
+  });
+
   const reconcile = Effect.gen(function* () {
     // Sweep cached todo rows whose thread or link no longer exists (t3o-18,
     // AC 20). The cache is a projection with no event to un-apply, so a row can
@@ -3608,6 +3702,18 @@ const make = Effect.gen(function* () {
       case "board.plans-approved":
         // The split's integration branch (t3o-23, D5).
         return handlePlansApproved(event);
+      case "thread.activity-appended":
+        // The one NON-board event the supervisor listens to (t3o-30, D2): a
+        // step's turn failing to start at all. Everything else about a thread
+        // reaches the board through its own turn completion; this failure has no
+        // turn to complete, so without it the step holds a slot and renders a
+        // spinner until the timeout sweep eventually notices, `timeoutMs` later.
+        return event.payload.activity.kind === "provider.turn.start.failed"
+          ? failStepAtSpawn({
+              threadId: event.payload.threadId,
+              detail: providerFailureDetail(event.payload.activity.payload),
+            })
+          : Effect.void;
       default:
         return Effect.void;
     }
@@ -3712,6 +3818,15 @@ const make = Effect.gen(function* () {
     // sequential worker.
     yield* forkParked(
       Stream.runForEach(engine.streamDomainEvents, (event) => {
+        // Thread activity is by far the highest-volume event on this stream, and
+        // the board cares about exactly one kind of it (t3o-30, D2), so it is
+        // filtered HERE rather than in `processDomainEvent` — the worker never
+        // sees the tool calls, reasoning and output of every thread on the box.
+        if (event.type === "thread.activity-appended") {
+          return event.payload.activity.kind === "provider.turn.start.failed"
+            ? worker.enqueue({ source: "domain", event })
+            : Effect.void;
+        }
         if (
           event.type !== "board.card-moved" &&
           event.type !== "board.card-created" &&

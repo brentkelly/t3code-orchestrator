@@ -32,6 +32,7 @@ const frozenConfig = {
   maxAttempts: 3,
   timeoutMs: 1000,
   baseTipAtRoundStart: null,
+  lastError: null,
 };
 
 function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: string }): BoardCard {

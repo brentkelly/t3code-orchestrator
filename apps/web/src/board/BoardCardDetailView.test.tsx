@@ -96,6 +96,7 @@ function detail(
     dependents: edges?.dependents ?? [],
     activity: edges?.activity ?? [],
     parentModelOverrides: null,
+    stepError: null,
     stepCompletions: edges?.stepCompletions ?? [],
   };
 }
@@ -163,6 +164,7 @@ const baseProps = {
   onMergePullRequest: noop,
   onOpenPullRequest: noop,
   conflictStepRunning: false,
+  stepFailure: null,
   merging: false,
   catalogue: [] as ReadonlyArray<BoardLabel>,
   stages: BOARD_SEED_STAGES,

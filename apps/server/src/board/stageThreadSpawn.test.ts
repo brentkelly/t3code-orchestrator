@@ -182,6 +182,7 @@ const leftoverStep = (stepId: string): BoardCardStepState => ({
   stallCount: 5,
   lastNudgeAt: NOW,
   baseTipAtRoundStart: null,
+  lastError: null,
   prompt: "old run",
   providerInstanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-opus-5",
@@ -365,6 +366,100 @@ it.effect("a step completing after the card left its stage does not spawn on the
           (yield* commands).find((command) => command.type === "thread.create"),
           "no thread is spawned on the manual Sprint stage",
         );
+      }),
+  ),
+);
+
+/** The thread activity the provider reactor appends when a requested turn never
+    starts (t3o-30, D2) — the CLI is missing, the session will not spawn. It is
+    the ONLY signal the board gets: no turn ran, so no turn completes. */
+const turnStartFailed = (threadId: ThreadId, detail: string, sequence: number) =>
+  ({
+    type: "thread.activity-appended",
+    sequence,
+    payload: {
+      threadId,
+      activity: {
+        id: `activity-${sequence}`,
+        tone: "error",
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
+        payload: { detail },
+        turnId: null,
+        createdAt: NOW,
+      },
+    },
+  }) as unknown as OrchestrationEvent;
+
+/** The shape a real spawn failure arrives in: the outer adapter error, a JS
+    stack, then the root cause that actually names what to fix. */
+const SPAWN_FAILURE_DETAIL = [
+  "ProviderAdapterProcessError: Provider adapter process error (codex): Failed to spawn Codex App Server process",
+  "    at file:///app/src/provider/Layers/CodexAdapter.ts:1709:15",
+  "    at startSession (file:///app/src/orchestration/Layers/ProviderCommandReactor.ts:624:23)",
+  "  [cause]: Error: spawn codex ENOENT",
+].join("\n");
+
+it.effect("a step whose provider never starts lands stalled, with the reason on the card", () =>
+  withGovernor(
+    {
+      board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+      settings: settingsWith({
+        building: [codexStep],
+        planning: codexStep,
+        globalMaxConcurrent: 3,
+      }),
+    },
+    ({ pumpDomain, board, slots }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToPlanning(1));
+        const running = boardCardStepState(yield* board, cardId);
+        assert.strictEqual(running?.status, "running");
+        const threadId = running?.threadId;
+        assert.isDefined(threadId);
+
+        yield* pumpDomain(turnStartFailed(threadId!, SPAWN_FAILURE_DETAIL, 2));
+
+        // Stalled IMMEDIATELY, not `timeoutMs` later via the sweep: there is no
+        // agent to nudge, so waiting only holds the card's spinner up for half
+        // an hour against a thread that is already dead.
+        const state = boardCardStepState(yield* board, cardId);
+        assert.strictEqual(state?.status, "stalled");
+        // Both halves of the error survive: the layer that noticed and the root
+        // cause that says what to fix. The stack frames between them do not.
+        assert.include(state?.lastError ?? "", "Failed to spawn Codex App Server process");
+        assert.include(state?.lastError ?? "", "spawn codex ENOENT");
+        assert.notInclude(state?.lastError ?? "", "CodexAdapter.ts");
+        // The slot goes back, or a provider that cannot start anything silently
+        // eats the board's capacity one card at a time.
+        assert.strictEqual(state?.slotHeld, false);
+        assert.strictEqual(yield* slots.heldFor(codexStep.providerInstanceId), 0);
+      }),
+  ),
+);
+
+it.effect("a turn-start failure on a thread the board does not own changes nothing", () =>
+  withGovernor(
+    {
+      board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+      settings: settingsWith({
+        building: [codexStep],
+        planning: codexStep,
+        globalMaxConcurrent: 3,
+      }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToPlanning(1));
+
+        yield* pumpDomain(
+          turnStartFailed(ThreadId.make("thread-a-human-opened"), SPAWN_FAILURE_DETAIL, 2),
+        );
+
+        // A human's own thread failing to start is theirs to see in the thread.
+        const state = boardCardStepState(yield* board, cardId);
+        assert.strictEqual(state?.status, "running");
+        assert.isNull(state?.lastError ?? null);
       }),
   ),
 );

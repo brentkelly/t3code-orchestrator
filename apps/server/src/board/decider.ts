@@ -2485,6 +2485,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // like every other frozen field.
         baseTipAtRoundStart: command.baseTipAtRoundStart,
         threadId: null,
+        // A fresh step has not stopped for any reason yet (t3o-30, D2).
+        lastError: null,
         status: "pending",
         slotHeld: false,
         startedAt: null,
@@ -2604,6 +2606,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // running and keeps its slot. `attempt` counts every invocation (D1, for
       // display and the D5 ceiling); `stallCount` counts CONSECUTIVE stalls and
       // resets to zero when the reactor observed progress since the last nudge.
+      // `lastError` (t3o-30, D2) is REPLACED, never merged: a command that
+      // carries a reason records it, and one that does not clears whatever was
+      // there. A nudge that puts the step back to `running` must not leave the
+      // card showing the error from the stop before it.
       const state: BoardCardStepState = {
         ...current,
         attempt: current.attempt + 1,
@@ -2611,6 +2617,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         status: command.escalateToHuman ? "stalled" : "running",
         slotHeld: command.escalateToHuman ? false : current.slotHeld,
         threadId: command.threadId,
+        lastError: command.lastError ?? null,
         lastNudgeAt: command.createdAt,
         updatedAt: command.createdAt,
       };

@@ -46,17 +46,27 @@ export function boardStageLabelMidSentence(label: string): string {
 }
 
 /**
- * The `+` menu's restart affordance (t3o-14 D1/D4): `null` when the current
- * stage does not auto-execute (the item is absent, not disabled); otherwise the
- * stage label plus a disabled reason that is non-null exactly while a supervised
- * run is in flight.
+ * The `+` menu's restart affordance (t3o-14 D1/D4): `null` when there is nothing
+ * to restart (the item is absent, not disabled); otherwise the stage label plus
+ * a disabled reason that is non-null exactly while a supervised run is in
+ * flight.
+ *
+ * Offered on a stage that auto-executes, and — t3o-30, D3 — on ANY stage whose
+ * step has stalled. A stage that runs nothing on entry still spawns steps
+ * (the merge role's conflict fix is one), and when one of those dies the stage
+ * had no restart item at all: the card said a thread was running, the button
+ * that would have cleared it was absent because the stage does not auto-execute,
+ * and archiving the card was the only way out. A stalled step is by definition
+ * something a human has to restart, whatever the stage does on entry.
  */
 export function resolveBoardThreadStageRestart(input: {
   readonly autoExecute: boolean;
   readonly stageLabel: string;
   readonly runInFlight: boolean;
+  /** Whether the card's live step has given up (t3o-17, D3). */
+  readonly stalled: boolean;
 }): BoardThreadStageRestart | null {
-  if (!input.autoExecute) return null;
+  if (!input.autoExecute && !input.stalled) return null;
   return {
     label: input.stageLabel,
     disabledReason: input.runInFlight ? BOARD_STAGE_RESTART_IN_FLIGHT_REASON : null,

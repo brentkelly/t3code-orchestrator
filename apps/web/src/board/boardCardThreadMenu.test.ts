@@ -43,12 +43,13 @@ describe("isBoardCardRunInFlight", () => {
 });
 
 describe("resolveBoardThreadStageRestart", () => {
-  it("returns null when the stage does not auto-execute (item absent, not disabled)", () => {
+  it("returns null on a non-auto-executing stage with nothing stalled", () => {
     expect(
       resolveBoardThreadStageRestart({
         autoExecute: false,
         stageLabel: "Planning",
         runInFlight: false,
+        stalled: false,
       }),
     ).toBeNull();
     // Absent even mid-run: no restart affordance to disable.
@@ -57,6 +58,7 @@ describe("resolveBoardThreadStageRestart", () => {
         autoExecute: false,
         stageLabel: "Planning",
         runInFlight: true,
+        stalled: false,
       }),
     ).toBeNull();
   });
@@ -67,6 +69,7 @@ describe("resolveBoardThreadStageRestart", () => {
         autoExecute: true,
         stageLabel: "Planning",
         runInFlight: false,
+        stalled: false,
       }),
     ).toEqual({ label: "Planning", disabledReason: null });
   });
@@ -77,8 +80,23 @@ describe("resolveBoardThreadStageRestart", () => {
         autoExecute: true,
         stageLabel: "Planning",
         runInFlight: true,
+        stalled: false,
       }),
     ).toEqual({ label: "Planning", disabledReason: BOARD_STAGE_RESTART_IN_FLIGHT_REASON });
+  });
+
+  // t3o-30, D3. The merge stage runs nothing on entry but still spawns a
+  // conflict-resolution step; when that step died there was no way to clear it
+  // from the card at all.
+  it("offers a restart on a stalled step even where the stage does not auto-execute", () => {
+    expect(
+      resolveBoardThreadStageRestart({
+        autoExecute: false,
+        stageLabel: "Ready for merge",
+        runInFlight: false,
+        stalled: true,
+      }),
+    ).toEqual({ label: "Ready for merge", disabledReason: null });
   });
 });
 

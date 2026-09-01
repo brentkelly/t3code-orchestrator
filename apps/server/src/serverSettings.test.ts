@@ -685,6 +685,35 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  // t3o-30, D1. The board's default model is the pair every unset stage runs on,
+  // so a write that silently dropped it would put cards back on the compiled-in
+  // codex pair with the settings card still showing the user's choice.
+  it.effect("persists the board's default model, and clears it with a null", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const chosen = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5" };
+      const next = yield* serverSettings.updateSettings({ board: { defaultModel: chosen } });
+      assert.deepEqual(next.board.defaultModel, chosen);
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const parsed = JSON.parse(raw) as { readonly board: Record<string, unknown> };
+      // Whole, not diffed field-wise: a `{ instanceId }` with no `model` fails
+      // the write-time validation and loses the ENTIRE settings write.
+      assert.deepEqual(parsed.board.defaultModel, chosen);
+      const reloaded = yield* decodeServerSettings(parsed);
+      assert.deepEqual(reloaded.board.defaultModel, chosen);
+
+      // Clearing is a retained null, not an omitted key — `deepMerge` cannot
+      // delete one, so an omission would silently keep the old model.
+      const cleared = yield* serverSettings.updateSettings({ board: { defaultModel: null } });
+      assert.equal(cleared.board.defaultModel, null);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

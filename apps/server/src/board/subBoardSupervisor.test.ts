@@ -899,6 +899,7 @@ const runningBuildStep = (cardId: BoardCardId): BoardCardStepState => ({
   stallCount: 0,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
+  lastError: null,
   prompt: "implement the card",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",

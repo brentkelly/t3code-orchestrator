@@ -216,6 +216,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         maxAttempts: 3,
         timeoutMs: 60_000,
         baseTipAtRoundStart: null,
+        lastError: null,
         createdAt,
       } as const;
 

@@ -26,7 +26,10 @@ import {
   resolveBoardKeyPrefix,
   resolveBoardProjectAccent,
   resolveBoardStageExecution,
+  resolveBoardDefaultModelSelection,
   resolveBoardStageModelSelection,
+  boardStepErrorSummary,
+  BOARD_STEP_ERROR_MAX_CHARS,
 } from "./board.ts";
 
 const decodeSettings = Schema.decodeUnknownSync(BoardSettings);
@@ -85,6 +88,67 @@ describe("board settings defaults", () => {
     expect(resolveBoardStageModelSelection(building.model, fallback)).toEqual(fallback);
     const chosen = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-terra" };
     expect(resolveBoardStageModelSelection(chosen, fallback)).toEqual(chosen);
+  });
+});
+
+describe("resolveBoardDefaultModelSelection (t3o-30, D1)", () => {
+  const appFallback = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-luna" };
+
+  it("falls through to the app's text-generation selection when unset", () => {
+    // The shipped state, and the behaviour this replaced: with no board default
+    // the app-wide pair still governs, so nothing changes for anyone who never
+    // sets one.
+    expect(DEFAULT_BOARD_SETTINGS.defaultModel).toBe(null);
+    expect(resolveBoardDefaultModelSelection(DEFAULT_BOARD_SETTINGS, appFallback)).toEqual(
+      appFallback,
+    );
+  });
+
+  it("wins over the app's selection once the user picks one", () => {
+    const chosen = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5" };
+    expect(resolveBoardDefaultModelSelection({ defaultModel: chosen }, appFallback)).toEqual(
+      chosen,
+    );
+  });
+
+  it("survives a round-trip, so a restart does not drop it", () => {
+    const chosen = { instanceId: "claudeAgent", model: "claude-opus-5" };
+    expect(decodeSettings({ defaultModel: chosen }).defaultModel).toEqual(chosen);
+  });
+});
+
+describe("boardStepErrorSummary (t3o-30, D2)", () => {
+  it("keeps the message and its root cause, and drops the stack between them", () => {
+    const summary = boardStepErrorSummary(
+      [
+        "ProviderAdapterProcessError: Failed to spawn Codex App Server process",
+        "    at file:///app/src/provider/Layers/CodexAdapter.ts:1709:15",
+        "    at startSession (file:///app/src/orchestration/x.ts:624:23)",
+        "  [cause]: CodexAppServerSpawnError: Failed to spawn Codex App Server",
+        "    at file:///app/src/provider/Layers/CodexSessionRuntime.ts:890:13",
+        "  [cause]: Error: spawn codex ENOENT",
+      ].join("\n"),
+    );
+    // The outer message says which layer noticed; the INNERMOST cause says what
+    // to fix, and each nesting level prints its own, so the last one wins.
+    expect(summary).toBe(
+      "ProviderAdapterProcessError: Failed to spawn Codex App Server process\n\nError: spawn codex ENOENT",
+    );
+  });
+
+  it("returns the message alone when there is no cause, and null when there is nothing", () => {
+    expect(boardStepErrorSummary("Model 'gpt-9' is not available on this instance.")).toBe(
+      "Model 'gpt-9' is not available on this instance.",
+    );
+    expect(boardStepErrorSummary("   \n  \n")).toBe(null);
+    expect(boardStepErrorSummary("")).toBe(null);
+  });
+
+  it("caps the length, so a pathological error cannot become the whole card", () => {
+    const summary = boardStepErrorSummary("x".repeat(5_000));
+    expect(summary).not.toBeNull();
+    expect(summary!.length).toBe(BOARD_STEP_ERROR_MAX_CHARS);
+    expect(summary!.endsWith("\u2026")).toBe(true);
   });
 });
 
