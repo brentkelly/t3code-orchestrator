@@ -45,7 +45,7 @@ describe("searchSettings", () => {
 
   it("matches normalized title substrings", () => {
     expect(searchSettings("  WORD   WRAP  ", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
-    // "work" is a substring of "Reclaim worktrees at Done" but not of "Word
+    // "work" is a substring of `Reclaim worktrees at "Done"` but not of "Word
     // wrap", so substring matching returns only the board setting, never
     // word-wrap.
     expect(searchSettings("work").map((item) => item.id)).toEqual([

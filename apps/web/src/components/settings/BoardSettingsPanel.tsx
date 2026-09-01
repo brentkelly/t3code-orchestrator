@@ -314,25 +314,23 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
   const anchor = searchableSetting("board-reclaim-worktree-on-done");
   return (
     <SettingsSection id="board-lifecycle" title="Lifecycle">
-      <CardListContainer>
-        <div id="board-reclaim-worktree-on-done">
-          <CardRow
-            label={anchor.title}
-            description="Remove a card's git worktree as soon as it reaches Done with its pull request merged, instead of waiting for it to be archived. Archiving always reclaims either way."
-            control={
-              <Switch
-                checked={board.lifecycle.reclaimWorktreeOnDone}
-                onCheckedChange={(checked) =>
-                  update({
-                    board: { lifecycle: { reclaimWorktreeOnDone: Boolean(checked) } },
-                  })
-                }
-                aria-label={anchor.title}
-              />
-            }
-          />
-        </div>
-      </CardListContainer>
+      <div id="board-reclaim-worktree-on-done" className="px-3 sm:px-4">
+        <CardRow
+          label={anchor.title}
+          description="Remove a card's git worktree as soon as it reaches Done with its pull request merged, instead of waiting for it to be archived. Archiving always reclaims either way."
+          control={
+            <Switch
+              checked={board.lifecycle.reclaimWorktreeOnDone}
+              onCheckedChange={(checked) =>
+                update({
+                  board: { lifecycle: { reclaimWorktreeOnDone: Boolean(checked) } },
+                })
+              }
+              aria-label={anchor.title}
+            />
+          }
+        />
+      </div>
       <p className="px-3 text-xs text-muted-foreground/70 sm:px-4">
         Defaults: reclaim worktrees at Done {DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE ? "on" : "off"},
         global concurrency {DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT}.

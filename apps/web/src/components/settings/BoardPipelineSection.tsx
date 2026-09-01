@@ -721,10 +721,7 @@ export function BoardPipelineSection() {
           Connect an environment to add, rename, reorder, or delete stages.
         </p>
       ) : null}
-      <div
-        id="board-default-model"
-        className="mx-3 rounded-xl border border-border bg-card px-4 py-1 shadow-xs sm:mx-4"
-      >
+      <div id="board-default-model" className="mb-6 px-3 sm:px-4">
         <ModelRow
           label="Default model"
           ariaLabel="Board default model"
@@ -752,7 +749,7 @@ export function BoardPipelineSection() {
           runtimeMode="approval-required"
           onRuntimeModeChange={() => {}}
         />
-        <p className="pb-2 text-xs leading-[1.5] text-muted-foreground/80">
+        <p className="text-xs leading-[1.5] text-muted-foreground/80">
           What a stage below runs on when it names no model of its own. Leave it unset and each
           stage must pick one; a stage that picks one always wins.
         </p>

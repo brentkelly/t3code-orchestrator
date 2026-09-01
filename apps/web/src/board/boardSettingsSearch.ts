@@ -34,7 +34,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
   { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
   {
     id: "board-reclaim-worktree-on-done",
-    title: "Reclaim worktrees at Done",
+    title: 'Reclaim worktrees at "Done"',
     to: "/settings/board",
     targetId: "board-lifecycle",
   },
