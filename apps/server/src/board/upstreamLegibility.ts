@@ -106,7 +106,7 @@ export const readUpstreamLegibility = Effect.fn("readUpstreamLegibility")(functi
   // prefix test rather than LIKE: `_` is a LIKE wildcard, and escaping it
   // through a JS template literal is a trap not worth setting.
   const tableRows = yield* sql<{ readonly name: string }>`
-    SELECT name FROM sqlite_master
+    SELECT name FROM main.sqlite_master
     WHERE type = 'table'
       AND (substr(name, 1, 6) = 'board_' OR name = 't3o_sql_migrations')
     ORDER BY name

@@ -21,10 +21,12 @@ import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import {
   BOARD_MIGRATION_TABLE,
+  BOARD_MIGRATION_TABLE_QUALIFIED,
   BOARD_MIGRATIONS,
-  reconcileLegacyBoardLedger,
+  initialiseBoardDatabase,
   runBoardMigrations,
 } from "./index.ts";
+import { attachBoardDatabase } from "../boardDatabase.ts";
 
 const LEGACY_FLOOR = 900;
 const expectedBoardIds = BOARD_MIGRATIONS.map(([id]) => id);
@@ -32,7 +34,7 @@ const legacyBoardIds = BOARD_MIGRATIONS.map(([id]) => LEGACY_FLOOR - 1 + id);
 
 /** The exact server boot sequence (persistence/Layers/Sqlite.ts). */
 const boot = Effect.gen(function* () {
-  yield* reconcileLegacyBoardLedger();
+  yield* initialiseBoardDatabase();
   yield* runMigrations();
   yield* runBoardMigrations();
 });
@@ -45,6 +47,10 @@ const boot = Effect.gen(function* () {
 const seedLegacyDatabase = (throughCount: number = BOARD_MIGRATIONS.length) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // T3o-26: these tests are about the LEDGER lineage, not the file split, so
+    // they attach up front and let the board tables land where they land now.
+    // Relocating a legacy layout out of `main` is covered in boardDatabase.test.ts.
+    yield* attachBoardDatabase();
     // Upstream schema + its ledger.
     yield* runMigrations();
     // Board tables applied the old way: run each migration effect, then record it
@@ -83,7 +89,7 @@ describe("board migration reconciliation", () => {
         legacyBoardIds,
       );
       const boardTableBefore = yield* sql`
-        SELECT name FROM sqlite_master WHERE type = 'table' AND name = ${BOARD_MIGRATION_TABLE}
+        SELECT name FROM boards.sqlite_master WHERE type = 'table' AND name = ${BOARD_MIGRATION_TABLE}
       `;
       assert.strictEqual(boardTableBefore.length, 0);
 
@@ -97,7 +103,7 @@ describe("board migration reconciliation", () => {
 
       // Board lineage now tracked in its own table at ids 1..N.
       const boardLedger = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE)} ORDER BY migration_id
+        SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE_QUALIFIED)} ORDER BY migration_id
       `;
       assert.deepStrictEqual(
         boardLedger.map((r) => r.migration_id),
@@ -120,7 +126,7 @@ describe("board migration reconciliation", () => {
       // Idempotent: a second boot changes nothing and does not error.
       yield* boot;
       const boardLedgerAgain = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE)} ORDER BY migration_id
+        SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE_QUALIFIED)} ORDER BY migration_id
       `;
       assert.deepStrictEqual(
         boardLedgerAgain.map((r) => r.migration_id),
@@ -142,7 +148,7 @@ describe("board migration reconciliation", () => {
       yield* seedLegacyDatabase(applied);
 
       const missingBefore = yield* sql`
-        SELECT name FROM sqlite_master
+        SELECT name FROM boards.sqlite_master
         WHERE type = 'table' AND name IN ('board_card_activity', 'board_card_steps', 'board_plans')
       `;
       assert.strictEqual(missingBefore.length, 0);
@@ -153,14 +159,14 @@ describe("board migration reconciliation", () => {
       // The ledger records the full lineage and the missing tables now exist — no
       // "no such column"/"no such table" left behind.
       const boardLedger = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE)} ORDER BY migration_id
+        SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE_QUALIFIED)} ORDER BY migration_id
       `;
       assert.deepStrictEqual(
         boardLedger.map((r) => r.migration_id),
         expectedBoardIds,
       );
       const presentAfter = yield* sql<{ readonly name: string }>`
-        SELECT name FROM sqlite_master
+        SELECT name FROM boards.sqlite_master
         WHERE type = 'table' AND name IN ('board_card_activity', 'board_card_steps', 'board_plans')
         ORDER BY name
       `;
@@ -186,17 +192,23 @@ describe("board migration reconciliation", () => {
       yield* boot;
 
       const boardLedger = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE)} ORDER BY migration_id
+        SELECT migration_id FROM ${sql(BOARD_MIGRATION_TABLE_QUALIFIED)} ORDER BY migration_id
       `;
       assert.deepStrictEqual(
         boardLedger.map((r) => r.migration_id),
         expectedBoardIds,
       );
 
+      // T3o-26: the board lineage builds its tables in the ATTACHED database, and
+      // leaves none behind in the file stock t3code reads.
       const boardCards = yield* sql`
-        SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'board_cards'
+        SELECT name FROM boards.sqlite_master WHERE type = 'table' AND name = 'board_cards'
       `;
       assert.strictEqual(boardCards.length, 1);
+      const boardCardsInMain = yield* sql`
+        SELECT name FROM main.sqlite_master WHERE type = 'table' AND name = 'board_cards'
+      `;
+      assert.strictEqual(boardCardsInMain.length, 0);
 
       // The board lineage never touches the upstream ledger.
       const upstreamHighRows = yield* sql`

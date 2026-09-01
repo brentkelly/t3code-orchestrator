@@ -22,7 +22,7 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`
-    CREATE TABLE IF NOT EXISTS board_thread_todos (
+    CREATE TABLE IF NOT EXISTS boards.board_thread_todos (
       thread_id TEXT NOT NULL PRIMARY KEY,
       card_id TEXT NOT NULL,
       statuses TEXT NOT NULL,
@@ -36,7 +36,7 @@ export default Effect.gen(function* () {
   `;
 
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_board_thread_todos_card
+    CREATE INDEX IF NOT EXISTS boards.idx_board_thread_todos_card
       ON board_thread_todos (card_id)
   `;
 });

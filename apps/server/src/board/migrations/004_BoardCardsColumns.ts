@@ -55,12 +55,12 @@ export default Effect.gen(function* () {
   }
 
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_board_cards_project_stage_order
+    CREATE INDEX IF NOT EXISTS boards.idx_board_cards_project_stage_order
     ON board_cards(project_id, stage, order_key)
   `;
 
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_board_cards_key
+    CREATE INDEX IF NOT EXISTS boards.idx_board_cards_key
     ON board_cards(key)
   `;
 });

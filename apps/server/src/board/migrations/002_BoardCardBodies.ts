@@ -9,7 +9,7 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`
-    CREATE TABLE IF NOT EXISTS board_card_bodies (
+    CREATE TABLE IF NOT EXISTS boards.board_card_bodies (
       card_id TEXT NOT NULL,
       kind TEXT NOT NULL,
       body TEXT NOT NULL,

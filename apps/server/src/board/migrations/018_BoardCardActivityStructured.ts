@@ -20,10 +20,10 @@ export default Effect.gen(function* () {
 
   // Every existing row is a `progress` or `input-requested` note whose kind no
   // longer exists (D13). Dropping the table drops them, which is the intent.
-  yield* sql`DROP TABLE IF EXISTS board_card_activity`;
+  yield* sql`DROP TABLE IF EXISTS boards.board_card_activity`;
 
   yield* sql`
-    CREATE TABLE IF NOT EXISTS board_card_activity (
+    CREATE TABLE IF NOT EXISTS boards.board_card_activity (
       activity_id TEXT NOT NULL PRIMARY KEY,
       card_id TEXT NOT NULL,
       kind TEXT NOT NULL,
@@ -46,7 +46,7 @@ export default Effect.gen(function* () {
   `;
 
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_board_card_activity_card
+    CREATE INDEX IF NOT EXISTS boards.idx_board_card_activity_card
       ON board_card_activity (card_id)
   `;
 });

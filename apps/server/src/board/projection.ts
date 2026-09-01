@@ -1354,7 +1354,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
             )
          OR card_id NOT IN (SELECT card_id FROM board_cards WHERE archived_at IS NULL)
          OR thread_id NOT IN (
-              SELECT thread_id FROM projection_threads WHERE deleted_at IS NULL
+              SELECT thread_id FROM main.projection_threads WHERE deleted_at IS NULL
             )
     `,
   });

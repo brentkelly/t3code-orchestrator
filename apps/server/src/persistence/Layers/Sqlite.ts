@@ -6,7 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 
 import { runMigrations } from "../Migrations.ts";
-import { reconcileLegacyBoardLedger, runBoardMigrations } from "../../board/migrations/index.ts";
+import { initialiseBoardDatabase, runBoardMigrations } from "../../board/migrations/index.ts";
 import { ServerConfig } from "../../config.ts";
 
 type RuntimeSqliteLayerConfig = {
@@ -36,10 +36,11 @@ const setup = Layer.effectDiscard(
     const sql = yield* SqlClient.SqlClient;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
-    // T3o: heal the old shared-ledger scheme BEFORE upstream migrations run, so a
-    // database pinned at the legacy 900+ high-water mark doesn't skip pending
-    // upstream migrations on its first boot. See board/migrations/index.ts.
-    yield* reconcileLegacyBoardLedger();
+    // T3o: attach boards.sqlite, relocate any pre-t3o-26 board tables out of this
+    // file, and heal the old shared-ledger scheme — all BEFORE upstream migrations
+    // run, so a database pinned at the legacy 900+ high-water mark doesn't skip
+    // pending upstream migrations on its first boot. See board/migrations/index.ts.
+    yield* initialiseBoardDatabase();
     yield* runMigrations();
     // T3o: board migrations are a separate lineage (own ledger table), run after
     // upstream so upstream tables exist first. See board/migrations/index.ts.

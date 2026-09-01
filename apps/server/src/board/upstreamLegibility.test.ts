@@ -162,15 +162,20 @@ layer("upstream legibility", (it) => {
     }),
   );
 
-  // Board tables are inert to upstream — it never selects from them — but their
-  // presence means the file has not been separated, so the report names them.
-  it.effect("names the t3o tables still in the file", () =>
+  // AC3, and the first half of the promise actually delivered: after P1 the board
+  // lineage builds its tables in boards.sqlite, so a migrated database leaves
+  // none of them in the file stock t3code reads.
+  it.effect("finds no t3o tables in the upstream file once the schema is separated", () =>
     Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
       const report = yield* readUpstreamLegibility();
+      assert.deepEqual(report.t3oTables, []);
 
-      assert.ok(report.t3oTables.includes("board_cards"));
-      assert.ok(report.t3oTables.includes("t3o_sql_migrations"));
-      assert.ok(!isUpstreamLegible(report));
+      // ...because they are in the attached board database, not because the
+      // migrations failed to run.
+      const inBoards = yield* sql<{ readonly name: string }>`
+        SELECT name FROM boards.sqlite_master WHERE type = 'table' AND name = 'board_cards'`;
+      assert.strictEqual(inBoards.length, 1);
     }),
   );
 });
