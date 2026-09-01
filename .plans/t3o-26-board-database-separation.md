@@ -67,6 +67,12 @@ running.
 `journal_mode` is per-database, so the `PRAGMA journal_mode = WAL` at `Sqlite.ts:38` must be
 issued for the attached database too. `foreign_keys` is per-connection and needs no change.
 
+**Validated empirically against `node:sqlite` (the runtime client), not just read off the docs:**
+attach works; the attached database's `journal_mode` really does default to `delete` and takes WAL
+on a qualified pragma; cross-schema JOINs work in one statement; an unqualified `board_cards`
+resolves to the attached copy when `main` has no such table; and a transaction confined to
+`boards.*` commits atomically under WAL.
+
 ### D2 — The board gets its own event log, with its own sequence
 
 `boards.orchestration_events` (same DDL as upstream's, own `AUTOINCREMENT`), plus
@@ -236,7 +242,7 @@ Two constraints on doing it:
 
 Each phase is independently shippable except where noted.
 
-### P0 — The verification harness (do this first)
+### P0 — The verification harness (do this first) — **DONE**
 
 A test that provisions a database, drives real board work against it, then boots a
 stock-upstream-shaped runtime against that same file and asserts a clean full replay from sequence
@@ -248,8 +254,25 @@ for the retired-event-type class of bug.
 
 ### P1 — `boards.sqlite`, attached, with the board tables in it
 
-Provision and attach the file, retarget the board migration lineage at it, move the 12 tables and the ledger with
-their data, qualify the orphan sweep's subquery.
+Provision and attach the file, retarget the board migration lineage at it, move the 12 tables and
+the ledger with their data, qualify the orphan sweep's subquery.
+
+Two implementation facts established up front:
+
+- **The Migrator accepts a qualified ledger name.** `sql("boards.t3o_sql_migrations")` compiles to
+  `"boards"."t3o_sql_migrations"` — the client splits on the dot rather than quoting one identifier
+  containing it. So `Migrator.make({ table: "boards.t3o_sql_migrations" })` is safe. Worth pinning
+  in a test: had it quoted the whole string, migrations would have silently created a table
+  *named* `boards.t3o_sql_migrations` in `main` and defeated the separation without erroring.
+- **The ledger must be COPIED to `boards`, never recreated there.** An existing database has its
+  ledger in `main` at high-water mark 30. Create an empty ledger in `boards` and the Migrator sees
+  mark 0 and replays the whole lineage — including migration 007, a one-time DATA backfill that
+  would resurrect seed labels the user has since deleted. This is the same trap
+  `reconcileLegacyBoardLedger` was written to avoid, in a new place. The relocation therefore has
+  to run BEFORE the Migrator reads the mark, in the same board-owned hook as the attach.
+
+No new lines in `Sqlite.ts` (D8): the attach, the WAL pragma and the relocation go inside the
+board-owned function it already calls, changing which function that is rather than adding one.
 
 **Do not ship P1 alone.** Between P1 and P2 the board projector's transaction spans two databases —
 it writes `boards.board_*` and `main.projection_state` in one `withTransaction`
@@ -287,7 +310,7 @@ before assuming the gate runs.
 
 ## Acceptance criteria
 
-- [ ] AC1 — A stock-upstream-shaped runtime boots against a t3o-exercised `state.sqlite` and
+- [x] AC1 (instrument built and calibrated; end-to-end assertion lands with P2) — A stock-upstream-shaped runtime boots against a t3o-exercised `state.sqlite` and
       replays every event from sequence zero with no decode failure. (P0, gated in P4.)
 - [ ] AC2 — `state.sqlite` contains no row whose `event_type` starts with `board.`, and no
       `aggregate_kind` outside `project` / `thread`, after any amount of board use.
