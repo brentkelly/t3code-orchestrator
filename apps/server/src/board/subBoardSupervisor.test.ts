@@ -673,3 +673,25 @@ it.effect("stops at a merge the forge REFUSES, and says so on the card", () =>
       }),
   ),
 );
+
+it("does not merge a child a human pulled BACK out of Done", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        // A backward drag is an UNDO. Answering it by immediately re-merging on
+        // the forge is both surprising and irreversible, so the hook takes
+        // forward arrivals only — the same condition the t3o-24 crossing gate
+        // applies just above it.
+        yield* h.pumpDomain(cardMoved(childAtMerge("card-one"), DONE, MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
+      }),
+  ));

@@ -1050,6 +1050,11 @@ describe("cards that need a human (boardCardAttention)", () => {
     queued: false,
     archivedAt: null,
     planCount: 0,
+    // The base fixture is a split parent (it populates every field); zero the
+    // child counts so the default card is an ordinary one and only the cases
+    // that ask for a split get one.
+    planTotal: 0,
+    planDone: 0,
     ...overrides,
   });
   /** The base fixture is fully populated, review summary included — strip it
@@ -1111,6 +1116,43 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(attention({ stage: BOARD_SEED_STAGE_IDS.backlog, stalled: true })?.reason).toBe(
       "stalled",
     );
+  });
+
+  it("never parks a split parent that is building through its children", () => {
+    // The parent keeps its planning step's terminal row for the whole split —
+    // `beginStageRun` refuses to start a run for it until the last child
+    // finishes — so `held` alone would flag it "Needs a human" for the entire
+    // build, when the split is exactly what is making progress.
+    expect(attention({ held: true, planTotal: 3, planDone: 1 })).toBeNull();
+    expect(attention({ held: true, planTotal: 3, planDone: 0 })).toBeNull();
+    // Once every child is done the counts converge and a parked parent flags
+    // normally — at that point nothing else is going to move it.
+    expect(attention({ held: true, planTotal: 3, planDone: 3 })?.reason).toBe("held");
+    // A card that is not a split parent is unaffected.
+    expect(attention({ held: true, planTotal: 0 })?.reason).toBe("held");
+  });
+
+  it("lets a stuck child's roll-up reach a parent that is mid-split", () => {
+    // The regression this pairs with: an own reason outranks an inherited one
+    // in the renderer, so a parent that self-flagged `held` would permanently
+    // shadow the roll-up of a genuinely stuck child.
+    const parent = card({
+      cardId: BoardCardId.make("card-parent"),
+      held: true,
+      planTotal: 2,
+      planDone: 0,
+    });
+    const stuck = {
+      ...card({ stalled: true }),
+      cardId: BoardCardId.make("c1"),
+      parentCardId: parent.cardId,
+    };
+    expect(boardCardAttention({ card: parent, stages: BOARD_SEED_STAGES })).toBeNull();
+    expect(
+      deriveBoardCardChildAttention({ cards: [parent, stuck], stages: BOARD_SEED_STAGES }).get(
+        parent.cardId,
+      )?.reason,
+    ).toBe("stalled");
   });
 
   it("treats a held flag as stale while the step is live again", () => {

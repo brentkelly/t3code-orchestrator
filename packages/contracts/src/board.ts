@@ -1983,6 +1983,7 @@ export function boardCardAttention(input: {
   > & {
     readonly planCount?: number | undefined;
     readonly planTotal?: number | undefined;
+    readonly planDone?: number | undefined;
     readonly parentCardId?: BoardCardId | undefined;
     readonly reviewOutcome?: BoardReviewLoopOutcome | undefined;
     readonly reviewHeldOutcome?: BoardReviewLoopOutcome | undefined;
@@ -2058,17 +2059,31 @@ export function boardCardAttention(input: {
   // "Needs a human" for the rest of its life. The other reasons need no such
   // guard: a thread question, a stalled step and a pending split are all real
   // wherever the card sits.
+  // …and a split parent is never parked while its children are still going.
+  // It builds THROUGH them (t3o-23, D4): `beginStageRun` refuses to start a run
+  // for it until the last child finishes, so it keeps its planning step's
+  // terminal row — and `held` alone would flag it "Needs a human" for the
+  // entire split, when the split is exactly what is making progress. Worse, an
+  // own reason outranks an inherited one, so the parent's roll-up of a genuinely
+  // stuck CHILD could never render behind it. Once the children are all done
+  // the counts converge and a parked parent flags normally.
+  const buildingThroughChildren =
+    card.planTotal !== undefined && card.planTotal > 0 && (card.planDone ?? 0) < card.planTotal;
   if (
     card.held &&
     !card.stepRunning &&
     !card.queued &&
+    !buildingThroughChildren &&
     isBoardStageAtOrAfterBuild(stageState, card.stage)
   ) {
     return {
       reason: "held",
       tone: ATTENTION_TONES.held,
       label: "Needs a human",
-      detail: "This stage finished without moving the card on — it needs a human to continue it",
+      // "stopped", not "finished": `held` is raised by any terminal settle, so
+      // this covers a step that FAILED or was abandoned as well as one that ran
+      // to a clean end and simply did not advance the card.
+      detail: "This stage stopped without moving the card on — it needs a human to continue it",
     };
   }
   if (card.awaitingInput) {

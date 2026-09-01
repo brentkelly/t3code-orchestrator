@@ -1101,12 +1101,27 @@ function SimpleStageBody(props: {
             />
           ) : null}
           {role === "build" ? (
-            <ToggleRow
-              label="Pause for a human when no plan exists"
-              checked={exec.humanInLoopWithoutPlan}
-              ariaLabel="Human in the loop when no plan exists"
-              onChange={(checked) => set({ humanInLoopWithoutPlan: checked })}
-            />
+            <>
+              <ToggleRow
+                label="Pause for a human when no plan exists"
+                checked={exec.humanInLoopWithoutPlan}
+                ariaLabel="Human in the loop when no plan exists"
+                onChange={(checked) => set({ humanInLoopWithoutPlan: checked })}
+              />
+              {/* The other half of the D6 pair. Previously only the no-plan
+                  default was offered, which left the with-plan one reachable
+                  solely by hand-editing settings.json — and it is the setting a
+                  sub-board child reads, since a child always counts as planned
+                  (`boardBuildHumanInLoopDefault`). Without this row there is no
+                  way in the UI to make a split's children pause. */}
+              <ToggleRow
+                label="Pause for a human when a plan exists"
+                hint="Also governs sub-board children: a child's approved plan became its brief, so it counts as planned."
+                checked={exec.humanInLoopWithPlan}
+                ariaLabel="Human in the loop when a plan exists"
+                onChange={(checked) => set({ humanInLoopWithPlan: checked })}
+              />
+            </>
           ) : null}
           {role === null || role === "done" ? (
             <ToggleRow

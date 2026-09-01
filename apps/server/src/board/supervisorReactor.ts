@@ -3308,9 +3308,16 @@ const make = Effect.gen(function* () {
     // side of that means one arrival resolves the whole chain — merge → Done →
     // the dependency it satisfied → the freed siblings into build — instead of
     // waiting for the Done move to come back around the event loop.
+    // FORWARD arrivals only, matching the t3o-24 crossing gate's own condition
+    // above. A forward move is the pipeline delivering the card (review's
+    // auto-advance, or a human dragging it on); a BACKWARD one is a human
+    // pulling the card out of Done, which is an undo, and answering an undo by
+    // immediately re-merging on the forge is both surprising and irreversible.
     if (
       card.parentCardId !== null &&
-      boardStageWithRole(board, "merge")?.stageId === event.payload.toStage
+      boardStageWithRole(board, "merge")?.stageId === event.payload.toStage &&
+      fromIndex >= 0 &&
+      toIndex > fromIndex
     ) {
       yield* autoMergeChild(card);
     }
