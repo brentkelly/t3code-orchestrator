@@ -36,7 +36,10 @@ import {
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
-import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
+// T3o-26: board projector watermarks live in the board database, so a board
+// projector's writes and its watermark commit inside ONE file — SQLite drops
+// cross-database atomicity under WAL. Upstream projectors are unaffected.
+import { BoardAwareProjectionStateRepositoryLive } from "../../board/boardProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
@@ -1743,5 +1746,5 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
-  Layer.provideMerge(ProjectionStateRepositoryLive),
+  Layer.provideMerge(BoardAwareProjectionStateRepositoryLive),
 );

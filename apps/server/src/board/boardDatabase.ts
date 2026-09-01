@@ -35,6 +35,14 @@ export const BOARD_SCHEMA = "boards";
 /** Board database filename, alongside `state.sqlite` in the state directory. */
 export const BOARD_DATABASE_FILENAME = "boards.sqlite";
 
+/**
+ * Quote an identifier for the raw statements the relocation builds by hand
+ * (`sql.unsafe` takes no bindings). The names come from `sqlite_master` in this
+ * same database, so this is defence in depth rather than an injection boundary —
+ * but an unquoted identifier would break on any name that needs quoting.
+ */
+const quoted = (identifier: string): string => `"${identifier.replace(/"/g, '""')}"`;
+
 /** Tables belonging to the board lineage, by name prefix and by exact name. */
 const BOARD_TABLE_PREFIX = "board_";
 const BOARD_LEDGER_TABLE = "t3o_sql_migrations";
@@ -75,9 +83,18 @@ export const attachBoardDatabase = Effect.fn("attachBoardDatabase")(function* ()
   const target = resolveBoardDatabasePath(mainFile);
 
   yield* sql`ATTACH DATABASE ${target} AS ${sql(BOARD_SCHEMA)}`;
-  yield* sql`PRAGMA boards.journal_mode = WAL`;
+  // The pragma reports the mode actually in force, which is worth logging: an
+  // attached database silently starts in `delete` mode regardless of `main`, and
+  // ':memory:' reports `memory` and cannot take WAL at all.
+  const journal = yield* sql<{ readonly journal_mode: string }>`
+    PRAGMA boards.journal_mode = WAL
+  `;
   yield* Effect.logDebug("Attached board database").pipe(
-    Effect.annotateLogs({ schema: BOARD_SCHEMA, path: target }),
+    Effect.annotateLogs({
+      schema: BOARD_SCHEMA,
+      path: target,
+      journalMode: journal[0]?.journal_mode ?? "unknown",
+    }),
   );
 });
 
@@ -97,6 +114,14 @@ export const attachBoardDatabase = Effect.fn("attachBoardDatabase")(function* ()
  * high-water mark zero and replays the entire lineage, including migration 007's
  * one-time label seed — resurrecting seed labels the user has since deleted.
  *
+ * RE-RUNNABLE, which matters more than it sounds. SQLite normalises
+ * `IF NOT EXISTS` out of stored DDL, so a relocation that dies partway — disk
+ * full, power loss, a killed process — leaves some tables already created in
+ * `boards` and the rest still in `main`. A naive retry then fails with
+ * "table board_cards already exists" ON THE BOOT PATH, and the install never
+ * starts again. Dropping each target on entry discards a partial copy and redoes
+ * it, which is safe because `main` stays authoritative until the final drops.
+ *
  * Idempotent: a no-op once `main` holds no board tables, which is every boot
  * after the first and every database created under t3o-26.
  */
@@ -111,44 +136,60 @@ export const relocateBoardSchema = Effect.fn("relocateBoardSchema")(function* ()
   `;
   if (tables.length === 0) return;
 
-  const indexes = yield* sql<{
+  // Indexes, and also views and triggers: the board schema defines none today,
+  // but `DROP TABLE` would take any that existed with it, and silently losing a
+  // database object mid-migration is not a failure mode worth leaving open.
+  const companions = yield* sql<{
     readonly name: string;
     readonly tbl_name: string;
     readonly sql: string | null;
   }>`
     SELECT name, tbl_name, sql FROM main.sqlite_master
-    WHERE type = 'index'
+    WHERE type IN ('index', 'view', 'trigger')
       AND (substr(tbl_name, 1, 6) = ${BOARD_TABLE_PREFIX} OR tbl_name = ${BOARD_LEDGER_TABLE})
   `;
 
-  for (const table of tables) {
-    // SQLite normalises `IF NOT EXISTS` out of stored DDL, so the text always
-    // starts `CREATE TABLE <name>`; inserting the schema after that prefix is
-    // the whole rewrite.
-    if (table.sql === null) continue;
-    yield* sql.unsafe(table.sql.replace(/^CREATE TABLE\s+/i, `CREATE TABLE ${BOARD_SCHEMA}.`));
-    yield* sql.unsafe(`INSERT INTO ${BOARD_SCHEMA}.${table.name} SELECT * FROM main.${table.name}`);
-  }
+  const move = Effect.gen(function* () {
+    for (const table of tables) {
+      // SQLite normalises `IF NOT EXISTS` out of stored DDL, so the text always
+      // starts `CREATE TABLE <name>`; inserting the schema after that prefix is
+      // the whole rewrite. Dropping first is what lets a resumed relocation
+      // succeed — `main` still holds the authoritative rows at this point.
+      if (table.sql === null) continue;
+      yield* sql.unsafe(`DROP TABLE IF EXISTS ${BOARD_SCHEMA}.${quoted(table.name)}`);
+      yield* sql.unsafe(table.sql.replace(/^CREATE TABLE\s+/i, `CREATE TABLE ${BOARD_SCHEMA}.`));
+      yield* sql.unsafe(
+        `INSERT INTO ${BOARD_SCHEMA}.${quoted(table.name)} SELECT * FROM main.${quoted(table.name)}`,
+      );
+    }
 
-  for (const index of indexes) {
-    // A null `sql` is an auto-index backing a PRIMARY KEY or UNIQUE constraint —
-    // SQLite recreates those from the table DDL, and they cannot be created by
-    // hand.
-    if (index.sql === null) continue;
-    yield* sql.unsafe(
-      index.sql.replace(/^CREATE\s+(UNIQUE\s+)?INDEX\s+/i, (match) => `${match}${BOARD_SCHEMA}.`),
-    );
-  }
+    for (const companion of companions) {
+      // A null `sql` is an auto-index backing a PRIMARY KEY or UNIQUE constraint
+      // — SQLite recreates those from the table DDL, and they cannot be created
+      // by hand.
+      if (companion.sql === null) continue;
+      yield* sql.unsafe(
+        companion.sql.replace(
+          /^CREATE\s+(UNIQUE\s+)?(INDEX|VIEW|TRIGGER)\s+/i,
+          (match) => `${match}${BOARD_SCHEMA}.`,
+        ),
+      );
+    }
 
-  // Dropping the table drops its indexes with it.
-  for (const table of tables) {
-    yield* sql.unsafe(`DROP TABLE main.${table.name}`);
-  }
+    // Dropping the table drops its indexes and triggers with it.
+    for (const table of tables) {
+      yield* sql.unsafe(`DROP TABLE main.${quoted(table.name)}`);
+    }
+  });
+
+  // One transaction: an error rolls the copy back rather than leaving a
+  // half-populated board database behind.
+  yield* sql.withTransaction(move);
 
   yield* Effect.log("Relocated board schema into the board database").pipe(
     Effect.annotateLogs({
       tables: tables.length,
-      indexes: indexes.filter((index) => index.sql !== null).length,
+      companions: companions.filter((companion) => companion.sql !== null).length,
     }),
   );
 });

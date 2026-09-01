@@ -15,8 +15,14 @@
  * therefore a row that would break stock t3code, not merely confuse it.
  *
  * The upstream event-type set is derived by SUBTRACTING `BOARD_EVENT_TYPES` from
- * the union t3o ships, rather than being written out by hand. A board event type
- * added later is excluded automatically, so this check cannot silently rot.
+ * the union t3o ships, rather than being written out by hand. That covers one
+ * direction automatically: a board event type added later is excluded without
+ * anyone remembering to update this file. It does NOT cover the other — a type
+ * upstream adds only appears here once the fork rebases, and a board type
+ * RETIRED from `BOARD_EVENT_TYPES` stops being recognised as board-owned, so
+ * rows for it read as unknown rather than as t3o's doing. Both err toward
+ * reporting more than is strictly illegible, which is the safe direction for a
+ * check whose job is to refuse to say "clean" when it is not sure.
  */
 import { BOARD_EVENT_TYPES, OrchestrationEventType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";

@@ -48,6 +48,7 @@ import Migration027 from "./027_BoardCardsSourcePlan.ts";
 import Migration028 from "./028_BoardCardStepStateBaseTip.ts";
 import Migration029 from "./029_BoardCardsModelOverrides.ts";
 import Migration030 from "./030_BoardCardStepStateLastError.ts";
+import Migration031 from "./031_BoardProjectionState.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -97,6 +98,7 @@ export const BOARD_MIGRATIONS = [
   [28, "BoardCardStepStateBaseTip", Migration028],
   [29, "BoardCardsModelOverrides", Migration029],
   [30, "BoardCardStepStateLastError", Migration030],
+  [31, "BoardProjectionState", Migration031],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(
@@ -135,7 +137,7 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
   if (upstreamLedger.length === 0) return; // fresh database — nothing to reconcile
 
   const legacyRows = yield* sql<{ readonly migration_id: number }>`
-    SELECT migration_id FROM effect_sql_migrations
+    SELECT migration_id FROM main.effect_sql_migrations
     WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR} ORDER BY migration_id
   `;
   if (legacyRows.length === 0) return; // already reconciled / never used the 900 scheme
@@ -167,7 +169,7 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
     }
   }
 
-  yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}`;
+  yield* sql`DELETE FROM main.effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}`;
   yield* Effect.log("Reconciled legacy board migration ledger").pipe(
     Effect.annotateLogs({ evicted: legacyRows.length, table: BOARD_MIGRATION_TABLE_QUALIFIED }),
   );

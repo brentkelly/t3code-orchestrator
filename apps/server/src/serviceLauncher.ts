@@ -52,13 +52,37 @@ const runtimePaths = (baseDir: string, version: string) => {
 
 /** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
+
+/**
+ * The state directory holds more than one SQLite database (t3o adds
+ * `boards.sqlite` beside `state.sqlite`), and a rollback that restores only some
+ * of them leaves the install internally inconsistent: a reverted build would read
+ * a schema migrated by the newer one, with a migration ledger claiming it is
+ * current, so nothing re-runs to reconcile it.
+ *
+ * Discovering the set from disk rather than naming the files keeps this correct
+ * for any database added later, and keeps the launcher from having to know what
+ * they are for.
+ */
+async function databaseBaseNames(dbPath: string): Promise<ReadonlyArray<string>> {
+  const directory = NodePath.dirname(dbPath);
+  const primary = NodePath.basename(dbPath);
+  const entries = await NodeFSP.readdir(directory).catch(() => [] as ReadonlyArray<string>);
+  const discovered = entries.filter((entry) => entry.endsWith(".sqlite"));
+  // The primary database is included even when the directory read fails, so a
+  // backup never silently degrades to covering nothing.
+  return [primary, ...discovered.filter((entry) => entry !== primary)].sort();
+}
 const RESTORE_MARKER = ".restore-pending";
 
 const databaseBackupDir = (baseDir: string, updateId: string) =>
   NodePath.join(baseDir, "runtime", "db-backup", updateId);
 
-const databaseBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
-  NodePath.join(backupDir, suffix === "" ? "database" : `database${suffix}`);
+const databaseBackupFile = (
+  backupDir: string,
+  baseName: string,
+  suffix: (typeof DB_FILE_SUFFIXES)[number],
+) => NodePath.join(backupDir, `${baseName}${suffix}`);
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -101,12 +125,22 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
   await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
   try {
-    for (const suffix of DB_FILE_SUFFIXES) {
-      const source = `${pending.dbPath}${suffix}`;
-      if (suffix !== "" && !(await pathExists(source))) continue;
-      const destination = databaseBackupFile(stagingDir, suffix);
-      await NodeFSP.copyFile(source, destination);
-      await syncFile(destination);
+    const directory = NodePath.dirname(pending.dbPath);
+    for (const baseName of await databaseBaseNames(pending.dbPath)) {
+      for (const suffix of DB_FILE_SUFFIXES) {
+        const source = NodePath.join(directory, `${baseName}${suffix}`);
+        // Only the primary database is required to exist; sidecars and any
+        // secondary database may legitimately be absent.
+        if (!(await pathExists(source))) {
+          if (suffix === "" && baseName === NodePath.basename(pending.dbPath)) {
+            await NodeFSP.copyFile(source, databaseBackupFile(stagingDir, baseName, suffix));
+          }
+          continue;
+        }
+        const destination = databaseBackupFile(stagingDir, baseName, suffix);
+        await NodeFSP.copyFile(source, destination);
+        await syncFile(destination);
+      }
     }
     await NodeFSP.rename(stagingDir, backupDir);
     await syncDirectory(NodePath.dirname(backupDir));
@@ -145,14 +179,24 @@ async function restoreDatabaseBackup(
   if (!(await pathExists(backupDir))) return;
 
   await markDatabaseRestorePending(backupDir);
-  for (const suffix of DB_FILE_SUFFIXES) {
-    const target = `${pending.dbPath}${suffix}`;
-    const source = databaseBackupFile(backupDir, suffix);
-    if (await pathExists(source)) {
-      await NodeFSP.copyFile(source, target);
-      await syncFile(target);
-    } else {
-      await NodeFSP.rm(target, { force: true });
+  const directory = NodePath.dirname(pending.dbPath);
+  // Union of what was backed up and what is live now: a database the trial update
+  // CREATED has no backup entry and must be removed, or the reverted build would
+  // read a database from the future.
+  const liveNames = await databaseBaseNames(pending.dbPath);
+  const backedUpNames = (
+    await NodeFSP.readdir(backupDir).catch(() => [] as ReadonlyArray<string>)
+  ).filter((entry) => entry.endsWith(".sqlite"));
+  for (const baseName of new Set([...liveNames, ...backedUpNames])) {
+    for (const suffix of DB_FILE_SUFFIXES) {
+      const target = NodePath.join(directory, `${baseName}${suffix}`);
+      const source = databaseBackupFile(backupDir, baseName, suffix);
+      if (await pathExists(source)) {
+        await NodeFSP.copyFile(source, target);
+        await syncFile(target);
+      } else {
+        await NodeFSP.rm(target, { force: true });
+      }
     }
   }
   await syncDirectory(NodePath.dirname(pending.dbPath));

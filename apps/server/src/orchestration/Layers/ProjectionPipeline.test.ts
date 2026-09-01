@@ -159,14 +159,19 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       `;
       assert.deepEqual(messageRows, [{ messageId: "message-1", text: "hello" }]);
 
+      // T3o-26: board projector watermarks live in boards.projection_state so a
+      // board projector's writes and its watermark commit inside one database.
+      // The assertion is still "every registered projector advanced", so it reads
+      // the same union the repository does.
       const stateRows = yield* sql<{
         readonly projector: string;
         readonly lastAppliedSequence: number;
       }>`
-        SELECT
-          projector,
-          last_applied_sequence AS "lastAppliedSequence"
-        FROM projection_state
+        SELECT projector, last_applied_sequence AS "lastAppliedSequence"
+        FROM main.projection_state
+        UNION ALL
+        SELECT projector, last_applied_sequence AS "lastAppliedSequence"
+        FROM boards.projection_state
         ORDER BY projector ASC
       `;
       assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
