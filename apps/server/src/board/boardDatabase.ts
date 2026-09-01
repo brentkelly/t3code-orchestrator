@@ -155,7 +155,17 @@ export const relocateBoardSchema = Effect.fn("relocateBoardSchema")(function* ()
       AND (substr(tbl_name, 1, 6) = ${BOARD_TABLE_PREFIX} OR tbl_name = ${BOARD_LEDGER_TABLE})
   `;
 
-  const move = Effect.gen(function* () {
+  // TWO transactions, each confined to ONE database. A single transaction
+  // spanning both would be the very thing this module exists to avoid: SQLite
+  // does not commit across attached databases atomically under WAL, so a tear
+  // could drop `main`'s tables without the copies in `boards` having landed —
+  // total, silent loss of every card.
+  //
+  // Split this way there is no lossy intermediate state. If the copy fails,
+  // `boards` rolls back and `main` is untouched. If the copy commits and the
+  // drop does not, both copies exist; the next run drops and redoes the copy,
+  // then drops again. `main` stays authoritative until the second transaction.
+  const copyIntoBoardDatabase = Effect.gen(function* () {
     for (const table of tables) {
       // SQLite normalises `IF NOT EXISTS` out of stored DDL, so the text always
       // starts `CREATE TABLE <name>`; inserting the schema after that prefix is
@@ -181,16 +191,22 @@ export const relocateBoardSchema = Effect.fn("relocateBoardSchema")(function* ()
         ),
       );
     }
+  });
 
-    // Dropping the table drops its indexes and triggers with it.
+  const dropFromMain = Effect.gen(function* () {
+    // A view is not dropped by `DROP TABLE`, so copied views are dropped by name
+    // first; indexes and triggers do go with their table.
+    for (const companion of companions) {
+      if (companion.sql === null || !/^CREATE\s+VIEW/i.test(companion.sql)) continue;
+      yield* sql.unsafe(`DROP VIEW IF EXISTS main.${quoted(companion.name)}`);
+    }
     for (const table of tables) {
       yield* sql.unsafe(`DROP TABLE main.${quoted(table.name)}`);
     }
   });
 
-  // One transaction: an error rolls the copy back rather than leaving a
-  // half-populated board database behind.
-  yield* sql.withTransaction(move);
+  yield* sql.withTransaction(copyIntoBoardDatabase);
+  yield* sql.withTransaction(dropFromMain);
 
   yield* Effect.log("Relocated board schema into the board database").pipe(
     Effect.annotateLogs({

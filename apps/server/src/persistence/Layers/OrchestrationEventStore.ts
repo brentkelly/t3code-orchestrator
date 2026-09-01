@@ -75,11 +75,15 @@ const AppendEventRequestSchema = Schema.Struct({
 const OrchestrationEventPersistedRowSchema = Schema.Struct({
   sequence: NonNegativeInt,
   eventId: EventId,
-  // T3o: a plain string, NOT `OrchestrationEventType` — see KNOWN_EVENT_TYPES.
-  // Rows are re-validated against the union per row so one retired type cannot
-  // fail the page. Append still validates strictly via `AppendEventRequestSchema`.
+  // T3o: plain strings, NOT the closed literal unions — see KNOWN_EVENT_TYPES.
+  // Rows are re-validated per row (via `decodeReadRow` -> `decodeEvent`, which
+  // checks both against the full `OrchestrationEvent` union) so one retired value
+  // cannot fail the whole page. `aggregateKind` gets the same treatment as
+  // `type` because it carries the same risk: t3o added `card`, `label` and
+  // `stage`, and retiring any of them would otherwise brick replay identically.
+  // Append still validates strictly via `AppendEventRequestSchema`.
   type: Schema.String,
-  aggregateKind: OrchestrationAggregateKind,
+  aggregateKind: Schema.String,
   // T3o: BoardCardId appended for card-aggregate event rows (D9); BoardLabelId
   // for the label aggregate (t3o-06a). Frozen widening.
   aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId, BoardStageId]),

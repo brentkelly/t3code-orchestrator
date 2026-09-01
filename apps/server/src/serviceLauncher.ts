@@ -54,6 +54,10 @@ const runtimePaths = (baseDir: string, version: string) => {
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
 
 /**
+ * Exported for tests: this is destructive code — restore deletes live database
+ * files that have no snapshot entry — and it should not be exercised only
+ * through a full launcher run.
+ *
  * The state directory holds more than one SQLite database (t3o adds
  * `boards.sqlite` beside `state.sqlite`), and a rollback that restores only some
  * of them leaves the install internally inconsistent: a reverted build would read
@@ -64,7 +68,7 @@ const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
  * for any database added later, and keeps the launcher from having to know what
  * they are for.
  */
-async function databaseBaseNames(dbPath: string): Promise<ReadonlyArray<string>> {
+export async function databaseBaseNames(dbPath: string): Promise<ReadonlyArray<string>> {
   const directory = NodePath.dirname(dbPath);
   const primary = NodePath.basename(dbPath);
   const entries = await NodeFSP.readdir(directory).catch(() => [] as ReadonlyArray<string>);
@@ -117,7 +121,10 @@ async function syncDirectory(directory: string): Promise<void> {
  * backup is never overwritten because a restarted launcher may be looking at
  * database writes from an earlier attempt by the same trial.
  */
-async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
+export async function backupDatabaseOnce(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return;
 
@@ -129,11 +136,13 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
     for (const baseName of await databaseBaseNames(pending.dbPath)) {
       for (const suffix of DB_FILE_SUFFIXES) {
         const source = NodePath.join(directory, `${baseName}${suffix}`);
-        // Only the primary database is required to exist; sidecars and any
-        // secondary database may legitimately be absent.
         if (!(await pathExists(source))) {
+          // Sidecars and any secondary database may legitimately be absent. The
+          // PRIMARY database missing means there is nothing to roll back to, and
+          // a backup that quietly skipped it would be worse than no backup —
+          // rollback would find no snapshot entry and delete the live file.
           if (suffix === "" && baseName === NodePath.basename(pending.dbPath)) {
-            await NodeFSP.copyFile(source, databaseBackupFile(stagingDir, baseName, suffix));
+            throw new Error(`cannot back up database: ${source} does not exist`);
           }
           continue;
         }
@@ -171,7 +180,7 @@ async function markDatabaseRestorePending(backupDir: string): Promise<void> {
 }
 
 /** Restore is retryable after any process crash while the backup directory remains. */
-async function restoreDatabaseBackup(
+export async function restoreDatabaseBackup(
   baseDir: string,
   pending: PendingServiceUpdate,
 ): Promise<void> {

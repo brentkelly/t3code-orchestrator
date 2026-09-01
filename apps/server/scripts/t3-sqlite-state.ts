@@ -16,6 +16,9 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import * as NodeSqliteClient from "../src/persistence/NodeSqliteClient.ts";
+// T3o-26: board tables live in an attached boards.sqlite, so this tool has to
+// attach it too or every `board_*` query fails with "no such table".
+import { attachBoardDatabase, BOARD_SCHEMA } from "../src/board/boardDatabase.ts";
 
 export const SqliteStateOperation = Schema.Literals(["query", "exec"]);
 export type SqliteStateOperation = typeof SqliteStateOperation.Type;
@@ -203,6 +206,14 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
     const sql = yield* SqlClient.SqlClient;
     yield* sql.unsafe("PRAGMA busy_timeout = 5000").unprepared;
 
+    // Tolerated rather than required: a database that predates t3o-26, or a
+    // read-only run against a state directory with no board file, has nothing to
+    // attach and should still answer questions about `main`.
+    const boardAttached = yield* attachBoardDatabase().pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+
     if (input.operation === "query") {
       const rows = yield* sql.unsafe<RawSqliteRow>(source).unprepared.pipe(
         Effect.provideService(SqlClient.SafeIntegers, true),
@@ -219,12 +230,23 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
     const backupPath = `${databasePath}.backup-${timestamp}`;
     yield* sql`VACUUM INTO ${backupPath}`;
     yield* fs.chmod(backupPath, 0o600);
+
+    // The board database is backed up too when attached: statements run here can
+    // touch `boards.*`, and a backup covering only `main` would be a false
+    // promise of reversibility.
+    const boardBackupPath = boardAttached ? `${backupPath}.${BOARD_SCHEMA}` : undefined;
+    if (boardBackupPath !== undefined) {
+      yield* sql`VACUUM ${sql(BOARD_SCHEMA)} INTO ${boardBackupPath}`;
+      yield* fs.chmod(boardBackupPath, 0o600);
+    }
+
     yield* sql.withTransaction(sql.unsafe(source).unprepared);
 
     return {
       operation: "exec",
       database: databasePath,
       backup: backupPath,
+      ...(boardBackupPath === undefined ? {} : { boardBackup: boardBackupPath }),
     } as const;
   });
 

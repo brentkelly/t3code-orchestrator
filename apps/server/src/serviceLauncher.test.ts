@@ -4,7 +4,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  backupDatabaseOnce,
+  databaseBaseNames,
+  Launcher,
+  readServiceState,
+  restoreDatabaseBackup,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -290,3 +297,82 @@ if (context.update?.status === "pending") {
     }),
   );
 });
+
+// T3o-26: the update snapshot covers every database in the state directory, not
+// just state.sqlite. These exercise it directly — restore DELETES live database
+// files that have no snapshot entry, which is too destructive to leave covered
+// only by a full launcher run.
+it.effect("snapshots every database in the state directory and restores them", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped();
+    const stateDir = path.join(baseDir, "userdata");
+    yield* fs.makeDirectory(stateDir, { recursive: true });
+
+    const dbPath = path.join(stateDir, "state.sqlite");
+    const boardsPath = path.join(stateDir, "boards.sqlite");
+    yield* fs.writeFileString(dbPath, "state-v1");
+    yield* fs.writeFileString(`${dbPath}-wal`, "state-wal-v1");
+    yield* fs.writeFileString(boardsPath, "boards-v1");
+
+    const pending = {
+      id: "update-1",
+      fromVersion: "1.0.0",
+      targetVersion: "1.1.0",
+      dbPath,
+      status: "pending",
+    } as const;
+
+    assert.deepEqual(yield* Effect.promise(() => databaseBaseNames(dbPath)), [
+      "boards.sqlite",
+      "state.sqlite",
+    ]);
+
+    yield* Effect.promise(() => backupDatabaseOnce(baseDir, pending));
+
+    // The trial migrates both databases and creates a third.
+    yield* fs.writeFileString(dbPath, "state-v2");
+    yield* fs.writeFileString(boardsPath, "boards-v2");
+    yield* fs.writeFileString(path.join(stateDir, "extra.sqlite"), "extra-v2");
+
+    yield* Effect.promise(() => restoreDatabaseBackup(baseDir, pending));
+
+    assert.equal(yield* fs.readFileString(dbPath), "state-v1");
+    assert.equal(yield* fs.readFileString(`${dbPath}-wal`), "state-wal-v1");
+    // Board data reverts too — before this it survived the rollback, leaving the
+    // reverted build reading a schema migrated by the newer one.
+    assert.equal(yield* fs.readFileString(boardsPath), "boards-v1");
+    // A database the trial CREATED has no snapshot entry and must not survive,
+    // or the reverted build reads a database from the future.
+    assert.isFalse(yield* fs.exists(path.join(stateDir, "extra.sqlite")));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("refuses to back up when the primary database is missing", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped();
+    const stateDir = path.join(baseDir, "userdata");
+    yield* fs.makeDirectory(stateDir, { recursive: true });
+
+    const pending = {
+      id: "update-2",
+      fromVersion: "1.0.0",
+      targetVersion: "1.1.0",
+      dbPath: path.join(stateDir, "state.sqlite"),
+      status: "pending",
+    } as const;
+
+    // Silently skipping it would be worse than failing: rollback would then find
+    // no snapshot entry for the primary database and delete the live file.
+    const outcome = yield* Effect.promise(() =>
+      backupDatabaseOnce(baseDir, pending).then(
+        () => "backed-up" as const,
+        () => "refused" as const,
+      ),
+    );
+    assert.equal(outcome, "refused");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

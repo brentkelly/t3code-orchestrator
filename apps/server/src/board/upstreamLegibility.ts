@@ -10,6 +10,10 @@
  *
  * This module is the instrument that checks it.
  *
+ * Every read is qualified to `main`: with a second database attached, "what is in
+ * the file stock t3code reads?" is the actual question, and an unqualified name
+ * would answer a subtly different one.
+ *
  * It has no production caller yet, and deliberately so. The plan (t3o-26 P4)
  * makes it a CI gate once P2 has moved the board's rows out, which is the first
  * point at which it can report clean. It is also too expensive for the boot path:
@@ -107,7 +111,7 @@ export const readUpstreamLegibility = Effect.fn("readUpstreamLegibility")(functi
     readonly count: number;
   }>`
     SELECT event_type AS "eventType", aggregate_kind AS "aggregateKind", COUNT(*) AS "count"
-    FROM orchestration_events
+    FROM main.orchestration_events
     GROUP BY event_type, aggregate_kind
   `;
 
@@ -118,7 +122,7 @@ export const readUpstreamLegibility = Effect.fn("readUpstreamLegibility")(functi
 
   const receiptRows = yield* sql<{ readonly aggregateKind: string; readonly count: number }>`
     SELECT aggregate_kind AS "aggregateKind", COUNT(*) AS "count"
-    FROM orchestration_command_receipts
+    FROM main.orchestration_command_receipts
     GROUP BY aggregate_kind
   `;
 
