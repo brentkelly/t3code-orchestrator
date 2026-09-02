@@ -87,7 +87,7 @@ function PlanGraphNode({
       <button
         className={cn(
           "absolute flex flex-col justify-center gap-[3px] rounded-[9px] border px-2.5 text-left shadow-xs",
-          node.awaitingInput ? "border-info/55" : "border-border",
+          node.awaitingInput ? "border-attention/55" : "border-border",
           node.tone === "done" ? "bg-foreground/4" : "bg-card",
           node.tone === "gone" && "opacity-60",
           openable ? "hover:border-foreground/20" : "cursor-default",

@@ -65,10 +65,13 @@ export function resolveThreadStatus(
     return {
       kind: "awaiting-input",
       label: "Awaiting Input",
-      pillClassName: "bg-adaptive-indigo-500-a12-a16",
-      textClassName: "text-adaptive-indigo-700-300",
-      iconColor: "#5e5ce6",
-      iconBackground: "rgba(94,92,230,0.22)",
+      // T3o: violet is the app-wide "waiting on you" colour, matching the web
+      // sidebar and the board (docs/t3o/status-colours.md). Plan Ready below is
+      // the same state, so it is already the same colour.
+      pillClassName: "bg-adaptive-violet-500-a12-a16",
+      textClassName: "text-adaptive-violet-700-300",
+      iconColor: "#bf5af2",
+      iconBackground: "rgba(191,90,242,0.22)",
       pulse: false,
     };
   }

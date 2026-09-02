@@ -126,7 +126,7 @@ function PhaseMarker({
         <span
           aria-label="Running now"
           role="img"
-          className="size-5 shrink-0 animate-spin rounded-full border-2 border-foreground/15 border-t-foreground"
+          className="size-5 shrink-0 animate-spin rounded-full border-2 border-[color-mix(in_srgb,var(--info)_25%,transparent)] border-t-info-foreground"
         />
       </BoardHint>
     );
@@ -187,11 +187,11 @@ function phaseNote(
 function roundBadge(round: BoardReviewLoopRound): { label: string; className: string } {
   switch (round.outcome) {
     case "in-progress":
-      return { label: "In progress", className: "border-border bg-muted text-muted-foreground" };
+      return { label: "In progress", className: "border-info/40 bg-info/10 text-info-foreground" };
     case "clean":
       return {
         label: "Clean",
-        className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+        className: "border-success/40 bg-success/10 text-success-foreground",
       };
     case "changes-requested":
       return {
@@ -331,19 +331,19 @@ function statusPill(
         ? {
             label: `${phase} · running now`,
             spinning: true,
-            className: "bg-accent text-foreground",
+            className: "bg-info/12 text-info-foreground",
           }
         : {
             label: `${phase} · waiting to run`,
             spinning: false,
-            className: "bg-accent text-muted-foreground",
+            className: "bg-attention/12 text-attention-foreground",
           };
     }
     case "converged":
       return {
         label: "Loop settled — nothing blocking",
         spinning: false,
-        className: "bg-emerald-500/14 text-emerald-700 dark:text-emerald-300",
+        className: "bg-success/14 text-success-foreground",
       };
     case "round-cap":
       return {
@@ -638,7 +638,7 @@ export function BoardCardReviewPane({
           )}
         >
           {pill.spinning ? (
-            <span className="size-2.5 shrink-0 animate-spin rounded-full border-[1.7px] border-foreground/20 border-t-current" />
+            <span className="size-2.5 shrink-0 animate-spin rounded-full border-[1.7px] border-[color-mix(in_srgb,var(--info)_25%,transparent)] border-t-current" />
           ) : null}
           {pill.label}
         </span>

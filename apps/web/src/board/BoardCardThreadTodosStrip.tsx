@@ -109,7 +109,7 @@ export function BoardCardThreadTodosStrip({
                 className={cn(
                   "size-1.5 shrink-0 rounded-full",
                   statuses[index] === BOARD_THREAD_TODO_STATUS_DONE
-                    ? "bg-emerald-500"
+                    ? "bg-success"
                     : statuses[index] === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
                       ? "bg-info"
                       : "bg-muted-foreground/30",

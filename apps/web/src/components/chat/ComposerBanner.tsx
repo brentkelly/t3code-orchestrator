@@ -7,7 +7,15 @@ import { cn } from "~/lib/utils";
 import { Button, buttonVariants } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 
-export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "warning";
+// T3o: `attention` is the violet a question wears — an agent that has stopped
+// to ask you something, distinct from the blue that means it is still running.
+export type ComposerBannerVariant =
+  | "default"
+  | "error"
+  | "info"
+  | "attention"
+  | "success"
+  | "warning";
 
 const surfaceColors = cn(
   "[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))]",
@@ -28,6 +36,8 @@ const variantColors: Record<ComposerBannerVariant, string> = {
   error:
     "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]",
   info: "[--chat-composer-attached-outline:color-mix(in_srgb,var(--info)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--info)_4%,transparent)]",
+  attention:
+    "[--chat-composer-attached-outline:color-mix(in_srgb,var(--attention)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--attention)_4%,transparent)]",
   success:
     "[--chat-composer-attached-outline:color-mix(in_srgb,var(--success)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--success)_4%,transparent)]",
   warning:
@@ -72,6 +82,7 @@ const peekBorder: Record<ComposerBannerVariant, string> = {
   default: "border-(--chat-composer-attached-outline)",
   error: "border-destructive/24",
   info: "border-info/24",
+  attention: "border-attention/24",
   success: "border-success/24",
   warning: "border-warning/24",
 };

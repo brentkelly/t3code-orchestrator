@@ -65,9 +65,10 @@ export function AgentActivity(
   const primaryForeground = "primary";
   const secondaryForeground = "secondary";
 
+  // T3o: unified status palette — see docs/t3o/status-colours.md.
   // Status tints mirror the web sidebar's pills
   // (apps/web/src/components/Sidebar.logic.ts resolveThreadStatusPill): amber
-  // for approval, indigo for input, sky for working, emerald for completed.
+  // for approval, violet for input, blue for working, emerald for completed.
   // On iPhone the LA sits on a dark material, but macOS (iPhone Mirroring /
   // Mac notification center) renders it on a light one — so pick the web
   // palette's light (-600) or dark (-300) variant off the color scheme.
@@ -80,7 +81,7 @@ export function AgentActivity(
       case "waiting_for_approval":
         return isLightScheme ? "#d97706" : "#fcd34d"; // amber-600 / amber-300
       case "waiting_for_input":
-        return isLightScheme ? "#4f46e5" : "#a5b4fc"; // indigo-600 / indigo-300
+        return isLightScheme ? "#7c3aed" : "#c4b5fd"; // violet-600 / violet-300
       case "failed":
         return isLightScheme ? "#dc2626" : "#fca5a5"; // red-600 / red-300
       case "completed":
@@ -88,7 +89,7 @@ export function AgentActivity(
       case "starting":
       case "running":
       default:
-        return isLightScheme ? "#0284c7" : "#7dd3fc"; // sky-600 / sky-300
+        return isLightScheme ? "#2563eb" : "#93c5fd"; // blue-600 / blue-300
     }
   };
 

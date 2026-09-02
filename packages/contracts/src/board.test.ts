@@ -1083,7 +1083,7 @@ describe("cards that need a human (boardCardAttention)", () => {
   it("keeps its tones apart — a question is not a failure", () => {
     expect(attention({ stalled: true })?.tone).toBe("danger");
     expect(attention({ held: true })?.tone).toBe("warning");
-    expect(attention({ awaitingInput: true })?.tone).toBe("info");
+    expect(attention({ awaitingInput: true })?.tone).toBe("attention");
   });
 
   it("never flags a finished or archived card", () => {

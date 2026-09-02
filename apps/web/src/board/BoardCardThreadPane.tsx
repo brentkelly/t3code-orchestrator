@@ -201,7 +201,7 @@ export function BoardCardThreadPane({
                         <span
                           aria-label="Awaiting your input"
                           role="img"
-                          className="size-2 shrink-0 rounded-full bg-info"
+                          className="size-2 shrink-0 rounded-full bg-attention"
                         />
                       </BoardHint>
                     ) : link.threadState === "working" ? (
@@ -209,7 +209,7 @@ export function BoardCardThreadPane({
                         <span
                           aria-label="Working"
                           role="img"
-                          className="size-2 shrink-0 rounded-full bg-emerald-500"
+                          className="size-2 shrink-0 rounded-full bg-info"
                         />
                       </BoardHint>
                     ) : (

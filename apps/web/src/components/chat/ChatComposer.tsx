@@ -3389,7 +3389,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerBanner.Attachment>
               <ComposerBanner.Root
                 data-chat-composer-top-drawer="true"
-                variant={activePendingApproval ? "warning" : "info"}
+                // T3o: the drawer's non-approval contents — a pending question,
+                // a plan waiting on a decision — are all "waiting on you", which
+                // reads violet everywhere else in the app.
+                variant={activePendingApproval ? "warning" : "attention"}
               >
                 {activePendingApproval ? (
                   <ComposerBanner.Row
