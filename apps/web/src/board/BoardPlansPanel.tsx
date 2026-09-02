@@ -177,6 +177,7 @@ function PlanRow({
           <BoardHint label="Working">
             <span
               aria-label="Working"
+              role="img"
               className="size-[11px] shrink-0 animate-spin rounded-full border-[1.8px] border-muted-foreground/25 border-t-muted-foreground"
             />
           </BoardHint>

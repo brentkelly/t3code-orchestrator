@@ -301,6 +301,7 @@ export function BoardCardContent({
           <BoardHint label="Thread running">
             <span
               aria-label="Thread running"
+              role="img"
               className="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
             />
           </BoardHint>

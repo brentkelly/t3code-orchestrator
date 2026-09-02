@@ -125,6 +125,7 @@ function PhaseMarker({
       <BoardHint label="Running now">
         <span
           aria-label="Running now"
+          role="img"
           className="size-5 shrink-0 animate-spin rounded-full border-2 border-foreground/15 border-t-foreground"
         />
       </BoardHint>

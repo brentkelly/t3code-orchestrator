@@ -200,6 +200,7 @@ export function BoardCardThreadPane({
                       <BoardHint label="Awaiting your input">
                         <span
                           aria-label="Awaiting your input"
+                          role="img"
                           className="size-2 shrink-0 rounded-full bg-info"
                         />
                       </BoardHint>
@@ -207,6 +208,7 @@ export function BoardCardThreadPane({
                       <BoardHint label="Working">
                         <span
                           aria-label="Working"
+                          role="img"
                           className="size-2 shrink-0 rounded-full bg-emerald-500"
                         />
                       </BoardHint>
