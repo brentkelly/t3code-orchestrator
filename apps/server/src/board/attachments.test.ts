@@ -70,8 +70,9 @@ describe("names", () => {
         mimeType: "x",
       }),
     ).toBe("Hire Terms (Draft).docx");
+    // A path contributes its basename only.
     expect(sanitizeBoardAttachmentName({ name: "a/b\\c d.pdf", type: "file", mimeType: "x" })).toBe(
-      "a b c d.pdf",
+      "c d.pdf",
     );
   });
 
@@ -79,7 +80,17 @@ describe("names", () => {
     expect(sanitizeBoardAttachmentName({ name: "", type: "image", mimeType: "image/png" })).toBe(
       "image.png",
     );
-    expect(sanitizeBoardAttachmentName({ name: "", type: "file", mimeType: "x" })).toBe("file.bin");
+    expect(sanitizeBoardAttachmentName({ name: "", type: "file", mimeType: "x" })).toBe("file");
+  });
+
+  it("keeps a generic file's own name, extension or not, dotfiles included", () => {
+    const file = (name: string) =>
+      sanitizeBoardAttachmentName({ name, type: "file", mimeType: "x" });
+    expect(file("Makefile")).toBe("Makefile");
+    expect(file(".env")).toBe(".env");
+    expect(file("../../.env")).toBe(".env");
+    expect(file("notes.md")).toBe("notes.md");
+    expect(file("...")).toBe("file");
   });
 
   it("de-duplicates with a numeric suffix before the extension", () => {

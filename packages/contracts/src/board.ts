@@ -485,8 +485,9 @@ export type BoardCardAttachmentId = typeof BoardCardAttachmentId.Type;
  * One file attached to a card's brief (t3o-32, K5). The bytes live in
  * board-owned storage under `<stateDir>/board/attachments/<cardId>/<name>`
  * (K1) — never in a worktree, which is reclaimed at Done. `name` is the
- * sanitised, de-duplicated on-disk filename; `id` is the claimed upload's
- * uuid, so the record survives the file being renamed on disk. Threads pull
+ * sanitised, de-duplicated on-disk filename; `id` is minted per claim and is
+ * unique across the whole board (the decider refuses an id any card already
+ * holds), so the record survives the file being renamed on disk. Threads pull
  * the list (with absolute paths) through `board_get_card_context` (K3).
  */
 export const BoardCardAttachment = Schema.Struct({

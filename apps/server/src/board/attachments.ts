@@ -31,7 +31,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
-  attachmentFileExtension,
   createPendingAttachmentId,
   parseAttachmentUuid,
   parseThreadSegmentFromAttachmentId,
@@ -86,26 +85,42 @@ function isUnsafeNameChar(char: string): boolean {
   return char === "/" || char === "\\" || code < 0x20 || (code >= 0x7f && code <= 0x9f);
 }
 
+/**
+ * A filename safe to store and pleasant to `cat`: the original name with
+ * path separators and control characters stripped, collapsed whitespace,
+ * `..` runs removed from the front (one leading dot is fine — a dotfile is a
+ * dotfile), and a bounded length that keeps the extension. A generic file
+ * keeps its name exactly, extension or not (`Makefile` stays `Makefile`):
+ * the whole point of the card folder is that an agent sees the file as it
+ * was. Only an image gets an inferred extension, so a pasted screenshot
+ * named "" becomes `image.png` rather than nothing.
+ */
 export function sanitizeBoardAttachmentName(input: {
   readonly name: string;
   readonly type: BoardCardAttachment["type"];
   readonly mimeType: string;
 }): string {
-  const stripped = [...input.name]
+  // A dropped path contributes only its basename; then separators, control
+  // characters and surrounding dot/space junk go, keeping exactly one leading
+  // dot when that is all that preceded the name (a dotfile).
+  const segments = input.name.split(/[\\/]+/).filter((segment) => segment.length > 0);
+  const base = segments.length > 0 ? (segments[segments.length - 1] ?? "") : "";
+  let stripped = [...base]
     .map((char) => (isUnsafeNameChar(char) ? " " : char))
     .join("")
     .replace(/\s+/g, " ")
-    .replace(/^[\s.]+/, "")
-    .replace(/[\s.]+$/, "");
+    .trim();
+  const lead = /^[\s.]+/.exec(stripped)?.[0] ?? "";
+  stripped = (lead === "." ? "." : "") + stripped.slice(lead.length);
+  stripped = stripped.replace(/[\s.]+$/, "");
+  const dot = stripped.lastIndexOf(".");
+  const ownExtension = dot > 0 ? stripped.slice(dot) : "";
   const extension =
     input.type === "image"
       ? inferImageExtension({ mimeType: input.mimeType, fileName: stripped })
-      : attachmentFileExtension(stripped);
-  const stem = (() => {
-    const dot = stripped.lastIndexOf(".");
-    const raw = dot > 0 ? stripped.slice(0, dot) : stripped;
-    return raw.length > 0 ? raw : input.type === "image" ? "image" : "file";
-  })();
+      : ownExtension;
+  const rawStem = dot > 0 ? stripped.slice(0, dot) : stripped;
+  const stem = rawStem.length > 0 ? rawStem : input.type === "image" ? "image" : "file";
   const bounded = stem.slice(0, Math.max(1, NAME_MAX_CHARS - extension.length));
   return `${bounded}${extension}`;
 }
@@ -316,7 +331,9 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
 });
 
 /** Delete one attachment's file. A file that is already gone is not an
-    error: the record is what the user removed, and it is gone either way. */
+    error: the record is what the user removed, and it is gone either way.
+    Any other failure is logged and left for a manual tidy — never raised,
+    because the record is already gone. */
 export const deleteBoardCardAttachmentFile = Effect.fn("board-attachments-delete")(
   function* (input: {
     readonly stateDir: string;
@@ -332,7 +349,22 @@ export const deleteBoardCardAttachmentFile = Effect.fn("board-attachments-delete
       name: input.name,
     });
     if (target === null) return;
-    yield* fileSystem.remove(target).pipe(Effect.ignore);
+    yield* fileSystem.remove(target).pipe(
+      Effect.catchCause((cause) =>
+        fileSystem.exists(target).pipe(
+          Effect.orElseSucceed(() => false),
+          Effect.flatMap((stillThere) =>
+            stillThere
+              ? Effect.logWarning("board attachments: file delete failed", {
+                  cardId: input.cardId,
+                  name: input.name,
+                  cause: String(cause),
+                })
+              : Effect.void,
+          ),
+        ),
+      ),
+    );
   },
 );
 

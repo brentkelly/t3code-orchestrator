@@ -4,8 +4,9 @@
 // rewritten wholesale from each attach/detach event exactly like
 // `board_card_thread_links`. Keyed on (card_id, attachment_id): ids are
 // minted per claim and the decider refuses an id any card already holds, so
-// a row can never be relocated between cards by an upsert. The card_id index
-// covers the shell's COUNT and the detail's list.
+// a row can never be relocated between cards by an upsert. The composite
+// key's leading column already serves the shell's COUNT and the detail's
+// per-card list, so there is no separate index.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -23,10 +24,5 @@ export default Effect.gen(function* () {
       added_at TEXT NOT NULL,
       PRIMARY KEY (card_id, attachment_id)
     )
-  `;
-
-  yield* sql`
-    CREATE INDEX IF NOT EXISTS boards.idx_board_card_attachments_card
-    ON board_card_attachments(card_id)
   `;
 });

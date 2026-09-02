@@ -166,7 +166,7 @@ export function useBoardBriefAttachments(input: {
             id,
             name: file.name.length > 0 ? file.name : isImage ? "image.png" : "file",
             type: isImage ? "image" : "file",
-            mimeType: file.type.toLowerCase(),
+            mimeType: file.type.toLowerCase() || "application/octet-stream",
             sizeBytes: file.size,
             file,
             previewUrl,

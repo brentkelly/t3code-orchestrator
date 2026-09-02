@@ -10,6 +10,8 @@
  */
 import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
+  type AttachmentCreateUploadUrlInput,
   type BoardCardAttachment,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -175,18 +177,28 @@ export async function uploadBoardAttachment(input: {
   readonly onAbortable?: (abort: () => void) => void;
   readonly isCancelled?: () => boolean;
 }): Promise<BoardUploadOutcome> {
-  const mimeType = input.file.type.toLowerCase();
+  // A drag from another app or a shell can hand over a File with no type;
+  // the mint requires one, so a generic file falls back to octet-stream. An
+  // image's mime was already normalised while preparing it.
+  const mimeType = input.file.type.toLowerCase() || "application/octet-stream";
+  const imageMimeType = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
+    (supported) => supported === mimeType,
+  );
+  const upload: AttachmentCreateUploadUrlInput | null =
+    input.type === "file"
+      ? { type: "file", name: input.file.name, mimeType, sizeBytes: input.file.size }
+      : imageMimeType === undefined
+        ? null
+        : { name: input.file.name, mimeType: imageMimeType, sizeBytes: input.file.size };
+  if (upload === null) {
+    return { status: "failed", reason: `'${input.file.name}' is not a supported image type.` };
+  }
   const result = await runAttachmentUploadCycle({
     registry: appAtomRegistry,
     createUploadUrl: attachmentEnvironment.createUploadUrl,
     remove: attachmentEnvironment.remove,
     environmentId: input.environmentId,
-    upload: {
-      ...(input.type === "file" ? { type: "file" as const } : {}),
-      name: input.file.name,
-      mimeType,
-      sizeBytes: input.file.size,
-    } as Parameters<typeof runAttachmentUploadCycle>[0]["upload"],
+    upload,
     resolveUploadUrl: (relativeUrl) => {
       const connection = readPreparedConnection(input.environmentId);
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
