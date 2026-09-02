@@ -24,6 +24,7 @@ import {
   type BoardCardAttachment,
   type BoardCardId,
   type ChatAttachment,
+  type ChatAttachmentId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -146,6 +147,11 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
   readonly attachmentsDir: string;
   readonly card: BoardCard;
   readonly pendingAttachmentId: string;
+  /** The record's id, minted by the caller per claim — never the pending
+      upload's uuid, so two claims of one upload onto two cards can never
+      share an id (the mirror table and the decider both assume ids are
+      unique across the board). */
+  readonly attachmentId: BoardCardAttachmentId;
   readonly name: string;
   readonly type: BoardCardAttachment["type"];
   readonly mimeType: string;
@@ -163,9 +169,8 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
       message: `Card ${input.card.key} already has ${BOARD_CARD_ATTACHMENTS_MAX} attachments.`,
     });
   }
-  const uuid = parseAttachmentUuid(input.pendingAttachmentId);
   if (
-    uuid === null ||
+    parseAttachmentUuid(input.pendingAttachmentId) === null ||
     parseThreadSegmentFromAttachmentId(input.pendingAttachmentId) !==
       PENDING_ATTACHMENT_THREAD_SEGMENT
   ) {
@@ -301,7 +306,7 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     break;
   }
   return {
-    id: BoardCardAttachmentId.make(uuid),
+    id: input.attachmentId,
     name,
     type: input.type,
     mimeType,
@@ -436,13 +441,16 @@ export const stageBoardCardImagesAsPending = Effect.fn("board-attachments-stage-
           Effect.catchCause(() => Effect.succeed(false)),
         );
       if (!copied) continue;
-      staged.push({
+      // `ChatAttachmentId` is exported as a type only; the brand is asserted
+      // on the id alone so the struct itself is type-checked as an image.
+      const chatAttachment: ChatAttachment = {
         type: "image",
-        id: pendingId,
+        id: pendingId as ChatAttachmentId,
         name: image.name,
         mimeType: image.mimeType,
         sizeBytes: image.sizeBytes,
-      } as ChatAttachment);
+      };
+      staged.push(chatAttachment);
     }
     return staged;
   },

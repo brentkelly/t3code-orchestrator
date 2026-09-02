@@ -120,6 +120,7 @@ describe("claim, manifest, delete", () => {
         attachmentsDir,
         card: card(),
         pendingAttachmentId: pendingId,
+        attachmentId: BoardCardAttachmentId.make("att-first"),
         name: "Bug screenshot.png",
         type: "image",
         mimeType: "image/PNG",
@@ -127,6 +128,7 @@ describe("claim, manifest, delete", () => {
         addedAt: NOW,
       });
       assert.strictEqual(stored.name, "Bug screenshot.png");
+      assert.strictEqual(stored.id, "att-first");
       assert.strictEqual(stored.mimeType, "image/png");
       assert.strictEqual(stored.sizeBytes, 9);
       const expected = NodePath.join(
@@ -148,6 +150,7 @@ describe("claim, manifest, delete", () => {
         attachmentsDir,
         card: card([stored]),
         pendingAttachmentId: pending2,
+        attachmentId: BoardCardAttachmentId.make("att-second"),
         name: "Bug screenshot.png",
         type: "image",
         mimeType: "image/png",
@@ -171,6 +174,7 @@ describe("claim, manifest, delete", () => {
             attachmentsDir,
             card: card([stored]),
             pendingAttachmentId: pendingId,
+            attachmentId: BoardCardAttachmentId.make(`att-racer-${marker}`),
             name: "Bug screenshot.png",
             type: "image",
             mimeType: "image/png",
@@ -227,6 +231,7 @@ describe("claim, manifest, delete", () => {
         stateDir,
         attachmentsDir,
         card: card(),
+        attachmentId: BoardCardAttachmentId.make("att-x"),
         name: "x.pdf",
         type: "file" as const,
         mimeType: "application/pdf",

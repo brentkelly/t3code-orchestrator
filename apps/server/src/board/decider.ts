@@ -1229,10 +1229,16 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${card.key}' already has ${BOARD_CARD_ATTACHMENTS_MAX} attachments.`,
         );
       }
-      if (card.attachments.some((existing) => existing.id === command.attachment.id)) {
+      // One attachment id, one card (the thread-link rule): the mirror table
+      // keys on the id, so a second card holding it would relocate the row
+      // and split the aggregate from the read model.
+      const holder = board.cards.find((candidate) =>
+        candidate.attachments.some((existing) => existing.id === command.attachment.id),
+      );
+      if (holder !== undefined) {
         return yield* invariant(
           command,
-          `Attachment '${command.attachment.id}' is already on card '${card.key}'.`,
+          `Attachment '${command.attachment.id}' is already on card '${holder.key}'.`,
         );
       }
       if (card.attachments.some((existing) => existing.name === command.attachment.name)) {

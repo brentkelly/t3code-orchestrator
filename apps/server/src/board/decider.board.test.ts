@@ -956,6 +956,24 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       );
       assert.include(duplicate.message, "already has an attachment named");
 
+      // One id, one card: the same id on a second card is refused.
+      const elsewhere = yield* decideFail(
+        {
+          type: "board.card.attach",
+          commandId: CommandId.make("cmd-attach-3"),
+          cardId: BoardCardId.make("card-b"),
+          attachment: { ...attachment, name: "other.png" },
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: {
+            cards: [attached.payload.card, makeCard({ id: "card-b" })],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      assert.include(elsewhere.message, "is already on card 'CARD-1'");
+
       const unknown = yield* decideFail(
         {
           type: "board.card.detach",

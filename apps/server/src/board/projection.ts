@@ -1169,9 +1169,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.sizeBytes},
         ${row.addedAt}
       )
-      ON CONFLICT (attachment_id)
+      ON CONFLICT (card_id, attachment_id)
       DO UPDATE SET
-        card_id = excluded.card_id,
         name = excluded.name,
         type = excluded.type,
         mime_type = excluded.mime_type,

@@ -93,6 +93,15 @@ export function useBoardBriefAttachments(input: {
     setStaged((rows) => rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   }, []);
 
+  /** Drop a row the card has taken over: its `blob:` preview is released
+      here, since the persisted thumbnail loads through a signed URL. */
+  const dropConsumed = useCallback((id: string) => {
+    const row = stagedRef.current.find((candidate) => candidate.id === id);
+    if (row?.previewUrl) URL.revokeObjectURL(row.previewUrl);
+    runtimes.current.delete(id);
+    setStaged((rows) => rows.filter((candidate) => candidate.id !== id));
+  }, []);
+
   const run = useCallback(
     async (id: string, file: File, type: BoardCardAttachment["type"]) => {
       const runtime: StagedRuntime = { abort: null, cancelled: false };
@@ -118,8 +127,7 @@ export function useBoardBriefAttachments(input: {
       const verdict = await onUploaded(outcome.upload);
       if (runtime.cancelled) return;
       if (verdict === "consumed") {
-        setStaged((rows) => rows.filter((row) => row.id !== id));
-        runtimes.current.delete(id);
+        dropConsumed(id);
         return;
       }
       if (verdict === "keep") {
@@ -128,7 +136,7 @@ export function useBoardBriefAttachments(input: {
       }
       update(id, { status: "failed", error: verdict });
     },
-    [environmentId, onUploaded, update],
+    [dropConsumed, environmentId, onUploaded, update],
   );
 
   const addFiles = useCallback(
@@ -214,7 +222,7 @@ export function useBoardBriefAttachments(input: {
         const upload = row.upload;
         void onUploaded(upload).then((verdict) => {
           if (verdict === "consumed") {
-            setStaged((rows) => rows.filter((candidate) => candidate.id !== id));
+            dropConsumed(id);
           } else if (verdict === "keep") {
             update(id, { status: "uploaded" });
           } else {
@@ -225,7 +233,7 @@ export function useBoardBriefAttachments(input: {
       }
       void run(id, row.file, row.type);
     },
-    [onUploaded, run, staged, update],
+    [dropConsumed, onUploaded, run, staged, update],
   );
 
   // Object URLs are process-wide; release whatever is still local on unmount.
