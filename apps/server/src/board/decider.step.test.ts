@@ -311,6 +311,76 @@ it.effect(
     }),
 );
 
+it.effect(
+  "resume-step clears the stop and returns the step to running, charging no attempt (t3o-17, D3)",
+  () =>
+    Effect.gen(function* () {
+      const card = makeCard({ id: "card-1" });
+      const board = makeReadModel({
+        cards: [card],
+        stepStates: [
+          stepState("card-1", "stalled", {
+            attempt: 3,
+            stallCount: 3,
+            slotHeld: false,
+            lastError: "turn/setPermissionMode failed",
+            lastNudgeAt: "2025-12-31T00:00:00.000Z",
+          }),
+        ],
+        nextCardNumberByProject: {},
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.resume-step",
+          commandId: CommandId.make("c1"),
+          cardId: card.id,
+          stepId: "build",
+          createdAt: NOW,
+        },
+        board,
+      );
+      assert.strictEqual(event.type, "board.card-step-recovered");
+      if (event.type === "board.card-step-recovered") {
+        assert.strictEqual(event.payload.state.status, "running");
+        // The reason no longer describes what is happening, so the card stops
+        // rendering it.
+        assert.strictEqual(event.payload.state.lastError, null);
+        // The human intervening is progress: the ladder counts from zero again
+        // instead of re-escalating on their first quiet turn.
+        assert.strictEqual(event.payload.state.stallCount, 0);
+        // No board invocation happened, so neither the per-step ledger nor the
+        // stage-entry ceiling is charged for the human's own turn.
+        assert.strictEqual(event.payload.state.attempt, 3);
+        // The slot stayed released at escalation and is not re-acquired.
+        assert.strictEqual(event.payload.state.slotHeld, false);
+        // The timeout sweep measures from the takeover, not from the stop.
+        assert.strictEqual(event.payload.state.lastNudgeAt, NOW);
+      }
+    }),
+);
+
+it.effect("resume-step refuses a step that is not stalled (t3o-17, D3)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "running")],
+      nextCardNumberByProject: {},
+    });
+    const failure = yield* decideFail(
+      {
+        type: "board.card.resume-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.include(String(failure), "not stalled");
+  }),
+);
+
 it.effect("settle-step releases the slot and is idempotent (a double settle advances once)", () =>
   Effect.gen(function* () {
     const card = makeCard({ id: "card-1" });

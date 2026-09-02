@@ -2921,6 +2921,28 @@ export const BoardCardRecoverStepCommand = Schema.Struct({
 });
 export type BoardCardRecoverStepCommand = typeof BoardCardRecoverStepCommand.Type;
 
+/**
+ * A human takes a stalled step back over — the way out of `stalled` that
+ * t3o-17 D3 left to the restart button alone. They sent a turn into the
+ * step's own thread, so the step is being worked again and the card must stop
+ * saying it stopped.
+ *
+ * Distinct from `recover-step`, which is the supervisor's ladder: no attempt is
+ * consumed (the board invoked nothing — a human did), the stall streak resets
+ * exactly as an observed-progress nudge resets it, and the recorded reason is
+ * cleared because it no longer describes what is happening. Internal —
+ * dispatched by the reactor when it sees a turn requested on the thread of a
+ * step that had given up.
+ */
+export const BoardCardResumeStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.resume-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardResumeStepCommand = typeof BoardCardResumeStepCommand.Type;
+
 export const BoardCardSettleStepCommand = Schema.Struct({
   type: Schema.Literal("board.card.settle-step"),
   commandId: CommandId,
@@ -4369,6 +4391,7 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardAdmitStepCommand,
   BoardCardAwaitStepInputCommand,
   BoardCardRecoverStepCommand,
+  BoardCardResumeStepCommand,
   BoardCardSettleStepCommand,
   BoardCardRetuneStepCommand,
   BoardCardAttachCommand,

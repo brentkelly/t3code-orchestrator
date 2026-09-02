@@ -463,3 +463,85 @@ it.effect("a turn-start failure on a thread the board does not own changes nothi
       }),
   ),
 );
+
+/** The domain event a turn request raises — the composer's Send, the thread's
+    Continue, or the board's own nudge. The reactor reads only the thread. */
+const turnStartRequested = (threadId: ThreadId, sequence: number) =>
+  ({
+    type: "thread.turn-start-requested",
+    sequence,
+    payload: {
+      threadId,
+      messageId: `message-${sequence}`,
+      runtimeMode: "auto",
+      interactionMode: "default",
+      createdAt: NOW,
+    },
+  }) as unknown as OrchestrationEvent;
+
+it.effect(
+  "a human's turn on a stalled step's thread resumes it and clears the reason (t3o-17, D3)",
+  () =>
+    withGovernor(
+      {
+        board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+        settings: settingsWith({
+          building: [codexStep],
+          planning: codexStep,
+          globalMaxConcurrent: 3,
+        }),
+      },
+      ({ pumpDomain, board }) =>
+        Effect.gen(function* () {
+          yield* pumpDomain(movedToPlanning(1));
+          const threadId = boardCardStepState(yield* board, cardId)?.threadId;
+          assert.isDefined(threadId);
+          yield* pumpDomain(turnStartFailed(threadId!, SPAWN_FAILURE_DETAIL, 2));
+          const stalled = boardCardStepState(yield* board, cardId);
+          assert.strictEqual(stalled?.status, "stalled");
+
+          // The human opens the step's thread and sends a turn — the one act
+          // `stalled` is waiting for.
+          yield* pumpDomain(turnStartRequested(threadId!, 3));
+
+          const resumed = boardCardStepState(yield* board, cardId);
+          assert.strictEqual(resumed?.status, "running");
+          // The card stops rendering a stop that no longer applies.
+          assert.isNull(resumed?.lastError ?? null);
+          // The human's own turn is not charged to the board's budget.
+          assert.strictEqual(resumed?.attempt, stalled?.attempt);
+          assert.strictEqual(resumed?.stallCount, 0);
+        }),
+    ),
+);
+
+it.effect("a turn on a thread whose step is not stalled leaves the step alone (t3o-17, D3)", () =>
+  withGovernor(
+    {
+      board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+      settings: settingsWith({
+        building: [codexStep],
+        planning: codexStep,
+        globalMaxConcurrent: 3,
+      }),
+    },
+    ({ pumpDomain, board, commands }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToPlanning(1));
+        const running = boardCardStepState(yield* board, cardId);
+        assert.strictEqual(running?.status, "running");
+
+        // The board's own kickoff and nudge turns arrive on this event too, as
+        // does any turn on a thread the board does not own.
+        yield* pumpDomain(turnStartRequested(running!.threadId!, 2));
+        yield* pumpDomain(turnStartRequested(ThreadId.make("thread-a-human-opened"), 3));
+
+        const after = boardCardStepState(yield* board, cardId);
+        assert.strictEqual(after?.status, "running");
+        assert.strictEqual(after?.attempt, running?.attempt);
+        assert.isUndefined(
+          (yield* commands).find((command) => command.type === "board.card.resume-step"),
+        );
+      }),
+  ),
+);

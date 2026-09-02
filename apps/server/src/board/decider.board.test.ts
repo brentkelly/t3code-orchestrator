@@ -1627,6 +1627,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       const admitCard = makeCard({ id: "card-admit", stage: "building" });
       const awaitCard = makeCard({ id: "card-await", stage: "building" });
       const recoverCard = makeCard({ id: "card-recover", stage: "building" });
+      const resumeCard = makeCard({ id: "card-resume", stage: "building" });
       const settleCard = makeCard({ id: "card-settle", stage: "building" });
       const briefAttachment = {
         id: BoardCardAttachmentId.make("att-1"),
@@ -1656,6 +1657,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             admitCard,
             awaitCard,
             recoverCard,
+            resumeCard,
             settleCard,
             splitCard,
             attachedCard,
@@ -1666,6 +1668,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             makeStepState("card-admit", "pending"),
             makeStepState("card-await", "running"),
             makeStepState("card-recover", "running"),
+            // resume-step only accepts a stalled step (t3o-17, D3).
+            makeStepState("card-resume", "stalled"),
             makeStepState("card-settle", "running"),
             // complete-step validates against the card's LIVE step, so the
             // catalog's completion needs one to succeed against.
@@ -1908,6 +1912,13 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           threadId: ThreadId.make("thread-1"),
           escalateToHuman: false,
           progressed: false,
+          createdAt: NOW,
+        },
+        "board.card.resume-step": {
+          type: "board.card.resume-step",
+          commandId: CommandId.make("cmd-resume"),
+          cardId: BoardCardId.make("card-resume"),
+          stepId: "s1",
           createdAt: NOW,
         },
         "board.card.settle-step": {

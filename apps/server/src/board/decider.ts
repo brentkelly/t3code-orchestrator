@@ -2710,6 +2710,53 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       };
     }
 
+    case "board.card.resume-step": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
+      if (current.status !== "stalled") {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not stalled; nothing to resume.`,
+        );
+      }
+      // A human sent a turn into the stalled step's thread (t3o-17, D3), so the step
+      // is running again and supervised again — the same status an ordinary
+      // recovery nudge returns it to, which is why it rides the same event.
+      //
+      // What it deliberately does NOT do:
+      //  - `attempt` is untouched. It counts BOARD invocations (D1, and the D5
+      //    stage-entry ceiling); a human's own turn is not one, and charging the
+      //    ceiling for it would escalate the card again the moment their turn
+      //    ended.
+      //  - `stallCount` resets to zero rather than incrementing: the human
+      //    intervening is progress, exactly as `progressed` is on a nudge, so
+      //    the ladder starts its count over instead of re-escalating on the
+      //    first quiet turn.
+      //  - `slotHeld` stays false. Escalation released the slot (D4) and a
+      //    resume does not re-acquire one: the governor caps runs the BOARD
+      //    spawns, and a re-acquire that the cap refused would leave the card
+      //    unable to resume at all — the worst outcome of the three.
+      // `lastNudgeAt` moves to now so the timeout sweep measures from the
+      // takeover, not from the stop the human just cleared.
+      const state: BoardCardStepState = {
+        ...current,
+        status: "running",
+        stallCount: 0,
+        lastError: null,
+        lastNudgeAt: command.createdAt,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-recovered",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
     case "board.card.settle-step": {
       // A card can be settled while archived (an abandonment at archive), so
       // require the card exists but not that it is active.

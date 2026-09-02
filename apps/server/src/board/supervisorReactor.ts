@@ -3642,6 +3642,42 @@ const make = Effect.gen(function* () {
     yield* schedule();
   });
 
+  /**
+   * A human takes a stalled step back over (t3o-17, D3).
+   *
+   * `stalled` means "nobody is working on this and nobody will until you act" —
+   * and sending a turn into the step's own thread IS the human acting. Until
+   * now the card kept its stop banner, its reason and its dark dot while the
+   * thread it points at was visibly working again; the only things that cleared
+   * them were restarting the stage (which throws the conversation away) and the
+   * agent completing the step.
+   *
+   * So a turn requested on a stalled step's thread puts the step back to
+   * `running`: the banner and the reason go, the dot re-lights, and supervision
+   * resumes on the thread the human just restarted — a turn that ends without
+   * completing the step is nudged as usual, and one that never starts re-stalls
+   * with the provider's new reason (`failStepAtSpawn`).
+   *
+   * Only from `stalled`. Every other status is either already supervised — the
+   * board's own kickoff, nudge and retune turns arrive on this same event — or
+   * settled, and neither has anything to resume.
+   */
+  const handleTurnStartRequested = Effect.fn("board-supervisor-handleTurnStartRequested")(
+    function* (event: Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>) {
+      const board = yield* readBoard;
+      const found = stepThreadCard(board, event.payload.threadId);
+      if (found === null || found.state.status !== "stalled") return;
+      if (found.card.archivedAt !== null) return;
+      yield* dispatch({
+        type: "board.card.resume-step",
+        commandId: yield* commandId("resume-step"),
+        cardId: found.card.id,
+        stepId: found.state.stepId,
+        createdAt: yield* nowIso,
+      });
+    },
+  );
+
   const reconcile = Effect.gen(function* () {
     // Sweep cached todo rows whose thread or link no longer exists (t3o-18,
     // AC 20). The cache is a projection with no event to un-apply, so a row can
@@ -3806,8 +3842,12 @@ const make = Effect.gen(function* () {
       case "board.plans-approved":
         // The split's integration branch (t3o-23, D5).
         return handlePlansApproved(event);
+      case "thread.turn-start-requested":
+        // A human restarting a stalled step by hand (t3o-17, D3) — the board's own
+        // turns land here too and no-op, since only a `stalled` step resumes.
+        return handleTurnStartRequested(event);
       case "thread.activity-appended":
-        // The one NON-board event the supervisor listens to (t3o-30, D2): a
+        // The other non-board event the supervisor listens to (t3o-30, D2): a
         // step's turn failing to start at all. Everything else about a thread
         // reaches the board through its own turn completion; this failure has no
         // turn to complete, so without it the step holds a slot and renders a
@@ -3932,6 +3972,7 @@ const make = Effect.gen(function* () {
             : Effect.void;
         }
         if (
+          event.type !== "thread.turn-start-requested" &&
           event.type !== "board.card-moved" &&
           event.type !== "board.card-created" &&
           event.type !== "board.card-stage-thread-requested" &&
