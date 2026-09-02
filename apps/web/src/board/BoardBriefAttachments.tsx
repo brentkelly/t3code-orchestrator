@@ -184,7 +184,7 @@ export function useBoardBriefAttachments(input: {
           update(id, {
             file: prepared.file,
             type: prepared.type,
-            mimeType: prepared.file.type.toLowerCase(),
+            mimeType: prepared.file.type.toLowerCase() || "application/octet-stream",
             sizeBytes: prepared.file.size,
           });
           void run(id, prepared.file, prepared.type);

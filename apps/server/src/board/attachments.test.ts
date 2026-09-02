@@ -93,6 +93,16 @@ describe("names", () => {
     expect(file("...")).toBe("file");
   });
 
+  it("bounds the name in bytes and keeps the extension", () => {
+    const long = sanitizeBoardAttachmentName({
+      name: `${"漢".repeat(120)}.md`,
+      type: "file",
+      mimeType: "x",
+    });
+    expect(new TextEncoder().encode(long).length).toBeLessThanOrEqual(200);
+    expect(long.endsWith(".md")).toBe(true);
+  });
+
   it("de-duplicates with a numeric suffix before the extension", () => {
     const taken = new Set(["shot.png", "shot-2.png"]);
     expect(dedupeBoardAttachmentName("shot.png", taken)).toBe("shot-3.png");

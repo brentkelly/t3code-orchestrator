@@ -75,7 +75,10 @@ export function resolveBoardCardAttachmentPath(input: {
   return resolveAttachmentRelativePath({ attachmentsDir: dir, relativePath: input.name });
 }
 
-const NAME_MAX_CHARS = 120;
+// Bound in UTF-8 BYTES, extension included, well under the 255-byte NAME_MAX
+// most filesystems enforce, so a long CJK name cannot surface as ENAMETOOLONG.
+const NAME_MAX_BYTES = 200;
+const utf8Bytes = (value: string): number => new TextEncoder().encode(value).length;
 
 /** Path separators, C0/C1 control characters and DEL have no business in a
     filename an agent will `cat`. Spelled as a predicate rather than a regex so
@@ -121,8 +124,14 @@ export function sanitizeBoardAttachmentName(input: {
       : ownExtension;
   const rawStem = dot > 0 ? stripped.slice(0, dot) : stripped;
   const stem = rawStem.length > 0 ? rawStem : input.type === "image" ? "image" : "file";
-  const bounded = stem.slice(0, Math.max(1, NAME_MAX_CHARS - extension.length));
-  return `${bounded}${extension}`;
+  // Trim the stem (never the extension) until the whole name fits the byte
+  // budget; an extension that alone exceeds it is dropped as unusable.
+  const ext = utf8Bytes(extension) > NAME_MAX_BYTES - 1 ? "" : extension;
+  let bounded = stem;
+  while (utf8Bytes(bounded) + utf8Bytes(ext) > NAME_MAX_BYTES && bounded.length > 1) {
+    bounded = [...bounded].slice(0, -1).join("");
+  }
+  return `${bounded}${ext}`;
 }
 
 /** `name.ext`, then `name-2.ext`, `name-3.ext`… until it is free of `taken`. */
