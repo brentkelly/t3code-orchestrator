@@ -84,9 +84,15 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   // Append still validates strictly via `AppendEventRequestSchema`.
   type: Schema.String,
   aggregateKind: Schema.String,
-  // T3o: BoardCardId appended for card-aggregate event rows (D9); BoardLabelId
-  // for the label aggregate (t3o-06a). Frozen widening.
-  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId, BoardStageId]),
+  // T3o: a plain string, and `metadata` a raw parsed value (below), for the same
+  // reason as `type`/`aggregateKind` — the retired-board skip in `decodeReadRow`
+  // must run BEFORE any board-specific structural decode, or a retired row whose
+  // id shape or metadata no longer fits a tightened schema fails the whole
+  // 500-row page inside `findAll` first. The real per-row validation still
+  // happens: `decodeEvent` checks both against `OrchestrationEvent`'s own strict
+  // `aggregateId` union and `OrchestrationEventMetadata`; `append` stays strict
+  // via `AppendEventRequestSchema`.
+  aggregateId: Schema.String,
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),

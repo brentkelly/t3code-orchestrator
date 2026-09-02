@@ -228,6 +228,39 @@ layer("OrchestrationEventStore", (it) => {
     }),
   );
 
+  // The same guarantee on the aggregateId axis. Every id brand is a non-empty
+  // string, so the only value the (former) union rejected is an empty one — which
+  // is exactly what a future dropped id type looks like to this schema. Under the
+  // old closed union an empty stream_id failed the batch decode; the skip must now
+  // reach it. Seeding it directly pins that the row schema no longer gates on the
+  // union.
+  it.effect("skips a retired board row whose aggregate id is outside the id union", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-01T00:00:00.000Z";
+      yield* sql`DELETE FROM orchestration_events`;
+
+      const before = yield* eventStore.append(projectCreated("id-before", now));
+      yield* insertRawEvent(sql, {
+        eventId: "evt-retired-bad-id",
+        aggregateKind: "card",
+        streamId: "",
+        eventType: "board.card-progress-reported",
+        occurredAt: now,
+      });
+      const after = yield* eventStore.append(projectCreated("id-after", now));
+
+      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(0, 10)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+      assert.deepEqual(
+        replayed.map((event) => event.sequence),
+        [before.sequence, after.sequence],
+      );
+    }),
+  );
+
   // The retired-board skip must run BEFORE the structural row decode, not just
   // before the event-union decode: a retired row is skipped even when its own
   // metadata no longer satisfies `OrchestrationEventMetadata` (here a numeric
