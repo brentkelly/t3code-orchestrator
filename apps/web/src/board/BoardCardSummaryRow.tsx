@@ -39,6 +39,7 @@ import {
 import { cn } from "../lib/utils";
 import { formatRelativeTime } from "../timestampFormat";
 import type { BoardCardMeta, BoardCardSummaryItem } from "./boardCardSummary";
+import { BoardHint } from "./BoardHint";
 
 /** Max pips rendered for either the review-round or plan-progress rows, so a
     pathological count cannot blow out the card width. */
@@ -71,29 +72,31 @@ function RoundPips({
     held ? (outcome === "stopped" ? " — stopped, no convergence" : " — no convergence") : ""
   }`;
   return (
-    <span className="inline-flex items-center gap-0.5" title={label} aria-label={label}>
-      <span className="text-[10.5px] font-medium text-muted-foreground">{rounds}</span>
-      <span className="ml-0.5 inline-flex items-center gap-0.5">
-        {Array.from({ length: shown }, (_, index) => (
-          <span
-            key={index}
-            className={cn(
-              "size-1.5 rounded-full",
-              held
-                ? "bg-amber-500/70"
-                : index < current
-                  ? "bg-foreground/70"
-                  : "bg-muted-foreground/30",
-            )}
-          />
-        ))}
-      </span>
-      {held ? (
-        <span className="ml-1 inline-flex items-center rounded bg-amber-500/18 px-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
-          {outcome === "stopped" ? "Stopped" : "No convergence"}
+    <BoardHint label={label}>
+      <span className="inline-flex items-center gap-0.5" aria-label={label}>
+        <span className="text-[10.5px] font-medium text-muted-foreground">{rounds}</span>
+        <span className="ml-0.5 inline-flex items-center gap-0.5">
+          {Array.from({ length: shown }, (_, index) => (
+            <span
+              key={index}
+              className={cn(
+                "size-1.5 rounded-full",
+                held
+                  ? "bg-amber-500/70"
+                  : index < current
+                    ? "bg-foreground/70"
+                    : "bg-muted-foreground/30",
+              )}
+            />
+          ))}
         </span>
-      ) : null}
-    </span>
+        {held ? (
+          <span className="ml-1 inline-flex items-center rounded bg-amber-500/18 px-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+            {outcome === "stopped" ? "Stopped" : "No convergence"}
+          </span>
+        ) : null}
+      </span>
+    </BoardHint>
   );
 }
 
@@ -135,50 +138,49 @@ export function BoardCardPlansRow({
     </>
   );
   return (
-    <div
-      aria-label={`${done} of ${total} plans done`}
-      className="flex items-center gap-2"
-      title={`${done} of ${total} plans done`}
-    >
-      <span className="flex min-w-0 flex-1 items-center gap-[3px]">
-        {Array.from(chars, (status, index) => (
-          <span
-            className={cn(
-              "h-[3px] min-w-[2px] flex-1 rounded-[2px]",
-              status === BOARD_THREAD_TODO_STATUS_DONE
-                ? "bg-emerald-500"
-                : status === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
-                  ? "bg-info/60"
-                  : "bg-muted-foreground/25",
-            )}
-            key={index}
-          />
-        ))}
-      </span>
-      {onOpen === undefined ? (
-        <span className={chipClass}>{chipBody}</span>
-      ) : (
-        // A real button so it is focusable on its own; clicks and keys stop
-        // here so the card underneath does not also open its detail sheet.
-        <button
-          className={cn(
-            chipClass,
-            "cursor-pointer transition-colors hover:bg-accent hover:text-foreground",
-          )}
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpen();
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-          }}
-          title="Open this card's sub-board"
-          type="button"
-        >
-          {chipBody}
-        </button>
-      )}
-    </div>
+    <BoardHint label={`${done} of ${total} plans done`}>
+      <div aria-label={`${done} of ${total} plans done`} className="flex items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-center gap-[3px]">
+          {Array.from(chars, (status, index) => (
+            <span
+              className={cn(
+                "h-[3px] min-w-[2px] flex-1 rounded-[2px]",
+                status === BOARD_THREAD_TODO_STATUS_DONE
+                  ? "bg-emerald-500"
+                  : status === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
+                    ? "bg-info/60"
+                    : "bg-muted-foreground/25",
+              )}
+              key={index}
+            />
+          ))}
+        </span>
+        {onOpen === undefined ? (
+          <span className={chipClass}>{chipBody}</span>
+        ) : (
+          // A real button so it is focusable on its own; clicks and keys stop
+          // here so the card underneath does not also open its detail sheet.
+          <BoardHint label="Open this card's sub-board">
+            <button
+              className={cn(
+                chipClass,
+                "cursor-pointer transition-colors hover:bg-accent hover:text-foreground",
+              )}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpen();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+              }}
+              type="button"
+            >
+              {chipBody}
+            </button>
+          </BoardHint>
+        )}
+      </div>
+    </BoardHint>
   );
 }
 
@@ -187,26 +189,27 @@ export function BoardCardPlansRow({
 export function PlanPips({ done, total }: { readonly done: number; readonly total: number }) {
   const shown = Math.min(total, MAX_SUMMARY_PIPS);
   return (
-    <span
-      className="inline-flex items-center gap-0.5"
-      title={`${done} of ${total} plans done`}
-      aria-label={`${done} of ${total} plans done`}
-    >
-      <span className="inline-flex items-center gap-0.5">
-        {Array.from({ length: shown }, (_, index) => (
-          <span
-            key={index}
-            className={cn(
-              "size-1.5 rounded-full",
-              index < done ? "bg-emerald-500" : "bg-muted-foreground/30",
-            )}
-          />
-        ))}
+    <BoardHint label={`${done} of ${total} plans done`}>
+      <span
+        className="inline-flex items-center gap-0.5"
+        aria-label={`${done} of ${total} plans done`}
+      >
+        <span className="inline-flex items-center gap-0.5">
+          {Array.from({ length: shown }, (_, index) => (
+            <span
+              key={index}
+              className={cn(
+                "size-1.5 rounded-full",
+                index < done ? "bg-emerald-500" : "bg-muted-foreground/30",
+              )}
+            />
+          ))}
+        </span>
+        <span className="ml-0.5 text-[10.5px] font-medium text-muted-foreground">
+          {done}/{total} plans
+        </span>
       </span>
-      <span className="ml-0.5 text-[10.5px] font-medium text-muted-foreground">
-        {done}/{total} plans
-      </span>
-    </span>
+    </BoardHint>
   );
 }
 
@@ -222,16 +225,18 @@ function SeverityTriple({
   // Three bare numbers are meaningless to anyone who has not read the spec —
   // the tooltip spells them out (t3o-06 verification).
   return (
-    <span
-      className="inline-flex items-center gap-1 rounded bg-muted px-1.5 text-[10.5px] font-medium tabular-nums"
-      title={`${critical} critical · ${improvement} improvements · ${nitpick} nitpicks`}
-    >
-      <span className="text-red-600 dark:text-red-400">{critical}</span>
-      <span className="text-muted-foreground">/</span>
-      <span className="text-amber-600 dark:text-amber-400">{improvement}</span>
-      <span className="text-muted-foreground">/</span>
-      <span className="text-sky-600 dark:text-sky-400">{nitpick}</span>
-    </span>
+    <BoardHint label={`${critical} critical · ${improvement} improvements · ${nitpick} nitpicks`}>
+      <span
+        aria-label={`${critical} critical · ${improvement} improvements · ${nitpick} nitpicks`}
+        className="inline-flex items-center gap-1 rounded bg-muted px-1.5 text-[10.5px] font-medium tabular-nums"
+      >
+        <span className="text-red-600 dark:text-red-400">{critical}</span>
+        <span className="text-muted-foreground">/</span>
+        <span className="text-amber-600 dark:text-amber-400">{improvement}</span>
+        <span className="text-muted-foreground">/</span>
+        <span className="text-sky-600 dark:text-sky-400">{nitpick}</span>
+      </span>
+    </BoardHint>
   );
 }
 
@@ -247,12 +252,13 @@ function IssueTally({
   readonly disputed: number;
 }) {
   return (
-    <span
-      className="text-[10.5px] font-medium text-muted-foreground"
-      title={`${fixed} fixed · ${rejected} rejected · ${open} open · ${disputed} disputed`}
+    <BoardHint
+      label={`${fixed} fixed · ${rejected} rejected · ${open} open · ${disputed} disputed`}
     >
-      {fixed} fixed · {rejected} rejected · {open} open · {disputed} disputed
-    </span>
+      <span className="text-[10.5px] font-medium text-muted-foreground">
+        {fixed} fixed · {rejected} rejected · {open} open · {disputed} disputed
+      </span>
+    </BoardHint>
   );
 }
 
@@ -329,17 +335,18 @@ function MetaCount({
   readonly title: string;
 }) {
   return (
-    <span
-      aria-label={title}
-      className={cn(
-        "inline-flex items-center gap-1 text-[10.5px] font-medium tabular-nums",
-        tint ?? "text-muted-foreground",
-      )}
-      title={title}
-    >
-      <Icon className="size-3" />
-      {children}
-    </span>
+    <BoardHint label={title}>
+      <span
+        aria-label={title}
+        className={cn(
+          "inline-flex items-center gap-1 text-[10.5px] font-medium tabular-nums",
+          tint ?? "text-muted-foreground",
+        )}
+      >
+        <Icon className="size-3" />
+        {children}
+      </span>
+    </BoardHint>
   );
 }
 
@@ -390,9 +397,11 @@ export function BoardCardMetaRow({ meta }: { readonly meta: BoardCardMeta }) {
       {meta.briefHasImage ? (
         // The one indicator with no number: a brief either has a picture in it
         // or it does not, and "1 image" would be a count of nothing useful.
-        <span aria-label="Brief contains an image" title="Brief contains an image">
-          <ImageIcon className="size-3" />
-        </span>
+        <BoardHint label="Brief contains an image">
+          <span aria-label="Brief contains an image">
+            <ImageIcon className="size-3" />
+          </span>
+        </BoardHint>
       ) : null}
     </div>
   );
@@ -428,24 +437,26 @@ export function BoardTodoPips({
 }) {
   const label = `${done} of ${total} todos done`;
   return (
-    <span aria-label={label} className="flex items-center gap-[2px]" title={label}>
-      {/* Indexed rather than mapped over the characters: a pip IS its position
+    <BoardHint label={label}>
+      <span aria-label={label} className="flex items-center gap-[2px]">
+        {/* Indexed rather than mapped over the characters: a pip IS its position
           — the row is a positional progress bar and items never reorder within a
           render — which is the same shape `PlanPips` and `RoundPips` use. */}
-      {Array.from({ length: statuses.length }, (_, index) => (
-        <span
-          className={cn(
-            "h-[3px] min-w-[2px] flex-1 rounded-full",
-            statuses[index] === BOARD_THREAD_TODO_STATUS_DONE
-              ? "bg-emerald-500"
-              : statuses[index] === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
-                ? "bg-info"
-                : "bg-muted-foreground/25",
-          )}
-          key={index}
-        />
-      ))}
-    </span>
+        {Array.from({ length: statuses.length }, (_, index) => (
+          <span
+            className={cn(
+              "h-[3px] min-w-[2px] flex-1 rounded-full",
+              statuses[index] === BOARD_THREAD_TODO_STATUS_DONE
+                ? "bg-emerald-500"
+                : statuses[index] === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
+                  ? "bg-info"
+                  : "bg-muted-foreground/25",
+            )}
+            key={index}
+          />
+        ))}
+      </span>
+    </BoardHint>
   );
 }
 
@@ -494,36 +505,38 @@ export function BoardCardTodoStrip({
           </span>
         )}
         {elapsed === null ? null : (
-          <span
-            className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70"
-            title="Time on the current todo"
-          >
-            {elapsed}
-          </span>
+          <BoardHint label="Time on the current todo">
+            <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70">
+              {elapsed}
+            </span>
+          </BoardHint>
         )}
         {otherThreadCount > 0 && onToggleThreads !== undefined ? (
-          <button
-            className="-my-0.5 inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-            // The chip must NOT open the card: clicking it expands the other
-            // threads in place.
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggleThreads();
-            }}
-            title={
+          <BoardHint
+            label={
               expanded
                 ? "Hide the other threads on this card"
                 : `Show ${otherThreadCount} other ${otherThreadCount === 1 ? "thread" : "threads"}`
             }
-            type="button"
           >
-            {expanded ? (
-              <ChevronDownIcon className="size-2.5" />
-            ) : (
-              <ChevronRightIcon className="size-2.5" />
-            )}
-            +{otherThreadCount}
-          </button>
+            <button
+              className="-my-0.5 inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+              // The chip must NOT open the card: clicking it expands the other
+              // threads in place.
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleThreads();
+              }}
+              type="button"
+            >
+              {expanded ? (
+                <ChevronDownIcon className="size-2.5" />
+              ) : (
+                <ChevronRightIcon className="size-2.5" />
+              )}
+              +{otherThreadCount}
+            </button>
+          </BoardHint>
         ) : null}
       </div>
     </div>

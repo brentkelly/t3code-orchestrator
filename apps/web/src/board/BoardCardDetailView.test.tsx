@@ -556,7 +556,11 @@ describe("BoardCardDetailPanel", () => {
       />,
     );
     expect(selectedTab(html)).toBe("3 plans");
-    expect(html).toContain("This card builds through its plan cards");
+    // The explanation is a BoardHint tooltip (a portal, absent from static
+    // markup), so the markup carries the disabled pill wired as its trigger.
+    expect(html).toMatch(
+      /<button[^>]*disabled=""[^>]*data-base-ui-tooltip-trigger=""[^>]*>(?:(?!<\/button>).)*Thread<\/button>/,
+    );
   });
 
   it("singularises a one-plan split", () => {

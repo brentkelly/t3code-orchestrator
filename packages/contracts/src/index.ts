@@ -18,6 +18,7 @@ export * from "./settings.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
+export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
 // T3o: board schema.
 export * from "./board.ts";
@@ -31,4 +32,5 @@ export * from "./review.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./resourceTelemetry.ts";
+export * from "./usage.ts";
 export * from "./rpc.ts";

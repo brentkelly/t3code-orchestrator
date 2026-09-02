@@ -38,6 +38,7 @@ import { ModelRow } from "../components/settings/BoardModelRow";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
+import { BoardHint } from "./BoardHint";
 import {
   deriveBoardReviewLoop,
   type BoardReviewLoop,
@@ -121,10 +122,13 @@ function PhaseMarker({
 }) {
   if (status === "running") {
     return (
-      <span
-        className="size-5 shrink-0 animate-spin rounded-full border-2 border-foreground/15 border-t-foreground"
-        title="Running now"
-      />
+      <BoardHint label="Running now">
+        <span
+          aria-label="Running now"
+          role="img"
+          className="size-5 shrink-0 animate-spin rounded-full border-2 border-foreground/15 border-t-foreground"
+        />
+      </BoardHint>
     );
   }
   return (
@@ -246,12 +250,13 @@ function Round({
           {badge.label}
         </span>
         {round.findings.length > 0 ? (
-          <span
-            className="inline-flex h-[18px] shrink-0 items-center rounded-[5px] bg-foreground/6 px-1.5 font-mono text-[10.5px] font-medium tracking-[.02em] text-muted-foreground"
-            title={`${round.severities.critical} critical · ${round.severities.improvement} improvement · ${round.severities.nitpick} nitpick`}
+          <BoardHint
+            label={`${round.severities.critical} critical · ${round.severities.improvement} improvement · ${round.severities.nitpick} nitpick`}
           >
-            {tally}
-          </span>
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-[5px] bg-foreground/6 px-1.5 font-mono text-[10.5px] font-medium tracking-[.02em] text-muted-foreground">
+              {tally}
+            </span>
+          </BoardHint>
         ) : null}
         <span className="min-w-0 truncate text-[11px] text-muted-foreground">
           {roundSummary(round)}
@@ -287,15 +292,16 @@ function Round({
                     </span>
                   </div>
                   {phase.threadId !== null && onOpenThread !== undefined ? (
-                    <button
-                      className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border border-input bg-popover px-2 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent"
-                      onClick={() => onOpenThread(phase.threadId as ThreadId)}
-                      title="Open this phase's thread"
-                      type="button"
-                    >
-                      <MessageSquareIcon className="size-3" />
-                      Thread
-                    </button>
+                    <BoardHint label="Open this phase's thread">
+                      <button
+                        className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border border-input bg-popover px-2 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+                        onClick={() => onOpenThread(phase.threadId as ThreadId)}
+                        type="button"
+                      >
+                        <MessageSquareIcon className="size-3" />
+                        Thread
+                      </button>
+                    </BoardHint>
                   ) : null}
                 </div>
                 {phaseId === "review" && round.findings.length > 0 ? (
@@ -653,66 +659,75 @@ export function BoardCardReviewPane({
               const exists = loop.rounds.some((round) => round.round === n);
               const now = n === loop.currentRound;
               return (
-                <button
+                <BoardHint
                   key={n}
-                  className={cn(
-                    "flex h-[22px] flex-1 items-center justify-center rounded-md text-[10.5px] font-medium",
-                    now
-                      ? "bg-foreground text-background"
-                      : exists
-                        ? "bg-foreground/10 text-muted-foreground"
-                        : "cursor-default text-muted-foreground/50 shadow-[inset_0_0_0_1px_var(--border)]",
-                    n === shownRound && exists && !now ? "shadow-[0_0_0_2px_var(--ring)]" : "",
-                  )}
-                  disabled={!exists && !plannable(n)}
-                  onClick={() =>
-                    exists
-                      ? setOpenRound(n)
-                      : setPlannedRound((current) => (current === n ? null : n))
-                  }
-                  title={
+                  label={
                     exists
                       ? `Show round ${n}`
                       : plannable(n)
                         ? `Set the review model for round ${n}`
                         : `Round ${n} is already in flight — its model was frozen when the step was dispatched`
                   }
-                  type="button"
                 >
-                  R{n}
-                </button>
+                  <button
+                    className={cn(
+                      "flex h-[22px] flex-1 items-center justify-center rounded-md text-[10.5px] font-medium",
+                      now
+                        ? "bg-foreground text-background"
+                        : exists
+                          ? "bg-foreground/10 text-muted-foreground"
+                          : "cursor-default text-muted-foreground/50 shadow-[inset_0_0_0_1px_var(--border)]",
+                      n === shownRound && exists && !now ? "shadow-[0_0_0_2px_var(--ring)]" : "",
+                    )}
+                    disabled={!exists && !plannable(n)}
+                    onClick={() =>
+                      exists
+                        ? setOpenRound(n)
+                        : setPlannedRound((current) => (current === n ? null : n))
+                    }
+                    type="button"
+                  >
+                    R{n}
+                  </button>
+                </BoardHint>
               );
             })}
             {onSetRounds === undefined ? null : (
               <span className="ml-1 flex shrink-0 items-center">
-                <button
-                  aria-label="Remove a round"
-                  className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/45"
-                  disabled={loop.maxRounds <= budgetFloor}
-                  onClick={() => onSetRounds(loop.maxRounds - 1)}
-                  title={
+                <BoardHint
+                  label={
                     loop.maxRounds <= budgetFloor
                       ? `Round ${budgetFloor} has already started and cannot be removed`
                       : `Drop the budget to ${loop.maxRounds - 1} rounds`
                   }
-                  type="button"
                 >
-                  −
-                </button>
-                <button
-                  aria-label="Add a round"
-                  className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/45"
-                  disabled={loop.maxRounds >= BOARD_REVIEW_MAX_ROUNDS}
-                  onClick={() => onSetRounds(loop.maxRounds + 1)}
-                  title={
+                  <button
+                    aria-label="Remove a round"
+                    className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/45"
+                    disabled={loop.maxRounds <= budgetFloor}
+                    onClick={() => onSetRounds(loop.maxRounds - 1)}
+                    type="button"
+                  >
+                    −
+                  </button>
+                </BoardHint>
+                <BoardHint
+                  label={
                     loop.maxRounds >= BOARD_REVIEW_MAX_ROUNDS
                       ? `${BOARD_REVIEW_MAX_ROUNDS} rounds is the ceiling`
                       : `Allow ${loop.maxRounds + 1} rounds`
                   }
-                  type="button"
                 >
-                  +
-                </button>
+                  <button
+                    aria-label="Add a round"
+                    className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/45"
+                    disabled={loop.maxRounds >= BOARD_REVIEW_MAX_ROUNDS}
+                    onClick={() => onSetRounds(loop.maxRounds + 1)}
+                    type="button"
+                  >
+                    +
+                  </button>
+                </BoardHint>
               </span>
             )}
           </div>

@@ -30,6 +30,7 @@ import {
   type BoardPlanRows,
 } from "./boardPlanRows";
 import { BoardPlanFinalReviewCard } from "./BoardPlanFinalReviewCard";
+import { BoardHint } from "./BoardHint";
 
 const TONE_DOT: Record<BoardPlanRowTone, string> = {
   done: "bg-success",
@@ -83,15 +84,16 @@ export function BoardPlansPanel({
           {chartOpen ? "Hide chart" : "Dependency chart"}
         </button>
         {onOpenSubBoard === undefined ? null : (
-          <button
-            className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border border-input bg-popover px-2.5 text-[11.5px] font-medium whitespace-nowrap text-foreground shadow-xs hover:bg-accent"
-            onClick={onOpenSubBoard}
-            title="Open these plans as a board"
-            type="button"
-          >
-            <Columns3Icon className="size-3" />
-            Board
-          </button>
+          <BoardHint label="Open these plans as a board">
+            <button
+              className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border border-input bg-popover px-2.5 text-[11.5px] font-medium whitespace-nowrap text-foreground shadow-xs hover:bg-accent"
+              onClick={onOpenSubBoard}
+              type="button"
+            >
+              <Columns3Icon className="size-3" />
+              Board
+            </button>
+          </BoardHint>
         )}
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-4 pt-3.5 pb-5">
@@ -126,68 +128,72 @@ function PlanRow({
     row.state === "archived" ? "archived" : row.state === "missing" ? "no card" : null,
   ].filter((part): part is string => part !== null);
   return (
-    <button
-      className={cn(
-        "flex w-full items-center gap-[11px] rounded-[10px] border px-3 py-2.5 text-left shadow-xs",
-        row.live?.awaitingInput === true ? "border-info/50" : "border-border",
-        row.done ? "bg-foreground/3" : "bg-card",
-        row.state !== "live" && "opacity-70",
-        openable ? "hover:border-foreground/20" : "cursor-default",
-      )}
-      disabled={!openable}
-      onClick={openable ? () => onOpenChild(cardId) : undefined}
-      title={openable ? `Open ${row.key ?? row.title} in the sub-board` : row.title}
-      type="button"
-    >
-      <span className={cn("size-[7px] shrink-0 rounded-full", TONE_DOT[row.tone])} />
-      <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">#{row.n}</span>
-      <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
+    <BoardHint label={openable ? `Open ${row.key ?? row.title} in the sub-board` : row.title}>
+      <button
+        className={cn(
+          "flex w-full items-center gap-[11px] rounded-[10px] border px-3 py-2.5 text-left shadow-xs",
+          row.live?.awaitingInput === true ? "border-info/50" : "border-border",
+          row.done ? "bg-foreground/3" : "bg-card",
+          row.state !== "live" && "opacity-70",
+          openable ? "hover:border-foreground/20" : "cursor-default",
+        )}
+        disabled={!openable}
+        onClick={openable ? () => onOpenChild(cardId) : undefined}
+        type="button"
+      >
+        <span className={cn("size-[7px] shrink-0 rounded-full", TONE_DOT[row.tone])} />
+        <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">#{row.n}</span>
+        <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
+          <span
+            className={cn(
+              "truncate text-[13px] font-medium text-foreground",
+              row.state === "archived" && "line-through",
+            )}
+          >
+            {row.title}
+          </span>
+          <span className="truncate text-[10.5px] text-muted-foreground">{meta.join("  ·  ")}</span>
+          {row.blockers.length > 0 && !row.done ? (
+            <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-warning-foreground">
+              <LockIcon className="size-2.5 shrink-0" />
+              Waiting on{" "}
+              {row.blockers.map((blocker) => `#${blocker.n} · ${blocker.stageLabel}`).join(", ")}
+            </span>
+          ) : null}
+        </span>
+        {row.done ? null : row.live?.stalled === true ? (
+          <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-warning-foreground">
+            <CircleAlertIcon className="size-3" />
+            Stalled
+          </span>
+        ) : row.live?.awaitingInput === true ? (
+          <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-info-foreground">
+            <CircleAlertIcon className="size-3" />
+            Input needed
+          </span>
+        ) : row.live?.queued === true ? (
+          <span className="shrink-0 text-[10.5px] font-medium text-muted-foreground">Queued</span>
+        ) : row.live?.working === true ? (
+          <BoardHint label="Working">
+            <span
+              aria-label="Working"
+              role="img"
+              className="size-[11px] shrink-0 animate-spin rounded-full border-[1.8px] border-muted-foreground/25 border-t-muted-foreground"
+            />
+          </BoardHint>
+        ) : null}
         <span
           className={cn(
-            "truncate text-[13px] font-medium text-foreground",
-            row.state === "archived" && "line-through",
+            "inline-flex h-5 shrink-0 items-center rounded-md border border-border px-2 text-[11px] font-medium text-muted-foreground",
+            row.done ? "bg-success/12" : "bg-muted",
           )}
         >
-          {row.title}
+          {row.stageLabel ?? "No card"}
         </span>
-        <span className="truncate text-[10.5px] text-muted-foreground">{meta.join("  ·  ")}</span>
-        {row.blockers.length > 0 && !row.done ? (
-          <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-warning-foreground">
-            <LockIcon className="size-2.5 shrink-0" />
-            Waiting on{" "}
-            {row.blockers.map((blocker) => `#${blocker.n} · ${blocker.stageLabel}`).join(", ")}
-          </span>
-        ) : null}
-      </span>
-      {row.done ? null : row.live?.stalled === true ? (
-        <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-warning-foreground">
-          <CircleAlertIcon className="size-3" />
-          Stalled
-        </span>
-      ) : row.live?.awaitingInput === true ? (
-        <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-info-foreground">
-          <CircleAlertIcon className="size-3" />
-          Input needed
-        </span>
-      ) : row.live?.queued === true ? (
-        <span className="shrink-0 text-[10.5px] font-medium text-muted-foreground">Queued</span>
-      ) : row.live?.working === true ? (
-        <span
-          className="size-[11px] shrink-0 animate-spin rounded-full border-[1.8px] border-muted-foreground/25 border-t-muted-foreground"
-          title="Working"
+        <ChevronRightIcon
+          className={cn("size-3.5 shrink-0 text-muted-foreground", !openable && "opacity-0")}
         />
-      ) : null}
-      <span
-        className={cn(
-          "inline-flex h-5 shrink-0 items-center rounded-md border border-border px-2 text-[11px] font-medium text-muted-foreground",
-          row.done ? "bg-success/12" : "bg-muted",
-        )}
-      >
-        {row.stageLabel ?? "No card"}
-      </span>
-      <ChevronRightIcon
-        className={cn("size-3.5 shrink-0 text-muted-foreground", !openable && "opacity-0")}
-      />
-    </button>
+      </button>
+    </BoardHint>
   );
 }

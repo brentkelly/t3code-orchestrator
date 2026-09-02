@@ -24,6 +24,7 @@ import { Fragment } from "react";
 
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
+import { BoardHint } from "./BoardHint";
 import {
   DraggableBoardCard,
   type BoardCardQueueSlot,
@@ -118,26 +119,27 @@ function CollapsedColumn({
   // column (it appends at the column tail).
   const isOver = draggedCardId !== null && dragOverIndex !== null;
   return (
-    <button
-      className={cn(
-        // `self-stretch` against the row's `items-start`: a collapsed rail is a
-        // full-height target, while expanded columns size to their cards.
-        "flex w-11 shrink-0 cursor-pointer flex-col items-center gap-2.5 self-stretch rounded-xl border border-transparent bg-foreground/5 py-2.5 transition-colors hover:bg-foreground/10",
-        BOARD_COLUMN_DARK_SURFACE,
-        isOver && "border-ring bg-foreground/10 dark:bg-[#1e1e22]",
-      )}
-      onClick={() => onSetCollapsed(stage, false)}
-      onDragOver={(event) => onColumnDragOver(stage, event)}
-      onDrop={(event) => onColumnDrop(stage, event)}
-      title="Expand column"
-      type="button"
-    >
-      <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
-      <span className="text-[11px] font-medium text-muted-foreground">{cards.length}</span>
-      <span className="text-sm font-semibold text-muted-foreground [writing-mode:vertical-rl]">
-        {label}
-      </span>
-    </button>
+    <BoardHint label="Expand column">
+      <button
+        className={cn(
+          // `self-stretch` against the row's `items-start`: a collapsed rail is a
+          // full-height target, while expanded columns size to their cards.
+          "flex w-11 shrink-0 cursor-pointer flex-col items-center gap-2.5 self-stretch rounded-xl border border-transparent bg-foreground/5 py-2.5 transition-colors hover:bg-foreground/10",
+          BOARD_COLUMN_DARK_SURFACE,
+          isOver && "border-ring bg-foreground/10 dark:bg-[#1e1e22]",
+        )}
+        onClick={() => onSetCollapsed(stage, false)}
+        onDragOver={(event) => onColumnDragOver(stage, event)}
+        onDrop={(event) => onColumnDrop(stage, event)}
+        type="button"
+      >
+        <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
+        <span className="text-[11px] font-medium text-muted-foreground">{cards.length}</span>
+        <span className="text-sm font-semibold text-muted-foreground [writing-mode:vertical-rl]">
+          {label}
+        </span>
+      </button>
+    </BoardHint>
   );
 }
 

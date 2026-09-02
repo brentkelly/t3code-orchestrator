@@ -22,6 +22,7 @@ import { ChevronDownIcon } from "lucide-react";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { sortProviderInstanceEntries } from "../../providerInstances";
 import { cn } from "../../lib/utils";
+import { usePrimarySettings } from "../../hooks/useSettings";
 import { runtimeModeConfig } from "../chat/AccessLevelPicker";
 import { CompactComposerControlsMenu } from "../chat/CompactComposerControlsMenu";
 import { ModelPickerContent } from "../chat/ModelPickerContent";
@@ -63,6 +64,9 @@ function ModelControlsMenu(props: {
   runtimeMode: RuntimeMode | undefined;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  // Upstream gates plan-mode traits on the client setting; the row reads the
+  // same source as the composer so both show the same controls for a model.
+  const planModeEnabled = usePrimarySettings((settings) => settings.planModeEnabled);
   const traits = getTraitsSectionVisibility({
     provider: props.provider,
     models: props.models,
@@ -70,6 +74,7 @@ function ModelControlsMenu(props: {
     prompt: "",
     modelOptions: props.modelOptions,
     allowPromptInjectedEffort: false,
+    planModeEnabled,
   });
   const labels: string[] = [];
   if (traits.hasAnyControls) {
@@ -105,6 +110,7 @@ function ModelControlsMenu(props: {
             onPromptChange={() => {}}
             modelOptions={props.modelOptions}
             allowPromptInjectedEffort={false}
+            planModeEnabled={planModeEnabled}
             onModelOptionsChange={props.onModelOptionsChange}
           />
         ) : undefined

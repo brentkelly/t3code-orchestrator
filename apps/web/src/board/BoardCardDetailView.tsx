@@ -110,6 +110,7 @@ import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
 import { deriveBoardPlanRows } from "./boardPlanRows";
 import { boardStageLabel } from "./boardStages";
 import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
+import { BoardHint } from "./BoardHint";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply inside this pure view. */
@@ -435,17 +436,18 @@ function TitleBody({
   }
   return (
     <h2 className={cn(frame, "cursor-text hover:bg-accent")} id={CARD_TITLE_ID}>
-      <button
-        className="block w-full cursor-text text-left"
-        onClick={() => {
-          setDraft(title);
-          setEditing(true);
-        }}
-        title="Click to edit"
-        type="button"
-      >
-        {title}
-      </button>
+      <BoardHint label="Click to edit">
+        <button
+          className="block w-full cursor-text text-left"
+          onClick={() => {
+            setDraft(title);
+            setEditing(true);
+          }}
+          type="button"
+        >
+          {title}
+        </button>
+      </BoardHint>
     </h2>
   );
 }
@@ -487,21 +489,22 @@ function BriefBody({
   // Click-to-edit in place, the prototype's affordance: the brief reads as
   // prose until you touch it, with the hover tint as the only hint.
   return (
-    <button
-      className="-mx-[7px] -my-1 rounded-lg px-[7px] py-1 text-left text-[13.5px]/[1.6] hover:bg-accent"
-      onClick={() => {
-        setDraft(brief ?? "");
-        setEditing(true);
-      }}
-      title="Click to edit"
-      type="button"
-    >
-      {brief === null ? (
-        <span className="text-muted-foreground">Add a brief…</span>
-      ) : (
-        <span className="whitespace-pre-wrap text-pretty text-foreground">{brief}</span>
-      )}
-    </button>
+    <BoardHint label="Click to edit">
+      <button
+        className="-mx-[7px] -my-1 rounded-lg px-[7px] py-1 text-left text-[13.5px]/[1.6] hover:bg-accent"
+        onClick={() => {
+          setDraft(brief ?? "");
+          setEditing(true);
+        }}
+        type="button"
+      >
+        {brief === null ? (
+          <span className="text-muted-foreground">Add a brief…</span>
+        ) : (
+          <span className="whitespace-pre-wrap text-pretty text-foreground">{brief}</span>
+        )}
+      </button>
+    </BoardHint>
   );
 }
 
@@ -757,24 +760,29 @@ function ActionsSection({
   return (
     <div className="flex flex-col gap-2 p-3.5">
       {stopRound !== null ? (
-        <button
-          className={cn(
-            "inline-flex h-8 items-center justify-center gap-[7px] rounded-lg border px-2.75 text-[13px] font-medium shadow-xs",
-            stopRound.pending
-              ? "border-amber-500/55 bg-amber-500/12 text-amber-700 dark:text-amber-300"
-              : "border-input bg-popover text-foreground hover:bg-accent",
-          )}
-          onClick={() => stopRound.onToggle(stopRound.pending ? null : stopRound.round)}
-          title={
+        <BoardHint
+          label={
             stopRound.pending
               ? `Round ${stopRound.round} finishes, then the loop holds for you`
               : "Let the current round finish, then hold instead of starting another"
           }
-          type="button"
         >
-          <SquareIcon className="size-3" />
-          {stopRound.pending ? `Stopping after round ${stopRound.round}` : "Stop after this round"}
-        </button>
+          <button
+            className={cn(
+              "inline-flex h-8 items-center justify-center gap-[7px] rounded-lg border px-2.75 text-[13px] font-medium shadow-xs",
+              stopRound.pending
+                ? "border-amber-500/55 bg-amber-500/12 text-amber-700 dark:text-amber-300"
+                : "border-input bg-popover text-foreground hover:bg-accent",
+            )}
+            onClick={() => stopRound.onToggle(stopRound.pending ? null : stopRound.round)}
+            type="button"
+          >
+            <SquareIcon className="size-3" />
+            {stopRound.pending
+              ? `Stopping after round ${stopRound.round}`
+              : "Stop after this round"}
+          </button>
+        </BoardHint>
       ) : null}
       {props.canApproveSplit ? (
         // A pending split (t3o-27): the forward stage button is REPLACED by
@@ -782,59 +790,63 @@ function ActionsSection({
         // resolved — the decider refuses every forward move while it stands.
         // Amber, matching the card face's "Needs approval" state (distinct
         // from the blue "Input needed" a thread question raises).
-        <button
-          className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-amber-500/60 bg-amber-500/15 px-3 text-[13px] font-medium text-amber-700 shadow-xs hover:bg-amber-500/25 dark:text-amber-300"
-          onClick={() => props.onApproveSplit()}
-          title="This card's planning proposed a multi-part split; approve it to materialise the plan cards"
-          type="button"
-        >
-          <LayersIcon className="size-3.5" />
-          Approve split
-        </button>
+        <BoardHint label="This card's planning proposed a multi-part split; approve it to materialise the plan cards">
+          <button
+            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-amber-500/60 bg-amber-500/15 px-3 text-[13px] font-medium text-amber-700 shadow-xs hover:bg-amber-500/25 dark:text-amber-300"
+            onClick={() => props.onApproveSplit()}
+            type="button"
+          >
+            <LayersIcon className="size-3.5" />
+            Approve split
+          </button>
+        </BoardHint>
       ) : forward !== null ? (
-        <button
-          className={cn(
-            "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border px-3 text-[13px] font-medium shadow-xs",
-            forward.emphasised
-              ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
-              : "border-input bg-popover text-foreground hover:bg-accent",
-            // The dependency gate is not overridable (D18) — the button says
-            // so rather than bouncing off the decider.
-            (card.blocked || (forward.kind === "merge" && forward.disabled)) &&
-              "cursor-not-allowed opacity-50",
-            merging && "cursor-wait",
-          )}
-          disabled={
-            card.blocked || (forward.kind === "merge" && (forward.disabled || props.merging))
-          }
-          onClick={() => {
-            if (forward.kind === "merge") {
-              props.onMergePullRequest();
-              return;
-            }
-            props.onMoveStage(forward.toStage);
-          }}
-          title={
+        <BoardHint
+          label={
             card.blocked
               ? "Blocked by unmet dependencies"
               : forward.kind === "merge"
                 ? (forward.disabledReason ?? undefined)
                 : undefined
           }
-          type="button"
         >
-          {merging ? (
-            <>
-              <span className="size-3.5 shrink-0 animate-spin rounded-full border-[1.7px] border-primary-foreground/40 border-t-primary-foreground" />
-              Merging…
-            </>
-          ) : (
-            <>
-              <ArrowRightIcon className="size-3.5" />
-              {forward.label}
-            </>
-          )}
-        </button>
+          <button
+            className={cn(
+              "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border px-3 text-[13px] font-medium shadow-xs",
+              forward.emphasised
+                ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
+                : "border-input bg-popover text-foreground hover:bg-accent",
+              // The dependency gate is not overridable (D18) — the button says
+              // so rather than bouncing off the decider.
+              (card.blocked || (forward.kind === "merge" && forward.disabled)) &&
+                "cursor-not-allowed opacity-50",
+              merging && "cursor-wait",
+            )}
+            disabled={
+              card.blocked || (forward.kind === "merge" && (forward.disabled || props.merging))
+            }
+            onClick={() => {
+              if (forward.kind === "merge") {
+                props.onMergePullRequest();
+                return;
+              }
+              props.onMoveStage(forward.toStage);
+            }}
+            type="button"
+          >
+            {merging ? (
+              <>
+                <span className="size-3.5 shrink-0 animate-spin rounded-full border-[1.7px] border-primary-foreground/40 border-t-primary-foreground" />
+                Merging…
+              </>
+            ) : (
+              <>
+                <ArrowRightIcon className="size-3.5" />
+                {forward.label}
+              </>
+            )}
+          </button>
+        </BoardHint>
       ) : null}
       {/* The card's pull request, at EVERY stage rather than only where the
           Merge button lives: a card in Done is exactly when you want to find
@@ -842,16 +854,17 @@ function ActionsSection({
           this link — which needs the URL — lives here on the detail, which
           already subscribes to the whole card. */}
       {displayed !== null ? (
-        <button
-          className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
-          onClick={() => props.onOpenPullRequest(displayed.url)}
-          title={`Open pull request #${displayed.number}`}
-          type="button"
-        >
-          <GitPullRequestIcon className="size-3.5" />
-          <span>View PR</span>
-          <span className="text-muted-foreground">{`#${displayed.number}`}</span>
-        </button>
+        <BoardHint label={`Open pull request #${displayed.number}`}>
+          <button
+            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
+            onClick={() => props.onOpenPullRequest(displayed.url)}
+            type="button"
+          >
+            <GitPullRequestIcon className="size-3.5" />
+            <span>View PR</span>
+            <span className="text-muted-foreground">{`#${displayed.number}`}</span>
+          </button>
+        </BoardHint>
       ) : null}
       {card.blocked ? (
         <div className="flex gap-[7px] rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-warning-foreground">
@@ -1046,30 +1059,30 @@ function PaneTabs({
     );
   return (
     <div className="flex shrink-0 items-center gap-0.5 rounded-[9px] bg-accent p-0.5">
-      <button
-        className={cn(tab("thread"), threadLocked && "cursor-not-allowed opacity-50")}
-        disabled={threadLocked}
-        onClick={() => onSelect("thread")}
-        title={
+      <BoardHint
+        label={
           threadLocked
             ? "This card builds through its plan cards; its own thread opens at review"
             : undefined
         }
-        type="button"
       >
-        <MessageSquareIcon className="size-3" />
-        Thread
-      </button>
-      {hasReview ? (
         <button
-          className={tab("review")}
-          onClick={() => onSelect("review")}
-          title="Adversarial review loop"
+          className={cn(tab("thread"), threadLocked && "cursor-not-allowed opacity-50")}
+          disabled={threadLocked}
+          onClick={() => onSelect("thread")}
           type="button"
         >
-          <RefreshCcwIcon className="size-3" />
-          Review
+          <MessageSquareIcon className="size-3" />
+          Thread
         </button>
+      </BoardHint>
+      {hasReview ? (
+        <BoardHint label="Adversarial review loop">
+          <button className={tab("review")} onClick={() => onSelect("review")} type="button">
+            <RefreshCcwIcon className="size-3" />
+            Review
+          </button>
+        </BoardHint>
       ) : null}
       {hasPlan ? (
         <button className={tab("plan")} onClick={() => onSelect("plan")} type="button">
@@ -1137,10 +1150,11 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const overriddenRows = modelRows.filter(
     (row) => card.modelOverrides?.[row.stageId] !== undefined,
   );
+  const soleOverriddenRow = overriddenRows.length === 1 ? overriddenRows[0] : undefined;
   const modelPillLabel =
-    overriddenRows.length === 1
-      ? `${overriddenRows[0].label} ${resolveOverrideName(overriddenRows[0])}`
-      : "Custom models";
+    soleOverriddenRow === undefined
+      ? "Custom models"
+      : `${soleOverriddenRow.label} ${resolveOverrideName(soleOverriddenRow)}`;
   const modelPillTitle = overriddenRows
     .map((row) => `${row.label}: ${resolveOverrideName(row)}`)
     .join("\n");
@@ -1213,16 +1227,17 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         {props.parentCard != null ? (
           // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
           // back into the sub-board it lives on, with this sheet still open.
-          <button
-            className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
-            disabled={props.onOpenParentSubBoard === undefined}
-            onClick={props.onOpenParentSubBoard}
-            title={`Part of ${props.parentCard.key}'s sub-board — open it`}
-            type="button"
-          >
-            <LayersIcon className="size-2.5" />
-            {props.parentCard.key}
-          </button>
+          <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
+            <button
+              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
+              disabled={props.onOpenParentSubBoard === undefined}
+              onClick={props.onOpenParentSubBoard}
+              type="button"
+            >
+              <LayersIcon className="size-2.5" />
+              {props.parentCard.key}
+            </button>
+          </BoardHint>
         ) : null}
         <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
         <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground">
@@ -1238,15 +1253,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             under; that should not be invisible from the card. It costs nothing
             on a card that has not set one. */}
         {modelOverridden ? (
-          <button
-            className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={() => setModelsOpen(true)}
-            title={modelPillTitle}
-            type="button"
-          >
-            <SlidersHorizontalIcon className="size-2.5" />
-            {modelPillLabel}
-          </button>
+          <BoardHint label={modelPillTitle}>
+            <button
+              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => setModelsOpen(true)}
+              type="button"
+            >
+              <SlidersHorizontalIcon className="size-2.5" />
+              {modelPillLabel}
+            </button>
+          </BoardHint>
         ) : null}
         <span className="flex-1" />
         {wide ? (
@@ -1337,14 +1353,15 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           open={deleteConfirmOpen}
           threadCount={card.threadLinks.length}
         />
-        <button
-          className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={props.onClose}
-          title="Close"
-          type="button"
-        >
-          <XIcon className="size-[15px]" />
-        </button>
+        <BoardHint label="Close">
+          <button
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={props.onClose}
+            type="button"
+          >
+            <XIcon className="size-[15px]" />
+          </button>
+        </BoardHint>
       </div>
 
       <TitleBody onSave={props.onSaveTitle} title={card.title} />

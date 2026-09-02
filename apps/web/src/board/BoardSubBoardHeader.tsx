@@ -18,6 +18,7 @@ import { cn } from "../lib/utils";
 import { boardEnvironment } from "../state/board";
 import { PlanPips } from "./BoardCardSummaryRow";
 import { projectAccent } from "./projectAccent";
+import { BoardHint } from "./BoardHint";
 
 export function BoardSubBoardHeader({
   environmentId,
@@ -62,32 +63,33 @@ export function BoardSubBoardHeader({
       >
         {parentShell.key}
       </span>
-      <button
-        className="min-w-0 truncate text-left text-[13px] font-semibold text-foreground hover:underline"
-        onClick={onOpenParentCard}
-        title={`Open ${parentShell.key} on the board`}
-        type="button"
-      >
-        {parentShell.title}
-      </button>
+      <BoardHint label={`Open ${parentShell.key} on the board`}>
+        <button
+          className="min-w-0 truncate text-left text-[13px] font-semibold text-foreground hover:underline"
+          onClick={onOpenParentCard}
+          type="button"
+        >
+          {parentShell.title}
+        </button>
+      </BoardHint>
       {total > 0 ? <PlanPips done={done} total={total} /> : null}
       {branch !== null ? (
-        <span
-          className="inline-flex min-w-0 shrink items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
-          title={`Integration branch — every card here builds on ${branch}`}
-        >
-          <GitBranchIcon className="size-3 shrink-0" />
-          <span className="truncate">{branch}</span>
-        </span>
+        <BoardHint label={`Integration branch — every card here builds on ${branch}`}>
+          <span className="inline-flex min-w-0 shrink items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+            <GitBranchIcon className="size-3 shrink-0" />
+            <span className="truncate">{branch}</span>
+          </span>
+        </BoardHint>
       ) : null}
       {pullRequest !== null && pullRequest.state === "open" ? (
-        <span
-          className="inline-flex shrink-0 items-center gap-1 rounded bg-info/12 px-1.5 py-0.5 text-[11px] font-medium text-info-foreground"
-          title={`${parentShell.key}'s integration pull request is open — ${pullRequest.url}`}
+        <BoardHint
+          label={`${parentShell.key}'s integration pull request is open — ${pullRequest.url}`}
         >
-          <GitPullRequestIcon className="size-3" />
-          PR #{pullRequest.number}
-        </span>
+          <span className="inline-flex shrink-0 items-center gap-1 rounded bg-info/12 px-1.5 py-0.5 text-[11px] font-medium text-info-foreground">
+            <GitPullRequestIcon className="size-3" />
+            PR #{pullRequest.number}
+          </span>
+        </BoardHint>
       ) : null}
       {total > 0 && done < total ? (
         <span className="hidden shrink-0 text-[11.5px] text-muted-foreground lg:inline">

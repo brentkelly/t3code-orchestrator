@@ -243,9 +243,11 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
         reviewCompletion("adjudicate@1", { verdicts: [] }),
       ];
 
-      let selected:
-        | (SelectedStep & { readonly humanInLoop: boolean; readonly prompt: string })
-        | null = null;
+      // A holder rather than a `let`: the assignment happens inside a closure the
+      // control-flow analysis cannot see, so a bare `let` reads back as `null`.
+      const captured: {
+        value: (SelectedStep & { readonly humanInLoop: boolean; readonly prompt: string }) | null;
+      } = { value: null };
       yield* withGovernor(
         {
           board: { nextCardNumberByProject: {}, cards: [card], stepCompletions: spentRound },
@@ -262,12 +264,12 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
               (command) => command.type === "board.card.select-step",
             );
             assert.equal(steps.length, 1, "exactly one re-entry step should have been selected");
-            selected = steps[0] as unknown as typeof selected;
+            captured.value = steps[0] as unknown as typeof captured.value;
           }),
       );
 
-      assert.isNotNull(selected, "the reactor should have selected a re-entry step");
-      const step = selected as NonNullable<typeof selected>;
+      const step = captured.value;
+      assert.isNotNull(step, "the reactor should have selected a re-entry step");
       // The override rides the re-entry verbatim: model, provider AND access.
       assert.strictEqual(step.model, reviewOverride.model);
       assert.strictEqual(step.providerInstanceId, String(reviewOverride.instanceId));

@@ -10,6 +10,7 @@ import type { BoardLabel, BoardLabelId } from "@t3tools/contracts";
 
 import { cn } from "../lib/utils";
 import { boardLabelChipStyle, resolveBoardLabels } from "./labelColour";
+import { BoardHint } from "./BoardHint";
 
 const VISIBLE_CHIPS = 2;
 
@@ -32,37 +33,42 @@ export function BoardLabelChips({
     <>
       {visible.map((label) =>
         label.colour === null ? (
-          <span
+          <BoardHint
             key={label.labelId}
-            className={cn(
-              CHIP_CLASS,
-              "border border-dashed border-border bg-muted/60 text-muted-foreground",
-            )}
-            title={label.missing ? "Unknown label" : `${label.name} (deleted)`}
+            label={label.missing ? "Unknown label" : `${label.name} (deleted)`}
           >
-            {label.name}
-          </span>
+            <span
+              className={cn(
+                CHIP_CLASS,
+                "border border-dashed border-border bg-muted/60 text-muted-foreground",
+              )}
+            >
+              {label.name}
+            </span>
+          </BoardHint>
         ) : (
-          <span
+          <BoardHint
             key={label.labelId}
-            className={cn(CHIP_CLASS, label.deleted && "opacity-55")}
-            style={boardLabelChipStyle(label.colour)}
-            title={label.deleted ? `${label.name} (deleted)` : label.name}
+            label={label.deleted ? `${label.name} (deleted)` : label.name}
           >
-            {label.name}
-          </span>
+            <span
+              className={cn(CHIP_CLASS, label.deleted && "opacity-55")}
+              style={boardLabelChipStyle(label.colour)}
+            >
+              {label.name}
+            </span>
+          </BoardHint>
         ),
       )}
       {overflow > 0 ? (
-        <span
-          className={cn(CHIP_CLASS, "bg-muted text-muted-foreground")}
-          title={resolved
+        <BoardHint
+          label={resolved
             .slice(VISIBLE_CHIPS)
             .map((label) => label.name)
             .join(", ")}
         >
-          +{overflow}
-        </span>
+          <span className={cn(CHIP_CLASS, "bg-muted text-muted-foreground")}>+{overflow}</span>
+        </BoardHint>
       ) : null}
     </>
   );

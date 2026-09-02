@@ -23,6 +23,7 @@ import { useState } from "react";
 import ChatMarkdown from "../components/ChatMarkdown";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
 import { boardStageLabel } from "./boardStages";
+import { BoardHint } from "./BoardHint";
 
 export function BoardCardPlanPane({
   plans,
@@ -145,25 +146,28 @@ export function BoardCardPlanPane({
                     // survives without pretending the card is live. A button
                     // when navigation is wired (t3o-25): it opens the child
                     // inside this card's sub-board.
-                    <button
-                      className={
-                        "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground disabled:pointer-events-none" +
-                        (child.archivedAt === null ? "" : " line-through opacity-60") +
-                        (onOpenChild === undefined ? "" : " hover:bg-muted-foreground/25")
-                      }
-                      disabled={onOpenChild === undefined}
-                      onClick={
-                        onOpenChild === undefined ? undefined : () => onOpenChild(child.cardId)
-                      }
-                      title={`${child.key} — ${child.title}${onOpenChild === undefined ? "" : " (open in the sub-board)"}`}
-                      type="button"
+                    <BoardHint
+                      label={`${child.key} — ${child.title}${onOpenChild === undefined ? "" : " (open in the sub-board)"}`}
                     >
-                      <LayersIcon className="size-2.5" />
-                      {child.key}
-                      <span className="font-normal text-muted-foreground">
-                        {boardStageLabel(stages, child.stage)}
-                      </span>
-                    </button>
+                      <button
+                        className={
+                          "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground disabled:pointer-events-none" +
+                          (child.archivedAt === null ? "" : " line-through opacity-60") +
+                          (onOpenChild === undefined ? "" : " hover:bg-muted-foreground/25")
+                        }
+                        disabled={onOpenChild === undefined}
+                        onClick={
+                          onOpenChild === undefined ? undefined : () => onOpenChild(child.cardId)
+                        }
+                        type="button"
+                      >
+                        <LayersIcon className="size-2.5" />
+                        {child.key}
+                        <span className="font-normal text-muted-foreground">
+                          {boardStageLabel(stages, child.stage)}
+                        </span>
+                      </button>
+                    </BoardHint>
                   )}
                 </h3>
               )}
