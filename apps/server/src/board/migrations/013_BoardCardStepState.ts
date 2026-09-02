@@ -14,7 +14,7 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`
-    CREATE TABLE IF NOT EXISTS board_card_step_state (
+    CREATE TABLE IF NOT EXISTS boards.board_card_step_state (
       card_id TEXT NOT NULL PRIMARY KEY,
       step_id TEXT NOT NULL,
       step_label TEXT NOT NULL,

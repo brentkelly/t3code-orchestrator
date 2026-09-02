@@ -15,6 +15,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { BOARD_MIGRATIONS } from "./index.ts";
+import { attachBoardDatabase } from "../boardDatabase.ts";
 import Migration020 from "./020_BoardCardStepStateLabels.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -23,6 +24,9 @@ const NOW = "2026-01-01T00:00:00.000Z";
     are not idempotent, so the lineage is run once, by hand, exactly as 016's
     test does. */
 const migrateToPrevious = Effect.gen(function* () {
+  // T3o-26: board tables live in the attached board database now, so the
+  // attach has to happen before any board migration, exactly as at boot.
+  yield* attachBoardDatabase();
   yield* runMigrations();
   for (const [id, , migration] of BOARD_MIGRATIONS) {
     if (id >= 20) break;

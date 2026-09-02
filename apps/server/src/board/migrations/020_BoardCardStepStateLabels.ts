@@ -52,7 +52,7 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`
-    CREATE TABLE board_card_step_state_new (
+    CREATE TABLE boards.board_card_step_state_new (
       card_id TEXT NOT NULL PRIMARY KEY,
       step_id TEXT NOT NULL,
       step_label TEXT,
@@ -80,6 +80,6 @@ export default Effect.gen(function* () {
       `SELECT ${CARRIED_COLUMNS} FROM board_card_step_state`,
   );
 
-  yield* sql`DROP TABLE board_card_step_state`;
+  yield* sql`DROP TABLE boards.board_card_step_state`;
   yield* sql`ALTER TABLE board_card_step_state_new RENAME TO board_card_step_state`;
 });

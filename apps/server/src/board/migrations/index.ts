@@ -16,6 +16,8 @@ import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { attachBoardDatabase, BOARD_SCHEMA, relocateBoardSchema } from "../boardDatabase.ts";
+
 import Migration001 from "./001_BoardCards.ts";
 import Migration002 from "./002_BoardCardBodies.ts";
 import Migration003 from "./003_BoardCardThreadLinks.ts";
@@ -46,9 +48,31 @@ import Migration027 from "./027_BoardCardsSourcePlan.ts";
 import Migration028 from "./028_BoardCardStepStateBaseTip.ts";
 import Migration029 from "./029_BoardCardsModelOverrides.ts";
 import Migration030 from "./030_BoardCardStepStateLastError.ts";
+import Migration031 from "./031_BoardProjectionState.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
+
+/**
+ * The ledger as the Migrator must address it: qualified into the board database
+ * (t3o-26). `sql("boards.t3o_sql_migrations")` compiles to
+ * `"boards"."t3o_sql_migrations"` — the client splits on the dot rather than
+ * quoting one identifier containing it. Worth knowing, because the alternative
+ * failure is silent: a single quoted identifier would have created a table
+ * literally NAMED `boards.t3o_sql_migrations` inside `main`, defeating the
+ * separation without erroring.
+ */
+export const BOARD_MIGRATION_TABLE_QUALIFIED = `${BOARD_SCHEMA}.${BOARD_MIGRATION_TABLE}`;
+
+/**
+ * Where the legacy reconciler seeds the ledger: `main`, not `boards`. The
+ * reconciler only ever acts on a database still carrying 900+ rows in upstream's
+ * ledger, and such a database has never been relocated — its board tables are
+ * in `main`. Seeding the ledger beside them lets the relocation move ledger and
+ * tables together in one copy, which is what makes a torn relocation provable
+ * as a resume (see `relocateBoardSchema`) rather than misread as a conflict.
+ */
+const LEGACY_SEED_TABLE = `main.${BOARD_MIGRATION_TABLE}`;
 
 /** Ids the board lineage used before it was split into its own ledger. */
 const LEGACY_BOARD_ID_FLOOR = 900;
@@ -84,6 +108,7 @@ export const BOARD_MIGRATIONS = [
   [28, "BoardCardStepStateBaseTip", Migration028],
   [29, "BoardCardsModelOverrides", Migration029],
   [30, "BoardCardStepStateLastError", Migration030],
+  [31, "BoardProjectionState", Migration031],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(
@@ -117,12 +142,12 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
   const sql = yield* SqlClient.SqlClient;
 
   const upstreamLedger = yield* sql<{ readonly name: string }>`
-    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+    SELECT name FROM main.sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
   `;
   if (upstreamLedger.length === 0) return; // fresh database — nothing to reconcile
 
   const legacyRows = yield* sql<{ readonly migration_id: number }>`
-    SELECT migration_id FROM effect_sql_migrations
+    SELECT migration_id FROM main.effect_sql_migrations
     WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR} ORDER BY migration_id
   `;
   if (legacyRows.length === 0) return; // already reconciled / never used the 900 scheme
@@ -130,7 +155,7 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
   // Create the board ledger now so we can seed it before the board Migrator reads
   // its high-water mark (that Migrator would also CREATE IF NOT EXISTS).
   yield* sql`
-    CREATE TABLE IF NOT EXISTS ${sql(BOARD_MIGRATION_TABLE)} (
+    CREATE TABLE IF NOT EXISTS ${sql(LEGACY_SEED_TABLE)} (
       migration_id integer PRIMARY KEY NOT NULL,
       created_at datetime NOT NULL DEFAULT current_timestamp,
       name VARCHAR(255) NOT NULL
@@ -138,7 +163,7 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
   `;
 
   const seeded = yield* sql<{ readonly count: number }>`
-    SELECT COUNT(*) AS count FROM ${sql(BOARD_MIGRATION_TABLE)}
+    SELECT COUNT(*) AS count FROM ${sql(LEGACY_SEED_TABLE)}
   `;
   if ((seeded[0]?.count ?? 0) === 0) {
     // Legacy id 900+k maps to new id k+1. Mark exactly those recorded ids applied
@@ -150,14 +175,42 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
       .filter((id): id is number => nameById.has(id))
       .map((id) => ({ migration_id: id, name: nameById.get(id) as string }));
     if (seedRows.length > 0) {
-      yield* sql`INSERT INTO ${sql(BOARD_MIGRATION_TABLE)} ${sql.insert(seedRows)}`;
+      yield* sql`INSERT INTO ${sql(LEGACY_SEED_TABLE)} ${sql.insert(seedRows)}`;
     }
   }
 
-  yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}`;
+  yield* sql`DELETE FROM main.effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}`;
   yield* Effect.log("Reconciled legacy board migration ledger").pipe(
-    Effect.annotateLogs({ evicted: legacyRows.length, table: BOARD_MIGRATION_TABLE }),
+    Effect.annotateLogs({ evicted: legacyRows.length, table: LEGACY_SEED_TABLE }),
   );
+});
+
+/**
+ * Everything that must happen to the board database BEFORE any migration runs
+ * (t3o-26).
+ *
+ * Ordering is the whole content of this function:
+ *
+ * 1. Attach `boards.sqlite` — nothing below can address the `boards` schema
+ *    until it exists.
+ * 2. Reconcile the legacy 900+ shared-ledger scheme: seed the board ledger in
+ *    `main`, beside the board tables, from upstream's ledger, and evict the
+ *    legacy rows. FIRST, so that a legacy database has its ledger in place
+ *    before anything is copied — the relocation copies ledger and tables in one
+ *    transaction, and that identical ledger is what proves a torn relocation is
+ *    a resume rather than a conflict. Reconciling afterwards would leave a torn
+ *    legacy relocation with no ledger on either side, refused forever.
+ * 3. Relocate a pre-t3o-26 layout's board tables and ledger out of `main`, so
+ *    the Migrator sees the state the database is actually in.
+ *
+ * Runs BEFORE upstream `runMigrations()`, because while the legacy rows are
+ * present they pin upstream's high-water mark and would make it skip every
+ * pending migration numbered below the top board id.
+ */
+export const initialiseBoardDatabase = Effect.fn("initialiseBoardDatabase")(function* () {
+  yield* attachBoardDatabase();
+  yield* reconcileLegacyBoardLedger();
+  yield* relocateBoardSchema();
 });
 
 /**
@@ -167,7 +220,10 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
  * `reconcileLegacyBoardLedger()` (which seeds already-applied board ids).
  */
 export const runBoardMigrations = Effect.fn("runBoardMigrations")(function* () {
-  const executedMigrations = yield* run({ loader: boardLoader, table: BOARD_MIGRATION_TABLE });
+  const executedMigrations = yield* run({
+    loader: boardLoader,
+    table: BOARD_MIGRATION_TABLE_QUALIFIED,
+  });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Board schema is current")

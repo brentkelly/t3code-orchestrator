@@ -20,7 +20,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
-    CREATE TABLE IF NOT EXISTS board_card_number_floor (
+    CREATE TABLE IF NOT EXISTS boards.board_card_number_floor (
       project_id TEXT PRIMARY KEY,
       max_card_number INTEGER NOT NULL
     )

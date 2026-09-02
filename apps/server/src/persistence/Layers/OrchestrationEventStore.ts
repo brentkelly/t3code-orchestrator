@@ -33,6 +33,26 @@ import {
 } from "../Services/OrchestrationEventStore.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
+
+/**
+ * Every event type THIS build knows about.
+ *
+ * Read rows are checked against this set per row (in `readPage`) rather than by
+ * typing the row schema's `type` column as `OrchestrationEventType`. A closed
+ * literal union in the row schema makes a RETIRED event type fatal: the failure
+ * takes down the whole 500-row page, and with it replay — and therefore boot —
+ * for every event after it. The log is append-only and permanent, so a type that
+ * is dropped from the union still has rows on disk forever.
+ */
+const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set<string>(OrchestrationEventType.literals);
+
+/**
+ * T3o: matched against the raw `event_type` column, so this tests the prefix
+ * directly rather than reusing `isBoardEvent` from contracts — that predicate
+ * narrows a discriminated union of literal types and collapses a plain-string
+ * column to `never`.
+ */
+const BOARD_EVENT_TYPE_PREFIX = "board.";
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMetadata);
 
@@ -55,17 +75,33 @@ const AppendEventRequestSchema = Schema.Struct({
 const OrchestrationEventPersistedRowSchema = Schema.Struct({
   sequence: NonNegativeInt,
   eventId: EventId,
-  type: OrchestrationEventType,
-  aggregateKind: OrchestrationAggregateKind,
-  // T3o: BoardCardId appended for card-aggregate event rows (D9); BoardLabelId
-  // for the label aggregate (t3o-06a). Frozen widening.
-  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId, BoardStageId]),
+  // T3o: plain strings, NOT the closed literal unions — see KNOWN_EVENT_TYPES.
+  // Rows are re-validated per row (via `decodeReadRow` -> `decodeEvent`, which
+  // checks both against the full `OrchestrationEvent` union) so one retired value
+  // cannot fail the whole page. `aggregateKind` gets the same treatment as
+  // `type` because it carries the same risk: t3o added `card`, `label` and
+  // `stage`, and retiring any of them would otherwise brick replay identically.
+  // Append still validates strictly via `AppendEventRequestSchema`.
+  type: Schema.String,
+  aggregateKind: Schema.String,
+  // T3o: a plain string, and `metadata` a raw parsed value (below), for the same
+  // reason as `type`/`aggregateKind` — the retired-board skip in `decodeReadRow`
+  // must run BEFORE any board-specific structural decode, or a retired row whose
+  // id shape or metadata no longer fits a tightened schema fails the whole
+  // 500-row page inside `findAll` first. The real per-row validation still
+  // happens: `decodeEvent` checks both against `OrchestrationEvent`'s own strict
+  // `aggregateId` union and `OrchestrationEventMetadata`; `append` stays strict
+  // via `AppendEventRequestSchema`.
+  aggregateId: Schema.String,
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
   payload: UnknownFromJsonString,
-  metadata: EventMetadataFromJsonString,
+  // T3o: parsed to a raw value here (still fatal on malformed JSON = corruption),
+  // validated against `OrchestrationEventMetadata` per row by `decodeEvent`. See
+  // the `aggregateId` note above.
+  metadata: UnknownFromJsonString,
 });
 
 const ReadFromSequenceRequestSchema = Schema.Struct({
@@ -103,6 +139,42 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
       ? toPersistenceDecodeError(decodeOperation)(cause)
       : toPersistenceSqlError(sqlOperation)(cause);
 }
+
+/**
+ * Decode one read row, or skip it.
+ *
+ * A `board.*` type this build does not know is one t3o RETIRED: its rows are
+ * still on disk (the log is append-only and permanent), nothing can interpret
+ * them, and board state is a projection that rebuilds fine without them.
+ * Skipping keeps replay alive; the warning keeps the skip visible.
+ *
+ * Every other unknown type stays fatal, deliberately. An unrecognised `thread.*`
+ * means this build is reading a log written by a NEWER one, where dropping
+ * events silently would advance the projection watermark past thread history
+ * that cannot be recovered. A malformed payload on a KNOWN type stays fatal too:
+ * that is corruption, not evolution.
+ */
+const decodeReadRow = (
+  row: Schema.Schema.Type<typeof OrchestrationEventPersistedRowSchema>,
+): Effect.Effect<OrchestrationEvent | undefined, OrchestrationEventStoreError> => {
+  if (!KNOWN_EVENT_TYPES.has(row.type) && row.type.startsWith(BOARD_EVENT_TYPE_PREFIX)) {
+    return Effect.as(
+      Effect.logWarning("Skipping retired board event type during replay").pipe(
+        Effect.annotateLogs({
+          eventType: row.type,
+          sequence: row.sequence,
+          eventId: row.eventId,
+        }),
+      ),
+      undefined,
+    );
+  }
+  return decodeEvent(row).pipe(
+    Effect.mapError(
+      toPersistenceDecodeError("OrchestrationEventStore.readFromSequence:rowToEvent"),
+    ),
+  );
+};
 
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -240,28 +312,33 @@ const makeEventStore = Effect.gen(function* () {
             ),
           ),
           Effect.flatMap((rows) =>
-            Effect.forEach(rows, (row) =>
-              decodeEvent(row).pipe(
-                Effect.mapError(
-                  toPersistenceDecodeError("OrchestrationEventStore.readFromSequence:rowToEvent"),
-                ),
-              ),
+            Effect.forEach(rows, decodeReadRow).pipe(
+              Effect.map((decoded) => ({
+                events: decoded.filter((event): event is OrchestrationEvent => event !== undefined),
+                // T3o: paging is driven by the ROWS READ, never by the events
+                // decoded from them. A page whose rows were all skipped still has
+                // to advance the cursor — treating it as end-of-stream would
+                // silently truncate replay at the first retired event.
+                rowsRead: rows.length,
+                lastSequence: rows[rows.length - 1]?.sequence ?? cursor,
+              })),
             ),
           ),
         ),
       ).pipe(
-        Stream.flatMap((events) => {
-          if (events.length === 0) {
+        Stream.flatMap(({ events, rowsRead, lastSequence }) => {
+          if (rowsRead === 0) {
             return Stream.empty;
           }
-          const nextRemaining = remaining - events.length;
+          // `limit` bounds the rows SCANNED, not the events yielded: a caller
+          // that computed it from a sequence gap (the shell resume path does)
+          // expects the read to stop at that head, and counting only decoded
+          // events would let a page of skipped rows carry the scan past it.
+          const nextRemaining = remaining - rowsRead;
           if (nextRemaining <= 0) {
             return Stream.fromIterable(events);
           }
-          return Stream.concat(
-            Stream.fromIterable(events),
-            readPage(events[events.length - 1]!.sequence, nextRemaining),
-          );
+          return Stream.concat(Stream.fromIterable(events), readPage(lastSequence, nextRemaining));
         }),
       );
 

@@ -12,6 +12,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { BOARD_MIGRATIONS, runBoardMigrations } from "./index.ts";
+import { attachBoardDatabase } from "../boardDatabase.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 
@@ -23,6 +24,9 @@ const dependsOnColumn = (ids: ReadonlyArray<string>) => `[${ids.map((id) => `"${
 /** Everything up to (but not including) 012 — the schema as the rows below
     were written under. */
 const migrateToPrevious = Effect.gen(function* () {
+  // T3o-26: board tables live in the attached board database now, so the
+  // attach has to happen before any board migration, exactly as at boot.
+  yield* attachBoardDatabase();
   yield* runMigrations();
   for (const [id, , migration] of BOARD_MIGRATIONS) {
     if (id >= 12) break;

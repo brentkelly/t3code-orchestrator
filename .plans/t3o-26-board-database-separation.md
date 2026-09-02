@@ -30,11 +30,12 @@ No eject script, no cleanup step, no decode failures.
 
 | Thing | Where | Status |
 | --- | --- | --- |
-| Separate board migration lineage + ledger | `board/migrations/index.ts`, `t3o_sql_migrations` | Done, retargeted in P1 |
-| Board tables carry **zero** foreign keys | all 26 board migrations | Done, nothing to sever |
-| Every board SQL `JOIN` is board↔board | `projection.ts:1311`, `:1332` | Done, untouched |
-| Retired `board.*` event types survive replay | `OrchestrationEventStore.ts` `decodeReadRow` | Done, prerequisite met |
-| Board events are namespaced `board.*` | `contracts/board.ts:3557` | Done, the partition key |
+| Separate board migration lineage + ledger | `board/migrations/index.ts`, `t3o_sql_migrations` (030 and counting) | Done, retargeted in P1 |
+| Board tables carry **zero** foreign keys | all 30 board migrations | Done, nothing to sever |
+| Every board SQL `JOIN` is board↔board | `projection.ts:1378`, `:1399` | Done, untouched |
+| Retired `board.*` event types survive replay | `OrchestrationEventStore.ts` `decodeReadRow` | Done (P0) — rewritten after the original was lost to a shared-checkout overwrite |
+| Board events are namespaced `board.*` | `contracts/board.ts:4280` (35 types) | Done, the partition key |
+| Sub-boards, splits, plans panel, model overrides (t3o-23, 27-30) | board-owned modules only | Done, **zero** new upstream surface |
 | No t3o migrations in upstream's lineage | `persistence/Migrations/` | Done, upstream schema is pristine |
 | Board projector is already a separate module | `board/projection.ts`, spread at `ProjectionPipeline.ts:1642` | Done, unhooked in P2 |
 | Board commands already carry their own aggregate refs | `OrchestrationEngine.ts`, `boardCommandAggregateRef` | Done, retargeted in P2 |
@@ -66,6 +67,12 @@ running.
 `journal_mode` is per-database, so the `PRAGMA journal_mode = WAL` at `Sqlite.ts:38` must be
 issued for the attached database too. `foreign_keys` is per-connection and needs no change.
 
+**Validated empirically against `node:sqlite` (the runtime client), not just read off the docs:**
+attach works; the attached database's `journal_mode` really does default to `delete` and takes WAL
+on a qualified pragma; cross-schema JOINs work in one statement; an unqualified `board_cards`
+resolves to the attached copy when `main` has no such table; and a transaction confined to
+`boards.*` commits atomically under WAL.
+
 ### D2 — The board gets its own event log, with its own sequence
 
 `boards.orchestration_events` (same DDL as upstream's, own `AUTOINCREMENT`), plus
@@ -78,8 +85,8 @@ a genuine loss and D3 is what makes it survivable.
 ### D3 — The board tails upstream's log read-only; the watermark lives in `boards.sqlite`
 
 The board projector consumes exactly two upstream event types — `thread.activity-appended` and
-`thread.deleted` (`projection.ts:1985`, `:1997`) — and both feed only `board_thread_todos`, a
-cache with an existing boot orphan sweep (`projection.ts:1281`).
+`thread.deleted` (`projection.ts:2077`, `:2089`) — and both feed only `board_thread_todos`, a
+cache with an existing boot orphan sweep (`projection.ts:1348`).
 
 So the board keeps reading `main.orchestration_events`, filtered to those two types, with its
 cursor stored in `boards.projection_state` under a distinct projector name. Reading is not
@@ -87,17 +94,26 @@ writing; the promise holds.
 
 Everything else the supervisor learns from thread events it *records as a board event* before it
 matters, so board replay needs the board log and nothing else. This is what makes two logs
-tractable at all — verify it holds before building P2, because the whole design rests on it.
+tractable at all, and it is the assumption most likely to be broken by future board work.
+**Re-verified against the sub-board, split, plans-panel and model-override work (t3o-23,
+t3o-27..t3o-30): still exactly those two types, and still exactly one cross-schema SQL reference in
+the whole codebase.** Re-check before building P2, and again whenever the board starts observing
+something new about threads.
 
 The one cross-schema SQL reference in the codebase — the orphan sweep's
-`SELECT thread_id FROM projection_threads` (`projection.ts:1290`) — becomes
+`SELECT thread_id FROM projection_threads` (`projection.ts:1357`) — becomes
 `main.projection_threads` and is otherwise unchanged.
 
 ### D4 — The board gets its own subscription, not a widened shell sequence
 
 This is the hard part, and the reason P3 is its own phase.
 
-The client's shell protocol assumes **one monotonic sequence space**. Board events are mapped into
+The client's shell protocol assumes **one monotonic sequence space**, and the guard is confirmed
+GLOBAL, not per-entity: `shellReducer.ts:18` drops any event with
+`sequence <= snapshot.snapshotSequence`, and every applied event advances that single counter. Two
+sequence spaces in one stream therefore cannot work, and no offsetting trick rescues it — board
+sequences drawn from a second counter would either be dropped or would swallow every later thread
+event. Board events are mapped into
 the shell stream carrying `event.sequence` (`ws.ts:604`), the client drops anything at or below its
 snapshot sequence (`ws.ts:710-726`), and resume replays from the durable log after `afterSequence`
 against `orchestrationEngine.latestSequence` (`ws.ts:1251`). Two logs means two counters, and a
@@ -115,8 +131,9 @@ proves too large to land in one go, this is the fallback, not the plan.
 
 ### D5 — What the promise does not cover
 
-The board's job is to drive thread work. `supervisorReactor.ts` dispatches `thread.create` (`:604`),
-`thread.turn.start` (`:622`), `thread.settle` (`:1254`) and `thread.delete` (`:640`). Those run
+The board's job is to drive thread work. `supervisorReactor.ts` dispatches `thread.create`, `thread.turn.start`, `thread.settle`,
+`thread.delete` and `thread.turn.interrupt` — and, verified against the sub-board and split work,
+**nothing else**: no `project.*` command is dispatched by non-test board code. Those run
 through upstream's engine and write ordinary thread events to `state.sqlite`. A card that runs a
 build has to create a thread.
 
@@ -178,7 +195,7 @@ For the board's own engine instance, `makeOrchestrationEngine` (`OrchestrationEn
 module-private but already takes every dependency as an injected Effect service — export it and
 build a board-scoped layer in `board/`.
 
-The event store needs more than an export. `makeEventStore` (`OrchestrationEventStore.ts:167`)
+The event store needs more than an export. `makeEventStore` (`OrchestrationEventStore.ts:107`)
 hardcodes the `orchestration_events` table name in its SQL, and under D1 there is only one
 `SqlClient`, so a board instance cannot be obtained by swapping the client. It must be
 parameterised over its schema-qualified table name. Parameterise the event schema in the same pass
@@ -230,7 +247,7 @@ Two constraints on doing it:
 
 Each phase is independently shippable except where noted.
 
-### P0 — The verification harness (do this first)
+### P0 — The verification harness (do this first) — **DONE**
 
 A test that provisions a database, drives real board work against it, then boots a
 stock-upstream-shaped runtime against that same file and asserts a clean full replay from sequence
@@ -240,10 +257,27 @@ This is the definition of done for every later phase, and it is the artifact tha
 checkable rather than aspirational. It also has standalone value today: it is the regression test
 for the retired-event-type class of bug.
 
-### P1 — `boards.sqlite`, attached, with the board tables in it
+### P1 — `boards.sqlite`, attached, with the board tables in it — **DONE**
 
-Provision and attach the file, retarget the board migration lineage at it, move the 12 tables and the ledger with
-their data, qualify the orphan sweep's subquery.
+Provision and attach the file, retarget the board migration lineage at it, move the 12 tables and
+the ledger with their data, qualify the orphan sweep's subquery.
+
+Two implementation facts established up front:
+
+- **The Migrator accepts a qualified ledger name.** `sql("boards.t3o_sql_migrations")` compiles to
+  `"boards"."t3o_sql_migrations"` — the client splits on the dot rather than quoting one identifier
+  containing it. So `Migrator.make({ table: "boards.t3o_sql_migrations" })` is safe. Worth pinning
+  in a test: had it quoted the whole string, migrations would have silently created a table
+  *named* `boards.t3o_sql_migrations` in `main` and defeated the separation without erroring.
+- **The ledger must be COPIED to `boards`, never recreated there.** An existing database has its
+  ledger in `main` at high-water mark 30. Create an empty ledger in `boards` and the Migrator sees
+  mark 0 and replays the whole lineage — including migration 007, a one-time DATA backfill that
+  would resurrect seed labels the user has since deleted. This is the same trap
+  `reconcileLegacyBoardLedger` was written to avoid, in a new place. The relocation therefore has
+  to run BEFORE the Migrator reads the mark, in the same board-owned hook as the attach.
+
+No new lines in `Sqlite.ts` (D8): the attach, the WAL pragma and the relocation go inside the
+board-owned function it already calls, changing which function that is rather than adding one.
 
 **Do not ship P1 alone.** Between P1 and P2 the board projector's transaction spans two databases —
 it writes `boards.board_*` and `main.projection_state` in one `withTransaction`
@@ -266,7 +300,12 @@ Per D4: a board subscription with its own snapshot, sequence and resume cursor; 
 the shell stream; `BoardState` and friends off the shell snapshot schema; web and mobile clients
 updated to consume it.
 
-Largest and riskiest phase. Scope it on its own once P2 is real.
+**P2 forces P3 — they land together.** `ws.ts:604` maps board events into the shell stream by
+reading them off `orchestrationEngine.streamDomainEvents`. Once P2 gives the board its own engine
+and PubSub, board events leave that stream entirely and the board UI goes dark until this phase
+replaces it. There is no intermediate state where P2 ships alone and the client still works.
+
+Largest and riskiest phase; only P0 and P4 are genuinely separable.
 
 ### P4 — Settings split and the guarantee as a gate
 
@@ -276,7 +315,7 @@ before assuming the gate runs.
 
 ## Acceptance criteria
 
-- [ ] AC1 — A stock-upstream-shaped runtime boots against a t3o-exercised `state.sqlite` and
+- [x] AC1 (instrument built and calibrated; end-to-end assertion lands with P2) — A stock-upstream-shaped runtime boots against a t3o-exercised `state.sqlite` and
       replays every event from sequence zero with no decode failure. (P0, gated in P4.)
 - [ ] AC2 — `state.sqlite` contains no row whose `event_type` starts with `board.`, and no
       `aggregate_kind` outside `project` / `thread`, after any amount of board use.
@@ -312,9 +351,8 @@ before assuming the gate runs.
 
 ## Open questions
 
-1. **D3 is load-bearing and unverified.** Confirm that no board projector or supervisor path
-   depends on upstream events beyond the two named types before building P2. If a third dependency
-   exists, the two-log design needs revisiting, not patching.
+1. ~~**D3 is load-bearing and unverified.**~~ Verified against t3o-23 and t3o-27..t3o-30 (see D3).
+   A standing re-check before P2, no longer an open question.
 2. **Test harness shape.** Tests run on `:memory:` (`Sqlite.ts:71`); each attached `:memory:` is a
    distinct database. Every test that seeds board tables directly needs the attach in place.
 3. **P3 sizing.** Unknown until P2 lands. The existing sibling-sequence TODO (`ws.ts:719`) is in

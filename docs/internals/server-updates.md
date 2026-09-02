@@ -35,7 +35,8 @@ Every write uses same-directory replacement plus file and directory fsync.
 4. The active child sends `request-update`. The launcher validates the child and target, writes
    pending state, generates the update ID, then replies `update-accepted`.
 5. After a short response-flush grace period, the launcher stops the active child.
-6. With SQLite quiescent, the launcher snapshots the database, WAL, and shared-memory files.
+6. With SQLite quiescent, the launcher snapshots every database in the state directory, along with
+   their WAL and shared-memory files.
 7. The launcher starts the target as a trial and gives it the pending update over IPC.
 8. The trial runs migrations, acquires dependencies, binds HTTP, starts every long-running root
    fiber, and verifies that each root is parked at the activation gate.
@@ -55,13 +56,37 @@ applies.
 
 ## Database Rollback
 
-The launcher snapshots `state.sqlite`, `state.sqlite-wal`, and `state.sqlite-shm` after the old
-server stops and before the trial starts. This makes trial migrations and writes reversible without
-requiring down migrations. The snapshot is retained across launcher restarts and is removed only
-after commit or after both restore and the terminal rollback state are durable.
+The launcher snapshots **every `*.sqlite` file in the state directory**, along with each one's
+`-wal` and `-shm` sidecars, after the old server stops and before the trial starts. The set is
+discovered from disk rather than named, so a database added later is covered without the launcher
+having to know what it is for — today that means `state.sqlite` and t3o's `boards.sqlite`.
+
+Restoring covers the union of what was backed up and what is live. A database the trial update
+_created_ has no snapshot entry and is **deleted** on restore, because leaving it would let the
+reverted build read a database from the future — migrated by the newer version, with a migration
+ledger claiming it is current, so nothing re-runs to reconcile it.
+
+Because snapshots are durable across launcher restarts, a restore can meet a directory written by an
+older launcher, whose layout was a single database stored as `database` / `database-wal` /
+`database-shm`. That layout is recognised and mapped to the primary database — and under it the
+deletion rule above does **not** apply: only the primary is restored, and every other database is
+left exactly as it is. A legacy snapshot proves the launcher that wrote it was old, not that the
+server was; it says nothing about `boards.sqlite`, which may hold the only copy of the board data.
+Only the current layout can claim to know the full pre-update set.
+
+A directory matching _neither_ layout makes the restore **refuse loudly** rather than proceed: a
+restore that recognises nothing would otherwise delete the databases and restore nothing. Failing is
+recoverable by hand; deleting is not.
+
+This makes trial migrations and writes reversible without requiring down migrations. The snapshot is
+retained across launcher restarts and is removed only after commit or after both restore and the
+terminal rollback state are durable.
 
 The protocol version is part of the safety boundary. A target that requires database snapshots is
-blocked when the installed launcher is too old. Upgrade the launcher once with:
+blocked when the installed launcher is too old. Protocol 3 is the version that snapshots every
+database in the state directory; a server keeping data in more than one file (t3o's
+`boards.sqlite`) must not be trialled under an older launcher, which would snapshot only
+`state.sqlite` and leave the rest migrated forward after a rollback. Upgrade the launcher once with:
 
 ```sh
 npx t3@<version> service update

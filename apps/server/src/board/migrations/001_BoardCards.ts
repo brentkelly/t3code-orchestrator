@@ -8,7 +8,7 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`
-    CREATE TABLE IF NOT EXISTS board_cards (
+    CREATE TABLE IF NOT EXISTS boards.board_cards (
       card_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -18,7 +18,7 @@ export default Effect.gen(function* () {
   `;
 
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_board_cards_project_created
+    CREATE INDEX IF NOT EXISTS boards.idx_board_cards_project_created
     ON board_cards(project_id, created_at)
   `;
 });
