@@ -48,6 +48,7 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -301,6 +302,15 @@ export type Harness = {
   readonly setBaseTip: (ref: string, tip: string) => void;
 };
 
+/**
+ * The harness's stand-in for an engine dispatch refusal. Tagged rather than a bare
+ * `Error` so the failure channel stays typed (the effect language service rejects
+ * untagged errors there).
+ */
+class HarnessDispatchError extends Data.TaggedError("HarnessDispatchError")<{
+  readonly message: string;
+}> {}
+
 /** Run `body` against a live reactor wired to the stateful engine double. */
 export function withGovernor(
   input: {
@@ -391,7 +401,9 @@ export function withGovernor(
         if (command.type === "thread.create") {
           if (input.rejectThreadCreate === true) {
             return yield* Effect.fail(
-              new Error(`Refusing to create thread '${String(command.threadId)}'.`),
+              new HarnessDispatchError({
+                message: `Refusing to create thread '${String(command.threadId)}'.`,
+              }),
             );
           }
           yield* Ref.update(threads, (current) => new Set(current).add(String(command.threadId)));
@@ -424,9 +436,9 @@ export function withGovernor(
         );
         if (known) return;
         return yield* Effect.fail(
-          new Error(
-            `Thread '${String(command.threadId)}' does not exist for command '${command.type}'.`,
-          ),
+          new HarnessDispatchError({
+            message: `Thread '${String(command.threadId)}' does not exist for command '${command.type}'.`,
+          }),
         );
       });
 
@@ -435,14 +447,17 @@ export function withGovernor(
         Ref.update(commands, (current) => [...current, command])
           .pipe(
             Effect.andThen(
-              isBoardCommand(command)
-                ? Ref.get(model).pipe(
-                    Effect.flatMap((rm) => decideBoardCommand({ command, readModel: rm })),
-                    Effect.flatMap((decided) =>
-                      Effect.forEach(boardDecidedEvents(decided), applyDecided, { discard: true }),
-                    ),
-                  )
-                : dispatchThreadCommand(command),
+              Effect.gen(function* () {
+                if (isBoardCommand(command)) {
+                  const rm = yield* Ref.get(model);
+                  const decided = yield* decideBoardCommand({ command, readModel: rm });
+                  yield* Effect.forEach(boardDecidedEvents(decided), applyDecided, {
+                    discard: true,
+                  });
+                  return;
+                }
+                yield* dispatchThreadCommand(command);
+              }),
             ),
           )
           .pipe(Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence }))))),

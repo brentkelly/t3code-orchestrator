@@ -8,6 +8,7 @@
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import { GitCommandError } from "@t3tools/contracts";
 
 import type { ExecuteGitInput, ExecuteGitResult, GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { pullMergedBaseBranch } from "./baseBranchSync.ts";
@@ -31,9 +32,16 @@ function fakeGit(options: FakeGitOptions): {
 } {
   const calls: Array<ExecuteGitInput> = [];
   const service = {
-    resolvePrimaryRemoteName: (_cwd: string) =>
+    resolvePrimaryRemoteName: (cwd: string) =>
       options.remoteName === undefined || options.remoteName === null
-        ? Effect.fail(new Error("no remote"))
+        ? Effect.fail(
+            new GitCommandError({
+              operation: "git.resolvePrimaryRemoteName",
+              command: "git remote",
+              cwd,
+              detail: "no remote",
+            }),
+          )
         : Effect.succeed(options.remoteName),
     execute: (input: ExecuteGitInput) => {
       calls.push(input);

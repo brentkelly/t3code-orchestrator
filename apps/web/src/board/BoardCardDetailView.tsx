@@ -1137,10 +1137,11 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const overriddenRows = modelRows.filter(
     (row) => card.modelOverrides?.[row.stageId] !== undefined,
   );
+  const soleOverriddenRow = overriddenRows.length === 1 ? overriddenRows[0] : undefined;
   const modelPillLabel =
-    overriddenRows.length === 1
-      ? `${overriddenRows[0].label} ${resolveOverrideName(overriddenRows[0])}`
-      : "Custom models";
+    soleOverriddenRow === undefined
+      ? "Custom models"
+      : `${soleOverriddenRow.label} ${resolveOverrideName(soleOverriddenRow)}`;
   const modelPillTitle = overriddenRows
     .map((row) => `${row.label}: ${resolveOverrideName(row)}`)
     .join("\n");
