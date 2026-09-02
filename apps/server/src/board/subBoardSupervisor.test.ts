@@ -30,6 +30,7 @@ import {
   codexStep,
   makeBoardCard,
   movedToBuilding,
+  NOW,
   readyWorktree,
   settingsWith,
   stepCompleted,
@@ -1011,4 +1012,247 @@ it.effect("PIPELINE 3: a child's converged review auto-merges it through to Done
         assert.strictEqual(cardStage(after, BoardCardId.make("card-one")), DONE);
       }),
   ),
+);
+
+// ---------------------------------------------------------------------------
+// Restarting a child's merge stage by hand.
+//
+// The merge role's re-entry rule ("not armed means open a clean
+// human-in-the-loop conversation") is written for a top-level card, whose merge
+// must always be a deliberate click. A sub-board child is the shape that rule
+// does not describe: the human initiated it at Begin build on the parent, and
+// the arm that marks that is IN-MEMORY and is dropped by `recoverStep` the
+// moment a conflict fix escalates. So the one path a human has to rescue a
+// failed conflict fix — the card's stage-restart button — used to hand the
+// child a blank, human-in-the-loop thread that no auto-advance and no drop
+// detection would ever follow up on, and the card stranded at Merge with a
+// merged pull request.
+
+/** The on-demand kickoff the stage-restart button dispatches. */
+const stageThreadRequested = (card: BoardCard, sequence: number): OrchestrationEvent =>
+  ({
+    type: "board.card-stage-thread-requested",
+    sequence,
+    payload: { cardId: card.id, stage: card.stage },
+  }) as unknown as OrchestrationEvent;
+
+/** A merge-stage step reporting success — the testkit's own `stepCompleted` is
+    scoped to the building step id. */
+const mergeStepSucceeded = (
+  cardId: BoardCardId,
+  threadId: ThreadId,
+  sequence: number,
+): OrchestrationEvent =>
+  ({
+    type: "board.card-step-completed",
+    sequence,
+    payload: {
+      cardId,
+      completion: {
+        cardId,
+        stepId: MERGE,
+        outcome: "succeeded",
+        summary: "resolved the conflicts",
+        payload: null,
+        threadId,
+        completedAt: NOW,
+      },
+    },
+  }) as unknown as OrchestrationEvent;
+
+const selectedSteps = (commands: ReadonlyArray<OrchestrationCommand>) =>
+  commands.filter((command) => command.type === "board.card.select-step") as ReadonlyArray<{
+    readonly prompt: string;
+    readonly humanInLoop: boolean;
+  }>;
+
+/** A child at the merge stage that has ALREADY been through a conflict fix —
+    the completion is what makes the re-entry rule fire, and the tombstoned
+    link is the dead fix's thread. */
+const childRetryingMerge = () => {
+  const card: BoardCard = {
+    ...childAtMerge("card-one"),
+    threadLinks: [
+      {
+        threadId: ThreadId.make("thread-dead-fix"),
+        role: MERGE,
+        linkedAt: NOW,
+        tombstonedAt: NOW,
+      },
+    ],
+  };
+  return {
+    card,
+    completion: {
+      cardId: card.id,
+      stepId: MERGE,
+      outcome: "succeeded" as const,
+      summary: "resolved the conflicts",
+      payload: null,
+      threadId: null,
+      completedAt: NOW,
+    },
+  };
+};
+
+it.effect("restarting a child's merge stage re-attempts the MERGE, not a conversation", () =>
+  Effect.gen(function* () {
+    const { card, completion } = childRetryingMerge();
+    yield* withGovernor(
+      {
+        board: {
+          cards: [parentCard(), card],
+          stepCompletions: [completion],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        pullRequest: openPr,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(stageThreadRequested(card, 1));
+          // The forge decides, so the restart asks it: the conflict that
+          // stranded this card has since been fixed, and the card lands.
+          assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+          assert.strictEqual(cardStage(yield* h.board, card.id), DONE);
+          // And no agent was spawned to "fix" a branch with nothing wrong.
+          assert.deepStrictEqual(selectedSteps(yield* h.commands), []);
+        }),
+    );
+  }),
+);
+
+it.effect("a restart that still conflicts runs the conflict prompt UNATTENDED", () =>
+  Effect.gen(function* () {
+    const { card, completion } = childRetryingMerge();
+    yield* withGovernor(
+      {
+        board: {
+          cards: [parentCard(), card],
+          stepCompletions: [completion],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        pullRequest: openPr,
+        mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
+      },
+      (h) =>
+        Effect.gen(function* () {
+          // The restart's merge attempt re-arms the card, and the conflict step
+          // it requests comes back through this same handler — armed this time.
+          yield* h.pumpDomain(stageThreadRequested(card, 1));
+          yield* h.pumpDomain(stageThreadRequested(card, 2));
+          const selected = selectedSteps(yield* h.commands);
+          assert.equal(selected.length, 1, "one conflict step should have been selected");
+          // The regression: a blank human-in-the-loop thread. A child never
+          // gets one — nothing would resume it, and nothing would advance it.
+          assert.isFalse(selected[0]!.humanInLoop);
+          assert.isAbove(selected[0]!.prompt.trim().length, 0);
+        }),
+    );
+  }),
+);
+
+it.effect("a restart the forge refuses on POLICY spawns no agent and says why", () =>
+  Effect.gen(function* () {
+    const { card, completion } = childRetryingMerge();
+    yield* withGovernor(
+      {
+        board: {
+          cards: [parentCard(), card],
+          stepCompletions: [completion],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        pullRequest: openPr,
+        mergeFailure: "Required status check 'test' is failing.",
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(stageThreadRequested(card, 1));
+          // Asking the forge instead of assuming a conflict is the whole point:
+          // this refusal needs a human, and an agent sent to "resolve" it would
+          // merge base into a healthy branch for no reason.
+          assert.deepStrictEqual(selectedSteps(yield* h.commands), []);
+          assert.equal(mergeRefusedNotes(yield* h.commands).length, 1);
+          assert.strictEqual(cardStage(yield* h.board, card.id), MERGE);
+        }),
+    );
+  }),
+);
+
+it.effect("restarting a TOP-LEVEL card's merge stage still opens a human conversation", () =>
+  Effect.gen(function* () {
+    const card = soloAtMerge();
+    yield* withGovernor(
+      {
+        board: { cards: [card], nextCardNumberByProject: {} },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        pullRequest: openPr,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(stageThreadRequested(card, 1));
+          // The carve-out is exactly one card shape. A top-level card keeps the
+          // merge spec's rule: the restart is a conversation, and the forge is
+          // not touched until a human clicks Merge.
+          assert.deepStrictEqual(yield* h.mergeAttempts, []);
+          const selected = selectedSteps(yield* h.commands);
+          assert.equal(selected.length, 1);
+          assert.isTrue(selected[0]!.humanInLoop);
+        }),
+    );
+  }),
+);
+
+it.effect("a child's conflict fix succeeding merges even when the arm was LOST", () =>
+  Effect.gen(function* () {
+    // The arm lives in memory, so a fix that spans a server restart completes
+    // with nothing armed. The merge stage's `autoAdvance` is off by design, so
+    // before the carve-out that child stranded at Merge with its conflicts
+    // resolved and nothing left that would ever merge it.
+    const card = childAtMerge("card-one");
+    const step: BoardCardStepState = {
+      cardId: card.id,
+      stepId: MERGE,
+      stepLabel: null,
+      stageLabel: "Ready for merge",
+      attempt: 1,
+      stallCount: 0,
+      lastNudgeAt: null,
+      baseTipAtRoundStart: null,
+      lastError: null,
+      prompt: "resolve the conflicts",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5-codex",
+      mode: "build",
+      runtimeMode: "auto",
+      humanInLoop: false,
+      maxAttempts: 3,
+      timeoutMs: 1_000,
+      threadId: ThreadId.make("thread-fix"),
+      status: "running",
+      slotHeld: true,
+      startedAt: NOW,
+      updatedAt: NOW,
+    };
+    yield* withGovernor(
+      {
+        board: {
+          cards: [parentCard(), card],
+          stepStates: [step],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        pullRequest: openPr,
+        initialShells: new Map([["thread-fix", { id: "thread-fix" } as never]]),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(mergeStepSucceeded(card.id, ThreadId.make("thread-fix"), 1));
+          assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+          assert.strictEqual(cardStage(yield* h.board, card.id), DONE);
+        }),
+    );
+  }),
 );
