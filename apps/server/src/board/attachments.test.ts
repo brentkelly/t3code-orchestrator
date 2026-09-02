@@ -156,22 +156,42 @@ describe("claim, manifest, delete", () => {
       });
       assert.strictEqual(second.name, "Bug screenshot-2.png");
 
-      // A racing attach that read the same (stale) record list still lands
-      // beside the winner rather than on top of it: files on disk count.
-      const pending3 = createPendingAttachmentId();
-      NodeFS.writeFileSync(NodePath.join(attachmentsDir, `${pending3}.png`), "png-bytes");
-      const racer = yield* claimBoardCardAttachment({
-        stateDir,
-        attachmentsDir,
-        card: card([stored]),
-        pendingAttachmentId: pending3,
-        name: "Bug screenshot.png",
-        type: "image",
-        mimeType: "image/png",
-        sizeBytes: 9,
-        addedAt: NOW,
-      });
-      assert.strictEqual(racer.name, "Bug screenshot-3.png");
+      // Racing attaches that read the same (stale) record list land beside
+      // each other, never on top: the name is claimed with an exclusive
+      // create, so the filesystem decides the collision.
+      const racers = yield* Effect.all(
+        ["A", "B", "C"].map((marker) => {
+          const pendingId = createPendingAttachmentId();
+          NodeFS.writeFileSync(
+            NodePath.join(attachmentsDir, `${pendingId}.png`),
+            `png-bytes-${marker}`,
+          );
+          return claimBoardCardAttachment({
+            stateDir,
+            attachmentsDir,
+            card: card([stored]),
+            pendingAttachmentId: pendingId,
+            name: "Bug screenshot.png",
+            type: "image",
+            mimeType: "image/png",
+            sizeBytes: 11,
+            addedAt: NOW,
+          });
+        }),
+        { concurrency: "unbounded" },
+      );
+      const names = racers.map((racer) => racer.name).sort();
+      assert.deepStrictEqual(names, [
+        "Bug screenshot-2.png",
+        "Bug screenshot-3.png",
+        "Bug screenshot-4.png",
+      ]);
+      // Every file holds its own bytes — nothing was overwritten.
+      const folder = NodePath.join(stateDir, "board", "attachments", String(cardId));
+      const contents = names.map((name) =>
+        NodeFS.readFileSync(NodePath.join(folder, name), "utf8"),
+      );
+      assert.deepStrictEqual(new Set(contents).size, 3);
 
       const manifest = boardCardAttachmentManifest({
         path,
@@ -228,6 +248,18 @@ describe("claim, manifest, delete", () => {
         claimBoardCardAttachment({ ...base, pendingAttachmentId: pendingId }),
       );
       assert.strictEqual(mismatch.failure.reason, "rejected");
+      // An image over upstream's image cap is refused even though the file
+      // mint would have accepted the bytes.
+      const bigImage = yield* Effect.flip(
+        claimBoardCardAttachment({
+          ...base,
+          pendingAttachmentId: pendingId,
+          type: "image",
+          mimeType: "image/png",
+          sizeBytes: 10 * 1024 * 1024 + 1,
+        }),
+      );
+      assert.include(bigImage.failure.message, "limited to");
       // A record type that disagrees with the bytes' mime is refused too.
       NodeFS.writeFileSync(NodePath.join(attachmentsDir, `${pendingId}.pdf`), "abc");
       const wrongType = yield* Effect.flip(

@@ -39,6 +39,7 @@ import {
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import { resolveBoardCardAttachmentPath } from "../board/attachments.ts"; // T3o: t3o-32
+import { SAFE_IMAGE_FILE_EXTENSIONS } from "../imageMime.ts"; // T3o: t3o-32
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -348,16 +349,21 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       if (!boardPath || !boardExists) {
         return yield* new AssetAttachmentNotFoundError({ resource: input.resource });
       }
+      // Inline only for a file whose STORED extension is a safe image type,
+      // and only under an image mime: the client's mime alone must not be
+      // able to move a `.html` file record onto the inline branch (the
+      // octet-stream vetting runs on downloads). Everything else downloads.
       const boardMime = input.resource.mimeType?.split(";", 1)[0]?.trim() ?? "";
-      const boardIsVideo = INLINE_VIDEO_MIME_TYPE_PATTERN.test(boardMime);
-      const boardIsImage = /^image\//i.test(boardMime);
+      const boardExtension = path.extname(input.resource.fileName).toLowerCase();
+      const boardInlineImage =
+        /^image\//i.test(boardMime) && SAFE_IMAGE_FILE_EXTENSIONS.includes(boardExtension);
       claims = {
         version: 1,
         kind: "board-attachment",
         cardId: input.resource.cardId,
         fileName: input.resource.fileName,
-        ...(!boardIsImage && !boardIsVideo ? { download: true } : {}),
-        ...(boardMime.length > 0 ? { mimeType: boardMime } : {}),
+        ...(boardInlineImage ? {} : { download: true }),
+        ...(boardInlineImage ? { mimeType: boardMime } : {}),
         expiresAt,
       };
       fileName = input.resource.fileName;

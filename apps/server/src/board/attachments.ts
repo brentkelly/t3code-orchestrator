@@ -19,6 +19,7 @@ import {
   BOARD_CARD_ATTACHMENTS_MAX,
   BoardCardAttachmentId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type BoardCard,
   type BoardCardAttachment,
   type BoardCardId,
@@ -27,6 +28,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 
 import {
   attachmentFileExtension,
@@ -196,6 +198,17 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
       message: `'${input.name}' cannot be attached: stored size does not match.`,
     });
   }
+  // An image is pushed onto spawn turns (K4) under upstream's image cap; a
+  // pending FILE upload can be anything up to the file cap, so the cap is
+  // enforced here rather than trusted from the mint.
+  if (input.type === "image" && input.sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+    return yield* fail({
+      reason: "rejected",
+      message: `'${input.name}' cannot be attached: images are limited to ${
+        PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024)
+      } MB.`,
+    });
+  }
 
   // The record's `type` decides which spawns push the file and how it is
   // served; it must agree with the bytes' declared mime rather than be taken
@@ -212,42 +225,68 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
   if (dir === null) {
     return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });
   }
-  // De-duplicate against the card's records AND the files already in its
-  // folder: two attaches of the same name racing each other both read the
-  // same record list, so without the on-disk check the loser would copy over
-  // the winner's file and, when the decider refused its duplicate record,
-  // delete it on rollback. With it the loser lands as `name-2` and the
-  // decider accepts both — nothing is overwritten and each rollback removes
-  // only its own file.
+  // De-duplicate against the card's records, then claim the name on disk
+  // with an EXCLUSIVE create: two attaches of the same name racing each other
+  // read the same record list, and a check-then-copy would let the loser
+  // overwrite the winner's file and, when the decider refused its duplicate
+  // record, delete it on rollback. `wx` makes the collision the filesystem's
+  // to detect — the loser lands as `name-2`, the decider accepts both, and
+  // each rollback removes only its own file.
   const taken = new Set(input.card.attachments.map((attachment) => attachment.name));
-  const onDisk = yield* fileSystem
-    .readDirectory(dir)
-    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-  for (const entry of onDisk) taken.add(entry);
-  const name = dedupeBoardAttachmentName(
-    sanitizeBoardAttachmentName({ name: input.name, type: input.type, mimeType }),
-    taken,
-  );
-  const target = resolveBoardCardAttachmentPath({
-    path,
-    stateDir: input.stateDir,
-    cardId: input.card.id,
-    name,
+  const preferred = sanitizeBoardAttachmentName({
+    name: input.name,
+    type: input.type,
+    mimeType,
   });
-  if (target === null) {
-    return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });
-  }
   yield* fileSystem.makeDirectory(dir, { recursive: true }).pipe(
-    Effect.andThen(fileSystem.copyFile(sourcePath, target)),
     Effect.mapError(
       (cause) =>
         new BoardAttachmentClaimError({
           reason: "storage",
-          message: `Failed to store '${name}' for card ${input.card.key}.`,
+          message: `Failed to store '${preferred}' for card ${input.card.key}.`,
           cause,
         }),
     ),
   );
+  let name = dedupeBoardAttachmentName(preferred, taken);
+  for (let attempt = 0; ; attempt += 1) {
+    const target = resolveBoardCardAttachmentPath({
+      path,
+      stateDir: input.stateDir,
+      cardId: input.card.id,
+      name,
+    });
+    if (target === null) {
+      return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });
+    }
+    const written = yield* Stream.run(
+      fileSystem.stream(sourcePath),
+      fileSystem.sink(target, { flag: "wx" }),
+    ).pipe(
+      Effect.as(true),
+      Effect.catch((cause) =>
+        // A failed exclusive create against an existing file is a collision
+        // to retry under the next name; anything else is a storage failure.
+        fileSystem.exists(target).pipe(
+          Effect.orElseSucceed(() => false),
+          Effect.flatMap((exists) =>
+            exists && attempt < 100
+              ? Effect.succeed(false)
+              : Effect.fail(
+                  new BoardAttachmentClaimError({
+                    reason: "storage",
+                    message: `Failed to store '${name}' for card ${input.card.key}.`,
+                    cause,
+                  }),
+                ),
+          ),
+        ),
+      ),
+    );
+    if (written) break;
+    taken.add(name);
+    name = dedupeBoardAttachmentName(preferred, taken);
+  }
   return {
     id: BoardCardAttachmentId.make(uuid),
     name,
