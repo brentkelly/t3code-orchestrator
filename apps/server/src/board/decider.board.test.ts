@@ -8,6 +8,7 @@
 import {
   BOARD_SEED_LABEL_IDS,
   BOARD_SEED_LABELS,
+  BoardCardAttachmentId,
   BoardCardId,
   BoardStageId,
   BoardLabelId,
@@ -55,6 +56,7 @@ function makeCard(
     parentCardId: null,
     sourcePlanId: null,
     threadLinks: [],
+    attachments: [],
     externalRef: null,
     humanInLoop: null,
     reviewOverrides: null,
@@ -912,6 +914,99 @@ it.layer(NodeServices.layer)("board decider", (it) => {
 
   // ── Thread links ─────────────────────────────────────────────────────
 
+  it.effect("attaches a brief file, refuses a duplicate name, and detaches by id (t3o-32)", () =>
+    Effect.gen(function* () {
+      const attachment = {
+        id: BoardCardAttachmentId.make("att-1"),
+        name: "bug.png",
+        type: "image" as const,
+        mimeType: "image/png",
+        sizeBytes: 12,
+        addedAt: NOW,
+      };
+      const attached = yield* decide(
+        {
+          type: "board.card.attach",
+          commandId: CommandId.make("cmd-attach"),
+          cardId: BoardCardId.make("card-a"),
+          attachment,
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: { cards: [makeCard({ id: "card-a" })], nextCardNumberByProject: {} },
+        }),
+      );
+      assert.strictEqual(attached.type, "board.card-attached");
+      if (attached.type !== "board.card-attached") return;
+      assert.deepStrictEqual(attached.payload.card.attachments, [attachment]);
+
+      // The same name again is refused — the RPC de-duplicates before it
+      // gets here, so a collision means two writers raced.
+      const duplicate = yield* decideFail(
+        {
+          type: "board.card.attach",
+          commandId: CommandId.make("cmd-attach-2"),
+          cardId: BoardCardId.make("card-a"),
+          attachment: { ...attachment, id: BoardCardAttachmentId.make("att-2") },
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: { cards: [attached.payload.card], nextCardNumberByProject: {} },
+        }),
+      );
+      assert.include(duplicate.message, "already has an attachment named");
+
+      // One id, one card: the same id on a second card is refused.
+      const elsewhere = yield* decideFail(
+        {
+          type: "board.card.attach",
+          commandId: CommandId.make("cmd-attach-3"),
+          cardId: BoardCardId.make("card-b"),
+          attachment: { ...attachment, name: "other.png" },
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: {
+            cards: [attached.payload.card, makeCard({ id: "card-b" })],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      assert.include(elsewhere.message, "is already on card 'CARD-1'");
+
+      const unknown = yield* decideFail(
+        {
+          type: "board.card.detach",
+          commandId: CommandId.make("cmd-detach-x"),
+          cardId: BoardCardId.make("card-a"),
+          attachmentId: BoardCardAttachmentId.make("att-nope"),
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: { cards: [attached.payload.card], nextCardNumberByProject: {} },
+        }),
+      );
+      assert.include(unknown.message, "is not on card");
+
+      const detached = yield* decide(
+        {
+          type: "board.card.detach",
+          commandId: CommandId.make("cmd-detach"),
+          cardId: BoardCardId.make("card-a"),
+          attachmentId: attachment.id,
+          createdAt: NOW,
+        },
+        makeReadModel({
+          board: { cards: [attached.payload.card], nextCardNumberByProject: {} },
+        }),
+      );
+      assert.strictEqual(detached.type, "board.card-detached");
+      if (detached.type !== "board.card-detached") return;
+      assert.deepStrictEqual(detached.payload.attachment, attachment);
+      assert.deepStrictEqual(detached.payload.card.attachments, []);
+    }),
+  );
+
   it.effect("links a live thread and rejects linking it to a second card", () =>
     Effect.gen(function* () {
       const threads = [makeThread({ id: "thread-1" })];
@@ -1533,6 +1628,20 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       const awaitCard = makeCard({ id: "card-await", stage: "building" });
       const recoverCard = makeCard({ id: "card-recover", stage: "building" });
       const settleCard = makeCard({ id: "card-settle", stage: "building" });
+      const briefAttachment = {
+        id: BoardCardAttachmentId.make("att-1"),
+        name: "bug.png",
+        type: "image" as const,
+        mimeType: "image/png",
+        sizeBytes: 1024,
+        addedAt: NOW,
+      };
+      // Not in Backlog: the catalog's stage delete expects that column empty.
+      const attachedCard = makeCard({
+        id: "card-attached",
+        stage: "ready",
+        attachments: [briefAttachment],
+      });
       const readModel = makeReadModel({
         threads: [makeThread({ id: "thread-1" }), makeThread({ id: "thread-2" })],
         board: {
@@ -1549,6 +1658,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             recoverCard,
             settleCard,
             splitCard,
+            attachedCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           plans: [readyPlan, ...splitPlans],
@@ -1581,6 +1691,20 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           commandId: CommandId.make("cmd-update"),
           cardId: BoardCardId.make("card-ready"),
           title: "Renamed",
+          createdAt: NOW,
+        },
+        "board.card.attach": {
+          type: "board.card.attach",
+          commandId: CommandId.make("cmd-attach"),
+          cardId: BoardCardId.make("card-ready"),
+          attachment: { ...briefAttachment, id: BoardCardAttachmentId.make("att-2") },
+          createdAt: NOW,
+        },
+        "board.card.detach": {
+          type: "board.card.detach",
+          commandId: CommandId.make("cmd-detach"),
+          cardId: BoardCardId.make("card-attached"),
+          attachmentId: briefAttachment.id,
           createdAt: NOW,
         },
         "board.card.link-thread": {

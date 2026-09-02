@@ -10,6 +10,7 @@
  * path end to end.
  */
 import {
+  BoardCardAttachmentId,
   BoardCardId,
   boardPlanId,
   BoardStageId,
@@ -135,6 +136,38 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const context = yield* boardHandlers.board_get_card_context().pipe(withScope(linkedThread));
       assert.strictEqual(context.card.id, cardId);
       assert.strictEqual(context.card.key, "CARD-1");
+    }),
+  );
+
+  it.effect("lists the brief's attachments with absolute paths the agent can read (t3o-32)", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const engine = yield* OrchestrationEngineService;
+      const config = yield* ServerConfig;
+      yield* engine.dispatch({
+        type: "board.card.attach",
+        commandId: CommandId.make("cmd-attach"),
+        cardId,
+        attachment: {
+          id: BoardCardAttachmentId.make("att-1"),
+          name: "bug.png",
+          type: "image",
+          mimeType: "image/png",
+          sizeBytes: 12,
+          addedAt: t0,
+        },
+        createdAt: t0,
+      });
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(linkedThread));
+      assert.strictEqual(context.attachments.length, 1);
+      const [entry] = context.attachments;
+      assert.strictEqual(entry?.name, "bug.png");
+      assert.strictEqual(entry?.type, "image");
+      assert.isTrue(entry !== undefined && entry.path.startsWith(config.stateDir));
+      assert.isTrue(entry?.path.endsWith(`board/attachments/${cardId}/bug.png`));
+      // The aggregate carries the record too (K5): the count on the shell and
+      // the list on the detail both derive from it.
+      assert.strictEqual(context.card.attachments.length, 1);
     }),
   );
 

@@ -58,6 +58,8 @@ import {
   isBoardTerminalStepStatus,
   makeBoardCardShell,
   ProviderInstanceId,
+  BoardCardAttachment,
+  sortBoardCardAttachments,
   sortBoardCardThreadLinks,
   type BoardCardDetail,
   type BoardPlanWithBody,
@@ -185,6 +187,19 @@ const BoardCardThreadLinkDbRow = Schema.Struct({
   tombstonedAt: BoardCardThreadLink.fields.tombstonedAt,
 });
 type BoardCardThreadLinkDbRow = typeof BoardCardThreadLinkDbRow.Type;
+
+// Brief attachment row (032_BoardCardAttachments, t3o-32): the mirror of
+// `BoardCard.attachments`, rewritten wholesale like the thread links.
+const BoardCardAttachmentDbRow = Schema.Struct({
+  attachmentId: BoardCardAttachment.fields.id,
+  cardId: BoardCardId,
+  name: BoardCardAttachment.fields.name,
+  type: BoardCardAttachment.fields.type,
+  mimeType: BoardCardAttachment.fields.mimeType,
+  sizeBytes: BoardCardAttachment.fields.sizeBytes,
+  addedAt: BoardCardAttachment.fields.addedAt,
+});
+type BoardCardAttachmentDbRow = typeof BoardCardAttachmentDbRow.Type;
 
 // Label catalogue row (904_BoardLabels). `deletedAt` NULL means live.
 const BoardLabelDbRow = Schema.Struct({
@@ -464,6 +479,9 @@ const BoardCardShellDbRow = Schema.Struct({
   /** The card's `board_plans` rows, counted in SQL so a thousand-card shell
       never loads a plan body. */
   planCount: Schema.Int,
+  /** `board_card_attachments` rows, counted in SQL (t3o-32) — the shell's
+      `attachmentCount`; the delta path derives it from `card.attachments`. */
+  attachmentCount: Schema.Int,
   /** The card's PR number, read straight out of the `pull_request` JSON. Only
       the NUMBER, not the whole struct: it is all the shell carries, and
       pulling the URL and state onto every card would spend wire bytes the
@@ -535,10 +553,22 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
   };
 }
 
+function rowToBoardCardAttachment(row: BoardCardAttachmentDbRow): BoardCardAttachment {
+  return {
+    id: row.attachmentId,
+    name: row.name,
+    type: row.type,
+    mimeType: row.mimeType,
+    sizeBytes: row.sizeBytes,
+    addedAt: row.addedAt,
+  };
+}
+
 function rowToBoardCard(
   row: BoardCardDbRow,
   threadLinks: ReadonlyArray<BoardCardThreadLink>,
   labels: ReadonlyArray<BoardLabelId>,
+  attachments: ReadonlyArray<BoardCardAttachment>,
 ): BoardCard {
   return {
     id: row.cardId,
@@ -563,6 +593,7 @@ function rowToBoardCard(
     modelOverrides: row.modelOverrides,
     blocked: row.blocked !== 0,
     threadLinks,
+    attachments,
     archivedAt: row.archivedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -772,6 +803,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         END AS "briefHasImage",
         (SELECT COUNT(*) FROM board_plans WHERE board_plans.card_id = board_cards.card_id)
           AS "planCount",
+        (SELECT COUNT(*) FROM board_card_attachments
+          WHERE board_card_attachments.card_id = board_cards.card_id)
+          AS "attachmentCount",
         -- The SECOND producer of prNumber. The delta path derives it in JS
         -- from the card aggregate; this derives it in SQL from the same
         -- column, and the two must agree - a badge that appears after an edit
@@ -818,6 +852,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- both queries decode through one row schema.
         0 AS "briefHasImage",
         0 AS "planCount",
+        (SELECT COUNT(*) FROM board_card_attachments
+          WHERE board_card_attachments.card_id = board_cards.card_id)
+          AS "attachmentCount",
         -- Unlike the two indicators above this is a plain column read, not a
         -- correlated subquery, so the archive list carries it for free — and
         -- an archived card's PR is exactly what you look for when working out
@@ -938,6 +975,41 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         tombstoned_at AS "tombstonedAt"
       FROM board_card_thread_links
       WHERE card_id = ${cardId}
+    `,
+  });
+
+  const listBoardCardAttachmentRowsForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardAttachmentDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        attachment_id AS "attachmentId",
+        card_id AS "cardId",
+        name,
+        type,
+        mime_type AS "mimeType",
+        size_bytes AS "sizeBytes",
+        added_at AS "addedAt"
+      FROM board_card_attachments
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  // Every card's attachment rows, for rehydration — read once and grouped per
+  // card, exactly like the thread links.
+  const listBoardCardAttachmentRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardCardAttachmentDbRow,
+    execute: () => sql`
+      SELECT
+        attachment_id AS "attachmentId",
+        card_id AS "cardId",
+        name,
+        type,
+        mime_type AS "mimeType",
+        size_bytes AS "sizeBytes",
+        added_at AS "addedAt"
+      FROM board_card_attachments
     `,
   });
 
@@ -1065,6 +1137,45 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role = excluded.role,
         linked_at = excluded.linked_at,
         tombstoned_at = excluded.tombstoned_at
+    `,
+  });
+
+  const deleteBoardCardAttachmentsForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_card_attachments
+      WHERE card_id = ${cardId}
+    `,
+  });
+
+  const insertBoardCardAttachmentRow = SqlSchema.void({
+    Request: BoardCardAttachmentDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_card_attachments (
+        attachment_id,
+        card_id,
+        name,
+        type,
+        mime_type,
+        size_bytes,
+        added_at
+      )
+      VALUES (
+        ${row.attachmentId},
+        ${row.cardId},
+        ${row.name},
+        ${row.type},
+        ${row.mimeType},
+        ${row.sizeBytes},
+        ${row.addedAt}
+      )
+      ON CONFLICT (card_id, attachment_id)
+      DO UPDATE SET
+        name = excluded.name,
+        type = excluded.type,
+        mime_type = excluded.mime_type,
+        size_bytes = excluded.size_bytes,
+        added_at = excluded.added_at
     `,
   });
 
@@ -1711,6 +1822,10 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     raiseBoardCardNumberFloor,
     deleteBoardCardThreadLinksForCard,
     insertBoardCardThreadLinkRow,
+    listBoardCardAttachmentRowsForCard,
+    listBoardCardAttachmentRows,
+    deleteBoardCardAttachmentsForCard,
+    insertBoardCardAttachmentRow,
     upsertBoardCardBodyRow,
     deleteBoardCardBodyRow,
     upsertBoardLabelRow,
@@ -1777,6 +1892,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       yield* queries.deleteBoardCardRow(card.id);
       yield* queries.deleteBoardCardBodiesForCard(card.id);
       yield* queries.deleteBoardCardThreadLinksForCard(card.id);
+      yield* queries.deleteBoardCardAttachmentsForCard(card.id);
       yield* queries.deleteBoardCardLabelsForCard(card.id);
       yield* queries.deleteBoardCardActivityForCard(card.id);
       yield* queries.deleteBoardCardStepsForCard(card.id);
@@ -1800,6 +1916,24 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         });
       }
     }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadLinks:query")));
+
+  // The brief's attachments (t3o-32): the same wholesale rewrite from the
+  // event's card state as the thread links, synced where they can change.
+  const syncAttachments = (card: BoardCard) =>
+    Effect.gen(function* () {
+      yield* queries.deleteBoardCardAttachmentsForCard(card.id);
+      for (const attachment of card.attachments) {
+        yield* queries.insertBoardCardAttachmentRow({
+          attachmentId: attachment.id,
+          cardId: card.id,
+          name: attachment.name,
+          type: attachment.type,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          addedAt: attachment.addedAt,
+        });
+      }
+    }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.attachments:query")));
 
   // Same wholesale-rewrite discipline for the card↔label join (t3o-06a): the
   // card's ordered label list is authoritative, and `ordinal` preserves its
@@ -2309,6 +2443,14 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         yield* dropThreadTodos(event.payload.threadId);
         return;
 
+      case "board.card-attached":
+      case "board.card-detached":
+        // Not on the Activity rail — a brief edit is not either, and the list
+        // is visible on the card itself.
+        yield* upsertCard(event.payload.card);
+        yield* syncAttachments(event.payload.card);
+        return;
+
       case "board.card-step-completed":
         yield* upsertStep(event.payload.completion);
         // Only a REVIEW step can move the review summary, and every other
@@ -2330,7 +2472,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
                 Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewCard:query")),
               );
             if (Option.isSome(cardRow)) {
-              yield* refreshReviewSummary(rowToBoardCard(cardRow.value, [], []));
+              yield* refreshReviewSummary(rowToBoardCard(cardRow.value, [], [], []));
             }
           } else {
             yield* queries
@@ -2471,6 +2613,7 @@ export function loadBoardState(
   return Effect.all([
     queries.listBoardCardRows(),
     queries.listBoardCardThreadLinkRows(),
+    queries.listBoardCardAttachmentRows(),
     queries.listNextCardNumberRows(),
     queries.listBoardLabelRows(),
     queries.listBoardStageRows(),
@@ -2483,6 +2626,7 @@ export function loadBoardState(
       ([
         cardRows,
         linkRows,
+        attachmentRows,
         counterRows,
         labelRows,
         stageRows,
@@ -2539,6 +2683,12 @@ export function loadBoardState(
           });
           linksByCard.set(row.cardId, links);
         }
+        const attachmentsByCard = new Map<BoardCardId, BoardCardAttachment[]>();
+        for (const row of attachmentRows) {
+          const attachments = attachmentsByCard.get(row.cardId) ?? [];
+          attachments.push(rowToBoardCardAttachment(row));
+          attachmentsByCard.set(row.cardId, attachments);
+        }
         const labelsByCard = groupCardLabels(cardLabelRows);
         // Agent write-path slices (t3o-08): rehydrated with the same shared JS
         // comparators the replay path uses. Omitted (not empty) when no event
@@ -2593,6 +2743,7 @@ export function loadBoardState(
                 row,
                 sortBoardCardThreadLinks(linksByCard.get(row.cardId) ?? []),
                 labelsByCard.get(row.cardId) ?? [],
+                sortBoardCardAttachments(attachmentsByCard.get(row.cardId) ?? []),
               ),
             )
             .sort(compareBoardCards),
@@ -2720,6 +2871,7 @@ export function withBoardShellCards(
           hasBrief: row.hasBrief !== 0,
           briefHasImage: row.briefHasImage !== 0,
           planCount: row.planCount,
+          attachmentCount: row.attachmentCount,
           prNumber: row.prNumber,
           // Sub-board membership (t3o-23, D1/D6): the client scopes the root
           // board and the sub-board off this key, and derives a parent's plan
@@ -2811,6 +2963,7 @@ export function withBoardArchivedShellCards(
             blocked: row.blocked !== 0,
             dependencyCount: row.dependencyCount,
             hasBrief: row.hasBrief !== 0,
+            attachmentCount: row.attachmentCount,
             prNumber: row.prNumber,
             parentCardId: row.parentCardId,
             archivedAt: row.archivedAt,
@@ -2902,6 +3055,7 @@ export function makeBoardCardDetailLoader(
     Effect.all([
       queries.findBoardCardRow(cardId),
       queries.listBoardCardThreadLinkRowsForCard(cardId),
+      queries.listBoardCardAttachmentRowsForCard(cardId),
       queries.findBoardCardBodyRow({ cardId, kind: BOARD_CARD_BRIEF_BODY_KIND }),
       queries.listBoardCardLabelRowsForCard(cardId),
       queries.listBoardCardDependencyRefRows(cardId),
@@ -2916,6 +3070,7 @@ export function makeBoardCardDetailLoader(
         ([
           cardRow,
           linkRows,
+          attachmentRows,
           bodyRow,
           labelRows,
           dependencyRows,
@@ -2938,7 +3093,10 @@ export function makeBoardCardDetailLoader(
           const labels = [...labelRows]
             .sort((left, right) => left.ordinal - right.ordinal)
             .map((row) => row.labelId);
-          const card = rowToBoardCard(cardRow.value, links, labels);
+          const attachments = sortBoardCardAttachments(
+            attachmentRows.map(rowToBoardCardAttachment),
+          );
+          const card = rowToBoardCard(cardRow.value, links, labels, attachments);
           // `dependsOn` order is the card's order — the SQL returns a set, so
           // the sequence is restored here rather than trusted from the rows.
           // An id whose row is gone is simply dropped: the chip has nothing to

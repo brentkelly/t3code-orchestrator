@@ -317,6 +317,10 @@ table below (rows added on this sync are listed here, not yet expanded into the 
 `orphanedProviderSessionStartup.integration.test.ts` 2 (supervisor reactor mocks),
 `OrchestrationEventStore.test.ts` 1.
 
+Brief attachments (`t3o-32`) added 6 markers: `contracts/assets.ts` 1, `AssetAccess.ts` 4 (import,
+claims member, mint case, resolve branch) and `ws.ts` +1 (6). The upload, storage, claim and
+manifest all live in board-owned files (`board/attachments.ts`, migration `032`).
+
 The **unified status palette** (see [Status colours](./status-colours.md)) added 12 markers across
 9 upstream-owned files, 8 of them newly marked: `apps/web/src/index.css` 3 (the `--attention`
 token), `Sidebar.logic.ts` 1 and `Sidebar.tsx` 2 (thread status pills), `ComposerBanner.tsx` 1 (the
@@ -405,6 +409,12 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/auth/RpcAuthorization.ts`                             | `t3o-04`     | Board scopes join `RPC_REQUIRED_SCOPES`                                                   | registry spread (`BOARD_RPC_SCOPES`)                                     |
 | `apps/server/src/ws.ts`                                                | `t3o-04`     | Import board RPC handler factory                                                          | one-line append (import)                                                 |
 | `apps/server/src/ws.ts`                                                | `t3o-04`     | Board RPC handlers join the `toLayer` handler record                                      | spread (injected factory call, `boardRpcHandlers(deps)`)                 |
+| `apps/server/src/ws.ts`                                                | `t3o-32`     | `board-attachment` asset resources mint like chat attachments                             | one-line predicate widening (frozen)                                     |
+| `packages/contracts/src/assets.ts`                                     | `t3o-32`     | `board-attachment` member of `AssetResource` (card folder + filename)                     | union member (frozen)                                                    |
+| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | Import the board attachment path resolver                                                 | one-line append (import)                                                 |
+| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | `board-attachment` claims member (card folder + filename, download/mime)                  | union member (frozen)                                                    |
+| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | `issueAssetUrl` mints a board attachment (same disposition rules as `attachment`)         | `case` delegating to the board resolver                                  |
+| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | `resolveAsset` serves a board attachment from the card folder                             | predicate branch delegating to the board resolver                        |
 | `packages/client-runtime/src/rpc/client.ts`                            | `t3o-04`     | Import board subscription tag type                                                        | one-line append (type import)                                            |
 | `packages/client-runtime/src/rpc/client.ts`                            | `t3o-04`     | Board tags join `EnvironmentSubscriptionRpcTag`                                           | one-line union member (`BoardSubscriptionRpcTag`, grows in board.ts)     |
 | `packages/contracts/src/settings.ts`                                   | `t3o-07`     | Import `BoardSettings` / `BoardSettingsPatch` from board.ts                               | one-line append (import)                                                 |

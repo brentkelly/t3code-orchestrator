@@ -53,6 +53,7 @@ import {
   boardModelSelectionOfOverride,
   type BoardCardStageModelOverride,
   ThreadId,
+  type ChatAttachment,
   type BoardCard,
   type BoardCardId,
   type BoardCardPullRequest,
@@ -71,7 +72,9 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -80,6 +83,7 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -87,6 +91,11 @@ import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts"
 import { boardSnapshotQueryMethodsOf } from "./projection.ts";
 import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { pullMergedBaseBranch } from "./baseBranchSync.ts";
+import {
+  removeBoardCardAttachmentsDir,
+  spawnPushesBriefImages,
+  stageBoardCardImagesAsPending,
+} from "./attachments.ts";
 import { deleteCardBranch } from "./branchCleanup.ts";
 import {
   assertSingleBoardWorktreeWriter,
@@ -691,6 +700,44 @@ const make = Effect.gen(function* () {
   // thread id. Shared by the initial spawn and by recovery when the step's
   // thread has vanished (reaped/deleted). The card↔thread link is what lets the
   // agent's board_* tools resolve their card (the MCP write path keys on it, D3).
+  // The one push (t3o-32, K4): a build-mode or plan-mode spawn carries the
+  // brief's images natively, so a "screenshot plus 'fix this'" card is seen on
+  // turn one. Staged as fresh pending uploads so upstream's Normalizer claims
+  // them into thread scope untouched. Absent config (the test harness) means
+  // nothing to stage — the manifest still reaches every thread through
+  // `board_get_card_context`.
+  const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  // The reactor's shape promises `never` requirements, so the file services
+  // its storage helpers need are captured here and provided at the call.
+  const fileSystem = yield* FileSystem.FileSystem;
+  const pathService = yield* Path.Path;
+  const withFileServices = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, pathService),
+    );
+  const stageSpawnAttachments = (card: BoardCard) =>
+    Option.match(serverConfig, {
+      onNone: () => Effect.succeed([] as ReadonlyArray<ChatAttachment>),
+      onSome: (config) =>
+        card.attachments.length === 0 || !spawnPushesBriefImages(boardSeedStageRole(card.stage))
+          ? Effect.succeed([] as ReadonlyArray<ChatAttachment>)
+          : withFileServices(
+              stageBoardCardImagesAsPending({
+                stateDir: config.stateDir,
+                attachmentsDir: config.attachmentsDir,
+                card,
+              }),
+            ).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("board supervisor: staging brief images for spawn failed", {
+                  cardId: card.id,
+                  cause: Cause.pretty(cause),
+                }).pipe(Effect.as([] as ReadonlyArray<ChatAttachment>)),
+              ),
+            ),
+    });
+
   const spawnStepThread = Effect.fn("board-supervisor-spawnStepThread")(function* (input: {
     readonly card: BoardCard;
     /** The frozen run-row fields a spawn needs (D12). */
@@ -719,6 +766,8 @@ const make = Effect.gen(function* () {
     /** Whether to run the worktree setup script — build only. */
     readonly runSetup: boolean;
     readonly text: string;
+    /** The brief's images on a build/plan spawn (t3o-32, K4); `[]` elsewhere. */
+    readonly attachments: ReadonlyArray<ChatAttachment>;
   }) {
     const { card, step } = input;
     const threadId = yield* freshThreadId;
@@ -762,7 +811,7 @@ const make = Effect.gen(function* () {
         messageId: yield* freshMessageId,
         role: "user",
         text: input.text,
-        attachments: [],
+        attachments: input.attachments,
       },
       runtimeMode,
       interactionMode: "default",
@@ -924,8 +973,10 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const spawnAttachments = yield* stageSpawnAttachments(card);
     const threadId = yield* spawnStepThread({
       card,
+      attachments: spawnAttachments,
       step: {
         stepId: state.stepId,
         stepLabel: state.stepLabel,
@@ -1015,8 +1066,10 @@ const make = Effect.gen(function* () {
       yield* escalateSpawnFailure({ card, state });
       return;
     }
+    const spawnAttachments = yield* stageSpawnAttachments(card);
     const threadId = yield* spawnStepThread({
       card,
+      attachments: spawnAttachments,
       step: {
         stepId: state.stepId,
         stepLabel: state.stepLabel,
@@ -2033,6 +2086,7 @@ const make = Effect.gen(function* () {
           branch: respawnTarget.branch,
           runSetup: false,
           text: decision.nudge,
+          attachments: [],
         });
         // A respawn that produced no thread sent nothing. Escalating here is
         // what keeps the failure visible: the `!acted` arm below leaves the
@@ -3090,6 +3144,16 @@ const make = Effect.gen(function* () {
         threadId,
       });
     }
+
+    // The brief's files go with the card (t3o-32, K1): board-owned storage,
+    // so nothing else will ever reclaim it.
+    yield* Option.match(serverConfig, {
+      onNone: () => Effect.void,
+      onSome: (config) =>
+        withFileServices(
+          removeBoardCardAttachmentsDir({ stateDir: config.stateDir, cardId: card.id }),
+        ),
+    });
 
     const worktree = card.worktree;
     if (worktree !== null) {

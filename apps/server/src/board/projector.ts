@@ -25,6 +25,8 @@ import {
   BoardCardReorderedPayload,
   BoardCardStepCompletedPayload,
   BoardCardThreadLinkedPayload,
+  BoardCardAttachedPayload,
+  BoardCardDetachedPayload,
   BoardCardThreadUnlinkedPayload,
   BoardCardUnarchivedPayload,
   BoardCardWorktreeFailedPayload,
@@ -93,6 +95,8 @@ const decodeBoardCardThreadLinkedPayload = Schema.decodeUnknownEffect(BoardCardT
 const decodeBoardCardThreadUnlinkedPayload = Schema.decodeUnknownEffect(
   BoardCardThreadUnlinkedPayload,
 );
+const decodeBoardCardAttachedPayload = Schema.decodeUnknownEffect(BoardCardAttachedPayload);
+const decodeBoardCardDetachedPayload = Schema.decodeUnknownEffect(BoardCardDetachedPayload);
 const decodeBoardCardArchivedPayload = Schema.decodeUnknownEffect(BoardCardArchivedPayload);
 const decodeBoardCardDeletedPayload = Schema.decodeUnknownEffect(BoardCardDeletedPayload);
 const decodeBoardCardUnarchivedPayload = Schema.decodeUnknownEffect(BoardCardUnarchivedPayload);
@@ -189,6 +193,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     parentCardId: payload.parentCardId ?? null,
     sourcePlanId: payload.sourcePlanId ?? null,
     threadLinks: [],
+    attachments: [],
     externalRef: null,
     // Per-card human-in-the-loop override is untouched at birth (D6), and so
     // are the review-loop overrides (t3o-22, D2) and the per-stage model
@@ -476,6 +481,18 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    case "board.card-attached":
+      return decodeBoardCardAttachedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-detached":
+      return decodeBoardCardDetachedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     case "board.card-archived":
       // The card stays in the model (archivedAt set) so unarchive can
       // restore it on replay; only the shell drops it.
@@ -725,6 +742,10 @@ export function boardShellStreamEvent(
     case "board.card-reordered":
     case "board.card-thread-linked":
     case "board.card-thread-unlinked":
+    // The attachment count IS on the shell (t3o-32) and rides the aggregate,
+    // so the card-upserted delta carries the real value.
+    case "board.card-attached":
+    case "board.card-detached":
     case "board.card-unarchived":
     // Worktree lifecycle (t3o-09) is not itself on the bounded shell — the
     // full worktree state rides board.subscribeCard detail (D7) — but the

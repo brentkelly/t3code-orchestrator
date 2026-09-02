@@ -24,6 +24,8 @@
  */
 import {
   BOARD_WS_METHODS,
+  type BoardAttachCardFileInput,
+  type BoardDetachCardFileInput,
   compareBoardStages,
   deriveBoardCardThreadState,
   isBoardShellStreamEvent,
@@ -66,6 +68,8 @@ import {
   deleteBoardLabel,
   deleteBoardStage,
   linkBoardCardThread,
+  attachBoardCardFile,
+  detachBoardCardFile,
   mergeBoardCardPullRequest,
   moveBoardCard,
   refreshBoardCardPullRequest,
@@ -821,6 +825,16 @@ export function createBoardEnvironmentAtoms<R, ER>(
     mergeCardPullRequest: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:merge-card-pull-request",
       execute: (input: { readonly cardId: BoardCardId }) => mergeBoardCardPullRequest(input),
+    }),
+    /** Attach a pending upload to a card's brief (t3o-32). Resolves with the
+        stored record — the name may have been de-duplicated server-side. */
+    attachCardFile: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:attach-card-file",
+      execute: (input: BoardAttachCardFileInput) => attachBoardCardFile(input),
+    }),
+    detachCardFile: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:detach-card-file",
+      execute: (input: BoardDetachCardFileInput) => detachBoardCardFile(input),
     }),
     reorderCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reorder-card",

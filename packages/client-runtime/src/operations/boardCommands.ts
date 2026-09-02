@@ -16,7 +16,9 @@ import {
   BOARD_WS_METHODS,
   CommandId,
   ORCHESTRATION_WS_METHODS,
+  type BoardAttachCardFileInput,
   type BoardCardId,
+  type BoardDetachCardFileInput,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -98,6 +100,14 @@ export const refreshBoardCardPullRequest = (input: { readonly cardId: BoardCardI
 
 export const mergeBoardCardPullRequest = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.mergeCardPullRequest, input);
+
+/** Claim a pending upload onto a card's brief (t3o-32): the server copies the
+    file into the card's folder and records it, in that order. */
+export const attachBoardCardFile = (input: BoardAttachCardFileInput) =>
+  request(BOARD_WS_METHODS.attachCardFile, input);
+
+export const detachBoardCardFile = (input: BoardDetachCardFileInput) =>
+  request(BOARD_WS_METHODS.detachCardFile, input);
 
 export const createBoardCard: (input: CreateBoardCardInput) => CommandEffect = Effect.fn(
   "BoardCommands.createBoardCard",

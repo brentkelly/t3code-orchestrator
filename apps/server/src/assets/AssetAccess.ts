@@ -1,4 +1,4 @@
-import type { AssetResource } from "@t3tools/contracts";
+import type { AssetResource, BoardCardId } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
   AssetPreviewTypeValidationError,
@@ -38,6 +38,8 @@ import {
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
+import { resolveBoardCardAttachmentPath } from "../board/attachments.ts"; // T3o: t3o-32
+import { SAFE_IMAGE_FILE_EXTENSIONS } from "../imageMime.ts"; // T3o: t3o-32
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -86,6 +88,17 @@ const AssetClaimsSchema = Schema.Union([
     /** Display name and mime the caller supplied at mint time; drive the
         download filename and Content-Type. */
     fileName: Schema.optionalKey(Schema.String),
+    mimeType: Schema.optionalKey(Schema.String),
+    expiresAt: Schema.Number,
+  }),
+  // T3o: a card's brief attachment (t3o-32, K8), resolved under the board's
+  // own storage rather than `attachmentsDir`.
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("board-attachment"),
+    cardId: Schema.String,
+    fileName: Schema.String,
+    download: Schema.optionalKey(Schema.Boolean),
     mimeType: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
@@ -320,6 +333,42 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = input.resource.fileName ?? path.basename(attachmentPath);
       break;
     }
+    // T3o: brief attachments (t3o-32, K8) — same disposition rules as
+    // `attachment`, keyed by card folder + filename.
+    case "board-attachment": {
+      const config = yield* ServerConfig.ServerConfig;
+      const boardPath = resolveBoardCardAttachmentPath({
+        path,
+        stateDir: config.stateDir,
+        cardId: input.resource.cardId as BoardCardId,
+        name: input.resource.fileName,
+      });
+      const boardExists =
+        boardPath !== null &&
+        (yield* fileSystem.exists(boardPath).pipe(Effect.orElseSucceed(() => false)));
+      if (!boardPath || !boardExists) {
+        return yield* new AssetAttachmentNotFoundError({ resource: input.resource });
+      }
+      // Inline only for a file whose STORED extension is a safe image type,
+      // and only under an image mime: the client's mime alone must not be
+      // able to move a `.html` file record onto the inline branch (the
+      // octet-stream vetting runs on downloads). Everything else downloads.
+      const boardMime = input.resource.mimeType?.split(";", 1)[0]?.trim() ?? "";
+      const boardExtension = path.extname(input.resource.fileName).toLowerCase();
+      const boardInlineImage =
+        /^image\//i.test(boardMime) && SAFE_IMAGE_FILE_EXTENSIONS.has(boardExtension);
+      claims = {
+        version: 1,
+        kind: "board-attachment",
+        cardId: input.resource.cardId,
+        fileName: input.resource.fileName,
+        ...(boardInlineImage ? {} : { download: true }),
+        ...(boardInlineImage ? { mimeType: boardMime } : {}),
+        expiresAt,
+      };
+      fileName = input.resource.fileName;
+      break;
+    }
     case "project-favicon": {
       const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(input.resource.cwd).pipe(
         Effect.mapError(
@@ -494,6 +543,32 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           path: attachmentPath,
           ...(claims.download ? { download: true } : {}),
           ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
+          ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
+        } satisfies ResolvedAsset)
+      : null;
+  }
+
+  // T3o: brief attachments (t3o-32, K8).
+  if (claims.kind === "board-attachment") {
+    const config = yield* ServerConfig.ServerConfig;
+    const path = yield* Path.Path;
+    const boardPath = resolveBoardCardAttachmentPath({
+      path,
+      stateDir: config.stateDir,
+      cardId: claims.cardId as BoardCardId,
+      name: claims.fileName,
+    });
+    if (!boardPath) return null;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const info = yield* optionOnNotFound(fileSystem.stat(boardPath)).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    return Option.isSome(info) && info.value.type === "File"
+      ? ({
+          kind: "file",
+          path: boardPath,
+          ...(claims.download ? { download: true } : {}),
+          fileName: claims.fileName,
           ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
         } satisfies ResolvedAsset)
       : null;

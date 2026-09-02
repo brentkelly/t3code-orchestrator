@@ -61,6 +61,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlots, BoardStepSlotsLive } from "./BoardStepSlots.ts";
 import {
@@ -124,6 +125,7 @@ export const makeBoardCard = (input: {
   parentCardId: null,
   sourcePlanId: null,
   threadLinks: [],
+  attachments: [],
   externalRef: null,
   humanInLoop: null,
   reviewOverrides: null,
@@ -355,6 +357,10 @@ export function withGovernor(
       string,
       { readonly advancedAt: string | null; readonly hasList: boolean }
     >;
+    /** A `ServerConfig` layer (t3o-32): with one, a build/plan spawn stages
+        the card's brief images from `<stateDir>/board/attachments`; without
+        one the reactor stages nothing, as the other tests expect. */
+    readonly serverConfig?: Layer.Layer<ServerConfig.ServerConfig>;
   },
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
@@ -630,6 +636,7 @@ export function withGovernor(
       Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
       Layer.succeed(BoardPullRequestGateway, pullRequestStub),
       BoardStepSlotsLive,
+      input.serverConfig ?? Layer.empty,
     );
 
     yield* Effect.scoped(

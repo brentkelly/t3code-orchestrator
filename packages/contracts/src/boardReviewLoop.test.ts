@@ -427,6 +427,7 @@ describe("replay equals rehydration for a pre-t3o-22 log", () => {
       dependsOn: [],
       parentCardId: null,
       threadLinks: [],
+      attachments: [],
       externalRef: null,
       blocked: false,
       archivedAt: null,

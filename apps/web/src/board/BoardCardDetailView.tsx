@@ -36,6 +36,8 @@ import {
   liveBoardCardDependents,
   parseReviewStepId,
   sortBoardCardThreadLinks,
+  BOARD_CARD_ATTACHMENTS_MAX,
+  type BoardCardAttachment,
   type BoardCardDetail,
   type BoardCardId,
   type BoardCardShell,
@@ -94,6 +96,13 @@ import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
+import {
+  BoardBriefAttachRow,
+  BoardBriefThumbnailStrip,
+  boardBriefDropClass,
+  useBoardBriefAttachments,
+} from "./BoardBriefAttachments";
+import type { BoardAttachmentLimits, BoardPendingUpload } from "./boardAttachmentUpload";
 import { BoardDeleteConfirmDialog } from "./BoardDeleteConfirmDialog";
 import { BoardLabelChips } from "./BoardLabelChips";
 import { BoardLabelField } from "./BoardLabelField";
@@ -309,6 +318,12 @@ export interface BoardCardDetailViewProps {
   readonly onUndeleteLabel: (labelId: BoardLabelId) => void;
   readonly onSaveTitle: (title: string) => void;
   readonly onSaveBrief: (brief: string | null) => void;
+  /** What the environment allows for brief attachments (t3o-32). */
+  readonly attachmentLimits: BoardAttachmentLimits;
+  /** Claim an uploaded file onto the card. Resolves null on success, or the
+      message the staged row shows. Changes persist immediately (K9). */
+  readonly onAttachFile: (upload: BoardPendingUpload) => Promise<string | null>;
+  readonly onDetachFile: (attachmentId: BoardCardAttachment["id"]) => void;
   readonly onAddDependency: (cardId: BoardCardId) => void;
   readonly onRemoveDependency: (cardId: BoardCardId) => void;
   readonly onMoveStage: (toStage: BoardStageId) => void;
@@ -455,56 +470,132 @@ function TitleBody({
 function BriefBody({
   brief,
   onSave,
+  environmentId,
+  cardId,
+  attachments,
+  attachmentLimits,
+  onAttachFile,
+  onDetachFile,
 }: {
   readonly brief: string | null;
   readonly onSave: (brief: string | null) => void;
+  readonly environmentId: EnvironmentId;
+  readonly cardId: BoardCardId;
+  readonly attachments: ReadonlyArray<BoardCardAttachment>;
+  readonly attachmentLimits: BoardAttachmentLimits;
+  readonly onAttachFile: (upload: BoardPendingUpload) => Promise<string | null>;
+  readonly onDetachFile: (attachmentId: BoardCardAttachment["id"]) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(brief ?? "");
+  // Brief attachments (t3o-32, K9): thumbnails above the text in both modes,
+  // the attach row below. Each change persists at once, so the row stays
+  // live whether or not the text is being edited.
+  const staged = useBoardBriefAttachments({
+    environmentId,
+    limits: attachmentLimits,
+    persistedCount: attachments.length,
+    maxAttachments: BOARD_CARD_ATTACHMENTS_MAX,
+    onUploaded: async (upload) => (await onAttachFile(upload)) ?? "consumed",
+  });
   const commit = () => {
     const trimmed = draft.trim();
     const next = trimmed.length === 0 ? null : trimmed;
     if (next !== (brief ?? null)) onSave(next);
     setEditing(false);
   };
+  const attachRow = (
+    <BoardBriefAttachRow
+      attachments={attachments}
+      cardId={cardId}
+      editable
+      environmentId={environmentId}
+      onDetach={onDetachFile}
+      state={staged}
+    />
+  );
   if (editing) {
     return (
-      <Textarea
-        autoFocus
-        className="min-h-24 text-[13.5px]/[1.6]"
-        onBlur={commit}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            setDraft(brief ?? "");
-            setEditing(false);
-          }
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) commit();
-        }}
-        placeholder="Describe the work… (⌘⏎ to save, Esc to cancel)"
-        value={draft}
-      />
+      <>
+        <div
+          className={cn(
+            "-mx-[7px] -my-1 flex flex-col gap-2 rounded-lg border bg-muted px-[7px] py-1 shadow-[0_0_0_1px_var(--primary)]",
+            boardBriefDropClass(staged.dropZone === "brief"),
+          )}
+          onDragLeave={staged.handlers.onDragLeave}
+          onDragOver={staged.handlers.onBriefDragOver}
+          onDrop={staged.handlers.onDrop}
+        >
+          <BoardBriefThumbnailStrip
+            attachments={attachments}
+            cardId={cardId}
+            className="pt-1"
+            editable
+            environmentId={environmentId}
+            onDetach={onDetachFile}
+            state={staged}
+          />
+          <Textarea
+            autoFocus
+            className="min-h-24 text-[13.5px]/[1.6]"
+            onBlur={commit}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setDraft(brief ?? "");
+                setEditing(false);
+              }
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) commit();
+            }}
+            onPaste={staged.handlers.onPaste}
+            placeholder="Describe the task. Paste screenshots (⌘V) or drop files in here."
+            unstyled
+            value={draft}
+          />
+        </div>
+        {attachRow}
+      </>
     );
   }
   // Click-to-edit in place, the prototype's affordance: the brief reads as
-  // prose until you touch it, with the hover tint as the only hint.
+  // prose until you touch it, with the hover tint as the only hint. The
+  // strip renders without its badges here (view mode, K9); a drop still
+  // attaches, since that is never a text edit.
   return (
-    <BoardHint label="Click to edit">
-      <button
-        className="-mx-[7px] -my-1 rounded-lg px-[7px] py-1 text-left text-[13.5px]/[1.6] hover:bg-accent"
-        onClick={() => {
-          setDraft(brief ?? "");
-          setEditing(true);
-        }}
-        type="button"
-      >
-        {brief === null ? (
-          <span className="text-muted-foreground">Add a brief…</span>
-        ) : (
-          <span className="whitespace-pre-wrap text-pretty text-foreground">{brief}</span>
-        )}
-      </button>
-    </BoardHint>
+    <>
+      <BoardBriefThumbnailStrip
+        attachments={attachments}
+        cardId={cardId}
+        className="mb-2.5"
+        editable={false}
+        environmentId={environmentId}
+        onDetach={null}
+        state={staged}
+      />
+      <BoardHint label="Click to edit">
+        <button
+          className={cn(
+            "-mx-[7px] -my-1 w-[calc(100%+14px)] rounded-lg border px-[7px] py-1 text-left text-[13.5px]/[1.6] hover:bg-accent",
+            boardBriefDropClass(staged.dropZone === "brief"),
+          )}
+          onClick={() => {
+            setDraft(brief ?? "");
+            setEditing(true);
+          }}
+          onDragLeave={staged.handlers.onDragLeave}
+          onDragOver={staged.handlers.onBriefDragOver}
+          onDrop={staged.handlers.onDrop}
+          type="button"
+        >
+          {brief === null ? (
+            <span className="text-muted-foreground">Add a brief…</span>
+          ) : (
+            <span className="whitespace-pre-wrap text-pretty text-foreground">{brief}</span>
+          )}
+        </button>
+      </BoardHint>
+      {attachRow}
+    </>
   );
 }
 
@@ -1383,7 +1474,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 </button>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto px-4.5 pt-4 pb-6">
-                <BriefBody brief={props.detail.brief} onSave={props.onSaveBrief} />
+                <BriefBody
+                  attachmentLimits={props.attachmentLimits}
+                  attachments={props.detail.card.attachments}
+                  brief={props.detail.brief}
+                  cardId={props.detail.card.id}
+                  environmentId={props.environmentId}
+                  onAttachFile={props.onAttachFile}
+                  onDetachFile={props.onDetachFile}
+                  onSave={props.onSaveBrief}
+                />
               </div>
             </section>
           ) : activePane === "review" ? (
@@ -1528,7 +1628,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
               <div className="min-w-0">
                 <SectionHeading className="mb-[7px]">Brief</SectionHeading>
-                <BriefBody brief={props.detail.brief} onSave={props.onSaveBrief} />
+                <BriefBody
+                  attachmentLimits={props.attachmentLimits}
+                  attachments={props.detail.card.attachments}
+                  brief={props.detail.brief}
+                  cardId={props.detail.card.id}
+                  environmentId={props.environmentId}
+                  onAttachFile={props.onAttachFile}
+                  onDetachFile={props.onDetachFile}
+                  onSave={props.onSaveBrief}
+                />
               </div>
 
               <div className="min-w-0">
