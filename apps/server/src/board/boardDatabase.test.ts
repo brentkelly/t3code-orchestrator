@@ -283,4 +283,49 @@ describe("board database", () => {
       );
     }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
   );
+  // A data-destroying gate must fail closed: two EMPTY ledgers differ by zero
+  // rows via EXCEPT, which would otherwise read as a "proven copy" and let the
+  // relocation overwrite boards from main. Divergent data with empty ledgers on
+  // both sides is not reachable today, but the gate must refuse it regardless of
+  // that invariant holding.
+  it.effect("refuses when both ledgers are empty rather than treating it as a copy", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* attachBoardDatabase();
+
+      // Data on both sides, ledgers present but EMPTY on both.
+      yield* sql`CREATE TABLE main.board_cards (card_id TEXT NOT NULL PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL)`;
+      yield* sql`INSERT INTO main.board_cards VALUES ('card-m', 'proj', 'Main')`;
+      yield* sql`CREATE TABLE boards.board_cards (card_id TEXT NOT NULL PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL)`;
+      yield* sql`INSERT INTO boards.board_cards VALUES ('card-b', 'proj', 'Boards')`;
+      for (const schema of ["main", "boards"] as const) {
+        yield* sql`
+          CREATE TABLE ${sql(`${schema}.t3o_sql_migrations`)} (
+            migration_id integer PRIMARY KEY NOT NULL,
+            created_at datetime NOT NULL DEFAULT current_timestamp,
+            name VARCHAR(255) NOT NULL
+          )
+        `;
+      }
+
+      const outcome = yield* relocateBoardSchema().pipe(
+        Effect.as("relocated" as const),
+        Effect.catchTag("BoardRelocationConflictError", () => Effect.succeed("refused" as const)),
+      );
+      assert.strictEqual(outcome, "refused");
+      // Both copies untouched.
+      assert.deepStrictEqual(
+        (yield* sql<{ readonly title: string }>`SELECT title FROM main.board_cards`).map(
+          (r) => r.title,
+        ),
+        ["Main"],
+      );
+      assert.deepStrictEqual(
+        (yield* sql<{ readonly title: string }>`SELECT title FROM boards.board_cards`).map(
+          (r) => r.title,
+        ),
+        ["Boards"],
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  );
 });

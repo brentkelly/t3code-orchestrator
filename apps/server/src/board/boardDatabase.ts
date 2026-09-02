@@ -95,6 +95,20 @@ export const resolveBoardDatabasePath = (mainFile: string): string => {
 /** Row-for-row equality of the two migration ledgers, timestamps included. */
 const ledgersIdentical = Effect.fn("ledgersIdentical")(function* () {
   const sql = yield* SqlClient.SqlClient;
+  // At least one shared row is REQUIRED. A symmetric EXCEPT of zero is also zero
+  // when BOTH ledgers are empty, which would read as a proven copy and let the
+  // relocation overwrite `boards` from `main`. A populated board schema always
+  // carries a stamped ledger, so two-empty-but-data-divergent is not reachable
+  // today — but resting the safety of a data-destroying gate on that external
+  // invariant is the fragility the check should not have. Requiring a shared row
+  // makes the empty case fail closed (refuse), never open (overwrite).
+  const shared = yield* sql<{ readonly n: number }>`
+    SELECT COUNT(*) AS n FROM (
+      SELECT migration_id, name, created_at FROM main.t3o_sql_migrations
+      INTERSECT
+      SELECT migration_id, name, created_at FROM boards.t3o_sql_migrations
+    )
+  `;
   const onlyInMain = yield* sql<{ readonly n: number }>`
     SELECT COUNT(*) AS n FROM (
       SELECT migration_id, name, created_at FROM main.t3o_sql_migrations
@@ -109,7 +123,9 @@ const ledgersIdentical = Effect.fn("ledgersIdentical")(function* () {
       SELECT migration_id, name, created_at FROM main.t3o_sql_migrations
     )
   `;
-  return (onlyInMain[0]?.n ?? 1) === 0 && (onlyInBoards[0]?.n ?? 1) === 0;
+  return (
+    (shared[0]?.n ?? 0) > 0 && (onlyInMain[0]?.n ?? 1) === 0 && (onlyInBoards[0]?.n ?? 1) === 0
+  );
 });
 
 /**
