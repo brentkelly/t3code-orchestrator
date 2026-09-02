@@ -165,6 +165,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-success: var(--success);
   --color-info-foreground: var(--info-foreground);
   --color-info: var(--info);
+  /* T3o: the third status colour. Green means done, blue means work is
+     running, and violet means the work has stopped to ask you something —
+     three tones the board, the sidebar and the composer all share. */
+  --color-attention-foreground: var(--attention-foreground);
+  --color-attention: var(--attention);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-ring: var(--ring);
   --color-input: var(--contrast-input);
@@ -979,6 +984,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --destructive-foreground: var(--error-foreground);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
+  /* T3o: awaiting-input violet (see the `--color-attention` note above). */
+  --attention: var(--color-violet-500);
+  --attention-foreground: var(--color-violet-700);
   --success: var(--color-emerald-500);
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
@@ -1029,6 +1037,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
     --info-foreground: var(--color-blue-400);
+    /* T3o: awaiting-input violet, lifted for dark like its neighbours. */
+    --attention-foreground: var(--color-violet-400);
     --success-foreground: var(--color-emerald-400);
     --warning-foreground: var(--color-amber-400);
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);

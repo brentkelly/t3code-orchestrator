@@ -24,6 +24,10 @@ decisions with their rationale and rejected alternatives. Per-feature specs are 
 **Status:** the board is built and in use. Upstream is synced to `v0.0.38` (`t3o-31`); the seam
 inventory and sync runbook are in `docs/t3o/seams.md`.
 
+**Status colours are a fixed vocabulary.** Green means done and only done, blue means running,
+violet (`--attention`) means waiting on a human, amber means blocked. Read
+`docs/t3o/status-colours.md` before giving any status indicator a colour.
+
 ### Plans are tracked here
 
 Upstream's "Plans and work artifacts" section below says not to commit plans and gitignores

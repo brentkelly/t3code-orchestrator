@@ -132,7 +132,7 @@ function PlanRow({
       <button
         className={cn(
           "flex w-full items-center gap-[11px] rounded-[10px] border px-3 py-2.5 text-left shadow-xs",
-          row.live?.awaitingInput === true ? "border-info/50" : "border-border",
+          row.live?.awaitingInput === true ? "border-attention/50" : "border-border",
           row.done ? "bg-foreground/3" : "bg-card",
           row.state !== "live" && "opacity-70",
           openable ? "hover:border-foreground/20" : "cursor-default",
@@ -167,7 +167,7 @@ function PlanRow({
             Stalled
           </span>
         ) : row.live?.awaitingInput === true ? (
-          <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-info-foreground">
+          <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-attention-foreground">
             <CircleAlertIcon className="size-3" />
             Input needed
           </span>
@@ -178,7 +178,7 @@ function PlanRow({
             <span
               aria-label="Working"
               role="img"
-              className="size-[11px] shrink-0 animate-spin rounded-full border-[1.8px] border-muted-foreground/25 border-t-muted-foreground"
+              className="size-[11px] shrink-0 animate-spin rounded-full border-[1.8px] border-[color-mix(in_srgb,var(--info)_25%,transparent)] border-t-info-foreground"
             />
           </BoardHint>
         ) : null}

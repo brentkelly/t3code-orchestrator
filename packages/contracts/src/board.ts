@@ -1952,10 +1952,10 @@ export const BOARD_CARD_ATTENTION_REASONS = [
 export type BoardCardAttentionReason = (typeof BOARD_CARD_ATTENTION_REASONS)[number];
 
 /** How loudly a reason reads on the card face. Per-reason rather than one
-    colour for all: blue already means "a thread is waiting on you" and amber
+    colour for all: violet already means "a thread is waiting on you" and amber
     "a decision is waiting on you", and collapsing them would cost information
     the board has been carrying since t3o-18. */
-export type BoardCardAttentionTone = "danger" | "warning" | "info";
+export type BoardCardAttentionTone = "danger" | "warning" | "attention";
 
 export type BoardCardAttention = {
   readonly reason: BoardCardAttentionReason;
@@ -1971,7 +1971,7 @@ const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> 
   approval: "warning",
   "review-held": "warning",
   held: "warning",
-  input: "info",
+  input: "attention",
 };
 
 /**

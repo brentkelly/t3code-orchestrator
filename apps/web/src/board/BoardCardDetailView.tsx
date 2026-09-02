@@ -555,7 +555,7 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
                     {link.title ?? "Deleted thread"}
                   </span>
                   {link.awaitingInput ? (
-                    <CircleAlertIcon className="size-3 shrink-0 text-info-foreground" />
+                    <CircleAlertIcon className="size-3 shrink-0 text-attention-foreground" />
                   ) : null}
                 </div>
                 <span className="text-[10.5px] text-muted-foreground">

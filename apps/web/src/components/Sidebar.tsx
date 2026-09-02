@@ -862,7 +862,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           // Working is a background state, so it rests at the dim end of what
           // the old pulse cycled through; only the thread you have open gets
           // the label at full strength.
-          className: cn("text-sky-600 dark:text-sky-400", !props.isActive && "opacity-75"),
+          // T3o: blue is the running colour everywhere now (board included).
+          className: cn("text-info-foreground", !props.isActive && "opacity-75"),
         }
       : status === "monitoring"
         ? {
@@ -870,7 +871,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             // (monitoring-pill D6), so it keeps the label at full strength.
             label: "Monitoring",
             icon: null,
-            className: "text-sky-600 dark:text-sky-400",
+            className: "text-info-foreground",
           }
         : status === "approval"
           ? {
@@ -882,7 +883,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             ? {
                 label: "Input",
                 icon: null,
-                className: "text-indigo-600 dark:text-indigo-300",
+                // T3o: violet is the "waiting on you" colour everywhere now.
+                className: "text-attention-foreground",
               }
             : status === "failed"
               ? {
@@ -900,7 +902,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   ? {
                       label: "Done",
                       icon: "done" as const,
-                      className: "text-emerald-700 dark:text-emerald-300",
+                      className: "text-success-foreground",
                     }
                   : null;
   const isWokeStatus = topStatus?.icon === "woke";

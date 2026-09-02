@@ -129,6 +129,8 @@ const ADAPTIVE_COLORS = {
   "--color-adaptive-sky-600-400": [color("sky", 600), color("sky", 400)],
   "--color-adaptive-sky-700-300": [color("sky", 700), color("sky", 300)],
   "--color-adaptive-violet-500-a12-a16": [color("violet", 500, 0.12), color("violet", 500, 0.16)],
+  // T3o: the "waiting on you" violet the thread list wears (status-colours.md).
+  "--color-adaptive-violet-600-300": [color("violet", 600), color("violet", 300)],
   "--color-adaptive-violet-600-400": [color("violet", 600), color("violet", 400)],
   "--color-adaptive-violet-700-300": [color("violet", 700), color("violet", 300)],
   "--color-adaptive-white-neutral-950-a70": [color("white"), color("neutral", 950, 0.7)],

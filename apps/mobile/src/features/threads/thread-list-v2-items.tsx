@@ -44,15 +44,16 @@ const MONO_FONT = Platform.select({
   default: "monospace",
 });
 
-// Status hues follow the system-wide convention set by sidebar v1 and the
-// Live Activity/widgets (amber approval, indigo input, sky working) so a
+// T3o: unified status palette — see docs/t3o/status-colours.md.
+// Status hues follow the system-wide convention set by the web sidebar and the
+// Live Activity/widgets (amber approval, violet input, blue working) so a
 // thread reads the same color everywhere it surfaces.
 const STATUS_LABEL_BY_STATUS: Partial<
   Record<ThreadListV2Status, { label: string; className: string }>
 > = {
   approval: { label: "Approval", className: "text-adaptive-amber-700-300" },
-  input: { label: "Input", className: "text-adaptive-indigo-600-300" },
-  working: { label: "Working", className: "text-adaptive-sky-600-400" },
+  input: { label: "Input", className: "text-adaptive-violet-600-300" },
+  working: { label: "Working", className: "text-adaptive-blue-600-400" },
   failed: { label: "Failed", className: "text-adaptive-red-700-300" },
 };
 

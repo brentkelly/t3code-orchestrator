@@ -75,7 +75,7 @@ export interface BoardCardQueueSlot {
  * a tone.
  *
  * The tint is a colour-MIX into the card fill, not a translucent overlay, so it
- * reads the same over the light `--card` and the dark lift — a flat `bg-info/7`
+ * reads the same over the light `--card` and the dark lift — a flat `bg-attention/7`
  * would wash out on one of them. Each table is a COMPLETE class per tone
  * because Tailwind resolves competing utilities by stylesheet order, not class
  * order, so a card must carry exactly one border / fill / shadow class.
@@ -83,7 +83,7 @@ export interface BoardCardQueueSlot {
 const TONE_BORDER: Record<BoardCardAttentionTone, string> = {
   danger: "border-destructive/60",
   warning: "border-amber-500/60",
-  info: "border-info/55",
+  attention: "border-attention/55",
 };
 
 const TONE_TINT: Record<BoardCardAttentionTone, string> = {
@@ -91,7 +91,8 @@ const TONE_TINT: Record<BoardCardAttentionTone, string> = {
     "bg-[color-mix(in_srgb,var(--destructive)_9%,var(--card))] dark:bg-[color-mix(in_srgb,var(--destructive)_12%,#1c1c20)]",
   warning:
     "bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]",
-  info: "bg-[color-mix(in_srgb,var(--info)_7%,var(--card))] dark:bg-[color-mix(in_srgb,var(--info)_9%,#1c1c20)]",
+  attention:
+    "bg-[color-mix(in_srgb,var(--attention)_7%,var(--card))] dark:bg-[color-mix(in_srgb,var(--attention)_9%,#1c1c20)]",
 };
 
 const TONE_RING: Record<BoardCardAttentionTone, string> = {
@@ -99,10 +100,11 @@ const TONE_RING: Record<BoardCardAttentionTone, string> = {
     "shadow-[0_0_0_1px_color-mix(in_srgb,var(--destructive)_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--destructive)_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
   warning:
     "shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
-  info: "shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--info)_40%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
+  attention:
+    "shadow-[0_0_0_1px_color-mix(in_srgb,var(--attention)_40%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--attention)_40%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
 };
 
-/** The chip's leading mark per reason. The blue question keeps its DOT rather
+/** The chip's leading mark per reason. The violet question keeps its DOT rather
     than an icon — the card reads as "has a thread, and it needs you", the same
     indicator as the running dot in a different colour — while the states where
     nothing is running at all wear an icon. */
@@ -111,7 +113,7 @@ const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
   approval: <LayersIcon className="size-3" />,
   "review-held": <TriangleAlertIcon className="size-3" />,
   held: <PauseIcon className="size-3" />,
-  input: <span className="size-2 shrink-0 rounded-full bg-info" />,
+  input: <span className="size-2 shrink-0 rounded-full bg-attention" />,
 };
 
 /** The chip's own colours, which are text-weight rather than surface-weight —
@@ -119,7 +121,7 @@ const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
 const TONE_CHIP: Record<BoardCardAttentionTone, string> = {
   danger: "text-destructive-foreground",
   warning: "text-amber-700 dark:text-amber-300",
-  info: "text-info-foreground",
+  attention: "text-attention-foreground",
 };
 
 export function BoardCardContent({
@@ -242,7 +244,7 @@ export function BoardCardContent({
         selected ? "border-foreground/40" : tone === null ? "border-border" : TONE_BORDER[tone],
         // The tint is a colour-MIX into the card fill, not a translucent
         // overlay, so it reads the same over the light `--card` and the dark
-        // lift below — a flat `bg-info/7` would wash out on one of them.
+        // lift below — a flat `bg-attention/7` would wash out on one of them.
         // `dark:bg-[#1c1c20]` lifts the card above the column beneath it. The
         // stock `--card` in dark is ~3% off the page background, which landed
         // BELOW the column's fill and left cards darker than the board.
@@ -289,7 +291,8 @@ export function BoardCardContent({
           </BoardHint>
         ) : null}
         {card.threadState === "working" || card.stepRunning ? (
-          // Green while the agent is working. `threadState === "working"` lights
+          // Blue while the agent is working — green is reserved for done, and
+          // nothing else on the board may wear it. `threadState === "working"` lights
           // only while a single linked thread is mid-turn; `stepRunning` is the
           // durable half — true for a card's whole admitted-and-running step — so
           // a loop stage (Code review's review/triage/adjudicate phases run as
@@ -302,7 +305,7 @@ export function BoardCardContent({
             <span
               aria-label="Thread running"
               role="img"
-              className="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
+              className="size-2 shrink-0 animate-pulse rounded-full bg-info"
             />
           </BoardHint>
         ) : null}

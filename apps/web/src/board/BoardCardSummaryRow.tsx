@@ -146,7 +146,7 @@ export function BoardCardPlansRow({
               className={cn(
                 "h-[3px] min-w-[2px] flex-1 rounded-[2px]",
                 status === BOARD_THREAD_TODO_STATUS_DONE
-                  ? "bg-emerald-500"
+                  ? "bg-success"
                   : status === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
                     ? "bg-info/60"
                     : "bg-muted-foreground/25",
@@ -200,7 +200,7 @@ export function PlanPips({ done, total }: { readonly done: number; readonly tota
               key={index}
               className={cn(
                 "size-1.5 rounded-full",
-                index < done ? "bg-emerald-500" : "bg-muted-foreground/30",
+                index < done ? "bg-success" : "bg-muted-foreground/30",
               )}
             />
           ))}
@@ -447,7 +447,7 @@ export function BoardTodoPips({
             className={cn(
               "h-[3px] min-w-[2px] flex-1 rounded-full",
               statuses[index] === BOARD_THREAD_TODO_STATUS_DONE
-                ? "bg-emerald-500"
+                ? "bg-success"
                 : statuses[index] === BOARD_THREAD_TODO_STATUS_IN_PROGRESS
                   ? "bg-info"
                   : "bg-muted-foreground/25",

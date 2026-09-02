@@ -307,7 +307,7 @@ for completeness; the code rows are the ones worth seaming.
 
 The row table below is maintained by hand and lags. The authoritative count is per file, from
 `git grep -c "T3o:"` restricted to files that exist in `main`. After the `v0.0.38` sync:
-**107 markers across 35 upstream-owned files.** Files whose count differs from their rows in the
+**121 markers across 44 upstream-owned files.** Files whose count differs from their rows in the
 table below (rows added on this sync are listed here, not yet expanded into the table):
 `serverSettings.ts` 2 (indivisible settings keys), `GitHubCli.ts` 7 (board merge path),
 `AppSidebarLayout.tsx` 3 (`isOnBoard`), `server.ts` 4 (+`BoardGitLayerLive`), `ChatView.tsx` 5
@@ -316,6 +316,14 @@ table below (rows added on this sync are listed here, not yet expanded into the 
 `OrchestrationEventStore.ts` 7 (`t3o-26` retired-event replay), `server.test.ts` 1 and
 `orphanedProviderSessionStartup.integration.test.ts` 2 (supervisor reactor mocks),
 `OrchestrationEventStore.test.ts` 1.
+
+The **unified status palette** (see [Status colours](./status-colours.md)) added 12 markers across
+9 upstream-owned files, 8 of them newly marked: `apps/web/src/index.css` 3 (the `--attention`
+token), `Sidebar.logic.ts` 1 and `Sidebar.tsx` 2 (thread status pills), `ComposerBanner.tsx` 1 (the
+`attention` banner variant) and `ChatComposer.tsx` 3 (+1, the question drawer's variant), plus four
+on mobile: `threadPresentation.ts` 1, `thread-list-v2-items.tsx` 1, `widgets/AgentActivity.tsx` 1
+and `scripts/generate-uniwind-themes.mts` 1. Every one is a colour-class or token swap — no logic
+moved, so all 12 are frozen one-line edits rather than growable seams.
 
 ---
 

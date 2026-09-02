@@ -100,7 +100,7 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
     case "card-step-completed":
       return <CheckCircle2Icon className={className} />;
     case "card-input-requested":
-      return <CircleAlertIcon className={cn(className, "text-info-foreground")} />;
+      return <CircleAlertIcon className={cn(className, "text-attention-foreground")} />;
     case "card-archived":
       return <ArchiveIcon className={className} />;
     case "card-unarchived":
@@ -118,8 +118,10 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <TriangleAlertIcon className={cn(className, "text-destructive-foreground")} />;
     case "card-branch-push-skipped":
       return <CloudOffIcon className={className} />;
+    // A stale base is a merge that cannot proceed, so it wears the blocked
+    // amber rather than the blue that now means "running".
     case "card-base-stale":
-      return <GitPullRequestIcon className={cn(className, "text-info-foreground")} />;
+      return <GitPullRequestIcon className={cn(className, "text-warning-foreground")} />;
   }
 }
 

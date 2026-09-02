@@ -124,7 +124,7 @@ describe("BoardCardContent (D7)", () => {
     );
     expect(html).toContain("2/6 plans");
     expect(html).toContain("2 of 6 plans done");
-    expect(html).toContain("bg-emerald-500");
+    expect(html).toContain("bg-success");
     expect(html).toContain("bg-info/60");
     expect(html).not.toContain("6 cards");
     // Without the drill handler (the ghost, the archive sheet) the chip is a
@@ -199,10 +199,10 @@ describe("BoardCardContent (D7)", () => {
         attention={attentionOf(shell("building", { awaitingInput: true }))}
       />,
     );
-    // Not just the badge: the fill, the border and the ring all go info-blue,
+    // Not just the badge: the fill, the border and the ring all go violet,
     // so "where am I needed" is answerable across a whole column at a glance.
-    expect(awaiting).toContain("border-info/55");
-    expect(awaiting).toContain("color-mix(in_srgb,var(--info)_7%,var(--card))");
+    expect(awaiting).toContain("border-attention/55");
+    expect(awaiting).toContain("color-mix(in_srgb,var(--attention)_7%,var(--card))");
     expect(awaiting).not.toContain("border-border");
 
     const calm = renderToStaticMarkup(
@@ -215,9 +215,9 @@ describe("BoardCardContent (D7)", () => {
       />,
     );
     expect(calm).toContain("border-border");
-    expect(calm).not.toContain("border-info/55");
+    expect(calm).not.toContain("border-attention/55");
 
-    // Selection still wins the border — the blue would otherwise read as
+    // Selection still wins the border — the violet would otherwise read as
     // "needs input" on whichever card you happened to click.
     const selected = renderToStaticMarkup(
       <BoardCardContent
@@ -228,7 +228,7 @@ describe("BoardCardContent (D7)", () => {
       />,
     );
     expect(selected).toContain("border-foreground/40");
-    expect(selected).not.toContain("border-info/55");
+    expect(selected).not.toContain("border-attention/55");
   });
 
   it("renders a distinct stalled badge, separate from the awaiting-input treatment (t3o-17, D3)", () => {
@@ -276,7 +276,7 @@ describe("BoardCardContent (D7)", () => {
       />,
     );
     expect(html).toContain("Thread running");
-    expect(html).toContain("bg-emerald-500");
+    expect(html).toContain("bg-info");
     // The working dot pulses so an actively-worked card reads at a glance.
     expect(html).toContain("animate-pulse");
   });
@@ -421,7 +421,7 @@ describe("cards that need a human (attention)", () => {
       cards: [parent, asking, alsoAsking],
       stages: BOARD_SEED_STAGES,
     }).get(parent.cardId);
-    expect(inherited?.tone).toBe("info");
+    expect(inherited?.tone).toBe("attention");
     expect(inherited?.childCount).toBe(2);
 
     const html = renderToStaticMarkup(
@@ -434,7 +434,7 @@ describe("cards that need a human (attention)", () => {
         childAttention={inherited}
       />,
     );
-    expect(html).toContain("border-info/55");
+    expect(html).toContain("border-attention/55");
     expect(html).toContain("2 children need you");
   });
 
