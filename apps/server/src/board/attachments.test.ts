@@ -156,6 +156,23 @@ describe("claim, manifest, delete", () => {
       });
       assert.strictEqual(second.name, "Bug screenshot-2.png");
 
+      // A racing attach that read the same (stale) record list still lands
+      // beside the winner rather than on top of it: files on disk count.
+      const pending3 = createPendingAttachmentId();
+      NodeFS.writeFileSync(NodePath.join(attachmentsDir, `${pending3}.png`), "png-bytes");
+      const racer = yield* claimBoardCardAttachment({
+        stateDir,
+        attachmentsDir,
+        card: card([stored]),
+        pendingAttachmentId: pending3,
+        name: "Bug screenshot.png",
+        type: "image",
+        mimeType: "image/png",
+        sizeBytes: 9,
+        addedAt: NOW,
+      });
+      assert.strictEqual(racer.name, "Bug screenshot-3.png");
+
       const manifest = boardCardAttachmentManifest({
         path,
         stateDir,
@@ -211,6 +228,12 @@ describe("claim, manifest, delete", () => {
         claimBoardCardAttachment({ ...base, pendingAttachmentId: pendingId }),
       );
       assert.strictEqual(mismatch.failure.reason, "rejected");
+      // A record type that disagrees with the bytes' mime is refused too.
+      NodeFS.writeFileSync(NodePath.join(attachmentsDir, `${pendingId}.pdf`), "abc");
+      const wrongType = yield* Effect.flip(
+        claimBoardCardAttachment({ ...base, pendingAttachmentId: pendingId, type: "image" }),
+      );
+      assert.include(wrongType.failure.message, "does not match its content type");
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
   );

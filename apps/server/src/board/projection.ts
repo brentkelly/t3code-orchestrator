@@ -3112,7 +3112,6 @@ export function makeBoardCardDetailLoader(
               onNone: () => null,
               onSome: (row) => row.body,
             }),
-            attachments,
             dependencies: card.dependsOn.flatMap((dependencyId) => {
               const row = dependencyRefsById.get(dependencyId);
               return row === undefined ? [] : [row];

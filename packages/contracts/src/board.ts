@@ -4756,13 +4756,6 @@ export const BoardCardDetail = Schema.Struct({
   card: BoardCard,
   /** Brief body text, or null when the card has no brief. */
   brief: Schema.NullOr(TrimmedNonEmptyString),
-  /** The brief's attachments (t3o-32) in canonical order — the same list as
-      `card.attachments`, surfaced here so the modal renders thumbnails and
-      chips without reaching into the aggregate. Decodes to `[]` on legacy
-      detail payloads. */
-  attachments: Schema.Array(BoardCardAttachment).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
   /** The PARENT card's per-stage model overrides (t3o-29, D4) for a sub-board
       child; null for a top-level card, or a parent that overrides nothing.
 

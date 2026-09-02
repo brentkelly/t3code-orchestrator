@@ -99,7 +99,6 @@ function detail(
     parentModelOverrides: null,
     stepError: null,
     stepCompletions: edges?.stepCompletions ?? [],
-    attachments: [],
   };
 }
 

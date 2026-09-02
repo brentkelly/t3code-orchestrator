@@ -80,6 +80,11 @@ export function useBoardBriefAttachments(input: {
   const [dropZone, setDropZone] = useState<BoardDropZone>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const runtimes = useRef(new Map<string, StagedRuntime>());
+  // The latest rows, readable from callbacks without capturing a render: the
+  // release side effects below must run once, outside React's updater, which
+  // may be invoked more than once.
+  const stagedRef = useRef(staged);
+  stagedRef.current = staged;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { environmentId, limits, onUploaded } = input;
   const capacityLeft = Math.max(0, input.maxAttachments - input.persistedCount - staged.length);
@@ -189,14 +194,12 @@ export function useBoardBriefAttachments(input: {
         runtime.abort?.();
         runtimes.current.delete(id);
       }
-      setStaged((rows) => {
-        const row = rows.find((candidate) => candidate.id === id);
-        if (row?.previewUrl) URL.revokeObjectURL(row.previewUrl);
-        if (row?.upload && row.status !== "attaching") {
-          releaseBoardPendingUpload(environmentId, row.upload.pendingAttachmentId);
-        }
-        return rows.filter((candidate) => candidate.id !== id);
-      });
+      const row = stagedRef.current.find((candidate) => candidate.id === id);
+      if (row?.previewUrl) URL.revokeObjectURL(row.previewUrl);
+      if (row?.upload && row.status !== "attaching") {
+        releaseBoardPendingUpload(environmentId, row.upload.pendingAttachmentId);
+      }
+      setStaged((rows) => rows.filter((candidate) => candidate.id !== id));
     },
     [environmentId],
   );
@@ -265,19 +268,17 @@ export function useBoardBriefAttachments(input: {
   /** Drop every staged row, releasing local previews and unclaimed uploads —
       the dialog's reset on its open edge. */
   const clear = useCallback(() => {
-    setStaged((rows) => {
-      for (const row of rows) {
-        const runtime = runtimes.current.get(row.id);
-        if (runtime) {
-          runtime.cancelled = true;
-          runtime.abort?.();
-        }
-        if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
-        if (row.upload) releaseBoardPendingUpload(environmentId, row.upload.pendingAttachmentId);
+    for (const row of stagedRef.current) {
+      const runtime = runtimes.current.get(row.id);
+      if (runtime) {
+        runtime.cancelled = true;
+        runtime.abort?.();
       }
-      runtimes.current.clear();
-      return [];
-    });
+      if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
+      if (row.upload) releaseBoardPendingUpload(environmentId, row.upload.pendingAttachmentId);
+    }
+    runtimes.current.clear();
+    setStaged([]);
     setNotice(null);
   }, [environmentId]);
 

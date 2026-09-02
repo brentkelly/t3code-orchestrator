@@ -197,22 +197,44 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     });
   }
 
+  // The record's `type` decides which spawns push the file and how it is
+  // served; it must agree with the bytes' declared mime rather than be taken
+  // on the client's word.
+  const mimeType = input.mimeType.toLowerCase();
+  if ((input.type === "image") !== mimeType.startsWith("image/")) {
+    return yield* fail({
+      reason: "rejected",
+      message: `'${input.name}' cannot be attached: its type does not match its content type.`,
+    });
+  }
+
+  const dir = boardCardAttachmentsDir({ path, stateDir: input.stateDir, cardId: input.card.id });
+  if (dir === null) {
+    return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });
+  }
+  // De-duplicate against the card's records AND the files already in its
+  // folder: two attaches of the same name racing each other both read the
+  // same record list, so without the on-disk check the loser would copy over
+  // the winner's file and, when the decider refused its duplicate record,
+  // delete it on rollback. With it the loser lands as `name-2` and the
+  // decider accepts both — nothing is overwritten and each rollback removes
+  // only its own file.
   const taken = new Set(input.card.attachments.map((attachment) => attachment.name));
+  const onDisk = yield* fileSystem
+    .readDirectory(dir)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  for (const entry of onDisk) taken.add(entry);
   const name = dedupeBoardAttachmentName(
-    sanitizeBoardAttachmentName({ name: input.name, type: input.type, mimeType: input.mimeType }),
+    sanitizeBoardAttachmentName({ name: input.name, type: input.type, mimeType }),
     taken,
   );
-  const dir = boardCardAttachmentsDir({ path, stateDir: input.stateDir, cardId: input.card.id });
-  const target =
-    dir === null
-      ? null
-      : resolveBoardCardAttachmentPath({
-          path,
-          stateDir: input.stateDir,
-          cardId: input.card.id,
-          name,
-        });
-  if (dir === null || target === null) {
+  const target = resolveBoardCardAttachmentPath({
+    path,
+    stateDir: input.stateDir,
+    cardId: input.card.id,
+    name,
+  });
+  if (target === null) {
     return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });
   }
   yield* fileSystem.makeDirectory(dir, { recursive: true }).pipe(
@@ -230,7 +252,7 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     id: BoardCardAttachmentId.make(uuid),
     name,
     type: input.type,
-    mimeType: input.mimeType.toLowerCase(),
+    mimeType,
     sizeBytes: input.sizeBytes,
     addedAt: input.addedAt,
   } satisfies BoardCardAttachment;

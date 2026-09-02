@@ -291,7 +291,9 @@ export function BoardCardCreateDialog({
         if (attached._tag === "Failure") failures.push(upload.name);
       }
       if (failures.length > 0) {
-        setSubmitting(false);
+        // The card exists, so Create must not re-arm — a second click would
+        // make a duplicate. `submitting` stays true (Create disabled); the
+        // message says what to do and Cancel closes the dialog.
         setFeedback(
           `Card created, but ${failures.join(", ")} could not be attached. Open the card to attach ${
             failures.length === 1 ? "it" : "them"

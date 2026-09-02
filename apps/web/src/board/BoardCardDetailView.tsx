@@ -1476,7 +1476,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               <div className="min-h-0 flex-1 overflow-y-auto px-4.5 pt-4 pb-6">
                 <BriefBody
                   attachmentLimits={props.attachmentLimits}
-                  attachments={props.detail.attachments}
+                  attachments={props.detail.card.attachments}
                   brief={props.detail.brief}
                   cardId={props.detail.card.id}
                   environmentId={props.environmentId}
@@ -1630,7 +1630,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 <SectionHeading className="mb-[7px]">Brief</SectionHeading>
                 <BriefBody
                   attachmentLimits={props.attachmentLimits}
-                  attachments={props.detail.attachments}
+                  attachments={props.detail.card.attachments}
                   brief={props.detail.brief}
                   cardId={props.detail.card.id}
                   environmentId={props.environmentId}
