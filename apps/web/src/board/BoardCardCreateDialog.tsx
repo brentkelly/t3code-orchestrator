@@ -16,6 +16,7 @@
  * enforces existence + the dependency gate; this is a convenience, not the guard.
  */
 import {
+  BOARD_CARD_ATTACHMENTS_MAX,
   BOARD_SEED_STAGES,
   BoardCardId,
   BoardLabelId,
@@ -49,6 +50,7 @@ import {
 import { Textarea } from "../components/ui/textarea";
 import { cn, randomUUID } from "../lib/utils";
 import { boardEnvironment } from "../state/board";
+import { useEnvironment } from "../state/environments";
 import { environmentShell } from "../state/shell";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
@@ -58,6 +60,13 @@ import {
   BoardSectionHeading,
   type BoardDependencyEntry,
 } from "./BoardCardFields";
+import {
+  BoardBriefAttachRow,
+  BoardBriefThumbnailStrip,
+  boardBriefDropClass,
+  useBoardBriefAttachments,
+} from "./BoardBriefAttachments";
+import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { BoardLabelField } from "./BoardLabelField";
 import { boardStageLabel } from "./boardStages";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
@@ -102,6 +111,9 @@ export function BoardCardCreateDialog({
   const boardSettings = usePrimarySettings((settings) => settings.board);
   const updateSettings = useUpdatePrimarySettings();
   const createCard = useAtomCommand(boardEnvironment.createCard);
+  // Attach failures after a successful create are reported in the dialog's
+  // own feedback line, not the global toast.
+  const attachCardFile = useAtomCommand(boardEnvironment.attachCardFile, { reportFailure: false });
   const createLabel = useAtomCommand(boardEnvironment.createLabel);
   const updateLabel = useAtomCommand(boardEnvironment.updateLabel);
   const deleteLabel = useAtomCommand(boardEnvironment.deleteLabel);
@@ -109,6 +121,21 @@ export function BoardCardCreateDialog({
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
   const allCards = snapshot?.cards ?? [];
+
+  // Brief attachments (t3o-32, K6): staged as pending uploads while the user
+  // types, claimed onto the card right after `board.card.create` returns.
+  const environment = useEnvironment(environmentId);
+  const attachmentLimits = boardAttachmentLimits(
+    environment?.serverConfig?.environment.capabilities ?? null,
+  );
+  const briefAttachments = useBoardBriefAttachments({
+    environmentId,
+    limits: attachmentLimits,
+    persistedCount: 0,
+    maxAttachments: BOARD_CARD_ATTACHMENTS_MAX,
+    onUploaded: () => Promise.resolve("keep" as const),
+  });
+  const clearBriefAttachments = briefAttachments.clear;
 
   const initialProjectId = defaultProjectId ?? projects[0]?.id ?? null;
   const [projectId, setProjectId] = useState<ProjectId | null>(initialProjectId);
@@ -136,9 +163,10 @@ export function BoardCardCreateDialog({
       setDependsOn([]);
       setFeedback(null);
       setSubmitting(false);
+      clearBriefAttachments();
     }
     wasOpen.current = open;
-  }, [open, defaultProjectId, defaultStage, projects]);
+  }, [open, defaultProjectId, defaultStage, projects, clearBriefAttachments]);
 
   // Dependencies stay inside one project, so the picker only offers cards from
   // the project this card is being created in. A child's picker is narrower
@@ -192,7 +220,14 @@ export function BoardCardCreateDialog({
         );
   }, [stages, subBoardParentId]);
 
-  const canSubmit = title.trim().length > 0 && projectId !== null && !submitting;
+  // Like the composer's send button: every upload must have landed, and a
+  // failed one must be retried or removed, before the card can be created.
+  const canSubmit =
+    title.trim().length > 0 &&
+    projectId !== null &&
+    !submitting &&
+    !briefAttachments.busy &&
+    !briefAttachments.failed;
 
   const submit = () => {
     if (projectId === null) return;
@@ -222,10 +257,14 @@ export function BoardCardCreateDialog({
         },
       });
     }
+    const cardId = BoardCardId.make(randomUUID());
+    const uploads = briefAttachments.staged.flatMap((row) =>
+      row.status === "uploaded" && row.upload !== null ? [row.upload] : [],
+    );
     void createCard({
       environmentId,
       input: {
-        cardId: BoardCardId.make(randomUUID()),
+        cardId,
         projectId,
         title: trimmedTitle,
         stage,
@@ -238,10 +277,27 @@ export function BoardCardCreateDialog({
         keyPrefix: prefix,
         orderKey: boardColumnAppendOrderKey(targetColumn),
       },
-    }).then((result) => {
+    }).then(async (result) => {
       if (result._tag === "Failure") {
         setSubmitting(false);
         if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+        return;
+      }
+      // The card exists; claim each staged upload onto it (K6). A claim that
+      // fails leaves a card without that file — say so rather than pretend.
+      const failures: string[] = [];
+      for (const upload of uploads) {
+        const attached = await attachCardFile({ environmentId, input: { cardId, ...upload } });
+        if (attached._tag === "Failure") failures.push(upload.name);
+      }
+      if (failures.length > 0) {
+        setSubmitting(false);
+        setFeedback(
+          `Card created, but ${failures.join(", ")} could not be attached. Open the card to attach ${
+            failures.length === 1 ? "it" : "them"
+          } again.`,
+        );
+        briefAttachments.clear();
         return;
       }
       onOpenChange(false);
@@ -386,13 +442,44 @@ export function BoardCardCreateDialog({
 
           <div className="min-w-0">
             <BoardSectionHeading className="mb-[7px]">Brief</BoardSectionHeading>
-            {/* Same control the card modal's brief opens into, so the text you
-                type here reads identically once the card exists. */}
-            <Textarea
-              className="min-h-24 text-[13.5px]/[1.6]"
-              onChange={(event) => setBrief(event.target.value)}
-              placeholder="Describe the work…"
-              value={brief}
+            {/* The brief is a container (K9): pasted screenshots land as
+                thumbnails on top, the text below; files drop here or on the
+                attach row underneath. Same control the card modal's brief
+                opens into, so the text reads identically once the card exists. */}
+            <div
+              className={cn(
+                "flex flex-col overflow-hidden rounded-lg border border-input bg-background shadow-xs/5 transition-colors",
+                briefAttachments.dropZone === "brief" && boardBriefDropClass(true),
+              )}
+              onDragLeave={briefAttachments.handlers.onDragLeave}
+              onDragOver={briefAttachments.handlers.onBriefDragOver}
+              onDrop={briefAttachments.handlers.onDrop}
+            >
+              <BoardBriefThumbnailStrip
+                attachments={[]}
+                cardId={null}
+                className="px-3 pt-2.5"
+                editable
+                environmentId={environmentId}
+                onDetach={null}
+                state={briefAttachments}
+              />
+              <Textarea
+                className="min-h-24 text-[13.5px]/[1.6]"
+                onChange={(event) => setBrief(event.target.value)}
+                onPaste={briefAttachments.handlers.onPaste}
+                placeholder="What's the context? Paste screenshots (⌘V) or drop files in here."
+                unstyled
+                value={brief}
+              />
+            </div>
+            <BoardBriefAttachRow
+              attachments={[]}
+              cardId={null}
+              editable
+              environmentId={environmentId}
+              onDetach={null}
+              state={briefAttachments}
             />
           </div>
 

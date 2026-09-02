@@ -48,6 +48,8 @@ import { randomUUID } from "../lib/utils";
 import { getCustomModelOptionsByInstance, resolveAppModelSelectionState } from "../modelSelection";
 import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils";
 import { boardEnvironment } from "../state/board";
+import { boardAttachmentLimits } from "./boardAttachmentUpload";
+import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
 import { environmentShell } from "../state/shell";
@@ -130,6 +132,14 @@ export function BoardCardDetail({
   const approvePlans = useAtomCommand(boardEnvironment.approvePlans);
   const linkThread = useAtomCommand(boardEnvironment.linkThread);
   const unlinkThread = useAtomCommand(boardEnvironment.unlinkThread);
+  // Brief attachments (t3o-32): an attach failure is shown on the staged row
+  // itself, so it opts out of the shared toast.
+  const attachCardFile = useAtomCommand(boardEnvironment.attachCardFile, { reportFailure: false });
+  const detachCardFile = useAtomCommand(boardEnvironment.detachCardFile);
+  const environment = useEnvironment(environmentId);
+  const attachmentLimits = boardAttachmentLimits(
+    environment?.serverConfig?.environment.capabilities ?? null,
+  );
   // Restart and blank-thread creation report their own failures (D4: log and
   // stop — the menu is its own recovery), so they opt out of the shared toast.
   const startStageThread = useAtomCommand(boardEnvironment.startStageThread, {
@@ -690,6 +700,17 @@ export function BoardCardDetail({
       }
       onSaveBrief={(brief) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, brief } }))
+      }
+      attachmentLimits={attachmentLimits}
+      onAttachFile={async (upload) => {
+        const result = await attachCardFile({
+          environmentId,
+          input: { cardId: card.id, ...upload },
+        });
+        return result._tag === "Success" ? null : describeBoardCommandFailure(result);
+      }}
+      onDetachFile={(attachmentId) =>
+        void detachCardFile({ environmentId, input: { cardId: card.id, attachmentId } })
       }
       onSaveTitle={(title) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, title } }))

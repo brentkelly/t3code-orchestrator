@@ -65,6 +65,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     parentCardId: null,
     sourcePlanId: null,
     threadLinks: [],
+    attachments: [],
     externalRef: null,
     humanInLoop: null,
     reviewOverrides: null,
@@ -98,6 +99,7 @@ function detail(
     parentModelOverrides: null,
     stepError: null,
     stepCompletions: edges?.stepCompletions ?? [],
+    attachments: [],
   };
 }
 
@@ -175,6 +177,7 @@ const baseProps = {
   dependencies: [],
   dependencyOptions: [],
   threadLinks: [],
+  attachments: [],
   adoptableThreads: [],
   stageRestart: null,
   onRestartStage: noop,
@@ -189,6 +192,9 @@ const baseProps = {
   onDeleteLabel: noop,
   onUndeleteLabel: noop,
   onSaveBrief: noop,
+  attachmentLimits: { known: false, enabled: false, maxFileBytes: null },
+  onAttachFile: () => Promise.resolve(null),
+  onDetachFile: noop,
   onSaveTitle: noop,
   onAddDependency: noop,
   onRemoveDependency: noop,
