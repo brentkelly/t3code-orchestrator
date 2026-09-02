@@ -68,15 +68,23 @@ describe("boardCardSummary", () => {
     ]);
   });
 
-  it("shows plan progress on a split parent at every stage", () => {
-    // Stage-independent (the prototype's treatment): the parent is a pile of
-    // plans wherever it sits, so the bar rides the card face at every stage.
+  it("shows plan progress on a split parent at every stage but review", () => {
+    // Near enough stage-independent (the prototype's treatment): the parent is
+    // a pile of plans wherever it sits, so the bar rides the card face.
     for (const stage of ["backlog", "sprint", "planning", "ready", "building", "done"] as const) {
       expect(
         boardCardSummary(shell(stage, { planTotal: 6, planDone: 2, planStatuses: "ddiipp" }))
           .items[0],
       ).toEqual({ kind: "plans", done: 2, total: 6, statuses: "ddiipp" });
     }
+    // Review is the exception: a parent only gets there once every child is
+    // finished, so the bar would sit full and green on a card whose real
+    // progress is the review loop. Suppressed for the whole stage, not just
+    // where the ledger happens to have recorded a round.
+    expect(
+      boardCardSummary(shell("review", { planTotal: 6, planDone: 6, planStatuses: "dddddd" }))
+        .items,
+    ).toEqual([]);
     // Not a parent (no planTotal): degrade to base.
     expect(boardCardSummary(shell("building")).items).toEqual([]);
   });

@@ -37,6 +37,7 @@ import { BoardLabelChips } from "./BoardLabelChips";
 import {
   BoardCardMetaRow,
   BoardCardPlansRow,
+  BoardCardReviewBlock,
   BoardCardSummaryRow,
   BoardCardTodoStrip,
   BoardCardTodoThreadRow,
@@ -174,9 +175,9 @@ export function BoardCardContent({
     stateOf,
     activeThreadId: card.activeThreadId,
   });
-  // Exactly one progress block per card (D8), with subcards outranking review
-  // outranking todos — so a parent card's plan pips and a review ledger are never
-  // pushed off the card by a todo strip.
+  // Exactly one progress block per card (D8), with review outranking subcards
+  // outranking todos — so a card in code review shows the loop reading its
+  // merged branch, not a finished child's plan bar or a todo strip.
   const progress = boardCardProgressBlock(summary, winner, {
     liveThreadCount: todoThreads.length,
     winnerStopped: winner === null ? undefined : stateOf(winner.threadId)?.stopped,
@@ -375,6 +376,11 @@ export function BoardCardContent({
         {card.title}
       </div>
       <BoardCardSummaryRow items={summary.items} />
+      {progress.kind === "review" ? (
+        // The review ledger is the card's progress block while it sits in code
+        // review — even for a split parent, whose plan bar it outranks (D8).
+        <BoardCardReviewBlock items={progress.items} />
+      ) : null}
       {progress.kind === "subcards"
         ? // The plan bar with its drill-in chip (t3o-25, AC2) — the D8 progress
           // block a split parent shows. The chip is the sub-board door where the

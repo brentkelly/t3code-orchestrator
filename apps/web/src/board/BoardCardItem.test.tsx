@@ -110,7 +110,7 @@ describe("BoardCardContent (D7)", () => {
     expect(gated).toContain("Depends on 2 cards");
   });
 
-  it("wears the plan bar with its drill-in chip on a split parent, at any stage", () => {
+  it("wears the plan bar with its drill-in chip on a split parent, at every stage before review", () => {
     // The prototype's treatment (t3o-25): a segment bar — one flex segment per
     // child, coloured done/started/pending — with the "N/M plans" chip beside
     // it. No footer "N cards" button, and the row shows outside Building too.
@@ -130,6 +130,40 @@ describe("BoardCardContent (D7)", () => {
     // Without the drill handler (the ghost, the archive sheet) the chip is a
     // static span, not a button.
     expect(html).not.toContain("Open this card&#x27;s sub-board");
+  });
+
+  it("swaps a split parent's plan bar for the review ledger once it reaches review", () => {
+    // The bug this fixes: a parent card sat in Code review still wearing a full
+    // green "4/4 plans" bar — a build overview of children that finished before
+    // the branch was ever reviewed — while the loop actually running on it was
+    // squeezed into a row of dots. In review the ledger IS the progress block.
+    const parent = shell("review", {
+      planTotal: 4,
+      planDone: 4,
+      planStatuses: "dddd",
+      roundCurrent: 1,
+      roundMax: 3,
+      issuesFixed: 0,
+      issuesRejected: 0,
+      issuesOpen: 3,
+      issuesDisputed: 0,
+    });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={parent}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+      />,
+    );
+    expect(html).toContain("Round 1 of 3");
+    expect(html).toContain("0 fixed · 0 rejected · 3 open · 0 disputed");
+    // The plan BAR is gone — no green segments, no drill-in chip.
+    expect(html).not.toContain("4/4 plans");
+    expect(html).not.toContain("bg-success");
+    // The children are still counted in the meta row, so the parent does not
+    // stop reading as a split card.
+    expect(html).toContain("4 plans");
   });
 
   it("spells out every meta indicator in a tooltip, since a bare glyph and a number mean nothing", () => {

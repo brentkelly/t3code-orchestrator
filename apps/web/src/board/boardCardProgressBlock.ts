@@ -9,10 +9,14 @@
  * the shell snapshot as its own array), so they cannot live inside it and its
  * signature is not widened. This is its pure sibling instead.
  *
- * Precedence is **subcards > review > todos**. Sub-board plan progress (D12
- * materialisation) and the review summary are absent until their data sources
- * land, so today this resolves to `todos` or `none` — but the precedence ships
- * now, tested, rather than being discovered later when two of them collide.
+ * Precedence is **review > subcards > todos** (the prototype's rule, `hasPlans:
+ * stacked && !review`). A split parent builds THROUGH its children, so while it
+ * is building, how its children are doing IS its progress — but once it reaches
+ * code review the children are finished and the loop reviewing the merged
+ * branch is the only thing still moving. A parent that keeps wearing a full
+ * green plan bar in the review column reads as work that is over.
+ * The sub-board door is not lost with the bar: the card's detail sheet opens
+ * the sub-board (`onOpenOwnSubBoard`).
  *
  * It is also the one place the "a second thread must add no height until
  * clicked" rule can be verified: the block is chosen from exactly ONE thread, and
@@ -47,9 +51,11 @@ export type BoardCardProgressBlock =
       readonly otherThreadCount: number;
     };
 
-// No "pr": the PR reference moved to the stage-independent meta row, so it is
-// not part of the review ledger's progress block any more.
-const REVIEW_ITEM_KINDS: ReadonlySet<BoardCardSummaryItem["kind"]> = new Set([
+/** The review ledger's item kinds. No "pr": the PR reference moved to the
+    stage-independent meta row, so it is not part of the block any more.
+    Exported so the inline summary row can leave these out — they render as the
+    review block instead, and rendering both would say everything twice. */
+export const BOARD_CARD_REVIEW_ITEM_KINDS: ReadonlySet<BoardCardSummaryItem["kind"]> = new Set([
   "round",
   "step",
   "severity",
@@ -116,10 +122,10 @@ export function boardCardProgressBlock(
     readonly winnerStopped?: boolean | undefined;
   },
 ): BoardCardProgressBlock {
+  const review = summary.items.filter((item) => BOARD_CARD_REVIEW_ITEM_KINDS.has(item.kind));
+  if (review.length > 0) return { kind: "review", items: review };
   const subcards = summary.items.filter((item) => item.kind === "plans");
   if (subcards.length > 0) return { kind: "subcards", items: subcards };
-  const review = summary.items.filter((item) => REVIEW_ITEM_KINDS.has(item.kind));
-  if (review.length > 0) return { kind: "review", items: review };
   if (todo === null) return { kind: "none" };
   if (boardThreadTodosComplete(todo) && options?.winnerStopped === true) return { kind: "none" };
   return {

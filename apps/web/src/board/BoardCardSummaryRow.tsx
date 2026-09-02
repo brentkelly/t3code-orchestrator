@@ -1,10 +1,12 @@
 /**
  * T3o card summary rows (t3o-06). Two of them:
  *
- * `BoardCardSummaryRow` renders the `BoardCardSummaryItem`s `boardCardSummary`
- * derives from a `BoardCardShell` — plan pips, review round pips, the severity
- * triple (with the tooltip that makes three bare numbers mean something), the
- * issue tally, attachment counts — and changes with the card's stage.
+ * `BoardCardSummaryRow` renders the inline `BoardCardSummaryItem`s
+ * `boardCardSummary` derives from a `BoardCardShell` — attachment counts today
+ * — and changes with the card's stage. The two full-width blocks live here too
+ * but render on their own rows, because their bars stretch the card:
+ * `BoardCardPlansRow` for a split parent's children and `BoardCardReviewBlock`
+ * for the review ledger. `boardCardProgressBlock` picks which one a card gets.
  *
  * `BoardCardMetaRow` is the stage-independent footer: dependencies, agent
  * threads, plans and the pull request as icon+count pairs, with the brief's
@@ -14,11 +16,7 @@
  * loops peg the GPU on high-refresh displays). Either row renders nothing when
  * it has nothing to say, so a card with no data adds no height.
  */
-import {
-  isBoardReviewLoopHeld,
-  type BoardCardThreadShell,
-  type BoardReviewLoopOutcome,
-} from "@t3tools/contracts";
+import { isBoardReviewLoopHeld, type BoardCardThreadShell } from "@t3tools/contracts";
 import {
   BOARD_THREAD_TODO_STATUS_DONE,
   BOARD_THREAD_TODO_STATUS_IN_PROGRESS,
@@ -37,66 +35,177 @@ import {
 } from "lucide-react";
 
 import { cn } from "../lib/utils";
+import { BOARD_CARD_REVIEW_ITEM_KINDS } from "./boardCardProgressBlock";
 import { formatRelativeTime } from "../timestampFormat";
 import type { BoardCardMeta, BoardCardSummaryItem } from "./boardCardSummary";
 import { BoardHint } from "./BoardHint";
 
-/** Max pips rendered for either the review-round or plan-progress rows, so a
+/** Max pips rendered for the plan-progress dot row (`PlanPips`), so a
     pathological count cannot blow out the card width. */
 const MAX_SUMMARY_PIPS = 6;
 
 /**
- * The review-round pips, plus the flag a loop that never converged carries
- * (t3o-22, D7/D9).
+ * The review-round bar: one segment per round in the budget, at `flex:1`, the
+ * same full-width treatment the plan bar and the todo strip wear. It is the
+ * card's progress element while a card sits in code review, which is why it is
+ * a bar and not the six dots this used to be — a card whose only visible
+ * progress was a 1.5px dot read as a card with no progress at all.
+ *
+ * Rounds already run get a dim fill, the round in flight a stronger one, the
+ * budget still to come an empty track. Neutral on purpose: green would claim a
+ * round that closed with findings still open was finished, and blue would claim
+ * a settled loop was still working (`docs/t3o/status-colours.md`).
  *
  * "Round 5 of 5, 12 raised, 7 fixed" describes a loop that PASSED and a loop
  * that ran out of road in exactly the same numbers, so the counts cannot be
- * left to speak for themselves. A held loop tints EVERY pip — the finding is
- * about the loop, not about round 5 — and says so in words beside them.
+ * left to speak for themselves. A held loop tints EVERY segment amber — the
+ * finding is about the loop, not about round 5 — and the flag beside the round
+ * label says so in words.
  */
-function RoundPips({
+function RoundBar({
   current,
   max,
-  outcome,
+  held,
 }: {
   readonly current: number;
-  /** Absent when the producer could not see the budget — the row then reports
-      the round reached rather than inventing a total. */
+  /** Absent when the producer could not see the budget — the bar then draws
+      only the rounds that actually ran rather than inventing a total. */
   readonly max: number | undefined;
-  readonly outcome: BoardReviewLoopOutcome | undefined;
+  readonly held: boolean;
 }) {
-  const shown = Math.min(max ?? current, MAX_SUMMARY_PIPS);
-  const held = outcome !== undefined && isBoardReviewLoopHeld(outcome);
-  const rounds = max === undefined ? `Round ${current}` : `Round ${current} of ${max}`;
-  const label = `${rounds}${
-    held ? (outcome === "stopped" ? " — stopped, no convergence" : " — no convergence") : ""
-  }`;
+  const total = Math.max(max ?? current, current, 1);
   return (
-    <BoardHint label={label}>
-      <span className="inline-flex items-center gap-0.5" aria-label={label}>
-        <span className="text-[10.5px] font-medium text-muted-foreground">{rounds}</span>
-        <span className="ml-0.5 inline-flex items-center gap-0.5">
-          {Array.from({ length: shown }, (_, index) => (
-            <span
-              key={index}
-              className={cn(
-                "size-1.5 rounded-full",
-                held
-                  ? "bg-amber-500/70"
-                  : index < current
-                    ? "bg-foreground/70"
-                    : "bg-muted-foreground/30",
-              )}
-            />
-          ))}
-        </span>
-        {held ? (
-          <span className="ml-1 inline-flex items-center rounded bg-amber-500/18 px-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
-            {outcome === "stopped" ? "Stopped" : "No convergence"}
+    <span className="flex items-center gap-[3px]">
+      {/* Indexed rather than mapped over data: a segment IS its position, the
+          same shape `BoardTodoPips` and `BoardCardPlansRow` use. */}
+      {Array.from({ length: total }, (_, index) => (
+        <span
+          className={cn(
+            "h-[3px] min-w-[2px] flex-1 rounded-[2px]",
+            held
+              ? "bg-amber-500/55"
+              : index < current - 1
+                ? "bg-foreground/30"
+                : index === current - 1
+                  ? "bg-foreground/60"
+                  : "bg-muted-foreground/25",
+          )}
+          key={index}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** Narrowing `find` over the item union — `Array.find` alone returns the whole
+    union, and the block needs each part's own fields. */
+function pickItem<K extends BoardCardSummaryItem["kind"]>(
+  items: ReadonlyArray<BoardCardSummaryItem>,
+  kind: K,
+): Extract<BoardCardSummaryItem, { readonly kind: K }> | undefined {
+  return items.find(
+    (item): item is Extract<BoardCardSummaryItem, { readonly kind: K }> => item.kind === kind,
+  );
+}
+
+/**
+ * The review ledger as the card's ONE progress block (D8), in the prototype's
+ * three-line shape: the round and what the loop is doing, the round bar, then
+ * what the rounds actually found.
+ *
+ * This is what a card in code review shows INSTEAD of its plan bar or its todo
+ * strip — including a split parent, whose children are finished by the time the
+ * merged branch is under review, so their bar would report progress on work
+ * nobody is waiting for (`boardCardProgressBlock`).
+ *
+ * Renders whatever parts of the ledger it was given: a card with rounds but no
+ * findings yet draws the label and the bar and stops there, rather than a row of
+ * zeroes.
+ */
+export function BoardCardReviewBlock({
+  items,
+}: {
+  readonly items: ReadonlyArray<BoardCardSummaryItem>;
+}) {
+  const round = pickItem(items, "round");
+  const step = pickItem(items, "step");
+  const severity = pickItem(items, "severity");
+  const issues = pickItem(items, "issues");
+  if (round === undefined && step === undefined && severity === undefined && issues === undefined) {
+    return null;
+  }
+  const held = round?.outcome !== undefined && isBoardReviewLoopHeld(round.outcome);
+  const rounds =
+    round === undefined
+      ? null
+      : round.max === undefined
+        ? `Round ${round.current}`
+        : `Round ${round.current} of ${round.max}`;
+  return (
+    <div className="flex flex-col gap-1.5">
+      {rounds === null && step === undefined && !held ? null : (
+        <div className="flex items-center gap-2">
+          {rounds === null ? null : (
+            <span className="text-[10.5px] font-medium text-foreground">{rounds}</span>
+          )}
+          <span className="flex-1" />
+          {/* One chip slot, and the held flag owns it: "the loop stopped without
+              converging" outranks "it is triaging" every time. */}
+          {held ? (
+            <span className="inline-flex shrink-0 items-center rounded bg-amber-500/18 px-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+              {round?.outcome === "stopped" ? "Stopped" : "No convergence"}
+            </span>
+          ) : step === undefined ? null : (
+            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              {step.label}
+            </span>
+          )}
+        </div>
+      )}
+      {round === undefined ? null : (
+        <BoardHint
+          label={`${rounds}${
+            held
+              ? round.outcome === "stopped"
+                ? " — stopped, no convergence"
+                : " — no convergence"
+              : ""
+          }`}
+        >
+          <span
+            aria-label={`${rounds}${
+              held
+                ? round.outcome === "stopped"
+                  ? " — stopped, no convergence"
+                  : " — no convergence"
+                : ""
+            }`}
+            className="flex items-center"
+          >
+            <RoundBar current={round.current} held={held} max={round.max} />
           </span>
-        ) : null}
-      </span>
-    </BoardHint>
+        </BoardHint>
+      )}
+      {severity === undefined && issues === undefined ? null : (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {severity === undefined ? null : (
+            <SeverityTriple
+              critical={severity.critical}
+              improvement={severity.improvement}
+              nitpick={severity.nitpick}
+            />
+          )}
+          {issues === undefined ? null : (
+            <IssueTally
+              disputed={issues.disputed}
+              fixed={issues.fixed}
+              open={issues.open}
+              rejected={issues.rejected}
+            />
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -276,30 +385,13 @@ function SummaryItem({ item }: { readonly item: BoardCardSummaryItem }) {
       // rendered by the card itself) so its segments can stretch the card.
       return null;
     case "round":
-      return <RoundPips current={item.current} max={item.max} outcome={item.outcome} />;
     case "step":
-      return (
-        <span className="inline-flex items-center rounded bg-muted px-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-          {item.label}
-        </span>
-      );
     case "severity":
-      return (
-        <SeverityTriple
-          critical={item.critical}
-          improvement={item.improvement}
-          nitpick={item.nitpick}
-        />
-      );
     case "issues":
-      return (
-        <IssueTally
-          fixed={item.fixed}
-          rejected={item.rejected}
-          open={item.open}
-          disputed={item.disputed}
-        />
-      );
+      // The review ledger is one block, not four inline chips
+      // (`BoardCardReviewBlock`), so that the round bar can stretch the card
+      // the way the plan bar and the todo strip do.
+      return null;
   }
 }
 
@@ -308,9 +400,12 @@ export function BoardCardSummaryRow({
 }: {
   readonly items: ReadonlyArray<BoardCardSummaryItem>;
 }) {
-  // Plans render as their own row (`BoardCardPlansRow`); counting them here
-  // would leave an empty div claiming a slot of the card's column gap.
-  const inline = items.filter((item) => item.kind !== "plans");
+  // Plans and the review ledger render as their own full-width blocks
+  // (`BoardCardPlansRow`, `BoardCardReviewBlock`); counting them here would
+  // leave an empty div claiming a slot of the card's column gap.
+  const inline = items.filter(
+    (item) => item.kind !== "plans" && !BOARD_CARD_REVIEW_ITEM_KINDS.has(item.kind),
+  );
   if (inline.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -441,7 +536,7 @@ export function BoardTodoPips({
       <span aria-label={label} className="flex items-center gap-[2px]">
         {/* Indexed rather than mapped over the characters: a pip IS its position
           — the row is a positional progress bar and items never reorder within a
-          render — which is the same shape `PlanPips` and `RoundPips` use. */}
+          render — which is the same shape `PlanPips` and `RoundBar` use. */}
         {Array.from({ length: statuses.length }, (_, index) => (
           <span
             className={cn(
