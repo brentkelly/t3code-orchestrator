@@ -37,6 +37,8 @@ import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
+// T3o-26: board projector watermarks live in boards.projection_state.
+import { isBoardProjectorName } from "../../board/boardProjectionState.ts";
 import { ServerConfig } from "../../config.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
@@ -1438,6 +1440,19 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             projector === ORCHESTRATION_PROJECTOR_NAMES.projects
               ? sequenceBeforeBacklog
               : lastSequence;
+          // T3o-26: a board projector's watermark is read from and committed to
+          // boards.projection_state, so seeding it into main would leave a row
+          // there that nothing ever advances.
+          if (isBoardProjectorName(projector)) {
+            return sql`
+              INSERT INTO boards.projection_state (projector, last_applied_sequence, updated_at)
+              VALUES (${projector}, ${lastAppliedSequence}, ${now})
+              ON CONFLICT (projector)
+              DO UPDATE SET
+                last_applied_sequence = excluded.last_applied_sequence,
+                updated_at = excluded.updated_at
+            `;
+          }
           return sql`
             INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
             VALUES (${projector}, ${lastAppliedSequence}, ${now})
@@ -1614,6 +1629,8 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         },
       ]);
 
+      // T3o-26: every registered projector advanced — read the same
+      // main ∪ boards union the repository does.
       const stateRows = yield* sql<{
         readonly projector: string;
         readonly lastAppliedSequence: number;
@@ -1621,7 +1638,12 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         SELECT
           projector,
           last_applied_sequence AS "lastAppliedSequence"
-        FROM projection_state
+        FROM main.projection_state
+        UNION ALL
+        SELECT
+          projector,
+          last_applied_sequence AS "lastAppliedSequence"
+        FROM boards.projection_state
       `;
       const maxSequenceRows = yield* sql<{ readonly maxSequence: number }>`
         SELECT MAX(sequence) AS "maxSequence" FROM orchestration_events

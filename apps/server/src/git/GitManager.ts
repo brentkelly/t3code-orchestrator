@@ -2646,7 +2646,20 @@ export const make = Effect.gen(function* () {
     // separate one. Sharing the EPOCH is what matters — that is what
     // invalidation acts on.)
     const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
-    const details = { branch: input.branch, upstreamRef: null };
+    // Upstream keys the lookup on the default branch as well: a head that IS the
+    // default branch only surfaces open PRs. Resolve it the way `remoteStatus`
+    // does so the board's entry carries the same semantics; an unresolvable
+    // default (no remote) falls back to the cache's main/master heuristic.
+    const remoteName = yield* gitCore
+      .resolvePrimaryRemoteName(cacheKey)
+      .pipe(Effect.orElseSucceed(() => null));
+    const defaultBranch =
+      remoteName === null
+        ? null
+        : yield* gitCore
+            .resolveDefaultBranchName(cacheKey, remoteName)
+            .pipe(Effect.orElseSucceed(() => null));
+    const details = { branch: input.branch, upstreamRef: null, defaultBranch };
     const { latest } = yield* Cache.get(prLookupCache, prLookupCacheKey(cacheKey, details));
     return latest === null ? null : toStatusPr(latest);
   });

@@ -40,6 +40,8 @@ import * as ServerLifecycleEvents from "../src/serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "../src/serverRuntimeStartup.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
 import * as AnalyticsService from "../src/telemetry/AnalyticsService.ts";
+// T3o: startup starts the board supervisor reactor (t3o-10).
+import { SupervisorReactor } from "../src/board/supervisorReactor.ts";
 
 const providerInstanceId = ProviderInstanceId.make("codex");
 const projectId = ProjectId.make("project-startup-orphan");
@@ -68,6 +70,9 @@ const startupDependencies = Layer.mergeAll(
   Layer.mock(Keybindings.Keybindings)({
     start: Effect.void,
   }),
+  // T3o: this test exercises provider-session recovery, not the board, so the
+  // supervisor reactor startup seam yields a no-op here.
+  Layer.mock(SupervisorReactor)({ start: () => Effect.void }),
   ServerSettings.layerTest(),
   Layer.succeed(OrchestrationReactor.OrchestrationReactor, {
     start: () => Effect.void,

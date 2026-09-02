@@ -50,12 +50,12 @@ describe("searchSettings", () => {
 
   it("matches normalized title substrings", () => {
     expect(searchSettings("  WORD   WRAP  ", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
-    // "work" is a substring of `Reclaim worktrees at "Done"` but not of "Word
-    // wrap", so substring matching returns only the board setting, never
-    // word-wrap.
-    expect(searchSettings("work").map((item) => item.id)).toEqual([
-      "board-reclaim-worktree-on-done",
-    ]);
+    // "work" is a substring of `Reclaim worktrees at "Done"` (and of upstream's
+    // own worktree/network items) but not of "Word wrap": the board setting is
+    // found by substring, and word-wrap never is.
+    const workMatches = searchSettings("work").map((item) => item.id);
+    expect(workMatches).toContain("board-reclaim-worktree-on-done");
+    expect(workMatches).not.toContain("word-wrap");
     expect(searchSettings("glass").map((item) => item.id)).toEqual(["setting-glass-opacity"]);
     expect(searchSettings("thè\u{1ab0}mes")[0]?.id).toBe("theme");
     const localeLowerCase = vi.spyOn(String.prototype, "toLocaleLowerCase").mockReturnValue("gıt");
