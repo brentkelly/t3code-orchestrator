@@ -37,6 +37,7 @@ import { BoardLabelChips } from "./BoardLabelChips";
 import {
   BoardCardMetaRow,
   BoardCardPlansRow,
+  BoardCardReviewBlock,
   BoardCardSummaryRow,
   BoardCardTodoStrip,
   BoardCardTodoThreadRow,
@@ -375,6 +376,11 @@ export function BoardCardContent({
         {card.title}
       </div>
       <BoardCardSummaryRow items={summary.items} />
+      {progress.kind === "review" ? (
+        // The review ledger is the card's progress block while it sits in code
+        // review — even for a split parent, whose plan bar it outranks (D8).
+        <BoardCardReviewBlock items={progress.items} />
+      ) : null}
       {progress.kind === "subcards"
         ? // The plan bar with its drill-in chip (t3o-25, AC2) — the D8 progress
           // block a split parent shows. The chip is the sub-board door where the

@@ -1,8 +1,8 @@
 /**
  * T3o card progress block (t3o-18, D5/D7/D8).
  *
- * The precedence — subcards > review > todos — ships tested now rather than
- * being discovered the day two of them collide, and this is the one place the
+ * The precedence — review > subcards > todos — is the rule that decides what a
+ * split parent shows once it reaches code review, and this is the one place the
  * "a second thread adds no height until clicked" rule can be verified.
  */
 import type { BoardCardThreadShell, ThreadId } from "@t3tools/contracts";
@@ -38,12 +38,24 @@ const running: BoardTodoThreadState = { awaitingInput: false, running: true, sto
 const waiting: BoardTodoThreadState = { awaitingInput: true, running: false, stopped: false };
 
 describe("boardCardProgressBlock (D8)", () => {
-  it("AC 11: returns exactly one block, subcards outranking review outranking todos", () => {
-    const subcards = summary([
-      { kind: "plans", done: 1, total: 3, statuses: "dip" },
+  it("AC 11: returns exactly one block, review outranking subcards outranking todos", () => {
+    // A split parent in code review: its children are finished, so the plan bar
+    // would report progress on work nobody is waiting for. The review ledger
+    // wins, and it wins carrying only the review items.
+    const parentInReview = summary([
+      { kind: "plans", done: 3, total: 3, statuses: "ddd" },
       { kind: "round", current: 1, max: 3, outcome: undefined },
+      { kind: "issues", fixed: 0, rejected: 0, open: 3, disputed: 0 },
     ]);
-    expect(boardCardProgressBlock(subcards, todo("t1")).kind).toBe("subcards");
+    const parentBlock = boardCardProgressBlock(parentInReview, todo("t1"));
+    expect(parentBlock.kind).toBe("review");
+    if (parentBlock.kind !== "review") return;
+    expect(parentBlock.items.map((item) => item.kind)).toEqual(["round", "issues"]);
+
+    // The same parent before review: nothing from the review ledger yet, so its
+    // children ARE its progress.
+    const parentBuilding = summary([{ kind: "plans", done: 1, total: 3, statuses: "dip" }]);
+    expect(boardCardProgressBlock(parentBuilding, todo("t1")).kind).toBe("subcards");
 
     const review = summary([
       { kind: "round", current: 1, max: 3, outcome: undefined },

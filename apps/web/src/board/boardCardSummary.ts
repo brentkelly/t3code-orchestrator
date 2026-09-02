@@ -168,11 +168,20 @@ export function boardCardSummary(card: BoardCardShell): BoardCardSummary {
     case "done":
       break;
   }
-  // Sub-board plan progress (t3o-23, D12) is stage-INDEPENDENT: where the
-  // parent sits does not change that it is a pile of plans, so the bar rides
-  // the card face at every stage. First in the items so the progress-block
-  // precedence (subcards > review > todos, D8) reads off array order too.
-  if (card.planTotal !== undefined && card.planTotal > 0) {
+  // Sub-board plan progress (t3o-23, D12) rides the card face at every stage
+  // but ONE: where the parent sits does not change that it is a pile of plans.
+  //
+  // Review is the exception, because there the bar is a lie of emphasis. A
+  // parent only reaches review once every child is finished — the supervisor
+  // regresses it to Building the moment one stops being done
+  // (`regressParentIfChildLeftDone`) — so its plan bar is permanently full and
+  // permanently green while the only thing actually moving is the loop reading
+  // the merged branch. A card in Code review wearing a complete build overview
+  // reads as work that is over. The review ledger is the block instead
+  // (`boardCardProgressBlock`), and where the ledger has not recorded a round
+  // yet the card falls through to the review thread's own todos — live work,
+  // rather than a summary of work that finished before review began.
+  if (card.stage !== "review" && card.planTotal !== undefined && card.planTotal > 0) {
     items.unshift({
       kind: "plans",
       done: card.planDone ?? 0,
