@@ -229,11 +229,12 @@ export function useBoardBriefAttachments(input: {
   );
 
   // Object URLs are process-wide; release whatever is still local on unmount.
+  // Read through the ref: the closure below is created on the first render,
+  // when the list is always empty.
   useEffect(
     () => () => {
-      for (const row of staged) if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
+      for (const row of stagedRef.current) if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount only
     [],
   );
 

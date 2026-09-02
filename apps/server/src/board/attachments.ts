@@ -28,7 +28,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Stream from "effect/Stream";
 
 import {
   attachmentFileExtension,
@@ -259,14 +258,14 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
     if (target === null) {
       return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });
     }
-    const written = yield* Stream.run(
-      fileSystem.stream(sourcePath),
-      fileSystem.sink(target, { flag: "wx" }),
-    ).pipe(
+    // Two phases, so a failure is never misread. RESERVE the name with an
+    // exclusive open: the only way that fails against an existing file is a
+    // collision, which is retried under the next suffix. Then COPY the bytes
+    // over the reservation: a failure here is a storage error — the reserved
+    // (possibly partial) file is removed and nothing is retried.
+    const reserved = yield* Effect.scoped(fileSystem.open(target, { flag: "wx" })).pipe(
       Effect.as(true),
       Effect.catch((cause) =>
-        // A failed exclusive create against an existing file is a collision
-        // to retry under the next name; anything else is a storage failure.
         fileSystem.exists(target).pipe(
           Effect.orElseSucceed(() => false),
           Effect.flatMap((exists) =>
@@ -283,9 +282,23 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
         ),
       ),
     );
-    if (written) break;
-    taken.add(name);
-    name = dedupeBoardAttachmentName(preferred, taken);
+    if (!reserved) {
+      taken.add(name);
+      name = dedupeBoardAttachmentName(preferred, taken);
+      continue;
+    }
+    yield* fileSystem.copyFile(sourcePath, target).pipe(
+      Effect.tapError(() => fileSystem.remove(target).pipe(Effect.ignore)),
+      Effect.mapError(
+        (cause) =>
+          new BoardAttachmentClaimError({
+            reason: "storage",
+            message: `Failed to store '${name}' for card ${input.card.key}.`,
+            cause,
+          }),
+      ),
+    );
+    break;
   }
   return {
     id: BoardCardAttachmentId.make(uuid),
