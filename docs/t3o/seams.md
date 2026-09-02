@@ -177,11 +177,12 @@ spec that touches a file upstream has been churning. Not on a calendar.
 git fetch upstream
 
 git checkout main
-git merge --ff-only upstream/main   # never force; a failure means someone
-                                    # committed to the mirror
+git merge --ff-only vX.Y.Z          # a release tag, not upstream/main — never force;
+                                    # a failure means someone committed to the mirror
 
-git checkout t3o
+git checkout -b sync/upstream-vX.Y.Z t3o
 git merge main
+git checkout --ours -- .plans && git add .plans   # upstream deletes its own plans; we archive ours
 ```
 
 Then, before pushing:
@@ -190,7 +191,18 @@ Then, before pushing:
 rg -n "T3o:"          # eyeball against the seam inventory below
 ```
 
-and run the normal checks for whatever the merge touched.
+and run the normal checks for whatever the merge touched. Two things the root scripts hide
+(learned on the `v0.0.38` sync):
+
+- `vp run -r typecheck` stops early on this box (mobile is OOM-killed at the default concurrency
+  and `t3`/desktop never run). Typecheck **per package**: `pnpm exec tsgo --noEmit` in
+  `packages/contracts`, `packages/shared`, `packages/client-runtime`, `apps/web`, `apps/server`,
+  `apps/desktop`, then `pnpm run typecheck` in `apps/mobile` alone.
+- A whole-tree `vp lint` does not report the repo's own JS-plugin rules (`t3code/*`) for
+  `apps/web/src/board`; `vp lint apps/web` does. Run both.
+
+Land the sync with a **merge commit, never a squash**: squashing a 1,500-file upstream merge
+destroys the ancestry the next `git merge main` relies on.
 
 ### If `--ff-only` fails
 
@@ -218,10 +230,11 @@ settles it is a few merges done by hand. `t3o-02` is the first place that gets w
 
 ### Merge log
 
-| Date       | Upstream delta                                                                                                  | Conflicts                                                                                                                                                         | Resolution                                                                                                                                                                                                                                                                                                                                       | Time                                                                                                                                                                                                      |
-| ---------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-09 | 20 commits, 101 files, ~9.2k insertions (`main` ff'd to `05eb05118`)                                            | **1 file**: `apps/server/src/persistence/Migrations.ts` — two hunks, both "upstream appended `039` where we appended `900`" at the list tails                     | Kept both lines, upstream's first. No seam needed re-applying; all 38 markers survived intact (verified with `rg "T3o:"` against the inventory).                                                                                                                                                                                                 | Merge + resolution ≈ 1 minute; full verification (install, typechecks for contracts/client-runtime/server/web, walking-skeleton + engine + pipeline tests, all green) ≈ 4 minutes.                        |
-| 2026-08-09 | 4 commits, 68 files, ~1.6k insertions (`main` ff'd to `1a003e383`), run against the `t3o-02a` generalised seams | **1 file**: `apps/server/src/persistence/Migrations.ts` — two hunks, both "upstream appended `039`/`040` where we spread `...BOARD_MIGRATIONS`" at the list tails | Kept both, upstream first. Every other seamed file — including four the delta churned directly (`decider.ts`, `projector.ts`, `ProjectionPipeline.ts`, `ProjectionSnapshotQuery.ts`, `orchestration.ts`, `ws.ts`) — auto-merged through the new predicate/spread seams. All 38 markers survived (`rg "T3o:"` row-for-row against the inventory). | Merge + resolution ≈ 1 minute; verification (install, 4 typechecks, walking-skeleton + engine + pipeline + snapshot-query + projector + event-store + reducer + contracts suites, all green) ≈ 3 minutes. |
+| Date       | Upstream delta                                                                                                  | Conflicts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Time                                                                                                                                                                                                                                                 |
+| ---------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-09 | 20 commits, 101 files, ~9.2k insertions (`main` ff'd to `05eb05118`)                                            | **1 file**: `apps/server/src/persistence/Migrations.ts` — two hunks, both "upstream appended `039` where we appended `900`" at the list tails                                                                                                                                                                                                                                                                                                                                                                                                                                           | Kept both lines, upstream's first. No seam needed re-applying; all 38 markers survived intact (verified with `rg "T3o:"` against the inventory).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Merge + resolution ≈ 1 minute; full verification (install, typechecks for contracts/client-runtime/server/web, walking-skeleton + engine + pipeline tests, all green) ≈ 4 minutes.                                                                   |
+| 2026-09-02 | 595 commits, 1,591 files (`main` ff'd to tag `v0.0.38`, `c0995d2ea`); spec `t3o-31`                             | **18 files, 27 hunks** + 32 `.plans` rename/delete. 11 were inventoried seams that moved with upstream churn (`ws.ts` dispatch body rewritten around the t3o-18 actor stamp; the t3o-05 tabs moved into upstream's new `WorkspacePageHeader`; three import seams; `index.css`; `orchestration.ts`/`rpc.ts`/`settings.ts`). 7 were **unmarked** fork edits (`serverSettings.ts`, `GitHubCli.ts`, `AppSidebarLayout.tsx`, `ChatComposer.tsx`, `server.ts` layer substitution, `contracts/orchestration.ts` `RuntimeMode` move, `settingsSearch.test.ts`). `routeTree.gen.ts` regenerated. | Every conflict resolved as upstream's code with the seam re-inserted; the unmarked hunks got markers on the way through. After the merge: 3 type errors (`planModeEnabled` on the board model row, a widened PR-cache key, an upstream-new integration test that drives the startup seam), 2 test failures (upstream tests now enumerate `ORCHESTRATION_PROJECTOR_NAMES` against the split `projection_state`; a settings-search substring), and 61 errors from upstream's new `no-native-title-tooltip` rule, fixed with a board-owned `BoardHint`. Ten pre-existing fork type errors were cleared first so the merge's own breakage was attributable. | Trial merge + measurement ≈ 2 h; real merge + resolution ≈ 20 min; fixes ≈ 1 h; verification (per-package typecheck, 5 test suites: 3,539 server / 3,280 web / 633 / 446 / 379, lint, two headless boots against copies of real databases) ≈ 40 min. |
+| 2026-08-09 | 4 commits, 68 files, ~1.6k insertions (`main` ff'd to `1a003e383`), run against the `t3o-02a` generalised seams | **1 file**: `apps/server/src/persistence/Migrations.ts` — two hunks, both "upstream appended `039`/`040` where we spread `...BOARD_MIGRATIONS`" at the list tails                                                                                                                                                                                                                                                                                                                                                                                                                       | Kept both, upstream first. Every other seamed file — including four the delta churned directly (`decider.ts`, `projector.ts`, `ProjectionPipeline.ts`, `ProjectionSnapshotQuery.ts`, `orchestration.ts`, `ws.ts`) — auto-merged through the new predicate/spread seams. All 38 markers survived (`rg "T3o:"` row-for-row against the inventory).                                                                                                                                                                                                                                                                                                        | Merge + resolution ≈ 1 minute; verification (install, 4 typechecks, walking-skeleton + engine + pipeline + snapshot-query + projector + event-store + reducer + contracts suites, all green) ≈ 3 minutes.                                            |
 
 Notes from the first run: the merge was executed against a scratch branch carrying the full `t3o-02`
 seam set (a merge against bare `t3o` would not have exercised the seams). Every other seamed file —
@@ -230,6 +243,79 @@ through real upstream churn. The one conflict was the migration registry, which 
 conflict site: upstream appends `NNN` at the same tail where we append `9xx`, and the resolution is
 always "keep both, upstream first". `routeTree.gen.ts` also auto-merged; had it conflicted, the
 resolution is regenerate, not hand-merge.
+
+### Decisions recorded on the `v0.0.38` sync (`t3o-31`)
+
+- **`.plans/` stays tracked.** Upstream now gitignores `.plans/` and its `AGENTS.md` forbids
+  committed plans. The fork re-includes the directory (`!.plans/`, marked) directly beneath
+  upstream's line and the `AGENTS.md` fork block says why. Resolve future `.plans` conflicts with
+  `--ours`.
+- **Upstream's `ThreadSettlementReactor` is accepted without a seam.** It auto-settles threads
+  whose PR merged/closed or that idled past `sidebarAutoSettleAfterDays`. Audit: the decider treats
+  settling a settled thread as a silent no-op; the board's three `thread.settle` dispatches go
+  through its swallow-on-reject helper; auto-settle candidates exclude any thread with a live
+  session, a pending request or a queued turn, so no in-flight step can be settled; and nothing in
+  `board/` reads settlement state. The one observable effect is that an idle card thread's
+  provider session may be stopped after three days, which a later turn restarts. Revisit if the
+  board ever keys step liveness off settlement.
+- **Upstream tests that enumerate `ORCHESTRATION_PROJECTOR_NAMES`** see the board names the fork
+  spreads in and, since `t3o-26`, hit the split `projection_state`. Policy: a marked test-side fix
+  each time (`isBoardProjectorName` routes seeding/assertions to `boards.projection_state`), not a
+  registry restructure.
+- **Launcher protocol.** The fork is at `SERVICE_LAUNCHER_PROTOCOL = 3` (multi-database backup,
+  `t3o-26`); upstream is still `2`. A future upstream bump to `3` auto-merges as a _semantic_
+  conflict — check `cloud/serviceProtocol.ts` on every sync.
+- **`migrate-dev-db`** (new upstream script) rebuilds and migrates `state.sqlite` only. It neither
+  copies nor migrates `boards.sqlite`. Follow-up, not blocking.
+- **Not adopted yet:** upstream's new `apps/server/src/pullRequest/` module
+  (`PullRequestService.runAction({ action: "merge", mergeMethod })`, `detail`, `list`). It covers
+  what the fork's forge-merge path does by hand across ~250 unmarked lines (`SourceControlProvider`
+  `mergeChangeRequest` + four provider stubs, `GitHubCli.mergePullRequest`,
+  `GitManager.findBranchPullRequest` / `mergeBranchPullRequest`, the `BoardGitLayerLive`
+  substitution in `server.ts`). Moving `BoardPullRequestGateway` onto it is the single largest seam
+  reduction available; separate spec.
+
+### Unmarked edits (debt)
+
+Upstream-owned files the fork changes **without** a `T3o:` marker, measured after the `v0.0.38`
+merge (`git diff --numstat main HEAD`, files present in `main`, excluding `.plans/`). These are
+where the next sync's non-seam conflicts will come from. Tests, docs and generated files are listed
+for completeness; the code rows are the ones worth seaming.
+
+| File                                                                                                                                                                                                                                        | +/−            | Owner / what                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------- |
+| `apps/web/src/components/chat/CompactComposerControlsMenu.tsx`                                                                                                                                                                              | 107/47         | `t3o-27` model-row menu reuse                               |
+| `apps/server/src/git/GitManager.ts`                                                                                                                                                                                                         | 101/1          | `t3o-16` `findBranchPullRequest` / `mergeBranchPullRequest` |
+| `apps/server/src/serviceLauncher.ts`                                                                                                                                                                                                        | 97/18          | `t3o-26` multi-database backup/restore (protocol 3)         |
+| `apps/server/src/vcs/VcsProcess.ts`                                                                                                                                                                                                         | 52/0           | `t3o-16` `safeProcessOutput` credential scrubber            |
+| `apps/server/src/sourceControl/SourceControlProvider.ts`                                                                                                                                                                                    | 22/0           | `t3o-16` `mergeChangeRequest` on the provider interface     |
+| `apps/server/src/sourceControl/GitHubSourceControlProvider.ts`                                                                                                                                                                              | 20/0           | `t3o-16` `mergeChangeRequest`                               |
+| `apps/server/src/sourceControl/{AzureDevOps,Bitbucket,GitLab}SourceControlProvider.ts`, `SourceControlProviderRegistry.ts`                                                                                                                  | 13/0 each      | `t3o-16` `mergeChangeRequest` stubs                         |
+| `packages/contracts/src/model.ts`                                                                                                                                                                                                           | 16/0           | `t3o-21` `RuntimeMode` moved here from `orchestration.ts`   |
+| `apps/server/src/cloud/serviceProtocol.ts`                                                                                                                                                                                                  | 10/2           | `t3o-26` `SERVICE_LAUNCHER_PROTOCOL = 3`                    |
+| `apps/web/src/components/chat/ChatComposer.tsx`                                                                                                                                                                                             | 9/71           | `t3o-27` `AccessLevelPicker` extraction (import now marked) |
+| `packages/contracts/src/sourceControl.ts`                                                                                                                                                                                                   | 6/0            | `t3o-16` `ChangeRequestMergeStrategy`                       |
+| `apps/web/src/main.tsx`, `apps/web/src/appearanceFonts.ts`, `apps/web/src/index.css`                                                                                                                                                        | 5/0, 4/1, 28/1 | DM Sans font + `.board-card-done` (css marked)              |
+| `vite.config.ts`, `package.json`, `scripts/dev-runner.ts`, `apps/web/package.json`                                                                                                                                                          | ≤6             | tooling                                                     |
+| `apps/server/scripts/t3-sqlite-state.ts`                                                                                                                                                                                                    | 33/0           | `t3o-26` board database awareness                           |
+| `apps/web/src/components/chat/TraitsPicker.tsx`                                                                                                                                                                                             | 1/1            | export                                                      |
+| tests: `serviceLauncher.test.ts` (159), `serverSettings.test.ts` ×2 (86), `GitHubCli.test.ts` (70), `ProjectionPipeline.test.ts` (32, now marked), `GitManager.test.ts`, `settingsSearch.test.ts`, `SourceControlRepositoryService.test.ts` |                | fork test additions                                         |
+| docs: `docs/internals/server-updates.md`, `docs/internals/scripts.md`                                                                                                                                                                       |                | `t3o-26`                                                    |
+| generated: `apps/web/src/routeTree.gen.ts` (+63), `pnpm-lock.yaml` (+8)                                                                                                                                                                     |                | regenerate / reinstall                                      |
+
+### Marker census
+
+The row table below is maintained by hand and lags. The authoritative count is per file, from
+`git grep -c "T3o:"` restricted to files that exist in `main`. After the `v0.0.38` sync:
+**107 markers across 35 upstream-owned files.** Files whose count differs from their rows in the
+table below (rows added on this sync are listed here, not yet expanded into the table):
+`serverSettings.ts` 2 (indivisible settings keys), `GitHubCli.ts` 7 (board merge path),
+`AppSidebarLayout.tsx` 3 (`isOnBoard`), `server.ts` 4 (+`BoardGitLayerLive`), `ChatView.tsx` 5
+(+`chrome` prop), `contracts/orchestration.ts` 16 (+`RuntimeMode` re-export), `.gitignore` 1
+(`!.plans/`), `AGENTS.md` 5 (+plans policy), `Sqlite.ts` 2 (`t3o-26` attach + board migrations),
+`OrchestrationEventStore.ts` 7 (`t3o-26` retired-event replay), `server.test.ts` 1 and
+`orphanedProviderSessionStartup.integration.test.ts` 2 (supervisor reactor mocks),
+`OrchestrationEventStore.test.ts` 1.
 
 ---
 
@@ -556,10 +642,17 @@ Recorded here so a future reader knows they were switched off deliberately, not 
 | `mobile-showcase-screenshots.yml` | Captures marketing screenshots on simulators for upstream's showcase. Long, expensive, and irrelevant to a fork that ships no mobile UI.                                                                                                           |
 | `release.yml`                     | Publishes the `t3` CLI to NPM on tags and a 3-hourly nightly cron. T3o publishes nothing. Leaving this on means a recurring scheduled job whose only possible outcomes are failure or, given credentials, publishing over upstream's package.      |
 | `thread-transfer-report.yml`      | Posts an upstream-specific report after each CI run, aimed at upstream's own review process. Noise here.                                                                                                                                           |
+| `desktop-macos-preview.yml`       | (since `v0.0.38`) Builds a signed macOS preview on every PR through upstream\'s Apple credentials. None here.                                                                                                                                      |
+| `mobile-fingerprint-check.yml`    | (since `v0.0.38`) Expo native-fingerprint gate on every PR. Mobile is out of scope (D17).                                                                                                                                                          |
+| `web-preview.yml`                 | (since `v0.0.38`) Deploys a web preview per PR to upstream\'s hosting. Not ours.                                                                                                                                                                   |
 
 **Kept on:** `ci.yml` (the actual build, lint, typecheck and test gates — we want these), plus
 `pr-size.yml`, `pr-vouch.yml` and `issue-labels.yml`, which are cheap, self-contained, and harmless
 if they never fire on a single-maintainer repo. Revisit if they turn out to be noisy.
+`publish-aur.yml` (since `v0.0.38`) is `workflow_call`-only and never fires on its own.
+
+Disable with `gh workflow disable <file>`; `gh workflow list --all` shows what is actually off —
+the YAML never says.
 
 ---
 
