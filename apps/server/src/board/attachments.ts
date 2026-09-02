@@ -172,6 +172,29 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
   ) {
     return yield* fail({ reason: "rejected", message: "Attachment must be a pending upload." });
   }
+  // The record's `type` decides which spawns push the file and how it is
+  // served; it must agree with the bytes' declared mime rather than be taken
+  // on the client's word.
+  const mimeType = input.mimeType.toLowerCase();
+  if ((input.type === "image") !== mimeType.startsWith("image/")) {
+    return yield* fail({
+      reason: "rejected",
+      message: `'${input.name}' cannot be attached: its type does not match its content type.`,
+    });
+  }
+
+  // An image is pushed onto spawn turns (K4) under upstream's image cap; a
+  // pending FILE upload can be anything up to the file cap, so the cap is
+  // enforced here rather than trusted from the mint.
+  if (input.type === "image" && input.sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+    return yield* fail({
+      reason: "rejected",
+      message: `'${input.name}' cannot be attached: images are limited to ${
+        PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024)
+      } MB.`,
+    });
+  }
+
   const sourcePath = resolveAttachmentPathById({
     attachmentsDir: input.attachmentsDir,
     attachmentId: input.pendingAttachmentId,
@@ -198,29 +221,6 @@ export const claimBoardCardAttachment = Effect.fn("board-attachments-claim")(fun
       message: `'${input.name}' cannot be attached: stored size does not match.`,
     });
   }
-  // An image is pushed onto spawn turns (K4) under upstream's image cap; a
-  // pending FILE upload can be anything up to the file cap, so the cap is
-  // enforced here rather than trusted from the mint.
-  if (input.type === "image" && input.sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-    return yield* fail({
-      reason: "rejected",
-      message: `'${input.name}' cannot be attached: images are limited to ${
-        PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024)
-      } MB.`,
-    });
-  }
-
-  // The record's `type` decides which spawns push the file and how it is
-  // served; it must agree with the bytes' declared mime rather than be taken
-  // on the client's word.
-  const mimeType = input.mimeType.toLowerCase();
-  if ((input.type === "image") !== mimeType.startsWith("image/")) {
-    return yield* fail({
-      reason: "rejected",
-      message: `'${input.name}' cannot be attached: its type does not match its content type.`,
-    });
-  }
-
   const dir = boardCardAttachmentsDir({ path, stateDir: input.stateDir, cardId: input.card.id });
   if (dir === null) {
     return yield* fail({ reason: "rejected", message: "Attachment name is not allowed." });

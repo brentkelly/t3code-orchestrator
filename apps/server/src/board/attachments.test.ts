@@ -180,11 +180,13 @@ describe("claim, manifest, delete", () => {
         }),
         { concurrency: "unbounded" },
       );
+      // `-2` is already on disk from the claim above (the racers' stale record
+      // list does not know it), so the exclusive create walks past it.
       const names = racers.map((racer) => racer.name).sort();
       assert.deepStrictEqual(names, [
-        "Bug screenshot-2.png",
         "Bug screenshot-3.png",
         "Bug screenshot-4.png",
+        "Bug screenshot-5.png",
       ]);
       // Every file holds its own bytes — nothing was overwritten.
       const folder = NodePath.join(stateDir, "board", "attachments", String(cardId));

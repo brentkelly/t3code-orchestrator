@@ -356,7 +356,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       const boardMime = input.resource.mimeType?.split(";", 1)[0]?.trim() ?? "";
       const boardExtension = path.extname(input.resource.fileName).toLowerCase();
       const boardInlineImage =
-        /^image\//i.test(boardMime) && SAFE_IMAGE_FILE_EXTENSIONS.includes(boardExtension);
+        /^image\//i.test(boardMime) && SAFE_IMAGE_FILE_EXTENSIONS.has(boardExtension);
       claims = {
         version: 1,
         kind: "board-attachment",
