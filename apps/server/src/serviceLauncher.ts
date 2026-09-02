@@ -212,7 +212,13 @@ export async function restoreDatabaseBackup(
   // Union of what was backed up and what is live now: a database the trial update
   // CREATED has no backup entry and must be removed, or the reverted build would
   // read a database from the future.
-  const liveNames = await databaseBaseNames(pending.dbPath);
+  // Only the NEW layout can claim to know the full pre-update set. A legacy
+  // snapshot proves the LAUNCHER that wrote it was old, not that the server was:
+  // an old launcher snapshotting a server already keeping its board data in
+  // boards.sqlite copied state.sqlite alone. Deleting the databases it did not
+  // cover would then destroy the only copy of that data. Under the legacy layout
+  // the primary is restored and every other database is left exactly as it is.
+  const liveNames = legacyLayout ? [primaryName] : await databaseBaseNames(pending.dbPath);
   for (const baseName of new Set([...liveNames, ...backedUpNames])) {
     for (const suffix of DB_FILE_SUFFIXES) {
       const target = NodePath.join(directory, `${baseName}${suffix}`);

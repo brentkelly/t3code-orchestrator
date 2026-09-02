@@ -33,7 +33,7 @@ No eject script, no cleanup step, no decode failures.
 | Separate board migration lineage + ledger | `board/migrations/index.ts`, `t3o_sql_migrations` (030 and counting) | Done, retargeted in P1 |
 | Board tables carry **zero** foreign keys | all 30 board migrations | Done, nothing to sever |
 | Every board SQL `JOIN` is board↔board | `projection.ts:1378`, `:1399` | Done, untouched |
-| Retired `board.*` event types survive replay | `OrchestrationEventStore.ts` `decodeReadRow` | **NOT done** — written, then lost to a shared-checkout overwrite; recoverable from checkpoint `a5898e344`. Reapply as part of P0 |
+| Retired `board.*` event types survive replay | `OrchestrationEventStore.ts` `decodeReadRow` | Done (P0) — rewritten after the original was lost to a shared-checkout overwrite |
 | Board events are namespaced `board.*` | `contracts/board.ts:4280` (35 types) | Done, the partition key |
 | Sub-boards, splits, plans panel, model overrides (t3o-23, 27-30) | board-owned modules only | Done, **zero** new upstream surface |
 | No t3o migrations in upstream's lineage | `persistence/Migrations/` | Done, upstream schema is pristine |

@@ -20,13 +20,17 @@
  * | ------------------------------ | ---------------------------- |
  * | `CREATE TABLE`                 | lands in `main` — must qualify |
  * | `CREATE INDEX`                 | ERRORS across schemas — must qualify |
- * | `ALTER` / `INSERT` / `SELECT`  | resolves to `boards` correctly |
- * | `PRAGMA table_info`            | resolves to `boards` correctly |
+ * | `ALTER` / `INSERT` / `SELECT`  | resolves to `boards` — IF `main` has no table of that name |
+ * | `PRAGMA table_info`            | resolves to `boards` — same condition |
  *
- * That is why the migrations qualify their `CREATE` statements and nothing else:
- * the minimum churn that is still unambiguous.
+ * The search order is `main` first, so an unqualified name only reaches `boards`
+ * when `main` cannot satisfy it. That holds for every `board_*` table, which is
+ * why the migrations qualify their `CREATE` statements and nothing else. It does
+ * NOT hold for a table that exists in both files — `projection_state` does, since
+ * migration 031 — and every read of one of those is qualified explicitly.
  */
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 /** Schema name the board database is attached under. */
@@ -42,6 +46,30 @@ export const BOARD_DATABASE_FILENAME = "boards.sqlite";
  * but an unquoted identifier would break on any name that needs quoting.
  */
 const quoted = (identifier: string): string => `"${identifier.replace(/"/g, '""')}"`;
+
+/**
+ * Both files hold a board schema, and the one in `boards` is not a proven copy of
+ * the one in `main`. Relocation refuses rather than pick a side: either choice
+ * destroys real data, and only a human knows which copy is the one they want.
+ */
+export class BoardRelocationConflictError extends Schema.TaggedErrorClass<BoardRelocationConflictError>()(
+  "BoardRelocationConflictError",
+  {
+    mainTables: Schema.Array(Schema.String),
+    boardTables: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    return (
+      "Refusing to relocate the board schema: both state.sqlite and boards.sqlite hold board " +
+      "tables, and boards.sqlite is not a copy of state.sqlite. This happens after running an " +
+      "older build (which recreated the board tables in state.sqlite) and then upgrading again. " +
+      "Keep ONE copy: to keep the newer data in state.sqlite, delete boards.sqlite; to keep the " +
+      "older data in boards.sqlite, drop the board_* tables and t3o_sql_migrations from " +
+      "state.sqlite. Then start again."
+    );
+  }
+}
 
 /** Tables belonging to the board lineage, by name prefix and by exact name. */
 const BOARD_TABLE_PREFIX = "board_";
@@ -63,6 +91,26 @@ export const resolveBoardDatabasePath = (mainFile: string): string => {
     ? BOARD_DATABASE_FILENAME
     : `${mainFile.slice(0, separator + 1)}${BOARD_DATABASE_FILENAME}`;
 };
+
+/** Row-for-row equality of the two migration ledgers, timestamps included. */
+const ledgersIdentical = Effect.fn("ledgersIdentical")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const onlyInMain = yield* sql<{ readonly n: number }>`
+    SELECT COUNT(*) AS n FROM (
+      SELECT migration_id, name, created_at FROM main.t3o_sql_migrations
+      EXCEPT
+      SELECT migration_id, name, created_at FROM boards.t3o_sql_migrations
+    )
+  `;
+  const onlyInBoards = yield* sql<{ readonly n: number }>`
+    SELECT COUNT(*) AS n FROM (
+      SELECT migration_id, name, created_at FROM boards.t3o_sql_migrations
+      EXCEPT
+      SELECT migration_id, name, created_at FROM main.t3o_sql_migrations
+    )
+  `;
+  return (onlyInMain[0]?.n ?? 1) === 0 && (onlyInBoards[0]?.n ?? 1) === 0;
+});
 
 /**
  * Attach the board database, idempotently.
@@ -141,6 +189,37 @@ export const relocateBoardSchema = Effect.fn("relocateBoardSchema")(function* ()
     ORDER BY name
   `;
   if (tables.length === 0) return;
+
+  // `main` is authoritative ONLY when `boards` holds nothing, or holds exactly
+  // the copy this relocation made. There is a third state: an older build ran in
+  // between — it knows nothing of `boards.sqlite`, so it recreated the board
+  // schema in `main` from scratch and the user worked in it — and now BOTH files
+  // hold real, divergent board data. Dropping either side destroys cards.
+  //
+  // The two states are told apart by the migration LEDGER. This relocation
+  // copies it row-for-row in the same transaction as the tables, so a resumed
+  // relocation finds `boards.t3o_sql_migrations` identical to `main`'s,
+  // timestamps included. An older build re-running the lineage stamps fresh
+  // timestamps, so the ledgers differ. Anything other than an identical ledger
+  // refuses, loudly, with both copies left exactly as they are.
+  const existing = yield* sql<{ readonly name: string }>`
+    SELECT name FROM boards.sqlite_master
+    WHERE type = 'table'
+      AND (substr(name, 1, 6) = ${BOARD_TABLE_PREFIX} OR name = ${BOARD_LEDGER_TABLE})
+    ORDER BY name
+  `;
+  if (existing.length > 0) {
+    const bothHaveLedger =
+      tables.some((table) => table.name === BOARD_LEDGER_TABLE) &&
+      existing.some((table) => table.name === BOARD_LEDGER_TABLE);
+    const provenCopy = bothHaveLedger && (yield* ledgersIdentical());
+    if (!provenCopy) {
+      return yield* new BoardRelocationConflictError({
+        mainTables: tables.map((table) => table.name),
+        boardTables: existing.map((table) => table.name),
+      });
+    }
+  }
 
   // Indexes, and also views and triggers: the board schema defines none today,
   // but `DROP TABLE` would take any that existed with it, and silently losing a

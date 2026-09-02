@@ -149,12 +149,22 @@ describe("board database", () => {
       yield* seedLegacyLayout;
       yield* attachBoardDatabase();
 
-      // Simulate the interrupted run: the copy transaction committed — a table
-      // AND a view landed in `boards` — but the drop-from-main did not.
+      // Simulate the interrupted run: the copy transaction committed — table,
+      // view AND the ledger landed in `boards`, row-for-row — but the
+      // drop-from-main did not. The identical ledger is what proves this is a
+      // resume rather than a downgrade/upgrade conflict.
       yield* sql`CREATE TABLE boards.board_cards (card_id TEXT NOT NULL PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL)`;
       yield* sql`INSERT INTO boards.board_cards VALUES ('card-1', 'proj', 'Half-copied')`;
       yield* sql`CREATE VIEW main.board_titles AS SELECT title FROM board_cards`;
       yield* sql`CREATE VIEW boards.board_titles AS SELECT title FROM board_cards`;
+      yield* sql`
+        CREATE TABLE boards.t3o_sql_migrations (
+          migration_id integer PRIMARY KEY NOT NULL,
+          created_at datetime NOT NULL DEFAULT current_timestamp,
+          name VARCHAR(255) NOT NULL
+        )
+      `;
+      yield* sql`INSERT INTO boards.t3o_sql_migrations SELECT * FROM main.t3o_sql_migrations`;
 
       // The table drop cannot discard a view, so the retry must drop it by name
       // before recreating it — or this call dies on "view already exists".
@@ -190,6 +200,51 @@ describe("board database", () => {
       assert.deepStrictEqual(
         triggers.map((row) => row.name),
         ["board_cards_touch"],
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  );
+  // An older build, which knows nothing of boards.sqlite, recreates the board
+  // schema in main from scratch and the user works in it. Upgrading again then
+  // finds real, divergent board data in BOTH files. Picking a side destroys
+  // cards, so the relocation must refuse and leave both copies exactly as found.
+  it.effect("refuses a downgrade/upgrade conflict rather than destroy either copy", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* attachBoardDatabase();
+
+      // The original data, relocated into boards by an earlier run.
+      yield* sql`CREATE TABLE boards.board_cards (card_id TEXT NOT NULL PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL)`;
+      yield* sql`INSERT INTO boards.board_cards VALUES ('card-old', 'proj', 'Original')`;
+      yield* sql`
+        CREATE TABLE boards.t3o_sql_migrations (
+          migration_id integer PRIMARY KEY NOT NULL,
+          created_at datetime NOT NULL DEFAULT current_timestamp,
+          name VARCHAR(255) NOT NULL
+        )
+      `;
+      yield* sql`INSERT INTO boards.t3o_sql_migrations (migration_id, created_at, name) VALUES (1, '2026-01-01 00:00:00', 'BoardCards')`;
+
+      // The older build's fresh schema in main, with its own freshly stamped ledger.
+      yield* seedLegacyLayout;
+      yield* sql`UPDATE main.t3o_sql_migrations SET created_at = '2026-06-01 00:00:00'`;
+
+      const outcome = yield* relocateBoardSchema().pipe(
+        Effect.as("relocated" as const),
+        Effect.catchTag("BoardRelocationConflictError", () => Effect.succeed("refused" as const)),
+      );
+      assert.strictEqual(outcome, "refused");
+
+      // Both copies untouched.
+      const inBoards = yield* sql<{ readonly title: string }>`SELECT title FROM boards.board_cards`;
+      assert.deepStrictEqual(
+        inBoards.map((row) => row.title),
+        ["Original"],
+      );
+      const inMain = yield* sql<{ readonly title: string }>`
+        SELECT title FROM main.board_cards ORDER BY card_id`;
+      assert.deepStrictEqual(
+        inMain.map((row) => row.title),
+        ["Kept", "Also kept"],
       );
     }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
   );

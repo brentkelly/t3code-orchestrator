@@ -321,7 +321,11 @@ const makeEventStore = Effect.gen(function* () {
           if (rowsRead === 0) {
             return Stream.empty;
           }
-          const nextRemaining = remaining - events.length;
+          // `limit` bounds the rows SCANNED, not the events yielded: a caller
+          // that computed it from a sequence gap (the shell resume path does)
+          // expects the read to stop at that head, and counting only decoded
+          // events would let a page of skipped rows carry the scan past it.
+          const nextRemaining = remaining - rowsRead;
           if (nextRemaining <= 0) {
             return Stream.fromIterable(events);
           }

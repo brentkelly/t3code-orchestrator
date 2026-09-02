@@ -409,9 +409,10 @@ it.effect("restores a legacy-layout snapshot instead of deleting the live databa
 
     assert.equal(yield* fs.readFileString(dbPath), "state-v1");
     assert.equal(yield* fs.readFileString(`${dbPath}-wal`), "state-wal-v1");
-    // A database with no entry in the snapshot still reverts by deletion — the
-    // legacy snapshot predates boards.sqlite, so the pre-update state had none.
-    assert.isFalse(yield* fs.exists(path.join(stateDir, "boards.sqlite")));
+    // A legacy snapshot proves the LAUNCHER was old, not the server: the board
+    // file may hold the only copy of the board data, and the snapshot says nothing
+    // about it. It must be left exactly as it is.
+    assert.equal(yield* fs.readFileString(path.join(stateDir, "boards.sqlite")), "boards-v2");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

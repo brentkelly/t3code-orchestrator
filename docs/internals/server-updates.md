@@ -78,7 +78,10 @@ retained across launcher restarts and is removed only after commit or after both
 terminal rollback state are durable.
 
 The protocol version is part of the safety boundary. A target that requires database snapshots is
-blocked when the installed launcher is too old. Upgrade the launcher once with:
+blocked when the installed launcher is too old. Protocol 3 is the version that snapshots every
+database in the state directory; a server keeping data in more than one file (t3o's
+`boards.sqlite`) must not be trialled under an older launcher, which would snapshot only
+`state.sqlite` and leave the rest migrated forward after a rollback. Upgrade the launcher once with:
 
 ```sh
 npx t3@<version> service update
