@@ -27,6 +27,10 @@ import {
   EnvironmentAuthorizationError,
   isBoardCommand,
   isBoardEvent,
+  BoardCardAttachmentError,
+  CommandId,
+  type BoardAttachCardFileInput,
+  type BoardDetachCardFileInput,
   ThreadId,
   type BoardCardDetail,
   type BoardCardDetailStreamItem,
@@ -38,12 +42,21 @@ import {
   type OrchestrationShellStreamEvent,
   type ProjectId,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
+import * as ServerConfig from "../config.ts";
+import {
+  BoardAttachmentClaimError,
+  claimBoardCardAttachment,
+  deleteBoardCardAttachmentFile,
+} from "./attachments.ts";
 import { observeRpcEffect, observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -106,6 +119,18 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
     );
   };
 
+  /** The RPC promises `BoardCardAttachmentError` and nothing else: a storage
+      failure the claim did not already name is reported as `internal`. */
+  const isAttachmentError = Schema.is(BoardCardAttachmentError);
+  const toAttachmentError = (error: unknown): BoardCardAttachmentError =>
+    isAttachmentError(error)
+      ? error
+      : new BoardCardAttachmentError({
+          code: "internal",
+          message: error instanceof Error ? error.message : "Attachment operation failed.",
+          cause: error,
+        });
+
   const detailItem = (detail: BoardCardDetail): BoardCardDetailStreamItem => ({
     kind: "card-detail",
     detail,
@@ -145,6 +170,155 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
         authorized(
           BOARD_WS_METHODS.mergeCardPullRequest,
           deps.boardSupervisor.mergePullRequest(input.cardId),
+        ),
+      ),
+
+    /**
+     * Attach a pending upload to the card's brief (t3o-32, K2). Copy first,
+     * record second: the file lands in the card's folder, then the internal
+     * `board.card.attach` command is dispatched; a refused dispatch deletes
+     * the copy again so disk and record never disagree.
+     */
+    [BOARD_WS_METHODS.attachCardFile]: (input: BoardAttachCardFileInput) =>
+      observeRpcEffect(
+        BOARD_WS_METHODS.attachCardFile,
+        authorized(
+          BOARD_WS_METHODS.attachCardFile,
+          Effect.gen(function* () {
+            const config = yield* ServerConfig.ServerConfig;
+            const crypto = yield* Crypto.Crypto;
+            const detail = yield* readDetail(input.cardId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new BoardCardAttachmentError({
+                    code: "internal",
+                    message: cause.message,
+                    cause,
+                  }),
+              ),
+            );
+            if (detail === null) {
+              return yield* new BoardCardAttachmentError({
+                code: "rejected",
+                message: `Card ${input.cardId} was not found.`,
+              });
+            }
+            const createdAt = DateTime.formatIso(yield* DateTime.now);
+            const attachment = yield* claimBoardCardAttachment({
+              stateDir: config.stateDir,
+              attachmentsDir: config.attachmentsDir,
+              card: detail.card,
+              pendingAttachmentId: input.pendingAttachmentId,
+              name: input.name,
+              type: input.type,
+              mimeType: input.mimeType,
+              sizeBytes: input.sizeBytes,
+              addedAt: createdAt,
+            }).pipe(
+              Effect.mapError((error) =>
+                error instanceof BoardAttachmentClaimError
+                  ? new BoardCardAttachmentError({
+                      code: error.failure.reason,
+                      message: error.failure.message,
+                      ...("cause" in error.failure && error.failure.cause !== undefined
+                        ? { cause: error.failure.cause }
+                        : {}),
+                    })
+                  : new BoardCardAttachmentError({
+                      code: "storage",
+                      message: `Failed to store '${input.name}'.`,
+                      cause: error,
+                    }),
+              ),
+            );
+            const uuid = yield* crypto.randomUUIDv4;
+            yield* deps.orchestrationEngine
+              .dispatch({
+                type: "board.card.attach",
+                commandId: CommandId.make(`server:board-attach:${uuid}`),
+                cardId: input.cardId,
+                attachment,
+                createdAt,
+              })
+              .pipe(
+                Effect.tapError(() =>
+                  deleteBoardCardAttachmentFile({
+                    stateDir: config.stateDir,
+                    cardId: input.cardId,
+                    name: attachment.name,
+                  }),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new BoardCardAttachmentError({
+                      code: "rejected",
+                      message: cause.message,
+                      cause,
+                    }),
+                ),
+              );
+            return attachment;
+          }).pipe(Effect.mapError(toAttachmentError)),
+        ),
+      ),
+
+    /**
+     * Drop a brief attachment (t3o-32): record first, then the file. A file
+     * that fails to delete is logged and left for a manual tidy — the record
+     * is gone, which is what the user asked for.
+     */
+    [BOARD_WS_METHODS.detachCardFile]: (input: BoardDetachCardFileInput) =>
+      observeRpcEffect(
+        BOARD_WS_METHODS.detachCardFile,
+        authorized(
+          BOARD_WS_METHODS.detachCardFile,
+          Effect.gen(function* () {
+            const config = yield* ServerConfig.ServerConfig;
+            const crypto = yield* Crypto.Crypto;
+            const detail = yield* readDetail(input.cardId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new BoardCardAttachmentError({
+                    code: "internal",
+                    message: cause.message,
+                    cause,
+                  }),
+              ),
+            );
+            const attachment = detail?.card.attachments.find(
+              (candidate) => candidate.id === input.attachmentId,
+            );
+            if (detail === null || attachment === undefined) {
+              return yield* new BoardCardAttachmentError({
+                code: "rejected",
+                message: `Attachment ${input.attachmentId} is not on card ${input.cardId}.`,
+              });
+            }
+            const uuid = yield* crypto.randomUUIDv4;
+            yield* deps.orchestrationEngine
+              .dispatch({
+                type: "board.card.detach",
+                commandId: CommandId.make(`server:board-detach:${uuid}`),
+                cardId: input.cardId,
+                attachmentId: input.attachmentId,
+                createdAt: DateTime.formatIso(yield* DateTime.now),
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new BoardCardAttachmentError({
+                      code: "rejected",
+                      message: cause.message,
+                      cause,
+                    }),
+                ),
+              );
+            yield* deleteBoardCardAttachmentFile({
+              stateDir: config.stateDir,
+              cardId: input.cardId,
+              name: attachment.name,
+            });
+          }).pipe(Effect.mapError(toAttachmentError)),
         ),
       ),
 

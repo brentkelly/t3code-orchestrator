@@ -24,6 +24,13 @@ export const AssetResource = Schema.Union([
     fileName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
     mimeType: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
   }),
+  // T3o: a card's brief attachment (t3o-32, K8), served from board-owned
+  // storage under `<stateDir>/board/attachments/<cardId>/<fileName>`.
+  Schema.TaggedStruct("board-attachment", {
+    cardId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    fileName: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+    mimeType: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+  }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     // A cache-key hint only. The server reads the authoritative path from the

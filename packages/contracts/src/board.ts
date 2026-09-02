@@ -470,6 +470,46 @@ export function sortBoardCardThreadLinks(
   );
 }
 
+// ── Brief attachments (t3o-32) ─────────────────────────────────────────
+
+/** Per-card cap on brief attachments, so the manifest an agent pulls stays
+    readable. The per-file byte caps are upstream's (`PROVIDER_SEND_TURN_MAX_*`). */
+export const BOARD_CARD_ATTACHMENTS_MAX = 20;
+
+export const BoardCardAttachmentId = TrimmedNonEmptyString.pipe(
+  Schema.brand("BoardCardAttachmentId"),
+);
+export type BoardCardAttachmentId = typeof BoardCardAttachmentId.Type;
+
+/**
+ * One file attached to a card's brief (t3o-32, K5). The bytes live in
+ * board-owned storage under `<stateDir>/board/attachments/<cardId>/<name>`
+ * (K1) — never in a worktree, which is reclaimed at Done. `name` is the
+ * sanitised, de-duplicated on-disk filename; `id` is the claimed upload's
+ * uuid, so the record survives the file being renamed on disk. Threads pull
+ * the list (with absolute paths) through `board_get_card_context` (K3).
+ */
+export const BoardCardAttachment = Schema.Struct({
+  id: BoardCardAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  type: Schema.Literals(["image", "file"]),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt,
+  addedAt: IsoDateTime,
+});
+export type BoardCardAttachment = typeof BoardCardAttachment.Type;
+
+/** Canonical attachment order: (addedAt, id) — the same code-unit compare
+    and the same both-sides discipline as `sortBoardCardThreadLinks`. */
+export function sortBoardCardAttachments(
+  attachments: ReadonlyArray<BoardCardAttachment>,
+): ReadonlyArray<BoardCardAttachment> {
+  const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+  return [...attachments].sort(
+    (left, right) => compare(left.addedAt, right.addedAt) || compare(left.id, right.id),
+  );
+}
+
 /** External tracker escape hatch (D14): exists from day one so import from,
     and later sync to, GitHub Issues / Linear / Jira is a field, not a
     migration. */
@@ -937,6 +977,14 @@ export const BoardCard = Schema.Struct({
       cards and for pre-t3o-23 rows. */
   sourcePlanId: Schema.NullOr(BoardPlanId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   threadLinks: Schema.Array(BoardCardThreadLink),
+  /** The brief's attachments (t3o-32, K5), in `sortBoardCardAttachments`
+      order. On the aggregate like `threadLinks` — the decider refuses a
+      duplicate name and an unknown remove — and mirrored to
+      `board_card_attachments`. Decodes to `[]` on every payload written
+      before t3o-32, so a from-empty replay matches the rehydrated model. */
+  attachments: Schema.Array(BoardCardAttachment).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   externalRef: Schema.NullOr(BoardCardExternalRef),
   /** Per-card human-in-the-loop override on the Build stage (D6). `null` means
       untouched — the effective value is `boardBuildHumanInLoopDefault`, computed
@@ -2344,6 +2392,32 @@ export const BoardCardUnlinkThreadCommand = Schema.Struct({
 });
 export type BoardCardUnlinkThreadCommand = typeof BoardCardUnlinkThreadCommand.Type;
 
+/**
+ * Record a brief attachment on the card (t3o-32, K2). Server-internal: the
+ * `board.attachCardFile` RPC copies the pending upload into the card's folder
+ * FIRST and only then dispatches this, so the record can never point at a
+ * file that is not there. A client cannot dispatch it directly.
+ */
+export const BoardCardAttachCommand = Schema.Struct({
+  type: Schema.Literal("board.card.attach"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  attachment: BoardCardAttachment,
+  createdAt: IsoDateTime,
+});
+export type BoardCardAttachCommand = typeof BoardCardAttachCommand.Type;
+
+/** Drop a brief attachment from the card (t3o-32). Internal for the same
+    reason: the RPC deletes the file once the record is gone. */
+export const BoardCardDetachCommand = Schema.Struct({
+  type: Schema.Literal("board.card.detach"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  attachmentId: BoardCardAttachmentId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardDetachCommand = typeof BoardCardDetachCommand.Type;
+
 export const BoardCardArchiveCommand = Schema.Struct({
   type: Schema.Literal("board.card.archive"),
   commandId: CommandId,
@@ -3018,6 +3092,22 @@ export const BoardCardThreadUnlinkedPayload = Schema.Struct({
 });
 export type BoardCardThreadUnlinkedPayload = typeof BoardCardThreadUnlinkedPayload.Type;
 
+export const BoardCardAttachedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  attachment: BoardCardAttachment,
+  card: BoardCard,
+});
+export type BoardCardAttachedPayload = typeof BoardCardAttachedPayload.Type;
+
+export const BoardCardDetachedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  attachmentId: BoardCardAttachmentId,
+  /** The record as it stood, so the RPC can delete the right file. */
+  attachment: BoardCardAttachment,
+  card: BoardCard,
+});
+export type BoardCardDetachedPayload = typeof BoardCardDetachedPayload.Type;
+
 export const BoardCardArchivedPayload = Schema.Struct({
   cardId: BoardCardId,
   archivedAt: IsoDateTime,
@@ -3547,7 +3637,8 @@ export const BoardCardShell = Schema.Struct({
       `BoardCard.pullRequest`; true regardless of the PR's state, so a card
       whose PR is already merged still reads as having one. */
   hasPr: Schema.Boolean,
-  /** Always 0 until t3o-11 wires attachments. */
+  /** `card.attachments.length` (t3o-32): the brief's attachments. Rides the
+      card aggregate, so every producer asserts it. */
   attachmentCount: NonNegativeInt,
   /** Whether the card is holding in the Building queue: it has been committed
       to Building (D18 "Begin build") but the governor has no free slot for its
@@ -3823,6 +3914,9 @@ export function makeBoardCardShell(input: {
   readonly blocked: boolean;
   readonly dependencyCount: number;
   readonly hasBrief: boolean;
+  /** `card.attachments.length` (t3o-32). Rests at 0 when a producer omits
+      it — only the contracts test's bare shell does. */
+  readonly attachmentCount?: number | undefined;
   /** Omitted by every live producer — the archive page is the only caller
       that has an archived card to describe (t3o-13, D7). */
   readonly archivedAt?: IsoDateTime | null | undefined;
@@ -3891,7 +3985,7 @@ export function makeBoardCardShell(input: {
     hasBrief: input.hasBrief,
     archivedAt: input.archivedAt ?? null,
     hasPr: input.prNumber != null,
-    attachmentCount: 0, // t3o-11
+    attachmentCount: input.attachmentCount ?? 0,
     queued: input.queued ?? false, // t3o-11 (D11): real on the snapshot, rests false on card deltas
     stalled: input.stalled ?? false, // t3o-17 (D3): real on the snapshot, rests false on card deltas
     held: input.held ?? false, // real on the snapshot, rests false on card deltas
@@ -3974,6 +4068,7 @@ export function boardCardShellFromCard(
     blocked: card.blocked,
     dependencyCount: card.dependsOn.length,
     hasBrief: card.briefRef !== null,
+    attachmentCount: card.attachments.length,
     archivedAt: card.archivedAt,
     // Falls back to the newest retired round (`boardCardDisplayPullRequest`),
     // so the badge does not blink out for the stretch between a card starting
@@ -4275,6 +4370,8 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardRecoverStepCommand,
   BoardCardSettleStepCommand,
   BoardCardRetuneStepCommand,
+  BoardCardAttachCommand,
+  BoardCardDetachCommand,
 ] as const;
 
 export const BOARD_EVENT_TYPES = [
@@ -4284,6 +4381,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-updated",
   "board.card-thread-linked",
   "board.card-thread-unlinked",
+  "board.card-attached",
+  "board.card-detached",
   "board.card-archived",
   "board.card-unarchived",
   "board.card-deleted",
@@ -4366,6 +4465,16 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-thread-unlinked"),
       payload: BoardCardThreadUnlinkedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-attached"),
+      payload: BoardCardAttachedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-detached"),
+      payload: BoardCardDetachedPayload,
     }),
     Schema.Struct({
       ...base,
@@ -4549,6 +4658,12 @@ export const BOARD_WS_METHODS = {
       "resolving conflicts" — and because a refresh must not write to the
       durable event log every time somebody opens a card. */
   mergeCardPullRequest: "board.mergeCardPullRequest",
+  /** Claim a pending upload into the card's folder and record it on the brief
+      (t3o-32, K2). An RPC, not a client command: the copy is a filesystem
+      side effect that must land before the record does. */
+  attachCardFile: "board.attachCardFile",
+  /** Drop a brief attachment and delete its file. */
+  detachCardFile: "board.detachCardFile",
 } as const;
 
 /**
@@ -4641,6 +4756,13 @@ export const BoardCardDetail = Schema.Struct({
   card: BoardCard,
   /** Brief body text, or null when the card has no brief. */
   brief: Schema.NullOr(TrimmedNonEmptyString),
+  /** The brief's attachments (t3o-32) in canonical order — the same list as
+      `card.attachments`, surfaced here so the modal renders thumbnails and
+      chips without reaching into the aggregate. Decodes to `[]` on legacy
+      detail payloads. */
+  attachments: Schema.Array(BoardCardAttachment).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   /** The PARENT card's per-stage model overrides (t3o-29, D4) for a sub-board
       child; null for a top-level card, or a parent that overrides nothing.
 
@@ -4782,6 +4904,36 @@ export class BoardSubscribeCardError extends Schema.TaggedErrorClass<BoardSubscr
   },
 ) {}
 
+/** What the client sends to attach: the pending upload it already made
+    through `attachments.createUploadUrl`, plus the metadata it holds. */
+export const BoardAttachCardFileInput = Schema.Struct({
+  cardId: BoardCardId,
+  /** A `pending-…` upload id from `attachments.createUploadUrl`. */
+  pendingAttachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  type: Schema.Literals(["image", "file"]),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt,
+});
+export type BoardAttachCardFileInput = typeof BoardAttachCardFileInput.Type;
+
+export const BoardDetachCardFileInput = Schema.Struct({
+  cardId: BoardCardId,
+  attachmentId: BoardCardAttachmentId,
+});
+export type BoardDetachCardFileInput = typeof BoardDetachCardFileInput.Type;
+
+/** Every way an attach or detach can go wrong is a message the chip shows;
+    `code` lets the client tell "upload expired, re-attach" from the rest. */
+export class BoardCardAttachmentError extends Schema.TaggedErrorClass<BoardCardAttachmentError>()(
+  "BoardCardAttachmentError",
+  {
+    code: Schema.Literals(["upload-missing", "rejected", "storage", "internal"]),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 /** Spread into `WsRpcGroup` (`RpcGroup.make` is variadic). */
 export const BOARD_RPCS = [
   Rpc.make(BOARD_WS_METHODS.subscribeCard, {
@@ -4800,6 +4952,16 @@ export const BOARD_RPCS = [
     success: BoardMergeCardPullRequestResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.attachCardFile, {
+    payload: BoardAttachCardFileInput,
+    success: BoardCardAttachment,
+    error: Schema.Union([BoardCardAttachmentError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WS_METHODS.detachCardFile, {
+    payload: BoardDetachCardFileInput,
+    success: Schema.Void,
+    error: Schema.Union([BoardCardAttachmentError, EnvironmentAuthorizationError]),
+  }),
 ] as const;
 
 /**
@@ -4816,6 +4978,10 @@ export const BOARD_RPC_SCOPES = {
   // Merging changes the repository and moves the card: the operate tier, the
   // same one every other board mutation rides.
   [BOARD_WS_METHODS.mergeCardPullRequest]: AuthOrchestrationOperateScope,
+  // Attaching writes a file and a board event; detaching deletes one. Both
+  // are the same mutation tier as every other board write.
+  [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.detachCardFile]: AuthOrchestrationOperateScope,
 } as const;
 
 // ── Board settings (D10, t3o-07) ───────────────────────────────────────

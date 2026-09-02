@@ -141,6 +141,7 @@ const typicalCard = (index: number): BoardCard => ({
   dependsOn: [],
   parentCardId: null,
   sourcePlanId: null,
+  attachments: [],
   threadLinks: [
     {
       threadId: ThreadId.make(`thread-${index}-4e5f-6789-abcd-ef0123456789`),

@@ -60,6 +60,8 @@ import {
   isBoardTerminalStepStatus,
   isEmptyBoardCardReviewOverrides,
   pickNextBoardLabelColour,
+  BOARD_CARD_ATTACHMENTS_MAX,
+  sortBoardCardAttachments,
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
@@ -1212,6 +1214,76 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           cardId: command.cardId,
           threadId: command.threadId,
           tombstonedAt,
+          card: nextCard,
+        },
+      };
+    }
+
+    case "board.card.attach": {
+      // The RPC copied the file before dispatching (K2), so the decider only
+      // guards the record: a live card, a free name, the per-card cap.
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (card.attachments.length >= BOARD_CARD_ATTACHMENTS_MAX) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' already has ${BOARD_CARD_ATTACHMENTS_MAX} attachments.`,
+        );
+      }
+      if (card.attachments.some((existing) => existing.id === command.attachment.id)) {
+        return yield* invariant(
+          command,
+          `Attachment '${command.attachment.id}' is already on card '${card.key}'.`,
+        );
+      }
+      if (card.attachments.some((existing) => existing.name === command.attachment.name)) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' already has an attachment named '${command.attachment.name}'.`,
+        );
+      }
+      const nextCard: BoardCard = {
+        ...card,
+        attachments: sortBoardCardAttachments([...card.attachments, command.attachment]),
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-attached",
+        payload: { cardId: command.cardId, attachment: command.attachment, card: nextCard },
+      };
+    }
+
+    case "board.card.detach": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const attachment = card.attachments.find(
+        (candidate) => candidate.id === command.attachmentId,
+      );
+      if (attachment === undefined) {
+        return yield* invariant(
+          command,
+          `Attachment '${command.attachmentId}' is not on card '${card.key}'.`,
+        );
+      }
+      const nextCard: BoardCard = {
+        ...card,
+        attachments: card.attachments.filter((candidate) => candidate.id !== command.attachmentId),
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-detached",
+        payload: {
+          cardId: command.cardId,
+          attachmentId: command.attachmentId,
+          attachment,
           card: nextCard,
         },
       };

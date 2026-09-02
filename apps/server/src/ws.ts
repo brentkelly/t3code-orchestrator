@@ -2097,7 +2097,11 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
-              if (input.resource._tag === "attachment") {
+              // T3o: brief attachments (t3o-32) mint like chat attachments.
+              if (
+                input.resource._tag === "attachment" ||
+                input.resource._tag === "board-attachment"
+              ) {
                 return yield* issueAssetUrl({ resource: input.resource });
               }
               if (input.resource._tag === "project-favicon") {

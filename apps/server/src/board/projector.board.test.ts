@@ -57,6 +57,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     parentCardId: null,
     sourcePlanId: null,
     threadLinks: [],
+    attachments: [],
     externalRef: null,
     humanInLoop: null,
     reviewOverrides: null,

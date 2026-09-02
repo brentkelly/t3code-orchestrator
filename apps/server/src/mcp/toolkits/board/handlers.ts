@@ -40,6 +40,7 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -55,6 +56,8 @@ import {
   type BoardSnapshotQueryMethods,
 } from "../../../board/projection.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as ServerConfig from "../../../config.ts";
+import { boardCardAttachmentManifest } from "../../../board/attachments.ts";
 import { boardAgentActor, stampBoardActivityActor } from "../../../board/activityActors.ts";
 import { BoardToolError, BoardToolkit } from "./tools.ts";
 
@@ -85,6 +88,9 @@ interface BoardToolDeps {
   readonly engine: OrchestrationEngineShape;
   readonly snapshotQuery: ProjectionSnapshotQueryShape;
   readonly board: BoardSnapshotQueryMethods;
+  /** For the brief-attachment manifest's absolute paths (t3o-32). */
+  readonly stateDir: string;
+  readonly path: Path.Path;
 }
 
 /** Resolve the services every board tool needs. `boardSnapshotQueryMethodsOf`
@@ -101,7 +107,16 @@ const boardToolDeps = Effect.gen(function* () {
       message: "Board snapshot query methods are unavailable on this server.",
     });
   }
-  return { scope, engine, snapshotQuery, board } satisfies BoardToolDeps;
+  const config = yield* ServerConfig.ServerConfig;
+  const path = yield* Path.Path;
+  return {
+    scope,
+    engine,
+    snapshotQuery,
+    board,
+    stateDir: config.stateDir,
+    path,
+  } satisfies BoardToolDeps;
 });
 
 const readBoardState = (deps: BoardToolDeps): Effect.Effect<BoardState, BoardToolError> =>
@@ -448,6 +463,13 @@ export const boardHandlers = {
       return {
         card,
         brief: detail?.brief ?? null,
+        // Pull, not push (K3): every linked thread lists the brief's files
+        // with a path it can read; added-later files show on the next call.
+        attachments: boardCardAttachmentManifest({
+          path: deps.path,
+          stateDir: deps.stateDir,
+          card,
+        }),
         dependencies,
         steps: boardCardStepCompletions(board, card.id),
         currentStep: (() => {

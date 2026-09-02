@@ -21,6 +21,7 @@ import {
   BoardCardActivityEntry,
   BoardCardThreadShell,
   BoardCardExternalRef,
+  BoardCardAttachmentId,
   BoardCardId,
   BoardPlan,
   BoardProposedPlanInput,
@@ -33,12 +34,14 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Crypto from "effect/Crypto";
+import * as Path from "effect/Path";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as ServerConfig from "../../../config.ts";
 
 /**
  * The single failure a board tool returns. `message` is the agent-facing,
@@ -70,6 +73,10 @@ const dependencies = [
   ProjectionSnapshotQuery,
   Crypto.Crypto,
   ServerSettings.ServerSettingsService,
+  // The brief-attachment manifest (t3o-32) resolves absolute paths off the
+  // state directory.
+  ServerConfig.ServerConfig,
+  Path.Path,
 ];
 
 // ── Read shapes ────────────────────────────────────────────────────────
@@ -85,9 +92,24 @@ const BoardCardContextDependency = Schema.Struct({
 
 /** Everything an agent needs to orient on its card without further calls — the
     pull half of D5. */
+/** One brief attachment with the absolute path the agent reads it at
+    (t3o-32, K3): `cat` it, or open an image with your file tools. */
+const BoardCardContextAttachment = Schema.Struct({
+  id: BoardCardAttachmentId,
+  name: TrimmedNonEmptyString,
+  type: Schema.Literals(["image", "file"]),
+  mimeType: TrimmedNonEmptyString,
+  sizeBytes: Schema.Number,
+  path: TrimmedNonEmptyString,
+});
+
 const BoardCardContext = Schema.Struct({
   card: BoardCard,
   brief: Schema.NullOr(Schema.String),
+  /** Files attached to the brief (t3o-32), each with an absolute path on this
+      machine. Read them on demand; nothing here is pushed into your turn
+      except the images a build or planning spawn already showed you. */
+  attachments: Schema.Array(BoardCardContextAttachment),
   dependencies: Schema.Array(BoardCardContextDependency),
   /** Prior step completions on this card, in order. HISTORY ONLY — the work
       the caller is assigned right now is `currentStep` (t3o-19). */
