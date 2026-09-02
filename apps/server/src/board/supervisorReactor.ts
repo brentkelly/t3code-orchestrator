@@ -1273,6 +1273,29 @@ const make = Effect.gen(function* () {
     // back, and coming back must not silently redo the stage's work.
     const mergeRole = effectiveBoardStageRole(stage) === "merge";
     const armedConflictFix = mergeRole && mergeAwaitingConflictFix.has(String(card.id));
+    // A sub-board child's merge stage is not a conversation (t3o-28, D3), so
+    // the "not armed means talk to a human" arm above does not apply to it —
+    // the same carve-out `autoMergeChild` documents, for the same reason: the
+    // initiating act was Begin build on the parent, and a child parked here
+    // strands every sibling that depends on it.
+    //
+    // It re-attempts the MERGE rather than assuming a conflict, because the
+    // arm can be missing for two very different reasons and only the forge can
+    // tell them apart: a conflict fix that escalated (`recoverStep` disarms) or
+    // a server restart (the set is in-memory) both leave a real conflict
+    // unarmed, while a merge refused for failing checks was never armed at all.
+    // Running the conflict prompt blind on that second case spawns an agent to
+    // "fix" a branch with nothing wrong with it — the asymmetric mistake
+    // `isMergeConflictRefusal` exists to avoid. Asking the forge again gets a
+    // conflict re-armed and its step started unattended through the ordinary
+    // path below, and gets a policy block onto the activity rail instead.
+    //
+    // Gated on `!armedConflictFix` so the conflict step this very call can
+    // start does not re-enter here and merge in a loop.
+    if (mergeRole && !armedConflictFix && card.parentCardId !== null) {
+      yield* autoMergeChild(card);
+      return;
+    }
     const firstEntry =
       armedConflictFix ||
       (!mergeRole && !completions.some((completion) => completion.stepId === card.stage));
@@ -2809,7 +2832,24 @@ const make = Effect.gen(function* () {
         // on the stage: a thread a human restarted by hand in this stage must
         // not merge anything. This is not auto-merge — every merge it can
         // complete was initiated by a Merge click that hit a conflict.
-        if (stageRole === "merge" && mergeAwaitingConflictFix.delete(String(card.id))) {
+        //
+        // A sub-board child carries that authorisation permanently (t3o-28, D3
+        // — the same carve-out `autoMergeChild` and `beginStageRun` apply), so
+        // it does not need the arm. Without this, a conflict fix that succeeds
+        // across a server restart — the set is in-memory — falls through to
+        // `continueStage`, and the merge stage's `autoAdvance` is off by
+        // design, so the child strands at Merge with its conflicts resolved and
+        // nothing left that would ever merge it.
+        //
+        // `delete` is the consumption, and it is the FIRST operand so a child
+        // never short-circuits past it: a stale arm left behind would be
+        // consumed by some later merge-stage step and turn into a merge nobody
+        // asked for. It stays behind the role test, so no other stage's step
+        // completing can clear a merge stage's arm.
+        if (
+          stageRole === "merge" &&
+          (mergeAwaitingConflictFix.delete(String(card.id)) || card.parentCardId !== null)
+        ) {
           // Release this fix's thread before anything else. Its link's role is
           // the stage id, which is exactly what `hasLiveStageThread` refuses to
           // trample — so leaving it live means the NEXT Merge click on a branch
