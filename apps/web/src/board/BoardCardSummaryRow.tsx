@@ -40,7 +40,7 @@ import { formatRelativeTime } from "../timestampFormat";
 import type { BoardCardMeta, BoardCardSummaryItem } from "./boardCardSummary";
 import { BoardHint } from "./BoardHint";
 
-/** Max pips rendered for either the review-round or plan-progress rows, so a
+/** Max pips rendered for the plan-progress dot row (`PlanPips`), so a
     pathological count cannot blow out the card width. */
 const MAX_SUMMARY_PIPS = 6;
 
@@ -173,7 +173,13 @@ export function BoardCardReviewBlock({
           }`}
         >
           <span
-            aria-label={`${rounds}${held ? " — no convergence" : ""}`}
+            aria-label={`${rounds}${
+              held
+                ? round.outcome === "stopped"
+                  ? " — stopped, no convergence"
+                  : " — no convergence"
+                : ""
+            }`}
             className="flex items-center"
           >
             <RoundBar current={round.current} held={held} max={round.max} />
@@ -530,7 +536,7 @@ export function BoardTodoPips({
       <span aria-label={label} className="flex items-center gap-[2px]">
         {/* Indexed rather than mapped over the characters: a pip IS its position
           — the row is a positional progress bar and items never reorder within a
-          render — which is the same shape `PlanPips` and `RoundPips` use. */}
+          render — which is the same shape `PlanPips` and `RoundBar` use. */}
         {Array.from({ length: statuses.length }, (_, index) => (
           <span
             className={cn(
