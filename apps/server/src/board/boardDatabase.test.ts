@@ -248,4 +248,39 @@ describe("board database", () => {
       );
     }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
   );
+  // The legacy 900+ reconciler seeds the ledger in main just before relocation,
+  // and in its test harness the board tables are already in boards. That state —
+  // main holding ONLY a ledger, boards holding the data — is a ledger move, not a
+  // conflict, and refusing it would leave every legacy database unbootable.
+  it.effect("moves a ledger-only main when boards already holds the data", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* attachBoardDatabase();
+      yield* sql`CREATE TABLE boards.board_cards (card_id TEXT NOT NULL PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL)`;
+      yield* sql`INSERT INTO boards.board_cards VALUES ('card-1', 'proj', 'Already here')`;
+      yield* sql`
+        CREATE TABLE main.t3o_sql_migrations (
+          migration_id integer PRIMARY KEY NOT NULL,
+          created_at datetime NOT NULL DEFAULT current_timestamp,
+          name VARCHAR(255) NOT NULL
+        )
+      `;
+      yield* sql`INSERT INTO main.t3o_sql_migrations (migration_id, name) VALUES (1, 'BoardCards')`;
+
+      yield* relocateBoardSchema();
+
+      assert.deepStrictEqual(yield* tableNames("main"), []);
+      const ledger = yield* sql<{ readonly migration_id: number }>`
+        SELECT migration_id FROM boards.t3o_sql_migrations`;
+      assert.deepStrictEqual(
+        ledger.map((row) => row.migration_id),
+        [1],
+      );
+      const cards = yield* sql<{ readonly title: string }>`SELECT title FROM boards.board_cards`;
+      assert.deepStrictEqual(
+        cards.map((row) => row.title),
+        ["Already here"],
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  );
 });

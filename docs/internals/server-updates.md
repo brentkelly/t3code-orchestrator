@@ -68,10 +68,15 @@ ledger claiming it is current, so nothing re-runs to reconcile it.
 
 Because snapshots are durable across launcher restarts, a restore can meet a directory written by an
 older launcher, whose layout was a single database stored as `database` / `database-wal` /
-`database-shm`. That layout is recognised and mapped to the primary database. A directory matching
-_neither_ layout makes the restore **refuse loudly** rather than proceed: past that point, live
-files with no snapshot entry are deleted, and a restore that recognises nothing would delete the
-databases and restore nothing. Failing is recoverable by hand; deleting is not.
+`database-shm`. That layout is recognised and mapped to the primary database — and under it the
+deletion rule above does **not** apply: only the primary is restored, and every other database is
+left exactly as it is. A legacy snapshot proves the launcher that wrote it was old, not that the
+server was; it says nothing about `boards.sqlite`, which may hold the only copy of the board data.
+Only the current layout can claim to know the full pre-update set.
+
+A directory matching _neither_ layout makes the restore **refuse loudly** rather than proceed: a
+restore that recognises nothing would otherwise delete the databases and restore nothing. Failing is
+recoverable by hand; deleting is not.
 
 This makes trial migrations and writes reversible without requiring down migrations. The snapshot is
 retained across launcher restarts and is removed only after commit or after both restore and the

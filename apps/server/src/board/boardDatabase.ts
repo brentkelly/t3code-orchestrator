@@ -208,7 +208,14 @@ export const relocateBoardSchema = Effect.fn("relocateBoardSchema")(function* ()
       AND (substr(name, 1, 6) = ${BOARD_TABLE_PREFIX} OR name = ${BOARD_LEDGER_TABLE})
     ORDER BY name
   `;
-  if (existing.length > 0) {
+  // A conflict needs DATA on both sides. The ledger is bookkeeping: `main`
+  // holding only a freshly seeded ledger (the legacy 900+ reconciler puts it
+  // there just before this runs) while `boards` already holds the tables is a
+  // ledger move, not two copies of the user's cards.
+  const isData = (name: string) => name !== BOARD_LEDGER_TABLE;
+  const mainHasData = tables.some((table) => isData(table.name));
+  const boardsHasData = existing.some((table) => isData(table.name));
+  if (mainHasData && boardsHasData) {
     const bothHaveLedger =
       tables.some((table) => table.name === BOARD_LEDGER_TABLE) &&
       existing.some((table) => table.name === BOARD_LEDGER_TABLE);

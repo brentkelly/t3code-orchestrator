@@ -64,6 +64,16 @@ export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
  */
 export const BOARD_MIGRATION_TABLE_QUALIFIED = `${BOARD_SCHEMA}.${BOARD_MIGRATION_TABLE}`;
 
+/**
+ * Where the legacy reconciler seeds the ledger: `main`, not `boards`. The
+ * reconciler only ever acts on a database still carrying 900+ rows in upstream's
+ * ledger, and such a database has never been relocated — its board tables are
+ * in `main`. Seeding the ledger beside them lets the relocation move ledger and
+ * tables together in one copy, which is what makes a torn relocation provable
+ * as a resume (see `relocateBoardSchema`) rather than misread as a conflict.
+ */
+const LEGACY_SEED_TABLE = `main.${BOARD_MIGRATION_TABLE}`;
+
 /** Ids the board lineage used before it was split into its own ledger. */
 const LEGACY_BOARD_ID_FLOOR = 900;
 
@@ -145,7 +155,7 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
   // Create the board ledger now so we can seed it before the board Migrator reads
   // its high-water mark (that Migrator would also CREATE IF NOT EXISTS).
   yield* sql`
-    CREATE TABLE IF NOT EXISTS ${sql(BOARD_MIGRATION_TABLE_QUALIFIED)} (
+    CREATE TABLE IF NOT EXISTS ${sql(LEGACY_SEED_TABLE)} (
       migration_id integer PRIMARY KEY NOT NULL,
       created_at datetime NOT NULL DEFAULT current_timestamp,
       name VARCHAR(255) NOT NULL
@@ -153,7 +163,7 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
   `;
 
   const seeded = yield* sql<{ readonly count: number }>`
-    SELECT COUNT(*) AS count FROM ${sql(BOARD_MIGRATION_TABLE_QUALIFIED)}
+    SELECT COUNT(*) AS count FROM ${sql(LEGACY_SEED_TABLE)}
   `;
   if ((seeded[0]?.count ?? 0) === 0) {
     // Legacy id 900+k maps to new id k+1. Mark exactly those recorded ids applied
@@ -165,13 +175,13 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
       .filter((id): id is number => nameById.has(id))
       .map((id) => ({ migration_id: id, name: nameById.get(id) as string }));
     if (seedRows.length > 0) {
-      yield* sql`INSERT INTO ${sql(BOARD_MIGRATION_TABLE_QUALIFIED)} ${sql.insert(seedRows)}`;
+      yield* sql`INSERT INTO ${sql(LEGACY_SEED_TABLE)} ${sql.insert(seedRows)}`;
     }
   }
 
   yield* sql`DELETE FROM main.effect_sql_migrations WHERE migration_id >= ${LEGACY_BOARD_ID_FLOOR}`;
   yield* Effect.log("Reconciled legacy board migration ledger").pipe(
-    Effect.annotateLogs({ evicted: legacyRows.length, table: BOARD_MIGRATION_TABLE_QUALIFIED }),
+    Effect.annotateLogs({ evicted: legacyRows.length, table: LEGACY_SEED_TABLE }),
   );
 });
 
@@ -183,10 +193,15 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
  *
  * 1. Attach `boards.sqlite` — nothing below can address the `boards` schema
  *    until it exists.
- * 2. Relocate a pre-t3o-26 layout's board tables out of `main`, ledger mark and
- *    all, so step 3 and the Migrator see the state the database is actually in.
- * 3. Reconcile the legacy 900+ shared-ledger scheme, which seeds the board
- *    ledger from upstream's and evicts the legacy rows.
+ * 2. Reconcile the legacy 900+ shared-ledger scheme: seed the board ledger in
+ *    `main`, beside the board tables, from upstream's ledger, and evict the
+ *    legacy rows. FIRST, so that a legacy database has its ledger in place
+ *    before anything is copied — the relocation copies ledger and tables in one
+ *    transaction, and that identical ledger is what proves a torn relocation is
+ *    a resume rather than a conflict. Reconciling afterwards would leave a torn
+ *    legacy relocation with no ledger on either side, refused forever.
+ * 3. Relocate a pre-t3o-26 layout's board tables and ledger out of `main`, so
+ *    the Migrator sees the state the database is actually in.
  *
  * Runs BEFORE upstream `runMigrations()`, because while the legacy rows are
  * present they pin upstream's high-water mark and would make it skip every
@@ -194,8 +209,8 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
  */
 export const initialiseBoardDatabase = Effect.fn("initialiseBoardDatabase")(function* () {
   yield* attachBoardDatabase();
-  yield* relocateBoardSchema();
   yield* reconcileLegacyBoardLedger();
+  yield* relocateBoardSchema();
 });
 
 /**
