@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import {
   TrimmedNonEmptyString,
+  // T3o: the board merge path (t3o-16).
   type ChangeRequestMergeStrategy,
   type SourceControlRepositoryVisibility,
   type VcsError,
@@ -52,6 +53,19 @@ export class GitHubCliAuthenticationError extends Schema.TaggedErrorClass<GitHub
   }
 }
 
+export class GitHubCliRateLimitError extends Schema.TaggedErrorClass<GitHubCliRateLimitError>()(
+  "GitHubCliRateLimitError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "GitHub API rate limit exceeded. Run `gh api rate_limit` to inspect the quota and reset time.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
 export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitHubPullRequestNotFoundError>()(
   "GitHubPullRequestNotFoundError",
   gitHubCliFailureFields,
@@ -65,6 +79,7 @@ export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitH
   }
 }
 
+// T3o: the board merge path (t3o-16) — refusal error, `allowNonZeroExit`, `mergePullRequest`.
 /**
  * A merge the forge REFUSED, carrying the forge's own words.
  *
@@ -169,7 +184,9 @@ export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubR
 export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
+  GitHubCliRateLimitError,
   GitHubPullRequestNotFoundError,
+  // T3o: see GitHubPullRequestMergeRefusedError.
   GitHubPullRequestMergeRefusedError,
   GitHubCliCommandError,
   GitHubPullRequestListDecodeError,
@@ -201,6 +218,9 @@ export function fromVcsError(
   if (error._tag === "VcsProcessExitError") {
     if (error.failureKind === "authentication") {
       return new GitHubCliAuthenticationError({ ...context, cause: error });
+    }
+    if (error.failureKind === "rate-limited") {
+      return new GitHubCliRateLimitError({ ...context, cause: error });
     }
     if (error.failureKind === "not-found") {
       return new GitHubPullRequestNotFoundError({ ...context, cause: error });
@@ -235,10 +255,13 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
-      /** Return a non-zero exit as a RESULT instead of an error, so a caller
+      /** T3o: return a non-zero exit as a RESULT instead of an error, so a caller
           that needs the process's own output (the merge path needs the forge's
           refusal text) can read it. */
       readonly allowNonZeroExit?: boolean;
+      /** Piped to the child's stdin, for payloads that must never appear in argv. */
+      readonly stdin?: string;
+      readonly maxOutputBytes?: number;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
     readonly listOpenPullRequests: (input: {
@@ -280,6 +303,7 @@ export class GitHubCli extends Context.Service<
       readonly reference: string;
       readonly force?: boolean;
     }) => Effect.Effect<void, GitHubCliError>;
+    // T3o: the board merge path (t3o-16).
     readonly mergePullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
@@ -355,7 +379,10 @@ export const make = Effect.gen(function* () {
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        // T3o: see `allowNonZeroExit`.
         ...(input.allowNonZeroExit === true ? { allowNonZeroExit: true } : {}),
+        ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+        ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
 
@@ -492,6 +519,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
       }).pipe(Effect.asVoid),
+    // T3o: the board merge path (t3o-16).
     // The strategy flag is always passed: `gh pr merge` with none prompts
     // interactively, which would hang a server. Branch deletion is NOT
     // delegated to `--delete-branch` — the board deletes the branch itself at

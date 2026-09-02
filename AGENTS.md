@@ -18,11 +18,20 @@ merge → Done), and the app itself spawns, supervises and restarts the agent th
 It is a supervisor, not a view.
 
 **Read `.plans/t3o-00-overview.md` before making any T3o change.** It holds 18 locked architectural
-decisions with their rationale and rejected alternatives. Per-feature specs are `.plans/t3o-01`
-through `.plans/t3o-12`; the build order and dependency waves are in the overview.
+decisions with their rationale and rejected alternatives. Per-feature specs are the numbered
+`.plans/t3o-NN-*.md` files from `t3o-01` onwards; the build order and dependency waves are in the overview.
 
-**Status:** design complete and locked. Implementation starts at `.plans/t3o-01-fork-foundation.md`.
-No board code exists yet.
+**Status:** the board is built and in use. Upstream is synced to `v0.0.38` (`t3o-31`); the seam
+inventory and sync runbook are in `docs/t3o/seams.md`.
+
+### Plans are tracked here
+
+Upstream's "Plans and work artifacts" section below says not to commit plans and gitignores
+`.plans/`. **T3o overrides that: `.plans/` is tracked.** The fork's specs, locked decisions and
+build order live there, the repo has no issue tracker of its own, and the plan-driven build flow
+reads each file's frontmatter. `.gitignore` re-includes the directory directly beneath upstream's
+ignore line. A commit that touches only `.plans/` needs `--no-verify`, because the format hook
+fails on that directory.
 
 ### Branches — the rule that matters most
 
@@ -56,7 +65,7 @@ The fork's survival depends on keeping the diff into upstream files small, mecha
 
 ## What makes T3 Code special?
 
-We have over 100,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
+We have over 200,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
 
 ### 1. Open at the core
 
@@ -154,6 +163,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 ## Verifying
 
 - Smallest proof that the change works. `vp test run <files>` for the tests you touched, targeted lint and typecheck for the scope you changed.
+- Test meaningful logic or observable behavior. Do not render components to static markup to assert props or attributes, or add tests that merely assert callback wiring or mirror the implementation.
 - **Do not run repo-wide checks.** No `vp check`, no `vp run -r test`, no `vp run -r typecheck` unless I ask. CI owns the full suite.
 - Backend behavior changes ship with focused tests for that behavior.
 - The server is event-sourced and its async flows emit typed receipts. Wait on receipts and worker drains, never on sleeps or polling. A test that needs a timeout to pass is wrong.
@@ -169,8 +179,16 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - **PRs target `t3o`, never `main`.** The one exception is the `main → t3o` upstream sync, which is
   run by hand from the runbook in `docs/t3o/seams.md`. <!-- T3o: fork PR-target rule — upstream's text targeted `main`. -->
 - UI changes need before/after images. Motion or timing needs a short video.
+- Upload PR evidence to GitHub. Never commit PR-only screenshots or assets such as `.github/pr-assets/`.
 - One concern per PR. If the description says "also", split it.
 - When babysitting: poll checks and comments newer than the last push, verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when the bots are green on the latest commit.
+
+## Plans and work artifacts
+
+- Do not commit implementation plans, research notes, or agent scratch files. Keep temporary working material outside the worktree. `.plans/` is gitignored only as a safety net for legacy tooling.
+- Track active maintainer work in the GitHub issue or project item that owns it. External proposals follow `CONTRIBUTING.md` and belong in Ideas discussions.
+- Put durable architecture, constraints, and decisions in `docs/internals/`. Update those docs when the product changes so agents find current facts instead of abandoned intentions.
+- A merged PR is the implementation record. Close or update its tracking item when the work lands; do not preserve a second checklist in the repository.
 
 ## How it works
 

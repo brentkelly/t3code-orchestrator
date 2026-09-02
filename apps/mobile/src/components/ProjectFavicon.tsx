@@ -7,7 +7,6 @@ import {
   getProjectFaviconCacheKey,
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
-import { useThemeColor } from "../lib/useThemeColor";
 import { useAssetUrl } from "../state/assets";
 import {
   beginProjectFaviconRequest,
@@ -24,13 +23,18 @@ export function ProjectFavicon(props: {
   readonly size?: number;
   readonly projectTitle: string;
   readonly workspaceRoot?: string | null;
+  readonly faviconPath?: string | null;
 }) {
   const size = props.size ?? 42;
   const faviconUrl = useAssetUrl(
     props.environmentId,
     props.workspaceRoot === null || props.workspaceRoot === undefined
       ? null
-      : { _tag: "project-favicon", cwd: props.workspaceRoot },
+      : {
+          _tag: "project-favicon",
+          cwd: props.workspaceRoot,
+          ...(props.faviconPath ? { path: props.faviconPath } : {}),
+        },
   );
   const renderableFaviconUrl = isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl;
   const cacheKey =
@@ -57,7 +61,6 @@ function ProjectFaviconImage(props: {
   readonly projectTitle: string;
   readonly size: number;
 }) {
-  const iconMuted = useThemeColor("--color-icon-subtle");
   const faviconRequest = useMemo(
     () => createProjectFaviconRequest(props.cacheKey, props.faviconUrl),
     [props.cacheKey, props.faviconUrl],
@@ -92,7 +95,7 @@ function ProjectFaviconImage(props: {
         <SymbolView
           name={{ ios: "folder.fill", android: props.open ? "folder_open" : "folder" }}
           size={props.size * 0.78}
-          tintColor={iconMuted}
+          tintColorClassName={"accent-icon-subtle"}
           type="monochrome"
         />
       ) : null}
