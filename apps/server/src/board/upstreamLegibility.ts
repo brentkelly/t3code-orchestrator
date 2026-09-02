@@ -43,12 +43,29 @@
  * adds appears here only after a rebase, and a board type retired from
  * `BOARD_EVENT_TYPES` reads as unknown rather than as t3o's doing.
  */
-import { BOARD_EVENT_TYPES, OrchestrationEventType } from "@t3tools/contracts";
+import {
+  BOARD_EVENT_TYPES,
+  OrchestrationAggregateKind,
+  OrchestrationEventType,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-/** Aggregate kinds stock t3code knows. Board added `card` / `label` / `stage`. */
-export const UPSTREAM_AGGREGATE_KINDS: ReadonlySet<string> = new Set(["project", "thread"]);
+/**
+ * The aggregate kinds t3o adds. The board owns exactly these three (D9 / t3o-06a
+ * / t3o-15); everything else in `OrchestrationAggregateKind` is upstream's. This
+ * is the one hand-maintained list, and it is the SMALL, board-owned side — a
+ * board aggregate added later is added here, mirroring how `BOARD_EVENT_TYPES`
+ * is the board-owned list the event derivation subtracts. Deriving the UPSTREAM
+ * side keeps the same rot-proofness in both places: an aggregate kind upstream
+ * adds is counted as upstream automatically.
+ */
+const BOARD_AGGREGATE_KINDS: ReadonlySet<string> = new Set(["card", "label", "stage"]);
+
+/** Aggregate kinds stock t3code knows: everything t3o ships, minus the board's. */
+export const UPSTREAM_AGGREGATE_KINDS: ReadonlySet<string> = new Set(
+  OrchestrationAggregateKind.literals.filter((kind) => !BOARD_AGGREGATE_KINDS.has(kind)),
+);
 
 /** Event types stock t3code knows: everything t3o ships, minus the board's. */
 export const UPSTREAM_EVENT_TYPES: ReadonlySet<string> = (() => {

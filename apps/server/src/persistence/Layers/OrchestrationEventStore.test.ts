@@ -45,6 +45,7 @@ const insertRawEvent = (
     readonly streamId: string;
     readonly eventType: string;
     readonly occurredAt: string;
+    readonly metadataJson?: string;
   },
 ) => sql`
   INSERT INTO orchestration_events (
@@ -55,7 +56,7 @@ const insertRawEvent = (
   VALUES (
     ${row.eventId}, ${row.aggregateKind}, ${row.streamId}, ${0}, ${row.eventType},
     ${row.occurredAt}, ${null}, ${null}, ${null},
-    ${"server"}, ${"{}"}, ${"{}"}
+    ${"server"}, ${"{}"}, ${row.metadataJson ?? "{}"}
   )
 `;
 
@@ -224,6 +225,40 @@ layer("OrchestrationEventStore", (it) => {
       if (replayResult._tag === "Failure") {
         assert.ok(isPersistenceDecodeError(replayResult.failure));
       }
+    }),
+  );
+
+  // The retired-board skip must run BEFORE the structural row decode, not just
+  // before the event-union decode: a retired row is skipped even when its own
+  // metadata no longer satisfies `OrchestrationEventMetadata` (here a numeric
+  // `providerTurnId`, valid JSON but wrong type). Before the row schema loosened
+  // `metadata`/`aggregateId`, this failed the whole page inside `findAll`.
+  it.effect("skips a retired board row whose metadata no longer fits the schema", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-01T00:00:00.000Z";
+      yield* sql`DELETE FROM orchestration_events`;
+
+      const before = yield* eventStore.append(projectCreated("meta-before", now));
+      yield* insertRawEvent(sql, {
+        eventId: "evt-retired-bad-metadata",
+        aggregateKind: "card",
+        streamId: BoardCardId.make("card-retired-meta"),
+        eventType: "board.card-progress-reported",
+        occurredAt: now,
+        // Valid JSON, invalid metadata: providerTurnId must be a string.
+        metadataJson: '{"providerTurnId":123}',
+      });
+      const after = yield* eventStore.append(projectCreated("meta-after", now));
+
+      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(0, 10)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+      assert.deepEqual(
+        replayed.map((event) => event.sequence),
+        [before.sequence, after.sequence],
+      );
     }),
   );
 });

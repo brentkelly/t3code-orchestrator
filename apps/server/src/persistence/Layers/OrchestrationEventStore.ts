@@ -92,7 +92,10 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
   payload: UnknownFromJsonString,
-  metadata: EventMetadataFromJsonString,
+  // T3o: parsed to a raw value here (still fatal on malformed JSON = corruption),
+  // validated against `OrchestrationEventMetadata` per row by `decodeEvent`. See
+  // the `aggregateId` note above.
+  metadata: UnknownFromJsonString,
 });
 
 const ReadFromSequenceRequestSchema = Schema.Struct({
