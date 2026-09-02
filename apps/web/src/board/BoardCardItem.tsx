@@ -42,6 +42,7 @@ import {
   BoardCardTodoThreadRow,
 } from "./BoardCardSummaryRow";
 import { projectAccent } from "./projectAccent";
+import { BoardHint } from "./BoardHint";
 
 /** What a card needs to render its todo strip (t3o-18). All of it is joined
     client-side from state the client already holds — `boardCardThreads` off the
@@ -280,13 +281,12 @@ export function BoardCardContent({
           // Sub-board membership (t3o-23): a child card names its parent so a
           // mixed column still reads as a whole. The chip is informational —
           // navigation stays the card click; drill-in is t3o-25.
-          <span
-            className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
-            title={`Part of ${parentKey}'s sub-board`}
-          >
-            <LayersIcon className="mr-0.5 size-2.5" />
-            {parentKey}
-          </span>
+          <BoardHint label={`Part of ${parentKey}'s sub-board`}>
+            <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+              <LayersIcon className="mr-0.5 size-2.5" />
+              {parentKey}
+            </span>
+          </BoardHint>
         ) : null}
         {card.threadState === "working" || card.stepRunning ? (
           // Green while the agent is working. `threadState === "working"` lights
@@ -298,10 +298,12 @@ export function BoardCardContent({
           // input or done. It pulses so "working" reads at a glance; a slow
           // opacity fade (`animate-pulse`), not a spinner — no per-frame layout,
           // so it stays cheap on high-refresh displays.
-          <span
-            className="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
-            title="Thread running"
-          />
+          <BoardHint label="Thread running">
+            <span
+              aria-label="Thread running"
+              className="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
+            />
+          </BoardHint>
         ) : null}
         {chip === null ? null : (
           // ONE chip, whatever the reason: the card face has room for a single
@@ -309,42 +311,48 @@ export function BoardCardContent({
           // needed" fight for the same slot. `boardCardAttention` already
           // ranked them, so the chip just says what won — and on a parent with
           // no problem of its own, it names the child that has one.
-          <span
-            className={cn(
-              "inline-flex shrink-0 items-center gap-1 text-[10.5px] font-semibold",
-              TONE_CHIP[chip.tone],
-            )}
-            title={chip.title}
-          >
-            {chip.icon}
-            {chip.label}
-          </span>
+          <BoardHint label={chip.title}>
+            <span
+              className={cn(
+                "inline-flex shrink-0 items-center gap-1 text-[10.5px] font-semibold",
+                TONE_CHIP[chip.tone],
+              )}
+            >
+              {chip.icon}
+              {chip.label}
+            </span>
+          </BoardHint>
         )}
         <span className="flex-1" />
         {queueSlot !== undefined ? (
-          <span
-            className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
-            title={
+          <BoardHint
+            label={
               queueSlot.startsNext
                 ? "Queued — starts next"
                 : `Queued — position ${queueSlot.position}`
             }
           >
-            {queueSlot.startsNext ? "Next" : `Queued #${queueSlot.position}`}
-          </span>
+            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+              {queueSlot.startsNext ? "Next" : `Queued #${queueSlot.position}`}
+            </span>
+          </BoardHint>
         ) : null}
         {card.blocked ? (
           // Only the GATE lives up here (it starts at Ready, D18). A card
           // carries dependencies long before they gate it, and that count is
           // now the meta row's chain icon — one place, every stage, and never
           // mistaken for the warning-coloured gate.
-          <span
-            className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-warning-foreground"
-            title={`Blocked by ${card.dependencyCount} ${card.dependencyCount === 1 ? "dependency" : "dependencies"}`}
+          <BoardHint
+            label={`Blocked by ${card.dependencyCount} ${card.dependencyCount === 1 ? "dependency" : "dependencies"}`}
           >
-            <LockIcon className="size-3" />
-            Blocked
-          </span>
+            <span
+              aria-label={`Blocked by ${card.dependencyCount} ${card.dependencyCount === 1 ? "dependency" : "dependencies"}`}
+              className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-warning-foreground"
+            >
+              <LockIcon className="size-3" />
+              Blocked
+            </span>
+          </BoardHint>
         ) : null}
       </div>
       {/* Labels sit on their own row beneath the key, so a multi-label card

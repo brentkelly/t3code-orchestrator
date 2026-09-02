@@ -47,6 +47,7 @@ import type { ReactNode } from "react";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { boardStageLabel } from "./boardStages";
+import { BoardHint } from "./BoardHint";
 
 /** How the rail resolves an agent's display name and accent (D11): from the
     thread's `ProviderInstanceId`, which is exactly where "Claude Opus 4.8" and
@@ -291,12 +292,11 @@ export function BoardCardActivityRail({
           <span className="min-w-0 flex-1 text-pretty">
             <ActorName agents={agents} entry={entry} /> {activitySentence(entry, stages)}
           </span>
-          <span
-            className="mt-[1px] shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70"
-            title={entry.createdAt}
-          >
-            {formatRelativeTimeLabel(entry.createdAt)}
-          </span>
+          <BoardHint label={entry.createdAt}>
+            <span className="mt-[1px] shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70">
+              {formatRelativeTimeLabel(entry.createdAt)}
+            </span>
+          </BoardHint>
         </li>
       ))}
     </ol>

@@ -36,6 +36,7 @@ import { BoardCardThreadAddMenu, type BoardThreadStageRestart } from "./BoardCar
 import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
+import { BoardHint } from "./BoardHint";
 
 /** The live chat for one linked thread. Split out so the thread-detail
     subscription hooks are keyed by the mounted thread and unmount with it. */
@@ -189,75 +190,86 @@ export function BoardCardThreadPane({
                 )}
                 key={link.threadId}
               >
-                <button
-                  className="inline-flex min-w-0 items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-ring"
-                  onClick={() => onSelectThread(link.threadId)}
-                  title={link.tombstoned ? "Deleted thread" : link.role}
-                  type="button"
-                >
-                  {link.awaitingInput ? (
-                    <span
-                      className="size-2 shrink-0 rounded-full bg-info"
-                      title="Awaiting your input"
-                    />
-                  ) : link.threadState === "working" ? (
-                    <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="Working" />
-                  ) : (
-                    <MessageSquareIcon className="size-3 shrink-0 opacity-70" />
-                  )}
-                  <span className="max-w-40 truncate whitespace-nowrap">
-                    {link.title ?? "Deleted thread"}
-                  </span>
-                  {(() => {
-                    // Per-tab todo counts (t3o-18): the point of tabs is choosing
-                    // between threads, and "3/9" answers that better than a title.
-                    const todo = threadTodos?.get(link.threadId);
-                    const total = todo?.todoTotal ?? 0;
-                    return total === 0 ? null : (
-                      <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
-                        {todo?.todoDone ?? 0}/{total}
-                      </span>
-                    );
-                  })()}
-                </button>
-                {active && !link.tombstoned ? (
+                <BoardHint label={link.tombstoned ? "Deleted thread" : link.role}>
                   <button
-                    aria-label="Unlink thread"
-                    className="-mr-1 inline-flex size-[15px] shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onUnlinkThread(link.threadId);
-                    }}
-                    title="Unlink thread"
+                    className="inline-flex min-w-0 items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-ring"
+                    onClick={() => onSelectThread(link.threadId)}
                     type="button"
                   >
-                    <XIcon className="size-2.5" />
+                    {link.awaitingInput ? (
+                      <BoardHint label="Awaiting your input">
+                        <span
+                          aria-label="Awaiting your input"
+                          className="size-2 shrink-0 rounded-full bg-info"
+                        />
+                      </BoardHint>
+                    ) : link.threadState === "working" ? (
+                      <BoardHint label="Working">
+                        <span
+                          aria-label="Working"
+                          className="size-2 shrink-0 rounded-full bg-emerald-500"
+                        />
+                      </BoardHint>
+                    ) : (
+                      <MessageSquareIcon className="size-3 shrink-0 opacity-70" />
+                    )}
+                    <span className="max-w-40 truncate whitespace-nowrap">
+                      {link.title ?? "Deleted thread"}
+                    </span>
+                    {(() => {
+                      // Per-tab todo counts (t3o-18): the point of tabs is choosing
+                      // between threads, and "3/9" answers that better than a title.
+                      const todo = threadTodos?.get(link.threadId);
+                      const total = todo?.todoTotal ?? 0;
+                      return total === 0 ? null : (
+                        <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+                          {todo?.todoDone ?? 0}/{total}
+                        </span>
+                      );
+                    })()}
                   </button>
+                </BoardHint>
+                {active && !link.tombstoned ? (
+                  <BoardHint label="Unlink thread">
+                    <button
+                      aria-label="Unlink thread"
+                      className="-mr-1 inline-flex size-[15px] shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onUnlinkThread(link.threadId);
+                      }}
+                      type="button"
+                    >
+                      <XIcon className="size-2.5" />
+                    </button>
+                  </BoardHint>
                 ) : null}
               </span>
             );
           })}
         </div>
         {canScrollRight ? (
-          <button
-            aria-label="Show older threads"
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-            onClick={scrollOlderIntoView}
-            title="Show older threads"
-            type="button"
-          >
-            <ChevronRightIcon className="size-3.5" />
-          </button>
+          <BoardHint label="Show older threads">
+            <button
+              aria-label="Show older threads"
+              className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+              onClick={scrollOlderIntoView}
+              type="button"
+            >
+              <ChevronRightIcon className="size-3.5" />
+            </button>
+          </BoardHint>
         ) : null}
         <span className="flex-1" />
-        <button
-          className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
-          onClick={onToggleMaximised}
-          title={maximised ? "Exit fullscreen" : "Fullscreen"}
-          type="button"
-        >
-          {maximised ? <MinimizeIcon className="size-3" /> : <MaximizeIcon className="size-3" />}
-        </button>
+        <BoardHint label={maximised ? "Exit fullscreen" : "Fullscreen"}>
+          <button
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+            onClick={onToggleMaximised}
+            type="button"
+          >
+            {maximised ? <MinimizeIcon className="size-3" /> : <MaximizeIcon className="size-3" />}
+          </button>
+        </BoardHint>
         {selected !== null && !selected.tombstoned ? (
           <Link
             className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"

@@ -113,6 +113,7 @@ import {
 } from "./BoardSettingsPanel.logic";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsSection } from "./settingsLayout";
+import { BoardHint } from "../../board/BoardHint";
 
 /** The stand-in card identity for envelope previews: a run interpolates the
     real card, so the preview shows placeholders where values vary per card. */
@@ -443,18 +444,21 @@ function PromptRow(props: {
             }}
           />
         ) : (
-          <button
-            type="button"
-            className="block w-full cursor-text px-3.5 py-3 text-left text-[13px] leading-relaxed whitespace-pre-wrap text-foreground"
-            title="Click to edit"
-            onClick={startEditing}
-          >
-            {props.value.trim().length > 0 ? (
-              props.value
-            ) : (
-              <span className="text-muted-foreground/70">No prompt yet — click to write one.</span>
-            )}
-          </button>
+          <BoardHint label="Click to edit">
+            <button
+              type="button"
+              className="block w-full cursor-text px-3.5 py-3 text-left text-[13px] leading-relaxed whitespace-pre-wrap text-foreground"
+              onClick={startEditing}
+            >
+              {props.value.trim().length > 0 ? (
+                props.value
+              ) : (
+                <span className="text-muted-foreground/70">
+                  No prompt yet — click to write one.
+                </span>
+              )}
+            </button>
+          </BoardHint>
         )}
 
         <SystemEnvelope text={props.postamble} edge="top" label="Postamble" />
@@ -544,17 +548,18 @@ function StageNameField(props: {
     // Not editable: a span, so the click keeps falling through to the row's
     // expand/collapse rather than dying on a disabled control.
     return props.editable ? (
-      <button
-        type="button"
-        title="Click to rename"
-        className="min-w-0 shrink-0 cursor-text truncate rounded-md px-1 py-0.5 text-left text-sm font-medium text-foreground hover:bg-popover hover:inset-ring hover:inset-ring-border"
-        onClick={(event) => {
-          event.stopPropagation();
-          setEditing(true);
-        }}
-      >
-        {props.label}
-      </button>
+      <BoardHint label="Click to rename">
+        <button
+          type="button"
+          className="min-w-0 shrink-0 cursor-text truncate rounded-md px-1 py-0.5 text-left text-sm font-medium text-foreground hover:bg-popover hover:inset-ring hover:inset-ring-border"
+          onClick={(event) => {
+            event.stopPropagation();
+            setEditing(true);
+          }}
+        >
+          {props.label}
+        </button>
+      </BoardHint>
     ) : (
       <span className="min-w-0 shrink-0 truncate px-1 py-0.5 text-sm font-medium text-foreground">
         {props.label}

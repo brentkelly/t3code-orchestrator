@@ -22,6 +22,7 @@ import { Input } from "../components/ui/input";
 import { cn } from "../lib/utils";
 import { boardLabelChipStyle, indexBoardLabels, resolveBoardLabels } from "./labelColour";
 import { boardLabelPickerModel } from "./labelPickerModel";
+import { BoardHint } from "./BoardHint";
 
 export interface BoardLabelFieldProps {
   readonly catalogue: ReadonlyArray<BoardLabel>;
@@ -64,15 +65,9 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
       {pills.length === 0 ? null : (
         <div className="flex flex-wrap gap-[5px]">
           {pills.map((label) => (
-            <span
-              className={cn(
-                "inline-flex h-[18px] max-w-full items-center truncate rounded-[5px] px-1.5 text-[10px] font-medium uppercase tracking-[0.03em]",
-                label.colour === null && "border border-dashed border-border bg-muted/60",
-                label.deleted && "opacity-55",
-              )}
+            <BoardHint
               key={label.labelId}
-              style={label.colour === null ? undefined : boardLabelChipStyle(label.colour)}
-              title={
+              label={
                 label.missing
                   ? "Unknown label"
                   : label.deleted
@@ -80,8 +75,17 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                     : label.name
               }
             >
-              {label.name}
-            </span>
+              <span
+                className={cn(
+                  "inline-flex h-[18px] max-w-full items-center truncate rounded-[5px] px-1.5 text-[10px] font-medium uppercase tracking-[0.03em]",
+                  label.colour === null && "border border-dashed border-border bg-muted/60",
+                  label.deleted && "opacity-55",
+                )}
+                style={label.colour === null ? undefined : boardLabelChipStyle(label.colour)}
+              >
+                {label.name}
+              </span>
+            </BoardHint>
           ))}
         </div>
       )}
@@ -135,51 +139,53 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                   {selected ? (
                     <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" />
                   ) : null}
-                  <span
-                    className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-accent hover:text-foreground"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setEditingColourFor((current) =>
-                        current === label.labelId ? null : label.labelId,
-                      );
-                    }}
-                    role="presentation"
-                    title="Change colour"
-                  >
-                    <PencilIcon className="size-3" />
-                  </span>
-                  <span
-                    className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      props.onDelete(label.labelId);
-                    }}
-                    role="presentation"
-                    title="Delete label"
-                  >
-                    <TrashIcon className="size-3" />
-                  </span>
+                  <BoardHint label="Change colour">
+                    <span
+                      className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setEditingColourFor((current) =>
+                          current === label.labelId ? null : label.labelId,
+                        );
+                      }}
+                      role="presentation"
+                    >
+                      <PencilIcon className="size-3" />
+                    </span>
+                  </BoardHint>
+                  <BoardHint label="Delete label">
+                    <span
+                      className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        props.onDelete(label.labelId);
+                      }}
+                      role="presentation"
+                    >
+                      <TrashIcon className="size-3" />
+                    </span>
+                  </BoardHint>
                 </div>
                 {editingColourFor === label.labelId ? (
                   <div className="flex flex-wrap gap-[5px] py-1.5 pr-1.5 pl-6">
                     {BOARD_LABEL_SWATCHES.map((swatch) => (
-                      <span
-                        className={cn(
-                          "size-5 cursor-pointer rounded-md border-2",
-                          label.colour === swatch ? "border-foreground" : "border-transparent",
-                        )}
-                        key={swatch}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          props.onRecolour(label.labelId, swatch);
-                          setEditingColourFor(null);
-                        }}
-                        role="presentation"
-                        style={{ backgroundColor: swatch }}
-                        title={swatch}
-                      />
+                      <BoardHint key={swatch} label={swatch}>
+                        <span
+                          className={cn(
+                            "size-5 cursor-pointer rounded-md border-2",
+                            label.colour === swatch ? "border-foreground" : "border-transparent",
+                          )}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            props.onRecolour(label.labelId, swatch);
+                            setEditingColourFor(null);
+                          }}
+                          role="presentation"
+                          style={{ backgroundColor: swatch }}
+                        />
+                      </BoardHint>
                     ))}
                   </div>
                 ) : null}
@@ -225,17 +231,18 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                     <span className="min-w-0 flex-1 truncate text-left line-through">
                       {label.name}
                     </span>
-                    <span
-                      className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] hover:bg-accent hover:text-foreground"
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        props.onUndelete(label.labelId);
-                      }}
-                      role="presentation"
-                      title="Restore label"
-                    >
-                      <RotateCcwIcon className="size-3" />
-                    </span>
+                    <BoardHint label="Restore label">
+                      <span
+                        className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] hover:bg-accent hover:text-foreground"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          props.onUndelete(label.labelId);
+                        }}
+                        role="presentation"
+                      >
+                        <RotateCcwIcon className="size-3" />
+                      </span>
+                    </BoardHint>
                   </div>
                 ))}
               </div>

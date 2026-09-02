@@ -32,6 +32,7 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import { boardArchivedCardsInScope } from "./boardArchivedCards";
 import { BoardDeleteConfirmDialog } from "./BoardDeleteConfirmDialog";
 import { boardStageLabel } from "./boardStages";
+import { BoardHint } from "./BoardHint";
 
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
   return orchestrationEnvironment.archivedShellSnapshot({ environmentId, input: {} });
@@ -137,13 +138,12 @@ function ArchivedCardList({
                   // A sub-board child names its parent (t3o-25, AC6) — the
                   // archive flattens every board into one list, so without
                   // this the child reads as a stray top-level card.
-                  <span
-                    className="inline-flex h-4 shrink-0 items-center rounded bg-muted-foreground/14 px-1.5 text-[10px] font-medium text-muted-foreground"
-                    title={`Part of ${parentKey}'s sub-board`}
-                  >
-                    <LayersIcon className="mr-0.5 size-2.5" />
-                    {parentKey}
-                  </span>
+                  <BoardHint label={`Part of ${parentKey}'s sub-board`}>
+                    <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted-foreground/14 px-1.5 text-[10px] font-medium text-muted-foreground">
+                      <LayersIcon className="mr-0.5 size-2.5" />
+                      {parentKey}
+                    </span>
+                  </BoardHint>
                 );
               })()}
               <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">

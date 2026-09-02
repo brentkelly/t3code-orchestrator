@@ -14,6 +14,7 @@ import { useState } from "react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { BoardHint } from "./BoardHint";
 
 export interface BoardPickerOption {
   readonly id: string;
@@ -65,12 +66,11 @@ export function BoardPickerSearchBody({
               ) : null}
               <span className="min-w-0 flex-1 truncate">{option.title}</span>
               {option.parentKey !== undefined ? (
-                <span
-                  className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
-                  title={`Part of ${option.parentKey}'s sub-board`}
-                >
-                  {option.parentKey}
-                </span>
+                <BoardHint label={`Part of ${option.parentKey}'s sub-board`}>
+                  <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+                    {option.parentKey}
+                  </span>
+                </BoardHint>
               ) : null}
             </button>
           ))

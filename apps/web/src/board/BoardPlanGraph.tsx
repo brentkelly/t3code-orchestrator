@@ -9,6 +9,7 @@
  * under a node never steals its click.
  */
 import { cn } from "../lib/utils";
+import { BoardHint } from "./BoardHint";
 import {
   boardPlanGraphLayout,
   type BoardPlanGraphNode,
@@ -82,35 +83,36 @@ function PlanGraphNode({
 }) {
   const openable = node.cardId !== null && onOpenChild !== undefined;
   return (
-    <button
-      className={cn(
-        "absolute flex flex-col justify-center gap-[3px] rounded-[9px] border px-2.5 text-left shadow-xs",
-        node.awaitingInput ? "border-info/55" : "border-border",
-        node.tone === "done" ? "bg-foreground/4" : "bg-card",
-        node.tone === "gone" && "opacity-60",
-        openable ? "hover:border-foreground/20" : "cursor-default",
-      )}
-      disabled={!openable}
-      onClick={openable ? () => onOpenChild(node.cardId as string) : undefined}
-      style={{
-        left: `${node.x}px`,
-        top: `${node.y}px`,
-        width: `${node.width}px`,
-        height: `${node.height}px`,
-      }}
-      title={node.stageLabel === null ? node.title : `${node.title} — ${node.stageLabel}`}
-      type="button"
-    >
-      <span className="flex items-center gap-1.5">
-        <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[node.tone])} />
-        <span className="text-[10.5px] font-semibold text-muted-foreground">#{node.n}</span>
-        <span className="ml-auto truncate text-[10.5px] text-muted-foreground">
-          {node.stageLabel ?? "No card"}
+    <BoardHint label={node.stageLabel === null ? node.title : `${node.title} — ${node.stageLabel}`}>
+      <button
+        className={cn(
+          "absolute flex flex-col justify-center gap-[3px] rounded-[9px] border px-2.5 text-left shadow-xs",
+          node.awaitingInput ? "border-info/55" : "border-border",
+          node.tone === "done" ? "bg-foreground/4" : "bg-card",
+          node.tone === "gone" && "opacity-60",
+          openable ? "hover:border-foreground/20" : "cursor-default",
+        )}
+        disabled={!openable}
+        onClick={openable ? () => onOpenChild(node.cardId as string) : undefined}
+        style={{
+          left: `${node.x}px`,
+          top: `${node.y}px`,
+          width: `${node.width}px`,
+          height: `${node.height}px`,
+        }}
+        type="button"
+      >
+        <span className="flex items-center gap-1.5">
+          <span className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[node.tone])} />
+          <span className="text-[10.5px] font-semibold text-muted-foreground">#{node.n}</span>
+          <span className="ml-auto truncate text-[10.5px] text-muted-foreground">
+            {node.stageLabel ?? "No card"}
+          </span>
         </span>
-      </span>
-      <span className="line-clamp-2 text-[12px]/[1.3] font-medium text-foreground">
-        {node.title}
-      </span>
-    </button>
+        <span className="line-clamp-2 text-[12px]/[1.3] font-medium text-foreground">
+          {node.title}
+        </span>
+      </button>
+    </BoardHint>
   );
 }
