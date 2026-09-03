@@ -41,4 +41,7 @@ node_modules/
 .env*
 !.env.example
 
+# T3o: `node scripts/t3o-pack.mjs` output — installable tarballs, never committed.
+dist-npm/
+
 .claude/worktrees/
