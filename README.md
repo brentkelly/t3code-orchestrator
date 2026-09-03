@@ -10,6 +10,76 @@ Nothing. We built T3 Code because we wanted the best possible development experi
 
 We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
 
+<!-- T3o: fork section. Upstream's README has no equivalent; keep fork additions together under this marker. -->
+
+## This is T3o, a fork
+
+This repository is **T3o**, a fork of [`pingdotgg/t3code`](https://github.com/pingdotgg/t3code) that adds
+**Board** mode: work is managed as cards moving through a fixed engineering pipeline (Backlog → Sprint →
+Planning → Ready → Building → Code review → Ready for merge → Done), and the app spawns, supervises and
+restarts the agent threads that do the work.
+
+T3o is not published to any registry. `npx t3@latest`, the desktop installers and the package-manager
+recipes under [Installation](#installation) all give you **upstream**, without the board. To run T3o you
+build it from this checkout.
+
+### Requirements
+
+- **Node.js 24.13.1 or newer** — `engines.node` is pinned to `^24.13.1`. Distro packages are usually far
+  older; use [nvm](https://github.com/nvm-sh/nvm), [fnm](https://github.com/Schniz/fnm) or
+  [NodeSource](https://github.com/nodesource/distributions).
+- **pnpm 11.10.0** — the workspace uses pnpm catalogs (the `catalog:` versions in `package.json`), which
+  npm and yarn cannot resolve. An `EUNSUPPORTEDPROTOCOL` / `Unsupported URL Type "catalog:"` failure means
+  the wrong package manager, not a broken lockfile.
+- **A C++ toolchain** — `node-pty` ships no Linux prebuild and compiles during install. On Debian/Ubuntu:
+  `sudo apt install -y build-essential python3`.
+- **`git` and `rsync`**, plus `sudo` rights if you want the systemd service.
+- **At least one provider CLI**, installed and authenticated as the user that will run the server. See the
+  warning under [Installation](#installation).
+
+### Install and build
+
+```bash
+corepack enable pnpm     # or: npm install -g pnpm@11.10.0
+pnpm install             # not `npm install`, and not `--frozen-lockfile`
+pnpm run build           # every app; the service install below builds the server on its own
+```
+
+`pnpm install` is what puts `vp` (Vite+, the build tool) at `node_modules/.bin/vp`. Until it has run, every
+script in `package.json` dies with `node_modules/.bin/vp … ENOENT`, `install-t3o-service` included. The
+global `vp` install described near the bottom of this file is optional — the repo carries its own copy.
+
+### Run it as a service (Linux, systemd)
+
+Install the provider CLIs first: the unit is written with a PATH resolved at install time, and a provider
+that was not on your PATH then will fail to spawn with `ENOENT`. Re-run the install after adding one.
+
+`pnpm run install-t3o-service` builds the server, copies the build to `~/.t3/app` so the service never runs
+out of the worktree, and writes a `t3o.service` unit serving `http://127.0.0.1:3773` from your `~/.t3` data
+directory:
+
+```bash
+pnpm run install-t3o-service                 # install, enable and start
+pnpm run install-t3o-service -- --takeover   # ...and switch off whatever else holds the port
+pnpm run t3o-service-status
+pnpm run uninstall-t3o-service               # remove the unit, restore whatever --takeover displaced
+```
+
+`--takeover` only matters on a machine already running another T3 Code server (upstream's
+`t3code.service`, say). On a fresh one, nothing holds port 3773 and the plain install starts straight away.
+
+The pairing URL is printed once at startup, and you need it to reach the web app:
+
+```bash
+journalctl -u t3o.service -n 200 --no-pager | grep -i 'Pairing URL'
+```
+
+Do **not** use upstream's `t3 service install` here. It runs `npm install t3@<version>` against the public
+registry, and would serve upstream's build against this fork's data — no board, and no error to say so.
+
+Flags, redeploying after a pull, running without systemd, and troubleshooting:
+[docs/t3o/install.md](./docs/t3o/install.md).
+
 ## Installation
 
 > [!WARNING]
