@@ -37,7 +37,14 @@ import { selectCliRuntimeExternalDependencies } from "./lib/cli-external-package
 const repoRoot = NodeURL.fileURLToPath(new URL("..", import.meta.url));
 const user = NodeOS.userInfo().username;
 
+// `pnpm run install-t3o-service -- --takeover` arrives as `install -- --takeover`:
+// pnpm forwards its own separator. parseArgs routes everything after a bare `--`
+// to positionals, which silently swallowed the flag and printed the "re-run with
+// --takeover" advice to someone who had just used it.
+const argv = process.argv.slice(2).filter((argument) => argument !== "--");
+
 const { values, positionals } = NodeUtil.parseArgs({
+  args: argv,
   allowPositionals: true,
   options: {
     home: { type: "string", default: NodePath.join(NodeOS.homedir(), ".t3") },
@@ -52,7 +59,7 @@ const { values, positionals } = NodeUtil.parseArgs({
   },
 });
 
-const command = positionals[0] ?? "install";
+const [command = "install", ...unexpected] = positionals;
 const t3Home = NodePath.resolve(values.home);
 const appDir = NodePath.resolve(values["app-dir"] ?? NodePath.join(t3Home, "app"));
 const unitName = `${values.unit}.service`;
@@ -74,6 +81,13 @@ if (values.help || !["install", "sync", "uninstall", "status", "unit"].includes(
     ].join("\n"),
   );
   process.exit(values.help ? 0 : 1);
+}
+
+if (unexpected.length > 0) {
+  console.error(
+    `\nt3o-service: unexpected argument(s): ${unexpected.join(" ")}\nRun with --help for usage.`,
+  );
+  process.exit(1);
 }
 
 const run = (bin, args, options = {}) => {
