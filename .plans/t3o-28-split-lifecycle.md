@@ -70,6 +70,14 @@ alone rather than cleared. Everything else the gate refuses stays: a live step,
 an existing live split, fewer than two plans, a parent already past build, a
 plan-graph cycle, a childless nested card.
 
+> **Amended in flight:** "a live step" turned out to wedge the gate shut. The
+> planning interview is itself a live step that only the forward move settles,
+> and D2 of t3o-27 refuses that move until the split is approved — so every
+> split proposed by a planning agent was unapprovable. The refusal now carves
+> out the plan-role stage: a plan step writes plans, not the branch, and since
+> D1 above approval no longer starts anything. A live step at any other stage
+> is refused exactly as before.
+
 The visible consequence needs no new code: `boardCardPendingSplit` goes false
 the moment the children exist, so the amber state clears and the modal's
 "Approve split" button gives way to the ordinary forward action — "Move to
