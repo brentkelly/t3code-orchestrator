@@ -35,6 +35,12 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   These were blue before, which read as "still working" — the opposite of what they mean.
 - **Blocked is amber, never blue.** It matches the card modal's blocked callout, which already used
   it.
+- **No colour without a claim.** A colour asserts something about work happening right now, so an
+  indicator that cannot make that assertion stays neutral (`bg-muted text-muted-foreground`) and
+  says why in words. The review pane is the case that forced the rule: its loop and round state are
+  derived from the step ledger, which still reads "round 1, review due" for a card that has never
+  reached the review stage — so off the stage the pill, the round pill and the phase markers all go
+  neutral and read "Not started" / "Not running" rather than spinning at a card sitting in Building.
 
 ## Deliberately outside the convention
 
