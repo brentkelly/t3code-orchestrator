@@ -195,6 +195,20 @@ export function boardCardHasThreadPane(
 }
 
 /**
+ * Whether the sheet takes its wide form: a pane other than the brief is on
+ * show. From Planning onward that is every default; before it the sheet stays
+ * narrow until the user opens another pane. The single source for the dialog
+ * frame (which sizes the popup by it) and the panel (which lays out by it).
+ */
+export function boardCardDetailIsWide(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stage: BoardStageId,
+  paneChoice: BoardCardPane | null,
+): boolean {
+  return boardCardHasThreadPane(stages, stage) || (paneChoice !== null && paneChoice !== "brief");
+}
+
+/**
  * A finished card reads as finished from across the room: the whole sheet
  * wears a lime wash while the card sits on the done-role stage, and loses it
  * the moment the card moves back off. Keyed on the ROLE, never the label (D3),
@@ -1201,13 +1215,7 @@ function PaneTabs({
 export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
-  // Wide is "a pane other than the brief is on show": from Planning onward
-  // that is every default, and before it the sheet stays narrow until the
-  // user opens the thread or review pane. Must agree with the dialog frame's
-  // computation in BoardCardDetailView, which sizes the popup.
-  const wide =
-    boardCardHasThreadPane(props.stages, card.stage) ||
-    (props.paneChoice !== null && props.paneChoice !== "brief");
+  const wide = boardCardDetailIsWide(props.stages, card.stage, props.paneChoice);
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
@@ -1521,7 +1529,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                     (link) => link.threadId === activeThreadId && link.threadState === "working",
                   )
                 }
-                notStarted={!onReviewStage && !reviewStarted}
+                offStage={!onReviewStage}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
                 onAdvance={(() => {
                   // "Advance anyway" is an ordinary stage move, gated exactly
@@ -1724,11 +1732,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   const [maximised, setMaximised] = useState(false);
   const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(null);
-  // Must agree with the panel's `wide`: the frame is 760px only while the
-  // narrow brief sheet is the pane on show.
-  const wide =
-    boardCardHasThreadPane(props.stages, props.detail.card.stage) ||
-    (paneChoice !== null && paneChoice !== "brief");
+  const wide = boardCardDetailIsWide(props.stages, props.detail.card.stage, paneChoice);
   const done = boardCardIsDone(props.stages, props.detail.card.stage);
   return (
     <Dialog

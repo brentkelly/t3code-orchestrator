@@ -323,16 +323,19 @@ function Round({
 function statusPill(
   loop: BoardReviewLoop,
   live: boolean,
-  notStarted: boolean,
+  offStage: boolean,
+  started: boolean,
 ): { label: string; spinning: boolean; className: string } {
   switch (loop.status) {
     case "running": {
-      // Ahead of the review stage an empty loop derives as "running" — but
+      // Off the review stage a non-terminal loop derives as "running" — but
       // nothing is running and nobody is waited on, so the pill stays
-      // neutral (docs/t3o/status-colours.md: no colour without a claim).
-      if (notStarted) {
+      // neutral (docs/t3o/status-colours.md: no colour without a claim):
+      // "not started" ahead of the loop, "not running" for a card dragged
+      // off mid-loop.
+      if (offStage) {
         return {
-          label: "Not started yet",
+          label: started ? "Not running — card is off the review stage" : "Not started yet",
           spinning: false,
           className: "bg-muted text-muted-foreground",
         };
@@ -537,7 +540,7 @@ export function BoardCardReviewPane({
   completions,
   maxRounds,
   live,
-  notStarted,
+  offStage,
   overrides,
   roundsStarted,
   stepActive,
@@ -557,10 +560,11 @@ export function BoardCardReviewPane({
   /** Whether the card's active thread is working — the difference between a
       due phase spinning "running now" and resting "waiting to run". */
   readonly live: boolean;
-  /** The pane is open AHEAD of the loop: the card has not reached the review
-      stage and no round has recorded anything — it exists to plan the rounds,
-      so the status pill must not claim the loop is running or waiting. */
-  readonly notStarted?: boolean | undefined;
+  /** The card is not ON the review stage, so the loop cannot be live: ahead
+      of it the pane is a planning surface, past it (or dragged back off it)
+      a record — either way a non-terminal loop's pill must not claim to be
+      running or waiting. */
+  readonly offStage?: boolean | undefined;
   /** The card's own review-loop settings (t3o-22, D2), or null. */
   readonly overrides?: BoardCardReviewOverrides | null | undefined;
   /** The highest round the loop has STARTED, resolved by the caller — which is
@@ -603,7 +607,12 @@ export function BoardCardReviewPane({
   // loop's current round.
   const [openRound, setOpenRound] = useState<number | "collapsed" | null>(null);
   const shownRound = openRound === "collapsed" ? null : (openRound ?? loop.currentRound);
-  const pill = statusPill(loop, live, notStarted === true);
+  // The highest round the ledger has recorded anything for — 0 means the loop
+  // has never run. Also `plannable`'s floor below; derived here because the
+  // pill needs it too (an empty loop still derives a synthetic round 1, so
+  // `loop.rounds` cannot say whether anything actually started).
+  const ledgerFloor = roundsStarted ?? boardReviewRoundsStarted({ completions, liveStepId: null });
+  const pill = statusPill(loop, live, offStage === true, ledgerFloor > 0);
   // A loop that ended without a clean pass. The distinction the whole spec
   // turns on: these carry a converged loop's round counts and the opposite
   // meaning, so the pane must never let them read as a pass.
@@ -614,7 +623,6 @@ export function BoardCardReviewPane({
   // live the round the walk sits on has started, so it counts; the decider
   // counts a live step of any status, so this matches it wherever the shell can
   // see one.
-  const ledgerFloor = roundsStarted ?? boardReviewRoundsStarted({ completions, liveStepId: null });
   const startedFloor = Math.max(
     ledgerFloor,
     stepActive === true && loop.status === "running" ? loop.currentRound : 0,
