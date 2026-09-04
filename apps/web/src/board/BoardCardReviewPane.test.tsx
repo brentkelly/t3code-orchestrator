@@ -131,4 +131,59 @@ describe("BoardCardReviewPane", () => {
     );
     expect(html.match(/Thread<\/button>/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
   });
+
+  // The pane opens ahead of the loop from any stage (so round models can be
+  // chosen before the executor freezes them): nothing has run, so the pill
+  // must not claim the loop is running or waiting, and every round — round 1
+  // included — is still plannable.
+  it("renders a not-started loop as neutral, with every round plannable", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardReviewPane
+        completions={[]}
+        live={false}
+        maxRounds={3}
+        offStage
+        onBackToThread={noop}
+        onSetRoundModel={noop}
+        onSetRounds={noop}
+      />,
+    );
+    expect(html).toContain("Not started yet");
+    expect(html).not.toContain("running now");
+    expect(html).not.toContain("waiting to run");
+    // No round has started, so no control is disabled — not even R1's.
+    expect(html).not.toContain('disabled=""');
+  });
+
+  // A card dragged off the review stage mid-loop: the loop derives as
+  // "running", but nothing is, and nobody is waited on — the pill must say
+  // so rather than wear the waiting-on-you colour.
+  it("renders an off-stage mid-loop pane as not running, never as waiting", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardReviewPane
+        completions={[
+          completion("review@1", {
+            reviewedSha: "sha1",
+            findings: [
+              {
+                id: "f1",
+                severity: "critical",
+                file: "a.ts",
+                line: 1,
+                title: "Open finding",
+                detail: "",
+              },
+            ],
+          }),
+        ]}
+        live={false}
+        maxRounds={3}
+        offStage
+        onBackToThread={noop}
+      />,
+    );
+    expect(html).toContain("Not running — card is off the review stage");
+    expect(html).not.toContain("running now");
+    expect(html).not.toContain("waiting to run");
+  });
 });
