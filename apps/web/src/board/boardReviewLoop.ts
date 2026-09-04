@@ -25,6 +25,7 @@ import {
   boardReviewLoopWalk,
   BoardTriagePayload,
   isBoardReviewBlockingSeverity,
+  parseBoardStepPayloadJson,
   parseReviewStepId,
   type BoardReviewFinding,
   type BoardReviewFindingResolution,
@@ -41,15 +42,6 @@ import * as Schema from "effect/Schema";
 const decodeReviewPayload = Schema.decodeUnknownOption(BoardReviewPayload);
 const decodeTriagePayload = Schema.decodeUnknownOption(BoardTriagePayload);
 const decodeAdjudicatePayload = Schema.decodeUnknownOption(BoardAdjudicatePayload);
-
-function parsePayloadJson(payload: string | null): unknown {
-  if (payload === null) return undefined;
-  try {
-    return JSON.parse(payload);
-  } catch {
-    return undefined;
-  }
-}
 
 /** Re-exported from contracts, where the folding rule now lives so the pane
     and the column card's summary agree on what "fixed" means. */
@@ -188,13 +180,13 @@ export function deriveBoardReviewLoop(
     }
 
     const reviewPayload = review
-      ? decodeReviewPayload(parsePayloadJson(review.payload))
+      ? decodeReviewPayload(parseBoardStepPayloadJson(review.payload))
       : Option.none();
     const triagePayload = triage
-      ? decodeTriagePayload(parsePayloadJson(triage.payload))
+      ? decodeTriagePayload(parseBoardStepPayloadJson(triage.payload))
       : Option.none();
     const adjudicatePayload = adjudicate
-      ? decodeAdjudicatePayload(parsePayloadJson(adjudicate.payload))
+      ? decodeAdjudicatePayload(parseBoardStepPayloadJson(adjudicate.payload))
       : Option.none();
     const reviewMalformed = review !== undefined && Option.isNone(reviewPayload);
 
