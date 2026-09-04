@@ -184,6 +184,8 @@ const baseProps = {
   feedback: null,
   maximised: false,
   onToggleMaximised: noop,
+  paneChoice: null,
+  onSelectPane: noop,
   onClose: noop,
   onSetLabels: noop,
   onCreateLabel: noop,
@@ -238,12 +240,13 @@ describe("BoardCardDetailPanel", () => {
     expect(html).toContain("More actions");
   });
 
-  // The review loop lives in its own pane now (t3o-16, D9): the header gains a
+  // The review loop lives in its own pane (t3o-16, D9): the header gains a
   // Review pill, and the pane itself (lazy, tested in BoardCardReviewPane
-  // tests) renders the rounds. The pill exists for a card ON the review stage
-  // and for any card CARRYING review completions — past reviews stay readable
-  // after the card moves on.
-  it("shows the Review pill on the review stage and on any card with review completions", () => {
+  // tests) renders the rounds. The pill exists at EVERY stage once the board
+  // has a review-role stage — a round's model is only settable before the
+  // executor freezes it, so the pane must open ahead of the loop — and on any
+  // card carrying review completions, so past reviews stay readable.
+  it("shows the Review pill at every stage once the board has a review role", () => {
     const onReviewStage = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
@@ -274,14 +277,24 @@ describe("BoardCardDetailPanel", () => {
     );
     expect(movedOnWithHistory).toContain(">Review</button>");
 
-    const neverReviewed = renderToStaticMarkup(
+    const beforeReview = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
         detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
         projectName="P"
       />,
     );
-    expect(neverReviewed).not.toContain(">Review</button>");
+    expect(beforeReview).toContain(">Review</button>");
+
+    // The narrow pre-Planning sheet carries the same switch.
+    const backlog = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.backlog })}
+        projectName="P"
+      />,
+    );
+    expect(backlog).toContain(">Review</button>");
   });
 
   it("renders an archived dependency as the card it is, not as an unknown id", () => {
@@ -449,7 +462,8 @@ describe("BoardCardDetailPanel", () => {
   });
 
   // The prototype's two forms, at its stage boundary: the card is something
-  // you read until Planning, and something you work in from Planning on.
+  // you read until Planning, and something you work in from Planning on —
+  // though every pane is reachable from the switch at any stage.
   it("opens onto the thread pane from Planning, and onto the brief before it", () => {
     const sprint = renderToStaticMarkup(
       <BoardCardDetailPanel
@@ -459,8 +473,9 @@ describe("BoardCardDetailPanel", () => {
       />,
     );
     expect(sprint).toContain("Ship the thing");
-    // No pane switch, because there is only one pane.
-    expect(sprint).not.toContain(">Thread</button>");
+    // The switch is present, resting on the brief.
+    expect(sprint).toContain(">Thread</button>");
+    expect(selectedTab(sprint)).toBe("Brief");
 
     const planning = renderToStaticMarkup(
       <BoardCardDetailPanel
@@ -473,6 +488,34 @@ describe("BoardCardDetailPanel", () => {
     expect(planning).not.toContain("Ship the thing");
     expect(planning).toContain(">Thread</button>");
     expect(planning).toContain(">Brief</button>");
+  });
+
+  // A card should not have to reach Planning before a thread can be attached
+  // or a review round's model chosen: the pane choice, not the stage, decides
+  // which form the sheet takes.
+  it("opens the thread or review pane on a pre-Planning card when picked", () => {
+    const threadPane = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.sprint }, "Ship the thing")}
+        paneChoice="thread"
+        projectName="P"
+      />,
+    );
+    // The wide form: the brief has left the screen for the pane on show.
+    expect(selectedTab(threadPane)).toBe("Thread");
+    expect(threadPane).not.toContain("Ship the thing");
+
+    const reviewPane = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.backlog }, "Ship the thing")}
+        paneChoice="review"
+        projectName="P"
+      />,
+    );
+    expect(selectedTab(reviewPane)).toBe("Review");
+    expect(reviewPane).not.toContain("Ship the thing");
   });
 
   it("shows the Plan pill only once the card has a plan (t3o-08)", () => {
@@ -658,9 +701,10 @@ describe("BoardCardDetailPanel", () => {
     expect(paneFor(BOARD_SEED_STAGE_IDS.review, false)).toBe("Review");
     expect(paneFor(BOARD_SEED_STAGE_IDS.merge, true)).toBe("Review");
     expect(paneFor(BOARD_SEED_STAGE_IDS.done, true)).toBe("Review");
-    // A card dragged past the loop without ever running it has no review to
-    // show, so it falls back to the thread rather than an empty pane.
-    expect(paneFor(BOARD_SEED_STAGE_IDS.done, false)).toBe("Thread");
+    // A card dragged past the loop without ever running it still opens on the
+    // review pane — no longer a fallback to the thread: the pane reads "Not
+    // started yet" and says plainly that nothing was reviewed.
+    expect(paneFor(BOARD_SEED_STAGE_IDS.done, false)).toBe("Review");
   });
 });
 
@@ -670,6 +714,11 @@ describe("initialBoardCardPane", () => {
       (stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.review,
     ).map((stage) => ({ ...stage, role: null }));
     expect(initialBoardCardPane(stages, BOARD_SEED_STAGE_IDS.done)).toBe("thread");
+  });
+
+  it("opens a pre-Planning card on its brief — the other panes wait to be picked", () => {
+    expect(initialBoardCardPane(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.backlog)).toBe("brief");
+    expect(initialBoardCardPane(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.sprint)).toBe("brief");
   });
 
   it("opens a split parent on its plans until review (t3o-28, D4)", () => {

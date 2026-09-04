@@ -131,4 +131,27 @@ describe("BoardCardReviewPane", () => {
     );
     expect(html.match(/Thread<\/button>/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
   });
+
+  // The pane opens ahead of the loop from any stage (so round models can be
+  // chosen before the executor freezes them): nothing has run, so the pill
+  // must not claim the loop is running or waiting, and every round — round 1
+  // included — is still plannable.
+  it("renders a not-started loop as neutral, with every round plannable", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardReviewPane
+        completions={[]}
+        live={false}
+        maxRounds={3}
+        notStarted
+        onBackToThread={noop}
+        onSetRoundModel={noop}
+        onSetRounds={noop}
+      />,
+    );
+    expect(html).toContain("Not started yet");
+    expect(html).not.toContain("running now");
+    expect(html).not.toContain("waiting to run");
+    // No round has started, so no control is disabled — not even R1's.
+    expect(html).not.toContain('disabled=""');
+  });
 });

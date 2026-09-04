@@ -323,9 +323,20 @@ function Round({
 function statusPill(
   loop: BoardReviewLoop,
   live: boolean,
+  notStarted: boolean,
 ): { label: string; spinning: boolean; className: string } {
   switch (loop.status) {
     case "running": {
+      // Ahead of the review stage an empty loop derives as "running" — but
+      // nothing is running and nobody is waited on, so the pill stays
+      // neutral (docs/t3o/status-colours.md: no colour without a claim).
+      if (notStarted) {
+        return {
+          label: "Not started yet",
+          spinning: false,
+          className: "bg-muted text-muted-foreground",
+        };
+      }
       const phase = loop.next === null ? "Review" : PHASE_NAMES[loop.next.phase];
       return live
         ? {
@@ -515,7 +526,7 @@ function PlannedRoundSettings({
       />
       <p className="text-[11px] text-muted-foreground">
         {model === null
-          ? `Same as round ${previousRound}. Only round ${round}'s review runs on this — triage and adjudication keep their configured models.`
+          ? `Same as ${previousRound < 1 ? "the review stage's configured model" : `round ${previousRound}`}. Only round ${round}'s review runs on this — triage and adjudication keep their configured models.`
           : `Only round ${round}'s review runs on this — triage and adjudication keep their configured models.`}
       </p>
     </div>
@@ -526,6 +537,7 @@ export function BoardCardReviewPane({
   completions,
   maxRounds,
   live,
+  notStarted,
   overrides,
   roundsStarted,
   stepActive,
@@ -545,6 +557,10 @@ export function BoardCardReviewPane({
   /** Whether the card's active thread is working — the difference between a
       due phase spinning "running now" and resting "waiting to run". */
   readonly live: boolean;
+  /** The pane is open AHEAD of the loop: the card has not reached the review
+      stage and no round has recorded anything — it exists to plan the rounds,
+      so the status pill must not claim the loop is running or waiting. */
+  readonly notStarted?: boolean | undefined;
   /** The card's own review-loop settings (t3o-22, D2), or null. */
   readonly overrides?: BoardCardReviewOverrides | null | undefined;
   /** The highest round the loop has STARTED, resolved by the caller — which is
@@ -587,7 +603,7 @@ export function BoardCardReviewPane({
   // loop's current round.
   const [openRound, setOpenRound] = useState<number | "collapsed" | null>(null);
   const shownRound = openRound === "collapsed" ? null : (openRound ?? loop.currentRound);
-  const pill = statusPill(loop, live);
+  const pill = statusPill(loop, live, notStarted === true);
   // A loop that ended without a clean pass. The distinction the whole spec
   // turns on: these carry a converged loop's round counts and the opposite
   // meaning, so the pane must never let them read as a pass.
@@ -599,11 +615,11 @@ export function BoardCardReviewPane({
   // counts a live step of any status, so this matches it wherever the shell can
   // see one.
   const ledgerFloor = roundsStarted ?? boardReviewRoundsStarted({ completions, liveStepId: null });
-  const budgetFloor = Math.max(
-    1,
+  const startedFloor = Math.max(
     ledgerFloor,
     stepActive === true && loop.status === "running" ? loop.currentRound : 0,
   );
+  const budgetFloor = Math.max(1, startedFloor);
   /**
    * Whether round `n`'s settings can still be chosen.
    *
@@ -611,10 +627,12 @@ export function BoardCardReviewPane({
    * the executor has already dispatched has recorded nothing either, and its
    * model was frozen onto the run row at `select-step`. Offering a picker there
    * writes an override nothing will ever read. A round is plannable only when
-   * it is genuinely ahead of the floor — and only when there is somewhere to
+   * it is genuinely ahead of the started rounds — NOT the `−` button's floor,
+   * which never drops below 1 because a budget can't: before the loop starts,
+   * round 1 itself is still free to plan — and only when there is somewhere to
    * write it, so a read-only pane never takes an edit and drops it.
    */
-  const plannable = (n: number) => onSetRoundModel !== undefined && n > budgetFloor;
+  const plannable = (n: number) => onSetRoundModel !== undefined && n > startedFloor;
   const counts = [
     `${loop.totals.raised} raised`,
     `${loop.totals.fixed} fixed`,

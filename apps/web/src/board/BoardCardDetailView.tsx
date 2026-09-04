@@ -387,6 +387,12 @@ export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
       pane's control just toggles it. */
   readonly maximised: boolean;
   readonly onToggleMaximised: () => void;
+  /** The pinned pane, owned by the dialog for the same reason as `maximised`:
+      the frame's width follows it — a pre-Planning card grows wide when a
+      pane other than the brief opens — so the choice cannot live below the
+      frame. Null means "whichever pane the card's stage makes current". */
+  readonly paneChoice: BoardCardPane | null;
+  readonly onSelectPane: (pane: BoardCardPane) => void;
 }
 
 const THREAD_STATE_LABEL: Record<BoardCardThreadState, string> = {
@@ -1028,7 +1034,7 @@ function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   );
 }
 
-type BoardCardPane = "thread" | "review" | "plan" | "brief";
+export type BoardCardPane = "thread" | "review" | "plan" | "brief";
 
 /** Whether the card has reached the review-role stage — from there on the loop
     is what the card is about, so the modal opens on the Review pane. */
@@ -1063,10 +1069,10 @@ export function isBoardCardThreadLocked(
 
 /**
  * The pane a card opens on: the latest surface its stage has produced.
- * Planning and Ready open on the conversation, Build on its build thread, and
- * Code review / Ready for merge / Done on the review pane. A card that reached
- * those stages without ever running the loop has no review to show, so the
- * caller's `hasReview` fallback lands it back on the thread.
+ * Backlog and Sprint open on the brief (nothing has run yet, though every
+ * pane is one pill away), Planning and Ready on the conversation, Build on
+ * its build thread, and Code review / Ready for merge / Done on the review
+ * pane.
  *
  * A split parent short of review opens on its plans instead
  * (`isBoardCardThreadLocked`).
@@ -1077,6 +1083,7 @@ export function initialBoardCardPane(
   liveChildCount = 0,
 ): BoardCardPane {
   if (isStageAtOrAfterReview(stages, stage)) return "review";
+  if (!boardCardHasThreadPane(stages, stage)) return "brief";
   return isBoardCardThreadLocked(stages, stage, liveChildCount) ? "plan" : "thread";
 }
 
@@ -1117,12 +1124,14 @@ export function initialBoardCardThreadId(
   return current.at(-1)?.threadId ?? active;
 }
 
-/** The header's Thread/Review/Plan/Brief switch — only the wide form has one,
-    because only it has somewhere else for the brief to live. The Review pill
-    appears once the card is on the review stage or carries review-loop
-    completions; the Plan pill once the card has a plan. Before either there is
-    nothing to show, so the switch is a plain Thread/Brief pair. A split
-    parent's Thread pill is disabled until review (t3o-28, D4). */
+/** The header's Thread/Review/Plan/Brief switch, present at every stage — a
+    pre-Planning card defaults to the narrow brief sheet, and picking another
+    pill grows the sheet wide, so a thread can be attached or a review round's
+    model set before the pipeline gets there. The Review pill exists whenever
+    the board has a review-role stage (or the card carries review-loop
+    completions — past reviews stay readable); the Plan pill once the card has
+    a plan. A split parent's Thread pill is disabled until review (t3o-28,
+    D4). */
 function PaneTabs({
   pane,
   hasReview,
@@ -1192,7 +1201,13 @@ function PaneTabs({
 export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
-  const wide = boardCardHasThreadPane(props.stages, card.stage);
+  // Wide is "a pane other than the brief is on show": from Planning onward
+  // that is every default, and before it the sheet stays narrow until the
+  // user opens the thread or review pane. Must agree with the dialog frame's
+  // computation in BoardCardDetailView, which sizes the popup.
+  const wide =
+    boardCardHasThreadPane(props.stages, card.stage) ||
+    (props.paneChoice !== null && props.paneChoice !== "brief");
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
@@ -1253,8 +1268,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // Null means "whatever the card's stage says is latest" (Planning/Ready and
   // Build open on the thread, the review stages on the Review pane): the modal
   // opens there and keeps tracking the card until the user picks a pane, which
-  // pins it.
-  const [paneChoice, setPane] = useState<BoardCardPane | null>(null);
+  // pins it. The choice itself lives on the dialog (`props.paneChoice`), which
+  // sizes the frame by it.
+  const paneChoice = props.paneChoice;
+  const setPane = props.onSelectPane;
   // A split parent's own thread is dormant while its children build (t3o-28,
   // D4). Live children only — an archived child is gone (t3o-13, D1), and a
   // fully-wrapped split leaves the parent an ordinary card again.
@@ -1282,15 +1299,20 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const pane = paneChoice ?? initialBoardCardPane(props.stages, card.stage, liveChildCount);
   // The plan is a first-class entity, so its pill only exists once one is
   // written; if the card loses its plans while the pane is open, fall back to
-  // the thread rather than render an empty surface. The review pane follows
-  // the same rule: it exists once the card is on the review-role stage or
-  // carries review-loop completions (past reviews stay readable after the
-  // card moves on).
+  // the thread rather than render an empty surface. The review pane exists at
+  // every stage once the board has a review-role stage (or the card carries
+  // review-loop completions — past reviews stay readable after the card moves
+  // on): a round's model is only writable BEFORE the executor freezes it, so
+  // the pane must open before the card gets there.
   const hasPlan = props.detail.plans.length > 0;
   const reviewStageId = boardStageWithRole(stageStateOf(props.stages), "review")?.stageId ?? null;
-  const hasReview =
-    (reviewStageId !== null && card.stage === reviewStageId) ||
-    hasBoardReviewSteps(props.detail.stepCompletions);
+  const reviewStarted = hasBoardReviewSteps(props.detail.stepCompletions);
+  const hasReview = reviewStageId !== null || reviewStarted;
+  // The card-level running/queued signals describe the review loop only while
+  // the card sits ON the review stage — anywhere else the live step is some
+  // other stage's, and feeding it in would spin the review pill during a
+  // build and freeze round models that are still free.
+  const onReviewStage = reviewStageId !== null && card.stage === reviewStageId;
   const fallbackPane: BoardCardPane = threadLocked && hasPlan ? "plan" : "thread";
   const activePane: BoardCardPane =
     (pane === "plan" && !hasPlan) || (pane === "review" && !hasReview)
@@ -1356,16 +1378,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           </BoardHint>
         ) : null}
         <span className="flex-1" />
-        {wide ? (
-          <PaneTabs
-            hasPlan={hasPlan}
-            hasReview={hasReview}
-            onSelect={setPane}
-            pane={activePane}
-            planCount={planRows === null ? null : planRows.rows.length}
-            threadLocked={threadLocked}
-          />
-        ) : null}
+        <PaneTabs
+          hasPlan={hasPlan}
+          hasReview={hasReview}
+          onSelect={setPane}
+          pane={activePane}
+          planCount={planRows === null ? null : planRows.rows.length}
+          threadLocked={threadLocked}
+        />
         <Menu>
           <MenuTrigger
             aria-label="More actions"
@@ -1493,10 +1513,15 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 // "Running now" means the loop's own step is live: the ACTIVE
                 // linked thread is the one a running phase owns, so only its
                 // state drives the spinner — a side conversation on another
-                // linked thread must not.
-                live={props.threadLinks.some(
-                  (link) => link.threadId === activeThreadId && link.threadState === "working",
-                )}
+                // linked thread must not, and neither may another stage's
+                // working thread (`onReviewStage`).
+                live={
+                  onReviewStage &&
+                  props.threadLinks.some(
+                    (link) => link.threadId === activeThreadId && link.threadState === "working",
+                  )
+                }
+                notStarted={!onReviewStage && !reviewStarted}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
                 onAdvance={(() => {
                   // "Advance anyway" is an ordinary stage move, gated exactly
@@ -1513,7 +1538,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onSetRounds={props.onSetReviewRounds}
                 overrides={props.reviewOverrides}
                 roundsStarted={props.reviewRoundsStarted}
-                stepActive={props.reviewStepActive}
+                stepActive={onReviewStage && props.reviewStepActive === true}
                 onOpenThread={(threadId) => {
                   setSelectedThreadId(threadId);
                   setPane("thread");
@@ -1698,7 +1723,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
 export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   const [maximised, setMaximised] = useState(false);
-  const wide = boardCardHasThreadPane(props.stages, props.detail.card.stage);
+  const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(null);
+  // Must agree with the panel's `wide`: the frame is 760px only while the
+  // narrow brief sheet is the pane on show.
+  const wide =
+    boardCardHasThreadPane(props.stages, props.detail.card.stage) ||
+    (paneChoice !== null && paneChoice !== "brief");
   const done = boardCardIsDone(props.stages, props.detail.card.stage);
   return (
     <Dialog
@@ -1716,7 +1746,9 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
         <BoardCardDetailPanel
           {...props}
           maximised={maximised}
+          onSelectPane={setPaneChoice}
           onToggleMaximised={() => setMaximised((current) => !current)}
+          paneChoice={paneChoice}
         />
       </BoardCardDetailPopup>
     </Dialog>
