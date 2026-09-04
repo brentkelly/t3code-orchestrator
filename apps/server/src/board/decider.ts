@@ -1981,16 +1981,32 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${card.key}' is itself a sub-board plan card; splits do not nest (D12).`,
         );
       }
-      // A parent with a run in flight cannot be split under it: the live
-      // agent would keep writing the very branch the children are about to
-      // fork from, and its completion would race the materialisation. Finish
-      // or stop the run first — the split then cuts from a quiet card.
+      // A parent with a BUILD run in flight cannot be split under it: the
+      // live agent would keep writing the very branch the children are about
+      // to fork from, and its completion would race the materialisation.
+      // Finish or stop the run first — the split then cuts from a quiet card.
+      //
+      // The plan-role stage is carved out, because that is where a split
+      // comes FROM. The planning interview is human-paced: its step stays
+      // `running` until the human walks the card onward, and that move is the
+      // only thing that settles it (`handleCardMoved` abandons it) — but
+      // t3o-27 D2 refuses the move until the split is approved. Refusing here
+      // too wedged every proposed split shut, with no client command to
+      // settle a step by hand. Nothing races: a plan step writes plans, not
+      // the branch, and approval no longer starts anything (t3o-28, D1) — the
+      // children sit on the floor until the parent reaches build.
       {
         const state = boardCardStepState(board, command.cardId);
-        if (state !== null && !isBoardTerminalStepStatus(state.status)) {
+        const planStage = boardStageWithRole(board, "plan");
+        const planning = planStage !== null && card.stage === planStage.stageId;
+        if (state !== null && !isBoardTerminalStepStatus(state.status) && !planning) {
           return yield* invariant(
             command,
-            `Card '${card.key}' has a live step ('${state.stepLabel}', ${state.status}); finish or stop it before approving a split.`,
+            // `stepLabel` is null for every stage but the review loop (t3o-19,
+            // D4), so name the stage when the step has no label of its own.
+            `Card '${card.key}' has a live step ('${
+              state.stepLabel ?? state.stageLabel
+            }', ${state.status}); finish or stop it before approving a split.`,
           );
         }
       }

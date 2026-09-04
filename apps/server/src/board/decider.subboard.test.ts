@@ -158,6 +158,34 @@ const moveCommand = (input: {
   createdAt: NOW,
 });
 
+/** A running step on the default parent, in the shape the read model carries. */
+const liveStep = (
+  overrides: Partial<NonNullable<BoardState["stepStates"]>[number]> & { readonly stepId: string },
+): NonNullable<BoardState["stepStates"]>[number] => ({
+  cardId: parentId,
+  stepLabel: null,
+  stageLabel: "Building",
+  attempt: 1,
+  stallCount: 0,
+  lastNudgeAt: null,
+  baseTipAtRoundStart: null,
+  lastError: null,
+  prompt: "do it",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5.4",
+  mode: "build",
+  runtimeMode: "auto",
+  humanInLoop: false,
+  maxAttempts: 3,
+  timeoutMs: 1000,
+  threadId: null,
+  status: "running",
+  slotHeld: true,
+  startedAt: NOW,
+  updatedAt: NOW,
+  ...overrides,
+});
+
 /** A materialised child in `stage`, belonging to the default parent. */
 const makeChild = (
   id: string,
@@ -547,37 +575,43 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
       const board = makeBoard({ parent: { stage: "building" } });
       const failure = yield* decideFail(
         approve(),
+        makeReadModel({ ...board, stepStates: [liveStep({ stepId: "building" })] }),
+      );
+      assert.include(String(failure), "live step");
+      // The step's own label when it has one; the stage label otherwise
+      // (t3o-19 D4 leaves `stepLabel` null everywhere but the review loop, and
+      // the message used to read "('null', running)").
+      assert.include(String(failure), "('Building', running)");
+      const labelled = yield* decideFail(
+        approve(),
+        makeReadModel({
+          ...board,
+          stepStates: [liveStep({ stepId: "review-2", stepLabel: "Review round 2" })],
+        }),
+      );
+      assert.include(String(labelled), "('Review round 2', running)");
+    }),
+  );
+
+  // The interview a split comes out of is itself a live step, and only the
+  // forward move the pending split refuses would settle it — so refusing here
+  // wedged the gate shut. A plan step writes plans, not the branch.
+  it.effect("approves while the parent's own planning interview is still running", () =>
+    Effect.gen(function* () {
+      const board = makeBoard({ parent: { stage: "planning" } });
+      const events = yield* decideEvents(
+        approve(),
         makeReadModel({
           ...board,
           stepStates: [
-            {
-              cardId: parentId,
-              stepId: "building",
-              stepLabel: "Build",
-              stageLabel: "Building",
-              attempt: 1,
-              stallCount: 0,
-              lastNudgeAt: null,
-              baseTipAtRoundStart: null,
-              lastError: null,
-              prompt: "build it",
-              providerInstanceId: ProviderInstanceId.make("codex"),
-              model: "gpt-5.4",
-              mode: "build",
-              runtimeMode: "auto",
-              humanInLoop: false,
-              maxAttempts: 3,
-              timeoutMs: 1000,
-              threadId: null,
-              status: "running",
-              slotHeld: true,
-              startedAt: NOW,
-              updatedAt: NOW,
-            },
+            liveStep({ stepId: "planning", stageLabel: "Planning", mode: "plan", slotHeld: false }),
           ],
         }),
       );
-      assert.include(String(failure), "live step");
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["board.card-created", "board.card-created", "board.plans-approved"],
+      );
     }),
   );
 
