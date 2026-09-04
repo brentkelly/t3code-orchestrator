@@ -2156,6 +2156,36 @@
                                       </sc-if>
                                       <span style="flex: 1"></span>
                                       <sc-if
+                                        value="{{ c.queued }}"
+                                        hint-placeholder-val="{{ false }}"
+                                      >
+                                        <span
+                                          title="{{ c.queueTip }}"
+                                          style="
+                                            display: inline-flex;
+                                            align-items: center;
+                                            gap: 4px;
+                                            font: 500 10.5px var(--font-sans);
+                                            color: var(--muted-fg);
+                                          "
+                                        >
+                                          <svg
+                                            width="11"
+                                            height="11"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2.2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                          >
+                                            <circle cx="12" cy="12" r="9"></circle>
+                                            <path d="M12 7v5l3 2"></path>
+                                          </svg>
+                                          {{ c.queueLabel }}
+                                        </span>
+                                      </sc-if>
+                                      <sc-if
                                         value="{{ c.blocked }}"
                                         hint-placeholder-val="{{ false }}"
                                       >
@@ -2935,6 +2965,37 @@
                       <circle cx="12" cy="12" r="9"></circle>
                     </svg>
                     Awaiting input
+                  </span>
+                </sc-if>
+                <sc-if value="{{ activeCard.queued }}" hint-placeholder-val="{{ false }}">
+                  <span
+                    title="{{ activeCard.queueDetail }}"
+                    style="
+                      display: inline-flex;
+                      align-items: center;
+                      gap: 5px;
+                      height: 18px;
+                      padding: 0 8px 0 6px;
+                      border-radius: 6px;
+                      font: 500 11px var(--font-sans);
+                      background: color-mix(in srgb, var(--attention) 14%, transparent);
+                      color: var(--attention-fg);
+                    "
+                  >
+                    <svg
+                      width="11"
+                      height="11"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="9"></circle>
+                      <path d="M12 7v5l3 2"></path>
+                    </svg>
+                    {{ activeCard.queueLabel }}
                   </span>
                 </sc-if>
                 <sc-if value="{{ cardModelsSet }}" hint-placeholder-val="{{ false }}">
@@ -5256,6 +5317,78 @@
                         gap: 14px;
                       "
                     >
+                      <sc-if value="{{ activeCard.queued }}" hint-placeholder-val="{{ false }}">
+                        <div
+                          style="
+                            display: flex;
+                            align-items: center;
+                            gap: 9px;
+                            flex: none;
+                            padding: 9px 11px;
+                            border: 1px solid color-mix(in srgb, var(--attention) 32%, transparent);
+                            border-radius: 10px;
+                            background: color-mix(in srgb, var(--attention) 6%, transparent);
+                          "
+                        >
+                          <svg
+                            width="13"
+                            height="13"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="var(--attention-fg)"
+                            stroke-width="2.2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            style="flex: none"
+                          >
+                            <circle cx="12" cy="12" r="9"></circle>
+                            <path d="M12 7v5l3 2"></path>
+                          </svg>
+                          <span
+                            style="
+                              flex: 1;
+                              min-width: 0;
+                              font: 400 12px/1.45 var(--font-sans);
+                              color: var(--muted-fg);
+                            "
+                            ><span style="font-weight: 600; color: var(--attention-fg)"
+                              >{{ activeCard.queueHeadline }}.</span
+                            >
+                            No agent has picked this up yet.</span
+                          >
+                          <button
+                            type="button"
+                            onClick="{{ activeCard.startNow }}"
+                            style="
+                              display: inline-flex;
+                              align-items: center;
+                              gap: 5px;
+                              height: 26px;
+                              padding: 0 9px;
+                              flex: none;
+                              border: 1px solid var(--input);
+                              border-radius: 7px;
+                              background: var(--popover);
+                              color: var(--fg);
+                              font: 500 11.5px var(--font-sans);
+                              cursor: pointer;
+                              box-shadow: var(--shadow-xs);
+                            "
+                            style-hover="background:var(--accent)"
+                          >
+                            <svg
+                              width="11"
+                              height="11"
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                              stroke="none"
+                            >
+                              <path d="M8 5.5v13l11-6.5z"></path>
+                            </svg>
+                            Start now
+                          </button>
+                        </div>
+                      </sc-if>
                       <sc-if value="{{ cardThread.empty }}" hint-placeholder-val="{{ false }}">
                         <div
                           style="
@@ -6277,6 +6410,123 @@
                           </svg>
                           {{ activeCard.stopLabel }}
                         </button>
+                      </sc-if>
+                      <sc-if value="{{ activeCard.queued }}" hint-placeholder-val="{{ false }}">
+                        <div
+                          style="
+                            display: flex;
+                            flex-direction: column;
+                            gap: 9px;
+                            padding: 11px 12px;
+                            border: 1px solid color-mix(in srgb, var(--attention) 38%, transparent);
+                            border-radius: 9px;
+                            background: color-mix(in srgb, var(--attention) 7%, transparent);
+                          "
+                        >
+                          <div style="display: flex; align-items: center; gap: 7px">
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="var(--attention-fg)"
+                              stroke-width="2.2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              style="flex: none"
+                            >
+                              <circle cx="12" cy="12" r="9"></circle>
+                              <path d="M12 7v5l3 2"></path>
+                            </svg>
+                            <span
+                              style="font: 600 12.5px var(--font-sans); color: var(--attention-fg)"
+                              >{{ activeCard.queueHeadline }}</span
+                            >
+                          </div>
+                          <div
+                            style="
+                              font: 400 11.5px/1.5 var(--font-sans);
+                              color: var(--muted-fg);
+                              text-wrap: pretty;
+                            "
+                          >
+                            {{ activeCard.queueDetail }}
+                          </div>
+                          <div style="display: flex; gap: 6px">
+                            <button
+                              type="button"
+                              onClick="{{ activeCard.startNow }}"
+                              title="Run this task now, over the agent limit"
+                              style="
+                                display: inline-flex;
+                                align-items: center;
+                                gap: 6px;
+                                height: 30px;
+                                padding: 0 11px;
+                                border: 1px solid var(--primary);
+                                border-radius: 8px;
+                                background: var(--primary);
+                                color: var(--primary-fg);
+                                font: 500 12.5px var(--font-sans);
+                                cursor: pointer;
+                                box-shadow: var(--shadow-xs);
+                              "
+                            >
+                              <svg
+                                width="13"
+                                height="13"
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                                stroke="none"
+                                style="flex: none"
+                              >
+                                <path d="M8 5.5v13l11-6.5z"></path>
+                              </svg>
+                              Start now
+                            </button>
+                            <sc-if
+                              value="{{ activeCard.canFront }}"
+                              hint-placeholder-val="{{ false }}"
+                            >
+                              <button
+                                type="button"
+                                onClick="{{ activeCard.moveToFront }}"
+                                title="Take the next free agent"
+                                style="
+                                  display: inline-flex;
+                                  align-items: center;
+                                  gap: 6px;
+                                  height: 30px;
+                                  padding: 0 11px;
+                                  border: 1px solid var(--input);
+                                  border-radius: 8px;
+                                  background: var(--popover);
+                                  color: var(--fg);
+                                  font: 500 12.5px var(--font-sans);
+                                  cursor: pointer;
+                                  box-shadow: var(--shadow-xs);
+                                "
+                                style-hover="background:var(--accent)"
+                              >
+                                <svg
+                                  width="13"
+                                  height="13"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  style="flex: none"
+                                >
+                                  <path d="M12 19V5"></path>
+                                  <path d="m5 12 7-7 7 7"></path>
+                                </svg>
+                                Move to front
+                              </button>
+                            </sc-if>
+                          </div>
+                        </div>
                       </sc-if>
                       <sc-if value="{{ activeCard.blocked }}" hint-placeholder-val="{{ false }}">
                         <div
@@ -7914,6 +8164,8 @@
         { key: "T3-195", p: "advisor", type: "Feature", status: "sprint", title: "Persist composer drafts per worktree", brief: "Drafts are keyed by thread today; switching worktrees loses the in-progress prompt." },
         { key: "T3-193", p: "advisor", type: "chore", status: "planning", t: "working", title: "Group worktrees by environment in the branch picker", brief: "The picker lists 40+ worktrees flat. Group by environment with a sticky header per group." },
         { key: "T3-188", p: "advisor", type: "Feature", status: "building", title: "Kanban board mode in the workspace shell", brief: "Add a top-level mode switch: threads or board. Board is per project, with drag between stages.", deps: ["T3-195"], plan: PLAN("Kanban board mode", ["Add workspaceMode atom persisted in client storage", "Mount BoardView beside ChatView under AppSidebarLayout", "Cards are server-authoritative events, same store as threads", "Dependencies are edges on the task record, validated on progress"], ["apps/web/src/components/BoardView.tsx", "apps/web/src/state/board.ts", "packages/contracts/src/task.ts"]) },
+        { key: "T3-176", p: "advisor", type: "bug", status: "building", t: "queued", title: "Active dot on a sub-board card doesn't roll up to the parent", brief: "A plan card running a thread shows its dot on the sub-board only, so the parent card looks idle." },
+        { key: "T3-171", p: "advisor", type: "chore", status: "building", t: "queued", title: "Prune worktrees for merged branches on launch", brief: "Merged worktrees pile up until someone clears them by hand." },
         { key: "T3-186", p: "advisor", type: "Feature", status: "building", t: "waiting", title: "Server-authoritative event sourcing cleanup", brief: "Collapse the duplicate client reducer so the server event log is the single source of truth.", plan: PLAN("Event sourcing cleanup", ["Delete the client-side mirror reducer", "Replay from the server log on reconnect", "Add a determinism test over recorded fixtures"], ["apps/server/src/events/log.ts", "packages/client-runtime/src/replay.ts"]) },
         { key: "T3-182", p: "advisor", type: "Feature", status: "review", t: "working", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
         { key: "T3-180", p: "advisor", type: "bug", status: "review", title: "Compaction leaves orphaned tool-call spans", brief: "After a compaction, spans whose parent turn was summarised away keep streaming into the timeline.", plan: PLAN("Orphaned span cleanup", ["Reparent live spans onto the summary turn", "Drop spans whose turn no longer exists", "Replay test over a recorded compaction"], ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"]), pr: { n: 287, title: "fix(runtime): reparent spans across compaction", add: 244, del: 96, files: ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"], state: "In review" } },
@@ -8182,6 +8434,9 @@
         { title: "/pullrequest feature/knowledge", age: "1d" },
       ];
 
+      // How many build agents may run at once. Extra work waits in a global queue.
+      const AGENT_CAP = 3;
+
       class Component extends DCLogic {
         constructor(props) {
           super(props);
@@ -8325,7 +8580,9 @@
                 : kind === "build"
                   ? th.state === "working"
                     ? "Implementing the approved plan — 3 of 6 files touched so far."
-                    : "Stopped after the third step. Resume whenever you're ready."
+                    : th.state === "queued"
+                      ? "Nothing has run yet. The build starts as soon as an agent is free, or start it now."
+                      : "Stopped after the third step. Resume whenever you're ready."
                   : rs
                     ? "PR #" + rs.rv.pr + " is open on " + rs.rv.forge + ". " + rs.roundLabel + " of the adversarial loop is " +
                       (rs.step
@@ -8843,6 +9100,45 @@
           });
         }
 
+        // Cards waiting on agent capacity, in the order they were enqueued.
+        queuedCards() {
+          return this.state.cards.filter((c) => !c.archived && c.tstate === "queued");
+        }
+        runningCount() {
+          return this.state.cards.filter((c) => !c.archived && c.tstate === "working").length;
+        }
+        queueInfo(card) {
+          if (!card || card.tstate !== "queued") return null;
+          const q = this.queuedCards();
+          const pos = q.findIndex((c) => c.id === card.id) + 1;
+          const running = this.runningCount();
+          const cap = Math.max(AGENT_CAP, running);
+          const ahead = pos - 1;
+          return {
+            pos,
+            total: q.length,
+            label: "Queued #" + pos,
+            headline: "Queued #" + pos + " for build",
+            detail:
+              running + " of " + cap + " agents busy" +
+              (ahead ? " · " + ahead + (ahead === 1 ? " task" : " tasks") + " ahead" : " · next in line") +
+              ". It starts on its own when an agent frees up.",
+            canFront: pos > 1,
+            startNow: () =>
+              this.setState((s) => ({
+                cards: s.cards.map((c) => (c.id === card.id ? { ...c, tstate: "working" } : c)),
+              })),
+            moveToFront: () =>
+              this.setState((s) => {
+                const rest = s.cards.filter((c) => c.id !== card.id);
+                const at = rest.findIndex((c) => !c.archived && c.tstate === "queued");
+                const next = rest.slice();
+                next.splice(at < 0 ? next.length : at, 0, card);
+                return { cards: next };
+              }),
+          };
+        }
+
         threadFor(c) {
           const kind =
             c.status === "planning"
@@ -9321,6 +9617,7 @@
             const th = this.threadFor(c);
             const working = !!th && th.state === "working";
             const awaiting = !!th && th.state === "waiting";
+            const qi = this.queueInfo(c);
             const blocked = this.isBlocked(c);
             const hasDeps = c.depKeys.length > 0;
             const hasPlan = !!c.plan;
@@ -9471,7 +9768,10 @@
               },
               working,
               awaiting,
-              tip: awaiting ? "Awaiting input" : working ? "Thread running" : "",
+              queued: !!qi,
+              queueLabel: qi ? qi.label : "",
+              queueTip: qi ? qi.detail : "",
+              tip: awaiting ? "Awaiting input" : working ? "Thread running" : qi ? qi.detail : "",
               projectName: projName(c.project),
               keyStyle: showKeys ? this.keyPillStyle(projColor(c.project)) : "display:none",
               style:
@@ -9710,6 +10010,7 @@
             const idx = this.stageIndex(active.status);
             const stage = STAGES[idx];
             const blocked = this.isBlocked(active);
+            const qActive = this.queueInfo(active);
             const rvNow = this.reviewState(active);
             const next = this.nextStage(active);
             const wf = this.workflowOf(active);
@@ -9749,6 +10050,13 @@
                 };
               }),
               blocked,
+              queued: !!qActive,
+              queueLabel: qActive ? qActive.label : "",
+              queueHeadline: qActive ? qActive.headline : "",
+              queueDetail: qActive ? qActive.detail : "",
+              canFront: !!qActive && qActive.canFront,
+              startNow: qActive ? qActive.startNow : () => {},
+              moveToFront: qActive ? qActive.moveToFront : () => {},
               blockedBy:
                 "Blocked by " +
                 active.depKeys
@@ -9955,7 +10263,9 @@
                   : kind === "build"
                     ? tMeta.state === "working"
                       ? "Implementing the approved plan — 3 of 6 files touched so far."
-                      : "Stopped after the third step. Resume whenever you're ready."
+                      : tMeta.state === "queued"
+                        ? "Nothing has run yet. The build starts as soon as an agent is free."
+                        : "Stopped after the third step. Resume whenever you're ready."
                     : "PR is up and checks are green. Waiting on review feedback.",
               question:
                 tMeta.state !== "waiting"
