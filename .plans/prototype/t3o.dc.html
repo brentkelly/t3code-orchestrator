@@ -6133,26 +6133,127 @@
                   <div style="{{ cardRightColStyle }}">
                     <div style="{{ groupActionsStyle }}">
                       <sc-if value="{{ activeCard.canProgress }}" hint-placeholder-val="{{ true }}">
-                        <button
-                          type="button"
-                          onClick="{{ progressCard }}"
-                          style="{{ activeCard.progressStyle }}"
-                        >
-                          <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
+                        <div style="position: relative; display: flex; align-items: stretch">
+                          <button
+                            type="button"
+                            onClick="{{ progressCard }}"
+                            style="{{ activeCard.progressStyle }}"
                           >
-                            <path d="M5 12h14"></path>
-                            <path d="m12 5 7 7-7 7"></path>
-                          </svg>
-                          {{ activeCard.progressLabel }}
-                        </button>
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M5 12h14"></path>
+                              <path d="m12 5 7 7-7 7"></path>
+                            </svg>
+                            {{ activeCard.progressLabel }}
+                          </button>
+                          <sc-if
+                            value="{{ activeCard.canHotfix }}"
+                            hint-placeholder-val="{{ false }}"
+                          >
+                            <button
+                              type="button"
+                              onClick="{{ toggleHotfixMenu }}"
+                              title="Other ways to advance"
+                              style="{{ activeCard.hotfixCaretStyle }}"
+                            >
+                              <svg
+                                width="13"
+                                height="13"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="m6 9 6 6 6-6"></path>
+                              </svg>
+                            </button>
+                            <sc-if value="{{ hotfixMenuOpen }}" hint-placeholder-val="{{ false }}">
+                              <div
+                                onClick="{{ closeHotfixMenu }}"
+                                style="position: fixed; inset: 0; z-index: 55"
+                              ></div>
+                              <div
+                                style="
+                                  position: absolute;
+                                  top: calc(100% + 5px);
+                                  right: 0;
+                                  z-index: 60;
+                                  width: 262px;
+                                  padding: 5px;
+                                  border: 1px solid var(--border);
+                                  border-radius: 11px;
+                                  background: var(--popover);
+                                  box-shadow:
+                                    0 18px 34px -18px color-mix(in srgb, var(--fg) 30%, transparent),
+                                    var(--shadow-xs);
+                                "
+                              >
+                                <button
+                                  type="button"
+                                  onClick="{{ commitHotfix }}"
+                                  style="
+                                    display: flex;
+                                    align-items: flex-start;
+                                    gap: 9px;
+                                    width: 100%;
+                                    padding: 7px 9px;
+                                    border: none;
+                                    border-radius: 8px;
+                                    background: transparent;
+                                    text-align: left;
+                                    cursor: pointer;
+                                  "
+                                  style-hover="background:var(--accent)"
+                                >
+                                  <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="var(--muted-fg)"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    style="flex: none; margin-top: 2px"
+                                  >
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                    <line x1="3" x2="9" y1="12" y2="12"></line>
+                                    <line x1="15" x2="21" y1="12" y2="12"></line>
+                                  </svg>
+                                  <span style="min-width: 0">
+                                    <span
+                                      style="
+                                        display: block;
+                                        font: 500 12.5px var(--font-sans);
+                                        color: var(--fg);
+                                      "
+                                      >Commit directly as a hotfix</span
+                                    >
+                                    <span
+                                      style="
+                                        display: block;
+                                        margin-top: 2px;
+                                        font: 400 11.5px/1.4 var(--font-sans);
+                                        color: var(--muted-fg);
+                                      "
+                                      >Skips code review and lands on main.</span
+                                    >
+                                  </span>
+                                </button>
+                              </div>
+                            </sc-if>
+                          </sc-if>
+                        </div>
                       </sc-if>
                       <sc-if
                         value="{{ activeCard.canStopLoop }}"
@@ -9232,6 +9333,13 @@
             const wf = this.workflowOf(active);
             const wfLocked = this.workflowLocked(active);
             const isPrimary = !!PRIMARY_ACTIONS[active.status];
+            // A finished build can also land straight on main, tucked under the caret.
+            const canHotfix =
+              active.status === "building" &&
+              !!(stage.action && next) &&
+              next.id === "review" &&
+              active.tstate !== "working" &&
+              !blocked;
             briefNode = React.createElement("div", {
               dangerouslySetInnerHTML: { __html: active.brief },
             });
@@ -9294,7 +9402,13 @@
                 ";box-shadow:var(--shadow-xs);" +
                 (isPrimary
                   ? "border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg)"
-                  : "border:1px solid var(--input);background:var(--popover);color:var(--fg)"),
+                  : "border:1px solid var(--input);background:var(--popover);color:var(--fg)") +
+                (canHotfix
+                  ? ";flex:1;min-width:0;border-top-right-radius:0;border-bottom-right-radius:0"
+                  : ""),
+              canHotfix,
+              hotfixCaretStyle:
+                "display:inline-flex;align-items:center;justify-content:center;width:28px;height:34px;flex:none;margin-left:-1px;border-radius:0 8px 8px 0;cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid var(--input);background:var(--popover);color:var(--muted-fg)",
               hasPlan: !!active.plan,
               canStopLoop: !!(rvNow && rvNow.stepId),
               stopLabel: rvNow && rvNow.stopAfter ? "Stopping after round " + rvNow.cur.n : "Stop after this round",
@@ -10424,6 +10538,7 @@
               this.setState({
                 cardMenuOpen: false,
                 cardModelsOpen: false,
+                hotfixMenuOpen: false,
                 activeId: null,
                 back: null,
                 cardMaxed: false,
@@ -10439,6 +10554,14 @@
               if (!active || this.isBlocked(active)) return;
               const next = this.nextStage(active);
               if (next) this.setStatus(active.id, next.id);
+            },
+            hotfixMenuOpen: !!st.hotfixMenuOpen,
+            toggleHotfixMenu: () => this.setState((s) => ({ hotfixMenuOpen: !s.hotfixMenuOpen })),
+            closeHotfixMenu: () => this.setState({ hotfixMenuOpen: false }),
+            commitHotfix: () => {
+              this.setState({ hotfixMenuOpen: false });
+              if (!active || this.isBlocked(active)) return;
+              this.setStatus(active.id, "done");
             },
             openPlan: () =>
               this.setState({
