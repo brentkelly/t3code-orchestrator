@@ -40,6 +40,7 @@ import {
   boardCardStepCompletions,
   boardCardStepState,
   boardReviewRoundsStarted,
+  boardRunLabel,
   deriveBoardCardReviewSummary,
   parseReviewStepId,
   boardLabelCatalogue,
@@ -2002,11 +2003,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         if (state !== null && !isBoardTerminalStepStatus(state.status) && !planning) {
           return yield* invariant(
             command,
-            // `stepLabel` is null for every stage but the review loop (t3o-19,
-            // D4), so name the stage when the step has no label of its own.
-            `Card '${card.key}' has a live step ('${
-              state.stepLabel ?? state.stageLabel
-            }', ${state.status}); finish or stop it before approving a split.`,
+            // `boardRunLabel` is the shared rule (t3o-19, D4): the step's own
+            // label, or the stage label when the step has none — so the gate
+            // names the run the same way every other reader does.
+            `Card '${card.key}' has a live step ('${boardRunLabel(
+              state,
+            )}', ${state.status}); finish or stop it before approving a split.`,
           );
         }
       }
