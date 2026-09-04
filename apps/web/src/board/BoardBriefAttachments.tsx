@@ -30,6 +30,7 @@ import {
 
 import { useAssetUrl } from "../assets/assetUrls";
 import { cn, randomUUID } from "../lib/utils";
+import { usePreparedConnection } from "../state/session";
 import { BoardHint } from "./BoardHint";
 import {
   formatBoardAttachmentSize,
@@ -87,6 +88,11 @@ export function useBoardBriefAttachments(input: {
   stagedRef.current = staged;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { environmentId, limits, onUploaded } = input;
+  // Keeps the prepared-connection atom mounted while an attach surface is
+  // open: the upload's readPreparedConnection() is a one-shot registry read,
+  // and board surfaces — unlike chat — have no other subscriber, so without
+  // this every upload fails its resolve-url step with "Not connected".
+  usePreparedConnection(environmentId);
   const capacityLeft = Math.max(0, input.maxAttachments - input.persistedCount - staged.length);
 
   const update = useCallback((id: string, patch: Partial<BoardStagedAttachment>) => {
