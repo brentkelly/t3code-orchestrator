@@ -1210,6 +1210,8 @@
     >
       const PRE_BUILD = "Card T3-42 “Board settings redesign” in t3o-test.\nStage 4 of 6 · Building. The card brief, the agreed plan and the worktree branch are attached.\nTools: worktree, run_checks, board_ask, board_complete.";
       const POST_BUILD = "When you are done, run the project's checks one final time, summarise what changed in two or three sentences, and record completion with board_complete. Do not move the card yourself.";
+      const PRE_HOTFIX = "Card T3-42 “Board settings redesign” in t3o-test.\nStage 4 of 6 · Building — hotfix run. The card is already built; a human has asked for a specific change.\nThe existing worktree, the last build summary and the hotfix request are attached.";
+      const POST_HOTFIX = "Change only what the hotfix request asks for. Run the project's checks, then record completion with board_complete. Do not re-open the plan and do not move the card yourself.";
       const PRE_REVIEW = "Card T3-42 in t3o-test. Stage 5 of 6 · Code review, round 2 of 5.\nThe reviewed SHA, the base ref and every earlier finding are attached.";
 
       class Component extends DCLogic {
@@ -1219,7 +1221,7 @@
           prefix: "CARD",
           colour: "auto",
           visible: true,
-          open: "review",
+          open: "building",
           bodyOpen: {},
           editing: {},
           sysOpen: {},
@@ -1232,7 +1234,10 @@
             { id: "building", name: "Building", key: "build", auto: true, mode: "Build", useModel: false, model: "claude-sonnet-4",
               prompt: "Implement the card's brief on its branch. Run the project's checks until they pass, then report completion through your completion tool. Ask any blocking question through your question tool rather than in prose.",
               pre: PRE_BUILD, post: POST_BUILD,
-              pausePlan: false, pauseNoPlan: true, advance: true, timeout: 30, attempts: 5 },
+              pausePlan: false, pauseNoPlan: true, advance: true, timeout: 30, attempts: 5,
+              hotfix: { model: "claude-sonnet-4", reasoning: "Medium", access: "Auto-accept edits",
+                prompt: "Apply the hotfix request to this card's existing branch. Read the request, locate the code it refers to and make the smallest change that satisfies it. Do not refactor adjacent code, do not rename anything and do not touch files the request does not concern.\n\nRun the project's checks until they pass. If the request is ambiguous or would require a change outside its stated scope, ask through board_ask instead of guessing.",
+                pre: PRE_HOTFIX, post: POST_HOTFIX } },
             { id: "review", name: "Code review", key: "review", auto: true, loop: true, rounds: 5,
               note: "A loop, not a single step: review the worktree, triage the findings, adjudicate the fixes, and repeat until a review pass raises no blocking findings or the round cap stops it. Each phase runs on its own model.",
               phases: [
@@ -1379,6 +1384,12 @@
             rows.push(this.toggleRow("Auto advance to the next stage", s.advance, () => this.patch(s.id, "advance", !s.advance)));
             rows.push(this.numberRow("Timeout", s.timeout, v => this.patch(s.id, "timeout", v), { min: 5, max: 240, step: 5, unit: "min" }));
             rows.push(this.numberRow("Attempts", s.attempts, v => this.patch(s.id, "attempts", v), { min: 1, max: 20 }));
+          }
+          if (s.hotfix) {
+            const set = (k, v) => this.patch(s.id, "hotfix", { ...s.hotfix, [k]: v });
+            rows.push({ isHeader: true, label: "Hotfix", step: "H" });
+            rows.push(this.promptRow("Prompt", s.id + ":hotfix", s.hotfix.prompt, v => set("prompt", v), s.hotfix.pre, s.hotfix.post));
+            rows.push(this.modelRow(s.hotfix, set));
           }
           return rows;
         }
