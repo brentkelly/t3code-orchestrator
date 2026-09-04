@@ -6673,11 +6673,120 @@
                           Project ·
                           <span style="color: var(--fg)">{{ activeCard.projectName }}</span>
                         </div>
-                        <div>
-                          Branch ·
-                          <span style="font-family: var(--font-sans); color: var(--fg)"
-                            >{{ activeCard.branch }}</span
+                        <div
+                          style="display: flex; align-items: center; gap: 5px; position: relative"
+                        >
+                          <span>Base ·</span>
+                          <button
+                            type="button"
+                            onClick="{{ activeCard.toggleBranchMenu }}"
+                            style="
+                              display: inline-flex;
+                              align-items: center;
+                              gap: 5px;
+                              height: 20px;
+                              padding: 0 5px;
+                              margin-left: -3px;
+                              border: none;
+                              border-radius: 6px;
+                              background: transparent;
+                              color: var(--fg);
+                              cursor: pointer;
+                              font: 500 11.5px var(--font-mono);
+                            "
+                            style-hover="background:var(--accent)"
                           >
+                            <span>{{ activeCard.branch }}</span>
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="var(--muted-fg)"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              style="flex: none"
+                            >
+                              <path d="m6 9 6 6 6-6"></path>
+                            </svg>
+                          </button>
+                          <sc-if
+                            value="{{ activeCard.branchMenuOpen }}"
+                            hint-placeholder-val="{{ false }}"
+                          >
+                            <div
+                              onClick="{{ activeCard.toggleBranchMenu }}"
+                              style="position: fixed; inset: 0; z-index: 8"
+                            ></div>
+                            <div
+                              style="
+                                position: absolute;
+                                left: 0;
+                                bottom: calc(100% + 3px);
+                                z-index: 9;
+                                min-width: 200px;
+                                max-height: 220px;
+                                overflow-y: auto;
+                                padding: 4px;
+                                border: 1px solid var(--border);
+                                border-radius: 10px;
+                                background: var(--popover);
+                                box-shadow: var(--shadow-pop);
+                                display: flex;
+                                flex-direction: column;
+                                gap: 1px;
+                              "
+                            >
+                              <sc-for
+                                list="{{ activeCard.branchOptions }}"
+                                as="o"
+                                hint-placeholder-count="3"
+                              >
+                                <button
+                                  type="button"
+                                  onClick="{{ o.select }}"
+                                  style="{{ o.style }}"
+                                >
+                                  <span
+                                    style="
+                                      flex: 1;
+                                      min-width: 0;
+                                      overflow: hidden;
+                                      text-overflow: ellipsis;
+                                      white-space: nowrap;
+                                      text-align: left;
+                                      font-family: var(--font-mono);
+                                    "
+                                    >{{ o.name }}</span
+                                  >
+                                  <span
+                                    style="
+                                      flex: none;
+                                      font: 400 10px var(--font-sans);
+                                      color: var(--muted-fg);
+                                    "
+                                    >{{ o.hint }}</span
+                                  >
+                                  <sc-if value="{{ o.current }}" hint-placeholder-val="{{ false }}">
+                                    <svg
+                                      width="13"
+                                      height="13"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="2.2"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                      style="flex: none; color: var(--muted-fg)"
+                                    >
+                                      <path d="M20 6 9 17l-5-5"></path>
+                                    </svg>
+                                  </sc-if>
+                                </button>
+                              </sc-for>
+                            </div>
+                          </sc-if>
                         </div>
                         <sc-if
                           value="{{ activeCard.hasParent }}"
@@ -6793,27 +6902,279 @@
                   gap: 14px;
                 "
               >
-                <div>
-                  <label
-                    style="
-                      display: block;
-                      font: 500 12px var(--font-sans);
-                      color: var(--fg);
-                      margin-bottom: 6px;
-                    "
-                    >Project</label
-                  >
-                  <div style="display: flex; flex-wrap: wrap; gap: 6px">
-                    <sc-for list="{{ createProjects }}" as="p" hint-placeholder-count="3">
-                      <button type="button" onClick="{{ p.select }}" style="{{ p.style }}">
+                <div style="display: flex; gap: 10px">
+                  <div style="flex: 1.15; min-width: 0">
+                    <label
+                      style="
+                        display: block;
+                        font: 500 12px var(--font-sans);
+                        color: var(--fg);
+                        margin-bottom: 6px;
+                      "
+                      >Project</label
+                    >
+                    <div style="position: relative">
+                      <button
+                        type="button"
+                        onClick="{{ createProjectMenu.toggle }}"
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 8px;
+                          width: 100%;
+                          height: 34px;
+                          padding: 0 9px 0 11px;
+                          border: 1px solid var(--input);
+                          border-radius: 10px;
+                          background: var(--popover);
+                          color: var(--fg);
+                          cursor: pointer;
+                          box-shadow: var(--shadow-xs);
+                          font: 500 13px var(--font-sans);
+                        "
+                        style-hover="background:var(--accent)"
+                      >
                         <span
-                          style="width:7px;height:7px;border-radius:99px;flex:none;background:{{ p.dot }}"
+                          style="width:7px;height:7px;border-radius:99px;flex:none;background:{{ createProjectMenu.dot }}"
                         ></span>
-                        <span style="font-family: var(--font-sans); font-size: 12px"
-                          >{{ p.name }}</span
+                        <span
+                          style="
+                            flex: 1;
+                            min-width: 0;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                            white-space: nowrap;
+                            text-align: left;
+                          "
+                          >{{ createProjectMenu.label }}</span
                         >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="var(--muted-fg)"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          style="flex: none"
+                        >
+                          <path d="m6 9 6 6 6-6"></path>
+                        </svg>
                       </button>
-                    </sc-for>
+                      <sc-if
+                        value="{{ createProjectMenu.open }}"
+                        hint-placeholder-val="{{ false }}"
+                      >
+                        <div
+                          onClick="{{ createProjectMenu.toggle }}"
+                          style="position: fixed; inset: 0; z-index: 8"
+                        ></div>
+                        <div
+                          style="
+                            position: absolute;
+                            left: 0;
+                            right: 0;
+                            top: calc(100% + 4px);
+                            z-index: 9;
+                            padding: 4px;
+                            border: 1px solid var(--border);
+                            border-radius: 10px;
+                            background: var(--popover);
+                            box-shadow: var(--shadow-pop);
+                            display: flex;
+                            flex-direction: column;
+                            gap: 1px;
+                          "
+                        >
+                          <sc-for
+                            list="{{ createProjectMenu.options }}"
+                            as="o"
+                            hint-placeholder-count="3"
+                          >
+                            <button type="button" onClick="{{ o.select }}" style="{{ o.style }}">
+                              <span
+                                style="width:7px;height:7px;border-radius:99px;flex:none;background:{{ o.dot }}"
+                              ></span>
+                              <span
+                                style="
+                                  flex: 1;
+                                  min-width: 0;
+                                  overflow: hidden;
+                                  text-overflow: ellipsis;
+                                  white-space: nowrap;
+                                  text-align: left;
+                                "
+                                >{{ o.name }}</span
+                              >
+                              <sc-if value="{{ o.current }}" hint-placeholder-val="{{ false }}">
+                                <svg
+                                  width="13"
+                                  height="13"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="2.2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  style="flex: none; color: var(--muted-fg)"
+                                >
+                                  <path d="M20 6 9 17l-5-5"></path>
+                                </svg>
+                              </sc-if>
+                            </button>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </div>
+                  <div style="flex: 1; min-width: 0">
+                    <label
+                      style="
+                        display: flex;
+                        align-items: baseline;
+                        gap: 8px;
+                        font: 500 12px var(--font-sans);
+                        color: var(--fg);
+                        margin-bottom: 6px;
+                      "
+                      >Base branch<span
+                        style="font-weight: 400; font-size: 11.5px; color: var(--muted-fg)"
+                        >work branches off this</span
+                      ></label
+                    >
+                    <div style="position: relative">
+                      <button
+                        type="button"
+                        onClick="{{ createBranchMenu.toggle }}"
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 8px;
+                          width: 100%;
+                          height: 34px;
+                          padding: 0 9px 0 11px;
+                          border: 1px solid var(--input);
+                          border-radius: 10px;
+                          background: var(--popover);
+                          color: var(--fg);
+                          cursor: pointer;
+                          box-shadow: var(--shadow-xs);
+                          font: 500 12.5px var(--font-mono);
+                        "
+                        style-hover="background:var(--accent)"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="var(--muted-fg)"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          style="flex: none"
+                        >
+                          <line x1="6" y1="3" x2="6" y2="15"></line>
+                          <circle cx="18" cy="6" r="3"></circle>
+                          <circle cx="6" cy="18" r="3"></circle>
+                          <path d="M18 9a9 9 0 0 1-9 9"></path>
+                        </svg>
+                        <span
+                          style="
+                            flex: 1;
+                            min-width: 0;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                            white-space: nowrap;
+                            text-align: left;
+                          "
+                          >{{ createBranchMenu.label }}</span
+                        >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="var(--muted-fg)"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          style="flex: none"
+                        >
+                          <path d="m6 9 6 6 6-6"></path>
+                        </svg>
+                      </button>
+                      <sc-if value="{{ createBranchMenu.open }}" hint-placeholder-val="{{ false }}">
+                        <div
+                          onClick="{{ createBranchMenu.toggle }}"
+                          style="position: fixed; inset: 0; z-index: 8"
+                        ></div>
+                        <div
+                          style="
+                            position: absolute;
+                            left: 0;
+                            right: 0;
+                            top: calc(100% + 4px);
+                            z-index: 9;
+                            max-height: 220px;
+                            overflow-y: auto;
+                            padding: 4px;
+                            border: 1px solid var(--border);
+                            border-radius: 10px;
+                            background: var(--popover);
+                            box-shadow: var(--shadow-pop);
+                            display: flex;
+                            flex-direction: column;
+                            gap: 1px;
+                          "
+                        >
+                          <sc-for
+                            list="{{ createBranchMenu.options }}"
+                            as="o"
+                            hint-placeholder-count="3"
+                          >
+                            <button type="button" onClick="{{ o.select }}" style="{{ o.style }}">
+                              <span
+                                style="
+                                  flex: 1;
+                                  min-width: 0;
+                                  overflow: hidden;
+                                  text-overflow: ellipsis;
+                                  white-space: nowrap;
+                                  text-align: left;
+                                  font-family: var(--font-mono);
+                                "
+                                >{{ o.name }}</span
+                              >
+                              <span
+                                style="
+                                  flex: none;
+                                  font: 400 10px var(--font-sans);
+                                  color: var(--muted-fg);
+                                "
+                                >{{ o.hint }}</span
+                              >
+                              <sc-if value="{{ o.current }}" hint-placeholder-val="{{ false }}">
+                                <svg
+                                  width="13"
+                                  height="13"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="2.2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  style="flex: none; color: var(--muted-fg)"
+                                >
+                                  <path d="M20 6 9 17l-5-5"></path>
+                                </svg>
+                              </sc-if>
+                            </button>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
                   </div>
                 </div>
                 <div>
@@ -7530,10 +7891,18 @@
         { name: "Chore", color: "#f59e0b" },
       ];
       const PROJECTS = [
-        { id: "advisor", name: "core.agent.advisor", branch: "main", dot: "#8b8bf5" },
-        { id: "web", name: "mesh.web", branch: "feat/board", dot: "#38bdf8" },
-        { id: "relay", name: "mesh.relay", branch: "main", dot: "#f59e0b" },
+        { id: "advisor", name: "core.agent.advisor", branch: "main", dot: "#8b8bf5",
+          defaultBranch: "main",
+          branches: ["main", "develop", "release/2.4", "feat/board-mode"] },
+        { id: "web", name: "mesh.web", branch: "feat/board", dot: "#38bdf8",
+          defaultBranch: "main",
+          branches: ["main", "feat/board", "staging"] },
+        { id: "relay", name: "mesh.relay", branch: "main", dot: "#f59e0b",
+          defaultBranch: "main",
+          branches: ["main", "develop", "feat/fanout-backpressure"] },
       ];
+      const projectOf = (id) => PROJECTS.find((p) => p.id === id) || PROJECTS[0];
+      const defaultBranchOf = (id) => projectOf(id).defaultBranch;
       const PLAN = (title, bullets, files) =>
         `# ${title}\n\n## Approach\n${bullets.map((b) => "- " + b).join("\n")}\n\n## Files\n${files
           .map((f) => "  " + f)
@@ -7896,6 +8265,9 @@
             lp: { open: false, target: null, query: "", edit: null },
             dropZone: null,
             createProject: "advisor",
+            createBranch: "main",
+            createMenu: null,
+            cardBranchMenu: false,
             draftTitle: "",
             draftBrief: "",
             draftFiles: [],
@@ -8623,6 +8995,14 @@
         workflowLocked(card) {
           return this.stageIndex(card.status) >= this.stageIndex("review");
         }
+        menuRowStyle(on) {
+          return (
+            "display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 8px;border:none;border-radius:7px;cursor:pointer;font:" +
+            (on ? "500" : "400") +
+            " 12.5px var(--font-sans);color:var(--fg);background:" +
+            (on ? "var(--accent)" : "transparent")
+          );
+        }
         setWorkflow(id, wf) {
           this.setState((s) => ({
             cards: s.cards.map((c) => (c.id === id ? { ...c, workflow: wf } : c)),
@@ -9277,6 +9657,8 @@
                       createStatus: stage.id,
                       createTags: ["Feature"],
                       createProject: isAll ? "advisor" : p.id,
+                      createBranch: defaultBranchOf(isAll ? "advisor" : p.id),
+                      createMenu: null,
                       draftTitle: "",
                       draftBrief: "",
             draftFiles: [],
@@ -9426,7 +9808,24 @@
               hasPr: !!active.pr,
               prLabel: active.pr ? "#" + active.pr.n : "",
               projectName: (PROJECTS.find((p) => p.id === active.project) || {}).name,
-              branch: (PROJECTS.find((p) => p.id === active.project) || {}).branch,
+              branch: active.baseBranch || defaultBranchOf(active.project),
+              branchMenuOpen: !!st.cardBranchMenu,
+              toggleBranchMenu: () => this.setState((s) => ({ cardBranchMenu: !s.cardBranchMenu })),
+              branchOptions: projectOf(active.project).branches.map((b) => ({
+                name: b,
+                hint: b === defaultBranchOf(active.project) ? "default" : "",
+                current: (active.baseBranch || defaultBranchOf(active.project)) === b,
+                select: () =>
+                  this.setState((s) => ({
+                    cardBranchMenu: false,
+                    cards: s.cards.map((c) =>
+                      c.id === active.id ? { ...c, baseBranch: b } : c,
+                    ),
+                  })),
+                style: this.menuRowStyle(
+                  (active.baseBranch || defaultBranchOf(active.project)) === b,
+                ),
+              })),
               created: active.created,
               hasParent: !!active.parentKey,
               parentKey: active.parentKey || "",
@@ -10596,6 +10995,8 @@
                 createStatus: "backlog",
                 createTags: ["Feature"],
                 createProject: st.scope === "all" ? "advisor" : st.scope,
+                createBranch: defaultBranchOf(st.scope === "all" ? "advisor" : st.scope),
+                createMenu: null,
                 draftTitle: "",
                 draftBrief: "",
             draftFiles: [],
@@ -10665,28 +11066,48 @@
                   ";color:var(--fg)",
               };
             }),
-            createProjects: PROJECTS.map((p) => {
-              const on = st.createProject === p.id;
-              return {
-                id: p.id,
+            createProjectMenu: {
+              open: st.createMenu === "project",
+              label: projectOf(st.createProject).name,
+              dot: projectOf(st.createProject).dot,
+              toggle: () =>
+                this.setState((s) => ({ createMenu: s.createMenu === "project" ? null : "project" })),
+              options: PROJECTS.map((p) => ({
                 name: p.name,
                 dot: p.dot,
+                current: st.createProject === p.id,
+                hint: "",
                 select: () =>
                   this.setState({
                     createProject: p.id,
+                    createBranch: defaultBranchOf(p.id),
+                    createMenu: null,
                     draftDeps: [],
                     depQuery: "",
                     depIndex: 0,
                     depOpen: false,
                   }),
-                style:
-                  "display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:9px;cursor:pointer;font:500 13px var(--font-sans);box-shadow:var(--shadow-xs);border:1px solid " +
-                  (on ? "var(--primary)" : "var(--input)") +
-                  ";background:" +
-                  (on ? "var(--accent)" : "var(--popover)") +
-                  ";color:var(--fg)",
-              };
-            }),
+                style: this.menuRowStyle(st.createProject === p.id),
+              })),
+            },
+            createBranchMenu: {
+              open: st.createMenu === "branch",
+              label: st.createBranch || defaultBranchOf(st.createProject),
+              isDefault:
+                (st.createBranch || defaultBranchOf(st.createProject)) ===
+                defaultBranchOf(st.createProject),
+              toggle: () =>
+                this.setState((s) => ({ createMenu: s.createMenu === "branch" ? null : "branch" })),
+              options: projectOf(st.createProject).branches.map((b) => ({
+                name: b,
+                current: (st.createBranch || defaultBranchOf(st.createProject)) === b,
+                hint: b === defaultBranchOf(st.createProject) ? "default" : "",
+                select: () => this.setState({ createBranch: b, createMenu: null }),
+                style: this.menuRowStyle(
+                  (st.createBranch || defaultBranchOf(st.createProject)) === b,
+                ),
+              })),
+            },
             depChips: st.draftDeps.map((k) => {
               const c = st.cards.find((x) => x.key === k);
               return {
@@ -10776,6 +11197,7 @@
                 id: "c" + Date.now(),
                 key: prefix + nextNum,
                 project: this.state.createProject,
+              baseBranch: this.state.createBranch || defaultBranchOf(this.state.createProject),
                 tags: (this.state.createTags || []).slice(),
                 status: this.state.createStatus,
                 workflow: this.state.createWorkflow || "full",
