@@ -329,8 +329,17 @@ if (command === "uninstall") {
 // install / sync
 // ---------------------------------------------------------------------------
 
-/** Build (unless --no-build) and publish the result into the app directory. */
-function deployBuild() {
+const distDir = NodePath.join(repoRoot, "apps/server/dist");
+
+/**
+ * Build (unless --no-build) and confirm the artefacts landed.
+ *
+ * Deliberately separate from publishing: the build only writes inside the
+ * worktree, so a redeploy can keep serving right through it. Only the publish
+ * step below needs the service down, which is the difference between a minute
+ * of downtime per upgrade and a couple of seconds.
+ */
+function buildBundle() {
   if (!values["no-build"]) {
     console.log("[t3o-service] Building (vp run --filter t3 build)...");
     run(NodePath.join(repoRoot, "node_modules/.bin/vp"), ["run", "--filter", "t3", "build"], {
@@ -338,13 +347,15 @@ function deployBuild() {
     });
   }
 
-  const distDir = NodePath.join(repoRoot, "apps/server/dist");
   for (const asset of ["bin.mjs", "service-launcher.mjs", "client/index.html"]) {
     if (!NodeFS.existsSync(NodePath.join(distDir, asset))) {
       fail(`missing build asset apps/server/dist/${asset}. Drop --no-build and try again.`);
     }
   }
+}
 
+/** Publish the built tree into the app directory. The service must be stopped. */
+function publishBuild() {
   console.log(`[t3o-service] Syncing build to ${appDir}...`);
   NodeFS.mkdirSync(appDir, { recursive: true });
   run("rsync", ["-a", "--delete", `${distDir}/`, `${NodePath.join(appDir, "dist")}/`]);
@@ -357,10 +368,14 @@ if (command === "sync") {
       `${unitName} is running and would be reading these files. Use \`pnpm run install-t3o-service\`, which stops it first.`,
     );
   }
-  deployBuild();
+  buildBundle();
+  publishBuild();
   console.log(`\nSynced to ${NodePath.join(appDir, "dist")}. Nothing was installed or started.`);
   process.exit(0);
 }
+
+// Built before anything stops, so an upgrade keeps serving until the swap.
+buildBundle();
 
 // A running service must not be reading the tree while --delete walks it.
 const wasActive = capture("systemctl", ["is-active", unitName]) === "active";
@@ -369,7 +384,7 @@ if (wasActive) {
   run("sudo", ["systemctl", "stop", unitName]);
 }
 
-deployBuild();
+publishBuild();
 
 console.log(`[t3o-service] Writing ${unitPath}...`);
 sudoWrite(unitPath, buildUnit());

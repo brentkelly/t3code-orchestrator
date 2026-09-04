@@ -161,8 +161,12 @@ pnpm install                     # only if the lockfile moved
 pnpm run install-t3o-service
 ```
 
-The install stops the unit, rebuilds, syncs and restarts it. Agent turns in flight are interrupted, so pick
-a quiet moment.
+The build runs first, while the old version keeps serving; the unit is stopped only for the sync and
+restart. That window is a few seconds, but agent turns in flight are still interrupted, so pick a quiet
+moment.
+
+Nothing else is needed. Migrations — upstream's and the board's — run at startup, and if the upgrade
+changed a native dependency the app directory's npm install re-runs on its own.
 
 ## Running without systemd
 
