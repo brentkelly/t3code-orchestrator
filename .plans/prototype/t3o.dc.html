@@ -6226,9 +6226,9 @@
                                     stroke-linejoin="round"
                                     style="flex: none; margin-top: 2px"
                                   >
-                                    <circle cx="12" cy="12" r="3"></circle>
-                                    <line x1="3" x2="9" y1="12" y2="12"></line>
-                                    <line x1="15" x2="21" y1="12" y2="12"></line>
+                                    <circle cx="18" cy="18" r="3"></circle>
+                                    <circle cx="6" cy="6" r="3"></circle>
+                                    <path d="M6 21V9a9 9 0 0 0 9 9"></path>
                                   </svg>
                                   <span style="min-width: 0">
                                     <span
@@ -6237,7 +6237,7 @@
                                         font: 500 12.5px var(--font-sans);
                                         color: var(--fg);
                                       "
-                                      >Commit directly as a hotfix</span
+                                      >Submit for merge — no review</span
                                     >
                                     <span
                                       style="
@@ -6246,7 +6246,7 @@
                                         font: 400 11.5px/1.4 var(--font-sans);
                                         color: var(--muted-fg);
                                       "
-                                      >Skips code review and lands on main.</span
+                                      >Opens the PR as normal, straight to Ready for merge.</span
                                     >
                                   </span>
                                 </button>
@@ -9715,7 +9715,7 @@
             const wf = this.workflowOf(active);
             const wfLocked = this.workflowLocked(active);
             const isPrimary = !!PRIMARY_ACTIONS[active.status];
-            // A finished build can also land straight on main, tucked under the caret.
+            // A finished build can also skip review and hand its PR straight to merge.
             const canHotfix =
               active.status === "building" &&
               !!(stage.action && next) &&
@@ -10960,7 +10960,7 @@
             commitHotfix: () => {
               this.setState({ hotfixMenuOpen: false });
               if (!active || this.isBlocked(active)) return;
-              this.setStatus(active.id, "done");
+              this.setStatus(active.id, "merge");
             },
             openPlan: () =>
               this.setState({
