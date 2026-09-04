@@ -103,22 +103,31 @@ describe("project settings map", () => {
 
   it("adds and updates an override", () => {
     const withPrefix = setBoardProjectSetting({}, project, { keyPrefix: "T3" });
-    expect(withPrefix[project]).toEqual({ keyPrefix: "T3", accentColor: null });
+    expect(withPrefix[project]).toEqual({ keyPrefix: "T3", accentColor: null, hidden: false });
     const withAccent = setBoardProjectSetting(withPrefix, project, { accentColor: "violet" });
-    expect(withAccent[project]).toEqual({ keyPrefix: "T3", accentColor: "violet" });
+    expect(withAccent[project]).toEqual({ keyPrefix: "T3", accentColor: "violet", hidden: false });
+  });
+
+  it("toggles visibility without touching the identity fields", () => {
+    const hidden = setBoardProjectSetting({}, project, { hidden: true });
+    expect(hidden[project]).toEqual({ keyPrefix: null, accentColor: null, hidden: true });
+    const withPrefix = setBoardProjectSetting(hidden, project, { keyPrefix: "T3" });
+    expect(withPrefix[project]).toEqual({ keyPrefix: "T3", accentColor: null, hidden: true });
+    const shown = setBoardProjectSetting(withPrefix, project, { hidden: false });
+    expect(shown[project]).toEqual({ keyPrefix: "T3", accentColor: null, hidden: false });
   });
 
   it("keeps a null-valued entry when an override reverts to defaults (deepMerge cannot delete keys)", () => {
     const configured: Record<string, BoardProjectSettings> = {
-      [project]: { keyPrefix: "T3", accentColor: "violet" },
+      [project]: { keyPrefix: "T3", accentColor: "violet", hidden: false },
     };
     const clearedAccent = setBoardProjectSetting(configured, project, { accentColor: null });
-    expect(clearedAccent[project]).toEqual({ keyPrefix: "T3", accentColor: null });
+    expect(clearedAccent[project]).toEqual({ keyPrefix: "T3", accentColor: null, hidden: false });
     const clearedBoth = setBoardProjectSetting(clearedAccent, project, { keyPrefix: null });
     // Retained with null fields, NOT deleted: an omitted key would silently
     // keep the old override through deepMerge; a null entry resolves to the
     // defaults and actually persists the clear.
-    expect(clearedBoth[project]).toEqual({ keyPrefix: null, accentColor: null });
+    expect(clearedBoth[project]).toEqual({ keyPrefix: null, accentColor: null, hidden: false });
   });
 
   it("normalizes a blank prefix input to null", () => {

@@ -22,6 +22,7 @@ import {
   DEFAULT_BOARD_SETTINGS,
   DEFAULT_BOARD_STAGE_EXECUTION,
   effectiveBoardRuntimeMode,
+  isBoardProjectHidden,
   isBoardReviewStageExecution,
   resolveBoardKeyPrefix,
   resolveBoardProjectAccent,
@@ -229,6 +230,21 @@ describe("resolveBoard* helpers", () => {
     });
     expect(resolveBoardKeyPrefix(configured, PROJECT)).toBe("T3");
     expect(resolveBoardProjectAccent(configured, PROJECT)).toBe("#39d");
+  });
+
+  it("resolves project visibility, and an entry written before `hidden` existed still decodes", () => {
+    expect(isBoardProjectHidden(DEFAULT_BOARD_SETTINGS, PROJECT)).toBe(false);
+    // A pre-`hidden` settings file: the field's decoding default fills false
+    // rather than failing the whole-settings decode (which would silently
+    // revert the user's file to compiled-in defaults).
+    const legacy = decodeSettings({
+      projects: { [PROJECT]: { keyPrefix: "T3", accentColor: null } },
+    });
+    expect(isBoardProjectHidden(legacy, PROJECT)).toBe(false);
+    const hiddenSettings = decodeSettings({
+      projects: { [PROJECT]: { keyPrefix: "T3", accentColor: null, hidden: true } },
+    });
+    expect(isBoardProjectHidden(hiddenSettings, PROJECT)).toBe(true);
   });
 });
 

@@ -17,6 +17,7 @@ import {
   boardCardAttention,
   deriveBoardCardChildAttention,
   deriveBoardCardThreadState,
+  isBoardProjectHidden,
   resolveBoardProjectAccent,
   type BoardCardShell,
   type BoardCardThreadShell,
@@ -279,27 +280,41 @@ function EnvironmentBoard({
     [boardSettings],
   );
 
-  const projects = useMemo(
+  const allProjects = useMemo(
     () => Option.getOrNull(shellState.snapshot)?.projects ?? [],
     [shellState.snapshot],
+  );
+  // A hidden project (the settings eye toggle) leaves the board view entirely
+  // — scope picker, legend, add-card list and the merged columns below — while
+  // its cards and automation run on untouched.
+  const projects = useMemo(
+    () => allProjects.filter((project) => !isBoardProjectHidden(boardSettings, project.id)),
+    [allProjects, boardSettings],
   );
   // `?project` scopes the ROOT board only — a sub-board's project is implied
   // by its parent, so the param is ignored there rather than double-filtering.
   const scopeProjectId =
     scope.kind === "root" ? ((search.project ?? null) as ProjectId | null) : null;
-  // A stale deep link (project deleted, or another environment's id) still
-  // needs a visible scope so the user can switch back to All projects.
+  // A stale deep link (project deleted, hidden, or another environment's id)
+  // still needs a visible scope so the user can switch back to All projects.
   const scopeIsStale =
     scopeProjectId !== null &&
-    projects.length > 0 &&
+    allProjects.length > 0 &&
     !projects.some((project) => project.id === scopeProjectId);
+  const scopeIsHidden =
+    scopeProjectId !== null && isBoardProjectHidden(boardSettings, scopeProjectId);
 
   const liveColumns = useMemo(() => {
     if (scopeProjectId !== null) {
+      if (isBoardProjectHidden(boardSettings, scopeProjectId)) return EMPTY_COLUMNS;
       return cardsByProject.get(scopeProjectId) ?? EMPTY_COLUMNS;
     }
-    return mergeBoardStageColumns(cardsByProject.values());
-  }, [cardsByProject, scopeProjectId]);
+    return mergeBoardStageColumns(
+      [...cardsByProject.entries()]
+        .filter(([projectId]) => !isBoardProjectHidden(boardSettings, projectId))
+        .map(([, columns]) => columns),
+    );
+  }, [boardSettings, cardsByProject, scopeProjectId]);
 
   // Optimistic drop placements: applied over the live shells immediately,
   // pruned as the server's deltas confirm them, removed on rejection.
@@ -945,7 +960,14 @@ function EnvironmentBoard({
                   value: project.id as string,
                   label: project.title,
                 })),
-                ...(scopeIsStale ? [{ value: scopeProjectId, label: "Unknown project" }] : []),
+                ...(scopeIsStale
+                  ? [
+                      {
+                        value: scopeProjectId,
+                        label: scopeIsHidden ? "Hidden project" : "Unknown project",
+                      },
+                    ]
+                  : []),
               ]}
               modal={false}
               onValueChange={(value: string | null) => {
@@ -985,7 +1007,9 @@ function EnvironmentBoard({
                   </SelectItem>
                 ))}
                 {scopeIsStale ? (
-                  <SelectItem value={scopeProjectId}>Unknown project</SelectItem>
+                  <SelectItem value={scopeProjectId}>
+                    {scopeIsHidden ? "Hidden project" : "Unknown project"}
+                  </SelectItem>
                 ) : null}
               </SelectPopup>
             </Select>
