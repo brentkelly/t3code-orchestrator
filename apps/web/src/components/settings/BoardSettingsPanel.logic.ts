@@ -77,6 +77,7 @@ export function setBoardProjectSetting(
   const current: BoardProjectSettings = projects[projectId] ?? {
     keyPrefix: null,
     accentColor: null,
+    hidden: false,
   };
   return { ...projects, [projectId]: { ...current, ...patch } };
 }

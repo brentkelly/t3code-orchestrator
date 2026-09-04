@@ -23,6 +23,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { useMemo } from "react";
 import * as Option from "effect/Option";
 
@@ -36,6 +37,7 @@ import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSet
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -128,7 +130,8 @@ function ProjectsSection({
       <p className="max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
         The prefix for this project's card keys (e.g. T3 → T3-42) and the colour its cards show on
         the board. A project's first card assigns an acronym from its name (mesh.web → MW) and keeps
-        it; set a prefix here to override it before those keys exist.
+        it; set a prefix here to override it before those keys exist. The eye hides a project and
+        its cards from the board without touching them — running work carries on.
       </p>
       {environmentId === null ? (
         <p className="px-3 text-sm text-muted-foreground sm:px-4">
@@ -172,6 +175,7 @@ function ProjectRows({
     <div className="mx-3 flex flex-col gap-2 sm:mx-4">
       {projects.map((project) => {
         const entry = board.projects[project.id];
+        const hidden = entry?.hidden ?? false;
         const accentName = resolveBoardProjectAccent(board, project.id);
         const accentValue: ProjectAccentName | typeof ACCENT_AUTO = isProjectAccentName(accentName)
           ? accentName
@@ -187,9 +191,35 @@ function ProjectRows({
                 projectAccent(project.id, accentName).dot,
               )}
             />
-            <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-foreground">
+            <span
+              className={cn(
+                "min-w-0 truncate text-[13.5px] font-medium",
+                hidden ? "text-muted-foreground" : "text-foreground",
+              )}
+            >
               {project.title}
             </span>
+            {hidden ? (
+              <span className="shrink-0 rounded-full border border-border px-1.75 py-px text-[11px] font-medium text-muted-foreground">
+                Hidden
+              </span>
+            ) : null}
+            <span className="min-w-2 flex-1" />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className={cn("text-muted-foreground", hidden && "border border-border")}
+              title={hidden ? "Show on the board" : "Hide from the board"}
+              aria-label={
+                hidden
+                  ? `Show ${project.title} on the board`
+                  : `Hide ${project.title} from the board`
+              }
+              aria-pressed={hidden}
+              onClick={() => setProject(project.id, { hidden: !hidden })}
+            >
+              {hidden ? <EyeOffIcon /> : <EyeIcon />}
+            </Button>
             <Input
               key={`${project.id}:${entry?.keyPrefix ?? ""}`}
               defaultValue={entry?.keyPrefix ?? ""}

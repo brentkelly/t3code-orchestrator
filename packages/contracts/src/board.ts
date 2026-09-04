@@ -5024,6 +5024,12 @@ export const BoardProjectSettings = Schema.Struct({
   keyPrefix: Schema.NullOr(TrimmedNonEmptyString),
   /** Null means the deterministic hash accent (the `projectAccent` fallback). */
   accentColor: Schema.NullOr(TrimmedNonEmptyString),
+  /** Hidden projects (the settings eye toggle) leave the board VIEW — scope
+      picker, legend and columns — while their cards, automation and threads
+      run on untouched. The decoding default keeps every entry written before
+      this field existed decodable; without it a missing key would fail the
+      whole-settings decode and silently revert the user's file to defaults. */
+  hidden: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type BoardProjectSettings = typeof BoardProjectSettings.Type;
 
@@ -6367,6 +6373,11 @@ export function assignBoardKeyPrefix(input: {
     .map(([, entry]) => entry.keyPrefix)
     .filter((prefix): prefix is string => prefix !== null);
   return { prefix: boardProjectAcronym(input.projectTitle, taken), assigned: true };
+}
+
+/** Whether a project (and its cards) is hidden from the board view. */
+export function isBoardProjectHidden(board: BoardSettings, projectId: ProjectId): boolean {
+  return board.projects[projectId]?.hidden ?? false;
 }
 
 /** The per-project accent colour, or null when unset. */

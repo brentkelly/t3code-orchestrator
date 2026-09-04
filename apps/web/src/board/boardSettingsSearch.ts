@@ -24,6 +24,12 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     targetId: "board-projects",
   },
+  {
+    id: "board-project-visibility",
+    title: "Hide a project from the board",
+    to: "/settings/board",
+    targetId: "board-projects",
+  },
   { id: "board-pipeline", title: "Pipeline", to: "/settings/board" },
   {
     id: "board-default-model",
