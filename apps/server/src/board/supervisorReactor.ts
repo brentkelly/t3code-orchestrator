@@ -73,6 +73,7 @@ import {
   type OrchestrationReadModel,
   type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
+  type TurnId,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -3152,6 +3153,9 @@ const make = Effect.gen(function* () {
 
   const handleTurnCompleted = Effect.fn("board-supervisor-handleTurnCompleted")(function* (
     threadId: ThreadId,
+    /** The turn that just ENDED, off the runtime event. Optional because the
+        base event schema makes it optional and not every adapter stamps it. */
+    completedTurnId: TurnId | undefined,
   ) {
     const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
@@ -3172,7 +3176,25 @@ const make = Effect.gen(function* () {
     // nudge `handleStepCompleted` sent for a `failed` completion moments
     // before this turn.completed arrived. The thread is not dead; the live
     // turn's own completion will re-run this test.
-    if (shell !== undefined && shell.session !== null && shell.session.activeTurnId !== null) {
+    //
+    // Compared by IDENTITY, not presence. The shell is read from the
+    // projection, which a DIFFERENT subscriber of this same runtime stream
+    // writes, so at the moment this handler runs it usually still names the
+    // turn that just ENDED as the live one. Reading that as "something else is
+    // working" made this whole handler a coin flip against the projector: when
+    // it lost, a human-in-the-loop step whose agent asked in prose was never
+    // parked, so `stepRunning` stayed true and the card pulsed its blue
+    // "being worked" dot until a restart's reconcile pass caught it.
+    //
+    // A provider that stamps no `turnId` keeps the old presence test: with no
+    // identity to compare there is nothing better to do, and "assume the thread
+    // is busy" is the conservative half of the trade.
+    const liveTurnId = shell?.session?.activeTurnId ?? null;
+    if (
+      shell !== undefined &&
+      liveTurnId !== null &&
+      (completedTurnId === undefined || liveTurnId !== completedTurnId)
+    ) {
       if (!shell.hasPendingUserInput) return;
     }
     if (shell !== undefined && shell.hasPendingUserInput) {
@@ -4375,7 +4397,10 @@ const make = Effect.gen(function* () {
         if (input.event.type === "turn.completed") {
           // An orphan whose turn ended needs no interrupt any more.
           orphanedThreads.delete(String(threadId));
-          return handleTurnCompleted(threadId);
+          // The ended turn's own id rides through: it is what lets the handler
+          // tell a projection that has not caught up yet from a genuinely live
+          // second turn.
+          return handleTurnCompleted(threadId, input.event.turnId);
         }
         // An ordinary agent question (t3o-18, D13): re-sourced from the runtime
         // event on the stream the reactor already consumes, so it fires for
