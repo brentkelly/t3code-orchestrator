@@ -19,6 +19,7 @@
 import {
   boardCardChildren,
   boardBuildHumanInLoopDefault,
+  boardCardPendingSplit,
   boardCardPlans,
   boardSubBoardFloorStage,
   unmetBoardCardDependencies,
@@ -39,14 +40,19 @@ import {
   CommandId,
   BOARD_ENVELOPE_QUESTION_MECHANISM,
   boardTextEndsWithQuestion,
+  BOARD_SUBMIT_STEP_ID,
+  BOARD_SUBMIT_STEP_LABEL,
+  DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
   DEFAULT_BOARD_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EMPTY_BOARD_STATE,
   effectiveBoardStageRole,
   isBoardCardPullRequestTerminal,
+  isBoardBuildStageExecution,
   isBoardMergeStageExecution,
   isBoardTerminalStepStatus,
   MessageId,
+  effectiveBoardRuntimeMode,
   resolveBoardStageExecution,
   resolveBoardDefaultModelSelection,
   resolveBoardStageModelSelection,
@@ -61,6 +67,7 @@ import {
   type BoardCardStepState,
   type BoardSettings,
   type BoardStageExecution,
+  type BoardStageRole,
   type BoardState,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -133,6 +140,23 @@ export type BoardMergeAttemptResult =
   | { readonly outcome: "stale-base" }
   | { readonly outcome: "unknown-card" };
 
+/** What a "Submit for merge — no review" click did (t3o-07, D1), for the RPC
+    to turn into a sentence on the card. */
+export type BoardSubmitAttemptResult =
+  | { readonly outcome: "started" }
+  | { readonly outcome: "wrong-stage" }
+  | { readonly outcome: "step-running" }
+  | { readonly outcome: "no-branch" }
+  | { readonly outcome: "no-merge-stage" }
+  | { readonly outcome: "blocked" }
+  /** A forward gate past the build role would refuse the directed move — an
+      unfinished sub-board child, an unapproved split. Pre-checked, because the
+      refusal itself only lands after the step has pushed and opened the pull
+      request. */
+  | { readonly outcome: "refused"; readonly detail: string }
+  | { readonly outcome: "unknown-card" }
+  | { readonly outcome: "failed" };
+
 export interface SupervisorReactorShape {
   /** Reconcile persisted step state, then subscribe to board and thread
       events. Must run in a scope so worker fibers finalize on shutdown. */
@@ -151,6 +175,9 @@ export interface SupervisorReactorShape {
   readonly refreshPullRequest: (cardId: BoardCardId) => Effect.Effect<void>;
   /** Merge a card's pull request and advance it (the Merge button). */
   readonly mergePullRequest: (cardId: BoardCardId) => Effect.Effect<BoardMergeAttemptResult>;
+  /** Open the card's pull request from Building and route it past Code review
+      ("Submit for merge — no review", t3o-07, D1). */
+  readonly submitForMerge: (cardId: BoardCardId) => Effect.Effect<BoardSubmitAttemptResult>;
 }
 
 export class SupervisorReactor extends Context.Service<SupervisorReactor, SupervisorReactorShape>()(
@@ -287,6 +314,39 @@ const make = Effect.gen(function* () {
               commandType: (command as { readonly type?: string }).type,
               detail: refusal.detail,
             });
+      }),
+    );
+
+  /** `dispatch`, but the caller learns WHY the decider said no: the refusal's
+      own sentence, or `null` when the command landed.
+   *
+   *  For the one write whose refusal has to reach the USER rather than the log
+   *  — the directed advance behind "Submit for merge — no review" (t3o-07,
+   *  D6). It runs after the submit step has pushed the branch and opened the
+   *  pull request, so a swallowed refusal leaves the card in Building with a
+   *  fresh pull request and no account of why it stayed. D6 promises those
+   *  gates "refuse it with their own message"; this is how the message gets
+   *  out.
+   *
+   *  Only an INVARIANT refusal comes back as a sentence. Anything else is a
+   *  fault, not the decider answering, and is logged like any other dispatch —
+   *  the card must not display an infrastructure hiccup as though a rule had
+   *  refused it. */
+  const dispatchRefusal = (command: Parameters<typeof engine.dispatch>[0]) =>
+    engine.dispatch(command).pipe(
+      Effect.as<string | null>(null),
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
+        const refusal = Cause.findErrorOption(cause).pipe(
+          Option.filter((error) => error._tag === "OrchestrationCommandInvariantError"),
+          Option.getOrUndefined,
+        );
+        return refusal === undefined
+          ? Effect.logWarning("board supervisor dispatch failed", {
+              commandType: (command as { readonly type?: string }).type,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as<string | null>(null))
+          : Effect.succeed<string | null>(refusal.detail);
       }),
     );
 
@@ -1425,11 +1485,13 @@ const make = Effect.gen(function* () {
         execution: exec,
       },
       completions,
-      // Stage entry: nothing of this card's is in flight yet.
+      // Stage entry: nothing of this card's is in flight yet, and nothing of
+      // this card's has just settled.
       runState: {
         round: 1,
         completedStepIds: [],
         liveStepId: null,
+        settledStepId: null,
         baseStale: yield* resolveBaseStale(card),
       },
     });
@@ -1522,12 +1584,70 @@ const make = Effect.gen(function* () {
   const advanceStage = Effect.fn("board-supervisor-advanceStage")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
+    /** The role the executor said this stage ends TOWARD (t3o-07, D5/D6).
+     *
+     * A DIRECTED advance, and the two differences from the ordinary one are
+     * both deliberate. It ignores `autoAdvance`, which governs the automatic
+     * crossing after an unattended run — a human who clicked "Submit for merge
+     * — no review" asked for this move explicitly, and it must not silently do
+     * nothing because auto-advance is switched off. And it moves with
+     * `override`, because the target is non-adjacent by construction (it steps
+     * over the review stage) and the decider refuses a non-adjacent move
+     * without it. Every other gate still applies: an unapproved split, an
+     * unfinished sub-board child and unmet dependencies each refuse the move
+     * with their own message, and the card simply stays put. */
+    readonly toRole?: BoardStageRole;
   }) {
+    const board = yield* readBoard;
+    if (input.toRole !== undefined) {
+      const target = boardStageWithRole(board, input.toRole);
+      if (target === null) {
+        // The stage this step was aimed at was deleted from the pipeline while
+        // the step ran — the same half-state as the gate-closed race below (the
+        // branch is pushed, the pull request is open) reached a different way,
+        // so it gets a sentence rather than a silent return. The card is held,
+        // so its forward button is the way out.
+        yield* dispatch({
+          type: "board.card.record-note",
+          commandId: yield* commandId("advance-directed-missing"),
+          cardId: input.card.id,
+          kind: "card-merge-refused",
+          detail: `Held the move: this board no longer has a stage with the "${input.toRole}" role.`,
+          createdAt: yield* nowIso,
+        });
+        return;
+      }
+      // Already there — the move is a no-op, not a held one, so nothing to say.
+      if (target.stageId === input.card.stage) return;
+      const refusal = yield* dispatchRefusal({
+        type: "board.card.move",
+        commandId: yield* commandId("advance-directed"),
+        cardId: input.card.id,
+        toStage: target.stageId,
+        override: true,
+        createdAt: yield* nowIso,
+      });
+      if (refusal === null) return;
+      // A gate closed between the click and here — the step it paid for has
+      // already pushed the branch and opened the pull request, and nobody is
+      // watching a return value any more. `submitCardForMerge` pre-checks
+      // these same gates so the ordinary refusal costs no agent run; this is
+      // the race, and it must not be silent either. The decider's own sentence
+      // is the message, exactly as D6 promises.
+      yield* dispatch({
+        type: "board.card.record-note",
+        commandId: yield* commandId("advance-directed-refused"),
+        cardId: input.card.id,
+        kind: "card-merge-refused",
+        detail: `Held the move to ${target.label}. ${refusal}`,
+        createdAt: yield* nowIso,
+      });
+      return;
+    }
     if (input.state.humanInLoop) return;
     const settings = yield* boardSettings;
     const exec = resolveBoardStageExecution(settings, input.card.stage);
     if (!exec.autoAdvance) return;
-    const board = yield* readBoard;
     const next = boardNextStageId(board, input.card.stage);
     if (next === null) return;
     yield* dispatch({
@@ -1794,11 +1914,13 @@ const make = Effect.gen(function* () {
       },
       completions,
       // The step in `state` has just SETTLED, so nothing is in flight; its
-      // round is already counted through its recorded completion.
+      // round is already counted through its recorded completion. Which step
+      // it was is the build executor's routing signal (t3o-07, D5).
       runState: {
         round: 1,
         completedStepIds,
         liveStepId: null,
+        settledStepId: state.stepId,
         baseStale: yield* resolveBaseStale(card),
       },
     });
@@ -1873,7 +1995,13 @@ const make = Effect.gen(function* () {
         // t3o-22 D1 — a loop that ran out of rounds with findings still open,
         // which carries a converged loop's round counts and the opposite
         // meaning.
-        if (plan.outcome === "succeeded") yield* advanceStage({ card, state });
+        if (plan.outcome === "succeeded") {
+          yield* advanceStage({
+            card,
+            state,
+            ...(plan.advanceToRole === undefined ? {} : { toRole: plan.advanceToRole }),
+          });
+        }
         return;
       }
       case "escalate": {
@@ -1945,11 +2073,15 @@ const make = Effect.gen(function* () {
         execution: exec,
       },
       completions,
-      // The stage is settled, so nothing of this card's is in flight.
+      // The stage is settled, so nothing of this card's is in flight — and no
+      // step is settling right now either: this is a re-plan off a card EDIT,
+      // not off a completion, so a card whose submit step succeeded long ago
+      // must not be routed again by an unrelated title change (t3o-07, D5).
       runState: {
         round: 1,
         completedStepIds,
         liveStepId: null,
+        settledStepId: null,
         baseStale: yield* resolveBaseStale(card),
       },
     });
@@ -2854,6 +2986,129 @@ const make = Effect.gen(function* () {
       });
     }
     return { outcome: "merged" as const, number: pullRequest.number };
+  });
+
+  /**
+   * "Submit for merge — no review" (t3o-07, D1) — the Build stage's second
+   * exit, behind the caret beside its forward button.
+   *
+   * It does NOT move the card. It selects one short unattended step in the
+   * card's existing worktree — push the branch, ensure an open pull request,
+   * write its title and body — and the card moves only when that step settles
+   * `succeeded`, routed by `BuildStageExecutor` (D4/D5). That ordering is the
+   * whole design: a card moved straight to the merge-role stage arrives with
+   * no pull request, and `boardStagePrimaryAction` renders Merge only for an
+   * OPEN one, so the user would be left pressing a button labelled "Move to
+   * Done" that ships nothing.
+   *
+   * An already-open pull request is not a problem — the step finds it and
+   * completes — which is the case where a card ran review, was dragged back to
+   * Building, and is being submitted again.
+   *
+   * Mirrors `mergeCardPullRequest`: request-scoped, outside the serialised
+   * worker, and TOTAL — every refusal is a value the card can show, because a
+   * button that silently does nothing is exactly what this replaces.
+   */
+  const submitCardForMerge = Effect.fn("board-supervisor-submitCardForMerge")(function* (
+    cardId: BoardCardId,
+  ) {
+    const card = yield* readCard(cardId);
+    if (card === null || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
+    const board = yield* readBoard;
+    const stage = boardStageById(board, card.stage);
+    // The stage gate, enforced here and not only on the caret: the RPC is
+    // reachable without the button, and submitting a card that is still
+    // planning would push a branch nobody built.
+    if (stage === null || effectiveBoardStageRole(stage) !== "build") {
+      return { outcome: "wrong-stage" } as const;
+    }
+    // Nowhere to route to. Refused up front rather than after the step has
+    // run, so the user is not charged an agent run for a board that cannot
+    // use its result.
+    if (boardStageWithRole(board, "merge") === null) return { outcome: "no-merge-stage" } as const;
+    // The dependency gate is not overridable (D18), and the directed move
+    // would be refused by the decider anyway — say so instead of teaching the
+    // rule by refusal after an agent has already pushed.
+    if (card.blocked) return { outcome: "blocked" } as const;
+    // The decider's other two forward gates past the build role, pre-checked
+    // for the same reason and with more force: they bite only at the directed
+    // advance, which happens AFTER the submit step has pushed the branch and
+    // opened the pull request. Refused there, the move is swallowed and the
+    // card sits in Building with a fresh pull request and no account of why —
+    // the half-state D9 exists to forbid. Refusing up front costs the user
+    // nothing and names the thing to fix. (`advanceStage` still writes a note
+    // if a gate closes while the step runs; this is the cheap path, not the
+    // only one.)
+    const unfinished = boardCardUnfinishedChildren(board, card.id);
+    if (unfinished.length > 0) {
+      return {
+        outcome: "refused",
+        detail: `This card advances through its ${unfinished.length} plan card${
+          unfinished.length === 1 ? "" : "s"
+        } (${unfinished
+          .map((child) => child.key)
+          .join(", ")}); it cannot pass '${stage.label}' until those finish.`,
+      } as const;
+    }
+    if (boardCardPendingSplit(board, card.id)) {
+      return {
+        outcome: "refused",
+        detail: `This card has ${boardCardPlans(board, card.id).length} unapproved plans; approve the split (or re-propose a single plan) before advancing it.`,
+      } as const;
+    }
+    // Nothing to push.
+    if (card.worktree === null) return { outcome: "no-branch" } as const;
+    // One step at a time (D4). The caret only shows on a HELD card, so this is
+    // a stale client or a race.
+    const live = boardCardStepState(board, card.id);
+    if (live !== null && !isBoardTerminalStepStatus(live.status)) {
+      return { outcome: "step-running" } as const;
+    }
+
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(settings, card.stage);
+    // Read off the stage's own config, symmetrically with `mergeCardPullRequest`
+    // reading the merge member's `strategy`. A build-role stage always resolves
+    // to the build member, so the fallback is unreachable in practice and is
+    // here so a hand-edited settings file cannot make the button do nothing.
+    const submit = isBoardBuildStageExecution(exec)
+      ? exec.submit
+      : DEFAULT_BOARD_BUILD_STAGE_EXECUTION.submit;
+    // The step's own model when it names one, else the stage's — the same
+    // ladder a review phase follows. The card's per-stage override is NOT
+    // applied: this is machinery, like the review loop's sync-base step, and
+    // "the model I want this card BUILT on" says nothing about who should
+    // write its pull request description.
+    const model =
+      submit.model ?? resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const landed = yield* dispatchLanded({
+      type: "board.card.select-step",
+      commandId: yield* commandId("submit-step"),
+      cardId: card.id,
+      stepId: BOARD_SUBMIT_STEP_ID,
+      stepLabel: BOARD_SUBMIT_STEP_LABEL,
+      stageLabel: stage.label,
+      prompt: submit.prompt,
+      providerInstanceId: model.instanceId,
+      model: model.model,
+      runtimeMode: effectiveBoardRuntimeMode(submit.runtimeMode, "build"),
+      ...(model.options === undefined ? {} : { modelOptions: model.options }),
+      mode: "build",
+      // Unattended whatever the card's human-in-the-loop stance (D10): there is
+      // no conversation to have about pushing a branch, and the prompt tells it
+      // to complete `failed` rather than guess.
+      humanInLoop: false,
+      maxAttempts: submit.maxAttempts,
+      timeoutMs: submit.timeoutMs,
+      // Starts no review round: carry the recorded tip forward (t3o-24, D1).
+      baseTipAtRoundStart: yield* baseTipForPlan(card, false),
+      createdAt: yield* nowIso,
+    });
+    // The only invariant that can refuse this command after the guards above is
+    // the decider's live-step one, which means another step won the race.
+    if (!landed) return { outcome: "step-running" } as const;
+    yield* schedule();
+    return { outcome: "started" } as const;
   });
 
   const handleTurnCompleted = Effect.fn("board-supervisor-handleTurnCompleted")(function* (
@@ -4189,6 +4444,18 @@ const make = Effect.gen(function* () {
               detail: "The merge could not be attempted. See the server log for details.",
             } as const),
           ),
+        ),
+      ),
+    submitForMerge: (cardId) =>
+      submitCardForMerge(cardId).pipe(
+        Effect.catchCause((cause) =>
+          // Total for the same reason merging is: an RPC handler owes the user
+          // a response, and a read-model hiccup must read as "it did not
+          // start" rather than as an unhandled failure on a button click.
+          Effect.logWarning("board supervisor: submit for merge failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "failed" } as const)),
         ),
       ),
   } satisfies SupervisorReactorShape;

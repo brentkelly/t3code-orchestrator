@@ -118,6 +118,7 @@ const plan = (
       round: 1,
       completedStepIds: completions.map((c) => c.stepId),
       liveStepId,
+      settledStepId: null,
       baseStale,
     },
   });
@@ -698,7 +699,13 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       card,
       config: { ...config(), execution: simple },
       completions: [],
-      runState: { round: 1, completedStepIds: [], liveStepId: null, baseStale: false },
+      runState: {
+        round: 1,
+        completedStepIds: [],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: false,
+      },
     });
     expect(result.kind === "run" && result.stepId).toBe("review@1");
   });
@@ -735,7 +742,13 @@ describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
       card: withWorktree,
       config: config(),
       completions: cleanRound(1),
-      runState: { round: 1, completedStepIds: ["review@1"], liveStepId: null, baseStale: true },
+      runState: {
+        round: 1,
+        completedStepIds: ["review@1"],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: true,
+      },
     });
     expect(result.kind === "run" && result.prompt).toContain("`main`");
   });

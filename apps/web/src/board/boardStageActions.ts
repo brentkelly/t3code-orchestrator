@@ -5,9 +5,13 @@
  * list (t3o-15): the exhaustive per-stage switch is gone, replaced by "move to
  * the next stage in order".
  *
- * The `build`-role stage has NO forward button: its onward crossing is
- * board-driven (a successful unattended run auto-advances, D8), never a human
- * click. The last stage (Done) has none either — its only exit is archive.
+ * The `build`-role stage has no forward button WHILE the pipeline is driving
+ * it: its onward crossing is board-driven (a successful unattended run
+ * auto-advances, D8), never a human click. The one exception is a SETTLED step
+ * (t3o-06 held-build-forward-button, D1) — a human-in-the-loop build never
+ * auto-advances and a failed one never will either, so once the step settles
+ * the ordinary forward move is offered rather than nothing at all. The last
+ * stage (Done) has none either — its only exit is archive.
  */
 import {
   effectiveBoardStageRole,
@@ -90,6 +94,75 @@ export interface BoardStagePrimaryActionContext {
       runs there — the stage does not auto-execute — so a live step can only be
       the conflict-resolution one. */
   readonly conflictStepRunning?: boolean;
+  /** Whether the card's step has SETTLED and left the card standing (the
+      shell's `held`, ranked by `boardCardAttention`). The build role has no
+      human forward gate while the pipeline is driving it — but once its step
+      settles, nothing will move the card on, so the ordinary forward move is
+      offered instead of nothing at all. */
+  readonly stepHeld?: boolean;
+}
+
+/**
+ * A secondary action offered BESIDE the primary one, behind a caret (t3o-07,
+ * D8). A list, not a nullable, so a second entry is a list entry rather than a
+ * second shape — the popover is already a list.
+ */
+export type BoardStageSecondaryAction = {
+  readonly kind: "submit-no-review";
+  readonly label: string;
+  /** The subtitle under the item: what the click actually does, which is not
+      obvious from a label that says what it skips. */
+  readonly detail: string;
+};
+
+/** What the secondary actions need to know beyond the stage list. */
+export interface BoardStageSecondaryActionContext extends BoardStagePrimaryActionContext {
+  /** Whether the card has a worktree branch. With none there is nothing to
+      push, so there is nothing to submit. */
+  readonly hasBranch?: boolean;
+  /** Unmet dependencies hold the card where it is, and the gate is not
+      overridable — so the caret would only offer a move the server refuses. */
+  readonly blocked?: boolean;
+}
+
+/**
+ * The caret beside the forward button (t3o-07, D8).
+ *
+ * "Submit for merge — no review" appears under a full conjunction, and each
+ * clause is a separate reason the offer would be meaningless:
+ *
+ *  - the primary forward button is showing at all (so, a HELD build step —
+ *    the same gate `boardStagePrimaryAction` applies);
+ *  - the card's ordinary next stage is the review-role stage. If the pipeline
+ *    already routes Building somewhere else, "skip review" says nothing;
+ *  - a merge-role stage exists to route to;
+ *  - the card has a branch to push;
+ *  - the card is not blocked.
+ *
+ * Pure and list-returning, the same shape and testability as
+ * `boardStagePrimaryAction`, so the view stays dumb.
+ */
+export function boardStageSecondaryActions(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stageId: BoardStageId,
+  context?: BoardStageSecondaryActionContext,
+): ReadonlyArray<BoardStageSecondaryAction> {
+  const primary = boardStagePrimaryAction(stages, stageId, context);
+  if (primary === null || primary.kind !== "move") return [];
+  const board = stateOf(stages);
+  const current = stages.find((stage) => stage.stageId === stageId) ?? null;
+  if (current === null || effectiveBoardStageRole(current) !== "build") return [];
+  if (context?.hasBranch !== true || context.blocked === true) return [];
+  const next = stages.find((stage) => stage.stageId === primary.toStage) ?? null;
+  if (next === null || effectiveBoardStageRole(next) !== "review") return [];
+  if (boardStageWithRole(board, "merge") === null) return [];
+  return [
+    {
+      kind: "submit-no-review",
+      label: "Submit for merge — no review",
+      detail: "Opens the PR as normal, straight to Ready for merge.",
+    },
+  ];
 }
 
 export function boardStagePrimaryAction(
@@ -103,8 +176,12 @@ export function boardStagePrimaryAction(
   // carries it as NULL, and the button must not change behaviour based on how
   // old someone's database is.
   const currentRole = current === null ? null : effectiveBoardStageRole(current);
-  // The build role advances board-driven (D8) — no human forward gate.
-  if (currentRole === "build") return null;
+  // The build role advances board-driven (D8) — no human forward gate WHILE the
+  // pipeline is driving it. A settled step is the opposite case: a
+  // human-in-the-loop build that ran to the end never auto-advances, and a
+  // failed one never will either, so the card would sit in Building with a
+  // "Needs a human" chip and nothing to press.
+  if (currentRole === "build" && context?.stepHeld !== true) return null;
   // The merge role's button merges the pull request and advances as a
   // consequence. Only with a PR still OPEN: merged, closed, or absent all fall
   // through to the ordinary forward move below, so a card whose PR someone

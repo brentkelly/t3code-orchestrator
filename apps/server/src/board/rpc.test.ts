@@ -98,7 +98,8 @@ const seedCard = Effect.gen(function* () {
 const supervisorCalls: {
   refresh: Array<string>;
   merge: Array<string>;
-} = { refresh: [], merge: [] };
+  submit: Array<string>;
+} = { refresh: [], merge: [], submit: [] };
 
 const supervisorStub: SupervisorReactorShape = {
   start: () => Effect.void,
@@ -113,6 +114,11 @@ const supervisorStub: SupervisorReactorShape = {
     Effect.sync(() => {
       supervisorCalls.merge.push(String(cardId));
       return { outcome: "merged", number: 284 } as const;
+    }),
+  submitForMerge: (cardId) =>
+    Effect.sync(() => {
+      supervisorCalls.submit.push(String(cardId));
+      return { outcome: "started" } as const;
     }),
 };
 

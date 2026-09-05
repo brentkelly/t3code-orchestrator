@@ -78,6 +78,7 @@ import {
   forceStartBoardCardStep,
   reorderBoardStage,
   startBoardStageThread,
+  submitBoardCardForMerge,
   unarchiveBoardCard,
   undeleteBoardLabel,
   unlinkBoardCardThread,
@@ -929,6 +930,13 @@ export function createBoardEnvironmentAtoms<R, ER>(
     mergeCardPullRequest: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:merge-card-pull-request",
       execute: (input: { readonly cardId: BoardCardId }) => mergeBoardCardPullRequest(input),
+    }),
+    /** Open the card's pull request from Building and route it past Code
+        review (t3o-07). Resolves to the outcome the card reports — started, or
+        the reason it was refused. */
+    submitCardForMerge: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:submit-card-for-merge",
+      execute: (input: { readonly cardId: BoardCardId }) => submitBoardCardForMerge(input),
     }),
     /** Attach a pending upload to a card's brief (t3o-32). Resolves with the
         stored record — the name may have been de-duplicated server-side. */

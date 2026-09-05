@@ -341,7 +341,6 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         maxAttempts: 3,
         timeoutMs: 60_000,
         baseTipAtRoundStart: null,
-        lastError: null,
         createdAt,
       });
       // No slot was free, so the step is queued — the only state a force start
@@ -377,7 +376,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         replayed = yield* projectEvent(replayed, event);
       }
       assert.deepStrictEqual(
-        replayed.board?.stepStates.find((candidate) => candidate.cardId === "card-forced"),
+        (replayed.board?.stepStates ?? []).find((candidate) => candidate.cardId === "card-forced"),
         state,
       );
     }),

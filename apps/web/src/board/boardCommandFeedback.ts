@@ -4,7 +4,10 @@
  * `detail` string (the unmet dependency, the cycle-closing edge, the label
  * cap), and that is what the user needs to see, not a generic failure.
  */
-import type { BoardMergeCardPullRequestResult } from "@t3tools/contracts";
+import type {
+  BoardMergeCardPullRequestResult,
+  BoardSubmitCardForMergeResult,
+} from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 /** The invariant `detail` when the failure carries one, else the error
@@ -60,5 +63,38 @@ export function describeBoardMergeOutcome(result: BoardMergeCardPullRequestResul
       return "The base branch moved since this card's last review round. The card went back to review to rebase and re-review before merging.";
     case "unknown-card":
       return "This card no longer exists.";
+  }
+}
+
+/**
+ * The sentence "Submit for merge — no review" leaves on the card (t3o-07).
+ *
+ * `started` returns null: the card visibly picks up a "Submit for merge" step
+ * and, when it finishes, moves — which says it better than a sentence would.
+ * Every other outcome names the thing the user has to fix, because a button
+ * that silently does nothing is what this action replaces.
+ */
+export function describeBoardSubmitOutcome(result: BoardSubmitCardForMergeResult): string | null {
+  switch (result.outcome) {
+    case "started":
+      return null;
+    case "wrong-stage":
+      return "This card is no longer in the build stage.";
+    case "step-running":
+      return "Something is already running on this card. Wait for it to finish, then try again.";
+    case "no-branch":
+      return "This card has no branch to push.";
+    case "no-merge-stage":
+      return "This board has no merge stage to send the card to.";
+    case "blocked":
+      return "This card is blocked by unmet dependencies.";
+    // The gate wrote the sentence — it names the plan cards still running, or
+    // the split still waiting on approval, and there is nothing to add.
+    case "refused":
+      return result.detail;
+    case "unknown-card":
+      return "This card no longer exists.";
+    case "failed":
+      return "The submission could not be started. See the server log for details.";
   }
 }

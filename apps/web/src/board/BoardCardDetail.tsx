@@ -20,6 +20,7 @@ import {
   isBoardReviewStageExecution,
   activeBoardCardThreadId,
   areBoardStagesAdjacent,
+  boardCardAttention,
   boardStageWithRole,
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterBuild,
@@ -82,7 +83,11 @@ import {
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
-import { describeBoardCommandFailure, describeBoardMergeOutcome } from "./boardCommandFeedback";
+import {
+  describeBoardCommandFailure,
+  describeBoardMergeOutcome,
+  describeBoardSubmitOutcome,
+} from "./boardCommandFeedback";
 import { openPullRequestLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 
@@ -168,6 +173,11 @@ export function BoardCardDetail({
   const mergeCardPullRequest = useAtomCommand(boardEnvironment.mergeCardPullRequest, {
     reportFailure: false,
   });
+  // Same reason as the two above: every refusal is a normal answer with its own
+  // wording ("this card has no branch to push"), not a command failure.
+  const submitCardForMerge = useAtomCommand(boardEnvironment.submitCardForMerge, {
+    reportFailure: false,
+  });
   const createLabel = useAtomCommand(boardEnvironment.createLabel);
   const updateLabel = useAtomCommand(boardEnvironment.updateLabel);
   const deleteLabel = useAtomCommand(boardEnvironment.deleteLabel);
@@ -229,6 +239,18 @@ export function BoardCardDetail({
     () => (snapshot?.cards ?? []).find((shell) => shell.cardId === cardId)?.stepRunning === true,
     [snapshot, cardId],
   );
+  /** Whether the card's step has SETTLED and left the card standing — the same
+      `held` the card face reads for its "Needs a human" chip, ranked by
+      `boardCardAttention` so the chip and the detail's forward button can never
+      disagree (t3o-06 held-build-forward-button, D2). The ranking brings the
+      guards with it: a running or queued step is not held, a card dragged back
+      before the build role is not held, a parent building through its children
+      is not held, and a `stalled` step outranks `held` so Restart keeps owning
+      that case (D3). */
+  const stepHeld = useMemo(() => {
+    const shell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+    return shell !== undefined && boardCardAttention({ card: shell, stages })?.reason === "held";
+  }, [snapshot, cardId, stages]);
   /** Whether the card's live step has given up (t3o-17, D3) — the failure
       banner's gate and the reason a non-auto-executing stage still offers a
       restart (t3o-30, D3). */
@@ -724,6 +746,7 @@ export function BoardCardDetail({
         runCommand(linkThread({ environmentId, input: { cardId: card.id, threadId, role } }))
       }
       conflictStepRunning={conflictStepRunning}
+      stepHeld={stepHeld}
       merging={merging}
       onMergePullRequest={() => {
         setFeedback(null);
@@ -735,6 +758,16 @@ export function BoardCardDetail({
             return;
           }
           setFeedback(describeBoardMergeOutcome(result.value));
+        });
+      }}
+      onSubmitForMerge={() => {
+        setFeedback(null);
+        void submitCardForMerge({ environmentId, input: { cardId: card.id } }).then((result) => {
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+            return;
+          }
+          setFeedback(describeBoardSubmitOutcome(result.value));
         });
       }}
       onOpenPullRequest={(url) => {
