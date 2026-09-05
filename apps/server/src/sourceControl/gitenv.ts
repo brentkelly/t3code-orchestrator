@@ -31,9 +31,13 @@
  * match on cwd would miss every board build.
  *
  * The module is intentionally synchronous and dependency-free so each seam in
- * an upstream file stays a one-line expression. `initGitenv` is called once
- * from `ServerConfig.make`; before that (or when the file is absent) every
- * lookup returns undefined and behavior is exactly stock.
+ * an upstream file stays a one-line expression. `initGitenv` is called from
+ * `resolveServerConfig` (the resolver every `t3` server boot goes through:
+ * `start`, `serve`, the desktop bootstrap, `vp run dev`) and from
+ * `ServerConfig.make` for the one-shot CLIs (`pair`, `auth`, `connect`,
+ * `project`); it is idempotent on the same path. Before either runs, or when
+ * the file is absent, every lookup returns undefined and behavior is exactly
+ * stock.
  *
  * GitHub-only for now: no cross-forge token variable exists. A forge-aware
  * variant can later pick the variable per detected remote without changing

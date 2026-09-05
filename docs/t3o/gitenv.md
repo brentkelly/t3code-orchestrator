@@ -69,4 +69,7 @@ by the project root — one line covers the project and every worktree cut from 
 All logic lives in `apps/server/src/sourceControl/gitenv.ts` (T3o-owned, deliberately synchronous
 and dependency-free so each seam stays a one-line expression). The 13 seams across 6 upstream
 files are listed in the [seam inventory](./seams.md) census. `initGitenv` is wired into
-`ServerConfig.make`; before it runs, or when the file is absent, behavior is exactly stock.
+`resolveServerConfig` — the resolver every `t3` server boot goes through (`start`, `serve`, the
+desktop bootstrap, `vp run dev`) — and into `ServerConfig.make` for the one-shot CLIs; it is
+idempotent on the same path. Before it runs, or when the file is absent, behavior is exactly stock.
+A focused test in `cli/config.test.ts` proves the boot-path wiring, not just the module.
