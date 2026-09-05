@@ -101,6 +101,12 @@ export const refreshBoardCardPullRequest = (input: { readonly cardId: BoardCardI
 export const mergeBoardCardPullRequest = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.mergeCardPullRequest, input);
 
+/** Open the card's pull request from Building and route it past Code review
+    (t3o-07). Same input shape as the merge action, and the same reason for
+    being an RPC: the caller renders the outcome. */
+export const submitBoardCardForMerge = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.submitCardForMerge, input);
+
 /** Claim a pending upload onto a card's brief (t3o-32): the server copies the
     file into the card's folder and records it, in that order. */
 export const attachBoardCardFile = (input: BoardAttachCardFileInput) =>

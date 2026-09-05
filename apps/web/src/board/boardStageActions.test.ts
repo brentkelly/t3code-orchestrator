@@ -8,7 +8,11 @@
 import { BOARD_SEED_STAGE_IDS, BOARD_SEED_STAGES } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
+import {
+  boardStagePrimaryAction,
+  boardStageSecondaryActions,
+  isBoardStageManuallySelectable,
+} from "./boardStageActions";
 
 const stages = BOARD_SEED_STAGES;
 
@@ -241,6 +245,87 @@ describe("boardStagePrimaryAction", () => {
       BOARD_SEED_STAGE_IDS.sprint,
       BOARD_SEED_STAGE_IDS.planning,
       BOARD_SEED_STAGE_IDS.ready,
+    ]);
+  });
+});
+
+/**
+ * The caret beside the forward button (t3o-07, D8). The offer stands on a full
+ * conjunction, so each test below falsifies exactly ONE clause: a caret that
+ * appears under a condition it cannot honour is a button that silently does
+ * nothing, which is the failure mode the whole feature replaces.
+ */
+describe("boardStageSecondaryActions (t3o-07, D8)", () => {
+  const held = { stepHeld: true, hasBranch: true, blocked: false };
+
+  it("offers the submit action on a held build card with a branch", () => {
+    expect(boardStageSecondaryActions(stages, BOARD_SEED_STAGE_IDS.building, held)).toEqual([
+      {
+        kind: "submit-no-review",
+        label: "Submit for merge — no review",
+        detail: "Opens the PR as normal, straight to Ready for merge.",
+      },
+    ]);
+  });
+
+  it("offers nothing while the build is still running — there is no forward button either", () => {
+    expect(
+      boardStageSecondaryActions(stages, BOARD_SEED_STAGE_IDS.building, {
+        ...held,
+        stepHeld: false,
+      }),
+    ).toEqual([]);
+  });
+
+  it("offers nothing on a card with no branch — there is nothing to push", () => {
+    expect(
+      boardStageSecondaryActions(stages, BOARD_SEED_STAGE_IDS.building, {
+        ...held,
+        hasBranch: false,
+      }),
+    ).toEqual([]);
+  });
+
+  it("offers nothing on a blocked card — the dependency gate is not overridable", () => {
+    expect(
+      boardStageSecondaryActions(stages, BOARD_SEED_STAGE_IDS.building, {
+        ...held,
+        blocked: true,
+      }),
+    ).toEqual([]);
+  });
+
+  it("offers nothing when Building's next stage is not the review role", () => {
+    // A pipeline that already routes Building somewhere else: "skip review" is
+    // meaningless when review is not what comes next.
+    const reordered = stages.filter((stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.review);
+    expect(boardStageSecondaryActions(reordered, BOARD_SEED_STAGE_IDS.building, held)).toEqual([]);
+  });
+
+  it("offers nothing when the board has no merge-role stage to route to", () => {
+    const noMerge = stages.filter((stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.merge);
+    expect(boardStageSecondaryActions(noMerge, BOARD_SEED_STAGE_IDS.building, held)).toEqual([]);
+  });
+
+  it("offers nothing at any stage other than the build role", () => {
+    for (const stage of stages) {
+      if (stage.stageId === BOARD_SEED_STAGE_IDS.building) continue;
+      expect(boardStageSecondaryActions(stages, stage.stageId, held)).toEqual([]);
+    }
+  });
+
+  it("resolves the build role on a stage row that predates it", () => {
+    // Same read-side fallback the primary action gets: a `board_stages` row
+    // seeded before roles existed carries NULL.
+    const legacyStages = stages.map((stage) =>
+      stage.stageId === BOARD_SEED_STAGE_IDS.building ? { ...stage, role: null } : stage,
+    );
+    expect(boardStageSecondaryActions(legacyStages, BOARD_SEED_STAGE_IDS.building, held)).toEqual([
+      {
+        kind: "submit-no-review",
+        label: "Submit for merge — no review",
+        detail: "Opens the PR as normal, straight to Ready for merge.",
+      },
     ]);
   });
 });
