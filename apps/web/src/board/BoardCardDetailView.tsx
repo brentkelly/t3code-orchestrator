@@ -442,6 +442,9 @@ export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
 const THREAD_STATE_LABEL: Record<BoardCardThreadState, string> = {
   working: "Working",
   waiting: "Waiting",
+  // The provider session died (t3o-10) — the same word the thread list uses for
+  // it, so the two surfaces read alike.
+  failed: "Failed",
   stopped: "Stopped",
   none: "Idle",
 };

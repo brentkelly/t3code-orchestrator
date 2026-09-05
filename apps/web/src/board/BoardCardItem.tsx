@@ -320,7 +320,10 @@ export function BoardCardContent({
           // (Code review's review/triage/adjudicate phases run as separate
           // short-lived threads) stays lit across the per-phase spin-up gaps and
           // goes dark only when genuinely queued, stalled, awaiting input or
-          // done. It pulses so "working" reads at a glance; a slow opacity fade
+          // done — or when every thread the step could be running on has FAILED,
+          // which vetoes the claim (a restart that orphans a step leaves
+          // `stepRunning` standing over threads that are provably dead).
+          // It pulses so "working" reads at a glance; a slow opacity fade
           // (`animate-pulse`), not a spinner — no per-frame layout, so it stays
           // cheap on high-refresh displays.
           //

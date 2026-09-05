@@ -21,9 +21,10 @@ export const BOARD_STAGE_RESTART_IN_FLIGHT_REASON =
  * Whether a supervised run is in flight for the card (t3o-14 D1). The step-state
  * read model is server-only, so the client reads the card shell's derived live
  * status as its proxy: an actively working thread, one awaiting the human
- * (`waiting`), or a build holding in the governor queue all count. An idle live
- * linked thread (`stopped` / `none`) does NOT — restarting onto it is the whole
- * point of the explicit escape hatch (D2), so it must stay enabled.
+ * (`waiting`), or a build holding in the governor queue all count. A live
+ * linked thread that is idle or DEAD (`stopped` / `failed` / `none`) does NOT —
+ * restarting onto it is the whole point of the explicit escape hatch (D2), so
+ * it must stay enabled.
  */
 export function isBoardCardRunInFlight(
   shell: Pick<BoardCardShell, "threadState" | "queued"> | undefined,

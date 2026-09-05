@@ -22,6 +22,7 @@
  */
 import {
   effectiveBoardStageRole,
+  isBoardCardWorking,
   type BoardCardChildRef,
   type BoardCardShell,
   type BoardPlanId,
@@ -55,9 +56,9 @@ export interface BoardPlanRowLive {
   readonly cardId: string;
   readonly prNumber: number | undefined;
   /** The durable "being worked" signal, not a single thread's turn: the card
-      dot's own rule (`stepRunning || threadState === "working"`), so a review
-      loop's between-thread gaps stay lit here exactly as they do on the
-      board. */
+      dot's own rule (`isBoardCardWorking`), so a review loop's between-thread
+      gaps stay lit here exactly as they do on the board — and a child whose
+      threads have all died goes dark here exactly as it does there. */
   readonly working: boolean;
   readonly awaitingInput: boolean;
   readonly queued: boolean;
@@ -185,7 +186,7 @@ export function deriveBoardPlanRows(input: {
           : {
               cardId: shell.cardId as string,
               prNumber: shell.prNumber,
-              working: shell.stepRunning || shell.threadState === "working",
+              working: isBoardCardWorking(shell),
               awaitingInput: shell.awaitingInput,
               queued: shell.queued,
               stalled: shell.stalled,

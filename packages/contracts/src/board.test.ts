@@ -695,6 +695,47 @@ describe("deriveBoardCardThreadState aggregates across live threads (t3o-18, D7)
     expect(deriveBoardCardThreadState(waiting).threadState).toBe("waiting");
     expect(deriveBoardCardThreadState(null).threadState).toBe("none");
   });
+
+  // ── A dead thread is not an idle one (t3o-10, D5) ────────────────────
+  //
+  // A server restart marks every orphaned session `error`. Read as "not
+  // running", that was indistinguishable from a thread resting between turns,
+  // so nothing on the card could contradict the board's claim to be working.
+  const failed = {
+    hasPendingUserInput: false,
+    hasPendingApprovals: false,
+    session: { status: "error" },
+  };
+
+  it("AC 11: a card whose only live thread errored derives `failed`, not `stopped`", () => {
+    expect(deriveBoardCardThreadState(failed)).toEqual({
+      threadState: "failed",
+      awaitingInput: false,
+    });
+  });
+
+  it("AC 12: one live thread outranks a dead sibling, and a human gate outranks both", () => {
+    expect(deriveBoardCardThreadState([failed, working]).threadState).toBe("working");
+    expect(deriveBoardCardThreadState([failed, waiting]).threadState).toBe("waiting");
+    // An idle thread is not evidence of life, so the failure still shows.
+    expect(deriveBoardCardThreadState([failed, idle]).threadState).toBe("failed");
+  });
+
+  it("a failed session outranks lingering background liveness, as the thread list ranks it", () => {
+    expect(
+      deriveBoardCardThreadState({
+        hasPendingUserInput: false,
+        hasPendingApprovals: false,
+        session: { status: "error" },
+        backgroundLiveness: "working",
+      }).threadState,
+    ).toBe("failed");
+  });
+
+  it("awaitingInput is untouched by the new state", () => {
+    expect(deriveBoardCardThreadState(failed).awaitingInput).toBe(false);
+    expect(deriveBoardCardThreadState([failed, waiting]).awaitingInput).toBe(true);
+  });
 });
 
 describe("BoardCardStepState decoding (t3o-19 D7)", () => {
@@ -1294,6 +1335,27 @@ describe("children actively working (deriveBoardCardChildRunning)", () => {
     expect(isBoardCardWorking(card({ stepRunning: true, threadState: "stopped" }))).toBe(true);
     expect(isBoardCardWorking(card({ queued: true }))).toBe(false);
     expect(isBoardCardWorking(card({ stalled: true, threadState: "stopped" }))).toBe(false);
+  });
+
+  it("AC 13: a dead thread vetoes the board's claim that a step is running", () => {
+    // The incident: the step row said `running` for twelve hours after the
+    // thread doing it died with a server restart.
+    expect(isBoardCardWorking(card({ threadState: "failed", stepRunning: true }))).toBe(false);
+    // ...while the loop-stage gap this claim exists to cover is untouched.
+    expect(isBoardCardWorking(card({ threadState: "stopped", stepRunning: true }))).toBe(true);
+    expect(isBoardCardWorking(card({ threadState: "none", stepRunning: true }))).toBe(true);
+  });
+
+  it("AC 14: a split parent does not light for a child whose threads are all dead", () => {
+    const parent = card({ cardId: parentId, planTotal: 2, planDone: 0, held: true });
+    const running = deriveBoardCardChildRunning({
+      cards: [
+        parent,
+        child("c1", { threadState: "failed", stepRunning: true }),
+        child("c2", { threadState: "working" }),
+      ],
+    });
+    expect(running.get(parentId)).toBe(1);
   });
 
   it("rolls a working child up to its parent, counted", () => {

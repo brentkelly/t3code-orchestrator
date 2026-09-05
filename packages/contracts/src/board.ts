@@ -2317,10 +2317,20 @@ export function boardCardChildAttentionLabel(attention: BoardCardChildAttention)
  * one phase's thread has ended and the next has not spawned. Named once here
  * because the card face is no longer the only surface asking: a split parent
  * asks it of every child (`deriveBoardCardChildRunning`).
+ *
+ * `threadState === "failed"` vetoes both (t3o-10, D5). `stepRunning` is the
+ * board's own CLAIM, and a restart that orphans a step leaves the claim
+ * standing over threads that are provably dead — twelve hours of pulsing blue
+ * over three corpses is what this veto exists to stop.
  */
 export function isBoardCardWorking(
   card: Pick<BoardCardShell, "threadState" | "stepRunning">,
 ): boolean {
+  // Evidence outranks the claim (t3o-10, D5): the board says a step is running
+  // and every thread it could be running on is DEAD, so the dot goes dark. Only
+  // `failed` does this — `stopped` is an idle thread between turns, which is
+  // exactly the loop-stage gap `stepRunning` exists to cover.
+  if (card.threadState === "failed") return false;
   return card.threadState === "working" || card.stepRunning;
 }
 
@@ -3773,8 +3783,18 @@ export function boardThreadTodosComplete(
  * status indicator. Derived — never stored: `deriveBoardCardThreadState`
  * computes it from the linked thread's shell fields wherever current thread
  * shells are at hand (the server at snapshot time, the client continuously).
+ *
+ * `failed` is a thread whose provider session died (t3o-10): distinct from
+ * `stopped`, which is an idle thread between turns, because only `failed` is
+ * evidence that the card's claim to be running work is false.
  */
-export const BoardCardThreadState = Schema.Literals(["working", "waiting", "stopped", "none"]);
+export const BoardCardThreadState = Schema.Literals([
+  "working",
+  "waiting",
+  "failed",
+  "stopped",
+  "none",
+]);
 export type BoardCardThreadState = typeof BoardCardThreadState.Type;
 
 /**
@@ -3864,9 +3884,10 @@ export const BoardCardShell = Schema.Struct({
       window of a step, so it spans the per-phase thread spin-up gaps of a loop
       stage (Code review runs `review@1` → `triage@1` → … as separate short-lived
       threads, and between them no thread is itself mid-turn). The card dot reads
-      `threadState === "working" || stepRunning`, so an active loop stays lit and
-      only goes dark when the card is genuinely queued, stalled, awaiting input or
-      done. Like `queued`/`stalled`, it is derived from the step-state read-model
+      `isBoardCardWorking`, so an active loop stays lit and only goes dark when
+      the card is genuinely queued, stalled, awaiting input, done — or when every
+      thread this step could be running on has FAILED, which outranks this claim
+      (t3o-10, D5). Like `queued`/`stalled`, it is derived from the step-state read-model
       slice the card aggregate does not carry, so it rides the `card-queued`
       /`card-stalled` deltas and the snapshot; card-carrying deltas rest it at
       false and the client preserves the last known value
@@ -4055,13 +4076,20 @@ export function deriveBoardCardThreadState(
   }
   const working = live.some((thread) => {
     const sessionStatus = thread.session?.status;
-    return (
-      sessionStatus === "starting" ||
-      sessionStatus === "running" ||
-      thread.backgroundLiveness === "working"
-    );
+    if (sessionStatus === "starting" || sessionStatus === "running") return true;
+    // A failed session outranks lingering background liveness, the same way the
+    // thread list ranks them (`resolveSidebarThreadStatus`): the human must see
+    // the failure, not a stale Working.
+    if (sessionStatus === "error") return false;
+    return thread.backgroundLiveness === "working";
   });
-  return { threadState: working ? "working" : "stopped", awaitingInput };
+  if (working) return { threadState: "working", awaitingInput };
+  // Nothing is running, so a dead thread is the loudest thing left to say
+  // (t3o-10, D5). Ranked BELOW `working`, so a card with one errored thread and
+  // one live one still reads as working — which is what keeps a review loop's
+  // errored earlier phase from darkening a card whose next phase is running.
+  const failed = live.some((thread) => thread.session?.status === "error");
+  return { threadState: failed ? "failed" : "stopped", awaitingInput };
 }
 
 /** The card's active thread: the most recently linked live link, by the
