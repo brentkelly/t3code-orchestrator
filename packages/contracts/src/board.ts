@@ -4760,6 +4760,10 @@ export const BoardSubmitCardForMergeResult = Schema.Union([
   /** Unmet dependencies: the same gate the forward button refuses on. */
   Schema.Struct({ outcome: Schema.Literal("blocked") }),
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+  /** The attempt itself broke — a read-model hiccup, not a refusal with a
+      cause the user can act on. Kept distinct so the card never claims a
+      reason that was never checked. */
+  Schema.Struct({ outcome: Schema.Literal("failed") }),
 ]);
 export type BoardSubmitCardForMergeResult = typeof BoardSubmitCardForMergeResult.Type;
 

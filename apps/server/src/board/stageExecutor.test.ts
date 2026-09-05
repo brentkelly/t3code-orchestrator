@@ -9,6 +9,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  BOARD_SUBMIT_STEP_ID,
   DEFAULT_BOARD_STAGE_EXECUTION,
   ProviderInstanceId,
   type BoardModelSelection,
@@ -16,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  BuildStageExecutor,
   SimpleStageExecutor,
   stageExecutorForRole,
   type BoardStageExecutorConfig,
@@ -49,7 +51,13 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [],
-      runState: { round: 1, completedStepIds: [], liveStepId: null, baseStale: false },
+      runState: {
+        round: 1,
+        completedStepIds: [],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: false,
+      },
     });
 
     expect(plan).toEqual({
@@ -73,7 +81,13 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [],
-      runState: { round: 4, completedStepIds: [], liveStepId: null, baseStale: false },
+      runState: {
+        round: 4,
+        completedStepIds: [],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: false,
+      },
     });
 
     expect(plan.kind).toBe("run");
@@ -85,7 +99,13 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [],
-      runState: { round: 1, completedStepIds: ["building"], liveStepId: null, baseStale: false },
+      runState: {
+        round: 1,
+        completedStepIds: ["building"],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: false,
+      },
     });
 
     expect(plan).toEqual({ kind: "complete", outcome: "succeeded" });
@@ -109,7 +129,13 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
       card,
       config: config(),
       completions: [priorSuccess],
-      runState: { round: 1, completedStepIds: [], liveStepId: null, baseStale: false },
+      runState: {
+        round: 1,
+        completedStepIds: [],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: false,
+      },
     });
 
     expect(plan.kind).toBe("run");
@@ -125,7 +151,13 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
         maxAttempts: 1,
       }),
       completions: [],
-      runState: { round: 2, completedStepIds: [], liveStepId: null, baseStale: false },
+      runState: {
+        round: 2,
+        completedStepIds: [],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: false,
+      },
     });
 
     expect(plan).toEqual({
@@ -157,7 +189,13 @@ describe("per-card model overrides (t3o-29)", () => {
       card,
       config: config({ cardOverride: override }),
       completions: [],
-      runState: { round: 1, completedStepIds: [], liveStepId: null, baseStale: false },
+      runState: {
+        round: 1,
+        completedStepIds: [],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: false,
+      },
     });
 
     expect(plan).toMatchObject({
@@ -173,7 +211,13 @@ describe("per-card model overrides (t3o-29)", () => {
       card,
       config: config({ cardOverride: override, runtimeMode: "approval-required" }),
       completions: [],
-      runState: { round: 1, completedStepIds: [], liveStepId: null, baseStale: false },
+      runState: {
+        round: 1,
+        completedStepIds: [],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: false,
+      },
     });
 
     expect(plan).toMatchObject({ kind: "run", runtimeMode: "approval-required" });
@@ -187,7 +231,13 @@ describe("per-card model overrides (t3o-29)", () => {
         runtimeMode: "auto",
       }),
       completions: [],
-      runState: { round: 1, completedStepIds: [], liveStepId: null, baseStale: false },
+      runState: {
+        round: 1,
+        completedStepIds: [],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: false,
+      },
     });
 
     expect(plan).toMatchObject({ kind: "run", runtimeMode: "approval-required" });
@@ -198,16 +248,134 @@ describe("per-card model overrides (t3o-29)", () => {
       card,
       config: config({ cardOverride: null }),
       completions: [],
-      runState: { round: 1, completedStepIds: [], liveStepId: null, baseStale: false },
+      runState: {
+        round: 1,
+        completedStepIds: [],
+        liveStepId: null,
+        settledStepId: null,
+        baseStale: false,
+      },
     });
 
     expect(plan).toMatchObject({ kind: "run", model, runtimeMode: "auto" });
   });
 });
 
-describe("stageExecutorForRole registry (D15 / t3o-16)", () => {
-  it("routes the review role to the review loop and every other role to the simple executor", () => {
-    expect(stageExecutorForRole("build")).toBe(SimpleStageExecutor);
+/**
+ * The build executor (t3o-07, D4/D5). Pure over its run state, like everything
+ * else in this file: what it decides is "did the SUBMIT step just settle?", and
+ * nothing else about the card can answer that question for it.
+ */
+describe("BuildStageExecutor.planNext (t3o-07, D4/D5)", () => {
+  const submitCompletion: BoardStepCompletion = {
+    cardId: card.id,
+    stepId: BOARD_SUBMIT_STEP_ID,
+    outcome: "succeeded",
+    summary: "opened PR #12",
+    payload: null,
+    threadId: null,
+    completedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  it("routes the card to the merge role when the submit step is the one that settled", () => {
+    const plan = BuildStageExecutor.planNext({
+      card,
+      config: config(),
+      completions: [submitCompletion],
+      runState: {
+        round: 1,
+        completedStepIds: ["building", BOARD_SUBMIT_STEP_ID],
+        liveStepId: null,
+        settledStepId: BOARD_SUBMIT_STEP_ID,
+        baseStale: false,
+      },
+    });
+
+    // `advanceToRole` is what steps over Code review; without it the stage
+    // would end toward the next stage in order, which IS Code review.
+    expect(plan).toEqual({ kind: "complete", outcome: "succeeded", advanceToRole: "merge" });
+  });
+
+  it("delegates to the simple executor when the ordinary build step settled", () => {
+    const runState = {
+      round: 1,
+      completedStepIds: ["building"],
+      liveStepId: null,
+      settledStepId: "building",
+      baseStale: false,
+    };
+    const input = { card, config: config(), completions: [], runState };
+
+    // Identical to what the simple executor says, and — crucially — carrying no
+    // `advanceToRole`, so the reactor's ordinary auto-advance runs.
+    expect(BuildStageExecutor.planNext(input)).toEqual(SimpleStageExecutor.planNext(input));
+    expect(BuildStageExecutor.planNext(input)).toEqual({
+      kind: "complete",
+      outcome: "succeeded",
+    });
+  });
+
+  it("delegates on stage entry, where nothing has settled at all", () => {
+    const runState = {
+      round: 1,
+      completedStepIds: [],
+      liveStepId: null,
+      settledStepId: null,
+      baseStale: false,
+    };
+    const input = { card, config: config(), completions: [], runState };
+
+    expect(BuildStageExecutor.planNext(input)).toEqual(SimpleStageExecutor.planNext(input));
+    expect(BuildStageExecutor.planNext(input).kind).toBe("run");
+  });
+
+  // The regression D5 names. Completions are keyed `(cardId, stepId)` and never
+  // cleared, so a card dragged back to Building for a SECOND build still
+  // carries the submit completion from its first pass. Routing on that
+  // completion would send the rebuild straight to the merge stage the moment it
+  // finished — skipping review on a card nobody asked to skip review for.
+  it("does NOT route on a stale submit COMPLETION when a rebuild is what settled", () => {
+    const plan = BuildStageExecutor.planNext({
+      card,
+      config: config(),
+      completions: [submitCompletion],
+      runState: {
+        round: 1,
+        completedStepIds: ["building", BOARD_SUBMIT_STEP_ID],
+        liveStepId: null,
+        // The BUILD step just settled; the submit completion is history.
+        settledStepId: "building",
+        baseStale: false,
+      },
+    });
+
+    expect(plan).toEqual({ kind: "complete", outcome: "succeeded" });
+    expect("advanceToRole" in plan).toBe(false);
+  });
+
+  it("does not route when some OTHER step settled, even with the submit step recorded", () => {
+    const plan = BuildStageExecutor.planNext({
+      card,
+      config: config(),
+      completions: [submitCompletion],
+      runState: {
+        round: 1,
+        completedStepIds: [BOARD_SUBMIT_STEP_ID],
+        liveStepId: null,
+        settledStepId: "review@1",
+        baseStale: false,
+      },
+    });
+
+    // Nothing recorded for the stage's own step, so the simple executor plans a
+    // run — the point being only that no directed advance was emitted.
+    expect(plan.kind).toBe("run");
+  });
+});
+
+describe("stageExecutorForRole registry (D15 / t3o-16 / t3o-07)", () => {
+  it("routes review to the loop, build to the build executor, and every other role to the simple one", () => {
+    expect(stageExecutorForRole("build")).toBe(BuildStageExecutor);
     expect(stageExecutorForRole("review")).toBe(ReviewLoopExecutor);
     expect(stageExecutorForRole("done")).toBe(SimpleStageExecutor);
     expect(stageExecutorForRole(null)).toBe(SimpleStageExecutor);
