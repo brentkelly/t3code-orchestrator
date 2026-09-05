@@ -19,6 +19,10 @@
  */
 import {
   BOARD_REVIEW_PHASE_IDS,
+  BOARD_SUBMIT_STEP_ID,
+  BOARD_SUBMIT_STEP_LABEL,
+  DEFAULT_BOARD_SUBMIT_PROMPT,
+  type BoardStepExecution,
   BOARD_REVIEW_PHASE_LABELS,
   BOARD_SEED_STAGES,
   BoardStageId,
@@ -35,6 +39,7 @@ import {
   effectiveBoardRuntimeMode,
   effectiveBoardStageRole,
   DEFAULT_BOARD_MERGE_CONFLICT_PROMPT,
+  isBoardBuildStageExecution,
   isBoardMergeStageExecution,
   isBoardReviewStageExecution,
   resolveBoardStageExecution,
@@ -512,12 +517,17 @@ function PromptRow(props: {
 }
 
 /** The numbered review-phase divider from the prototype. */
-function PhaseHeader(props: { step: number; label: string }) {
+/** A titled rule between blocks. `step` numbers it (the review loop's three
+    phases run in order); a block that is not part of a sequence — the Build
+    stage's submit step — passes none. */
+function PhaseHeader(props: { step?: number; label: string }) {
   return (
     <div className="mt-3 mb-0.5 flex items-center gap-2">
-      <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full border border-border bg-muted font-mono text-[10.5px] font-semibold text-muted-foreground">
-        {props.step}
-      </span>
+      {props.step === undefined ? null : (
+        <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full border border-border bg-muted font-mono text-[10.5px] font-semibold text-muted-foreground">
+          {props.step}
+        </span>
+      )}
       <span className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-foreground">
         {props.label}
       </span>
@@ -1248,6 +1258,127 @@ function SimpleStageBody(props: {
           ) : null}
         </>
       ) : null}
+      {isBoardBuildStageExecution(exec) ? (
+        <SubmitStepBlock
+          stage={stage}
+          submit={exec.submit}
+          stageModelName={
+            exec.model === null
+              ? props.inheritedModelName
+              : boardModelDisplayName(exec.model, props.getModelOptions)
+          }
+          instanceEntries={props.instanceEntries}
+          getModelOptions={props.getModelOptions}
+          onChange={(patch) => set({ submit: { ...exec.submit, ...patch } })}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * "Submit for merge — no review" (t3o-07) — the Build stage's second exit,
+ * configured like a review phase because it is the same kind of thing: one
+ * short agent run with its own prompt, model, access level and limits.
+ *
+ * Outside the `Auto execute` conditional above, deliberately. Auto-execute
+ * governs whether a card arriving at this stage starts BUILDING on its own;
+ * submitting is a human clicking a button on a card that has already built, and
+ * it stays available on a stage the user drives entirely by hand.
+ */
+function SubmitStepBlock(props: {
+  stage: BoardStageDefinition;
+  submit: BoardStepExecution;
+  /** The model this step inherits when it names none — the Build stage's own,
+      or the workspace default. Named rather than called "default", because
+      saying "default" when the stage above actually decides is a lie the user
+      cannot check. */
+  stageModelName: string | null;
+  instanceEntries: InstanceEntries;
+  getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
+  onChange: (patch: Partial<BoardStepExecution>) => void;
+}) {
+  const { stage, submit } = props;
+  return (
+    <>
+      <PhaseHeader label="Submit for merge — no review" />
+      <p className="mb-1 max-w-[62ch] text-[12.5px] leading-[1.55] text-muted-foreground">
+        The caret beside a finished card&apos;s forward button. One unattended run pushes the branch
+        and opens its pull request, writing the title and body from the work — then the card goes
+        straight to the merge stage, skipping code review.
+      </p>
+      <PromptRow
+        id={`${stage.stageId}:${BOARD_SUBMIT_STEP_ID}`}
+        label="Prompt"
+        value={submit.prompt}
+        defaultValue={DEFAULT_BOARD_SUBMIT_PROMPT}
+        preamble={boardStepPreamble({
+          card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
+          stageLabel: stage.label,
+          step: { stepLabel: BOARD_SUBMIT_STEP_LABEL },
+        })}
+        postamble={boardStepPostamble({
+          // Machinery, and always unattended whatever the card's stance (D10).
+          humanInLoop: false,
+          role: "build",
+          step: { stepId: BOARD_SUBMIT_STEP_ID, stepLabel: BOARD_SUBMIT_STEP_LABEL },
+        })}
+        missingMessage={
+          submit.prompt.trim().length === 0
+            ? "A prompt is required, or the step runs with nothing to do."
+            : null
+        }
+        onChange={(prompt) => props.onChange({ prompt })}
+      />
+      <ModelRow
+        label="Model"
+        ariaLabel="Submit for merge model"
+        selection={submit.model}
+        {...inheritedModelRowProps(props.stageModelName, "Pick the model this step runs on.")}
+        instanceEntries={props.instanceEntries}
+        getModelOptions={props.getModelOptions}
+        onChange={(model) => props.onChange({ model })}
+        modelOptions={submit.model?.options}
+        onModelOptionsChange={(options) => {
+          if (submit.model === null) return;
+          props.onChange({
+            model:
+              options === undefined
+                ? { instanceId: submit.model.instanceId, model: submit.model.model }
+                : { instanceId: submit.model.instanceId, model: submit.model.model, options },
+          });
+        }}
+        runtimeMode={effectiveBoardRuntimeMode(submit.runtimeMode, "build")}
+        onRuntimeModeChange={(runtimeMode) => props.onChange({ runtimeMode })}
+      />
+      <NumberRow
+        label="Stall timeout"
+        hint="Time with no sign of life before the supervisor nudges the step."
+        stepper={
+          <NumberStepper
+            value={msToMinutes(submit.timeoutMs)}
+            min={BOARD_STEP_TIMEOUT_MIN_MINUTES}
+            max={240}
+            step={5}
+            unit="min"
+            ariaLabel="Submit stall timeout in minutes"
+            onChange={(minutes) => props.onChange({ timeoutMs: minutesToMs(minutes) })}
+          />
+        }
+      />
+      <NumberRow
+        label="Attempts"
+        hint="Consecutive stalls before the step gives up and asks a human."
+        stepper={
+          <NumberStepper
+            value={submit.maxAttempts}
+            min={1}
+            max={BOARD_STEP_MAX_ATTEMPTS_MAX}
+            ariaLabel="Submit max attempts"
+            onChange={(maxAttempts) => props.onChange({ maxAttempts })}
+          />
+        }
+      />
     </>
   );
 }

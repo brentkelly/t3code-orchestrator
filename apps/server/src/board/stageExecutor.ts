@@ -37,7 +37,7 @@ import type {
   BoardStepOutcome,
   RuntimeMode,
 } from "@t3tools/contracts";
-import { boardModelSelectionOfOverride } from "@t3tools/contracts";
+import { BOARD_SUBMIT_STEP_ID, boardModelSelectionOfOverride } from "@t3tools/contracts";
 
 import { ReviewLoopExecutor } from "./reviewLoopExecutor.ts";
 
@@ -121,6 +121,16 @@ export interface BoardStageRunState {
       decide whether a sync-base step stands between the loop and `succeeded`;
       every other executor ignores it. */
   readonly baseStale: boolean;
+  /** The step that just SETTLED, or null on stage entry (t3o-07, D5).
+   *
+   * Distinct from `liveStepId`, which means "in flight": a run state that can
+   * only say what is running cannot say what just finished, and the build
+   * executor needs exactly that to tell "the submit step just succeeded, route
+   * this card to merge" from "this card is being rebuilt and happens to carry
+   * an old submit completion". The reactor already holds it — `continueStage`
+   * is called with the settled state — so this only lets the seam express it.
+   * Every other executor ignores it. */
+  readonly settledStepId: string | null;
 }
 
 /** What the executor decides the reactor should do next. */
@@ -154,7 +164,18 @@ export type BoardStagePlan =
           started from. */
       readonly recordBaseTip: boolean;
     }
-  | { readonly kind: "complete"; readonly outcome: BoardStepOutcome }
+  | {
+      readonly kind: "complete";
+      readonly outcome: BoardStepOutcome;
+      /** Where this stage ends TOWARD (t3o-07, D5), when it does not simply end
+          at the next stage in order. The reactor resolves the role with
+          `boardStageWithRole`, which it does throughout, so it stays
+          role-generic and learns nothing about submission. A directed advance
+          is a human's explicit request: it bypasses the stage's `autoAdvance`
+          and moves with `override`, because the target is non-adjacent by
+          construction (D6). */
+      readonly advanceToRole?: BoardStageRole;
+    }
   | { readonly kind: "escalate"; readonly question: string };
 
 export interface BoardStagePlanInput {
@@ -216,14 +237,44 @@ export const SimpleStageExecutor: BoardStageExecutor = {
 };
 
 /**
+ * The build-role executor (t3o-07, D4).
+ *
+ * A thin wrapper, and load-bearing rather than tidy. Building ships
+ * `autoAdvance: true`: when the submit step settles, `continueStage` asks the
+ * stage's executor what happens next, and `SimpleStageExecutor` would see the
+ * ordinary build step already recorded, report `complete: succeeded`, and let
+ * `advanceStage` move the card to the next stage in order — **Code review**,
+ * the one stage the whole feature exists to skip. Registering an executor for
+ * the role is the sanctioned single edit, and it keeps the reactor from
+ * learning what a submit step is.
+ *
+ * It routes on the SETTLE, never on the recorded completion. Completions are
+ * keyed `(cardId, stepId)` and never cleared, so a card dragged back to
+ * Building for a second build still carries its old `submit` completion — and
+ * keying on that would send the rebuild straight to merge the moment it
+ * finished.
+ */
+export const BuildStageExecutor: BoardStageExecutor = {
+  planNext(input: BoardStagePlanInput): BoardStagePlan {
+    if (input.runState.settledStepId === BOARD_SUBMIT_STEP_ID) {
+      return { kind: "complete", outcome: "succeeded", advanceToRole: "merge" };
+    }
+    return SimpleStageExecutor.planNext(input);
+  },
+};
+
+/**
  * Executor implementations keyed by stage role (D15). The `review` role runs the
- * multi-phase `ReviewLoopExecutor` (t3o-16); every other role, and a null-role
- * custom stage, falls through to `SimpleStageExecutor`. Registering here is the
- * single edit that teaches the pipeline about review without touching the
- * reactor — the reactor only ever asks `stageExecutorForRole(...).planNext`.
+ * multi-phase `ReviewLoopExecutor` (t3o-16) and the `build` role the
+ * settle-routing `BuildStageExecutor` (t3o-07); every other role, and a
+ * null-role custom stage, falls through to `SimpleStageExecutor`. Registering
+ * here is the single edit that teaches the pipeline about a stage kind without
+ * touching the reactor — the reactor only ever asks
+ * `stageExecutorForRole(...).planNext`.
  */
 const STAGE_EXECUTORS: Partial<Record<BoardStageRole, BoardStageExecutor>> = {
   review: ReviewLoopExecutor,
+  build: BuildStageExecutor,
 };
 
 /**

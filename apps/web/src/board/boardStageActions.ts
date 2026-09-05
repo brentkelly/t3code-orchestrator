@@ -102,6 +102,69 @@ export interface BoardStagePrimaryActionContext {
   readonly stepHeld?: boolean;
 }
 
+/**
+ * A secondary action offered BESIDE the primary one, behind a caret (t3o-07,
+ * D8). A list, not a nullable, so a second entry is a list entry rather than a
+ * second shape — the popover is already a list.
+ */
+export type BoardStageSecondaryAction = {
+  readonly kind: "submit-no-review";
+  readonly label: string;
+  /** The subtitle under the item: what the click actually does, which is not
+      obvious from a label that says what it skips. */
+  readonly detail: string;
+};
+
+/** What the secondary actions need to know beyond the stage list. */
+export interface BoardStageSecondaryActionContext extends BoardStagePrimaryActionContext {
+  /** Whether the card has a worktree branch. With none there is nothing to
+      push, so there is nothing to submit. */
+  readonly hasBranch?: boolean;
+  /** Unmet dependencies hold the card where it is, and the gate is not
+      overridable — so the caret would only offer a move the server refuses. */
+  readonly blocked?: boolean;
+}
+
+/**
+ * The caret beside the forward button (t3o-07, D8).
+ *
+ * "Submit for merge — no review" appears under a full conjunction, and each
+ * clause is a separate reason the offer would be meaningless:
+ *
+ *  - the primary forward button is showing at all (so, a HELD build step —
+ *    the same gate `boardStagePrimaryAction` applies);
+ *  - the card's ordinary next stage is the review-role stage. If the pipeline
+ *    already routes Building somewhere else, "skip review" says nothing;
+ *  - a merge-role stage exists to route to;
+ *  - the card has a branch to push;
+ *  - the card is not blocked.
+ *
+ * Pure and list-returning, the same shape and testability as
+ * `boardStagePrimaryAction`, so the view stays dumb.
+ */
+export function boardStageSecondaryActions(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stageId: BoardStageId,
+  context?: BoardStageSecondaryActionContext,
+): ReadonlyArray<BoardStageSecondaryAction> {
+  const primary = boardStagePrimaryAction(stages, stageId, context);
+  if (primary === null || primary.kind !== "move") return [];
+  const board = stateOf(stages);
+  const current = stages.find((stage) => stage.stageId === stageId) ?? null;
+  if (current === null || effectiveBoardStageRole(current) !== "build") return [];
+  if (context?.hasBranch !== true || context.blocked === true) return [];
+  const next = stages.find((stage) => stage.stageId === primary.toStage) ?? null;
+  if (next === null || effectiveBoardStageRole(next) !== "review") return [];
+  if (boardStageWithRole(board, "merge") === null) return [];
+  return [
+    {
+      kind: "submit-no-review",
+      label: "Submit for merge — no review",
+      detail: "Opens the PR as normal, straight to Ready for merge.",
+    },
+  ];
+}
+
 export function boardStagePrimaryAction(
   stages: ReadonlyArray<BoardStageDefinition>,
   stageId: BoardStageId,

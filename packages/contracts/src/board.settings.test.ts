@@ -17,12 +17,14 @@ import {
   boardProjectAcronym,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
   DEFAULT_BOARD_BUILD_PROMPT,
+  DEFAULT_BOARD_SUBMIT_PROMPT,
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_PIPELINE,
   DEFAULT_BOARD_SETTINGS,
   DEFAULT_BOARD_STAGE_EXECUTION,
   effectiveBoardRuntimeMode,
   isBoardProjectHidden,
+  isBoardBuildStageExecution,
   isBoardReviewStageExecution,
   resolveBoardKeyPrefix,
   resolveBoardProjectAccent,
@@ -220,6 +222,101 @@ describe("resolveBoard* helpers", () => {
       expect(resolved.autoExecute).toBe(true);
       expect(resolved.prompt).toBe(DEFAULT_BOARD_PIPELINE[stageId]?.prompt);
     }
+  });
+
+  // ── The Build stage's `submit` config (t3o-07, D2) ────────────────────
+  //
+  // The Building stage resolves to the BUILD member whatever the settings file
+  // says, so every reader — the settings card, the submit action, the executor
+  // — sees `submit`. No migration exists to guarantee that; the resolver is
+  // the guarantee.
+
+  it("resolves an ABSENT Building entry to the build member, with submit populated", () => {
+    const resolved = resolveBoardStageExecution(decodeSettings({}), BOARD_SEED_STAGE_IDS.building);
+    expect(isBoardBuildStageExecution(resolved)).toBe(true);
+    expect(isBoardBuildStageExecution(resolved) && resolved.submit.prompt).toBe(
+      DEFAULT_BOARD_SUBMIT_PROMPT,
+    );
+    // The invariants the branch has always forced.
+    expect(resolved.mode).toBe("build");
+    expect(resolved.humanInLoopWithPlan).toBe(false);
+    expect(resolved.prompt).toBe(DEFAULT_BOARD_BUILD_PROMPT);
+  });
+
+  it("UPGRADES a legacy simple Building entry rather than discarding what the user wrote", () => {
+    // A settings.json written before the build member existed. The review and
+    // merge branches coerce a legacy entry to their default; here the stored
+    // fields are still meaningful — one of them is the Building PROMPT — so
+    // replacing them with compiled-in defaults would silently throw away a
+    // prompt the user wrote.
+    const legacy = decodeSettings({
+      pipeline: {
+        [BOARD_SEED_STAGE_IDS.building]: {
+          kind: "simple",
+          autoExecute: true,
+          prompt: "My own build prompt.",
+          model: { instanceId: "claude", model: "opus" },
+          autoAdvance: false,
+          maxAttempts: 2,
+        },
+      },
+    });
+    const resolved = resolveBoardStageExecution(legacy, BOARD_SEED_STAGE_IDS.building);
+    expect(isBoardBuildStageExecution(resolved)).toBe(true);
+    expect(resolved.prompt).toBe("My own build prompt.");
+    expect(resolved.model).toEqual({ instanceId: "claude", model: "opus" });
+    expect(resolved.autoAdvance).toBe(false);
+    expect(resolved.maxAttempts).toBe(2);
+    // ...and the setting that did not exist when the file was written is
+    // filled in from the compiled-in default.
+    expect(isBoardBuildStageExecution(resolved) && resolved.submit.prompt).toBe(
+      DEFAULT_BOARD_SUBMIT_PROMPT,
+    );
+    expect(resolved.mode).toBe("build");
+  });
+
+  it("passes a genuine build entry through, submit and all", () => {
+    const configured = decodeSettings({
+      pipeline: {
+        [BOARD_SEED_STAGE_IDS.building]: {
+          kind: "build",
+          prompt: "Build it.",
+          submit: {
+            prompt: "Push it.",
+            model: { instanceId: "claude", model: "haiku" },
+            maxAttempts: 1,
+          },
+        },
+      },
+    });
+    const resolved = resolveBoardStageExecution(configured, BOARD_SEED_STAGE_IDS.building);
+    expect(isBoardBuildStageExecution(resolved)).toBe(true);
+    if (!isBoardBuildStageExecution(resolved)) return;
+    expect(resolved.submit.prompt).toBe("Push it.");
+    expect(resolved.submit.model).toEqual({ instanceId: "claude", model: "haiku" });
+    expect(resolved.submit.maxAttempts).toBe(1);
+    // Unset per-step fields still take their own defaults.
+    expect(resolved.submit.timeoutMs).toBeGreaterThan(0);
+  });
+
+  it("a settings file written before the build member round-trips through a decode", () => {
+    // The upgrade case as a user actually hits it: their file is read, their
+    // board runs, and re-encoding it does not lose anything they wrote.
+    const legacyFile = {
+      pipeline: {
+        [BOARD_SEED_STAGE_IDS.building]: {
+          kind: "simple" as const,
+          autoExecute: true,
+          prompt: "My own build prompt.",
+        },
+      },
+    };
+    const decoded = decodeSettings(legacyFile);
+    const round = decodeSettings(encodeSettings(decoded));
+    expect(round.pipeline[BOARD_SEED_STAGE_IDS.building]?.prompt).toBe("My own build prompt.");
+    expect(resolveBoardStageExecution(round, BOARD_SEED_STAGE_IDS.building).prompt).toBe(
+      "My own build prompt.",
+    );
   });
 
   it("falls back to the default key prefix, or uses the configured one and accent", () => {

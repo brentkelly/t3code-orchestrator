@@ -4682,6 +4682,11 @@ export const BOARD_WS_METHODS = {
       "resolving conflicts" — and because a refresh must not write to the
       durable event log every time somebody opens a card. */
   mergeCardPullRequest: "board.mergeCardPullRequest",
+  /** Open the card's pull request from the Build stage and route it past Code
+      review (t3o-07, D1). An RPC for the same reason merging is one: the
+      caller is a human waiting on an answer, and "there is nothing to push"
+      is a refusal they need to read on the card. */
+  submitCardForMerge: "board.submitCardForMerge",
   /** Claim a pending upload into the card's folder and record it on the brief
       (t3o-32, K2). An RPC, not a client command: the copy is a filesystem
       side effect that must land before the record does. */
@@ -4732,6 +4737,43 @@ export const BoardMergeCardPullRequestResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
 ]);
 export type BoardMergeCardPullRequestResult = typeof BoardMergeCardPullRequestResult.Type;
+
+/**
+ * What "Submit for merge — no review" did (t3o-07, D1/D9).
+ *
+ * `started` is the ONLY success: the submit step was selected and the card
+ * stays in Building until it settles. Every refusal names the thing the user
+ * has to fix, because the alternative — a button that silently does nothing —
+ * is what this whole feature exists to avoid.
+ */
+export const BoardSubmitCardForMergeResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("started") }),
+  /** The card is not at the build-role stage. The caret only renders there, so
+      this is a stale client or an RPC call made without one. */
+  Schema.Struct({ outcome: Schema.Literal("wrong-stage") }),
+  /** A step is live on the card, so nothing else may be selected. */
+  Schema.Struct({ outcome: Schema.Literal("step-running") }),
+  /** No worktree branch, so there is nothing to push. */
+  Schema.Struct({ outcome: Schema.Literal("no-branch") }),
+  /** The board has no merge-role stage to route the card to. */
+  Schema.Struct({ outcome: Schema.Literal("no-merge-stage") }),
+  /** Unmet dependencies: the same gate the forward button refuses on. */
+  Schema.Struct({ outcome: Schema.Literal("blocked") }),
+  /** One of the decider's OTHER forward gates past the build role would refuse
+      the directed move — an unfinished sub-board child, an unapproved split.
+      Checked before the step runs, because the refusal only bites at the
+      advance, by which time the branch is pushed and the pull request is open:
+      the card would sit in Building with a fresh pull request and no reason
+      given. `detail` is the sentence to show, named the way the decider names
+      it. */
+  Schema.Struct({ outcome: Schema.Literal("refused"), detail: Schema.String }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+  /** The attempt itself broke — a read-model hiccup, not a refusal with a
+      cause the user can act on. Kept distinct so the card never claims a
+      reason that was never checked. */
+  Schema.Struct({ outcome: Schema.Literal("failed") }),
+]);
+export type BoardSubmitCardForMergeResult = typeof BoardSubmitCardForMergeResult.Type;
 
 export const BoardSubscribeCardInput = Schema.Struct({
   cardId: BoardCardId,
@@ -4969,6 +5011,11 @@ export const BOARD_RPCS = [
     success: BoardMergeCardPullRequestResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.submitCardForMerge, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardSubmitCardForMergeResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.attachCardFile, {
     payload: BoardAttachCardFileInput,
     success: BoardCardAttachment,
@@ -4995,6 +5042,9 @@ export const BOARD_RPC_SCOPES = {
   // Merging changes the repository and moves the card: the operate tier, the
   // same one every other board mutation rides.
   [BOARD_WS_METHODS.mergeCardPullRequest]: AuthOrchestrationOperateScope,
+  // Submitting starts an agent that pushes a branch and opens a pull request,
+  // and moves the card: the same mutation tier as merging.
+  [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
   // Attaching writes a file and a board event; detaching deletes one. Both
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,
@@ -5642,10 +5692,16 @@ export const DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT =
 export const DEFAULT_BOARD_SYNC_PHASE_PROMPT =
   "This card's base branch has advanced since its last review round started — a sibling card merged into it — so the diff that was reviewed is no longer the diff that would merge. Your whole job is to rebase this card's branch onto the current tip of its base branch, in this worktree. Fetch the base branch from the remote first (best effort — the local base branch is kept fast-forwarded, so a failed fetch is not itself a blocker). Run the rebase. Resolving any conflicts is exactly what you are here for: preserve both the base's merged changes and this branch's intent, and never resolve a conflict by discarding one side unexamined. After the rebase, run the project's own checks (build, tests, lint — whatever the repository defines) and fix anything the rebase broke. Then push the branch with --force-with-lease; never plain --force. If you cannot complete the rebase safely, run `git rebase --abort` so the worktree is left clean — never leave it mid-rebase — and complete the step with outcome \"failed\", saying why.";
 
-/** A single review phase's execution config (D2): its own prompt and its own
-    model, so a thorough reviewer can pair with a cheap triager. `model` null
-    runs the phase on the global text-generation model (resolved at run). */
-export const BoardReviewPhaseExecution = Schema.Struct({
+/** A single STEP's execution config: its own prompt and its own model, so a
+    thorough reviewer can pair with a cheap triager, and a submit step can run
+    somewhere cheaper than the build that preceded it. `model` null runs the
+    step on the stage's model, or the global one, resolved at run.
+
+    Named neutrally because two unrelated features now configure a step this
+    way — the review loop's phases and the Build stage's `submit` (t3o-07,
+    D3) — and a `submit` typed as a "review phase" would read as though it
+    belonged to the loop. */
+export const BoardStepExecution = Schema.Struct({
   prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** The agent authority posture this review phase runs under (t3o-21). The user
@@ -5661,7 +5717,13 @@ export const BoardReviewPhaseExecution = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
   ),
 });
-export type BoardReviewPhaseExecution = typeof BoardReviewPhaseExecution.Type;
+export type BoardStepExecution = typeof BoardStepExecution.Type;
+
+/** The review loop's name for the same struct. An alias, not a copy: the
+    review executor and the review settings card keep reading
+    `BoardReviewPhaseExecution` and neither had to change. */
+export const BoardReviewPhaseExecution = BoardStepExecution;
+export type BoardReviewPhaseExecution = BoardStepExecution;
 
 const makeDefaultReviewPhase = (prompt: string): BoardReviewPhaseExecution => ({
   prompt,
@@ -5865,6 +5927,84 @@ export const BoardStageExecutionMerge = Schema.Struct({
 export type BoardStageExecutionMerge = typeof BoardStageExecutionMerge.Type;
 
 /**
+ * The submit step's id and label (t3o-07, D1). Compiled-in machinery like the
+ * review loop's `sync`, not a stage the user can add or rename: the step is
+ * the request. Its COMPLETION is keyed `(cardId, "submit")` and never cleared,
+ * which is exactly why the build executor routes on the settle rather than on
+ * the recorded completion (D5).
+ */
+export const BOARD_SUBMIT_STEP_ID = "submit";
+export const BOARD_SUBMIT_STEP_LABEL = "Submit for merge";
+
+/**
+ * The submit step's prompt (t3o-07, D1) — user-owned, like the review phases.
+ *
+ * It says push, then ensure a pull request, then WRITE the title and body,
+ * because no review is going to explain this change later: the whole point of
+ * the action is to skip the stage whose agent would otherwise have opened the
+ * PR and described it. It also says, twice over, not to review and not to
+ * merge — this step exists to be the cheap end of the Build stage, and an
+ * agent that reads a diff and posts findings has re-created the thing the user
+ * opted out of.
+ */
+export const DEFAULT_BOARD_SUBMIT_PROMPT =
+  'Get this card\'s branch ready to merge without a review. Push the branch to its remote, then make sure it has an open pull request against its base ref, opening one if there is none — and if one is already open, just make sure it reflects everything on the branch. Write the pull request title and body yourself from the work on the branch: what changed and why, in a few sentences, so someone reading it later understands the change without a review to explain it. Do not review the code, do not post findings, and do not merge anything. If you cannot push or cannot open a pull request — no remote, an unauthenticated forge, a protected branch — stop and complete the step with outcome "failed", saying exactly what blocked you.';
+
+/**
+ * The `{ kind: "build" }` member (t3o-07, D2) — the build-role stage's config.
+ * Like the review and merge members it carries EVERY simple-member field, so
+ * the reactor keeps reading `prompt`/`model`/`mode`/… uniformly and never
+ * learns this stage has a second way out, and adds the one setting the build
+ * role owns: how the `submit` step runs.
+ *
+ * `submit` is a whole `BoardStepExecution` rather than a bare prompt because
+ * the step is a real agent run with a real cost: a push-and-describe job has
+ * no business defaulting to the model that just spent an hour building, and
+ * the access level it needs (it pushes) is a decision the user should be able
+ * to see and change.
+ *
+ * No migration: board settings live in `settings.json`, every field carries a
+ * decoding default, and a file written before this member existed decodes to
+ * the compiled-in `submit` config.
+ */
+export const BoardStageExecutionBuild = Schema.Struct({
+  kind: Schema.Literal("build"),
+  autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  prompt: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  runtimeMode: Schema.optional(RuntimeMode),
+  /** Build mode: the card's own worktree. Forced by
+      `resolveBoardStageExecution`, as the review loop's and the merge
+      stage's are. */
+  mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("build" as const))),
+  humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithoutPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  autoAdvance: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  timeoutMs: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
+  ),
+  maxAttempts: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
+  ),
+  maxInvocationsPerStageEntry: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
+  ),
+  /** How "Submit for merge — no review" runs (t3o-07, D1). */
+  submit: BoardStepExecution.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        prompt: DEFAULT_BOARD_SUBMIT_PROMPT,
+        model: null,
+        timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
+        maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
+      }),
+    ),
+  ),
+});
+export type BoardStageExecutionBuild = typeof BoardStageExecutionBuild.Type;
+
+/**
  * A stage's execution config (D4/D15) — a `kind`-discriminated union so the
  * codebase branches on stage kind in exactly two places (the executor registry
  * and the settings card). The simple member is tried first, and its `kind`
@@ -5876,6 +6016,7 @@ export const BoardStageExecution = Schema.Union([
   BoardStageExecutionSimple,
   BoardStageExecutionReview,
   BoardStageExecutionMerge,
+  BoardStageExecutionBuild,
 ]);
 export type BoardStageExecution = typeof BoardStageExecution.Type;
 
@@ -5895,6 +6036,15 @@ export function isBoardMergeStageExecution(
   execution: BoardStageExecution,
 ): execution is BoardStageExecutionMerge {
   return execution.kind === "merge";
+}
+
+/** True when a resolved stage config is the build member (t3o-07, D2).
+    Companion to the two above; the settings card and the submit action are the
+    only readers. */
+export function isBoardBuildStageExecution(
+  execution: BoardStageExecution,
+): execution is BoardStageExecutionBuild {
+  return execution.kind === "build";
 }
 
 /**
@@ -5928,6 +6078,14 @@ export const DEFAULT_BOARD_MERGE_STAGE_EXECUTION: BoardStageExecutionMerge = Sch
   BoardStageExecution,
 )({ kind: "merge" }) as BoardStageExecutionMerge;
 
+/** The all-defaults BUILD-stage config (t3o-07, D2): everything the Building
+    stage already shipped with, plus the compiled-in submit config. Its
+    `prompt` is filled in by `DEFAULT_BOARD_PIPELINE` below, which is the one
+    place the Building prompt has ever lived. */
+export const DEFAULT_BOARD_BUILD_STAGE_EXECUTION: BoardStageExecutionBuild = Schema.decodeSync(
+  BoardStageExecution,
+)({ kind: "build" }) as BoardStageExecutionBuild;
+
 /** The Building prompt (D4), intent only: completion / question mechanics are
     force-appended by the prompt envelope (`composeStepPrompt`), never carried
     in the editable body. */
@@ -5951,19 +6109,13 @@ If a question can be answered by exploring the codebase, explore the codebase in
  * ships with `Auto execute` off (absent from the map).
  */
 export const DEFAULT_BOARD_PIPELINE: BoardPipeline = {
+  // Building is the build MEMBER (t3o-07, D2) — the same field values it has
+  // always shipped with, plus the `submit` config behind "Submit for merge —
+  // no review". A build-only setting on the simple member would have put it on
+  // every stage in the pipeline.
   [BOARD_SEED_STAGE_IDS.building]: {
-    kind: "simple",
-    autoExecute: true,
+    ...DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
     prompt: DEFAULT_BOARD_BUILD_PROMPT,
-    model: null,
-    mode: "build",
-    humanInLoop: false,
-    humanInLoopWithPlan: false,
-    humanInLoopWithoutPlan: true,
-    autoAdvance: true,
-    timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
-    maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
-    maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   },
   [BOARD_SEED_STAGE_IDS.planning]: {
     kind: "simple",
@@ -6146,32 +6298,62 @@ export function resolveBoardStageExecution(
       runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
     };
   }
-  // The plan / build role holders (seeded ids — roles are never created, so
-  // the id ↔ role mapping is exact) get their invariants FORCED at the same
-  // single resolution point: Planning always runs read-only and
-  // human-in-the-loop, Building always runs in build mode, and the retired
-  // "pause when a plan exists" stance is always off. A review member stored
-  // under either key is ignored the same way a simple member under the review
-  // key is.
-  if (stageId === BOARD_SEED_STAGE_IDS.planning || stageId === BOARD_SEED_STAGE_IDS.building) {
-    // An ABSENT entry resolves to that stage's SEEDED config, not the empty
-    // all-defaults one: settings.json is written sparsely (every entry equal to
-    // its compiled-in default is pruned), so "Planning is missing from the map"
-    // is the normal state of a board whose Planning was never edited — and
-    // resolving it to `autoExecute: false` with an empty prompt would silently
-    // switch the seeded stage off. Mirrors the review branch above.
+  if (stageId === BOARD_SEED_STAGE_IDS.building) {
+    // Building resolves to the BUILD member (t3o-07, D2), so every reader —
+    // the settings card, the submit action, the executor — sees `submit`
+    // whatever the settings file says. Three cases, and only the first is
+    // new:
+    //
+    //  - a genuine build member (the settings card's own writes) passes
+    //    through;
+    //  - a LEGACY simple member, stored here before this member existed, is
+    //    UPGRADED field-wise rather than discarded. The review and merge
+    //    branches above coerce a legacy entry to their default because
+    //    neither stage's settings survived in a usable form; here the fields
+    //    ARE usable and one of them is the Building prompt, so replacing it
+    //    with the compiled-in default would silently throw away a prompt the
+    //    user wrote;
+    //  - an ABSENT entry resolves to the SEEDED config, not the empty
+    //    all-defaults one: settings.json is written sparsely, so "Building is
+    //    missing from the map" is the normal state of a board nobody has
+    //    edited, and resolving it to `autoExecute: false` with an empty
+    //    prompt would switch the seeded stage off.
+    //
+    // The build-mode invariant is forced here as it always was.
+    const seeded = DEFAULT_BOARD_PIPELINE[stageId] as BoardStageExecutionBuild;
+    const base =
+      configured === undefined
+        ? seeded
+        : isBoardBuildStageExecution(configured)
+          ? configured
+          : configured.kind === "simple"
+            ? { ...seeded, ...configured, kind: "build" as const, submit: seeded.submit }
+            : seeded;
+    return {
+      ...base,
+      mode: "build",
+      humanInLoopWithPlan: false,
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+    };
+  }
+  // Planning (a seeded id — roles are never created, so the id ↔ role mapping
+  // is exact) gets its invariants FORCED at the same single resolution point:
+  // it always runs read-only and human-in-the-loop, and the retired "pause
+  // when a plan exists" stance is always off. A review member stored under its
+  // key is ignored the same way a simple member under the review key is.
+  if (stageId === BOARD_SEED_STAGE_IDS.planning) {
+    // An ABSENT entry resolves to the SEEDED config for the same reason
+    // Building's does.
     const base =
       configured !== undefined && !isBoardReviewStageExecution(configured)
         ? configured
         : (DEFAULT_BOARD_PIPELINE[stageId] as BoardStageExecutionSimple);
-    const forced =
-      stageId === BOARD_SEED_STAGE_IDS.planning
-        ? ({ mode: "plan", humanInLoop: true, humanInLoopWithPlan: false } as const)
-        : ({ mode: "build", humanInLoopWithPlan: false } as const);
     return {
       ...base,
-      ...forced,
-      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, forced.mode),
+      mode: "plan",
+      humanInLoop: true,
+      humanInLoopWithPlan: false,
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "plan"),
     };
   }
   const resolved = configured ?? DEFAULT_BOARD_STAGE_EXECUTION;

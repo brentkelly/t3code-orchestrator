@@ -175,6 +175,22 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
       ),
 
     /**
+     * Open the card's pull request from Building and route it past Code review
+     * ("Submit for merge — no review", t3o-07). Always human-initiated, and
+     * the result is a value rather than an error channel for the same reason
+     * merging's is: "this card has no branch to push" is the system working,
+     * and the caller renders each refusal differently.
+     */
+    [BOARD_WS_METHODS.submitCardForMerge]: (input: BoardCardPullRequestActionInput) =>
+      observeRpcEffect(
+        BOARD_WS_METHODS.submitCardForMerge,
+        authorized(
+          BOARD_WS_METHODS.submitCardForMerge,
+          deps.boardSupervisor.submitForMerge(input.cardId),
+        ),
+      ),
+
+    /**
      * Attach a pending upload to the card's brief (t3o-32, K2). Copy first,
      * record second: the file lands in the card's folder, then the internal
      * `board.card.attach` command is dispatched; a refused dispatch deletes

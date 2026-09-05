@@ -64,9 +64,11 @@ import {
   ArchiveRestoreIcon,
   ArrowRightIcon,
   CheckIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   CircleAlertIcon,
   EllipsisVerticalIcon,
+  GitPullRequestArrowIcon,
   GitPullRequestIcon,
   ExternalLinkIcon,
   FileIcon,
@@ -85,7 +87,7 @@ import { Suspense, lazy, useMemo, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogPopup } from "../components/ui/dialog";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
-import { PopoverTrigger } from "../components/ui/popover";
+import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import {
   boardCardModelOverrideSummary,
   boardCardModelRows,
@@ -118,7 +120,12 @@ import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCar
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
 import { deriveBoardPlanRows } from "./boardPlanRows";
 import { boardStageLabel } from "./boardStages";
-import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
+import {
+  boardStagePrimaryAction,
+  boardStageSecondaryActions,
+  isBoardStageManuallySelectable,
+  type BoardStageSecondaryAction,
+} from "./boardStageActions";
 import { BoardHint } from "./BoardHint";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
@@ -343,6 +350,9 @@ export interface BoardCardDetailViewProps {
   readonly onMoveStage: (toStage: BoardStageId) => void;
   /** Merge the card's pull request and advance it. */
   readonly onMergePullRequest: () => void;
+  /** Open the card's pull request from Building and route it past Code review
+      (t3o-07). Absent hides the caret entirely. */
+  readonly onSubmitForMerge?: (() => void) | undefined;
   /** Open the pull request externally, and refresh its state while we are at
       it — clicking through is a moment the user is about to learn whether the
       card's link is stale, so it may as well not be. */
@@ -801,6 +811,58 @@ function LabelSection({
   );
 }
 
+/**
+ * The caret half of the split forward button (t3o-07, D8).
+ *
+ * No confirmation dialog in front of it, deliberately: the item opens a pull
+ * request and moves a card between two columns. It merges nothing, it pushes
+ * nothing to a protected branch, and it is reversible — drag the card back,
+ * close the pull request. The irreversible act lives on the Merge button one
+ * stage later, which has its own confirmation path.
+ */
+function BoardStageSecondaryMenu({
+  actions,
+  onSubmitForMerge,
+}: {
+  readonly actions: ReadonlyArray<BoardStageSecondaryAction>;
+  readonly onSubmitForMerge: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover onOpenChange={setOpen} open={open}>
+      <PopoverTrigger
+        aria-label="Other ways to advance"
+        className="-ml-px inline-flex h-[34px] w-7 shrink-0 items-center justify-center rounded-lg rounded-l-none border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent"
+      >
+        <ChevronDownIcon className="size-3.5" />
+      </PopoverTrigger>
+      <PopoverPopup align="end" className="w-[262px] p-1.5">
+        <div className="flex flex-col gap-0.5">
+          {actions.map((action) => (
+            <button
+              className="flex w-full items-start gap-2 rounded px-1.5 py-1.5 text-left hover:bg-accent"
+              key={action.kind}
+              onClick={() => {
+                setOpen(false);
+                onSubmitForMerge();
+              }}
+              type="button"
+            >
+              <GitPullRequestArrowIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+              <span className="flex min-w-0 flex-col">
+                <span className="text-[12.5px] font-medium text-foreground">{action.label}</span>
+                <span className="mt-px text-[11.5px]/[1.4] text-muted-foreground">
+                  {action.detail}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
 /** Stage action, blocked reason and archive — the things you *do* to a card,
     kept together at the top of the rail. */
 function ActionsSection({
@@ -823,13 +885,22 @@ function ActionsSection({
   // request that merged last time, right up until its new round opens one.
   const pullRequest = card.pullRequest;
   const displayed = boardCardDisplayPullRequest(card);
-  const primaryAction = boardStagePrimaryAction(props.stages, card.stage, {
+  const actionContext = {
     pullRequestState: pullRequest?.state ?? null,
     pullRequestNumber: pullRequest?.number ?? null,
     conflictStepRunning: props.conflictStepRunning,
     stepHeld: props.stepHeld === true,
-  });
+    hasBranch: card.worktree !== null,
+    blocked: card.blocked,
+  };
+  const primaryAction = boardStagePrimaryAction(props.stages, card.stage, actionContext);
   const forward = primaryAction !== null && !archived ? primaryAction : null;
+  // The caret beside the forward button (t3o-07, D8) — today at most one item.
+  // An archived card gets none for the same reason it gets no forward button.
+  const secondary =
+    archived || props.onSubmitForMerge === undefined
+      ? []
+      : boardStageSecondaryActions(props.stages, card.stage, actionContext);
   // "Stop after this round" (t3o-22, D8): offered only while a review loop is
   // actually mid-flight — there is nothing to stop after otherwise, and a card
   // that has never reached review must not show it at all. Toggling it off
@@ -916,52 +987,64 @@ function ActionsSection({
           </button>
         </BoardHint>
       ) : forward !== null ? (
-        <BoardHint
-          label={
-            card.blocked
-              ? "Blocked by unmet dependencies"
-              : forward.kind === "merge"
-                ? (forward.disabledReason ?? undefined)
-                : undefined
-          }
-        >
-          <button
-            className={cn(
-              "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border px-3 text-[13px] font-medium shadow-xs",
-              forward.emphasised
-                ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
-                : "border-input bg-popover text-foreground hover:bg-accent",
-              // The dependency gate is not overridable (D18) — the button says
-              // so rather than bouncing off the decider.
-              (card.blocked || (forward.kind === "merge" && forward.disabled)) &&
-                "cursor-not-allowed opacity-50",
-              merging && "cursor-wait",
-            )}
-            disabled={
-              card.blocked || (forward.kind === "merge" && (forward.disabled || props.merging))
+        // With a secondary action the forward button becomes the left half of a
+        // split button: square inner corners, the caret overlapping its border
+        // by a pixel so the pair reads as one control.
+        <div className="flex items-stretch">
+          <BoardHint
+            label={
+              card.blocked
+                ? "Blocked by unmet dependencies"
+                : forward.kind === "merge"
+                  ? (forward.disabledReason ?? undefined)
+                  : undefined
             }
-            onClick={() => {
-              if (forward.kind === "merge") {
-                props.onMergePullRequest();
-                return;
-              }
-              props.onMoveStage(forward.toStage);
-            }}
-            type="button"
           >
-            {merging ? (
-              <>
-                <span className="size-3.5 shrink-0 animate-spin rounded-full border-[1.7px] border-primary-foreground/40 border-t-primary-foreground" />
-                Merging…
-              </>
-            ) : (
-              <>
-                <ArrowRightIcon className="size-3.5" />
-                {forward.label}
-              </>
-            )}
-          </button>
-        </BoardHint>
+            <button
+              className={cn(
+                "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border px-3 text-[13px] font-medium shadow-xs",
+                forward.emphasised
+                  ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "border-input bg-popover text-foreground hover:bg-accent",
+                // The dependency gate is not overridable (D18) — the button says
+                // so rather than bouncing off the decider.
+                (card.blocked || (forward.kind === "merge" && forward.disabled)) &&
+                  "cursor-not-allowed opacity-50",
+                merging && "cursor-wait",
+                secondary.length > 0 && "min-w-0 flex-1 rounded-r-none",
+              )}
+              disabled={
+                card.blocked || (forward.kind === "merge" && (forward.disabled || props.merging))
+              }
+              onClick={() => {
+                if (forward.kind === "merge") {
+                  props.onMergePullRequest();
+                  return;
+                }
+                props.onMoveStage(forward.toStage);
+              }}
+              type="button"
+            >
+              {merging ? (
+                <>
+                  <span className="size-3.5 shrink-0 animate-spin rounded-full border-[1.7px] border-primary-foreground/40 border-t-primary-foreground" />
+                  Merging…
+                </>
+              ) : (
+                <>
+                  <ArrowRightIcon className="size-3.5" />
+                  {forward.label}
+                </>
+              )}
+            </button>
+          </BoardHint>
+          {secondary.length > 0 && props.onSubmitForMerge !== undefined ? (
+            <BoardStageSecondaryMenu
+              actions={secondary}
+              onSubmitForMerge={props.onSubmitForMerge}
+            />
+          ) : null}
+        </div>
       ) : null}
       {/* The card's pull request, at EVERY stage rather than only where the
           Merge button lives: a card in Done is exactly when you want to find

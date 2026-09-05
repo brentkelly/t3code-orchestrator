@@ -430,6 +430,54 @@ describe("BoardCardDetailPanel", () => {
     expect(settled).toContain("Move to Code review");
   });
 
+  it("puts a caret beside the forward button when the card can skip review (t3o-07, D8)", () => {
+    const worktree = {
+      branch: "board/t3-7",
+      baseRefName: "main",
+      path: "/tmp/wt/t3-7",
+      status: "ready" as const,
+      attempts: 1,
+      lastError: null,
+      reclaimBlockedReason: null,
+    };
+    const built = detail({ stage: BOARD_SEED_STAGE_IDS.building, worktree });
+    const withCaret = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={built}
+        onSubmitForMerge={noop}
+        projectName="P"
+        stepHeld
+      />,
+    );
+    expect(withCaret).toContain("Move to Code review");
+    expect(withCaret).toContain("Other ways to advance");
+
+    // No branch to push: the forward button stands alone.
+    const noBranch = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        onSubmitForMerge={noop}
+        projectName="P"
+        stepHeld
+      />,
+    );
+    expect(noBranch).toContain("Move to Code review");
+    expect(noBranch).not.toContain("Other ways to advance");
+
+    // And nowhere else: the merge stage's own forward button gets no caret.
+    const atMerge = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge, worktree })}
+        onSubmitForMerge={noop}
+        projectName="P"
+      />,
+    );
+    expect(atMerge).not.toContain("Other ways to advance");
+  });
+
   it("swaps the Merge button for a disabled 'Merging…' spinner while a merge is in flight", () => {
     const openPr = {
       number: 42,

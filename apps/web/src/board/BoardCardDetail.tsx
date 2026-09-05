@@ -75,7 +75,11 @@ import {
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
-import { describeBoardCommandFailure, describeBoardMergeOutcome } from "./boardCommandFeedback";
+import {
+  describeBoardCommandFailure,
+  describeBoardMergeOutcome,
+  describeBoardSubmitOutcome,
+} from "./boardCommandFeedback";
 import { openPullRequestLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 
@@ -155,6 +159,11 @@ export function BoardCardDetail({
     reportFailure: false,
   });
   const mergeCardPullRequest = useAtomCommand(boardEnvironment.mergeCardPullRequest, {
+    reportFailure: false,
+  });
+  // Same reason as the two above: every refusal is a normal answer with its own
+  // wording ("this card has no branch to push"), not a command failure.
+  const submitCardForMerge = useAtomCommand(boardEnvironment.submitCardForMerge, {
     reportFailure: false,
   });
   const createLabel = useAtomCommand(boardEnvironment.createLabel);
@@ -666,6 +675,16 @@ export function BoardCardDetail({
             return;
           }
           setFeedback(describeBoardMergeOutcome(result.value));
+        });
+      }}
+      onSubmitForMerge={() => {
+        setFeedback(null);
+        void submitCardForMerge({ environmentId, input: { cardId: card.id } }).then((result) => {
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+            return;
+          }
+          setFeedback(describeBoardSubmitOutcome(result.value));
         });
       }}
       onOpenPullRequest={(url) => {

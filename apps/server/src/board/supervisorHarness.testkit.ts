@@ -32,7 +32,9 @@ import {
   ThreadId,
   type BoardCard,
   type BoardCardStepState,
+  DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
   DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
+  type BoardStepExecution,
   type BoardCardPullRequest,
   type BoardStageExecutionMerge,
   type VcsStatusChangeRequest,
@@ -198,19 +200,19 @@ export const readModel = (board: BoardState): OrchestrationReadModel => ({
     auto-advances to the next stage on success — the behaviour the governor /
     building-automation suites drive. Human-in-the-loop is off (both defaults
     false), so a plan-less card runs unattended and the completion advances it. */
-const buildingStageExecution = (step: TestBuildStep): BoardStageExecution => ({
-  kind: "simple",
-  autoExecute: true,
+const buildingStageExecution = (
+  step: TestBuildStep,
+  input: {
+    readonly submit?: Partial<BoardStepExecution>;
+    readonly buildAutoAdvance?: boolean;
+  },
+): BoardStageExecution => ({
+  ...DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
   prompt: step.prompt,
   model: { instanceId: step.providerInstanceId, model: DEFAULT_TEXT_GENERATION_MODEL },
-  mode: "build",
-  humanInLoop: false,
-  humanInLoopWithPlan: false,
   humanInLoopWithoutPlan: false,
-  autoAdvance: true,
-  timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
-  maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
-  maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
+  autoAdvance: input.buildAutoAdvance ?? true,
+  submit: { ...DEFAULT_BOARD_BUILD_STAGE_EXECUTION.submit, ...input.submit },
 });
 
 /** The Planning stage configured to auto-execute (t3o-15): `plan` mode, so its
@@ -250,13 +252,21 @@ export const settingsWith = (input: {
       reclaimed there rather than at archive. Defaults to the shipped default
       (on), so a suite that says nothing exercises what users actually run. */
   readonly reclaimWorktreeOnDone?: boolean;
+  /** Overrides for the Build stage's `submit` step (t3o-07): the prompt, model
+      and limits behind "Submit for merge — no review". Absent leaves the
+      compiled-in defaults. */
+  readonly submit?: Partial<BoardStepExecution>;
+  /** Whether the Build stage auto-advances on an ordinary successful run.
+      Defaults to on (what the stage ships with); a suite proving the DIRECTED
+      advance ignores it switches it off. */
+  readonly buildAutoAdvance?: boolean;
 }): BoardSettings => ({
   projects: {},
   // The board has no workspace default in the harness: every test stage names
   // its own model, so a fallback firing would be a bug the suite should see.
   defaultModel: null,
   pipeline: {
-    [BOARD_SEED_STAGE_IDS.building]: buildingStageExecution(input.building[0]!),
+    [BOARD_SEED_STAGE_IDS.building]: buildingStageExecution(input.building[0]!, input),
     ...(input.planning === undefined
       ? {}
       : { [BOARD_SEED_STAGE_IDS.planning]: planningStageExecution(input.planning) }),
@@ -722,6 +732,9 @@ export const stepCompleted = (
   cardId: BoardCardId,
   outcome: "succeeded" | "failed" | "blocked",
   sequence: number,
+  /** Which step completed. Defaults to the Building stage's own step; the
+      submit step (t3o-07) is the other one a build-stage card can report. */
+  stepId: string = String(BOARD_SEED_STAGE_IDS.building),
 ): OrchestrationEvent =>
   ({
     type: "board.card-step-completed",
@@ -730,7 +743,7 @@ export const stepCompleted = (
       cardId,
       completion: {
         cardId,
-        stepId: String(BOARD_SEED_STAGE_IDS.building),
+        stepId,
         outcome,
         summary: `report ${outcome}`,
         payload: null,
