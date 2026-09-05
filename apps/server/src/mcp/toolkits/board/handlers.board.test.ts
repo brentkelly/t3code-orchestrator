@@ -382,6 +382,49 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  /** What an agent that stringified its own payload hands the tool — and, once
+      the handler unwraps it, exactly what storing the object itself produces. */
+  const stringifiedPayload = JSON.stringify({ reviewedSha: "abc123", findings: [] });
+  const encodedPlainPayload = JSON.stringify("all done");
+
+  // T3O-2: agents reach this tool over MCP, and some of them hand it a payload
+  // they have already `JSON.stringify`d rather than the object itself.
+  // Stringifying that a second time stored a JSON *string* where every reader
+  // expects an object, and a review round that had run to a clean conclusion
+  // was reported as "reviewer payload unreadable". Storage stays canonical.
+  it.effect("stores an already-stringified payload unwrapped", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("wrapped");
+      yield* startStep({ ...own, suffix: "wrapped" });
+      yield* boardHandlers
+        .board_complete_step({
+          outcome: "succeeded",
+          summary: "Reviewed",
+          payload: stringifiedPayload,
+        })
+        .pipe(withScope(own.ownThread));
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      // Byte-for-byte what passing the object itself would have stored.
+      assert.strictEqual(context.steps[0]?.payload, stringifiedPayload);
+    }),
+  );
+
+  // The unwrap is for a stringified object, not for every string an agent
+  // reports: a payload that is genuinely a string keeps its own encoding.
+  it.effect("leaves a plain string payload alone", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("plain-string");
+      yield* startStep({ ...own, suffix: "plain-string" });
+      yield* boardHandlers
+        .board_complete_step({ outcome: "succeeded", summary: "Built", payload: "all done" })
+        .pipe(withScope(own.ownThread));
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps[0]?.payload, encodedPlainPayload);
+    }),
+  );
+
   it.effect("rejects an omitted stepId from a thread with no work in progress", () =>
     Effect.gen(function* () {
       yield* seed();

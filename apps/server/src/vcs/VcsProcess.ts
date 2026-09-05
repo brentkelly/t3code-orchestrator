@@ -16,6 +16,8 @@ import {
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
+// T3o: per-project GitHub token overrides for `gh` subprocesses (t3o-34).
+import { scrubGitenvTokens, withGitenvTokenEnv } from "../sourceControl/gitenv.ts";
 
 export interface VcsProcessInput {
   readonly operation: string;
@@ -103,6 +105,8 @@ export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
+    // T3o: `gh` gets the matched project's token merged over its env (t3o-34).
+    const env = input.command === "gh" ? withGitenvTokenEnv(input.env, input.cwd) : input.env;
     const baseError = {
       operation: input.operation,
       command: input.command,
@@ -117,7 +121,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
-        ...(input.env !== undefined ? { env: input.env } : {}),
+        ...(env !== undefined ? { env } : {}),
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: "truncate",
@@ -233,7 +237,11 @@ export function safeProcessOutput(raw: string): string {
     "***",
   );
 
-  return withoutBareTokens.length > SAFE_OUTPUT_MAX_LENGTH
-    ? `${withoutBareTokens.slice(0, SAFE_OUTPUT_MAX_LENGTH)}…`
-    : withoutBareTokens;
+  // T3o: also drop the exact gitenv-configured token values, whatever their
+  // shape — the prefix patterns above only know published formats (t3o-34).
+  const withoutGitenvTokens = scrubGitenvTokens(withoutBareTokens);
+
+  return withoutGitenvTokens.length > SAFE_OUTPUT_MAX_LENGTH
+    ? `${withoutGitenvTokens.slice(0, SAFE_OUTPUT_MAX_LENGTH)}…`
+    : withoutGitenvTokens;
 }

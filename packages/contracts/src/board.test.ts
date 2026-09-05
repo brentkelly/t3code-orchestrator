@@ -30,7 +30,10 @@ import {
   boardBuildHumanInLoopDefault,
   boardCardAttention,
   boardCardChildAttentionLabel,
+  boardCardChildRunningLabel,
   deriveBoardCardChildAttention,
+  deriveBoardCardChildRunning,
+  isBoardCardWorking,
   boardCardPendingSplit,
   boardCardShellPendingSplit,
   boardCardUnfinishedChildren,
@@ -100,6 +103,7 @@ const fullyPopulatedShell = {
   queued: true,
   stalled: true,
   stepRunning: true,
+  stepAwaiting: "stopped",
   held: true,
   threadState: "waiting",
   awaitingInput: true,
@@ -1048,6 +1052,7 @@ describe("cards that need a human (boardCardAttention)", () => {
     held: false,
     awaitingInput: false,
     stepRunning: false,
+    stepAwaiting: null,
     queued: false,
     archivedAt: null,
     planCount: 0,
@@ -1163,6 +1168,47 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(attention({ held: true, queued: true })).toBeNull();
   });
 
+  // t3o-34 D4: a step parked on a human is a card-face fact. Before this the
+  // card only learned about a waiting agent from the THREAD's pending question,
+  // so a step parked for a question asked in prose said nothing at all.
+  it("reads a step parked for a question as Input needed, in Planning as anywhere", () => {
+    const asked = attention({
+      stage: BOARD_SEED_STAGE_IDS.planning,
+      stepAwaiting: "question",
+    });
+    expect(asked?.reason).toBe("input");
+    expect(asked?.tone).toBe("attention");
+    expect(asked?.label).toBe("Input needed");
+  });
+
+  it("reads a step that stopped without asking as Needs a human", () => {
+    const stopped = attention({
+      stage: BOARD_SEED_STAGE_IDS.planning,
+      stepAwaiting: "stopped",
+    });
+    expect(stopped?.reason).toBe("stopped");
+    expect(stopped?.tone).toBe("warning");
+    expect(stopped?.label).toBe("Needs a human");
+  });
+
+  it("shows the ANSWERABLE fact when a card has both", () => {
+    // The two are about different threads — `awaitingInput` ORs across every
+    // live thread, `stepAwaiting` describes the one live step — so both can be
+    // true at once. A question the human can click through and answer beats a
+    // chip that says only that something stopped.
+    expect(attention({ stepAwaiting: "stopped", awaitingInput: true })?.reason).toBe("input");
+    // …but a stopped step with nothing answerable still gets its amber chip.
+    expect(attention({ stepAwaiting: "stopped", awaitingInput: false })?.reason).toBe("stopped");
+    // A stall outranks both: recovery gave up, which is louder than either.
+    expect(attention({ stepAwaiting: "stopped", stalled: true })?.reason).toBe("stalled");
+  });
+
+  it("says nothing once the step is no longer parked", () => {
+    expect(attention({ stepAwaiting: null })).toBeNull();
+    // …and a finished card never asks for anything, whatever its flags say.
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.done, stepAwaiting: "stopped" })).toBeNull();
+  });
+
   it("reads a review loop that ran out of rounds as needing a human", () => {
     const heldLoop = attention({
       stage: BOARD_SEED_STAGE_IDS.review,
@@ -1215,5 +1261,86 @@ describe("cards that need a human (boardCardAttention)", () => {
         stages: BOARD_SEED_STAGES,
       }).size,
     ).toBe(0);
+  });
+});
+
+describe("children actively working (deriveBoardCardChildRunning)", () => {
+  const card = (overrides: Partial<BoardCardShell>): BoardCardShell => ({
+    ...fullyPopulatedShell,
+    stage: BOARD_SEED_STAGE_IDS.building,
+    stalled: false,
+    held: false,
+    awaitingInput: false,
+    stepRunning: false,
+    queued: false,
+    threadState: "none",
+    archivedAt: null,
+    planCount: 0,
+    planTotal: 0,
+    planDone: 0,
+    ...overrides,
+  });
+  const parentId = BoardCardId.make("card-parent");
+  const child = (id: string, overrides: Partial<BoardCardShell>): BoardCardShell => ({
+    ...card(overrides),
+    cardId: BoardCardId.make(id),
+    parentCardId: parentId,
+  });
+
+  it("reads both halves of the working dot on a child", () => {
+    // A child mid-turn and a child whose step is admitted-and-running between
+    // thread spawns both count — the same two signals the card face lights on.
+    expect(isBoardCardWorking(card({ threadState: "working" }))).toBe(true);
+    expect(isBoardCardWorking(card({ stepRunning: true, threadState: "stopped" }))).toBe(true);
+    expect(isBoardCardWorking(card({ queued: true }))).toBe(false);
+    expect(isBoardCardWorking(card({ stalled: true, threadState: "stopped" }))).toBe(false);
+  });
+
+  it("rolls a working child up to its parent, counted", () => {
+    const parent = card({ cardId: parentId, planTotal: 3, planDone: 0, held: true });
+    const running = deriveBoardCardChildRunning({
+      cards: [
+        parent,
+        child("c1", { threadState: "working" }),
+        child("c2", { stepRunning: true, threadState: "stopped" }),
+        child("c3", { queued: true }),
+      ],
+    });
+    // The queued child is not working, so it is not counted.
+    expect(running.get(parentId)).toBe(2);
+    expect(boardCardChildRunningLabel(2)).toBe("2 child threads running");
+    expect(boardCardChildRunningLabel(1)).toBe("1 child thread running");
+  });
+
+  it("rolls nothing up for a parent whose whole split is queued", () => {
+    // The distinction the dot exists to make: a parent runs no step of its own
+    // during a split, so with every child waiting for a slot it must stay dark.
+    const parent = card({ cardId: parentId, planTotal: 2, planDone: 0, held: true });
+    const running = deriveBoardCardChildRunning({
+      cards: [parent, child("c1", { queued: true }), child("c2", { queued: true })],
+    });
+    expect(running.size).toBe(0);
+  });
+
+  it("never counts a top-level card towards anything", () => {
+    // No `parentCardId`, so a working top-level card contributes to no
+    // roll-up — it lights its own dot and nothing else's.
+    expect(deriveBoardCardChildRunning({ cards: [card({ threadState: "working" })] }).size).toBe(0);
+  });
+
+  it("keeps each parent's count to its own children", () => {
+    const otherParentId = BoardCardId.make("card-other-parent");
+    const running = deriveBoardCardChildRunning({
+      cards: [
+        child("c1", { threadState: "working" }),
+        {
+          ...card({ threadState: "working" }),
+          cardId: BoardCardId.make("c2"),
+          parentCardId: otherParentId,
+        },
+      ],
+    });
+    expect(running.get(parentId)).toBe(1);
+    expect(running.get(otherParentId)).toBe(1);
   });
 });

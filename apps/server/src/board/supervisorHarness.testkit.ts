@@ -218,13 +218,18 @@ const buildingStageExecution = (
 /** The Planning stage configured to auto-execute (t3o-15): `plan` mode, so its
     run holds no concurrency slot and needs no worktree — the shape a card
     dropped into an auto-executing Planning column runs under. */
-const planningStageExecution = (step: TestBuildStep): BoardStageExecution => ({
+const planningStageExecution = (
+  step: TestBuildStep,
+  /** The planning interview's real stance (t3o-34): asking IS the job there, so
+      the suites that drive a stopped planning agent need it on. */
+  humanInLoop = false,
+): BoardStageExecution => ({
   kind: "simple",
   autoExecute: true,
   prompt: step.prompt,
   model: { instanceId: step.providerInstanceId, model: DEFAULT_TEXT_GENERATION_MODEL },
   mode: "plan",
-  humanInLoop: false,
+  humanInLoop,
   humanInLoopWithPlan: false,
   humanInLoopWithoutPlan: false,
   autoAdvance: false,
@@ -244,6 +249,9 @@ export const settingsWith = (input: {
   /** Pass a step to make Planning auto-execute too — the plan-mode counterpart
       of `building`, for the suites that drive a card into Planning. */
   readonly planning?: TestBuildStep;
+  /** Run the Planning step human-in-the-loop, as the real planning interview
+      does (t3o-34). */
+  readonly planningHumanInLoop?: boolean;
   /** Overrides for the merge stage's config (strategy, branch cleanup, the
       conflict prompt). Absent leaves it at the compiled-in defaults, which is
       what a board nobody has configured actually resolves to. */
@@ -269,7 +277,12 @@ export const settingsWith = (input: {
     [BOARD_SEED_STAGE_IDS.building]: buildingStageExecution(input.building[0]!, input),
     ...(input.planning === undefined
       ? {}
-      : { [BOARD_SEED_STAGE_IDS.planning]: planningStageExecution(input.planning) }),
+      : {
+          [BOARD_SEED_STAGE_IDS.planning]: planningStageExecution(
+            input.planning,
+            input.planningHumanInLoop ?? false,
+          ),
+        }),
     ...(input.merge === undefined
       ? {}
       : {
@@ -367,6 +380,16 @@ export function withGovernor(
       string,
       { readonly advancedAt: string | null; readonly hasList: boolean }
     >;
+    /** The last ASSISTANT message per thread id (t3o-34, D2): the reactor reads
+        it to decide whether a stopped turn ended with something for a human to
+        answer. Absent threads answer "no message", which reads as "no
+        question". Dated far in the future by default, so a fixture message
+        always counts as written since the step started; pass
+        `staleThreadMessages` for the opposite. */
+    readonly threadMessages?: ReadonlyMap<string, string>;
+    /** Thread ids whose message should be dated BEFORE the step started, i.e.
+        text the agent wrote in an earlier turn and has not added to since. */
+    readonly staleThreadMessages?: ReadonlySet<string>;
     /** A `ServerConfig` layer (t3o-32): with one, a build/plan spawn stages
         the card's brief images from `<stateDir>/board/attachments`; without
         one the reactor stages nothing, as the other tests expect. */
@@ -482,6 +505,8 @@ export function withGovernor(
     } as unknown as OrchestrationEngineService["Service"];
 
     const threadTodos = input.threadTodos ?? new Map();
+    const threadMessages = input.threadMessages ?? new Map<string, string>();
+    const staleThreadMessages = input.staleThreadMessages ?? new Set<string>();
     const snapshotStub = {
       getCommandReadModel: () => Ref.get(model),
       getThreadShellById: (threadId: ThreadId) =>
@@ -512,6 +537,17 @@ export function withGovernor(
                 advancedAt: todo.advancedAt,
               },
         );
+      },
+      boardLatestAssistantMessage: (threadId: ThreadId) => {
+        const text = threadMessages.get(String(threadId));
+        // Dated at one end of time or the other, so a fixture is unambiguously
+        // "written since the work resumed" or unambiguously not. The stale date
+        // is PRE-epoch on purpose: the harness clock starts at the epoch, so a
+        // step's `startedAt` is 1970 and anything later would read as fresh.
+        const createdAt = staleThreadMessages.has(String(threadId))
+          ? "1969-01-01T00:00:00.000Z"
+          : "2999-01-01T00:00:00.000Z";
+        return Effect.succeed(text === undefined ? null : { text, createdAt });
       },
       boardSweepThreadTodos: () => Effect.void,
     } as unknown as ProjectionSnapshotQuery["Service"];
@@ -672,7 +708,13 @@ export function withGovernor(
         // clobber the recipe snapshot the reactor stamped, whereas the reactor
         // reads those triggers from the event payload / the live model.
         const projectExternal = (event: OrchestrationEvent) =>
-          isBoardEvent(event) && event.type === "board.card-step-completed"
+          isBoardEvent(event) &&
+          (event.type === "board.card-step-completed" ||
+            // Same reason (t3o-33): the override lands on the step row through
+            // the projection, and `schedule` reads it from there. Pumping the
+            // event without folding it in would test a row that never carried
+            // the flag.
+            event.type === "board.card-step-force-start-requested")
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),
@@ -732,8 +774,11 @@ export const stepCompleted = (
   cardId: BoardCardId,
   outcome: "succeeded" | "failed" | "blocked",
   sequence: number,
-  /** Which step completed. Defaults to the Building stage's own step; the
-      submit step (t3o-07) is the other one a build-stage card can report. */
+  /** Which step reported. Defaults to the Building stage's own step, which is
+      what almost every suite drives; the submit step (t3o-07) is the other one
+      a build-stage card can report, and a planning-stage suite has to say so,
+      because the handler ignores a completion whose step is not the card's
+      live one. */
   stepId: string = String(BOARD_SEED_STAGE_IDS.building),
 ): OrchestrationEvent =>
   ({
@@ -751,6 +796,20 @@ export const stepCompleted = (
         completedAt: NOW,
       },
     },
+  }) as unknown as OrchestrationEvent;
+
+/** A human's force-start request as the decider emits it (t3o-33): the whole
+    step row with the override set. The pump projects it into the model before
+    the reactor observes it, exactly as the projection pipeline does in
+    production, so `schedule` reads a row that really carries `forceStart`. */
+export const forceStartRequested = (
+  state: BoardCardStepState,
+  sequence: number,
+): OrchestrationEvent =>
+  ({
+    type: "board.card-step-force-start-requested",
+    sequence,
+    payload: { cardId: state.cardId, state: { ...state, forceStart: true } },
   }) as unknown as OrchestrationEvent;
 
 export const cardArchived = (card: BoardCard, sequence: number): OrchestrationEvent =>
@@ -784,6 +843,34 @@ export const cardDeleted = (
 
 export const turnCompleted = (threadId: ThreadId): ProviderRuntimeEvent =>
   ({ type: "turn.completed", threadId }) as unknown as ProviderRuntimeEvent;
+
+/** A turn actually beginning on a thread (t3o-34, D5). */
+export const turnStarted = (threadId: ThreadId): ProviderRuntimeEvent =>
+  ({ type: "turn.started", threadId }) as unknown as ProviderRuntimeEvent;
+
+/** A structured question being ANSWERED (t3o-34, D5). It is raised from inside a
+    running turn and answering it only resolves the deferred that turn is blocked
+    on, so no turn ever starts — this is the only signal a board sees.
+
+    The non-empty `answers` is the whole point: every adapter emits this same
+    event with `{}` when the question is CANCELLED rather than answered (a
+    thread stop resolves the deferred on teardown), so the payload is what tells
+    the two apart. Use `userInputCancelled` for that shape. */
+export const userInputResolved = (threadId: ThreadId): ProviderRuntimeEvent =>
+  ({
+    type: "user-input.resolved",
+    threadId,
+    payload: { answers: { "Which one?": "A" } },
+  }) as unknown as ProviderRuntimeEvent;
+
+/** A structured question CANCELLED — the same event, with the empty answer set
+    every adapter sends when a thread is stopped with a question outstanding. */
+export const userInputCancelled = (threadId: ThreadId): ProviderRuntimeEvent =>
+  ({
+    type: "user-input.resolved",
+    threadId,
+    payload: { answers: {} },
+  }) as unknown as ProviderRuntimeEvent;
 
 /** An ORDINARY agent question (t3o-18, D13): the runtime event every provider
     emits when it asks a human, with no board tool call behind it. This is what

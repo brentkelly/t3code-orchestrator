@@ -26,6 +26,7 @@ import {
   cardArchived,
   cardDeleted,
   codexStep,
+  forceStartRequested,
   movedToBuilding,
   settingsWith,
   stepCompleted,
@@ -83,6 +84,46 @@ it.effect("maxConcurrent 1 runs two same-instance cards strictly sequentially", 
         assert.strictEqual(yield* slots.heldFor(ProviderInstanceId.make("codex")), 1);
       }),
   ),
+);
+
+it.effect(
+  "a force start runs a queued card over the cap, and releases its slot once (t3o-33)",
+  () =>
+    withGovernor(
+      {
+        board: {
+          cards: [buildingCard("card-a", "b"), buildingCard("card-b", "c")],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+      },
+      ({ slots, pumpDomain, board }) =>
+        Effect.gen(function* () {
+          yield* pumpDomain(movedToBuilding(buildingCard("card-a", "b"), 1));
+          yield* pumpDomain(movedToBuilding(buildingCard("card-b", "c"), 2));
+          const queued = yield* board;
+          assert.strictEqual(stepStatus(queued, BoardCardId.make("card-b")), "queued");
+          assert.strictEqual(yield* slots.heldTotal, 1);
+
+          // The whole point: the ceiling is full, and the card starts anyway.
+          const held = boardCardStepState(queued, BoardCardId.make("card-b"));
+          assert.isNotNull(held);
+          yield* pumpDomain(forceStartRequested(held!, 3));
+          const forced = yield* board;
+          assert.strictEqual(stepStatus(forced, BoardCardId.make("card-b")), "running");
+          assert.strictEqual(yield* slots.heldTotal, 2);
+          // Spent on admission, so the card's NEXT step is governed normally.
+          assert.strictEqual(
+            boardCardStepState(forced, BoardCardId.make("card-b"))?.forceStart,
+            false,
+          );
+
+          // The over-cap slot is an ordinary slot: one release, and the count
+          // comes back under the ceiling by itself.
+          yield* pumpDomain(stepCompleted(BoardCardId.make("card-b"), "succeeded", 4));
+          assert.strictEqual(yield* slots.heldTotal, 1);
+        }),
+    ),
 );
 
 // (The "an idle provider is not blocked by a saturated one" guarantee is

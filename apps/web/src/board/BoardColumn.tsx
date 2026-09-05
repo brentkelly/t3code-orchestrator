@@ -25,11 +25,8 @@ import { Fragment } from "react";
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
-import {
-  DraggableBoardCard,
-  type BoardCardQueueSlot,
-  type BoardCardTodoContext,
-} from "./BoardCardItem";
+import { DraggableBoardCard, type BoardCardTodoContext } from "./BoardCardItem";
+import type { BoardQueueInfo } from "./boardQueueInfo";
 
 /** Vertical gap (px) between cards; kept in sync with the list's `gap-2` so
     the drop-index math can subtract the placeholder it inserts. */
@@ -75,7 +72,7 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly cards: ReadonlyArray<BoardCardShell>;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly collapsed: boolean;
-  readonly queueSlots: ReadonlyMap<string, BoardCardQueueSlot>;
+  readonly queueSlots: ReadonlyMap<string, BoardQueueInfo>;
   readonly selectedCardId: string | null;
   /** Projects new cards may be created in; empty hides the add button, which
       also only shows on creation stages (t3o-06a). */
@@ -89,6 +86,10 @@ export interface BoardColumnProps extends BoardColumnDragProps {
       list and the whole card set. */
   readonly attentionFor: (card: BoardCardShell) => BoardCardAttention | null;
   readonly childAttentionFor: (card: BoardCardShell) => BoardCardChildAttention | undefined;
+  /** How many of a card's children are working right now
+      (`deriveBoardCardChildRunning`) — what lights the working dot on a split
+      parent, which runs no step of its own while its children build. */
+  readonly childRunningFor: (card: BoardCardShell) => number | undefined;
   /** Thread todo lists for one card (t3o-18) — built once by the page and read
       per card, so the column adds no state of its own. */
   readonly todosFor: (cardId: string) => BoardCardTodoContext;
@@ -156,6 +157,7 @@ function ExpandedColumn({
   parentKeyFor,
   attentionFor,
   childAttentionFor,
+  childRunningFor,
   draggedCardId,
   dragOverIndex,
   dragHeight,
@@ -264,6 +266,7 @@ function ExpandedColumn({
                   parentKey={parentKeyFor(card.cardId)}
                   attention={attentionFor(card)}
                   childAttention={childAttentionFor(card)}
+                  childRunning={childRunningFor(card)}
                   todos={todosFor(card.cardId)}
                   onOpenSubBoard={
                     onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card)

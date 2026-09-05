@@ -172,6 +172,27 @@ describe("deriveBoardReviewLoop", () => {
     expect(loop.rounds[0]?.reviewMalformed).toBe(true);
   });
 
+  // T3O-2: the pane is where the loss was visible — a round that ran to a
+  // clean conclusion rendered as "Recorded a payload nothing can read", with
+  // its findings, dispositions and verdicts all dropped, because the agent had
+  // stringified the payload before handing it to the tool.
+  it("t3o-2: reads a double-encoded payload as the round it wraps", () => {
+    const loop = deriveBoardReviewLoop(
+      [
+        completion("review@1", JSON.stringify(JSON.stringify(review([finding("nitpick")])))),
+        completion("triage@1", {
+          fixedSha: "s",
+          dispositions: [{ findingId: "f1", action: "fixed", note: "done" }],
+        }),
+      ],
+      5,
+    );
+    expect(loop.status).toBe("converged");
+    expect(loop.rounds[0]?.outcome).toBe("clean");
+    expect(loop.rounds[0]?.reviewMalformed).toBe(false);
+    expect(loop.rounds[0]?.findings.map((f) => f.resolution)).toEqual(["fixed"]);
+  });
+
   it("ignores failed completions, exactly as the executor does", () => {
     const loop = deriveBoardReviewLoop([completion("review@1", review([]), "failed")], 5);
     expect(loop.next).toEqual({ phase: "review", round: 1 });

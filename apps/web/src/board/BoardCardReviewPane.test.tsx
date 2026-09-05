@@ -155,6 +155,110 @@ describe("BoardCardReviewPane", () => {
     expect(html).not.toContain('disabled=""');
   });
 
+  // T3O-3: the same pane, read through its ROUND. A card that has never
+  // reached review still derives a synthetic round 1 (that is where the loop
+  // will start), and the pane used to dress it as "In progress" with a
+  // spinning phase marker while the card sat in Building.
+  it("renders the round of a not-started loop as not started, never as in progress", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardReviewPane
+        completions={[]}
+        live={false}
+        maxRounds={3}
+        offStage
+        onBackToThread={noop}
+      />,
+    );
+    expect(html).toContain("Not started");
+    expect(html).not.toContain("In progress");
+    // No phase claims to be running: no spinner, and the review phase's note
+    // is the resting one.
+    expect(html).not.toContain("Running now");
+    expect(html).not.toContain("A fresh thread is reading the diff");
+    expect(html).toContain("Not started.");
+    // The footer says when the loop WILL run rather than describing a run.
+    expect(html).toContain("starts when the card reaches the review stage");
+  });
+
+  // T3O-3: a card dragged BACK off the review stage mid-loop. Round 1 has
+  // history, so it is not "not started" — but nothing is running either.
+  it("renders an off-stage mid-loop round as not running, with no spinning phase", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardReviewPane
+        completions={[
+          completion("review@1", {
+            reviewedSha: "sha1",
+            findings: [
+              {
+                id: "f1",
+                severity: "critical",
+                file: "a.ts",
+                line: 1,
+                title: "Open finding",
+                detail: "",
+              },
+            ],
+          }),
+        ]}
+        live={false}
+        maxRounds={3}
+        offStage
+        onBackToThread={noop}
+      />,
+    );
+    expect(html).toContain("Not running");
+    expect(html).not.toContain("In progress");
+    expect(html).not.toContain("Running now");
+    // Triage is the due phase; off-stage it has simply not started.
+    expect(html).not.toContain("still being worked");
+    expect(html).toContain("Not started.");
+    expect(html).toContain("paused while the card sits off the review stage");
+  });
+
+  // T3O-3, the mixed case: off-stage with a closed round behind the open one.
+  // The closed round keeps its real outcome; only the round the loop would
+  // have entered next reads as not started.
+  it("keeps a closed round's outcome while its unstarted successor reads as not started", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardReviewPane
+        completions={[
+          completion("review@1", {
+            reviewedSha: "sha1",
+            findings: [
+              { id: "f1", severity: "critical", file: "a.ts", line: 1, title: "Boom", detail: "" },
+            ],
+          }),
+          completion("triage@1", {
+            fixedSha: "sha2",
+            dispositions: [{ findingId: "f1", action: "fixed", note: "fixed it" }],
+          }),
+          completion("adjudicate@1", {
+            verdicts: [{ findingId: "f1", verdict: "fix-upheld", note: "" }],
+          }),
+        ]}
+        live={false}
+        maxRounds={3}
+        offStage
+        onBackToThread={noop}
+      />,
+    );
+    expect(html).toContain("Changes requested");
+    expect(html).toContain("Not started");
+    expect(html).not.toContain("In progress");
+    expect(html).not.toContain("Running now");
+  });
+
+  // The guard for the fix above: ON the review stage the round still reads as
+  // in progress, and the due phase still spins.
+  it("still shows a live on-stage round as in progress, with its phase running", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardReviewPane completions={[]} live maxRounds={3} onBackToThread={noop} />,
+    );
+    expect(html).toContain("In progress");
+    expect(html).toContain("Running now");
+    expect(html).toContain("A fresh thread is reading the diff");
+  });
+
   // A card dragged off the review stage mid-loop: the loop derives as
   // "running", but nothing is, and nobody is waited on — the pill must say
   // so rather than wear the waiting-on-you colour.

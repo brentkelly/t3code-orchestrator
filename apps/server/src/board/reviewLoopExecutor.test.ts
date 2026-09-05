@@ -651,6 +651,29 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     });
   });
 
+  // T3O-2: a reviewer that did everything right, whose round was thrown away
+  // over its wrapping. It handed `board_complete_step` an already-stringified
+  // payload; the handler stringified it again, and the executor — reading a
+  // JSON string where the schema wanted an object — terminated the loop
+  // `blocked` on a converged card. One level of that wrapping now comes off,
+  // and the round decides exactly as it would have encoded once.
+  it("t3o-2: a double-encoded review payload decides like the payload it wraps", () => {
+    const doubled = (findings: ReadonlyArray<BoardReviewFinding>) =>
+      completion("review@1", JSON.stringify(JSON.stringify(reviewPayload(findings))));
+    expect(plan([doubled([])])).toEqual({ kind: "complete", outcome: "succeeded" });
+    // A blocking round still runs its triage, rather than converging or halting.
+    expect(plan([doubled([finding("critical")])])).toMatchObject({
+      kind: "run",
+      stepId: "triage@1",
+    });
+    // The tolerance is for the encoding only: a well-formed string that is not
+    // a review payload is still a broken reviewer.
+    expect(plan([completion("review@1", JSON.stringify(JSON.stringify({ nope: 1 })))])).toEqual({
+      kind: "complete",
+      outcome: "blocked",
+    });
+  });
+
   it("D2: each phase runs on its own model", () => {
     const triageModel: BoardModelSelection = {
       instanceId: ProviderInstanceId.make("claude"),

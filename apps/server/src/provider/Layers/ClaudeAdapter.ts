@@ -77,6 +77,8 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+// T3o: per-project GitHub token overrides for agent sessions (t3o-34).
+import { gitenvTokenEnv } from "../../sourceControl/gitenv.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -4324,7 +4326,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: claudeEnvironment,
+        // T3o: agent `gh` calls act as the matched project's identity (t3o-34).
+        env: { ...claudeEnvironment, ...gitenvTokenEnv(input.cwd) },
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession

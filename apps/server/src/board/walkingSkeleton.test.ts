@@ -132,6 +132,7 @@ const expectedCardShell = {
   stalled: false,
   stepRunning: false,
   held: false,
+  stepAwaiting: null,
   threadState: "none",
   awaitingInput: false,
   activeThreadId: null,
@@ -303,6 +304,82 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         replayed = yield* projectEvent(replayed, event);
       }
       assert.deepStrictEqual(replayed.board?.stepStates, rehydrated.board?.stepStates);
+    }),
+  );
+
+  // t3o-33. The force-start override is a COLUMN, not memory: a server bounced
+  // between the click and the next scheduling pass must still admit the card.
+  // Written and read through the real projection, so a column the migration
+  // never added — or an upsert that always wrote 0 — fails here rather than in
+  // production.
+  it.effect("a force-started step rehydrates carrying its override", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-card-forced"),
+        cardId: BoardCardId.make("card-forced"),
+        projectId,
+        title: "Forced card",
+        orderKey: "y",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.select-step",
+        commandId: CommandId.make("cmd-select-forced"),
+        cardId: BoardCardId.make("card-forced"),
+        stepId: "building",
+        stepLabel: "Building",
+        stageLabel: "Building",
+        prompt: "Do the work.",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+        mode: "build",
+        runtimeMode: "auto",
+        humanInLoop: false,
+        maxAttempts: 3,
+        timeoutMs: 60_000,
+        baseTipAtRoundStart: null,
+        lastError: null,
+        createdAt,
+      });
+      // No slot was free, so the step is queued — the only state a force start
+      // applies to.
+      yield* engine.dispatch({
+        type: "board.card.admit-step",
+        commandId: CommandId.make("cmd-admit-forced"),
+        cardId: BoardCardId.make("card-forced"),
+        stepId: "building",
+        admitted: false,
+        threadId: null,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.force-start-step",
+        commandId: CommandId.make("cmd-force-forced"),
+        cardId: BoardCardId.make("card-forced"),
+        createdAt,
+      });
+
+      const rehydrated = yield* snapshotQuery.getCommandReadModel();
+      const state = (rehydrated.board?.stepStates ?? []).find(
+        (candidate) => candidate.cardId === "card-forced",
+      );
+      assert.strictEqual(state?.status, "queued");
+      assert.strictEqual(state?.forceStart, true);
+
+      const events: OrchestrationEvent[] = Array.from(
+        yield* Stream.runCollect(engine.readEvents(0)),
+      );
+      let replayed = createEmptyReadModel(createdAt);
+      for (const event of events) {
+        replayed = yield* projectEvent(replayed, event);
+      }
+      assert.deepStrictEqual(
+        replayed.board?.stepStates.find((candidate) => candidate.cardId === "card-forced"),
+        state,
+      );
     }),
   );
 

@@ -12,6 +12,7 @@ import {
   BoardCardId,
   BoardLabelId,
   BOARD_SEED_STAGE_IDS,
+  BOARD_SEED_STAGES,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ThreadId,
@@ -26,6 +27,7 @@ import {
   deriveBoardCardThreadState,
   boardBuildHumanInLoopDefault,
   resolveBoardStageExecution,
+  type BoardCardShell,
   type BoardCardThreadShell,
   type BoardState,
   type EnvironmentId,
@@ -35,7 +37,12 @@ import {
   type BoardCardReviewOverrides,
   type BoardCardStageModelOverride,
 } from "@t3tools/contracts";
-import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
+import {
+  boardBuildQueue,
+  boardColumnAppendOrderKey,
+  boardRunningStepCount,
+  planBoardQueueMoveToFront,
+} from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
@@ -50,6 +57,7 @@ import { getCustomModelOptionsByInstance, resolveAppModelSelectionState } from "
 import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils";
 import { boardEnvironment } from "../state/board";
 import { boardAttachmentLimits } from "./boardAttachmentUpload";
+import { boardQueueInfo } from "./boardQueueInfo";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
@@ -110,6 +118,8 @@ function LoadingModal({
   );
 }
 
+const EMPTY_SHELL_CARDS: ReadonlyArray<BoardCardShell> = [];
+
 export function BoardCardDetail({
   environmentId,
   cardId,
@@ -131,6 +141,8 @@ export function BoardCardDetail({
 
   const updateCard = useAtomCommand(boardEnvironment.updateCard);
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
+  const reorderCard = useAtomCommand(boardEnvironment.reorderCard);
+  const forceStartStep = useAtomCommand(boardEnvironment.forceStartStep);
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
   const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
@@ -393,15 +405,71 @@ export function BoardCardDetail({
       .map((thread) => ({ id: thread.id, key: "", title: thread.title }));
   }, [card, snapshot]);
 
+  // ── Everything below this line runs before the loading early return ──
+  // The card's own shell, and the queue state derived from it. These sit ABOVE
+  // the `LoadingModal` branch because they include hooks: `detail` is null on
+  // the first render of every card modal, so a hook declared after that branch
+  // would be skipped on render one and present on render two. (The repo's
+  // oxlint config carries no `rules-of-hooks`, so nothing catches that but a
+  // crash in the app.)
+  //
+  // The in-flight proxy for the `+` menu's restart affordance (t3o-14, D1)
+  // reads this same shell, since the step-state read model is server-only.
+  const cardShell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+
+  // The card's place in the board-wide build queue (t3o-33). Derived from the
+  // shells the modal already holds — every project, since the queue is global —
+  // so a queued card can say why it is waiting instead of opening on the
+  // planning conversation it left behind and explaining nothing.
+  //
+  // Everything below is skipped for the overwhelmingly common case: the map is
+  // empty unless something is actually queued.
+  const allShellCards = snapshot?.cards ?? EMPTY_SHELL_CARDS;
+  // Same fallback the board uses: before the first snapshot the stage list is
+  // empty, and ranking every queued card equally would print a position that is
+  // wrong rather than absent.
+  const queueStages = stages.length > 0 ? stages : BOARD_SEED_STAGES;
+  const queueInfo = useMemo(
+    () =>
+      cardShell?.queued !== true
+        ? null
+        : boardQueueInfo({
+            slot: boardBuildQueue(allShellCards, queueStages).get(cardId),
+            running: boardRunningStepCount(allShellCards),
+            cap: boardSettings.concurrency.globalMaxConcurrent,
+          }),
+    [
+      allShellCards,
+      boardSettings.concurrency.globalMaxConcurrent,
+      cardId,
+      cardShell?.queued,
+      queueStages,
+    ],
+  );
+  // Null whenever reordering could not actually improve the card's position —
+  // the rail hides the button rather than offering one that does nothing.
+  const queueMoveToFront = useMemo(
+    () =>
+      queueInfo === null
+        ? null
+        : planBoardQueueMoveToFront({ cards: allShellCards, stages: queueStages, cardId }),
+    [allShellCards, cardId, queueInfo, queueStages],
+  );
+  // Strictly "the command is in flight" — cleared when it settles, either way.
+  // It deliberately does NOT wait for the card to leave the queue: the governor
+  // can decline to start it (a worktree that will not provision), and a button
+  // that waits for a signal which may never arrive is stuck forever. The
+  // request is durable on the step row, so asking again is harmless.
+  const [forceStartPending, setForceStartPending] = useState(false);
+
   if (detail === null || card === null) {
     // The shell already knows the stage, so the empty frame opens at the width
     // the detail will need — no jump from sheet to working surface.
-    const shell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
     return (
       <LoadingModal
-        done={shell !== undefined && boardCardIsDone(stages, shell.stage)}
+        done={cardShell !== undefined && boardCardIsDone(stages, cardShell.stage)}
         onClose={onClose}
-        wide={shell !== undefined && boardCardHasThreadPane(stages, shell.stage)}
+        wide={cardShell !== undefined && boardCardHasThreadPane(stages, cardShell.stage)}
       />
     );
   }
@@ -450,14 +518,6 @@ export function BoardCardDetail({
         },
       }),
     );
-
-  // The `+` menu's restart affordance (t3o-14, D1): shown only when the card's
-  // current stage auto-executes, and disabled while a supervised run is in
-  // flight for the card — restarting then would leave two threads owning the
-  // same step. Both facts are derived by pure helpers (asserted in
-  // `boardCardThreadMenu.test.ts`); the in-flight proxy reads the card shell's
-  // live status since the step-state read model is server-only.
-  const cardShell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
 
   // The review loop's round budget, for the Review pane's R1..Rn bar. Resolved
   // from the same settings the executor reads, so the bar and the real loop can
@@ -639,6 +699,29 @@ export function BoardCardDetail({
         });
       }}
       onClose={onClose}
+      queueInfo={queueInfo}
+      queueForceStartPending={forceStartPending}
+      onQueueForceStart={() => {
+        setFeedback(null);
+        setForceStartPending(true);
+        void forceStartStep({ environmentId, input: { cardId: card.id } }).then((result) => {
+          setForceStartPending(false);
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            setFeedback(describeBoardCommandFailure(result));
+          }
+        });
+      }}
+      onQueueMoveToFront={
+        queueMoveToFront === null
+          ? undefined
+          : () =>
+              runCommand(
+                reorderCard({
+                  environmentId,
+                  input: { cardId: card.id, orderKey: queueMoveToFront.orderKey },
+                }),
+              )
+      }
       onCreateLabel={(name) => {
         // Create the label, then tag this card with it in one gesture — a
         // client-generated id lets the tag reference it without a round trip,

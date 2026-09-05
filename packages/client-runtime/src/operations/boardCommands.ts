@@ -47,6 +47,7 @@ export type CreateBoardCardInput = CommandInput<"board.card.create">;
 export type MoveBoardCardInput = CommandInput<"board.card.move">;
 export type ReorderBoardCardInput = CommandInput<"board.card.reorder">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
+export type ForceStartBoardCardStepInput = CommandInput<"board.card.force-start-step">;
 export type LinkBoardCardThreadInput = CommandInput<"board.card.link-thread">;
 export type UnlinkBoardCardThreadInput = CommandInput<"board.card.unlink-thread">;
 export type ArchiveBoardCardInput = CommandInput<"board.card.archive">;
@@ -150,6 +151,19 @@ export const reorderBoardCard: (input: ReorderBoardCardInput) => CommandEffect =
     createdAt: metadata.createdAt,
   });
 });
+
+/** Start a card's queued step now, over the agent cap (t3o-33). Names no step:
+    the server resolves the card's live one. */
+export const forceStartBoardCardStep: (input: ForceStartBoardCardStepInput) => CommandEffect =
+  Effect.fn("BoardCommands.forceStartBoardCardStep")(function* (input) {
+    const metadata = yield* commandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "board.card.force-start-step",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
 
 export const updateBoardCard: (input: UpdateBoardCardInput) => CommandEffect = Effect.fn(
   "BoardCommands.updateBoardCard",

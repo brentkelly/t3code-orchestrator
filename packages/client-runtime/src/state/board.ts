@@ -75,6 +75,7 @@ import {
   refreshBoardCardPullRequest,
   renameBoardStage,
   reorderBoardCard,
+  forceStartBoardCardStep,
   reorderBoardStage,
   startBoardStageThread,
   submitBoardCardForMerge,
@@ -95,6 +96,7 @@ import {
   type MoveBoardCardInput,
   type RenameBoardStageInput,
   type ReorderBoardCardInput,
+  type ForceStartBoardCardStepInput,
   type ReorderBoardStageInput,
   type StartBoardStageThreadInput,
   type UnarchiveBoardCardInput,
@@ -124,6 +126,7 @@ export type {
   MoveBoardCardInput,
   RenameBoardStageInput,
   ReorderBoardCardInput,
+  ForceStartBoardCardStepInput,
   ReorderBoardStageInput,
   StartBoardStageThreadInput,
   UnarchiveBoardCardInput,
@@ -296,13 +299,20 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.held === withStepRunning.held
           ? withStepRunning
           : { ...withStepRunning, held: existing.held };
+      // `stepAwaiting` (t3o-34, D4) comes off the same slice and rests at null
+      // on a card-carrying delta, so preserve it too — otherwise renaming a card
+      // that is waiting on an answer clears the badge that says so.
+      const withStepAwaiting =
+        existing === undefined || existing.stepAwaiting === withHeld.stepAwaiting
+          ? withHeld
+          : { ...withHeld, stepAwaiting: existing.stepAwaiting };
       // `briefHasImage` and `planCount` are derived from slices the card
       // aggregate does not carry (the brief BODY, the plan set), so a
       // card-carrying delta that cannot see them OMITS the key rather than
       // asserting a false/zero — absent means "unchanged, keep what you have".
       // A present key is authoritative, including `false`/`0`: clearing an
       // image out of a brief has to clear the icon.
-      const withBodyDerived = preserveAbsentShellFields(withHeld, existing);
+      const withBodyDerived = preserveAbsentShellFields(withStepAwaiting, existing);
       const card = withDerivedThreadFields(
         withBodyDerived,
         (threadId) => snapshot.threads.find((thread) => thread.id === threadId),
@@ -343,13 +353,20 @@ export function applyBoardShellStreamEvent(
       // Recovery/select/settle also settle the durable `stepRunning` dot on this
       // same delta: recovered-to-running lights it, while stalled / freshly
       // selected (pending) / settled (terminal) put it out.
+      //
+      // And it carries `stepAwaiting` (t3o-34, D4), which is why a step PARKING
+      // for a human publishes through this delta at all: awaiting-input emitted
+      // nothing to the column card before. Every other emitter clears it, so
+      // answering the question clears the badge on the same event that re-lights
+      // the dot.
       const nextCards = Arr.map(cards, (card) => {
         if (card.cardId !== event.cardId) return card;
         const queued = event.stalled ? false : card.queued;
         return card.stalled === event.stalled &&
           card.queued === queued &&
           card.stepRunning === event.stepRunning &&
-          card.held === event.held
+          card.held === event.held &&
+          card.stepAwaiting === event.stepAwaiting
           ? card
           : {
               ...card,
@@ -357,6 +374,7 @@ export function applyBoardShellStreamEvent(
               queued,
               stepRunning: event.stepRunning,
               held: event.held,
+              stepAwaiting: event.stepAwaiting,
             };
       });
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
@@ -648,22 +666,108 @@ export function isBoardCardPlacementSettled(
   return true;
 }
 
+/** One queued card's place in the board-wide build queue (t3o-33). Positions
+    are a VIEW over the queue and are never stored on a card: every one of
+    these is recomputed whenever the queue changes. */
+export interface BoardQueueSlot {
+  /** 1-based place in the queue. */
+  readonly position: number;
+  /** How many cards are queued in total, this one included. */
+  readonly total: number;
+  /** Cards that will be admitted before this one. */
+  readonly ahead: number;
+  readonly startsNext: boolean;
+}
+
 /**
- * Queue view of the Building column (D11: the column is the queue,
- * position is priority). Derived strictly from the `queued` flag on the
- * shells — until t3o-11 populates it nothing is queued and the map is
- * empty. UIs render this, never invented queue state.
+ * Queue view of every card holding for a concurrency slot (D11), across the
+ * WHOLE environment — every project, and every stage that runs build-mode
+ * steps, not just Building.
+ *
+ * Mirrors the governor's own ordering (`orderBoardQueue`, apps/server): later
+ * stage first, then the cards' drag order. That is what makes the number
+ * honest — an earlier per-project reading of one Building column numbered a
+ * card `#1` while another project's review step was ahead of it in the only
+ * queue that exists.
+ *
+ * ONE DIVERGENCE, deliberately: the server breaks a stage tie by admitting an
+ * already-started step before an unstarted one. That needs step completions,
+ * which are card detail, and it only separates two queued steps on the same
+ * stage where one is a re-run. Buying it would cost a field on every shell, so
+ * the client orders by drag order alone there.
+ *
+ * Derived strictly from the `queued` flag on the shells, so a board with
+ * nothing queued yields an empty map and costs a single pass.
  */
-export function boardBuildingQueueInfo(
-  buildingColumn: ReadonlyArray<BoardCardShell>,
-): ReadonlyMap<string, { readonly position: number; readonly startsNext: boolean }> {
-  const queue = new Map<string, { readonly position: number; readonly startsNext: boolean }>();
-  for (const card of buildingColumn) {
-    if (!card.queued) continue;
-    const position = queue.size + 1;
-    queue.set(card.cardId, { position, startsNext: position === 1 });
-  }
+export function boardBuildQueue(
+  cards: ReadonlyArray<BoardCardShell>,
+  stages: ReadonlyArray<BoardStageDefinition>,
+): ReadonlyMap<string, BoardQueueSlot> {
+  const queued = cards.filter((card) => card.queued);
+  if (queued.length === 0) return EMPTY_QUEUE;
+  const stageOrder = new Map(stages.map((stage, index) => [stage.stageId, index]));
+  // An unknown stage sorts last rather than ahead of everything: a card on a
+  // stage this client has not seen yet must not claim the front of the queue.
+  const rankOf = (card: BoardCardShell) => stageOrder.get(card.stage) ?? -1;
+  const ordered = [...queued].sort(
+    (left, right) =>
+      rankOf(right) - rankOf(left) ||
+      (left.orderKey < right.orderKey ? -1 : left.orderKey > right.orderKey ? 1 : 0) ||
+      (left.cardId < right.cardId ? -1 : left.cardId > right.cardId ? 1 : 0),
+  );
+  const queue = new Map<string, BoardQueueSlot>();
+  ordered.forEach((card, index) => {
+    queue.set(card.cardId, {
+      position: index + 1,
+      total: ordered.length,
+      ahead: index,
+      startsNext: index === 0,
+    });
+  });
   return queue;
+}
+
+const EMPTY_QUEUE: ReadonlyMap<string, BoardQueueSlot> = new Map();
+
+/** Steps the executor is actually running, board-wide (t3o-33) — the numerator
+    of "3 of 3 agents busy". Counted from the same shells the queue is, so the
+    two halves of that sentence can never disagree. */
+export function boardRunningStepCount(cards: ReadonlyArray<BoardCardShell>): number {
+  let running = 0;
+  for (const card of cards) if (card.stepRunning) running += 1;
+  return running;
+}
+
+/**
+ * The reorder that moves a queued card to the front of the build queue
+ * (t3o-33), or null when there is no such move.
+ *
+ * Null in two cases, and the second is the point: the card is already first,
+ * or reordering CANNOT improve its position. Drag order is the governor's last
+ * tiebreak, so a card queued behind one on a later stage does not overtake it
+ * however low its key goes — and a button that visibly does nothing is worse
+ * than an absent one. The check is the derivation itself, run once against the
+ * projected key, so it can never drift from what the queue will actually show.
+ */
+export function planBoardQueueMoveToFront(input: {
+  readonly cards: ReadonlyArray<BoardCardShell>;
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+  readonly cardId: string;
+}): { readonly orderKey: string } | null {
+  const current = boardBuildQueue(input.cards, input.stages).get(input.cardId);
+  if (current === undefined || current.position === 1) return null;
+  let frontKey: string | null = null;
+  for (const card of input.cards) {
+    if (!card.queued) continue;
+    if (frontKey === null || card.orderKey < frontKey) frontKey = card.orderKey;
+  }
+  const orderKey = pinOrderKeyBetween(null, frontKey);
+  if (orderKey === null) return null;
+  const projected = boardBuildQueue(
+    input.cards.map((card) => (card.cardId === input.cardId ? { ...card, orderKey } : card)),
+    input.stages,
+  ).get(input.cardId);
+  return projected !== undefined && projected.position < current.position ? { orderKey } : null;
 }
 
 /** Card-detail subscriptions get a short grace so closing and immediately
@@ -847,6 +951,11 @@ export function createBoardEnvironmentAtoms<R, ER>(
     reorderCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reorder-card",
       execute: (input: ReorderBoardCardInput) => reorderBoardCard(input),
+    }),
+    /** Start a queued step now, over the agent cap (t3o-33). */
+    forceStartStep: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:force-start-step",
+      execute: (input: ForceStartBoardCardStepInput) => forceStartBoardCardStep(input),
     }),
     updateCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:update-card",

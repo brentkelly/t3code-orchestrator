@@ -50,6 +50,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,
+  awaitingReason: "question" as const,
   prompt: "build it",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
@@ -63,6 +64,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   // slotHeld false keeps boot reconcile's slot-restore out of the picture —
   // the sweep's clock is what these tests isolate.
   slotHeld: false,
+  forceStart: false,
   startedAt: OVERDUE,
   updatedAt: OVERDUE,
   ...overrides,

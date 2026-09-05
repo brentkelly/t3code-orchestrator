@@ -20,6 +20,8 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+// T3o: per-project GitHub token overrides for agent sessions (t3o-34).
+import { withGitenvTokenEnv } from "../../sourceControl/gitenv.ts";
 
 import {
   collectSessionConfigOptionValues,
@@ -338,16 +340,18 @@ export const make = (
         ),
       );
 
+    // T3o: agent `gh` calls act as the matched project's identity (t3o-34).
+    const spawnEnv = withGitenvTokenEnv(options.spawn.env, options.spawn.cwd);
     const spawnCommand = yield* resolveSpawnCommand(
       options.spawn.command,
       options.spawn.args,
-      options.spawn.env ? { env: options.spawn.env, extendEnv: true } : {},
+      spawnEnv ? { env: spawnEnv, extendEnv: true } : {},
     );
     const child = yield* spawner
       .spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
-          ...(options.spawn.env ? { env: options.spawn.env, extendEnv: true } : {}),
+          ...(spawnEnv ? { env: spawnEnv, extendEnv: true } : {}),
           shell: spawnCommand.shell,
         }),
       )

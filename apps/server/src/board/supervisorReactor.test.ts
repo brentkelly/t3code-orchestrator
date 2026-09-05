@@ -94,6 +94,7 @@ const runningState: BoardCardStepState = {
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,
+  awaitingReason: "question" as const,
   prompt: "do it",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
@@ -105,6 +106,7 @@ const runningState: BoardCardStepState = {
   threadId: ThreadId.make("thread-1"),
   status: "running",
   slotHeld: true,
+  forceStart: false,
   startedAt: NOW,
   updatedAt: NOW,
 };

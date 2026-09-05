@@ -126,6 +126,37 @@ describe("boardReviewLoopWalk", () => {
     assert.strictEqual(walk([review(1, [])], 5).status, "converged");
   });
 
+  // T3O-2: the round that made this test necessary. The reviewer ran to a
+  // clean conclusion and recorded valid findings, but handed
+  // `board_complete_step` an already-`JSON.stringify`d payload, which the
+  // completion handler stringified a second time. Every reader then saw a JSON
+  // *string* where the schema wanted an object and called the round
+  // unreadable, holding a converged card in Code review. The content was never
+  // in question, only its wrapping — so one level of it is unwrapped on read.
+  it("t3o-2: reads a payload the agent handed the tool already stringified", () => {
+    const doubled = (round: number, findings: ReadonlyArray<BoardReviewFinding>) =>
+      completion(
+        `review@${round}`,
+        JSON.stringify(JSON.stringify({ reviewedSha: `sha-${round}`, findings })),
+      );
+    // Exactly the shape the walk gives the same payload encoded once.
+    assert.deepStrictEqual(walk([doubled(1, [])], 5), walk([review(1, [])], 5));
+    assert.deepStrictEqual(
+      walk([doubled(1, [finding("critical")])], 5),
+      walk([review(1, [finding("critical")])], 5),
+    );
+    // ...and a string that is not a payload at all stays unreadable: the
+    // tolerance is for the encoding, never for the content.
+    assert.strictEqual(
+      walk([completion("review@1", JSON.stringify("done"))], 5).status,
+      "unreadable",
+    );
+    assert.strictEqual(
+      walk([completion("review@1", JSON.stringify(JSON.stringify({ nope: 1 })))], 5).status,
+      "unreadable",
+    );
+  });
+
   it("ignores completions that did not succeed", () => {
     const failed = completion("review@1", { reviewedSha: "s", findings: [] }, "failed");
     // A failed phase is the reactor's to retry, not a phase that happened.
@@ -228,6 +259,28 @@ describe("deriveBoardCardReviewSummary", () => {
     // The untriaged nitpick is still open.
     assert.strictEqual(summary?.issuesOpen, 1);
     assert.strictEqual(summary?.issuesRejected, 0);
+  });
+
+  // T3O-2: the tally skipped the double-encoded round entirely, so the card
+  // showed round 1's counts under a round-2 header.
+  it("t3o-2: tallies a round whose payload arrived double-encoded", () => {
+    const doubled = deriveBoardCardReviewSummary({
+      completions: [
+        completion(
+          "review@1",
+          JSON.stringify(JSON.stringify({ reviewedSha: "sha-1", findings: [finding("nitpick")] })),
+        ),
+        completion("triage@1", {
+          fixedSha: "s1",
+          dispositions: [{ findingId: "f1", action: "fixed", note: "" }],
+        }),
+      ],
+      maxRounds: 5,
+      stopAfterRound: null,
+    });
+    assert.strictEqual(doubled?.severityNitpick, 1);
+    assert.strictEqual(doubled?.issuesFixed, 1);
+    assert.strictEqual(doubled?.outcome, "converged");
   });
 
   it("reports the round the loop ENTERED, never the one it is waiting on", () => {

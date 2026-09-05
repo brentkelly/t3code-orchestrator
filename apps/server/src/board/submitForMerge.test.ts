@@ -65,6 +65,7 @@ const settledBuildStep: BoardCardStepState = {
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,
+  awaitingReason: "question" as const,
   prompt: "build it",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
@@ -76,6 +77,7 @@ const settledBuildStep: BoardCardStepState = {
   threadId: ThreadId.make("thread-build"),
   status: "succeeded",
   slotHeld: false,
+  forceStart: false,
   startedAt: NOW,
   updatedAt: NOW,
 };
