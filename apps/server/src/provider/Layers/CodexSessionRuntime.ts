@@ -39,6 +39,8 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+// T3o: per-project GitHub token overrides for agent sessions (t3o-34).
+import { gitenvTokenEnv } from "../../sourceControl/gitenv.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
@@ -1179,6 +1181,8 @@ export const makeCodexSessionRuntime = (
     const env = {
       ...options.environment,
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
+      // T3o: agent `gh` calls act as the matched project's identity (t3o-34).
+      ...gitenvTokenEnv(options.cwd),
     };
     const extendEnv = options.environment === undefined;
     const appServerArgs = codexSessionAppServerArgs(options.appServerArgs, options.launchArgs);

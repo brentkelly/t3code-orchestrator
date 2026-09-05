@@ -16,6 +16,8 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+// T3o: per-project GitHub token overrides read `<stateDir>/gitenv` (t3o-34).
+import { initGitenv } from "../sourceControl/gitenv.ts";
 
 export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -387,6 +389,10 @@ export const resolveServerConfig = (
       tailscaleServeEnabled,
       tailscaleServePort,
     };
+
+    // T3o: point the gitenv module at this boot's state dir — every `t3` server
+    // start (`start`/`serve`/desktop/`vp run dev`) resolves its config here (t3o-34).
+    initGitenv(config.stateDir);
 
     return config;
   });
