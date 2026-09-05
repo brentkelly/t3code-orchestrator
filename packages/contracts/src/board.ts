@@ -4759,6 +4759,14 @@ export const BoardSubmitCardForMergeResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("no-merge-stage") }),
   /** Unmet dependencies: the same gate the forward button refuses on. */
   Schema.Struct({ outcome: Schema.Literal("blocked") }),
+  /** One of the decider's OTHER forward gates past the build role would refuse
+      the directed move — an unfinished sub-board child, an unapproved split.
+      Checked before the step runs, because the refusal only bites at the
+      advance, by which time the branch is pushed and the pull request is open:
+      the card would sit in Building with a fresh pull request and no reason
+      given. `detail` is the sentence to show, named the way the decider names
+      it. */
+  Schema.Struct({ outcome: Schema.Literal("refused"), detail: Schema.String }),
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
   /** The attempt itself broke — a read-model hiccup, not a refusal with a
       cause the user can act on. Kept distinct so the card never claims a

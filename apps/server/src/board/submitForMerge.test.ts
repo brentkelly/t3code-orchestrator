@@ -17,6 +17,7 @@ import {
   BOARD_SUBMIT_STEP_ID,
   BoardCardId,
   BoardStageId,
+  EMPTY_BOARD_STATE,
   ProviderInstanceId,
   ThreadId,
   boardCardStepState,
@@ -25,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 
 import {
   NOW,
@@ -394,6 +396,90 @@ it.effect("refuses a card that does not exist", () =>
         assert.deepStrictEqual(yield* reactor.submitForMerge(BoardCardId.make("nope")), {
           outcome: "unknown-card",
         });
+      }),
+  ),
+);
+
+// ── The gates that only bite at the directed advance ────────────────────────
+//
+// Two of the decider's forward gates past the build role — an unfinished
+// sub-board child and an unapproved split — refuse the DIRECTED MOVE, which
+// happens after the submit step has already pushed the branch and opened the
+// pull request. Left to bite there, the refusal is swallowed by the reactor's
+// dispatch and the card sits in Building with a fresh pull request and no
+// account of why. So they are pre-checked before the step runs, and the race
+// that pre-check cannot close is reported on the card.
+
+/** A live plan card of `card-1`'s: materialised, sitting on the floor, not
+    done — the state that holds its parent at the build ceiling. */
+const workingChild: BoardCard = {
+  ...makeBoardCard({ id: "card-2", stage: "ready", orderKey: "n" }),
+  parentCardId: cardId,
+};
+
+it.effect("refuses a split parent whose plan cards are still working, before it costs a run", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [heldBuildCard(), workingChild],
+        stepStates: [settledBuildStep],
+        stepCompletions: [buildCompletion],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        const result = yield* reactor.submitForMerge(cardId);
+        // The gate would refuse the move ANYWAY — but only after an agent had
+        // pushed the branch and opened a pull request for a card that cannot
+        // go anywhere. Named up front instead, in the gate's own terms.
+        assert.strictEqual(result.outcome, "refused");
+        assert.include(result.outcome === "refused" ? result.detail : "", "CARD-2");
+
+        yield* reactor.drain;
+        // Nothing was selected: no step, no thread, no run.
+        assert.notStrictEqual(
+          boardCardStepState(yield* board, cardId)?.stepId,
+          BOARD_SUBMIT_STEP_ID,
+        );
+        assert.strictEqual(cardStage(yield* board, cardId), "building");
+      }),
+  ),
+);
+
+it.effect("says why the card stayed when a gate closes while the submit step is running", () =>
+  withGovernor(
+    {
+      board: heldBoard(),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ reactor, board, model, decided, pumpDomain }) =>
+      Effect.gen(function* () {
+        assert.deepStrictEqual(yield* reactor.submitForMerge(cardId), { outcome: "started" });
+        yield* reactor.drain;
+
+        // The race the pre-check cannot close: the split is approved while the
+        // step is pushing, so the card acquires a plan card between the click
+        // and the advance.
+        yield* Ref.update(model, (current) => {
+          const existing = current.board ?? EMPTY_BOARD_STATE;
+          return { ...current, board: { ...existing, cards: [...existing.cards, workingChild] } };
+        });
+        yield* pumpDomain(stepCompleted(cardId, "succeeded", 10, BOARD_SUBMIT_STEP_ID));
+
+        // The move is refused, so the card stays put — and it SAYS so, with the
+        // decider's own sentence, rather than leaving a fresh pull request and
+        // a card that quietly did not move (D6).
+        assert.strictEqual(cardStage(yield* board, cardId), "building");
+        const notes = (yield* decided).filter((event) => event.type === "board.card-note-recorded");
+        assert.strictEqual(notes.length, 1);
+        const payload = notes[0]?.payload as
+          | { readonly kind?: unknown; readonly detail?: unknown }
+          | undefined;
+        assert.strictEqual(payload?.kind, "card-merge-refused");
+        assert.match(String(payload?.detail), /Held the move to Ready for merge\./);
+        assert.include(String(payload?.detail), "CARD-2");
       }),
   ),
 );

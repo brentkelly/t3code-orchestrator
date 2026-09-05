@@ -19,6 +19,7 @@
 import {
   boardCardChildren,
   boardBuildHumanInLoopDefault,
+  boardCardPendingSplit,
   boardCardPlans,
   boardSubBoardFloorStage,
   unmetBoardCardDependencies,
@@ -147,6 +148,11 @@ export type BoardSubmitAttemptResult =
   | { readonly outcome: "no-branch" }
   | { readonly outcome: "no-merge-stage" }
   | { readonly outcome: "blocked" }
+  /** A forward gate past the build role would refuse the directed move — an
+      unfinished sub-board child, an unapproved split. Pre-checked, because the
+      refusal itself only lands after the step has pushed and opened the pull
+      request. */
+  | { readonly outcome: "refused"; readonly detail: string }
   | { readonly outcome: "unknown-card" }
   | { readonly outcome: "failed" };
 
@@ -307,6 +313,39 @@ const make = Effect.gen(function* () {
               commandType: (command as { readonly type?: string }).type,
               detail: refusal.detail,
             });
+      }),
+    );
+
+  /** `dispatch`, but the caller learns WHY the decider said no: the refusal's
+      own sentence, or `null` when the command landed.
+   *
+   *  For the one write whose refusal has to reach the USER rather than the log
+   *  — the directed advance behind "Submit for merge — no review" (t3o-07,
+   *  D6). It runs after the submit step has pushed the branch and opened the
+   *  pull request, so a swallowed refusal leaves the card in Building with a
+   *  fresh pull request and no account of why it stayed. D6 promises those
+   *  gates "refuse it with their own message"; this is how the message gets
+   *  out.
+   *
+   *  Only an INVARIANT refusal comes back as a sentence. Anything else is a
+   *  fault, not the decider answering, and is logged like any other dispatch —
+   *  the card must not display an infrastructure hiccup as though a rule had
+   *  refused it. */
+  const dispatchRefusal = (command: Parameters<typeof engine.dispatch>[0]) =>
+    engine.dispatch(command).pipe(
+      Effect.as<string | null>(null),
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
+        const refusal = Cause.findErrorOption(cause).pipe(
+          Option.filter((error) => error._tag === "OrchestrationCommandInvariantError"),
+          Option.getOrUndefined,
+        );
+        return refusal === undefined
+          ? Effect.logWarning("board supervisor dispatch failed", {
+              commandType: (command as { readonly type?: string }).type,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as<string | null>(null))
+          : Effect.succeed<string | null>(refusal.detail);
       }),
     );
 
@@ -1515,12 +1554,27 @@ const make = Effect.gen(function* () {
     if (input.toRole !== undefined) {
       const target = boardStageWithRole(board, input.toRole);
       if (target === null || target.stageId === input.card.stage) return;
-      yield* dispatch({
+      const refusal = yield* dispatchRefusal({
         type: "board.card.move",
         commandId: yield* commandId("advance-directed"),
         cardId: input.card.id,
         toStage: target.stageId,
         override: true,
+        createdAt: yield* nowIso,
+      });
+      if (refusal === null) return;
+      // A gate closed between the click and here — the step it paid for has
+      // already pushed the branch and opened the pull request, and nobody is
+      // watching a return value any more. `submitCardForMerge` pre-checks
+      // these same gates so the ordinary refusal costs no agent run; this is
+      // the race, and it must not be silent either. The decider's own sentence
+      // is the message, exactly as D6 promises.
+      yield* dispatch({
+        type: "board.card.record-note",
+        commandId: yield* commandId("advance-directed-refused"),
+        cardId: input.card.id,
+        kind: "card-merge-refused",
+        detail: `Held the move to ${target.label}. ${refusal}`,
         createdAt: yield* nowIso,
       });
       return;
@@ -2910,6 +2964,32 @@ const make = Effect.gen(function* () {
     // would be refused by the decider anyway — say so instead of teaching the
     // rule by refusal after an agent has already pushed.
     if (card.blocked) return { outcome: "blocked" } as const;
+    // The decider's other two forward gates past the build role, pre-checked
+    // for the same reason and with more force: they bite only at the directed
+    // advance, which happens AFTER the submit step has pushed the branch and
+    // opened the pull request. Refused there, the move is swallowed and the
+    // card sits in Building with a fresh pull request and no account of why —
+    // the half-state D9 exists to forbid. Refusing up front costs the user
+    // nothing and names the thing to fix. (`advanceStage` still writes a note
+    // if a gate closes while the step runs; this is the cheap path, not the
+    // only one.)
+    const unfinished = boardCardUnfinishedChildren(board, card.id);
+    if (unfinished.length > 0) {
+      return {
+        outcome: "refused",
+        detail: `This card advances through its ${unfinished.length} plan card${
+          unfinished.length === 1 ? "" : "s"
+        } (${unfinished
+          .map((child) => child.key)
+          .join(", ")}); it cannot pass '${stage.label}' until those finish.`,
+      } as const;
+    }
+    if (boardCardPendingSplit(board, card.id)) {
+      return {
+        outcome: "refused",
+        detail: `This card has ${boardCardPlans(board, card.id).length} unapproved plans; approve the split (or re-propose a single plan) before advancing it.`,
+      } as const;
+    }
     // Nothing to push.
     if (card.worktree === null) return { outcome: "no-branch" } as const;
     // One step at a time (D4). The caret only shows on a HELD card, so this is

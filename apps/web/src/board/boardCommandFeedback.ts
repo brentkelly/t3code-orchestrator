@@ -88,6 +88,10 @@ export function describeBoardSubmitOutcome(result: BoardSubmitCardForMergeResult
       return "This board has no merge stage to send the card to.";
     case "blocked":
       return "This card is blocked by unmet dependencies.";
+    // The gate wrote the sentence — it names the plan cards still running, or
+    // the split still waiting on approval, and there is nothing to add.
+    case "refused":
+      return result.detail;
     case "unknown-card":
       return "This card no longer exists.";
     case "failed":
