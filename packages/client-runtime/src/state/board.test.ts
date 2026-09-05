@@ -215,6 +215,7 @@ describe("board shell reducer", () => {
       stepRunning: false,
       held: false,
       stepAwaiting: null,
+      queued: false,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     expect(stalled.snapshotSequence).toBe(2);
@@ -226,6 +227,7 @@ describe("board shell reducer", () => {
       stepRunning: false,
       held: false,
       stepAwaiting: null,
+      queued: false,
     });
     expect(cleared.cards?.[0]?.stalled).toBe(false);
   });
@@ -254,14 +256,17 @@ describe("board shell reducer", () => {
       stepRunning: false,
       held: false,
       stepAwaiting: null,
+      queued: false,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     expect(stalled.cards?.[0]?.queued).toBe(false);
   });
 
-  it("clearing the stalled badge leaves the queue badge alone", () => {
-    // The clear rides a fresh select-step / settle, neither of which says
-    // anything about the queue — only `card-queued` and an admit do.
+  it("a card that settles out of the queue drops its queue badge with it", () => {
+    // A step held for a slot can be settled straight out of the queue —
+    // abandoned when its card leaves the pipeline, failed before it ever ran —
+    // without passing through the admission the badge used to wait on. Left
+    // standing, a card sitting in Done reads `Queued for build — starts next`.
     const queued = applyShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
       {
@@ -272,16 +277,19 @@ describe("board shell reducer", () => {
         stepRunning: false,
       },
     );
-    const cleared = applyShellStreamEvent(queued, {
+    expect(queued.cards?.[0]?.queued).toBe(true);
+    const settled = applyShellStreamEvent(queued, {
       kind: "card-stalled",
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
       stalled: false,
       stepRunning: false,
-      held: false,
+      held: true,
       stepAwaiting: null,
+      queued: false,
     });
-    expect(cleared.cards?.[0]?.queued).toBe(true);
+    expect(settled.cards?.[0]?.queued).toBe(false);
+    expect(settled.cards?.[0]?.held).toBe(true);
   });
 
   it("a card-carrying upsert preserves the stalled badge — a drag never blanks it (t3o-17)", () => {
@@ -295,6 +303,7 @@ describe("board shell reducer", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: null,
+        queued: false,
       },
     );
     expect(stalled.cards?.[0]?.stalled).toBe(true);
@@ -317,6 +326,7 @@ describe("board shell reducer", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: "stopped",
+        queued: false,
       },
     );
     expect(parked.cards?.[0]?.stepAwaiting).toBe("stopped");
@@ -335,6 +345,7 @@ describe("board shell reducer", () => {
       stepRunning: true,
       held: false,
       stepAwaiting: null,
+      queued: false,
     });
     expect(resumed.cards?.[0]?.stepAwaiting).toBeNull();
     expect(resumed.cards?.[0]?.stepRunning).toBe(true);

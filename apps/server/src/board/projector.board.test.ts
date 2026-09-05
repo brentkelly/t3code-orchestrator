@@ -668,10 +668,11 @@ describe("board projector", () => {
         queued: false,
         stepRunning: true,
       });
-      // A step only leaves `queued` via admission above, never via settle — but
-      // settling clears the stalled badge (t3o-17, D3): the one path a stalled
+      // Settling clears the stalled badge (t3o-17, D3): the one path a stalled
       // step leaves without a fresh select-step is a human taking over its live
-      // thread and completing it, so settle emits card-stalled=false.
+      // thread and completing it, so settle emits card-stalled=false. It clears
+      // the QUEUE badge too — a step held for a slot can settle straight out of
+      // the queue, and admission is not the only way out of it.
       assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(settledEvent)), {
         kind: "card-stalled",
         sequence: settledEvent.sequence,
@@ -681,6 +682,7 @@ describe("board projector", () => {
         // A settled step is the card parking: `held` is raised here.
         held: true,
         stepAwaiting: null,
+        queued: false,
       });
       // t3o-34 (D4): parking on a human is a column-card fact now, and this
       // event emitted NO delta at all before — which is exactly how a card
@@ -702,6 +704,7 @@ describe("board projector", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: "stopped",
+        queued: false,
       });
     }),
   );
@@ -791,6 +794,7 @@ describe("board projector", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: null,
+        queued: false,
       });
       // An ordinary retry (status running) clears the badge.
       const retryRecover: BoardEvent = {
@@ -806,6 +810,7 @@ describe("board projector", () => {
         stepRunning: true,
         held: false,
         stepAwaiting: null,
+        queued: false,
       });
       // A fresh stage run (select-step) also clears any lingering stalled badge.
       const selected: BoardEvent = {
@@ -824,6 +829,7 @@ describe("board projector", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: null,
+        queued: false,
       });
     }),
   );

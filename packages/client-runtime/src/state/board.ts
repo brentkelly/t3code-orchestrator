@@ -343,13 +343,15 @@ export function applyBoardShellStreamEvent(
       // on the card's step (→ true) or a retry / fresh run put it back to work
       // (→ false). A no-op for a card we do not hold.
       //
-      // Raising `stalled` also clears `queued`: both badges are views of ONE
-      // step status, so they are mutually exclusive at the source — a stalled
-      // step is not waiting for a slot. Without this, a step that escalates
-      // straight out of `queued` (its slot was granted but the spawn was
-      // refused) keeps a queue badge no later delta clears, and it goes on
-      // occupying a displayed queue position for every card behind it until a
-      // reconnect re-derives the shell.
+      // It also carries `queued`, which every emitter sets false: recovered,
+      // freshly selected, settled and awaiting-input are all statuses that are
+      // not `queued`, so this delta is the general clear. It used to be inferred
+      // here — lowered only when `stalled` rose — on the belief that a step
+      // always leaves the queue through `card-step-admitted`. It does not: a
+      // step held for a slot can settle straight out of the queue, and the card
+      // then kept a queue badge no later delta cleared, going on to occupy a
+      // displayed queue position for every card behind it until a reconnect
+      // re-derived the shell from the snapshot.
       // Recovery/select/settle also settle the durable `stepRunning` dot on this
       // same delta: recovered-to-running lights it, while stalled / freshly
       // selected (pending) / settled (terminal) put it out.
@@ -361,9 +363,8 @@ export function applyBoardShellStreamEvent(
       // the dot.
       const nextCards = Arr.map(cards, (card) => {
         if (card.cardId !== event.cardId) return card;
-        const queued = event.stalled ? false : card.queued;
         return card.stalled === event.stalled &&
-          card.queued === queued &&
+          card.queued === event.queued &&
           card.stepRunning === event.stepRunning &&
           card.held === event.held &&
           card.stepAwaiting === event.stepAwaiting
@@ -371,7 +372,7 @@ export function applyBoardShellStreamEvent(
           : {
               ...card,
               stalled: event.stalled,
-              queued,
+              queued: event.queued,
               stepRunning: event.stepRunning,
               held: event.held,
               stepAwaiting: event.stepAwaiting,

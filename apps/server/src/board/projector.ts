@@ -867,6 +867,8 @@ export function boardShellStreamEvent(
         // "Needs a human" badge when a human answers, because `resume-step`
         // publishes through here.
         stepAwaiting: null,
+        // Recovery lands on `running` or `stalled`, so it is never queued.
+        queued: false,
       });
 
     case "board.card-step-selected":
@@ -887,6 +889,9 @@ export function boardShellStreamEvent(
         held: false,
         // A fresh run is not parked on anybody (t3o-34, D4).
         stepAwaiting: null,
+        // A freshly-selected step is `pending`, not `queued` — it has not been
+        // offered to the governor yet — so any badge from a previous run goes.
+        queued: false,
       });
 
     case "board.card-step-settled":
@@ -912,6 +917,13 @@ export function boardShellStreamEvent(
         // A settled step is not waiting on an answer (t3o-34, D4) — `held` is
         // the settled form of "needs a human" and carries it from here.
         stepAwaiting: null,
+        // And a settled step is not queued. This is the clear that was missing:
+        // a step held for a slot can settle straight out of the queue (abandoned
+        // when its card leaves the pipeline, failed before it ever ran) without
+        // passing through the admission that used to be the only way to lower
+        // the flag — which is how a card in Done kept reading
+        // `Queued for build — starts next` until a reconnect.
+        queued: false,
       });
 
     case "board.plans-proposed":
@@ -966,6 +978,8 @@ export function boardShellStreamEvent(
         // Non-terminal, so nothing is `held`.
         held: false,
         stepAwaiting: event.payload.state.awaitingReason,
+        // A step parked on a human is admitted and holding its slot, not queued.
+        queued: false,
       });
 
     case "board.plan-written":
@@ -989,9 +1003,11 @@ export function boardShellStreamEvent(
       // BODY rewrite changes nothing a column card renders, so they emit no
       // shell delta.
       // They reach a client through board.subscribeCard / the MCP context tool.
-      // (A step leaving `queued` always does so via `card-step-admitted` above,
-      // so the badge clears there — never here; and a plan SET change rides
-      // `card-plans` above, which `board.plan-written` never causes.)
+      // (None of them moves a step in or out of `queued`: the flag is raised by
+      // `card-step-admitted` and lowered by that same event or by any of the
+      // four step transitions above, every one of which carries it explicitly;
+      // and a plan SET change rides `card-plans` above, which
+      // `board.plan-written` never causes.)
       return Option.none();
 
     default: {

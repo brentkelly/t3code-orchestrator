@@ -3841,9 +3841,10 @@ export const BoardCardShell = Schema.Struct({
 
       Like `threadState`, this is derived from state that is NOT on the card
       aggregate (the step-state read-model slice), so it cannot ride a
-      card-carrying delta. The authoritative live source is the snapshot (set
-      from step state) and the dedicated `card-queued` delta; card-carrying
-      deltas rest it at false and the client preserves its last known value
+      card-carrying delta. The authoritative live sources are the snapshot (set
+      from step state), the dedicated `card-queued` delta and `card-stalled`,
+      which clears it for every other step transition; card-carrying deltas rest
+      it at false and the client preserves its last known value
       (`applyBoardShellStreamEvent`). */
   queued: Schema.Boolean,
   /** Whether the card's live step has given up (t3o-17, D3): recovery exhausted
@@ -4388,6 +4389,19 @@ export const BoardCardStalledShellEvent = Schema.Struct({
       shell delta at all before t3o-34 — now emits this one rather than a fourth
       delta carrying a single field. */
   stepAwaiting: Schema.NullOr(BoardCardStepAwaitingReason),
+  /** And the QUEUE flag, carried for the same reason as the three above: every
+      event that emits this delta (settled / selected / recovered /
+      awaiting-input) carries the step's status, and none of those statuses is
+      `queued`. It used to be inferred client-side — cleared only when `stalled`
+      rose — on the belief that a step always leaves `queued` through
+      `card-step-admitted`. It does not: a step held for a slot can be settled
+      straight out of the queue (abandoned when its card is taken off the
+      pipeline, failed before it ever ran), and the card then kept a queue badge
+      no later delta cleared. A done card reading `Queued for build — starts
+      next` is the visible form of that, and it survived until a reconnect
+      re-derived the shell from the snapshot. Carried explicitly rather than
+      inferred so the flag has one authority per delta, not two. */
+  queued: Schema.Boolean,
 });
 export type BoardCardStalledShellEvent = typeof BoardCardStalledShellEvent.Type;
 
