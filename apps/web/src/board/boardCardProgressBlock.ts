@@ -141,6 +141,11 @@ export function boardCardShellThreadState(card: BoardCardShell): BoardTodoThread
   return {
     awaitingInput: card.awaitingInput,
     running: card.threadState === "working",
-    stopped: card.threadState === "stopped" || card.threadState === "none",
+    // A failed thread is stopped for the winner rule (t3o-10): it is not
+    // running, and there is nothing more coming from it.
+    stopped:
+      card.threadState === "stopped" ||
+      card.threadState === "failed" ||
+      card.threadState === "none",
   };
 }

@@ -497,7 +497,8 @@ function EnvironmentBoard({
       return {
         awaitingInput,
         running: threadState === "working",
-        stopped: threadState === "stopped" || threadState === "none",
+        // A failed thread is stopped for the winner rule (t3o-10).
+        stopped: threadState === "stopped" || threadState === "failed" || threadState === "none",
       };
     },
     [threadShellsById],

@@ -102,6 +102,36 @@ export const readyWorktree = (id: string): BoardCardWorktree => ({
   reclaimBlockedReason: null,
 });
 
+/** A thread shell mid-turn: what boot reconcile must read as ALIVE. The session
+    status is spelled out because `error` is now what kills a thread (t3o-10,
+    D1), so a shell that omits it is only accidentally alive. */
+export const aliveThreadShell = (threadId: string): OrchestrationThreadShell =>
+  ({
+    id: threadId,
+    hasPendingUserInput: false,
+    hasPendingApprovals: false,
+    session: { status: "running", activeTurnId: "turn-live" },
+  }) as unknown as OrchestrationThreadShell;
+
+/** A thread shell as a server restart leaves it (t3o-10): upstream's
+    `reconcileProviderSessions` has marked the orphaned session `error`, while
+    the killed turn's id LINGERS on the projection. The stale `activeTurnId` is
+    the whole point of the fixture — it is what used to read as alive. */
+export const failedThreadShell = (
+  threadId: string,
+  options?: { readonly staleActiveTurnId?: boolean },
+): OrchestrationThreadShell =>
+  ({
+    id: threadId,
+    hasPendingUserInput: false,
+    hasPendingApprovals: false,
+    session: {
+      status: "error",
+      activeTurnId: options?.staleActiveTurnId === false ? null : "turn-killed",
+      lastError: "Provider session did not survive a server restart.",
+    },
+  }) as unknown as OrchestrationThreadShell;
+
 /** A board card in an arbitrary stage. `worktree` defaults to null (no worktree
     before Building, per D6); pass one for a card the "Begin build" gate has
     already provisioned. */
@@ -344,10 +374,18 @@ export function withGovernor(
     /** Thread shells present BEFORE the reactor starts, so boot reconcile sees
         the threads a seeded step-state fixture references as alive. */
     readonly initialShells?: ReadonlyMap<string, OrchestrationThreadShell>;
-    /** What `git log -1 --format=%cI` answers in the stubbed driver — the
-        commit-liveness signal the timeout sweep reads. Defaults to "" (no
-        commit history). */
+    /** What an UNSCOPED `git log -1 --format=%cI` answers — the worktree tip,
+        whoever wrote it. Nothing in the reactor reads this any more (t3o-10,
+        D4); it stays so a fixture can set a fresh tip and an empty
+        `latestBranchCommitIso` to reproduce the base-sync heartbeat the sweep
+        used to be fooled by. Defaults to "" (no commit history). */
     readonly latestCommitIso?: string;
+    /** What a BRANCH-SCOPED `git log … HEAD --not refs/heads/<base>` answers —
+        the newest commit unique to the card's own branch, which is the
+        commit-liveness signal the timeout sweep and the stall-count reset read.
+        Defaults to `latestCommitIso`, so a fixture that only cares "the agent
+        committed" keeps reading naturally. */
+    readonly latestBranchCommitIso?: string;
     /** Make every git call answer as it does outside a repository: empty
         stdout, exit 128. The driver runs with `allowNonZeroExit`, so this is
         what the reactor's base-branch probes really see when a project's
@@ -625,13 +663,23 @@ export function withGovernor(
             exitCode: 0,
           });
         }
-        return Effect.succeed({
-          // `git log -1 --format=%cI` answers the configured commit time (the
-          // sweep's commit-liveness signal); every other call answers "main".
-          stdout: request.args?.[0] === "log" ? (input.latestCommitIso ?? "") : "main",
-          stderr: "",
-          exitCode: 0,
-        });
+        // `git log -1 --format=%cI` answers the configured commit time (the
+        // sweep's commit-liveness signal). A `--not` in the args makes it the
+        // BRANCH-SCOPED read (t3o-10, D4): commits unique to the card's branch,
+        // which is a different answer from the worktree tip whenever a base
+        // sync has fast-forwarded a sibling's merge in. Every other call
+        // answers "main".
+        if (request.args?.[0] === "log") {
+          const branchScoped = request.args.includes("--not");
+          return Effect.succeed({
+            stdout: branchScoped
+              ? (input.latestBranchCommitIso ?? input.latestCommitIso ?? "")
+              : (input.latestCommitIso ?? ""),
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+        return Effect.succeed({ stdout: "main", stderr: "", exitCode: 0 });
       },
     } as unknown as GitVcsDriver.GitVcsDriver["Service"];
 

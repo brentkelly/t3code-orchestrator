@@ -223,6 +223,19 @@ export function BoardCardThreadPane({
                           className="size-2 shrink-0 rounded-full bg-info"
                         />
                       </BoardHint>
+                    ) : link.threadState === "failed" ? (
+                      // A dead provider session (t3o-10) reads as idle if it
+                      // falls through to the generic glyph, which is the lie
+                      // this card set out to remove. Red, the colour the thread
+                      // list and the activity rail already give a failure — not
+                      // a work-state colour, because no work is happening.
+                      <BoardHint label="Failed">
+                        <span
+                          aria-label="Failed"
+                          role="img"
+                          className="size-2 shrink-0 rounded-full bg-destructive"
+                        />
+                      </BoardHint>
                     ) : (
                       <MessageSquareIcon className="size-3 shrink-0 opacity-70" />
                     )}

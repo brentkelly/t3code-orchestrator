@@ -93,7 +93,7 @@ import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { forkParked } from "../serverActivation.ts";
+import { forkParked, ServerActivation } from "../serverActivation.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
 import { boardSnapshotQueryMethodsOf } from "./projection.ts";
@@ -210,8 +210,20 @@ function providerFailureDetail(payload: unknown): string {
 /** Whether a step's thread is still doing live work — an active turn or a
     pending question a human can still answer. A present-but-idle thread (turn
     ended, session reaped) is NOT alive for supervision purposes: its step
-    settled without completing, which is the death path. */
+    settled without completing, which is the death path.
+ *
+    A session upstream marked `error` is dead whatever else the shell still says
+    (t3o-10, D1) — the same rule the thread list reads to show `Failed`
+    (`resolveSidebarThreadStatus`), so the supervisor, the card and the thread
+    list can never disagree about whether a thread is alive. This is the shape
+    a restart leaves behind: `reconcileProviderSessions` errors the orphaned
+    session, but the killed turn's id lingers on the projection, so measuring
+    liveness by `activeTurnId` alone reads a corpse as mid-turn and waits
+    forever for a `turn.completed` that died with the process. A pending
+    question cannot be answered in a dead session either, so `error` outranks
+    that too. */
 function threadIsAlive(shell: OrchestrationThreadShell): boolean {
+  if (shell.session?.status === "error") return false;
   return (
     shell.hasPendingUserInput || (shell.session !== null && shell.session.activeTurnId !== null)
   );
@@ -256,6 +268,13 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const pullRequests = yield* BoardPullRequestGateway;
   const setupRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  // The activation boundary the boot reconcile waits on (t3o-10, D3). Captured
+  // at CONSTRUCTION, where the reference is in scope (`activationLayer` is
+  // provided to the runtime services layer), because `reconcile` itself runs on
+  // the worker fiber in the caller's context. It is a `Context.Reference`
+  // defaulting to `undefined`, so every test that wires no activation waits for
+  // nothing.
+  const serverActivation = yield* ServerActivation;
 
   const commandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)));
@@ -442,15 +461,31 @@ const make = Effect.gen(function* () {
     return Number.isFinite(a) && Number.isFinite(b) && a > b;
   };
 
-  /** The latest commit time (strict ISO 8601) on the worktree's HEAD, or null on
-      any error / empty history — a new commit since the last nudge is progress
-      (D2). Best-effort: git failure never blocks recovery. */
-  const latestCommitIso = (cwd: string) =>
+  /** The latest commit time (strict ISO 8601) of a commit unique to the card's
+      OWN branch, or null on any error / no such commit — a new commit since the
+      last nudge is progress (D2). Best-effort: git failure never blocks
+      recovery.
+   *
+      Scoped with `--not <base>` (t3o-10, D4) rather than reading the worktree
+      tip. A base sync fast-forwards commits that are reachable from the base
+      into the card's branch — a sibling card's squash merge, most often — and
+      the unscoped tip read every one of those as this agent's heartbeat, so a
+      dead build step re-armed its watchdog for another `timeoutMs` for as long
+      as siblings kept merging. Commits reachable from the base are excluded by
+      construction; everything the agent itself committed is kept, including a
+      merge commit its own sync-base step created, which IS agent work.
+   *
+      An unresolvable base ref (git exits 128) answers null, the same as "no
+      such commit": the heartbeat cannot be measured, so it shields nothing and
+      the step falls back to the todo-advance signal and the nudge ladder. That
+      direction is deliberate — the alternative, reading the tip when the scoped
+      read fails, is the exact defect this replaced. */
+  const latestBranchCommitIso = (cwd: string, baseRefName: string) =>
     git
       .execute({
         operation: "boardSupervisor.progressCommit",
         cwd,
-        args: ["log", "-1", "--format=%cI"],
+        args: ["log", "-1", "--format=%cI", "HEAD", "--not", `refs/heads/${baseRefName}`],
         allowNonZeroExit: true,
       })
       .pipe(
@@ -485,10 +520,14 @@ const make = Effect.gen(function* () {
     if (state.lastNudgeAt === null) return false;
     const todo = yield* threadTodoState(state.threadId);
     if (todo?.advancedAt != null && isAfter(todo.advancedAt, state.lastNudgeAt)) return true;
-    // A commit counts too (D2); only a build-mode step has a worktree to inspect.
+    // A commit counts too (D2); only a build-mode step has a worktree to
+    // inspect, and only a commit unique to the card's branch is its agent's
+    // work (t3o-10, D4) — otherwise a sibling's merge, synced in from the base,
+    // would reset this card's stall counter.
     const worktreePath = card.worktree?.path ?? null;
-    if (state.mode !== "build" || worktreePath === null) return false;
-    const committedAt = yield* latestCommitIso(worktreePath);
+    const baseRefName = card.worktree?.baseRefName ?? null;
+    if (state.mode !== "build" || worktreePath === null || baseRefName === null) return false;
+    const committedAt = yield* latestBranchCommitIso(worktreePath, baseRefName);
     return committedAt !== null && isAfter(committedAt, state.lastNudgeAt);
   });
 
@@ -4049,6 +4088,21 @@ const make = Effect.gen(function* () {
   );
 
   const reconcile = Effect.gen(function* () {
+    // Read the world only once the server is ACTIVATED (t3o-10, D3). This item
+    // is enqueued from `start`, which runs in the `reactors.start` startup
+    // phase — one phase EARLIER than upstream's `provider-sessions.reconcile`,
+    // which is what marks a session orphaned by a restart `error`. Reading
+    // before that phase means every thread shell still shows its killed turn as
+    // active, so a dead step reads alive and resume-watches forever.
+    //
+    // The wait is here rather than on the ordering of two upstream startup
+    // phases: an upstream sync that reshuffles them would silently restore the
+    // bug with no test that could catch it. `ServerActivation` is a
+    // `Context.Reference` defaulting to undefined, so wherever activation is
+    // not wired (every test but the one that drives this) the await is absent.
+    // The item is still ENQUEUED first, so live events stay queued behind it
+    // and the "serialised ahead of live events" guarantee is untouched.
+    if (serverActivation !== undefined) yield* serverActivation;
     // Sweep cached todo rows whose thread or link no longer exists (t3o-18,
     // AC 20). The cache is a projection with no event to un-apply, so a row can
     // outlive its link when a delete lands while the server is down; a single
@@ -4292,8 +4346,9 @@ const make = Effect.gen(function* () {
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined || card.archivedAt !== null) continue;
       const worktreePath = card.worktree?.path ?? null;
-      if (state.mode === "build" && worktreePath !== null) {
-        const committedAt = yield* latestCommitIso(worktreePath);
+      const baseRefName = card.worktree?.baseRefName ?? null;
+      if (state.mode === "build" && worktreePath !== null && baseRefName !== null) {
+        const committedAt = yield* latestBranchCommitIso(worktreePath, baseRefName);
         const committedMs = committedAt === null ? Number.NaN : Date.parse(committedAt);
         if (Number.isFinite(committedMs) && nowMs - committedMs <= state.timeoutMs) continue;
       }
