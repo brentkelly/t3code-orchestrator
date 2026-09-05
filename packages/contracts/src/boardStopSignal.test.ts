@@ -47,6 +47,43 @@ describe("boardTextEndsWithQuestion", () => {
     ).toBe(false);
   });
 
+  it("ignores a question mark anywhere inside a multi-line fenced block", () => {
+    // The whole block has to go, not just its first line: a lazy regex body
+    // stops at the first newline and leaks the rest into the question window.
+    expect(
+      boardTextEndsWithQuestion(
+        [
+          "Ran the check.",
+          "",
+          "```sh",
+          "set -euo pipefail",
+          "",
+          "grep -rn 'which one?' src/",
+          "echo done",
+          "```",
+          "",
+          "All clean.",
+        ].join("\n"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not let a nested fence of the other character close the block", () => {
+    expect(
+      boardTextEndsWithQuestion(
+        ["~~~md", "```", "Which one?", "```", "~~~", "", "Done."].join("\n"),
+      ),
+    ).toBe(false);
+  });
+
+  it("still sees a question that follows a closed fenced block", () => {
+    expect(
+      boardTextEndsWithQuestion(
+        ["```sh", "pnpm install", "```", "", "Which lockfile should I commit?"].join("\n"),
+      ),
+    ).toBe(true);
+  });
+
   it("ignores a dangling fence that is never closed", () => {
     expect(boardTextEndsWithQuestion("Here is the diff.\n\n```diff\n- is this right?\n")).toBe(
       false,

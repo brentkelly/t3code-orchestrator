@@ -42,12 +42,43 @@ const ASK_PHRASES = [
   "which would you prefer",
 ] as const;
 
-/** Fenced blocks (``` or ~~~), opened and closed or opened and left dangling at
-    the end of the message — a truncated fence must still swallow its contents. */
-const FENCED_BLOCK = /^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\1[^\n]*$|$)/gm;
 /** Inline code spans, including the double-backtick form that can contain a
     single backtick. */
 const INLINE_CODE = /`{1,2}[^`\n]*`{1,2}/g;
+/** A fence opener or closer: three or more backticks or tildes on their own
+    line (an info string after the opener is allowed). */
+const FENCE = /^[ \t]*(`{3,}|~{3,})/;
+
+/**
+ * Drop fenced code blocks, keeping the prose around them.
+ *
+ * Line-wise rather than by regex on purpose. The regex form has to express "up
+ * to the matching closer, or the end of the message if the fence was never
+ * closed", and under the multiline flag every `$` in it also matches at every
+ * line END — so a lazy body stops at the first newline and the rest of the block
+ * leaks straight into the question window. Walking the lines says exactly what
+ * it means and cannot be read two ways.
+ *
+ * A fence left open at the end swallows the remainder, which is the right
+ * reading: whatever follows an unterminated fence is code the agent was still
+ * writing, not a question it was asking.
+ */
+function stripFencedBlocks(text: string): string {
+  const kept: Array<string> = [];
+  let fence: string | null = null;
+  for (const line of text.split("\n")) {
+    const marker = FENCE.exec(line)?.[1];
+    if (fence === null) {
+      if (marker === undefined) kept.push(line);
+      else fence = marker[0]!; // the fence CHARACTER; a closer may be longer
+      continue;
+    }
+    // Only a fence of the same character closes the block, so a ``` inside a
+    // ~~~ block stays code.
+    if (marker !== undefined && marker[0] === fence) fence = null;
+  }
+  return kept.join("\n");
+}
 /** Trailing markdown emphasis / list punctuation, so `**Which one?**` and
     `Which one?*` both end in a question mark once trimmed. */
 const TRAILING_MARKUP = /[*_~\s>]+$/;
@@ -62,7 +93,7 @@ const HEADING = /^[ \t]*#{1,6}[ \t]+(.+)$/gm;
  * for `recoveryDecision`.
  */
 export function boardTextEndsWithQuestion(text: string): boolean {
-  const prose = text.replace(FENCED_BLOCK, "\n").replace(INLINE_CODE, " ");
+  const prose = stripFencedBlocks(text).replace(INLINE_CODE, " ");
   const window = prose.length > TAIL_WINDOW ? prose.slice(-TAIL_WINDOW) : prose;
   if (window.trim().length === 0) return false;
 

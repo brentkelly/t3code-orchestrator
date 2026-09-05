@@ -29,6 +29,7 @@ import {
   settingsWith,
   stepCompleted,
   turnCompleted,
+  turnStarted,
   userInputRequested,
   withGovernor,
   type Harness,
@@ -160,6 +161,52 @@ it.effect("a human turn on the parked thread puts the step back to running", () 
       assert.strictEqual(resumed?.status, "running");
       // A human's own turn is not a board invocation, so it charges nothing.
       assert.strictEqual(resumed?.attempt, 1);
+    }),
+  );
+});
+
+it.effect("answering a STRUCTURED question resumes the step, with no turn-start event", () => {
+  const messages = new Map<string, string>();
+  return withGovernor(planningBoard("picker", messages), ({ pumpDomain, pumpRuntime, board }) =>
+    Effect.gen(function* () {
+      const threadId = yield* startPlanning({ pumpDomain, board }, "picker");
+      yield* pumpRuntime(userInputRequested(threadId));
+      assert.strictEqual(
+        boardCardStepState(yield* board, BoardCardId.make("picker"))?.status,
+        "awaiting-input",
+      );
+
+      // A picker answer emits `thread.user-input-response-requested`, which goes
+      // straight to the provider — NO `thread.turn-start-requested` is ever
+      // produced. Only the runtime's own `turn.started` sees this, and without
+      // it the card would keep its violet "Input needed" chip while the agent
+      // visibly worked.
+      yield* pumpRuntime(turnStarted(threadId));
+
+      const resumed = boardCardStepState(yield* board, BoardCardId.make("picker"));
+      assert.strictEqual(resumed?.status, "running");
+      assert.strictEqual(resumed?.attempt, 1);
+    }),
+  );
+});
+
+it.effect("a turn-start domain event and a turn.started for the same turn resume once", () => {
+  const messages = new Map<string, string>();
+  return withGovernor(planningBoard("both", messages), ({ pumpDomain, pumpRuntime, board }) =>
+    Effect.gen(function* () {
+      const threadId = yield* startPlanning({ pumpDomain, board }, "both");
+      messages.set(String(threadId), "Which one?");
+      yield* pumpRuntime(turnCompleted(threadId));
+
+      // A message send produces both signals. The second finds the step already
+      // running and does nothing — no second resume, no rejected dispatch.
+      yield* pumpDomain(turnStartRequested(String(threadId), 2));
+      const once = boardCardStepState(yield* board, BoardCardId.make("both"));
+      yield* pumpRuntime(turnStarted(threadId));
+      const twice = boardCardStepState(yield* board, BoardCardId.make("both"));
+
+      assert.strictEqual(twice?.status, "running");
+      assert.strictEqual(twice?.updatedAt, once?.updatedAt);
     }),
   );
 });

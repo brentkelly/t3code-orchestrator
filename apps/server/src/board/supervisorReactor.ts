@@ -3716,22 +3716,52 @@ const make = Effect.gen(function* () {
    * board's own kickoff, nudge and retune turns arrive on this same event — or
    * settled, and neither has anything to resume.
    */
+  const resumeParkedStep = Effect.fn("board-supervisor-resumeParkedStep")(function* (
+    threadId: ThreadId,
+  ) {
+    const board = yield* readBoard;
+    const found = stepThreadCard(board, threadId);
+    if (found === null) return;
+    if (found.state.status !== "stalled" && found.state.status !== "awaiting-input") return;
+    if (found.card.archivedAt !== null) return;
+    yield* dispatch({
+      type: "board.card.resume-step",
+      commandId: yield* commandId("resume-step"),
+      cardId: found.card.id,
+      stepId: found.state.stepId,
+      createdAt: yield* nowIso,
+    });
+  });
+
   const handleTurnStartRequested = Effect.fn("board-supervisor-handleTurnStartRequested")(
     function* (event: Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>) {
-      const board = yield* readBoard;
-      const found = stepThreadCard(board, event.payload.threadId);
-      if (found === null) return;
-      if (found.state.status !== "stalled" && found.state.status !== "awaiting-input") return;
-      if (found.card.archivedAt !== null) return;
-      yield* dispatch({
-        type: "board.card.resume-step",
-        commandId: yield* commandId("resume-step"),
-        cardId: found.card.id,
-        stepId: found.state.stepId,
-        createdAt: yield* nowIso,
-      });
+      yield* resumeParkedStep(event.payload.threadId);
     },
   );
+
+  /**
+   * The runtime's own "a turn is now running" signal, and the reason the resume
+   * cannot rest on `thread.turn-start-requested` alone (t3o-34, D5).
+   *
+   * That domain event is emitted for a `thread.turn.start` — a human SENDING a
+   * message. Answering a structured question is not that: it emits
+   * `thread.user-input-response-requested`, which `ProviderCommandReactor` hands
+   * straight to `respondToUserInput`, so no turn-start event is ever produced.
+   * Watching only the domain event would therefore leave a step parked by the
+   * STRUCTURED question path parked forever — a stale violet "Input needed" on a
+   * card whose agent is visibly working, which is the exact lie this change
+   * exists to remove, merely relocated.
+   *
+   * `turn.started` covers every way a turn begins — a message, a picker answer,
+   * the board's own nudge — so it is the honest signal. Both handlers funnel
+   * into the same guarded resume, and whichever arrives second finds the step
+   * already `running` and does nothing.
+   */
+  const handleTurnStarted = Effect.fn("board-supervisor-handleTurnStarted")(function* (
+    threadId: ThreadId,
+  ) {
+    yield* resumeParkedStep(threadId);
+  });
 
   const reconcile = Effect.gen(function* () {
     // Sweep cached todo rows whose thread or link no longer exists (t3o-18,
@@ -3983,6 +4013,9 @@ const make = Effect.gen(function* () {
         // EVERY input request rather than only the ones a now-deleted board tool
         // remembered to double-report.
         if (input.event.type === "user-input.requested") return handleInputRequested(threadId);
+        // A turn actually STARTING is what un-parks a step (t3o-34, D5) — see
+        // `handleTurnStarted` for why the domain turn-start event is not enough.
+        if (input.event.type === "turn.started") return handleTurnStarted(threadId);
         return Effect.void;
       }
       case "reconcile":
@@ -4050,6 +4083,10 @@ const make = Effect.gen(function* () {
         // agent question, which is what re-parks a step on the gate.
         if (event.type === "user-input.requested")
           return worker.enqueue({ source: "runtime", event });
+        // `turn.started` rides the same stream (t3o-34, D5): the only signal
+        // that catches a step un-parked by a STRUCTURED question being answered,
+        // which produces no turn-start domain event at all.
+        if (event.type === "turn.started") return worker.enqueue({ source: "runtime", event });
         // session.started matters only for a thread orphaned by a rejected
         // admit — the durable delivery point for its turn interrupt.
         if (event.type === "session.started" && orphanedThreads.has(String(event.threadId))) {

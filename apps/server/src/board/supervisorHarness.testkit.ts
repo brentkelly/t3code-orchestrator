@@ -797,6 +797,12 @@ export const cardDeleted = (
 export const turnCompleted = (threadId: ThreadId): ProviderRuntimeEvent =>
   ({ type: "turn.completed", threadId }) as unknown as ProviderRuntimeEvent;
 
+/** A turn actually beginning on a thread (t3o-34, D5) — the runtime signal that
+    catches a step un-parked by a structured question being ANSWERED, which
+    produces no turn-start domain event at all. */
+export const turnStarted = (threadId: ThreadId): ProviderRuntimeEvent =>
+  ({ type: "turn.started", threadId }) as unknown as ProviderRuntimeEvent;
+
 /** An ORDINARY agent question (t3o-18, D13): the runtime event every provider
     emits when it asks a human, with no board tool call behind it. This is what
     re-sourced `handleInputRequested` now watches. */

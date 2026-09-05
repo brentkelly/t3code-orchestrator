@@ -182,11 +182,17 @@ export function recoveryDecision(input: {
   }
   // Answer the question the agent asked, with the only answer an unattended run
   // has (t3o-34, D6). Prepended AFTER the splice above, so it reads as a reply
-  // to the turn that just ended and the outstanding-work reminder keeps the
-  // position it has always had relative to the "continue" instruction.
+  // to the question and the outstanding-work reminder keeps the position it has
+  // always had relative to the "continue" instruction.
+  //
+  // Worded around the question rather than around the turn: recovery is reached
+  // from the TIMEOUT SWEEP as well as from a completed turn, and there the
+  // agent's last message is the newest thing it said while the turn is still
+  // open. "You asked a question" is true on both paths; "your turn ended with a
+  // question" is not.
   if (input.endedWithQuestion) {
     nudgeLines.unshift(
-      `Your turn ended with a question, but this run is unattended and nobody will answer it: decide it yourself with your best judgement, record the decision, and continue.`,
+      `You asked a question, but this run is unattended and nobody will answer it: decide it yourself with your best judgement, record the decision, and continue.`,
     );
   }
   return {
