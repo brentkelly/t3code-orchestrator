@@ -2220,6 +2220,46 @@
                                           Blocked
                                         </span>
                                       </sc-if>
+                                      <sc-if
+                                        value="{{ c.conflict }}"
+                                        hint-placeholder-val="{{ false }}"
+                                      >
+                                        <span
+                                          title="{{ c.conflict.tip }}"
+                                          style="
+                                            display: inline-flex;
+                                            align-items: center;
+                                            gap: 4px;
+                                            height: 17px;
+                                            padding: 0 6px 0 5px;
+                                            flex: none;
+                                            border-radius: 5px;
+                                            background: color-mix(
+                                              in srgb,
+                                              var(--warning) 16%,
+                                              transparent
+                                            );
+                                            color: var(--warning-fg);
+                                            font: 500 10px var(--font-sans);
+                                            letter-spacing: 0.03em;
+                                            text-transform: uppercase;
+                                          "
+                                        >
+                                          <span
+                                            style="
+                                              width: 9px;
+                                              height: 9px;
+                                              flex: none;
+                                              border-radius: 99px;
+                                              border: 1.6px solid
+                                                color-mix(in srgb, var(--warning) 30%, transparent);
+                                              border-top-color: currentColor;
+                                              animation: t3spin 0.8s linear infinite;
+                                            "
+                                          ></span>
+                                          Conflicts
+                                        </span>
+                                      </sc-if>
                                     </div>
                                     <sc-if
                                       value="{{ c.hasTags }}"
@@ -3570,6 +3610,84 @@
                 >
                   {{ activeCard.title }}
                 </h2>
+              </sc-if>
+              <sc-if value="{{ mergeConflict }}" hint-placeholder-val="{{ false }}">
+                <div
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    margin: 10px 10px 0;
+                    padding: 9px 10px 9px 11px;
+                    flex: none;
+                    border: 1px solid color-mix(in srgb, var(--warning) 38%, transparent);
+                    border-radius: 10px;
+                    background: color-mix(in srgb, var(--warning) 9%, var(--card));
+                  "
+                >
+                  <span
+                    style="
+                      width: 13px;
+                      height: 13px;
+                      flex: none;
+                      border-radius: 99px;
+                      border: 2px solid color-mix(in srgb, var(--warning) 28%, transparent);
+                      border-top-color: var(--warning-fg);
+                      animation: t3spin 0.8s linear infinite;
+                    "
+                  ></span>
+                  <div
+                    style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"
+                  >
+                    <span style="font: 500 12.5px var(--font-sans); color: var(--fg)"
+                      >{{ mergeConflict.title }}</span
+                    >
+                    <span
+                      style="
+                        font: 400 11.5px/1.45 var(--font-sans);
+                        color: var(--muted-fg);
+                        text-wrap: pretty;
+                      "
+                      >{{ mergeConflict.note }}</span
+                    >
+                  </div>
+                  <button
+                    type="button"
+                    onClick="{{ mergeConflict.openThread }}"
+                    style="
+                      display: inline-flex;
+                      align-items: center;
+                      gap: 6px;
+                      height: 28px;
+                      padding: 0 10px;
+                      flex: none;
+                      border: 1px solid var(--input);
+                      border-radius: 8px;
+                      background: var(--popover);
+                      color: var(--fg);
+                      font: 500 11.5px var(--font-sans);
+                      cursor: pointer;
+                      box-shadow: var(--shadow-xs);
+                    "
+                    style-hover="background:var(--accent)"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path
+                        d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+                      ></path>
+                    </svg>
+                    View thread
+                  </button>
+                </div>
               </sc-if>
               <div style="{{ cardBodyStyle }}">
                 <sc-if value="{{ reviewPaneOpen }}" hint-placeholder-val="{{ false }}">
@@ -6270,6 +6388,7 @@
                           <button
                             type="button"
                             onClick="{{ progressCard }}"
+                            title="{{ activeCard.progressTip }}"
                             style="{{ activeCard.progressStyle }}"
                           >
                             <svg
@@ -8169,7 +8288,7 @@
         { key: "T3-186", p: "advisor", type: "Feature", status: "building", t: "waiting", title: "Server-authoritative event sourcing cleanup", brief: "Collapse the duplicate client reducer so the server event log is the single source of truth.", plan: PLAN("Event sourcing cleanup", ["Delete the client-side mirror reducer", "Replay from the server log on reconnect", "Add a determinism test over recorded fixtures"], ["apps/server/src/events/log.ts", "packages/client-runtime/src/replay.ts"]) },
         { key: "T3-182", p: "advisor", type: "Feature", status: "review", t: "working", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
         { key: "T3-180", p: "advisor", type: "bug", status: "review", title: "Compaction leaves orphaned tool-call spans", brief: "After a compaction, spans whose parent turn was summarised away keep streaming into the timeline.", plan: PLAN("Orphaned span cleanup", ["Reparent live spans onto the summary turn", "Drop spans whose turn no longer exists", "Replay test over a recorded compaction"], ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"]), pr: { n: 287, title: "fix(runtime): reparent spans across compaction", add: 244, del: 96, files: ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"], state: "In review" } },
-        { key: "T3-179", p: "advisor", type: "chore", status: "merge", title: "Pre-commit format and lint gate", brief: "Formatting drift keeps landing on main. Gate commits with the same checks CI runs.", plan: PLAN("Pre-commit gate", ["Wire lefthook with a staged-file filter", "Run oxlint + prettier on staged files only", "Document the escape hatch in CONTRIBUTING"], ["lefthook.yml", "CONTRIBUTING.md"]), pr: { n: 284, title: "chore: pre-commit format and lint", add: 96, del: 12, files: ["lefthook.yml", "package.json", "CONTRIBUTING.md"], state: "Approved" } },
+        { key: "T3-179", p: "advisor", type: "chore", status: "merge", title: "Pre-commit format and lint gate", brief: "Formatting drift keeps landing on main. Gate commits with the same checks CI runs.", t: "working", conflict: { files: 3, resolved: 1, base: "main", cur: "package.json", started: "4m ago" }, plan: PLAN("Pre-commit gate", ["Wire lefthook with a staged-file filter", "Run oxlint + prettier on staged files only", "Document the escape hatch in CONTRIBUTING"], ["lefthook.yml", "CONTRIBUTING.md"]), pr: { n: 284, title: "chore: pre-commit format and lint", add: 96, del: 12, files: ["lefthook.yml", "package.json", "CONTRIBUTING.md"], state: "Approved" } },
         { key: "T3-171", p: "advisor", type: "chore", status: "done", title: "Diff panel scroll fade", brief: "Rows now fade under the sticky header instead of cutting hard.", plan: PLAN("Diff panel scroll fade", ["Reuse the chat timeline mask", "Respect the scrollbar gutter"], ["apps/web/src/components/DiffPanel.tsx"]), pr: { n: 276, title: "fix(diff): scroll fade under header", add: 41, del: 9, files: ["apps/web/src/components/DiffPanel.tsx", "apps/web/src/index.css"], state: "Merged" } },
         { key: "T3-168", p: "advisor", type: "bug", status: "done", title: "Fix knowledge capture skill lookup", brief: "Skill ids were resolved case-sensitively, so captures silently no-oped.", plan: PLAN("Skill lookup fix", ["Normalize ids at the registry boundary", "Add a regression test"], ["packages/shared/src/skills.ts"]), pr: { n: 268, title: "fix: normalize skill ids", add: 28, del: 6, files: ["packages/shared/src/skills.ts"], state: "Merged" } },
         { key: "MW-42", p: "web", type: "Feature", status: "backlog", title: "Marketing site: pricing comparison table", brief: "Three tiers, sticky header row on scroll." },
@@ -8448,6 +8567,7 @@
             status: c.status,
             workflow: c.workflow || "full",
             tstate: c.t || "stopped",
+            conflict: c.conflict || null,
             title: c.title,
             brief: "<p style=\"margin:0 0 8px\">" + c.brief + "</p>",
             depKeys: c.deps || [],
@@ -8572,6 +8692,21 @@
           const th = this.threadFor(c);
           if (!th) return null;
           const kind = th.kind;
+          if (kind === "conflict") {
+            const cf = c.conflict;
+            return {
+              summary:
+                "The merge into " + cf.base + " stopped on " + cf.files +
+                " conflicting files. Replaying the branch hunk by hunk — " +
+                cf.resolved + " resolved, currently on " + cf.cur + ".",
+              question:
+                th.state === "waiting"
+                  ? cf.cur + " has competing changes on both sides. Keep the branch version, or take " + cf.base + "?"
+                  : "",
+              label: "Conflict thread",
+              state: th.state,
+            };
+          }
           const rs = kind === "review" ? this.reviewState(c) : null;
           return {
             summary:
@@ -8752,6 +8887,13 @@
           }
           this._rv[c.key] = rv;
           return rv;
+        }
+
+        // A merge that hit conflicts hands the worktree back to an agent thread. The
+        // card holds in Ready for merge until every hunk is resolved.
+        conflictFor(c) {
+          if (!c || c.status !== "merge" || !c.conflict) return null;
+          return c.conflict;
         }
 
         reviewState(c) {
@@ -9147,7 +9289,9 @@
                 ? "build"
                 : c.status === "review"
                   ? "review"
-                  : null;
+                  : c.status === "merge" && c.conflict
+                    ? "conflict"
+                    : null;
           if (!kind) return null;
           return { kind, state: c.tstate || "stopped", title: c.title, id: c.id };
         }
@@ -9627,6 +9771,7 @@
             const stacked = plans.length > 0;
             const planThreads = plans.filter((p) => !!this.threadFor(p)).length;
             const threadCount = (th ? 1 : 0) + planThreads;
+            const cf = this.conflictFor(c);
             const rs = this.reviewState(c);
             const review = rs
               ? {
@@ -9678,6 +9823,13 @@
               : null;
             return {
               review,
+              conflict: cf
+                ? {
+                    tip:
+                      "Resolving merge conflicts against " + cf.base + " — " +
+                      cf.resolved + " of " + cf.files + " files done",
+                  }
+                : null,
               id: c.id,
               isCard: true,
               isPlaceholder: false,
@@ -9766,7 +9918,7 @@
                 e.stopPropagation();
                 this.setState({ drill: c.id, activeId: null });
               },
-              working,
+              working: working && !cf,
               awaiting,
               queued: !!qi,
               queueLabel: qi ? qi.label : "",
@@ -10016,6 +10168,11 @@
             const wf = this.workflowOf(active);
             const wfLocked = this.workflowLocked(active);
             const isPrimary = !!PRIMARY_ACTIONS[active.status];
+            const cfNow = this.conflictFor(active);
+            // Conflicts hold the merge: the action stays visible but inert until the
+            // resolving thread has cleared every file.
+            const cfHeld = !!cfNow && cfNow.resolved < cfNow.files;
+            const held = blocked || cfHeld;
             // A finished build can also skip review and hand its PR straight to merge.
             const canHotfix =
               active.status === "building" &&
@@ -10084,11 +10241,16 @@
                   ";color:" +
                   (w.id === wf.id ? "var(--fg)" : "var(--muted-fg)"),
               })),
+              progressTip: cfHeld
+                ? "Held until the conflict thread clears all " + cfNow.files + " files"
+                : blocked
+                  ? "Blocked by dependencies"
+                  : "",
               progressStyle:
                 "display:inline-flex;align-items:center;justify-content:center;gap:7px;height:34px;padding:0 12px;border-radius:8px;font:500 13px var(--font-sans);cursor:" +
-                (blocked ? "not-allowed" : "pointer") +
+                (held ? "not-allowed" : "pointer") +
                 ";opacity:" +
-                (blocked ? "0.5" : "1") +
+                (held ? "0.5" : "1") +
                 ";box-shadow:var(--shadow-xs);" +
                 (isPrimary
                   ? "border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg)"
@@ -10883,6 +11045,15 @@
           const backCard = st.back ? st.cards.find((c) => c.id === st.back.activeId) : null;
           const artifact = st.artifact;
           return {
+            mergeConflict: (() => {
+              const cf = active ? this.conflictFor(active) : null;
+              if (!cf) return null;
+              return {
+                title: "Resolving conflicts against " + cf.base,
+                note: "The merge holds until the thread finishes.",
+                openThread: setPane("thread"),
+              };
+            })(),
             paneTabs: hasThreadPane,
             threadTabStyle: paneBtn(pane === "thread", threadLocked),
             threadTabTitle: threadLocked
@@ -11261,6 +11432,8 @@
               }),
             progressCard: () => {
               if (!active || this.isBlocked(active)) return;
+              const cfg = this.conflictFor(active);
+              if (cfg && cfg.resolved < cfg.files) return;
               const next = this.nextStage(active);
               if (next) this.setStatus(active.id, next.id);
             },
