@@ -99,6 +99,7 @@ function makeStepStateFor(cardId: string): BoardCardStepState {
     threadId: ThreadId.make("thread-live"),
     status: "running",
     slotHeld: true,
+    forceStart: false,
     startedAt: NOW,
     updatedAt: NOW,
   };
@@ -584,6 +585,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
                   threadId: ThreadId.make("thread-1"),
                   status: "running" as const,
                   slotHeld: true,
+                  forceStart: false,
                   startedAt: NOW,
                   updatedAt: NOW,
                 },
@@ -1620,11 +1622,13 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           status === "running" || status === "awaiting-input" ? ThreadId.make("thread-1") : null,
         status,
         slotHeld: status === "running" || status === "awaiting-input",
+        forceStart: false,
         startedAt: status === "running" || status === "awaiting-input" ? NOW : null,
         updatedAt: NOW,
       });
       const selectCard = makeCard({ id: "card-select", stage: "building" });
       const admitCard = makeCard({ id: "card-admit", stage: "building" });
+      const forceStartCard = makeCard({ id: "card-force-start", stage: "building" });
       const awaitCard = makeCard({ id: "card-await", stage: "building" });
       const recoverCard = makeCard({ id: "card-recover", stage: "building" });
       const resumeCard = makeCard({ id: "card-resume", stage: "building" });
@@ -1655,6 +1659,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             worktreeCard,
             selectCard,
             admitCard,
+            forceStartCard,
             awaitCard,
             recoverCard,
             resumeCard,
@@ -1666,6 +1671,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           plans: [readyPlan, ...splitPlans],
           stepStates: [
             makeStepState("card-admit", "pending"),
+            // force-start-step only accepts a step actually queued for a slot.
+            makeStepState("card-force-start", "queued"),
             makeStepState("card-await", "running"),
             makeStepState("card-recover", "running"),
             // resume-step only accepts a stalled step (t3o-17, D3).
@@ -1895,6 +1902,12 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           stepId: "s1",
           admitted: true,
           threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
+        "board.card.force-start-step": {
+          type: "board.card.force-start-step",
+          commandId: CommandId.make("cmd-force-start"),
+          cardId: BoardCardId.make("card-force-start"),
           createdAt: NOW,
         },
         "board.card.await-step-input": {
@@ -2463,6 +2476,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       threadId: null,
       status,
       slotHeld: status === "running",
+      forceStart: false,
       startedAt: status === "running" ? NOW : null,
       updatedAt: NOW,
     }) as const satisfies BoardCardStepState;

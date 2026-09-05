@@ -708,6 +708,84 @@ describe("BoardCardDetailPanel", () => {
   });
 });
 
+describe("BoardCardDetailPanel queued banner (t3o-33)", () => {
+  const queued = {
+    position: 2,
+    total: 3,
+    ahead: 1,
+    running: 3,
+    cap: 3,
+    startsNext: false,
+    label: "Queued #2",
+    headline: "Queued #2 for build",
+    detail: "3 of 3 agents busy · 1 task ahead. It starts on its own when an agent frees up.",
+  };
+
+  // The bug this fixes: a queued card opened on the planning conversation it
+  // arrived with and said nothing at all about why nothing was happening.
+  it("says it is queued, where, and why, with both overrides", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        projectName="P"
+        queueInfo={queued}
+        onQueueForceStart={() => {}}
+        onQueueMoveToFront={() => {}}
+      />,
+    );
+    expect(html).toContain("Queued #2 for build");
+    expect(html).toContain("3 of 3 agents busy · 1 task ahead.");
+    expect(html).toContain("It starts on its own when an agent frees up.");
+    expect(html).toContain("Start now");
+    expect(html).toContain("Move to front");
+  });
+
+  // Drag order is the governor's last tiebreak, so the reorder often cannot
+  // improve the position at all. The container passes no handler then, and an
+  // absent button is the honest answer.
+  it("omits Move to front when the container offers no reorder", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        projectName="P"
+        queueInfo={queued}
+        onQueueForceStart={() => {}}
+      />,
+    );
+    expect(html).toContain("Start now");
+    expect(html).not.toContain("Move to front");
+  });
+
+  it("holds Start now while the request is in flight", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        projectName="P"
+        queueInfo={queued}
+        queueForceStartPending
+        onQueueForceStart={() => {}}
+      />,
+    );
+    expect(html).toContain("Starting…");
+    expect(html).not.toContain(">Start now<");
+  });
+
+  it("says nothing about a queue on a card that is not queued", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        projectName="P"
+      />,
+    );
+    expect(html).not.toContain("for build");
+    expect(html).not.toContain("Start now");
+  });
+});
+
 describe("initialBoardCardPane", () => {
   it("keeps every stage on the thread when the board has no review role", () => {
     const stages = BOARD_SEED_STAGES.filter(

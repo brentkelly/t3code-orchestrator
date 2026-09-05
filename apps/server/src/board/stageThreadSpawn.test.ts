@@ -194,6 +194,7 @@ const leftoverStep = (stepId: string): BoardCardStepState => ({
   threadId: ThreadId.make("thread-dead-old"),
   status: "stalled",
   slotHeld: false,
+  forceStart: false,
   startedAt: NOW,
   updatedAt: NOW,
 });

@@ -662,7 +662,13 @@ export function withGovernor(
         // clobber the recipe snapshot the reactor stamped, whereas the reactor
         // reads those triggers from the event payload / the live model.
         const projectExternal = (event: OrchestrationEvent) =>
-          isBoardEvent(event) && event.type === "board.card-step-completed"
+          isBoardEvent(event) &&
+          (event.type === "board.card-step-completed" ||
+            // Same reason (t3o-33): the override lands on the step row through
+            // the projection, and `schedule` reads it from there. Pumping the
+            // event without folding it in would test a row that never carried
+            // the flag.
+            event.type === "board.card-step-force-start-requested")
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),
@@ -738,6 +744,20 @@ export const stepCompleted = (
         completedAt: NOW,
       },
     },
+  }) as unknown as OrchestrationEvent;
+
+/** A human's force-start request as the decider emits it (t3o-33): the whole
+    step row with the override set. The pump projects it into the model before
+    the reactor observes it, exactly as the projection pipeline does in
+    production, so `schedule` reads a row that really carries `forceStart`. */
+export const forceStartRequested = (
+  state: BoardCardStepState,
+  sequence: number,
+): OrchestrationEvent =>
+  ({
+    type: "board.card-step-force-start-requested",
+    sequence,
+    payload: { cardId: state.cardId, state: { ...state, forceStart: true } },
   }) as unknown as OrchestrationEvent;
 
 export const cardArchived = (card: BoardCard, sequence: number): OrchestrationEvent =>

@@ -181,6 +181,7 @@ const liveStep = (
   threadId: null,
   status: "running",
   slotHeld: true,
+  forceStart: false,
   startedAt: NOW,
   updatedAt: NOW,
   ...overrides,
