@@ -271,8 +271,9 @@ const make = Effect.gen(function* () {
   // The activation boundary the boot reconcile waits on (t3o-10, D3). Captured
   // at CONSTRUCTION, where the reference is in scope (`activationLayer` is
   // provided to the runtime services layer), because `reconcile` itself runs on
-  // the worker fiber in the caller's context. A `Context.Reference` defaulting
-  // to `undefined`, so every test that wires no activation gets no wait.
+  // the worker fiber in the caller's context. It is a `Context.Reference`
+  // defaulting to `undefined`, so every test that wires no activation waits for
+  // nothing.
   const serverActivation = yield* ServerActivation;
 
   const commandId = (tag: string) =>
