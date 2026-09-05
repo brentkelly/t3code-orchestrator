@@ -30,6 +30,7 @@ import {
   stepCompleted,
   turnCompleted,
   turnStarted,
+  userInputCancelled,
   userInputRequested,
   userInputResolved,
   withGovernor,
@@ -261,6 +262,31 @@ it.effect("a synthetic turn.started does NOT un-park a step", () => {
       const still = boardCardStepState(yield* board, BoardCardId.make("synthetic"));
       assert.strictEqual(still?.status, "awaiting-input");
       assert.strictEqual(still?.awaitingReason, "stopped");
+    }),
+  );
+});
+
+// The mirror of the `turn.started` exclusion, and the reason the resume reads
+// the payload rather than trusting the event type. Every adapter resolves its
+// pending-input deferred on teardown and emits `user-input.resolved` with an
+// empty answer set, so "resolved" alone is satisfied by stopping a thread. A
+// cancelled question is still unanswered, so the card must keep saying so.
+it.effect("a CANCELLED structured question does not un-park the step", () => {
+  const messages = new Map<string, string>();
+  return withGovernor(planningBoard("cancelled", messages), ({ pumpDomain, pumpRuntime, board }) =>
+    Effect.gen(function* () {
+      const threadId = yield* startPlanning({ pumpDomain, board }, "cancelled");
+      yield* pumpRuntime(userInputRequested(threadId));
+      assert.strictEqual(
+        boardCardStepState(yield* board, BoardCardId.make("cancelled"))?.status,
+        "awaiting-input",
+      );
+
+      yield* pumpRuntime(userInputCancelled(threadId));
+
+      const still = boardCardStepState(yield* board, BoardCardId.make("cancelled"));
+      assert.strictEqual(still?.status, "awaiting-input");
+      assert.strictEqual(still?.awaitingReason, "question");
     }),
   );
 });

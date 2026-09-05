@@ -3718,33 +3718,28 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A human takes a parked step back over (t3o-17 D3; t3o-34 D5).
+   * Whether a `user-input.resolved` carries a real ANSWER, or is the same event
+   * a CANCELLATION emits (t3o-34, D5).
    *
-   * `stalled` means "nobody is working on this and nobody will until you act" —
-   * and sending a turn into the step's own thread IS the human acting. Until
-   * now the card kept its stop banner, its reason and its dark dot while the
-   * thread it points at was visibly working again; the only things that cleared
-   * them were restarting the stage (which throws the conversation away) and the
-   * agent completing the step.
+   * Every adapter resolves its pending-input deferred on teardown and falls
+   * through to the same emit — `ClaudeAdapter`'s `settleAsAborted` succeeds the
+   * deferred with `{}` and only checks `aborted` AFTER the event goes out;
+   * Grok and OpenCode send `{}` on their non-answered branches too. So
+   * "resolved" alone means "no longer pending", which stopping a thread
+   * satisfies just as well as answering it.
    *
-   * So a turn requested on a stalled step's thread puts the step back to
-   * `running`: the banner and the reason go, the dot re-lights, and supervision
-   * resumes on the thread the human just restarted — a turn that ends without
-   * completing the step is nudged as usual, and one that never starts re-stalls
-   * with the provider's new reason (`failStepAtSpawn`).
-   *
-   * The same argument holds, word for word, for `awaiting-input` (t3o-34, D5),
-   * and it is load-bearing now that the status paints the card: a step parked
-   * for a question would otherwise keep asking for an answer the human has
-   * already given, which is the same lie in the other direction. It also closes
-   * a hole that predates this change — a step parked by the STRUCTURED question
-   * path never returned to `running` either; it was invisible only because the
-   * card read the thread's flag instead of the step's status.
-   *
-   * Only from those two. Every other status is either already supervised — the
-   * board's own kickoff, nudge and retune turns arrive on this same event — or
-   * settled, and neither has anything to resume.
+   * Resuming on that would be the hazard `turn.started` was dropped for, in a
+   * new place: a stopped thread would re-light the card's blue dot with nobody
+   * having answered anything, and on a `stalled` step it would zero
+   * `stallCount` and re-arm the sweep, undoing a t3o-17 escalation. An empty
+   * answer set is the one thing that separates the two, and it is the right
+   * reading either way — a cancelled question is still unanswered, so the card
+   * should keep saying so.
    */
+  const isAnsweredUserInput = (
+    event: Extract<ProviderRuntimeEvent, { type: "user-input.resolved" }>,
+  ): boolean => Object.keys(event.payload.answers).length > 0;
+
   /**
    * A parked step goes back to work (t3o-17 D3; t3o-34 D5). Exactly two signals
    * reach here, and the pair is deliberate:
@@ -3754,11 +3749,12 @@ const make = Effect.gen(function* () {
    *   sent a message. This is t3o-17's signal, and it covers every step that
    *   parked between turns: a stall, or a turn that ended with a question in
    *   prose.
-   * - `user-input.resolved` (runtime) — a structured question was ANSWERED.
-   *   That question is raised from INSIDE a running turn (the adapter's
-   *   `canUseTool` path) and answering it merely resolves the deferred the turn
-   *   is blocked on, so the same turn carries on: no turn is ever asked for and
-   *   none starts. This is the only signal that sees it.
+   * - `user-input.resolved` (runtime) — a structured question was ANSWERED, as
+   *   distinct from cancelled (`isAnsweredUserInput`). That question is raised
+   *   from INSIDE a running turn (the adapter's `canUseTool` path) and answering
+   *   it merely resolves the deferred the turn is blocked on, so the same turn
+   *   carries on: no turn is ever asked for and none starts. This is the only
+   *   signal that sees it.
    *
    * The runtime's `turn.started` is deliberately NOT one of them, though it
    * looks like it belongs. Adapters synthesise it for assistant activity that
@@ -4053,8 +4049,11 @@ const make = Effect.gen(function* () {
         // remembered to double-report.
         if (input.event.type === "user-input.requested") return handleInputRequested(threadId);
         // A structured question being ANSWERED (t3o-34, D5) — the one way a
-        // parked step goes back to work that no turn-start event sees.
-        if (input.event.type === "user-input.resolved") return resumeParkedStep(threadId);
+        // parked step goes back to work that no turn-start event sees. Only an
+        // actual ANSWER counts: see `isAnsweredUserInput`.
+        if (input.event.type === "user-input.resolved") {
+          return isAnsweredUserInput(input.event) ? resumeParkedStep(threadId) : Effect.void;
+        }
         return Effect.void;
       }
       case "reconcile":

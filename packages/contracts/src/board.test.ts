@@ -1188,9 +1188,15 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(stopped?.label).toBe("Needs a human");
   });
 
-  it("ranks a stopped step above a thread question and below a stalled one", () => {
-    // Both true at once: the louder, more specific reason wins.
-    expect(attention({ stepAwaiting: "stopped", awaitingInput: true })?.reason).toBe("stopped");
+  it("shows the ANSWERABLE fact when a card has both", () => {
+    // The two are about different threads — `awaitingInput` ORs across every
+    // live thread, `stepAwaiting` describes the one live step — so both can be
+    // true at once. A question the human can click through and answer beats a
+    // chip that says only that something stopped.
+    expect(attention({ stepAwaiting: "stopped", awaitingInput: true })?.reason).toBe("input");
+    // …but a stopped step with nothing answerable still gets its amber chip.
+    expect(attention({ stepAwaiting: "stopped", awaitingInput: false })?.reason).toBe("stopped");
+    // A stall outranks both: recovery gave up, which is louder than either.
     expect(attention({ stepAwaiting: "stopped", stalled: true })?.reason).toBe("stalled");
   });
 

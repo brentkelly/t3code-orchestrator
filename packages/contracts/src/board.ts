@@ -2039,15 +2039,21 @@ export const BOARD_CARD_ATTENTION_REASONS = [
   /** The step settled and left the card where it stands: a human-in-the-loop
       build that finished, a failed step, a merge the forge refused. */
   "held",
-  /** A human-in-the-loop step ended a turn without completing and without
-      asking anything (t3o-34, D4) — nobody is working and there is nothing to
-      answer, so the card needs a human to look at it. Ranked above `input`
-      because it is the more serious of the two stops, and below `held` because
-      `held` is the settled version of the same situation. */
-  "stopped",
   /** A live thread asked the human a question (t3o-18, D13), or the step parked
       on one it asked in prose (t3o-34, D4). */
   "input",
+  /** A human-in-the-loop step ended a turn without completing and without
+      asking anything (t3o-34, D4) — nobody is working and there is nothing to
+      answer, so the card needs a human to look at it.
+   *
+      Ranked BELOW `input`, which reads backwards until you notice the two are
+      about different threads: `awaitingInput` is an OR across every live thread
+      on the card, while `stepAwaiting` describes the one live step. A card can
+      easily have both — a step that stopped quietly, and a sibling thread with a
+      real pending question — and there the answerable fact is the more useful
+      one to show. Ranking the stop first would replace a question the human can
+      click through and answer with a chip that only says something halted. */
+  "stopped",
 ] as const;
 export type BoardCardAttentionReason = (typeof BOARD_CARD_ATTENTION_REASONS)[number];
 
@@ -2211,23 +2217,30 @@ export function boardCardAttention(input: {
   }
   // The two halves of "the step parked on a human" (t3o-34, D4). Deliberately
   // NOT stage-gated the way `held` is: `held` rests on the shell across a drag
-  // back to Backlog, whereas this is cleared the moment any turn starts on the
+  // back to Backlog, whereas this is cleared the moment work resumes on the
   // step's thread — and Planning, which sits well before the build role, is the
   // stage where an agent asking in prose is most common.
-  if (card.stepAwaiting === "stopped") {
-    return {
-      reason: "stopped",
-      tone: ATTENTION_TONES.stopped,
-      label: "Needs a human",
-      detail: "The agent stopped without asking anything — this step needs a human to continue it",
-    };
-  }
+  //
+  // Anything ANSWERABLE comes first. The two facts are about different threads —
+  // `awaitingInput` ORs across every live thread on the card, `stepAwaiting`
+  // describes the one live step — so a card can have a quietly stopped step AND
+  // a sibling thread holding a real question. Showing the stop there would hide
+  // the question the human could actually answer behind a chip that says only
+  // that something halted.
   if (card.awaitingInput || card.stepAwaiting === "question") {
     return {
       reason: "input",
       tone: ATTENTION_TONES.input,
       label: "Input needed",
       detail: "A thread on this card is waiting on your answer",
+    };
+  }
+  if (card.stepAwaiting === "stopped") {
+    return {
+      reason: "stopped",
+      tone: ATTENTION_TONES.stopped,
+      label: "Needs a human",
+      detail: "The agent stopped without asking anything — this step needs a human to continue it",
     };
   }
   return null;

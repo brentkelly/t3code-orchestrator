@@ -838,8 +838,22 @@ export const turnStarted = (threadId: ThreadId): ProviderRuntimeEvent =>
 
 /** A structured question being ANSWERED (t3o-34, D5). It is raised from inside a
     running turn and answering it only resolves the deferred that turn is blocked
-    on, so no turn ever starts — this is the only signal a board sees. */
+    on, so no turn ever starts — this is the only signal a board sees.
+
+    The non-empty `answers` is the whole point: every adapter emits this same
+    event with `{}` when the question is CANCELLED rather than answered (a
+    thread stop resolves the deferred on teardown), so the payload is what tells
+    the two apart. Use `userInputCancelled` for that shape. */
 export const userInputResolved = (threadId: ThreadId): ProviderRuntimeEvent =>
+  ({
+    type: "user-input.resolved",
+    threadId,
+    payload: { answers: { "Which one?": "A" } },
+  }) as unknown as ProviderRuntimeEvent;
+
+/** A structured question CANCELLED — the same event, with the empty answer set
+    every adapter sends when a thread is stopped with a question outstanding. */
+export const userInputCancelled = (threadId: ThreadId): ProviderRuntimeEvent =>
   ({
     type: "user-input.resolved",
     threadId,
