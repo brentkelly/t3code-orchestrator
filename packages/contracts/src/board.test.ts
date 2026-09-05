@@ -100,6 +100,7 @@ const fullyPopulatedShell = {
   queued: true,
   stalled: true,
   stepRunning: true,
+  stepAwaiting: "stopped",
   held: true,
   threadState: "waiting",
   awaitingInput: true,
@@ -1048,6 +1049,7 @@ describe("cards that need a human (boardCardAttention)", () => {
     held: false,
     awaitingInput: false,
     stepRunning: false,
+    stepAwaiting: null,
     queued: false,
     archivedAt: null,
     planCount: 0,
@@ -1161,6 +1163,41 @@ describe("cards that need a human (boardCardAttention)", () => {
     // snapshot can arrive mid-flight.
     expect(attention({ held: true, stepRunning: true })).toBeNull();
     expect(attention({ held: true, queued: true })).toBeNull();
+  });
+
+  // t3o-34 D4: a step parked on a human is a card-face fact. Before this the
+  // card only learned about a waiting agent from the THREAD's pending question,
+  // so a step parked for a question asked in prose said nothing at all.
+  it("reads a step parked for a question as Input needed, in Planning as anywhere", () => {
+    const asked = attention({
+      stage: BOARD_SEED_STAGE_IDS.planning,
+      stepAwaiting: "question",
+    });
+    expect(asked?.reason).toBe("input");
+    expect(asked?.tone).toBe("attention");
+    expect(asked?.label).toBe("Input needed");
+  });
+
+  it("reads a step that stopped without asking as Needs a human", () => {
+    const stopped = attention({
+      stage: BOARD_SEED_STAGE_IDS.planning,
+      stepAwaiting: "stopped",
+    });
+    expect(stopped?.reason).toBe("stopped");
+    expect(stopped?.tone).toBe("warning");
+    expect(stopped?.label).toBe("Needs a human");
+  });
+
+  it("ranks a stopped step above a thread question and below a stalled one", () => {
+    // Both true at once: the louder, more specific reason wins.
+    expect(attention({ stepAwaiting: "stopped", awaitingInput: true })?.reason).toBe("stopped");
+    expect(attention({ stepAwaiting: "stopped", stalled: true })?.reason).toBe("stalled");
+  });
+
+  it("says nothing once the step is no longer parked", () => {
+    expect(attention({ stepAwaiting: null })).toBeNull();
+    // …and a finished card never asks for anything, whatever its flags say.
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.done, stepAwaiting: "stopped" })).toBeNull();
   });
 
   it("reads a review loop that ran out of rounds as needing a human", () => {

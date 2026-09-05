@@ -87,6 +87,7 @@ function makeStepState(id: string): BoardCardStepState {
     lastNudgeAt: null,
     baseTipAtRoundStart: null,
     lastError: null,
+    awaitingReason: "question" as const,
     prompt: "",
     providerInstanceId: ProviderInstanceId.make("codex"),
     model: "gpt-5-codex",
@@ -599,6 +600,7 @@ describe("board projector", () => {
         lastNudgeAt: null,
         baseTipAtRoundStart: null,
         lastError: null,
+        awaitingReason: "question" as const,
         // Frozen execution config on the run row (D12).
         prompt: "do it",
         providerInstanceId: ProviderInstanceId.make("codex"),
@@ -675,6 +677,28 @@ describe("board projector", () => {
         stepRunning: false,
         // A settled step is the card parking: `held` is raised here.
         held: true,
+        stepAwaiting: null,
+      });
+      // t3o-34 (D4): parking on a human is a column-card fact now, and this
+      // event emitted NO delta at all before — which is exactly how a card
+      // whose agent asked in prose went on pulsing its blue dot.
+      const awaitingEvent: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-awaiting-input",
+        payload: {
+          cardId,
+          state: { ...running, status: "awaiting-input", awaitingReason: "stopped" },
+        },
+      };
+      assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(awaitingEvent)), {
+        kind: "card-stalled",
+        sequence: awaitingEvent.sequence,
+        cardId,
+        // Parked, not stalled, not settled — and above all not running.
+        stalled: false,
+        stepRunning: false,
+        held: false,
+        stepAwaiting: "stopped",
       });
     }),
   );
@@ -691,6 +715,7 @@ describe("board projector", () => {
         lastNudgeAt: null,
         baseTipAtRoundStart: null,
         lastError: null,
+        awaitingReason: "question" as const,
         prompt: "do it",
         providerInstanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
@@ -733,6 +758,7 @@ describe("board projector", () => {
         lastNudgeAt: NOW,
         baseTipAtRoundStart: null,
         lastError: null,
+        awaitingReason: "question" as const,
         prompt: "do it",
         providerInstanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
@@ -759,6 +785,7 @@ describe("board projector", () => {
         stalled: true,
         stepRunning: false,
         held: false,
+        stepAwaiting: null,
       });
       // An ordinary retry (status running) clears the badge.
       const retryRecover: BoardEvent = {
@@ -773,6 +800,7 @@ describe("board projector", () => {
         stalled: false,
         stepRunning: true,
         held: false,
+        stepAwaiting: null,
       });
       // A fresh stage run (select-step) also clears any lingering stalled badge.
       const selected: BoardEvent = {
@@ -790,6 +818,7 @@ describe("board projector", () => {
         stalled: false,
         stepRunning: false,
         held: false,
+        stepAwaiting: null,
       });
     }),
   );

@@ -94,6 +94,7 @@ const runningState: BoardCardStepState = {
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,
+  awaitingReason: "question" as const,
   prompt: "do it",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",

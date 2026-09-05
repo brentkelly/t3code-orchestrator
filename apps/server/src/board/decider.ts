@@ -2567,6 +2567,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // against — consecutive stalls are per-step, unlike the carried
         // invocation total above.
         stallCount: 0,
+        // Resting value (t3o-34, D3): only read while the step is
+        // `awaiting-input`, and a fresh step never is.
+        awaitingReason: "question",
         lastNudgeAt: null,
         prompt: command.prompt,
         providerInstanceId: command.providerInstanceId,
@@ -2669,9 +2672,14 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not running; cannot await input.`,
         );
       }
+      // Why it is parked (t3o-34, D3) — `question` when there is something to
+      // answer (a structured pending question, an agent-reported `blocked`, or
+      // prose the stop-signal reader read as a question), `stopped` when a
+      // human-in-the-loop turn simply ended. One status, two card treatments.
       const state: BoardCardStepState = {
         ...current,
         status: "awaiting-input",
+        awaitingReason: command.reason,
         updatedAt: command.createdAt,
       };
       return {
@@ -2731,15 +2739,21 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     case "board.card.resume-step": {
       yield* requireActiveBoardCard({ board, command });
       const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
-      if (current.status !== "stalled") {
+      // T3o-34 (D5): `awaiting-input` resumes on the same signal `stalled`
+      // does. Without it a step parked for a question stays parked in the read
+      // model after the human answers, and the card keeps asking for an answer
+      // it already has — the same lie, in the other direction, that this whole
+      // change removes.
+      if (current.status !== "stalled" && current.status !== "awaiting-input") {
         return yield* invariant(
           command,
-          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not stalled; nothing to resume.`,
+          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not stalled or awaiting input; nothing to resume.`,
         );
       }
-      // A human sent a turn into the stalled step's thread (t3o-17, D3), so the step
-      // is running again and supervised again — the same status an ordinary
-      // recovery nudge returns it to, which is why it rides the same event.
+      // A human sent a turn into the parked step's thread — a stalled one
+      // (t3o-17, D3) or one awaiting input (t3o-34, D5) — so the step is running
+      // again and supervised again, the same status an ordinary recovery nudge
+      // returns it to, which is why it rides the same event.
       //
       // What it deliberately does NOT do:
       //  - `attempt` is untouched. It counts BOARD invocations (D1, and the D5
@@ -2750,10 +2764,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       //    intervening is progress, exactly as `progressed` is on a nudge, so
       //    the ladder starts its count over instead of re-escalating on the
       //    first quiet turn.
-      //  - `slotHeld` stays false. Escalation released the slot (D4) and a
-      //    resume does not re-acquire one: the governor caps runs the BOARD
-      //    spawns, and a re-acquire that the cap refused would leave the card
-      //    unable to resume at all — the worst outcome of the three.
+      //  - `slotHeld` is carried through untouched, which means different
+      //    things on the two paths and is right on both: escalation already
+      //    released the stalled step's slot (D4) and a resume must not
+      //    re-acquire one (the governor caps runs the BOARD spawns, and a
+      //    re-acquire the cap refused would leave the card unable to resume at
+      //    all); an awaiting-input step never released its slot, so it simply
+      //    keeps the place it has held all along.
       // `lastNudgeAt` moves to now so the timeout sweep measures from the
       // takeover, not from the stop the human just cleared.
       const state: BoardCardStepState = {

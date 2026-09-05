@@ -216,13 +216,18 @@ const buildingStageExecution = (step: TestBuildStep): BoardStageExecution => ({
 /** The Planning stage configured to auto-execute (t3o-15): `plan` mode, so its
     run holds no concurrency slot and needs no worktree — the shape a card
     dropped into an auto-executing Planning column runs under. */
-const planningStageExecution = (step: TestBuildStep): BoardStageExecution => ({
+const planningStageExecution = (
+  step: TestBuildStep,
+  /** The planning interview's real stance (t3o-34): asking IS the job there, so
+      the suites that drive a stopped planning agent need it on. */
+  humanInLoop = false,
+): BoardStageExecution => ({
   kind: "simple",
   autoExecute: true,
   prompt: step.prompt,
   model: { instanceId: step.providerInstanceId, model: DEFAULT_TEXT_GENERATION_MODEL },
   mode: "plan",
-  humanInLoop: false,
+  humanInLoop,
   humanInLoopWithPlan: false,
   humanInLoopWithoutPlan: false,
   autoAdvance: false,
@@ -242,6 +247,9 @@ export const settingsWith = (input: {
   /** Pass a step to make Planning auto-execute too — the plan-mode counterpart
       of `building`, for the suites that drive a card into Planning. */
   readonly planning?: TestBuildStep;
+  /** Run the Planning step human-in-the-loop, as the real planning interview
+      does (t3o-34). */
+  readonly planningHumanInLoop?: boolean;
   /** Overrides for the merge stage's config (strategy, branch cleanup, the
       conflict prompt). Absent leaves it at the compiled-in defaults, which is
       what a board nobody has configured actually resolves to. */
@@ -259,7 +267,12 @@ export const settingsWith = (input: {
     [BOARD_SEED_STAGE_IDS.building]: buildingStageExecution(input.building[0]!),
     ...(input.planning === undefined
       ? {}
-      : { [BOARD_SEED_STAGE_IDS.planning]: planningStageExecution(input.planning) }),
+      : {
+          [BOARD_SEED_STAGE_IDS.planning]: planningStageExecution(
+            input.planning,
+            input.planningHumanInLoop ?? false,
+          ),
+        }),
     ...(input.merge === undefined
       ? {}
       : {
@@ -357,6 +370,11 @@ export function withGovernor(
       string,
       { readonly advancedAt: string | null; readonly hasList: boolean }
     >;
+    /** The last ASSISTANT message per thread id (t3o-34, D2): the reactor reads
+        it to decide whether a stopped turn ended with something for a human to
+        answer. Absent threads answer "no message", which reads as "no
+        question". */
+    readonly threadMessages?: ReadonlyMap<string, string>;
     /** A `ServerConfig` layer (t3o-32): with one, a build/plan spawn stages
         the card's brief images from `<stateDir>/board/attachments`; without
         one the reactor stages nothing, as the other tests expect. */
@@ -472,6 +490,7 @@ export function withGovernor(
     } as unknown as OrchestrationEngineService["Service"];
 
     const threadTodos = input.threadTodos ?? new Map();
+    const threadMessages = input.threadMessages ?? new Map<string, string>();
     const snapshotStub = {
       getCommandReadModel: () => Ref.get(model),
       getThreadShellById: (threadId: ThreadId) =>
@@ -503,6 +522,8 @@ export function withGovernor(
               },
         );
       },
+      boardLatestAssistantText: (threadId: ThreadId) =>
+        Effect.succeed(threadMessages.get(String(threadId)) ?? null),
       boardSweepThreadTodos: () => Effect.void,
     } as unknown as ProjectionSnapshotQuery["Service"];
 
@@ -722,6 +743,10 @@ export const stepCompleted = (
   cardId: BoardCardId,
   outcome: "succeeded" | "failed" | "blocked",
   sequence: number,
+  /** Which stage's step reported. Defaults to Building, which is what almost
+      every suite drives; a planning-stage suite has to say so, because the
+      handler ignores a completion whose step is not the card's live one. */
+  stepId: string = String(BOARD_SEED_STAGE_IDS.building),
 ): OrchestrationEvent =>
   ({
     type: "board.card-step-completed",
@@ -730,7 +755,7 @@ export const stepCompleted = (
       cardId,
       completion: {
         cardId,
-        stepId: String(BOARD_SEED_STAGE_IDS.building),
+        stepId,
         outcome,
         summary: `report ${outcome}`,
         payload: null,

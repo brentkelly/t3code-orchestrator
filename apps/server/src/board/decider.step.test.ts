@@ -88,6 +88,7 @@ const stepState = (
   stageLabel: "Building",
   attempt: 1,
   stallCount: 0,
+  awaitingReason: "question",
   lastNudgeAt: null,
   ...frozenConfig,
   threadId: ThreadId.make("thread-1"),
@@ -440,6 +441,7 @@ it.effect("await-step-input only fires on a running step (D13: no retry consumed
         commandId: CommandId.make("c1"),
         cardId: card.id,
         stepId: "build",
+        reason: "question",
         createdAt: NOW,
       },
       makeReadModel({

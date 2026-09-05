@@ -66,6 +66,7 @@ const settledReviewStep = (tip: string): BoardCardStepState => ({
   lastNudgeAt: null,
   baseTipAtRoundStart: tip,
   lastError: null,
+  awaitingReason: "question" as const,
   prompt: "review it",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",

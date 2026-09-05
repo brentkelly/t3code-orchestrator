@@ -114,6 +114,9 @@ const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
   approval: <LayersIcon className="size-3" />,
   "review-held": <TriangleAlertIcon className="size-3" />,
   held: <PauseIcon className="size-3" />,
+  // Same mark as `held` (t3o-34, D4): both say "the pipeline is finished with
+  // this card and only a human moves it on", one settled and one not.
+  stopped: <PauseIcon className="size-3" />,
   input: <span className="size-2 shrink-0 rounded-full bg-attention" />,
 };
 

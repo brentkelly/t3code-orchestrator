@@ -19,6 +19,7 @@
  * sequence, and the client upsert is idempotent, so nothing is lost.
  */
 import {
+  BoardCardStepAwaitingReason,
   activeBoardCardThreadId,
   BOARD_CARD_BRIEF_BODY_KIND,
   BoardCard,
@@ -409,6 +410,10 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULLABLE in the DB: rows written before migration 030 have no value, and a
   // null already MEANS "stopped for no recorded reason" (t3o-30, D2).
   lastError: BoardCardStepState.fields.lastError,
+  // NULLABLE in the DB: rows written before migration 033 have no value, and
+  // every step that reached `awaiting-input` before t3o-34 did so through the
+  // structured-question path — which is `question` (t3o-34, D3).
+  awaitingReason: Schema.NullOr(BoardCardStepAwaitingReason),
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -1605,7 +1610,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       INSERT INTO board_card_step_state (
         card_id, step_id, step_label, stage_label, attempt, stall_count, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
-        last_error,
+        last_error, awaiting_reason,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, started_at, updated_at
       )
       VALUES (
@@ -1613,7 +1618,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.lastNudgeAt}, ${row.prompt},
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
-        ${row.lastError},
+        ${row.lastError}, ${row.awaitingReason},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.startedAt}, ${row.updatedAt}
       )
@@ -1633,6 +1638,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_options = excluded.model_options,
         base_tip_at_round_start = excluded.base_tip_at_round_start,
         last_error = excluded.last_error,
+        awaiting_reason = excluded.awaiting_reason,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -1664,6 +1670,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_options AS "modelOptions",
         base_tip_at_round_start AS "baseTipAtRoundStart",
         last_error AS "lastError",
+        awaiting_reason AS "awaitingReason",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -1673,6 +1680,33 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         started_at AS "startedAt",
         updated_at AS "updatedAt"
       FROM board_card_step_state
+    `,
+  });
+
+  /** The most recent ASSISTANT message on a thread (t3o-34, D2), or none.
+   *
+      The supervisor reads it once per step turn-end to decide whether the agent
+      stopped with something for the human to answer. Upstream's
+      `projection_thread_messages` lives in `main` and the board database is
+      ATTACHED to the same connection (`boardDatabase.ts`), so this is one query
+      on one connection with no new plumbing — and upstream migration 029's
+      `(thread_id, created_at, message_id)` index serves it directly.
+
+      A dedicated one-column, one-row read rather than
+      `ProjectionThreadMessageRepository.listByThreadId`, which returns the
+      WHOLE thread: the supervisor wants the last message, and a planning
+      interview's transcript is exactly the case where "the whole thread" is
+      expensive. */
+  const findLatestAssistantMessageText = SqlSchema.findOneOption({
+    Request: ThreadId,
+    Result: Schema.Struct({ text: Schema.String }),
+    execute: (threadId) => sql`
+      SELECT text
+      FROM projection_thread_messages
+      WHERE thread_id = ${threadId}
+        AND role = 'assistant'
+      ORDER BY created_at DESC, message_id DESC
+      LIMIT 1
     `,
   });
 
@@ -1854,6 +1888,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     upsertBoardCardStepStateRow,
     listBoardCardStepStateRows,
     findBoardCardStepErrorRow,
+    findLatestAssistantMessageText,
     deleteBoardPlansForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
@@ -2141,6 +2176,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         modelOptions: state.modelOptions === undefined ? null : JSON.stringify(state.modelOptions),
         baseTipAtRoundStart: state.baseTipAtRoundStart,
         lastError: state.lastError,
+        awaitingReason: state.awaitingReason,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -2724,6 +2760,9 @@ export function loadBoardState(
               ...stepModelOptionsPatch(row.modelOptions),
               baseTipAtRoundStart: row.baseTipAtRoundStart,
               lastError: row.lastError,
+              // A NULL column reads as `question` (t3o-34, D3): pre-033 rows
+              // could only have parked through the structured-question path.
+              awaitingReason: row.awaitingReason ?? "question",
               humanInLoop: row.humanInLoop !== 0,
               maxAttempts: row.maxAttempts,
               timeoutMs: row.timeoutMs,
@@ -2830,6 +2869,7 @@ export function withBoardShellCards(
       const stalledByCard = new Set<BoardCardId>();
       const runningByCard = new Set<BoardCardId>();
       const heldByCard = new Set<BoardCardId>();
+      const awaitingByCard = new Map<BoardCardId, BoardCardStepAwaitingReason>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
         // The second step-state field on the bounded shell (t3o-17, D3): a card
@@ -2846,6 +2886,14 @@ export function withBoardShellCards(
         // `abandoned`; `stalled` is terminal-adjacent but has its own louder
         // flag, and the shared `boardCardAttention` ranks it first regardless.
         if (isBoardTerminalStepStatus(row.status)) heldByCard.add(row.cardId);
+        // Why the step is parked on a human (t3o-34, D4). Before this the
+        // column card could only learn about a waiting agent from the THREAD's
+        // pending question, so a step parked for a prose question — or for a
+        // human-in-the-loop turn that ended with nothing to answer — left the
+        // card pulsing blue as if it were working.
+        if (row.status === "awaiting-input") {
+          awaitingByCard.set(row.cardId, row.awaitingReason ?? "question");
+        }
       }
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
@@ -2890,6 +2938,7 @@ export function withBoardShellCards(
           stalled: stalledByCard.has(row.cardId),
           stepRunning: runningByCard.has(row.cardId),
           held: heldByCard.has(row.cardId),
+          stepAwaiting: awaitingByCard.get(row.cardId) ?? null,
           thread: liveThreads,
         });
       });
@@ -3239,6 +3288,13 @@ export interface BoardSnapshotQueryMethods {
   readonly boardThreadTodo: (
     threadId: ThreadId,
   ) => Effect.Effect<BoardThreadTodoState | null, ProjectionRepositoryError>;
+  /** The most recent assistant message on a thread (t3o-34, D2), or null when
+      it has none. The supervisor passes it to `boardTextEndsWithQuestion`, so
+      the stop-signal reading stays a pure function with no SQL of its own —
+      the pattern `boardThreadTodo` established for the stall signal. */
+  readonly boardLatestAssistantText: (
+    threadId: ThreadId,
+  ) => Effect.Effect<string | null, ProjectionRepositoryError>;
   /** Boot reconciliation sweep of orphaned todo rows (t3o-18, AC 20). */
   readonly boardSweepThreadTodos: () => Effect.Effect<void, ProjectionRepositoryError>;
 }
@@ -3268,6 +3324,7 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
     typeof candidate.boardCardThreads === "function" &&
     typeof candidate.boardCardIdForThread === "function" &&
     typeof candidate.boardThreadTodo === "function" &&
+    typeof candidate.boardLatestAssistantText === "function" &&
     typeof candidate.boardSweepThreadTodos === "function"
     ? {
         boardCardDetail: candidate.boardCardDetail,
@@ -3276,6 +3333,7 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
         boardCardThreads: candidate.boardCardThreads,
         boardCardIdForThread: candidate.boardCardIdForThread,
         boardThreadTodo: candidate.boardThreadTodo,
+        boardLatestAssistantText: candidate.boardLatestAssistantText,
         boardSweepThreadTodos: candidate.boardSweepThreadTodos,
       }
     : null;
@@ -3389,6 +3447,16 @@ export function boardSnapshotQueryMethods(
           }),
         ),
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodo:query")),
+      ),
+    boardLatestAssistantText: (threadId) =>
+      queries.findLatestAssistantMessageText(threadId).pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => null,
+            onSome: (row) => row.text,
+          }),
+        ),
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.latestAssistantText:query")),
       ),
     boardSweepThreadTodos: () =>
       queries

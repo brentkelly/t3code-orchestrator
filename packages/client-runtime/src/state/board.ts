@@ -295,13 +295,20 @@ export function applyBoardShellStreamEvent(
         existing === undefined || existing.held === withStepRunning.held
           ? withStepRunning
           : { ...withStepRunning, held: existing.held };
+      // `stepAwaiting` (t3o-34, D4) comes off the same slice and rests at null
+      // on a card-carrying delta, so preserve it too — otherwise renaming a card
+      // that is waiting on an answer clears the badge that says so.
+      const withStepAwaiting =
+        existing === undefined || existing.stepAwaiting === withHeld.stepAwaiting
+          ? withHeld
+          : { ...withHeld, stepAwaiting: existing.stepAwaiting };
       // `briefHasImage` and `planCount` are derived from slices the card
       // aggregate does not carry (the brief BODY, the plan set), so a
       // card-carrying delta that cannot see them OMITS the key rather than
       // asserting a false/zero — absent means "unchanged, keep what you have".
       // A present key is authoritative, including `false`/`0`: clearing an
       // image out of a brief has to clear the icon.
-      const withBodyDerived = preserveAbsentShellFields(withHeld, existing);
+      const withBodyDerived = preserveAbsentShellFields(withStepAwaiting, existing);
       const card = withDerivedThreadFields(
         withBodyDerived,
         (threadId) => snapshot.threads.find((thread) => thread.id === threadId),
@@ -342,13 +349,20 @@ export function applyBoardShellStreamEvent(
       // Recovery/select/settle also settle the durable `stepRunning` dot on this
       // same delta: recovered-to-running lights it, while stalled / freshly
       // selected (pending) / settled (terminal) put it out.
+      //
+      // And it carries `stepAwaiting` (t3o-34, D4), which is why a step PARKING
+      // for a human publishes through this delta at all: awaiting-input emitted
+      // nothing to the column card before. Every other emitter clears it, so
+      // answering the question clears the badge on the same event that re-lights
+      // the dot.
       const nextCards = Arr.map(cards, (card) => {
         if (card.cardId !== event.cardId) return card;
         const queued = event.stalled ? false : card.queued;
         return card.stalled === event.stalled &&
           card.queued === queued &&
           card.stepRunning === event.stepRunning &&
-          card.held === event.held
+          card.held === event.held &&
+          card.stepAwaiting === event.stepAwaiting
           ? card
           : {
               ...card,
@@ -356,6 +370,7 @@ export function applyBoardShellStreamEvent(
               queued,
               stepRunning: event.stepRunning,
               held: event.held,
+              stepAwaiting: event.stepAwaiting,
             };
       });
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
