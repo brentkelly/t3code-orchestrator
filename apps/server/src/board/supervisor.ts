@@ -110,6 +110,16 @@ export function recoveryDecision(input: {
       against `stageEntryInvocations + 1`. */
   readonly stageEntryInvocations: number;
   readonly maxInvocationsPerStageEntry: number;
+  /** Whether the stopped turn ended with something the agent wanted a human to
+      answer (t3o-34, D6), resolved by the reactor from the step thread's last
+      assistant message — the same "reactor resolves, this function stays pure"
+      split as `progressedSinceLastNudge`.
+
+      This arm is UNATTENDED by construction: a human-in-the-loop run never
+      reaches recovery. So the answer to the question is "you decide", and
+      saying so is what stops the nudged agent asking it again on the next turn
+      and marching itself up the stall ladder. */
+  readonly endedWithQuestion: boolean;
 }): BoardRecoveryDecision {
   const nextAttempt = input.stepState.attempt + 1;
   // Progress since the last nudge forgets the prior streak, so THIS stall is
@@ -168,6 +178,21 @@ export function recoveryDecision(input: {
       1,
       0,
       `Summarise what is still outstanding before continuing, so nothing is dropped.`,
+    );
+  }
+  // Answer the question the agent asked, with the only answer an unattended run
+  // has (t3o-34, D6). Prepended AFTER the splice above, so it reads as a reply
+  // to the question and the outstanding-work reminder keeps the position it has
+  // always had relative to the "continue" instruction.
+  //
+  // Worded around the question rather than around the turn: recovery is reached
+  // from the TIMEOUT SWEEP as well as from a completed turn, and there the
+  // agent's last message is the newest thing it said while the turn is still
+  // open. "You asked a question" is true on both paths; "your turn ended with a
+  // question" is not.
+  if (input.endedWithQuestion) {
+    nudgeLines.unshift(
+      `You asked a question, but this run is unattended and nobody will answer it: decide it yourself with your best judgement, record the decision, and continue.`,
     );
   }
   return {

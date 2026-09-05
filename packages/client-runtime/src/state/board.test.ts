@@ -214,6 +214,7 @@ describe("board shell reducer", () => {
       stalled: true,
       stepRunning: false,
       held: false,
+      stepAwaiting: null,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     expect(stalled.snapshotSequence).toBe(2);
@@ -224,6 +225,7 @@ describe("board shell reducer", () => {
       stalled: false,
       stepRunning: false,
       held: false,
+      stepAwaiting: null,
     });
     expect(cleared.cards?.[0]?.stalled).toBe(false);
   });
@@ -251,6 +253,7 @@ describe("board shell reducer", () => {
       stalled: true,
       stepRunning: false,
       held: false,
+      stepAwaiting: null,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     expect(stalled.cards?.[0]?.queued).toBe(false);
@@ -276,6 +279,7 @@ describe("board shell reducer", () => {
       stalled: false,
       stepRunning: false,
       held: false,
+      stepAwaiting: null,
     });
     expect(cleared.cards?.[0]?.queued).toBe(true);
   });
@@ -290,6 +294,7 @@ describe("board shell reducer", () => {
         stalled: true,
         stepRunning: false,
         held: false,
+        stepAwaiting: null,
       },
     );
     expect(stalled.cards?.[0]?.stalled).toBe(true);
@@ -299,6 +304,40 @@ describe("board shell reducer", () => {
       card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
     });
     expect(reordered.cards?.[0]?.stalled).toBe(true); // preserved
+  });
+
+  it("carries the parked-on-a-human reason, and a drag never blanks it (t3o-34)", () => {
+    const parked = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.planning })] }),
+      {
+        kind: "card-stalled",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        stalled: false,
+        stepRunning: false,
+        held: false,
+        stepAwaiting: "stopped",
+      },
+    );
+    expect(parked.cards?.[0]?.stepAwaiting).toBe("stopped");
+    const reordered = applyShellStreamEvent(parked, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.planning, orderKey: "z" }),
+    });
+    expect(reordered.cards?.[0]?.stepAwaiting).toBe("stopped"); // preserved
+    // …and the resume clears it on the same delta that re-lights the dot.
+    const resumed = applyShellStreamEvent(reordered, {
+      kind: "card-stalled",
+      sequence: 4,
+      cardId: BoardCardId.make("card-1"),
+      stalled: false,
+      stepRunning: true,
+      held: false,
+      stepAwaiting: null,
+    });
+    expect(resumed.cards?.[0]?.stepAwaiting).toBeNull();
+    expect(resumed.cards?.[0]?.stepRunning).toBe(true);
   });
 
   it("card-plans updates the footer's plan count and no-ops on an unheld card", () => {

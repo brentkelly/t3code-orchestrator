@@ -35,6 +35,10 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   These were blue before, which read as "still working" — the opposite of what they mean.
 - **Blocked is amber, never blue.** It matches the card modal's blocked callout, which already used
   it.
+- **A stopped agent is never blue.** A step whose turn ended without completing is not working, so
+  it never wears the running dot. If it left a question behind it is violet ("Input needed"); if it
+  did not, it is amber ("Needs a human"). Both are the same fact — nobody is working on this card —
+  told at the volume the human's next move deserves.
 
 ## Deliberately outside the convention
 

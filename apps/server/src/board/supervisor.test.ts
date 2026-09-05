@@ -94,6 +94,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     readonly hasTodoList?: boolean;
     readonly stageEntryInvocations?: number;
     readonly maxInvocationsPerStageEntry?: number;
+    readonly endedWithQuestion?: boolean;
   }) =>
     recoveryDecision({
       stepState: {
@@ -107,6 +108,9 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
         "attempt" | "stallCount" | "maxAttempts" | "stepLabel" | "stageLabel"
       >,
       progressedSinceLastNudge: input.progressedSinceLastNudge ?? false,
+      // t3o-34 D6: default to "the turn ended with no question", so the
+      // question-specific case is the one that opts in.
+      endedWithQuestion: input.endedWithQuestion ?? false,
       // t3o-18 D16: default to "the thread keeps a list", so the todo-specific
       // assertions below are the only ones that see the extra nudge line.
       hasTodoList: input.hasTodoList ?? true,
@@ -156,6 +160,40 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
   // t3o-19 AC 11: the escalation a human reads names the STEP only when the
   // stage has steps. On every other stage `stepLabel` is null and naming a
   // step would invent one.
+  // t3o-34 D6: the unattended half of blocked-agent handling. A human-in-the-loop
+  // run never reaches recovery, so the only agent that gets nudged here is one
+  // whose question nobody will ever answer — and saying so is what stops it
+  // asking again on the next turn and marching up the stall ladder.
+  it("tells a nudged unattended agent to decide its own question, and stays quiet otherwise", () => {
+    const asked = decide({ stallCount: 1, endedWithQuestion: true });
+    assert.strictEqual(asked.kind, "resume");
+    if (asked.kind === "resume") {
+      assert.include(asked.nudge, "unattended and nobody will answer it");
+      assert.include(asked.nudge, "decide it yourself");
+      // It answers the question FIRST, then repeats the standing instruction.
+      assert.isBelow(
+        asked.nudge.indexOf("unattended and nobody will answer it"),
+        asked.nudge.indexOf("board_complete_step"),
+      );
+    }
+    const quiet = decide({ stallCount: 1 });
+    assert.strictEqual(quiet.kind, "resume");
+    if (quiet.kind === "resume") assert.notInclude(quiet.nudge, "nobody will answer");
+  });
+
+  // The outstanding-work reminder keeps the position it has always had relative
+  // to the "continue where you left off" line, whatever else is prepended.
+  it("keeps the third-stall summary reminder ahead of the continue instruction", () => {
+    const both = decide({ stallCount: 3, endedWithQuestion: true });
+    assert.strictEqual(both.kind, "resume");
+    if (both.kind === "resume") {
+      assert.isBelow(
+        both.nudge.indexOf("Summarise what is still outstanding"),
+        both.nudge.indexOf("Continue where you left off"),
+      );
+    }
+  });
+
   it("names the stage, not a step, when the stage has no steps", () => {
     const unstepped = decide({ stallCount: 4 });
     assert.strictEqual(unstepped.kind, "escalate");
@@ -171,6 +209,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       hasTodoList: true,
       stageEntryInvocations: 0,
       maxInvocationsPerStageEntry: 20,
+      endedWithQuestion: false,
     });
     assert.strictEqual(unnamed.kind, "escalate");
     if (unnamed.kind === "escalate") {
@@ -189,6 +228,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       hasTodoList: true,
       stageEntryInvocations: 0,
       maxInvocationsPerStageEntry: 20,
+      endedWithQuestion: false,
     });
     assert.strictEqual(stepped.kind, "escalate");
     if (stepped.kind === "escalate") {

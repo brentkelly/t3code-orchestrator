@@ -862,6 +862,11 @@ export function boardShellStreamEvent(
         // clears `held`: a step that gave up is `stalled`, which is its own
         // louder flag, and one that retried is running again.
         held: false,
+        // And it is never awaiting input (t3o-34, D4): recovery either escalated
+        // or resumed. This is the delta that clears the card's "Input needed" /
+        // "Needs a human" badge when a human answers, because `resume-step`
+        // publishes through here.
+        stepAwaiting: null,
       });
 
     case "board.card-step-selected":
@@ -880,6 +885,8 @@ export function boardShellStreamEvent(
         // `held`. This is also why `card-queued` needs no copy of the flag: a
         // step is always selected before it can be admitted.
         held: false,
+        // A fresh run is not parked on anybody (t3o-34, D4).
+        stepAwaiting: null,
       });
 
     case "board.card-step-settled":
@@ -902,6 +909,9 @@ export function boardShellStreamEvent(
         // clears it a beat later; if nothing advances the card, the flag is the
         // whole point — it is the only trace a parked card leaves.
         held: true,
+        // A settled step is not waiting on an answer (t3o-34, D4) — `held` is
+        // the settled form of "needs a human" and carries it from here.
+        stepAwaiting: null,
       });
 
     case "board.plans-proposed":
@@ -934,14 +944,37 @@ export function boardShellStreamEvent(
       }
       return Option.none();
 
+    case "board.card-step-awaiting-input":
+      // The third step transition that IS a column-card field (t3o-34, D4).
+      // This case used to fall through to "step transitions are card DETAIL",
+      // which was true only while the card learned about a waiting agent from
+      // the THREAD's pending question instead. It does not, once a step can
+      // park for a question asked in prose or for a human-in-the-loop turn that
+      // ended with nothing to answer — neither leaves a pending question on the
+      // thread, and both used to leave the card pulsing blue as if it were
+      // working. It rides `card-stalled` rather than a delta of its own because
+      // that delta already carries every other step-derived shell flag.
+      return Option.some({
+        kind: "card-stalled",
+        sequence: event.sequence,
+        cardId: event.payload.cardId,
+        // Parked, not stalled: recovery has not given up on it, and (unlike a
+        // stall) nothing released its slot.
+        stalled: false,
+        // The blue dot goes dark. This is the fix.
+        stepRunning: false,
+        // Non-terminal, so nothing is `held`.
+        held: false,
+        stepAwaiting: event.payload.state.awaitingReason,
+      });
+
     case "board.plan-written":
     case "board.card-stage-thread-requested":
-    // Step-lifecycle events (t3o-10) are card DETAIL — the live step status
-    // rides board.subscribeCard, not a column-card shell field (D7 payload
-    // discipline). The column card's thread-derived indicators already reflect
-    // the step's thread through the existing `threadState`/`awaitingInput`
-    // fields, so a step transition needs no separate shell delta.
-    case "board.card-step-awaiting-input":
+    // The REMAINING step-lifecycle events (t3o-10) are card DETAIL — the live
+    // step status rides board.subscribeCard, not a column-card shell field (D7
+    // payload discipline). The column card's thread-derived indicators already
+    // reflect the step's thread through the existing `threadState` /
+    // `awaitingInput` fields, so those transitions need no shell delta.
     // A force-start request (t3o-33) changes no column-card field either: the
     // step is STILL queued until the governor admits it, and that admission
     // emits `card-step-admitted`, which clears the badge. Emitting a delta here
