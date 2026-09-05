@@ -84,6 +84,7 @@ const runningMergeStep = (cardId: BoardCardId): BoardCardStepState => ({
   threadId: ThreadId.make("thread-1"),
   status: "running",
   slotHeld: true,
+  forceStart: false,
   startedAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 });

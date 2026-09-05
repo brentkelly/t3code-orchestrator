@@ -25,11 +25,8 @@ import { Fragment } from "react";
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
-import {
-  DraggableBoardCard,
-  type BoardCardQueueSlot,
-  type BoardCardTodoContext,
-} from "./BoardCardItem";
+import { DraggableBoardCard, type BoardCardTodoContext } from "./BoardCardItem";
+import type { BoardQueueInfo } from "./boardQueueInfo";
 
 /** Vertical gap (px) between cards; kept in sync with the list's `gap-2` so
     the drop-index math can subtract the placeholder it inserts. */
@@ -75,7 +72,7 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly cards: ReadonlyArray<BoardCardShell>;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly collapsed: boolean;
-  readonly queueSlots: ReadonlyMap<string, BoardCardQueueSlot>;
+  readonly queueSlots: ReadonlyMap<string, BoardQueueInfo>;
   readonly selectedCardId: string | null;
   /** Projects new cards may be created in; empty hides the add button, which
       also only shows on creation stages (t3o-06a). */

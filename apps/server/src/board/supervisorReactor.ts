@@ -955,7 +955,15 @@ const make = Effect.gen(function* () {
     );
     if (wouldConflict) return;
 
-    const admitted = yield* slots.acquire(state.providerInstanceId, input.limits);
+    // A human asked for this step over the cap (t3o-33), so the slot is TAKEN,
+    // not requested: `restore` is the same unconditional take boot
+    // reconciliation uses. The count stays honest — it simply sits above the
+    // ceiling until this step settles and releases it exactly once, like every
+    // other step — and the policy in `acquire` is never quietly bypassed on the
+    // ordinary path.
+    const admitted = yield* state.forceStart
+      ? slots.restore(state.providerInstanceId).pipe(Effect.as(true))
+      : slots.acquire(state.providerInstanceId, input.limits);
     if (!admitted) {
       // No slot right now. A fresh (pending) step is recorded queued so the card
       // shows its badge; a queued step stays put and is re-offered next boundary.
@@ -1166,8 +1174,17 @@ const make = Effect.gen(function* () {
         orderKey: card.orderKey,
       });
     }
-    for (const candidate of orderBoardQueue(candidates)) {
-      const entry = entries.get(`${String(candidate.cardId)}::${candidate.stepId}`);
+    // A force-started step (t3o-33) is offered FIRST, and its position in the
+    // priority order is irrelevant: it is not competing for a slot, it takes
+    // one. Leaving it in place would only make it wait behind candidates the
+    // governor is about to refuse anyway.
+    const ordered = orderBoardQueue(candidates).map((candidate) => ({
+      candidate,
+      entry: entries.get(`${String(candidate.cardId)}::${candidate.stepId}`),
+    }));
+    const forced = ordered.filter(({ entry }) => entry?.state.forceStart === true);
+    const rest = ordered.filter(({ entry }) => entry?.state.forceStart !== true);
+    for (const { entry } of [...forced, ...rest]) {
       if (entry !== undefined) yield* admitBuildCandidate(entry);
     }
   });
@@ -3835,6 +3852,11 @@ const make = Effect.gen(function* () {
         return handleCardUpdated(event);
       case "board.card-step-completed":
         return handleStepCompleted(event);
+      case "board.card-step-force-start-requested":
+        // A human took a slot over the cap (t3o-33). Scheduling here is what
+        // makes the click start the card: without it the override would sit on
+        // the row until some unrelated step boundary happened to run a pass.
+        return schedule();
       case "board.card-archived":
         return handleArchived(event);
       case "board.card-deleted":
@@ -3978,6 +4000,10 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-stage-thread-requested" &&
           event.type !== "board.card-updated" &&
           event.type !== "board.card-step-completed" &&
+          // A human's "start it anyway" (t3o-33). Rare, and the whole point is
+          // that it takes effect on the click rather than at the next step
+          // boundary, so it has to cross this filter.
+          event.type !== "board.card-step-force-start-requested" &&
           event.type !== "board.card-archived" &&
           event.type !== "board.card-deleted" &&
           event.type !== "board.plans-approved"

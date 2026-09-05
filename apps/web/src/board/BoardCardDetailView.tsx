@@ -66,15 +66,18 @@ import {
   CheckIcon,
   ChevronLeftIcon,
   CircleAlertIcon,
+  ClockIcon,
   EllipsisVerticalIcon,
   GitPullRequestIcon,
   ExternalLinkIcon,
   FileIcon,
   FileTextIcon,
+  ArrowUpIcon,
   LayersIcon,
   LockIcon,
   MessageSquareIcon,
   SquareIcon,
+  PlayIcon,
   RefreshCcwIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
@@ -118,6 +121,7 @@ import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCar
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
 import { deriveBoardPlanRows } from "./boardPlanRows";
 import { boardStageLabel } from "./boardStages";
+import type { BoardQueueInfo } from "./boardQueueInfo";
 import { boardStagePrimaryAction, isBoardStageManuallySelectable } from "./boardStageActions";
 import { BoardHint } from "./BoardHint";
 
@@ -309,6 +313,19 @@ export interface BoardCardDetailViewProps {
       without its own inherits. */
   readonly reviewPhaseRuntimeMode?: RuntimeMode | undefined;
   readonly onStopAfterRound?: ((round: number | null) => void) | undefined;
+  /** The card's place in the board-wide build queue (t3o-33), or null when it
+      is not holding for a slot. Resolved by the container, which is the only
+      layer that can see every project's shells at once — the queue is global. */
+  readonly queueInfo?: BoardQueueInfo | null | undefined;
+  /** True between asking for a force start and the card actually leaving the
+      queue. There is still a worktree to provision, so the button holds. */
+  readonly queueForceStartPending?: boolean | undefined;
+  /** Start the queued step now, over the agent cap. */
+  readonly onQueueForceStart?: (() => void) | undefined;
+  /** Move the card to the front of the queue. ABSENT — not disabled — when the
+      reorder could not improve its position, which drag order alone often
+      cannot (t3o-33). */
+  readonly onQueueMoveToFront?: (() => void) | undefined;
   /** The thread pane `+` menu's restart affordance (t3o-14): present only when
       the card's current stage auto-executes, `null` otherwise. */
   readonly stageRestart: BoardThreadStageRestart | null;
@@ -616,6 +633,67 @@ function BriefBody({
       </BoardHint>
       {attachRow}
     </>
+  );
+}
+
+/**
+ * The queued-for-build banner (t3o-33) — the fix for a queued card opening on
+ * the planning conversation it left behind and explaining nothing.
+ *
+ * Sits directly above the failure and dependency blocks, so a card that is both
+ * queued AND dependency-blocked shows both: blocked keeps its amber and its
+ * precedence in meaning, and this explains the other half of why nothing is
+ * moving.
+ *
+ * Deliberately NEUTRAL, not `--attention`. Violet means "waiting on a human"
+ * (docs/t3o/status-colours.md) and this card is waiting on a machine — it needs
+ * nothing from anyone and starts by itself. The two buttons are an override,
+ * not a request.
+ */
+function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
+  const info = props.queueInfo;
+  if (info == null) return null;
+  const pending = props.queueForceStartPending === true;
+  return (
+    <div className="mx-3.5 mb-3.5 rounded-lg border border-border bg-muted/50 p-2.5">
+      <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-foreground">
+        <ClockIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        {info.headline}
+      </p>
+      <p className="mt-1 text-[11.5px] leading-[1.45] text-muted-foreground">{info.detail}</p>
+      {props.onQueueForceStart === undefined && props.onQueueMoveToFront === undefined ? null : (
+        <div className="mt-2.5 flex items-center gap-1.5">
+          {props.onQueueForceStart === undefined ? null : (
+            <BoardHint label="Run this task now, over the agent limit.">
+              <button
+                className={cn(
+                  "inline-flex h-[28px] items-center justify-center gap-[6px] rounded-lg border border-primary bg-primary px-2.5 text-[12px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90",
+                  pending && "cursor-wait opacity-60",
+                )}
+                disabled={pending}
+                onClick={props.onQueueForceStart}
+                type="button"
+              >
+                <PlayIcon className="size-3" />
+                {pending ? "Starting…" : "Start now"}
+              </button>
+            </BoardHint>
+          )}
+          {props.onQueueMoveToFront === undefined ? null : (
+            <BoardHint label="Put this task at the front of the build queue.">
+              <button
+                className="inline-flex h-[28px] items-center justify-center gap-[6px] rounded-lg border border-input bg-popover px-2.5 text-[12px] font-medium text-foreground shadow-xs hover:bg-accent"
+                onClick={props.onQueueMoveToFront}
+                type="button"
+              >
+                <ArrowUpIcon className="size-3" />
+                Move to front
+              </button>
+            </BoardHint>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1369,6 +1447,18 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             Archived
           </span>
         ) : null}
+        {/* Queued for a build slot (t3o-33). Beside the stage badge, because
+            "Building" alone is what made a queued card look mid-build. Neutral,
+            not `--attention`: nothing is waiting on the user here — see
+            docs/t3o/status-colours.md. */}
+        {props.queueInfo != null ? (
+          <BoardHint label={props.queueInfo.detail}>
+            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+              <ClockIcon className="size-2.5" />
+              {props.queueInfo.label}
+            </span>
+          </BoardHint>
+        ) : null}
         {/* Shown only once this card actually overrides something (t3o-29, D7).
             An override changes what the card spends and what authority it runs
             under; that should not be invisible from the card. It costs nothing
@@ -1593,6 +1683,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 stageRestart={props.stageRestart}
                 threadLinks={props.threadLinks}
                 threadTodos={props.threadTodos}
+                queueInfo={props.queueInfo}
+                queueForceStartPending={props.queueForceStartPending}
+                onQueueForceStart={props.onQueueForceStart}
               />
             </Suspense>
           )}
@@ -1600,6 +1693,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           {/* The rail: everything about the card that is not the conversation. */}
           <div className="flex min-h-0 flex-col overflow-y-auto [&>*:first-child]:border-t-0">
             <ActionsSection props={props} unmet={unmet} />
+            <QueueSection props={props} />
             {props.stepFailure !== null ? (
               <BoardCardStepFailure
                 className="mx-3.5 mb-3.5"

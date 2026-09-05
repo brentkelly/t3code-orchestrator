@@ -1335,6 +1335,20 @@ export const BoardCardStepState = Schema.Struct({
       release happens exactly once at every terminal outcome, including a crash
       — a leaked slot silently halves throughput. */
   slotHeld: Schema.Boolean,
+  /** Whether a human asked for this step to start OVER the concurrency cap
+      (t3o-33). Set by `board.card.force-start-step` on a `queued` step; the
+      governor then admits it ahead of the queue and takes its slot through the
+      unconditional `restore` rather than the capped `acquire`, so the count
+      stays balanced and the single release at every terminal outcome still
+      cancels it.
+   *
+   * Self-clearing: every step event carries the WHOLE state, so the fresh row
+   * admission writes has `forceStart: false` by construction and the override
+   * can never survive into the card's next step.
+   *
+   * A DECODING DEFAULT for the same replay reason as `stageLabel`: rows and
+   * events written before t3o-33 have no key at all. */
+  forceStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** When the step began running; null while pending/queued. */
   startedAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
@@ -2622,6 +2636,21 @@ export const BoardCardCompleteStepCommand = Schema.Struct({
 });
 export type BoardCardCompleteStepCommand = typeof BoardCardCompleteStepCommand.Type;
 
+/**
+ * Start a queued step NOW, deliberately over the concurrency cap (t3o-33).
+ *
+ * Carries no `stepId`: one step-state row per card (D4), so the server resolves
+ * the live step itself and can never be handed a stale one by a client that
+ * rendered the card a moment ago.
+ */
+export const BoardCardForceStartStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.force-start-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardForceStartStepCommand = typeof BoardCardForceStartStepCommand.Type;
+
 /** One proposed plan on `board_propose_plans`. `key` is an agent-chosen slug,
     unique within the proposal, that `dependsOn` entries reference — validated
     for existence and acyclicity on ingest (the offending edge is named on
@@ -3403,6 +3432,16 @@ export const BoardCardStepAdmittedPayload = Schema.Struct({
   state: BoardCardStepState,
 });
 export type BoardCardStepAdmittedPayload = typeof BoardCardStepAdmittedPayload.Type;
+
+/** The queued step a human asked to start over the cap (t3o-33). Carries the
+    whole state like every other step event, so the projector upserts it and
+    the governor reads `forceStart` from the row it rehydrates. */
+export const BoardCardStepForceStartRequestedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardCardStepForceStartRequestedPayload =
+  typeof BoardCardStepForceStartRequestedPayload.Type;
 
 export const BoardCardStepAwaitingInputPayload = Schema.Struct({
   cardId: BoardCardId,
@@ -4364,6 +4403,7 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardStageDeleteCommand,
   BoardCardStartStageThreadCommand,
   BoardCardCompleteStepCommand,
+  BoardCardForceStartStepCommand,
   BoardPlansProposeCommand,
   BoardPlanWriteCommand,
   BoardPlansApproveCommand,
@@ -4432,6 +4472,7 @@ export const BOARD_EVENT_TYPES = [
   "board.card-note-recorded",
   "board.card-step-selected",
   "board.card-step-admitted",
+  "board.card-step-force-start-requested",
   "board.card-step-awaiting-input",
   "board.card-step-recovered",
   "board.card-step-settled",
@@ -4624,6 +4665,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-step-admitted"),
       payload: BoardCardStepAdmittedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-force-start-requested"),
+      payload: BoardCardStepForceStartRequestedPayload,
     }),
     Schema.Struct({
       ...base,

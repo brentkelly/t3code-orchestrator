@@ -912,6 +912,7 @@ const runningBuildStep = (cardId: BoardCardId): BoardCardStepState => ({
   threadId: ThreadId.make("thread-build-one"),
   status: "running",
   slotHeld: true,
+  forceStart: false,
   startedAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 });
@@ -1233,6 +1234,7 @@ it.effect("a child's conflict fix succeeding merges even when the arm was LOST",
       threadId: ThreadId.make("thread-fix"),
       status: "running",
       slotHeld: true,
+      forceStart: false,
       startedAt: NOW,
       updatedAt: NOW,
     };

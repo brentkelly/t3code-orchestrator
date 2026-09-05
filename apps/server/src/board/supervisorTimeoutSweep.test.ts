@@ -63,6 +63,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   // slotHeld false keeps boot reconcile's slot-restore out of the picture —
   // the sweep's clock is what these tests isolate.
   slotHeld: false,
+  forceStart: false,
   startedAt: OVERDUE,
   updatedAt: OVERDUE,
   ...overrides,
