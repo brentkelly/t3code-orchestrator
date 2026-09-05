@@ -7,9 +7,11 @@
  * "working" dot slowly pulses (an opacity fade, not a spinner — no per-frame
  * layout, so it stays cheap on high-refresh displays; upstream AGENTS.md warns
  * against transform/loop animations that peg the GPU) so an actively-worked card
- * reads at a glance. The same dot slot turns to a static blue dot when the card
- * is awaiting input, and lights for a split parent whose CHILD is working —
- * the parent runs no step of its own while its sub-board builds.
+ * reads at a glance. Blue is that dot's alone: awaiting input is the violet
+ * attention chip in the slot beside it, never this dot
+ * (`docs/t3o/status-colours.md`). The dot does also light for a split parent
+ * whose CHILD is working — the parent runs no step of its own while its
+ * sub-board builds.
  */
 import {
   boardCardChildAttentionLabel,
