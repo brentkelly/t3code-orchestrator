@@ -30,7 +30,8 @@ import {
 } from "@t3tools/contracts";
 import {
   applyBoardCardPlacements,
-  boardBuildingQueueInfo,
+  boardBuildQueue,
+  boardRunningStepCount,
   isBoardCardPlacementSettled,
   mergeBoardStageColumns,
   planBoardCardReorder,
@@ -66,6 +67,7 @@ import { BoardArchivedCardsSheet, refreshBoardArchivedCards } from "./BoardArchi
 import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { BoardCardDetail } from "./BoardCardDetail";
+import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
 import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
 import { indexBoardLabels } from "./labelColour";
@@ -87,6 +89,7 @@ import type { BoardSearch } from "../routes/board";
 
 const EMPTY_COLUMNS: BoardStageColumns = mergeBoardStageColumns([]);
 const EMPTY_CARDS: ReadonlyArray<BoardCardShell> = [];
+const EMPTY_QUEUE_INFO: ReadonlyMap<string, BoardQueueInfo> = new Map();
 const EMPTY_CARD_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
 
 const ALL_PROJECTS = "__all__";
@@ -422,8 +425,31 @@ function EnvironmentBoard({
   // a navigation bug in this codebase (D9).
   const [subBoardChartOpen, setSubBoardChartOpen] = useState(false);
 
-  const buildColumn = buildStageId === null ? EMPTY_CARDS : (columns[buildStageId] ?? EMPTY_CARDS);
-  const queueSlots = useMemo(() => boardBuildingQueueInfo(buildColumn), [buildColumn]);
+  // Every card the environment holds, whatever project it belongs to and
+  // whether or not this scope renders it (t3o-33). The build queue is
+  // board-wide, so it is read from here rather than from the scoped columns: a
+  // hidden project's card still holds an agent, and a queue that skipped it
+  // would number every visible card wrong.
+  const everyCard = useMemo(
+    () => [...cardsByProject.values()].flatMap((byStage) => Object.values(byStage).flat()),
+    [cardsByProject],
+  );
+
+  // The queued cards' pills and their tooltips. One derivation for the whole
+  // board — positions are a view over the queue, so they are recomputed
+  // together or not at all — and it costs a single pass when nothing is queued.
+  const queueSlots = useMemo(() => {
+    const queue = boardBuildQueue(everyCard, orderedStages);
+    if (queue.size === 0) return EMPTY_QUEUE_INFO;
+    const running = boardRunningStepCount(everyCard);
+    const cap = boardSettings.concurrency.globalMaxConcurrent;
+    const info = new Map<string, BoardQueueInfo>();
+    for (const [cardId, slot] of queue) {
+      const resolved = boardQueueInfo({ slot, running, cap });
+      if (resolved !== null) info.set(cardId, resolved);
+    }
+    return info;
+  }, [boardSettings.concurrency.globalMaxConcurrent, everyCard, orderedStages]);
 
   // ── Card todo strips (t3o-18) ────────────────────────────────────────
   // The card→thread links and their cached lists ride the shell snapshot as
@@ -615,17 +641,22 @@ function EnvironmentBoard({
           });
           return;
         }
-        if (targetStage === "building") {
+        if (targetStage === buildStageId) {
           // D11: within Building, position is queue priority. Announce the
-          // slot the drop landed in — derived from the `queued` field, so
-          // this stays silent until t3o-11 populates the queue.
+          // slot the drop landed in — derived from the `queued` field, so a
+          // drop that did not land in the queue stays silent. Keyed on the
+          // stage's ROLE rather than the seed id, so a renamed build stage
+          // still announces (t3o-33: `buildStageId` was already resolved here
+          // for the old per-column derivation).
           const movedAssignment = assignments.find((next) => next.cardId === cardId);
           if (movedAssignment === undefined) return;
-          const projected = applyBoardCardPlacements(liveColumns, [
-            { cardId, stage: targetStage, orderKey: movedAssignment.orderKey },
-          ]);
-          const slot = boardBuildingQueueInfo(
-            buildStageId === null ? EMPTY_CARDS : (projected[buildStageId] ?? EMPTY_CARDS),
+          const slot = boardBuildQueue(
+            everyCard.map((existing) =>
+              existing.cardId === cardId
+                ? { ...existing, stage: targetStage, orderKey: movedAssignment.orderKey }
+                : existing,
+            ),
+            orderedStages,
           ).get(cardId);
           if (slot !== undefined) {
             toastManager.add({
@@ -641,7 +672,7 @@ function EnvironmentBoard({
         }
       });
     },
-    [columns, environmentId, liveColumns, moveCard, reorderCard],
+    [columns, environmentId, everyCard, liveColumns, moveCard, orderedStages, reorderCard],
   );
 
   // Turns a target stage + raw insertion index into the settled card order.

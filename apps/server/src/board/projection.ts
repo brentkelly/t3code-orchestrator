@@ -420,6 +420,9 @@ const BoardCardStepStateDbRow = Schema.Struct({
   threadId: BoardCardStepState.fields.threadId,
   status: BoardCardStepState.fields.status,
   slotHeld: Schema.Int,
+  // 0/1 like `slotHeld`. Rows written before migration 033 read 0 through the
+  // column default, which already means "no override asked for" (t3o-33).
+  forceStart: Schema.Int,
   startedAt: BoardCardStepState.fields.startedAt,
   updatedAt: BoardCardStepState.fields.updatedAt,
 });
@@ -1611,7 +1614,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id, step_id, step_label, stage_label, attempt, stall_count, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
         last_error, awaiting_reason,
-        human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, started_at, updated_at
+        human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
+        started_at, updated_at
       )
       VALUES (
         ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.stageLabel}, ${row.attempt}, ${row.stallCount},
@@ -1620,7 +1624,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.baseTipAtRoundStart},
         ${row.lastError}, ${row.awaitingReason},
         ${row.humanInLoop}, ${row.maxAttempts},
-        ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.startedAt}, ${row.updatedAt}
+        ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
+        ${row.startedAt}, ${row.updatedAt}
       )
       ON CONFLICT (card_id)
       DO UPDATE SET
@@ -1645,6 +1650,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         thread_id = excluded.thread_id,
         status = excluded.status,
         slot_held = excluded.slot_held,
+        force_start = excluded.force_start,
         started_at = excluded.started_at,
         updated_at = excluded.updated_at
     `,
@@ -1677,6 +1683,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         thread_id AS "threadId",
         status,
         slot_held AS "slotHeld",
+        force_start AS "forceStart",
         started_at AS "startedAt",
         updated_at AS "updatedAt"
       FROM board_card_step_state
@@ -2188,6 +2195,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         threadId: state.threadId,
         status: state.status,
         slotHeld: state.slotHeld ? 1 : 0,
+        forceStart: state.forceStart ? 1 : 0,
         startedAt: state.startedAt,
         updatedAt: state.updatedAt,
       })
@@ -2538,6 +2546,13 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         });
         return;
 
+      // The override is recorded on the step row and nothing else (t3o-33):
+      // the step is still queued, and the activity rail keeps its nine curated
+      // kinds. What the user sees change is the card starting.
+      case "board.card-step-force-start-requested":
+        yield* upsertStepState(event.payload.state);
+        return;
+
       case "board.card-step-awaiting-input":
         yield* upsertStepState(event.payload.state);
         // The rail's `card-input-requested` row (D12/D13). Sourced from the step
@@ -2774,6 +2789,7 @@ export function loadBoardState(
               threadId: row.threadId,
               status: row.status,
               slotHeld: row.slotHeld !== 0,
+              forceStart: row.forceStart !== 0,
               startedAt: row.startedAt,
               updatedAt: row.updatedAt,
             }),

@@ -99,6 +99,7 @@ function makeStepState(id: string): BoardCardStepState {
     threadId: null,
     status: "succeeded",
     slotHeld: false,
+    forceStart: false,
     startedAt: null,
     updatedAt: NOW,
   };
@@ -613,6 +614,7 @@ describe("board projector", () => {
         threadId: ThreadId.make("thread-1"),
         status: "running" as const,
         slotHeld: true,
+        forceStart: false,
         startedAt: NOW,
         updatedAt: NOW,
       };
@@ -626,6 +628,7 @@ describe("board projector", () => {
             status: "pending",
             threadId: null,
             slotHeld: false,
+            forceStart: false,
             startedAt: null,
           },
         },
@@ -727,6 +730,7 @@ describe("board projector", () => {
         threadId: null,
         status: "queued" as const,
         slotHeld: false,
+        forceStart: false,
         startedAt: null,
         updatedAt: NOW,
       };
@@ -769,6 +773,7 @@ describe("board projector", () => {
         timeoutMs: 1000,
         threadId: ThreadId.make("thread-1"),
         slotHeld: false,
+        forceStart: false,
         startedAt: NOW,
         updatedAt: NOW,
       };

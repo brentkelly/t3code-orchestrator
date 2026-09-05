@@ -78,6 +78,7 @@ const settledReviewStep = (tip: string): BoardCardStepState => ({
   threadId: null,
   status: "succeeded",
   slotHeld: false,
+  forceStart: false,
   startedAt: null,
   updatedAt: NOW,
 });

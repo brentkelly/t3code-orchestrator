@@ -37,6 +37,7 @@ import {
   BoardCardStepSelectedPayload,
   BoardCardStepAdmittedPayload,
   BoardCardStepAwaitingInputPayload,
+  BoardCardStepForceStartRequestedPayload,
   BoardCardStepRecoveredPayload,
   BoardCardStepSettledPayload,
   BoardCardStepRetunedPayload,
@@ -139,6 +140,9 @@ const decodeBoardCardStepSelectedPayload = Schema.decodeUnknownEffect(BoardCardS
 const decodeBoardCardStepAdmittedPayload = Schema.decodeUnknownEffect(BoardCardStepAdmittedPayload);
 const decodeBoardCardStepAwaitingInputPayload = Schema.decodeUnknownEffect(
   BoardCardStepAwaitingInputPayload,
+);
+const decodeBoardCardStepForceStartRequestedPayload = Schema.decodeUnknownEffect(
+  BoardCardStepForceStartRequestedPayload,
 );
 const decodeBoardCardStepRecoveredPayload = Schema.decodeUnknownEffect(
   BoardCardStepRecoveredPayload,
@@ -661,6 +665,12 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
+    case "board.card-step-force-start-requested":
+      return decodeBoardCardStepForceStartRequestedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
     case "board.card-step-awaiting-input":
       return decodeBoardCardStepAwaitingInputPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
@@ -965,6 +975,11 @@ export function boardShellStreamEvent(
     // payload discipline). The column card's thread-derived indicators already
     // reflect the step's thread through the existing `threadState` /
     // `awaitingInput` fields, so those transitions need no shell delta.
+    // A force-start request (t3o-33) changes no column-card field either: the
+    // step is STILL queued until the governor admits it, and that admission
+    // emits `card-step-admitted`, which clears the badge. Emitting a delta here
+    // would clear the queued pill before anything actually started.
+    case "board.card-step-force-start-requested":
     case "board.card-step-retuned":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.

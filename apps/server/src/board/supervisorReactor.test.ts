@@ -106,6 +106,7 @@ const runningState: BoardCardStepState = {
   threadId: ThreadId.make("thread-1"),
   status: "running",
   slotHeld: true,
+  forceStart: false,
   startedAt: NOW,
   updatedAt: NOW,
 };

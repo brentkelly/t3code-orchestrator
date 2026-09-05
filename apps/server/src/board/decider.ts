@@ -2588,6 +2588,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         lastError: null,
         status: "pending",
         slotHeld: false,
+        // A fresh step carries no cap override (t3o-33): forcing one step past
+        // the ceiling never bleeds into the step after it.
+        forceStart: false,
         startedAt: null,
         updatedAt: command.createdAt,
       };
@@ -2641,6 +2644,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             // Only a build-mode step holds a concurrency slot (D5); a plan-mode
             // step runs read-only with no worktree and no slot.
             slotHeld: current.mode === "build",
+            // The override is spent the moment it lands (t3o-33): it named THIS
+            // admission, and leaving it set would silently force the card's next
+            // step past the cap too.
+            forceStart: false,
             startedAt: command.createdAt,
             updatedAt: command.createdAt,
           }
@@ -2689,6 +2696,40 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           commandId: command.commandId,
         })),
         type: "board.card-step-awaiting-input",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
+    // Start a queued step over the concurrency cap (t3o-33). The command names
+    // no step — one live step row per card (D4) — so the card's own row is the
+    // target and a client that rendered the card a moment ago cannot aim at a
+    // stale one. Only a `queued` step is forceable: `pending` is not yet
+    // withheld by anything (the governor has not reached it), and every other
+    // status is already running or over.
+    case "board.card.force-start-step": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = boardCardStepState(board, command.cardId);
+      if (current === null) {
+        return yield* invariant(command, `Card '${command.cardId}' has no live step to start.`);
+      }
+      if (current.status !== "queued") {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' step '${current.stepId}' is '${current.status}', not queued; nothing to force-start.`,
+        );
+      }
+      const state: BoardCardStepState = {
+        ...current,
+        forceStart: true,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-force-start-requested",
         payload: { cardId: command.cardId, state },
       };
     }

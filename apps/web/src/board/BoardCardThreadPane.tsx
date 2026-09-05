@@ -20,9 +20,11 @@ import type { BoardCardThreadShell, EnvironmentId, ThreadId } from "@t3tools/con
 import { Link } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
+  ClockIcon,
   MaximizeIcon,
   MessageSquareIcon,
   MinimizeIcon,
+  PlayIcon,
   SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
@@ -37,6 +39,7 @@ import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 import { BoardHint } from "./BoardHint";
+import type { BoardQueueInfo } from "./boardQueueInfo";
 
 /** The live chat for one linked thread. Split out so the thread-detail
     subscription hooks are keyed by the mounted thread and unmount with it. */
@@ -91,6 +94,9 @@ export function BoardCardThreadPane({
   maximised,
   onToggleMaximised,
   threadTodos,
+  queueInfo,
+  queueForceStartPending,
+  onQueueForceStart,
 }: {
   readonly environmentId: EnvironmentId;
   readonly cardKey: string;
@@ -114,6 +120,11 @@ export function BoardCardThreadPane({
       list on a stopped thread — so a thread that succeeded still reads `5/5`
       here. */
   readonly threadTodos?: ReadonlyMap<ThreadId, BoardCardThreadShell> | undefined;
+  /** The card's place in the build queue (t3o-33), or null when it is not
+      queued. */
+  readonly queueInfo?: BoardQueueInfo | null | undefined;
+  readonly queueForceStartPending?: boolean | undefined;
+  readonly onQueueForceStart?: (() => void) | undefined;
 }) {
   // A new blank thread becomes the card's most-recently-linked live thread, so
   // selecting it opens its ChatView (which focuses the composer on mount, D3).
@@ -283,6 +294,37 @@ export function BoardCardThreadPane({
           </Link>
         ) : null}
       </div>
+
+      {/* Queued for a build slot (t3o-33). PANE-LEVEL, above whichever thread is
+          selected, because a queued card has no build thread to put it in — the
+          governor spawns nothing until it admits the step, so the pane is
+          showing the planning conversation the card arrived with. Without this
+          the transcript reads as though the build already ran and stopped. */}
+      {queueInfo == null ? null : (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-3 py-2">
+          <ClockIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          <p className="min-w-0 flex-1 text-[12px] text-muted-foreground">
+            <span className="font-semibold text-foreground">{queueInfo.headline}.</span> No agent
+            has picked this up yet.
+          </p>
+          {onQueueForceStart === undefined ? null : (
+            <BoardHint label="Run this task now, over the agent limit.">
+              <button
+                className={cn(
+                  "inline-flex h-[24px] shrink-0 items-center gap-[5px] rounded-[7px] border border-input bg-popover px-2 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent",
+                  queueForceStartPending === true && "cursor-wait opacity-60",
+                )}
+                disabled={queueForceStartPending === true}
+                onClick={onQueueForceStart}
+                type="button"
+              >
+                <PlayIcon className="size-2.5" />
+                {queueForceStartPending === true ? "Starting…" : "Start now"}
+              </button>
+            </BoardHint>
+          )}
+        </div>
+      )}
 
       {selected === null || selected.tombstoned ? (
         <div className="flex min-h-0 flex-1 flex-col justify-center p-4">
