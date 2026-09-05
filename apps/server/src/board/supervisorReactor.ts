@@ -472,7 +472,13 @@ const make = Effect.gen(function* () {
       dead build step re-armed its watchdog for another `timeoutMs` for as long
       as siblings kept merging. Commits reachable from the base are excluded by
       construction; everything the agent itself committed is kept, including a
-      merge commit its own sync-base step created, which IS agent work. */
+      merge commit its own sync-base step created, which IS agent work.
+   *
+      An unresolvable base ref (git exits 128) answers null, the same as "no
+      such commit": the heartbeat cannot be measured, so it shields nothing and
+      the step falls back to the todo-advance signal and the nudge ladder. That
+      direction is deliberate — the alternative, reading the tip when the scoped
+      read fails, is the exact defect this replaced. */
   const latestBranchCommitIso = (cwd: string, baseRefName: string) =>
     git
       .execute({
