@@ -1038,10 +1038,10 @@ function ActionsSection({
               )}
             </button>
           </BoardHint>
-          {secondary.length > 0 ? (
+          {secondary.length > 0 && props.onSubmitForMerge !== undefined ? (
             <BoardStageSecondaryMenu
               actions={secondary}
-              onSubmitForMerge={props.onSubmitForMerge ?? (() => {})}
+              onSubmitForMerge={props.onSubmitForMerge}
             />
           ) : null}
         </div>
