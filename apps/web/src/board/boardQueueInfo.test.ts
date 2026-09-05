@@ -36,12 +36,15 @@ describe("boardQueueInfo", () => {
     );
   });
 
-  // Per-instance caps can leave a step queued while the global count still has
-  // room, so the fraction has to read below the cap as well as at it.
-  it("reports a count under the cap honestly", () => {
-    expect(boardQueueInfo({ slot: slot(1, 1), running: 1, cap: 3 })!.detail).toContain(
-      "1 of 3 agents busy",
-    );
+  // The client cannot see every slot-holder: a step parked on a question keeps
+  // its slot and reaches the shell as neither running nor queued, and a
+  // per-instance cap holds work back with the global count below its ceiling.
+  // A fraction here would imply spare capacity the card demonstrably could not
+  // get, so it is not stated.
+  it("states no fraction below the cap, where the count could be an undercount", () => {
+    const detail = boardQueueInfo({ slot: slot(1, 1), running: 1, cap: 3 })!.detail;
+    expect(detail).toContain("No agent is free for this task");
+    expect(detail).not.toContain("of 3 agents");
   });
 
   // A force start deliberately runs over the limit (t3o-33). "4 of 3" reads as

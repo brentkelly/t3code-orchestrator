@@ -28,14 +28,25 @@ export interface BoardQueueInfo {
 /**
  * How busy the agents are, said honestly at every count.
  *
- * A force-start deliberately runs OVER the cap (t3o-33), so `4 of 3 agents
- * busy` is reachable and reads as a bug. Past the ceiling the sentence stops
- * being a fraction and reports the limit instead.
+ * The count is CARDS THE EXECUTOR IS RUNNING, which is not quite the same as
+ * slots held: a step parked on a question (`awaiting-input`) or finishing up
+ * (`completing`) keeps its slot but is not "running", and neither status
+ * reaches the client — the card shell carries no field for them. A per-instance
+ * cap can hold a step back too, with the global count nowhere near its ceiling.
+ *
+ * So the fraction is only stated when it cannot be wrong. Below the cap the
+ * numbers would imply spare capacity the card demonstrably could not get — it
+ * is queued, which means the governor refused it — so the sentence says the one
+ * thing that is true at every count instead of inventing a number.
+ *
+ * Above the cap is reachable on purpose: a force start runs over the limit
+ * (t3o-33), and `4 of 3 agents busy` reads as a bug, so past the ceiling the
+ * sentence stops being a fraction and reports the limit.
  */
 function describeAgents(running: number, cap: number): string {
-  return running > cap
-    ? `${running} agents running (limit ${cap})`
-    : `${running} of ${cap} agents busy`;
+  if (running > cap) return `${running} agents running (limit ${cap})`;
+  if (running < cap) return "No agent is free for this task";
+  return `${running} of ${cap} agents busy`;
 }
 
 /**

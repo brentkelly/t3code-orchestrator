@@ -335,6 +335,7 @@ it.effect("admit-step spends the force-start override rather than carrying it (t
         nextCardNumberByProject: {},
       }),
     );
+    assert.strictEqual(event.type, "board.card-step-admitted");
     if (event.type === "board.card-step-admitted") {
       assert.strictEqual(event.payload.state.forceStart, false);
     }

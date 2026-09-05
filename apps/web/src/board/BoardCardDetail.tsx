@@ -383,15 +383,71 @@ export function BoardCardDetail({
       .map((thread) => ({ id: thread.id, key: "", title: thread.title }));
   }, [card, snapshot]);
 
+  // ── Everything below this line runs before the loading early return ──
+  // The card's own shell, and the queue state derived from it. These sit ABOVE
+  // the `LoadingModal` branch because they include hooks: `detail` is null on
+  // the first render of every card modal, so a hook declared after that branch
+  // would be skipped on render one and present on render two. (The repo's
+  // oxlint config carries no `rules-of-hooks`, so nothing catches that but a
+  // crash in the app.)
+  //
+  // The in-flight proxy for the `+` menu's restart affordance (t3o-14, D1)
+  // reads this same shell, since the step-state read model is server-only.
+  const cardShell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+
+  // The card's place in the board-wide build queue (t3o-33). Derived from the
+  // shells the modal already holds — every project, since the queue is global —
+  // so a queued card can say why it is waiting instead of opening on the
+  // planning conversation it left behind and explaining nothing.
+  //
+  // Everything below is skipped for the overwhelmingly common case: the map is
+  // empty unless something is actually queued.
+  const allShellCards = snapshot?.cards ?? EMPTY_SHELL_CARDS;
+  // Same fallback the board uses: before the first snapshot the stage list is
+  // empty, and ranking every queued card equally would print a position that is
+  // wrong rather than absent.
+  const queueStages = stages.length > 0 ? stages : BOARD_SEED_STAGES;
+  const queueInfo = useMemo(
+    () =>
+      cardShell?.queued !== true
+        ? null
+        : boardQueueInfo({
+            slot: boardBuildQueue(allShellCards, queueStages).get(cardId),
+            running: boardRunningStepCount(allShellCards),
+            cap: boardSettings.concurrency.globalMaxConcurrent,
+          }),
+    [
+      allShellCards,
+      boardSettings.concurrency.globalMaxConcurrent,
+      cardId,
+      cardShell?.queued,
+      queueStages,
+    ],
+  );
+  // Null whenever reordering could not actually improve the card's position —
+  // the rail hides the button rather than offering one that does nothing.
+  const queueMoveToFront = useMemo(
+    () =>
+      queueInfo === null
+        ? null
+        : planBoardQueueMoveToFront({ cards: allShellCards, stages: queueStages, cardId }),
+    [allShellCards, cardId, queueInfo, queueStages],
+  );
+  // Strictly "the command is in flight" — cleared when it settles, either way.
+  // It deliberately does NOT wait for the card to leave the queue: the governor
+  // can decline to start it (a worktree that will not provision), and a button
+  // that waits for a signal which may never arrive is stuck forever. The
+  // request is durable on the step row, so asking again is harmless.
+  const [forceStartPending, setForceStartPending] = useState(false);
+
   if (detail === null || card === null) {
     // The shell already knows the stage, so the empty frame opens at the width
     // the detail will need — no jump from sheet to working surface.
-    const shell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
     return (
       <LoadingModal
-        done={shell !== undefined && boardCardIsDone(stages, shell.stage)}
+        done={cardShell !== undefined && boardCardIsDone(stages, cardShell.stage)}
         onClose={onClose}
-        wide={shell !== undefined && boardCardHasThreadPane(stages, shell.stage)}
+        wide={cardShell !== undefined && boardCardHasThreadPane(stages, cardShell.stage)}
       />
     );
   }
@@ -440,60 +496,6 @@ export function BoardCardDetail({
         },
       }),
     );
-
-  // The `+` menu's restart affordance (t3o-14, D1): shown only when the card's
-  // current stage auto-executes, and disabled while a supervised run is in
-  // flight for the card — restarting then would leave two threads owning the
-  // same step. Both facts are derived by pure helpers (asserted in
-  // `boardCardThreadMenu.test.ts`); the in-flight proxy reads the card shell's
-  // live status since the step-state read model is server-only.
-  const cardShell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
-
-  // The card's place in the board-wide build queue (t3o-33). Derived from the
-  // shells the modal already holds — every project, since the queue is global —
-  // so a queued card can say why it is waiting instead of opening on the
-  // planning conversation it left behind and explaining nothing.
-  //
-  // Everything below is skipped for the overwhelmingly common case: the map is
-  // empty unless something is actually queued.
-  const allShellCards = snapshot?.cards ?? EMPTY_SHELL_CARDS;
-  // Same fallback the board uses: before the first snapshot the stage list is
-  // empty, and ranking every queued card equally would print a position that is
-  // wrong rather than absent.
-  const queueStages = stages.length > 0 ? stages : BOARD_SEED_STAGES;
-  const queueInfo = useMemo(
-    () =>
-      cardShell?.queued !== true
-        ? null
-        : boardQueueInfo({
-            slot: boardBuildQueue(allShellCards, queueStages).get(cardId),
-            running: boardRunningStepCount(allShellCards),
-            cap: boardSettings.concurrency.globalMaxConcurrent,
-          }),
-    [
-      allShellCards,
-      boardSettings.concurrency.globalMaxConcurrent,
-      cardId,
-      cardShell?.queued,
-      stages,
-    ],
-  );
-  // Null whenever reordering could not actually improve the card's position —
-  // the rail hides the button rather than offering one that does nothing.
-  const queueMoveToFront = useMemo(
-    () =>
-      queueInfo === null
-        ? null
-        : planBoardQueueMoveToFront({ cards: allShellCards, stages: queueStages, cardId }),
-    [allShellCards, cardId, queueInfo, queueStages],
-  );
-  // Cleared by the card leaving the queue, not by a timer: the request is a
-  // command like any other, and the banner is honest until the governor has
-  // actually admitted the step.
-  const [forceStartPending, setForceStartPending] = useState(false);
-  useEffect(() => {
-    if (cardShell?.queued !== true) setForceStartPending(false);
-  }, [cardShell?.queued]);
 
   // The review loop's round budget, for the Review pane's R1..Rn bar. Resolved
   // from the same settings the executor reads, so the bar and the real loop can
@@ -681,13 +683,10 @@ export function BoardCardDetail({
         setFeedback(null);
         setForceStartPending(true);
         void forceStartStep({ environmentId, input: { cardId: card.id } }).then((result) => {
-          if (result._tag === "Failure") {
-            setForceStartPending(false);
-            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+          setForceStartPending(false);
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            setFeedback(describeBoardCommandFailure(result));
           }
-          // On success the button stays pending until the shell reports the
-          // card out of the queue — the governor still has to provision a
-          // worktree, and a button that springs back would read as a no-op.
         });
       }}
       onQueueMoveToFront={
