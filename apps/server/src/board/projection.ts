@@ -410,7 +410,7 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULLABLE in the DB: rows written before migration 030 have no value, and a
   // null already MEANS "stopped for no recorded reason" (t3o-30, D2).
   lastError: BoardCardStepState.fields.lastError,
-  // NULLABLE in the DB: rows written before migration 033 have no value, and
+  // NULLABLE in the DB: rows written before migration 034 have no value, and
   // every step that reached `awaiting-input` before t3o-34 did so through the
   // structured-question path — which is `question` (t3o-34, D3).
   awaitingReason: Schema.NullOr(BoardCardStepAwaitingReason),
@@ -2780,7 +2780,7 @@ export function loadBoardState(
               ...stepModelOptionsPatch(row.modelOptions),
               baseTipAtRoundStart: row.baseTipAtRoundStart,
               lastError: row.lastError,
-              // A NULL column reads as `question` (t3o-34, D3): pre-033 rows
+              // A NULL column reads as `question` (t3o-34, D3): pre-034 rows
               // could only have parked through the structured-question path.
               awaitingReason: row.awaitingReason ?? "question",
               humanInLoop: row.humanInLoop !== 0,

@@ -1,6 +1,6 @@
 /**
  * The SNAPSHOT producer for `stepAwaiting` (t3o-34, D4), and the NULL fallback
- * migration 033 rests on.
+ * migration 034 rests on.
  *
  * `stepAwaiting` has two producers that must agree: the `card-stalled` delta,
  * which keeps a connected client's card honest, and this SQL-derived shell
@@ -64,7 +64,7 @@ const makeTestLayer = (prefix: string) =>
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
-    // provideMerge, not provide: the NULL-column case writes the pre-033 row
+    // provideMerge, not provide: the NULL-column case writes the pre-034 row
     // shape directly, so the test needs the same `SqlClient` the projection uses.
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
@@ -179,11 +179,11 @@ describe("stepAwaiting on the shell SNAPSHOT (t3o-34, D4)", () => {
     );
   });
 
-  it.layer(makeTestLayer("t3o-await-snap-3-"))("a pre-migration-033 row", (it) => {
+  it.layer(makeTestLayer("t3o-await-snap-3-"))("a pre-migration-034 row", (it) => {
     it.effect("reads a NULL awaiting_reason as `question`", () =>
       Effect.gen(function* () {
         yield* seedParkedStep("stopped");
-        // What a row written before migration 033 looks like: the column exists
+        // What a row written before migration 034 looks like: the column exists
         // (the ALTER ran) but nothing ever wrote it. Every such row reached
         // `awaiting-input` through the structured-question path, because before
         // t3o-34 there was no other way in — so it must read as `question`, not

@@ -137,7 +137,7 @@ awaitingReason: "question" | "stopped"; // decoding default "question"
 - `stopped` — a human-in-the-loop turn that ended with nothing to answer.
 
 `board.card.await-step-input` carries the reason; the decider writes it onto the state. A board
-migration `033_BoardCardStepStateAwaitingReason.ts` adds `awaiting_reason TEXT` to
+migration `034_BoardCardStepStateAwaitingReason.ts` adds `awaiting_reason TEXT` to
 `board_card_step_state` (plain `ADD COLUMN`, nullable, no history rewrite — NULL reads as
 `question`, which is what every pre-existing awaiting-input row was).
 
@@ -246,7 +246,7 @@ Nothing else about the ladder changes — not the counters, not the ceilings, no
 - `packages/contracts/src/board.ts` — `awaitingReason` on the step state, `stepAwaiting` on the shell
   and the `card-stalled` delta, the two `boardCardAttention` branches, the `await-step-input` command
   payload.
-- `apps/server/src/board/migrations/033_BoardCardStepStateAwaitingReason.ts` — **new**.
+- `apps/server/src/board/migrations/034_BoardCardStepStateAwaitingReason.ts` — **new**.
 - `apps/server/src/board/decider.ts` — reason on `await-step-input`, `resume-step` accepts
   `awaiting-input`.
 - `apps/server/src/board/projector.ts` — `card-stalled` delta from `board.card-step-awaiting-input`.
