@@ -86,6 +86,49 @@ Run a quick **Rescan** after setting up a new machine or changing credentials.
 
 You can now clone, publish, and create pull requests.
 
+#### Using a different GitHub identity for specific projects
+
+By default every project uses the GitHub account you signed into with `gh` above. If one project
+needs to act as a **different** GitHub identity — a client's org, a bot account, a separate set of
+permissions — you can give that project its own personal access token without changing your machine
+login.
+
+Create a file named `gitenv` in the T3 Code data directory on the machine running the server
+(`~/.t3/userdata/gitenv` in a standard install). Add one line per project, mapping the project's
+folder to a token:
+
+```
+# The key is the path to the project's main folder — an absolute path,
+# or one starting with ~ for your home directory.
+# Lines starting with # and blank lines are ignored.
+/home/you/projects/client-site=github_pat_xxxxxxxxxxxxxxxxxxxxxxxx
+~/projects/other-client=github_pat_yyyyyyyyyyyyyyyyyyyyyyyy
+```
+
+- **Token** – a GitHub personal access token (fine-grained or classic) with the scopes that project
+  needs, typically repository read/write and pull requests. No username is required.
+- **Permissions** – keep the file private: `chmod 600 ~/.t3/userdata/gitenv`. T3 Code logs a warning
+  (never the token itself) if the file is readable by other users.
+- **Takes effect immediately** – the file is read on demand, so you can create it (or edit an
+  existing one) while T3 Code is running; the next action against that project picks it up, no
+  restart needed. A project with no entry keeps using your normal `gh` login.
+
+Once a project has an entry, both **T3 Code's own actions** for it (clone, publish, pull request
+create and merge, fetch and push over HTTPS) and any **coding agents working in that project** use
+that identity — so an agent's own `gh` commands, such as opening a pull request, act as the project
+account. Board work is covered automatically: an entry keyed to the project's main folder also
+applies to every card branch T3 Code checks out for it, so you only write one line.
+
+The token is only ever handed to the tools that need it, through their environment — it is never
+placed in a prompt, an agent instruction, or a log, and it is stripped from any provider output
+T3 Code stores. One caveat worth understanding: to let an agent's own `gh` act as the project, the
+token is present in that agent's environment, and an agent that deliberately inspects its
+environment could read it. Only give an entry to projects whose agents you're willing to trust with
+that token; T3 Code's own actions still get the identity either way.
+
+This override is GitHub-only. GitLab, Bitbucket, and Azure DevOps continue to use their configured
+credentials.
+
 ### For GitLab
 
 1. Install the GitLab CLI:
@@ -150,6 +193,7 @@ Control settings**.
 - **GitHub says it could not verify sign-in status** – T3 Code needs GitHub CLI 2.81.0 or newer to check sign-in status. Update `gh` (e.g., `brew upgrade gh`), then rescan
 - **Bitbucket not connecting** – Double-check your environment variables are set in the correct shell profile and the server was restarted
 - **Can't push to a remote** – Verify your Git remote URL matches the provider you've authenticated with (SSH vs HTTPS remotes may need different credentials)
+- **A project ignores its `gitenv` entry** – Confirm the key is the _absolute path to the project's main folder_ (not a subfolder or a symlink), the token is valid, and the `gitenv` file is readable by the account running the server. Entries apply to GitHub only
 
 **Need more help?** Check your provider's CLI documentation:
 
