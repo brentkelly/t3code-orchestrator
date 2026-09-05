@@ -754,10 +754,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               cwd: commandInput.cwd,
               env: {
                 ...process.env,
-                // T3o: per-project GitHub token override, for https remotes
-                // that authenticate via gh's credential helper (t3o-34).
-                ...gitenvTokenEnv(commandInput.cwd),
                 ...input.env,
+                // T3o: per-project GitHub token override, for https remotes
+                // that authenticate via gh's credential helper. Merged last (bar
+                // the trace monitor) so gitenv wins, matching the `gh` seam's
+                // "gitenv wins over ambient" order (t3o-34).
+                ...gitenvTokenEnv(commandInput.cwd),
                 ...trace2Monitor.env,
               },
             }),

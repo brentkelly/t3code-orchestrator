@@ -133,4 +133,12 @@ describe("gitenv", () => {
     );
     expect(scrubGitenvTokens("nothing sensitive")).toBe("nothing sensitive");
   });
+
+  it("does not scrub a short/placeholder configured value", () => {
+    const fixture = makeFixture();
+    writeGitenv(fixture, `${fixture.projectRoot}=todo\n`);
+    expect(scrubGitenvTokens("the value todo appears in ordinary text")).toBe(
+      "the value todo appears in ordinary text",
+    );
+  });
 });

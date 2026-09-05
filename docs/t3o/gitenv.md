@@ -31,8 +31,17 @@ through gh's credential helper, which honors the same variable. SSH remotes igno
 
 When a subprocess is spawned for a directory that resolves into a matched project,
 `{ GH_TOKEN, GITHUB_TOKEN }` is merged over its inherited environment. The token rides only in the
-spawn env — never in argv, never in a shell string, never in model-visible text — and persisted
-forge output is scrubbed of the exact configured values on top of the usual token-shape scrub.
+spawn env — never in argv, never in a shell string, never in T3o's own persisted or logged output —
+and persisted forge output is scrubbed of the exact configured values on top of the usual
+token-shape scrub.
+
+The containment stops at the agent's process boundary. To make an agent's own `gh pr create`
+authenticate as the project, the token has to be in that agent process's environment — and, exactly
+as with any ambient credential the process inherits, an agent that deliberately reads its own
+environment (`printenv`, a tool that dumps env) can observe it. The guarantee is that T3o never puts
+the token in a prompt, a tool argument, argv, or a log; it is not that the value is invisible to the
+agent. If that exposure is unacceptable for a given project, don't give its agents an entry — the
+server's own `gh`/`git` calls still get the override.
 
 Covered surfaces:
 

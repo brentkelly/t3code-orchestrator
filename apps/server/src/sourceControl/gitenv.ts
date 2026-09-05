@@ -13,9 +13,15 @@
  * act as that project's identity instead of the machine's ambient login.
  *
  * The token only ever rides in a spawn `env` option: never in argv, never in
- * a shell string, never in anything shown to a model. `scrubGitenvTokens`
- * exists so persisted process output can also drop the exact configured
- * values, whatever their shape.
+ * a shell string, never in T3o's own persisted or logged output.
+ * `scrubGitenvTokens` exists so persisted process output can also drop the
+ * exact configured values, whatever their shape. Note the containment stops at
+ * the agent's process boundary: an agent session gets the token in its
+ * environment so its own `gh` authenticates, and — exactly as with any ambient
+ * credential the process inherits — an agent that deliberately reads its
+ * environment can observe it. The guarantee is that T3o never places the token
+ * in a prompt, a tool argument, argv, or a log, not that the value is invisible
+ * to the agent.
  *
  * Matching is worktree-aware: the calling cwd is resolved to its main
  * repository root by walking up to the nearest `.git` entry and, for linked
@@ -51,6 +57,10 @@ let warnedLoosePermissions = false;
     long-lived server from accumulating dead worktree paths. */
 const repoRootCache = new Map<string, string | null>();
 const REPO_ROOT_CACHE_LIMIT = 512;
+
+/** Shortest value `scrubGitenvTokens` will redact. A real PAT is far longer;
+    the floor keeps a placeholder value from mangling unrelated output. */
+const MIN_SCRUBBABLE_TOKEN_LENGTH = 16;
 
 export function initGitenv(stateDir: string): void {
   const next = NodePath.join(stateDir, "gitenv");
@@ -252,7 +262,10 @@ export function scrubGitenvTokens(text: string): string {
   }
   let scrubbed = text;
   for (const token of entries.values()) {
-    if (scrubbed.includes(token)) {
+    // A usable GitHub token is far longer than this; the floor stops a
+    // mistyped or placeholder value from blanket-replacing a common substring
+    // across unrelated output.
+    if (token.length >= MIN_SCRUBBABLE_TOKEN_LENGTH && scrubbed.includes(token)) {
       scrubbed = scrubbed.split(token).join("***");
     }
   }
