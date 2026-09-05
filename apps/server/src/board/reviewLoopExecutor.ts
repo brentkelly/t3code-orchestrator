@@ -27,6 +27,7 @@ import {
   effectiveBoardRuntimeMode,
   isBoardReviewBlockingSeverity,
   isBoardReviewStageExecution,
+  parseBoardStepPayloadJson,
   parseReviewStepId,
   reviewStepId,
   reviewStepLabel,
@@ -56,21 +57,12 @@ export type ParsedPayload<A> = { readonly ok: true; readonly value: A } | { read
 
 const decodeReview = Schema.decodeUnknownOption(BoardReviewPayload);
 
-function parseJson(payload: string | null): Option.Option<unknown> {
-  if (payload === null) return Option.none();
-  try {
-    return Option.some(JSON.parse(payload));
-  } catch {
-    return Option.none();
-  }
-}
-
 // Only the `review` phase's payload gates the loop (convergence is decided by
 // review, D3), so the executor parses only that. The triage/adjudicate payloads
 // are opaque to the executor — it advances on their *presence* (a succeeded
 // completion), and the card-detail view is what decodes them for display.
 export function parseReviewPayload(payload: string | null): ParsedPayload<BoardReviewPayload> {
-  const decoded = Option.flatMap(parseJson(payload), decodeReview);
+  const decoded = decodeReview(parseBoardStepPayloadJson(payload));
   return Option.isSome(decoded) ? { ok: true, value: decoded.value } : { ok: false };
 }
 

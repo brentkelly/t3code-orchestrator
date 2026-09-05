@@ -5455,13 +5455,42 @@ export function boardReviewFindingResolution(
   return disposition.action;
 }
 
-function parseBoardStepPayloadJson(payload: string | null): unknown {
-  if (payload === null) return undefined;
+function parseJsonOrUndefined(json: string): unknown {
   try {
-    return JSON.parse(payload);
+    return JSON.parse(json);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * One level of an agent's own `JSON.stringify` taken back off (T3O-2).
+ *
+ * `board_complete_step` takes an unknown payload and stores it as JSON, so an
+ * agent that hands the tool an already-stringified payload — as they do, over
+ * MCP, having been asked for "a JSON payload { … }" — had it stringified a
+ * second time. The findings were intact and the phase had run to a clean
+ * conclusion; only the wrapping was wrong, and every reader threw the whole
+ * round away over it. Applied on both sides of storage: the completion handler
+ * unwraps before it writes, so new payloads are canonical, and the readers here
+ * unwrap so payloads written before the fix still read.
+ *
+ * Only a string that parses to an OBJECT or ARRAY unwraps. A payload that is
+ * genuinely a string keeps its own encoding, and the tolerance never invents
+ * structure the agent did not write — a well-formed payload of the wrong shape
+ * is still an unreadable one.
+ */
+export function unwrapStringifiedBoardStepPayload(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const parsed = parseJsonOrUndefined(value);
+  return typeof parsed === "object" && parsed !== null ? parsed : value;
+}
+
+/** A step completion's stored payload, decoded — `undefined` when it is absent
+    or malformed, which no caller may read as "nothing to report". */
+export function parseBoardStepPayloadJson(payload: string | null): unknown {
+  if (payload === null) return undefined;
+  return unwrapStringifiedBoardStepPayload(parseJsonOrUndefined(payload));
 }
 
 const decodeBoardReviewPayloadOption = Schema.decodeUnknownOption(BoardReviewPayload);

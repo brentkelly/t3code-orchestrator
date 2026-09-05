@@ -22,6 +22,7 @@ import {
   CommandId,
   EMPTY_BOARD_STATE,
   resolveBoardCardForThread,
+  unwrapStringifiedBoardStepPayload,
   type BoardCardCreateCommand,
   type BoardCardCompleteStepCommand,
   type BoardCardMoveCommand,
@@ -531,9 +532,15 @@ export const boardHandlers = {
         !isBoardTerminalStepStatus(liveState.status);
       // The agent's structured payload is stored verbatim as an opaque JSON
       // string (D8: carried through unread), so a schema codec would add
-      // nothing over a plain stringify.
+      // nothing over a plain stringify — except for the one thing a stringify
+      // cannot see: an agent that already stringified the payload itself
+      // (T3O-2). Storing THAT would wrap it twice and leave every reader
+      // holding a JSON string where the schema wants an object, so one level
+      // comes off first and storage stays canonical.
+      const structured =
+        input.payload === undefined ? undefined : unwrapStringifiedBoardStepPayload(input.payload);
       // @effect-diagnostics-next-line preferSchemaOverJson:off
-      const payload = input.payload === undefined ? null : JSON.stringify(input.payload);
+      const payload = structured === undefined ? null : JSON.stringify(structured);
       // The completion enters the event log, the in-memory read model and every
       // subscribeCard detail frame for the card's lifetime (D8 discipline:
       // bodies never enter the read model) — one oversized call must not bloat
