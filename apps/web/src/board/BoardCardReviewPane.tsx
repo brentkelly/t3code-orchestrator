@@ -112,6 +112,18 @@ function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
   );
 }
 
+/**
+ * What a phase LOOKS like, which is not always what the walk says (T3O-3).
+ * Off the review stage the due phase is not running — no thread is reading
+ * anything — so it renders exactly as the phases behind it: not started.
+ */
+function displayedPhaseStatus(
+  status: BoardReviewPhaseStatus,
+  offStage: boolean,
+): BoardReviewPhaseStatus {
+  return offStage && status === "running" ? "pending" : status;
+}
+
 /** The step marker: a numbered dot at rest, a spinner while the phase runs. */
 function PhaseMarker({
   index,
@@ -184,9 +196,22 @@ function phaseNote(
   return "Not started.";
 }
 
-function roundBadge(round: BoardReviewLoopRound): { label: string; className: string } {
+function roundBadge(
+  round: BoardReviewLoopRound,
+  offStage: boolean,
+): { label: string; className: string } {
   switch (round.outcome) {
     case "in-progress":
+      // Off the review stage the round is open but nobody is in it, so the
+      // badge stays neutral for the same reason the pill does
+      // (docs/t3o/status-colours.md: no colour without a claim). A round with
+      // no phase behind it has not started at all — which is what a card
+      // opening the pane ahead of review sees (T3O-3).
+      if (offStage)
+        return {
+          label: round.completedAt === null ? "Not started" : "Not running",
+          className: "border-border bg-muted text-muted-foreground",
+        };
       return { label: "In progress", className: "border-info/40 bg-info/10 text-info-foreground" };
     case "clean":
       return {
@@ -217,23 +242,26 @@ function roundSummary(round: BoardReviewLoopRound): string {
 
 function Round({
   round,
+  offStage,
   open,
   onToggle,
   onOpenThread,
 }: {
   readonly round: BoardReviewLoopRound;
+  /** The card is not on the review stage, so no phase of this round is live. */
+  readonly offStage: boolean;
   readonly open: boolean;
   readonly onToggle: () => void;
   readonly onOpenThread: ((threadId: ThreadId) => void) | undefined;
 }) {
-  const badge = roundBadge(round);
+  const badge = roundBadge(round, offStage);
   const tally = `${round.severities.critical} / ${round.severities.improvement} / ${round.severities.nitpick}`;
   return (
     <div className="shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-xs">
       <button
         className={cn(
           "flex w-full items-center gap-2.5 px-3 py-2.5 text-left",
-          round.outcome === "in-progress" ? "bg-foreground/2" : "",
+          round.outcome === "in-progress" && !offStage ? "bg-foreground/2" : "",
         )}
         onClick={onToggle}
         type="button"
@@ -279,16 +307,17 @@ function Round({
           {BOARD_REVIEW_PHASE_IDS.map((phaseId, index) => {
             const phase = round.phases.find((p) => p.phase === phaseId);
             if (phase === undefined) return null;
+            const status = displayedPhaseStatus(phase.status, offStage);
             return (
               <div key={phaseId} className="border-t border-border">
                 <div className="flex items-start gap-2.5 px-3 py-2.5">
-                  <PhaseMarker index={index + 1} status={phase.status} />
+                  <PhaseMarker index={index + 1} status={status} />
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="text-[12.5px] font-medium text-foreground">
                       {PHASE_NAMES[phaseId]}
                     </span>
                     <span className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">
-                      {phaseNote(round, phaseId, phase.status)}
+                      {phaseNote(round, phaseId, status)}
                     </span>
                   </div>
                   {phase.threadId !== null && onOpenThread !== undefined ? (
@@ -380,9 +409,15 @@ function statusPill(
   }
 }
 
-function footerNote(loop: BoardReviewLoop): string {
+function footerNote(loop: BoardReviewLoop, offStage: boolean, started: boolean): string {
   switch (loop.status) {
     case "running":
+      // Off the review stage the loop is not running, so the footer says what
+      // it IS: a budget waiting to be spent, or a loop paused by the move.
+      if (offStage)
+        return started
+          ? `Round ${loop.currentRound} of ${loop.maxRounds} · the loop is paused while the card sits off the review stage.`
+          : `Round 1 of ${loop.maxRounds} · the loop starts when the card reaches the review stage, and stops early once a round closes clean.`;
       return `Round ${loop.currentRound} of ${loop.maxRounds} · the loop stops early once a round closes clean.`;
     case "converged":
       return "A round closed with nothing blocking, so the loop is settled.";
@@ -785,6 +820,7 @@ export function BoardCardReviewPane({
         {loop.rounds.toReversed().map((round) => (
           <Round
             key={round.round}
+            offStage={offStage === true}
             onOpenThread={onOpenThread}
             onToggle={() => setOpenRound(shownRound === round.round ? "collapsed" : round.round)}
             open={shownRound === round.round}
@@ -793,7 +829,7 @@ export function BoardCardReviewPane({
         ))}
         <div className="flex shrink-0 items-center gap-3 rounded-xl border border-dashed border-input bg-foreground/3 px-3.5 py-3">
           <span className="min-w-0 text-[11.5px]/[1.5] text-pretty text-muted-foreground">
-            {footerNote(loop)}
+            {footerNote(loop, offStage === true, ledgerFloor > 0)}
           </span>
         </div>
       </div>

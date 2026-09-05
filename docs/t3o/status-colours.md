@@ -35,6 +35,12 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   These were blue before, which read as "still working" — the opposite of what they mean.
 - **Blocked is amber, never blue.** It matches the card modal's blocked callout, which already used
   it.
+- **No colour without a claim.** A colour asserts something about work happening right now, so an
+  indicator that cannot make that assertion stays neutral (`bg-muted text-muted-foreground`) and
+  says why in words. The review pane is the case that forced the rule: its loop and round state are
+  derived from the step ledger, which still reads "round 1, review due" for a card that has never
+  reached the review stage — so off the stage the pill, the round pill and the phase markers all go
+  neutral and read "Not started" / "Not running" rather than spinning at a card sitting in Building.
 - **A stopped agent is never blue.** A step whose turn ended without completing is not working, so
   it never wears the running dot. If it left a question behind it is violet ("Input needed"); if it
   did not, it is amber ("Needs a human"). Both are the same fact — nobody is working on this card —
