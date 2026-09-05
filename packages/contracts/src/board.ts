@@ -4748,8 +4748,8 @@ export type BoardMergeCardPullRequestResult = typeof BoardMergeCardPullRequestRe
  */
 export const BoardSubmitCardForMergeResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("started") }),
-  /** The card is not held at the build-role stage: it is somewhere else, or a
-      step is still running on it. */
+  /** The card is not at the build-role stage. The caret only renders there, so
+      this is a stale client or an RPC call made without one. */
   Schema.Struct({ outcome: Schema.Literal("wrong-stage") }),
   /** A step is live on the card, so nothing else may be selected. */
   Schema.Struct({ outcome: Schema.Literal("step-running") }),
