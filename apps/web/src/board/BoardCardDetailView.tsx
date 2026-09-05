@@ -350,6 +350,9 @@ export interface BoardCardDetailViewProps {
   /** Whether a conflict-resolution step is running on this card. Nothing else
       runs in the merge stage, so a live step there can only be that. */
   readonly conflictStepRunning: boolean;
+  /** The shell's `held`, ranked by `boardCardAttention` — the build stage's
+      forward button appears only on it (t3o-06 held-build-forward-button). */
+  readonly stepHeld?: boolean;
   /** Whether a merge kicked off from this card is still in flight — drives the
       Merge button's "Merging…" spinner and disables it so the several-second
       round trip can't be re-entered by a second click. */
@@ -824,6 +827,7 @@ function ActionsSection({
     pullRequestState: pullRequest?.state ?? null,
     pullRequestNumber: pullRequest?.number ?? null,
     conflictStepRunning: props.conflictStepRunning,
+    stepHeld: props.stepHeld === true,
   });
   const forward = primaryAction !== null && !archived ? primaryAction : null;
   // "Stop after this round" (t3o-22, D8): offered only while a review loop is

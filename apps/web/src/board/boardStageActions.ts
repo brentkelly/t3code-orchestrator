@@ -5,9 +5,13 @@
  * list (t3o-15): the exhaustive per-stage switch is gone, replaced by "move to
  * the next stage in order".
  *
- * The `build`-role stage has NO forward button: its onward crossing is
- * board-driven (a successful unattended run auto-advances, D8), never a human
- * click. The last stage (Done) has none either — its only exit is archive.
+ * The `build`-role stage has no forward button WHILE the pipeline is driving
+ * it: its onward crossing is board-driven (a successful unattended run
+ * auto-advances, D8), never a human click. The one exception is a SETTLED step
+ * (t3o-06 held-build-forward-button, D1) — a human-in-the-loop build never
+ * auto-advances and a failed one never will either, so once the step settles
+ * the ordinary forward move is offered rather than nothing at all. The last
+ * stage (Done) has none either — its only exit is archive.
  */
 import {
   effectiveBoardStageRole,
@@ -90,6 +94,12 @@ export interface BoardStagePrimaryActionContext {
       runs there — the stage does not auto-execute — so a live step can only be
       the conflict-resolution one. */
   readonly conflictStepRunning?: boolean;
+  /** Whether the card's step has SETTLED and left the card standing (the
+      shell's `held`, ranked by `boardCardAttention`). The build role has no
+      human forward gate while the pipeline is driving it — but once its step
+      settles, nothing will move the card on, so the ordinary forward move is
+      offered instead of nothing at all. */
+  readonly stepHeld?: boolean;
 }
 
 export function boardStagePrimaryAction(
@@ -103,8 +113,12 @@ export function boardStagePrimaryAction(
   // carries it as NULL, and the button must not change behaviour based on how
   // old someone's database is.
   const currentRole = current === null ? null : effectiveBoardStageRole(current);
-  // The build role advances board-driven (D8) — no human forward gate.
-  if (currentRole === "build") return null;
+  // The build role advances board-driven (D8) — no human forward gate WHILE the
+  // pipeline is driving it. A settled step is the opposite case: a
+  // human-in-the-loop build that ran to the end never auto-advances, and a
+  // failed one never will either, so the card would sit in Building with a
+  // "Needs a human" chip and nothing to press.
+  if (currentRole === "build" && context?.stepHeld !== true) return null;
   // The merge role's button merges the pull request and advances as a
   // consequence. Only with a PR still OPEN: merged, closed, or absent all fall
   // through to the ordinary forward move below, so a card whose PR someone

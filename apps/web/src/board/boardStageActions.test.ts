@@ -159,6 +159,66 @@ describe("boardStagePrimaryAction", () => {
     expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.done)).toBeNull();
   });
 
+  it("offers the ordinary forward move from the build role once its step has settled", () => {
+    // A human-in-the-loop build never auto-advances, and a failed one never
+    // will either: the card sits in Building wearing a "Needs a human" chip
+    // with nothing to press. `stepHeld` is that chip's own condition, so the
+    // button appears exactly when the chip does — labelled and styled by the
+    // generic rule, not special-cased (D5, D6).
+    expect(
+      boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.building, { stepHeld: true }),
+    ).toEqual({
+      kind: "move",
+      label: "Move to Code review",
+      toStage: BOARD_SEED_STAGE_IDS.review,
+      emphasised: false,
+    });
+  });
+
+  it("keeps the build role's forward button shut while its step is still running", () => {
+    // The flag OPENS the gate; merely passing a context must not. A card
+    // mid-build is being driven by the board and has nothing for a human to do.
+    expect(
+      boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.building, { stepHeld: false }),
+    ).toBeNull();
+    expect(boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.building, {})).toBeNull();
+  });
+
+  it("still offers nothing from the last stage, settled or not", () => {
+    // Done has no next stage, so the ordinary rule refuses on its own — the
+    // held exception must not invent an exit where the ladder ends.
+    expect(
+      boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.done, { stepHeld: true }),
+    ).toBeNull();
+  });
+
+  it("changes nothing on a stage that was never gated", () => {
+    // `stepHeld` exists to unblock the ONE stage that returns null
+    // unconditionally. Everywhere else the ordinary move already applies and
+    // the flag must not leak into it.
+    for (const stage of stages) {
+      if (stage.stageId === BOARD_SEED_STAGE_IDS.building) continue;
+      expect(boardStagePrimaryAction(stages, stage.stageId, { stepHeld: true })).toEqual(
+        boardStagePrimaryAction(stages, stage.stageId),
+      );
+    }
+  });
+
+  it("resolves the build role on a stage row that predates it", () => {
+    // Same read-side fallback the merge role gets: a `board_stages` row seeded
+    // before roles existed carries NULL, and a settled build on such a row must
+    // still offer its way out rather than falling through to a stage-name
+    // coincidence.
+    const legacyStages = stages.map((stage) =>
+      stage.stageId === BOARD_SEED_STAGE_IDS.building ? { ...stage, role: null } : stage,
+    );
+    expect(boardStagePrimaryAction(legacyStages, BOARD_SEED_STAGE_IDS.building)).toBeNull();
+    expect(
+      boardStagePrimaryAction(legacyStages, BOARD_SEED_STAGE_IDS.building, { stepHeld: true })
+        ?.kind,
+    ).toBe("move");
+  });
+
   it("no primary action ever targets the build role except the explicit gate before it", () => {
     for (const stage of stages) {
       const action = boardStagePrimaryAction(stages, stage.stageId);

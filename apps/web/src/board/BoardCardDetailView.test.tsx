@@ -414,6 +414,22 @@ describe("BoardCardDetailPanel", () => {
     expect(archived).not.toContain("Begin build");
   });
 
+  it("offers a way forward from Building only once the step has settled", () => {
+    // The defect: a human-in-the-loop build that finished wore a "Needs a
+    // human" chip on its face and had nothing to press in the detail. The chip
+    // and this button now key off the same `held`, so the answer appears
+    // wherever the question does.
+    const building = detail({ stage: BOARD_SEED_STAGE_IDS.building });
+    const driven = renderToStaticMarkup(
+      <BoardCardDetailPanel {...baseProps} detail={building} projectName="P" />,
+    );
+    expect(driven).not.toContain("Move to Code review");
+    const settled = renderToStaticMarkup(
+      <BoardCardDetailPanel {...baseProps} detail={building} projectName="P" stepHeld />,
+    );
+    expect(settled).toContain("Move to Code review");
+  });
+
   it("swaps the Merge button for a disabled 'Merging…' spinner while a merge is in flight", () => {
     const openPr = {
       number: 42,
