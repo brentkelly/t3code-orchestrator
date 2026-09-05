@@ -165,6 +165,14 @@ prefix falls outside the `Extract`, reaches upstream's `satisfies never`, and fa
   `workspace:*`, so nothing is fetched from NPM and renaming would touch every import for zero gain.
 - **Branding is a single seam.** `apps/web/src/branding.ts` (`APP_BASE_NAME`, `APP_DISPLAY_NAME`,
   `APP_STAGE_LABEL`) is the only place a product name belongs. Do not scatter naming elsewhere.
+- **The board reads upstream's startup ORDER through `ServerActivation`, never by position.** The
+  supervisor is started in the `reactors.start` phase, one phase before upstream's
+  `provider-sessions.reconcile` marks a session orphaned by a restart `error`. Its boot reconcile
+  therefore waits on the `ServerActivation` boundary before reading any thread shell, because a
+  shell read earlier still shows the killed turn as active and a dead step reads alive
+  (`supervisorReactor.ts`, t3o-10 D3). Do not "simplify" that wait into moving our start line below
+  upstream's phase: it would make our correctness a property of upstream's phase ordering, which a
+  sync can reshuffle with no test that could catch it.
 
 ---
 
