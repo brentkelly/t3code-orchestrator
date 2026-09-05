@@ -347,53 +347,80 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
 });
 
 describe("reconcileStepDecision (boot reconciliation)", () => {
+  /** Unattended and thread-gone by default — the shape most of these assert.
+      `threadAlive` implies `threadPresent`, so passing alive sets both. */
+  const decide = (
+    input: Partial<Parameters<typeof reconcileStepDecision>[0]> &
+      Pick<Parameters<typeof reconcileStepDecision>[0], "status">,
+  ) =>
+    reconcileStepDecision({
+      threadAlive: false,
+      threadPresent: input.threadAlive ?? false,
+      humanInLoop: false,
+      hasSucceeded: false,
+      ...input,
+    });
+
   it("advances a step that completed while the server was down", () => {
-    assert.deepStrictEqual(
-      reconcileStepDecision({ status: "running", threadAlive: false, hasSucceeded: true }),
-      { kind: "advance" },
-    );
+    assert.deepStrictEqual(decide({ status: "running", hasSucceeded: true }), { kind: "advance" });
   });
 
   it("resumes watching a running step whose thread is still alive", () => {
-    assert.deepStrictEqual(
-      reconcileStepDecision({ status: "running", threadAlive: true, hasSucceeded: false }),
-      { kind: "resume-watch" },
-    );
+    assert.deepStrictEqual(decide({ status: "running", threadAlive: true }), {
+      kind: "resume-watch",
+    });
   });
 
   it("recovers a running step whose thread is gone (routine, not an error)", () => {
-    assert.deepStrictEqual(
-      reconcileStepDecision({ status: "running", threadAlive: false, hasSucceeded: false }),
-      { kind: "recover" },
-    );
+    assert.deepStrictEqual(decide({ status: "running" }), { kind: "recover" });
+  });
+
+  it("parks a human-in-the-loop step whose thread is present but idle", () => {
+    // The defect this covers (t3o-34): a planning agent that asked its question
+    // in prose and stopped was recovered at every boot — nudged with the
+    // unattended "nobody will answer you" text, an attempt burned, and the step
+    // left `running`, so the card pulsed its blue "being worked" dot for as long
+    // as it waited. It is waiting on the human, exactly as the live turn-ended
+    // path already decides.
+    assert.deepStrictEqual(decide({ status: "running", humanInLoop: true, threadPresent: true }), {
+      kind: "park",
+    });
+  });
+
+  it("still recovers a human-in-the-loop step whose thread is gone", () => {
+    // Nothing left to park on: there is no thread for the human to answer in.
+    assert.deepStrictEqual(decide({ status: "running", humanInLoop: true }), { kind: "recover" });
   });
 
   it("keeps waiting on an awaiting-input step whose question thread survives", () => {
-    assert.deepStrictEqual(
-      reconcileStepDecision({ status: "awaiting-input", threadAlive: true, hasSucceeded: false }),
-      { kind: "resume-watch" },
-    );
+    assert.deepStrictEqual(decide({ status: "awaiting-input", threadAlive: true }), {
+      kind: "resume-watch",
+    });
+  });
+
+  it("keeps waiting on a step parked for a PROSE question, which leaves no liveness", () => {
+    // A prose question parks the step with no pending question on the thread, so
+    // the thread reads idle. Keyed on liveness, a restart un-parked it and drove
+    // it as a stall — t3o-34's fix lasting exactly until the server bounced.
+    assert.deepStrictEqual(decide({ status: "awaiting-input", threadPresent: true }), {
+      kind: "resume-watch",
+    });
+  });
+
+  it("recovers an awaiting-input step whose thread is gone", () => {
+    assert.deepStrictEqual(decide({ status: "awaiting-input" }), { kind: "recover" });
   });
 
   it("re-offers a queued/pending step to the governor (t3o-11): reschedule, not recover", () => {
     // A slotless, never-started step is placed by the governor's schedule pass,
     // not treated as a stall — recovering it would burn an attempt on work that
     // never ran (D11).
-    assert.deepStrictEqual(
-      reconcileStepDecision({ status: "queued", threadAlive: false, hasSucceeded: false }),
-      { kind: "reschedule" },
-    );
-    assert.deepStrictEqual(
-      reconcileStepDecision({ status: "pending", threadAlive: false, hasSucceeded: false }),
-      { kind: "reschedule" },
-    );
+    assert.deepStrictEqual(decide({ status: "queued" }), { kind: "reschedule" });
+    assert.deepStrictEqual(decide({ status: "pending" }), { kind: "reschedule" });
   });
 
   it("still recovers a completing step whose settle never landed", () => {
-    assert.deepStrictEqual(
-      reconcileStepDecision({ status: "completing", threadAlive: false, hasSucceeded: false }),
-      { kind: "recover" },
-    );
+    assert.deepStrictEqual(decide({ status: "completing" }), { kind: "recover" });
   });
 });
 

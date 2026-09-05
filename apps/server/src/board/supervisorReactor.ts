@@ -4083,7 +4083,15 @@ const make = Effect.gen(function* () {
               .getThreadShellById(state.threadId)
               .pipe(Effect.map(Option.getOrUndefined));
       const threadAlive = shell !== undefined && threadIsAlive(shell);
-      const decision = reconcileStepDecision({ status: state.status, threadAlive, hasSucceeded });
+      const decision = reconcileStepDecision({
+        status: state.status,
+        threadAlive,
+        // Present but idle is the state a step parked on a human rests in: no
+        // turn, no pending question, and a thread the human can still answer in.
+        threadPresent: shell !== undefined,
+        humanInLoop: state.humanInLoop,
+        hasSucceeded,
+      });
       // The in-memory slot Ref is empty after a restart, so any step that still
       // holds a slot must RESTORE it here — whether we go on to watch it
       // (resume-watch) or recover it (recover keeps the slot, D13) — otherwise
@@ -4105,6 +4113,22 @@ const make = Effect.gen(function* () {
           break;
         case "recover":
           yield* recoverStep({ card, state });
+          break;
+        case "park":
+          // The boot-time twin of `handleTurnCompleted`'s human-in-the-loop arm
+          // (t3o-34): say WHICH kind of stop it was, off the same last-message
+          // read, so the card shows "Input needed" or "Needs a human" rather
+          // than claiming the agent is working. The slot was restored above and
+          // stays held — a parked step is admitted, not queued — and the human's
+          // next turn on the thread un-parks it through `resumeParkedStep`.
+          yield* dispatch({
+            type: "board.card.await-step-input",
+            commandId: yield* commandId("await-input"),
+            cardId: card.id,
+            stepId: state.stepId,
+            reason: (yield* endedWithQuestion(state)) ? "question" : "stopped",
+            createdAt: yield* nowIso,
+          });
           break;
         case "reschedule":
           // Pending/queued and slotless — placed by the final schedule pass

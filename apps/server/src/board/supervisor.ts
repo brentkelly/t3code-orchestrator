@@ -206,6 +206,7 @@ export function recoveryDecision(input: {
 export type BoardReconcileDecision =
   | { readonly kind: "resume-watch" }
   | { readonly kind: "recover" }
+  | { readonly kind: "park" }
   | { readonly kind: "reschedule" }
   | { readonly kind: "advance" };
 
@@ -217,16 +218,28 @@ export type BoardReconcileDecision =
  *
  * - the step already succeeded while we were down → advance;
  * - its thread is still alive → resume watching;
- * - awaiting a human answer with the thread still present → keep waiting
- *   (resume-watch — the pending question is intact);
+ * - a human-in-the-loop step whose thread is present but idle → park it on the
+ *   human (t3o-34), the boot-time twin of `handleTurnCompleted`'s arm;
+ * - awaiting a human answer with the thread still present → keep waiting;
  * - its thread is gone and it never completed → recover;
  * - queued/pending with no thread → reschedule (re-offer to the governor: it
  *   held no slot and never started, so it is placed, not recovered — D11);
  * - completing (agent reported done, settle never landed) → recover.
+ *
+ * `threadAlive` and `threadPresent` are deliberately two bits, not one. Alive
+ * means a turn is running or a structured question is pending; present means
+ * the thread still exists and a human could type in it. Everything a step
+ * parked on a human needs sits in the gap between them — nothing is running,
+ * yet the card is one reply away from moving.
  */
 export function reconcileStepDecision(input: {
   readonly status: BoardCardStepState["status"];
   readonly threadAlive: boolean;
+  /** The step's thread still exists (idle counts). See above. */
+  readonly threadPresent: boolean;
+  /** The step runs WITH a human (planning, a human-in-the-loop build). Such a
+      step stopping between turns is a pause, never a death. */
+  readonly humanInLoop: boolean;
   readonly hasSucceeded: boolean;
 }): BoardReconcileDecision {
   if (input.hasSucceeded) return { kind: "advance" };
@@ -238,12 +251,25 @@ export function reconcileStepDecision(input: {
     return { kind: "resume-watch" };
   }
   if (input.status === "awaiting-input") {
-    // A live pending question is intact; a gone thread means the question can
-    // no longer be answered there, so recover it into a fresh escalation.
-    return input.threadAlive ? { kind: "resume-watch" } : { kind: "recover" };
+    // Keyed on PRESENT, not alive: since t3o-34 a step can be parked on a
+    // question the agent asked in PROSE, which leaves no pending question on
+    // the thread and so no liveness at all. Reading `threadAlive` here un-parked
+    // every one of those on the next restart and nudged it as if it had died —
+    // t3o-34's fix surviving right up until the server bounced. A gone thread is
+    // still a recover: the question can no longer be answered there.
+    return input.threadPresent ? { kind: "resume-watch" } : { kind: "recover" };
   }
   if (input.status === "running") {
-    return input.threadAlive ? { kind: "resume-watch" } : { kind: "recover" };
+    if (input.threadAlive) return { kind: "resume-watch" };
+    // A human-in-the-loop step whose thread is merely idle is WAITING on the
+    // human (t3o-34, D5), not dead — the same call `handleTurnCompleted` makes
+    // on the live edge. Boot reconciliation used to recover it instead: it
+    // nudged the waiting agent with the unattended "nobody will answer you"
+    // text, burned an attempt, and left the step `running`, so the card kept
+    // pulsing its blue "being worked" dot across every restart while the agent
+    // sat there waiting for an answer. Parking is what turns the dot off.
+    if (input.humanInLoop && input.threadPresent) return { kind: "park" };
+    return { kind: "recover" };
   }
   if (input.status === "pending" || input.status === "queued") {
     // Never started, holds no slot — not a death to recover but work to place.

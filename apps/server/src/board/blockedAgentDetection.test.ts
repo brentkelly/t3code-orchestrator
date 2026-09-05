@@ -17,7 +17,11 @@ import {
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   boardCardStepState,
+  ProviderInstanceId,
+  ThreadId,
+  type BoardCardStepState,
   type OrchestrationEvent,
+  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -353,3 +357,132 @@ it.effect("re-entering the turn-end handler while already parked changes nothing
     }),
   );
 });
+
+// ── Across a restart ───────────────────────────────────────────────────────
+//
+// Everything above is the LIVE edge: a turn ends and the reactor parks the step
+// on the spot. Boot reconciliation is the other edge, and it used to disagree.
+// It read a running step with no live turn as a death — nudging the waiting
+// agent with the unattended "nobody will answer you" text, burning an attempt,
+// and leaving the step `running`, so the card went on pulsing its blue "being
+// worked" dot. On a machine that restarts a few times a day that is where a
+// waiting card spends most of its life, so the live fix barely held.
+
+const RESTART_THREAD = ThreadId.make("thread-restart");
+
+/** A step as the database holds it across a restart: human-in-the-loop,
+    `running`, and pointing at a thread whose turn ended while we were down. */
+const seededStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepState => ({
+  cardId: BoardCardId.make("restart"),
+  stepId: String(BOARD_SEED_STAGE_IDS.planning),
+  stepLabel: null,
+  stageLabel: "Planning",
+  attempt: 1,
+  stallCount: 0,
+  lastNudgeAt: null,
+  baseTipAtRoundStart: null,
+  lastError: null,
+  // Meaningless while the step is `running` (and the schema has no null for
+  // it), so a leftover value sits here — which is also what keeps the park
+  // assertions honest: they read a reason this run DERIVED, not this one.
+  awaitingReason: "stopped" as const,
+  prompt: "interview the human",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5-codex",
+  mode: "plan",
+  runtimeMode: "auto",
+  humanInLoop: true,
+  maxAttempts: 3,
+  timeoutMs: 60_000,
+  threadId: RESTART_THREAD,
+  status: "running",
+  slotHeld: true,
+  forceStart: false,
+  startedAt: "1969-12-31T00:00:00.000Z",
+  updatedAt: "1969-12-31T00:00:00.000Z",
+  ...overrides,
+});
+
+/** The thread the seeded step points at: it EXISTS — a human can open it and
+    answer — but nothing is running in it and no structured question is pending.
+    That gap between "present" and "alive" is where a parked step lives. */
+const idleShell = (): ReadonlyMap<string, OrchestrationThreadShell> =>
+  new Map([
+    [
+      String(RESTART_THREAD),
+      {
+        hasPendingUserInput: false,
+        session: { activeTurnId: null },
+      } as unknown as OrchestrationThreadShell,
+    ],
+  ]);
+
+const restartBoard = (step: BoardCardStepState, messages: Map<string, string>) => ({
+  board: { cards: [planningCard("restart")], stepStates: [step], nextCardNumberByProject: {} },
+  settings: settingsWith({
+    building: [codexStep],
+    planning: codexStep,
+    planningHumanInLoop: true,
+    globalMaxConcurrent: 3,
+  }),
+  initialShells: idleShell(),
+  threadMessages: messages,
+});
+
+it.effect("boot reconcile parks a waiting human-in-the-loop step instead of nudging it", () => {
+  const messages = new Map([
+    [String(RESTART_THREAD), "Which way should the worktree be provisioned?"],
+  ]);
+  return withGovernor(restartBoard(seededStep(), messages), ({ board, commands, reactor }) =>
+    Effect.gen(function* () {
+      // Reconcile is enqueued by `start`; wait for the worker to settle it.
+      yield* reactor.drain;
+      const parked = boardCardStepState(yield* board, BoardCardId.make("restart"));
+      assert.strictEqual(parked?.status, "awaiting-input");
+      assert.strictEqual(parked?.awaitingReason, "question");
+      // No recovery ran: the human's pause costs no attempt and no stall.
+      assert.strictEqual(parked?.attempt, 1);
+      assert.strictEqual(parked?.stallCount, 0);
+      // And nothing was said to the waiting agent. The nudge this replaces told
+      // an agent mid-conversation with a human that its run was unattended.
+      assert.isUndefined((yield* commands).find((command) => command.type === "thread.turn.start"));
+    }),
+  );
+});
+
+it.effect("boot reconcile keeps a step parked on a PROSE question parked", () => {
+  // The prose park leaves no pending question on the thread, so the thread
+  // reads idle — and reconciliation used to read idle as gone and recover it.
+  // Every restart un-parked the card and drove it as a stall.
+  const messages = new Map([[String(RESTART_THREAD), "Which one do you want?"]]);
+  return withGovernor(
+    restartBoard(seededStep({ status: "awaiting-input", awaitingReason: "question" }), messages),
+    ({ board, reactor }) =>
+      Effect.gen(function* () {
+        yield* reactor.drain;
+        const still = boardCardStepState(yield* board, BoardCardId.make("restart"));
+        assert.strictEqual(still?.status, "awaiting-input");
+        assert.strictEqual(still?.awaitingReason, "question");
+        assert.strictEqual(still?.attempt, 1);
+      }),
+  );
+});
+
+it.effect(
+  "boot reconcile still recovers an UNATTENDED step whose turn ended while we were down",
+  () => {
+    // The behaviour the park must not swallow: with no human in the loop, an idle
+    // thread is a death, and recovery is what gets the work moving again.
+    const messages = new Map([[String(RESTART_THREAD), "I have finished exploring."]]);
+    return withGovernor(
+      restartBoard(seededStep({ humanInLoop: false }), messages),
+      ({ board, reactor }) =>
+        Effect.gen(function* () {
+          yield* reactor.drain;
+          const recovered = boardCardStepState(yield* board, BoardCardId.make("restart"));
+          assert.strictEqual(recovered?.status, "running");
+          assert.strictEqual(recovered?.attempt, 2);
+        }),
+    );
+  },
+);
