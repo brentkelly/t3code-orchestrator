@@ -1080,7 +1080,7 @@ function ActionsSection({
           >
             <button
               className={cn(
-                "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border px-3 text-[13px] font-medium shadow-xs",
+                "inline-flex h-[34px] min-w-0 flex-1 items-center justify-center gap-[7px] rounded-lg border px-3 text-[13px] font-medium shadow-xs",
                 forward.emphasised
                   ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
                   : "border-input bg-popover text-foreground hover:bg-accent",
@@ -1089,7 +1089,7 @@ function ActionsSection({
                 (card.blocked || (forward.kind === "merge" && forward.disabled)) &&
                   "cursor-not-allowed opacity-50",
                 merging && "cursor-wait",
-                secondary.length > 0 && "min-w-0 flex-1 rounded-r-none",
+                secondary.length > 0 && "rounded-r-none",
               )}
               disabled={
                 card.blocked || (forward.kind === "merge" && (forward.disabled || props.merging))
