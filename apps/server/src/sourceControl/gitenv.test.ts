@@ -141,4 +141,23 @@ describe("gitenv", () => {
       "the value todo appears in ordinary text",
     );
   });
+  it("matches when the key is a linked worktree's path", () => {
+    const fixture = makeFixture();
+    writeGitenv(fixture, `${fixture.worktreeDir}=${TOKEN}\n`);
+    expect(gitenvTokenEnv(fixture.nestedDir)?.GH_TOKEN).toBe(TOKEN);
+    expect(gitenvTokenEnv(fixture.worktreeDir)?.GH_TOKEN).toBe(TOKEN);
+  });
+
+  it("does not remember a worktree path that did not exist yet", () => {
+    const fixture = makeFixture();
+    writeGitenv(fixture, `${fixture.projectRoot}=${TOKEN}\n`);
+    const futureWorktree = NodePath.join(NodePath.dirname(fixture.worktreeDir), "card-2");
+    expect(gitenvTokenEnv(futureWorktree)).toBeUndefined();
+    NodeFS.mkdirSync(futureWorktree, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(futureWorktree, ".git"),
+      `gitdir: ${NodePath.join(fixture.projectRoot, ".git", "worktrees", "card-2")}\n`,
+    );
+    expect(gitenvTokenEnv(futureWorktree)?.GH_TOKEN).toBe(TOKEN);
+  });
 });

@@ -33,10 +33,11 @@
  * The module is intentionally synchronous and dependency-free so each seam in
  * an upstream file stays a one-line expression. `initGitenv` is called from
  * `resolveServerConfig` (the resolver every `t3` server boot goes through:
- * `start`, `serve`, the desktop bootstrap, `vp run dev`) and from
- * `ServerConfig.make` for the one-shot CLIs (`pair`, `auth`, `connect`,
- * `project`); it is idempotent on the same path. Before either runs, or when
- * the file is absent, every lookup returns undefined and behavior is exactly
+ * `start`, `serve`, the desktop bootstrap, `vp run dev` — and, through
+ * `resolveCliAuthConfig`, `auth`, `connect` and `project`) and from
+ * `ServerConfig.make`, which only `pair` still reaches with a hand-built
+ * config; it is idempotent on the same path. Before either runs, or when the
+ * file is absent, every lookup returns undefined and behavior is exactly
  * stock.
  *
  * GitHub-only for now: no cross-forge token variable exists. A forge-aware
@@ -56,12 +57,6 @@ let gitenvPath: string | undefined;
 let fileCache: GitenvFileCache | undefined;
 let warnedLoosePermissions = false;
 
-/** cwd → resolved main repository root (or null when not in a repo). Purely
-    filesystem topology, so it survives gitenv edits; bounded to keep a
-    long-lived server from accumulating dead worktree paths. */
-const repoRootCache = new Map<string, string | null>();
-const REPO_ROOT_CACHE_LIMIT = 512;
-
 /** Shortest value `scrubGitenvTokens` will redact. A real PAT is far longer;
     the floor keeps a placeholder value from mangling unrelated output. */
 const MIN_SCRUBBABLE_TOKEN_LENGTH = 16;
@@ -74,7 +69,6 @@ export function initGitenv(stateDir: string): void {
   gitenvPath = next;
   fileCache = undefined;
   warnedLoosePermissions = false;
-  repoRootCache.clear();
 }
 
 /** Test seam: forget everything, including the configured file path. */
@@ -82,7 +76,6 @@ export function resetGitenvForTesting(): void {
   gitenvPath = undefined;
   fileCache = undefined;
   warnedLoosePermissions = false;
-  repoRootCache.clear();
 }
 
 function realpathOrSelf(target: string): string {
@@ -109,7 +102,9 @@ function parseGitenv(text: string): ReadonlyMap<string, string> {
     if (key.length === 0 || value.length === 0 || !NodePath.isAbsolute(key)) {
       continue;
     }
-    entries.set(realpathOrSelf(key), value);
+    // Keys resolve to their main checkout exactly as lookups do, so an entry
+    // keyed by a linked worktree's path still matches.
+    entries.set(resolveMainRepositoryRoot(key) ?? realpathOrSelf(key), value);
   }
   return entries;
 }
@@ -152,14 +147,14 @@ function readEntries(): ReadonlyMap<string, string> | undefined {
  * sits in. Walks up to the nearest `.git`; a directory means we are in the
  * main checkout, a file is a linked worktree/submodule pointer whose gitdir
  * is followed back to the main root. Returns null outside any repository.
+ *
+ * Deliberately uncached: a cwd can be a board worktree that does not exist
+ * yet, or was just reclaimed, and a remembered answer would pin its
+ * replacement at the same path to the wrong identity. The walk is a few
+ * `stat`s — nothing next to the process spawn it precedes.
  */
 function resolveMainRepositoryRoot(cwd: string): string | null {
   const start = realpathOrSelf(cwd);
-  const cached = repoRootCache.get(start);
-  if (cached !== undefined) {
-    return cached;
-  }
-
   let root: string | null = null;
   let current = start;
   for (;;) {
@@ -185,10 +180,6 @@ function resolveMainRepositoryRoot(cwd: string): string | null {
     current = parent;
   }
 
-  if (repoRootCache.size >= REPO_ROOT_CACHE_LIMIT) {
-    repoRootCache.clear();
-  }
-  repoRootCache.set(start, root);
   return root;
 }
 

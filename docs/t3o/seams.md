@@ -322,7 +322,7 @@ claims member, mint case, resolve branch) and `ws.ts` +1 (6). The upload, storag
 manifest all live in board-owned files (`board/attachments.ts`, migration `032`).
 
 Per-project GitHub token overrides (`t3o-34`, see [gitenv](./gitenv.md)) added 15 markers across 7
-upstream-owned files: `config.ts` 2 (import + `initGitenv` in `make`, for the one-shot CLIs),
+upstream-owned files: `config.ts` 2 (import + `initGitenv` in `make`, which only `pair` still reaches),
 `cli/config.ts` 2 (import + `initGitenv` at the end of `resolveServerConfig`, the real server boot
 path), `vcs/VcsProcess.ts` 3
 (import, `gh` env merge in `run`, exact-value scrub in `safeProcessOutput`),
