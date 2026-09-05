@@ -23,6 +23,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
+  aliveThreadShell,
   codexStep,
   makeBoardCard,
   readyWorktree,
@@ -73,15 +74,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
 /** A live shell for the step's thread, so boot reconcile resume-watches it
     instead of recovering it before the sweep under test ever runs. */
 const aliveShells = (): ReadonlyMap<string, OrchestrationThreadShell> =>
-  new Map([
-    [
-      String(threadId),
-      {
-        hasPendingUserInput: false,
-        session: { activeTurnId: "turn-live" },
-      } as unknown as OrchestrationThreadShell,
-    ],
-  ]);
+  new Map([[String(threadId), aliveThreadShell(String(threadId))]]);
 
 const boardWithStep = (step: BoardCardStepState): BoardState => ({
   cards: [
@@ -160,7 +153,7 @@ it.effect("a fresh commit on the card's branch keeps an overdue build step alive
       board: boardWithStep(runningStep()),
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
       initialShells: aliveShells(),
-      latestCommitIso: FRESH,
+      latestBranchCommitIso: FRESH,
     },
     ({ reactor, board }) =>
       Effect.gen(function* () {
@@ -176,7 +169,7 @@ it.effect("a commit older than the window does not shield an overdue build step"
       board: boardWithStep(runningStep()),
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
       initialShells: aliveShells(),
-      latestCommitIso: OVERDUE,
+      latestBranchCommitIso: OVERDUE,
     },
     ({ reactor, board }) =>
       Effect.gen(function* () {
@@ -212,6 +205,125 @@ it.effect("a human-in-the-loop run is exempt from the timeout sweep", () =>
       Effect.gen(function* () {
         yield* reactor.sweep;
         assert.strictEqual(attemptOf(yield* board), 1); // exempt
+      }),
+  ),
+);
+
+// ── The heartbeat is measured on the card's OWN branch (t3o-10, D4) ────
+//
+// A base sync fast-forwards commits reachable from the base into the card's
+// branch — a sibling card's squash merge, most often. Read as the worktree
+// tip, one of those looks exactly like this agent committing: three dead build
+// steps re-armed their watchdog for another `timeoutMs` every time a sibling
+// merged, and held their concurrency slots for twelve hours.
+
+it.effect("a base-sync commit is NOT this agent's heartbeat: the step is still recovered", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+      // Tip freshly moved, nothing of the card's own on the branch.
+      latestCommitIso: FRESH,
+      latestBranchCommitIso: "",
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 2); // recovered
+      }),
+  ),
+);
+
+it.effect("a plan-mode step reads no commit at all and is recovered on the clock alone", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep({ mode: "plan" })),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+      // Even a fresh branch commit cannot shield a step with no worktree work.
+      latestBranchCommitIso: FRESH,
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 2); // recovered
+      }),
+  ),
+);
+
+it.effect("a build step whose card has no worktree is recovered on the clock alone", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [makeBoardCard({ id: "card-sweep", stage: "building", orderKey: "m" })],
+        stepStates: [runningStep()],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+      latestBranchCommitIso: FRESH,
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 2); // recovered
+      }),
+  ),
+);
+
+// ── The same branch scope resets `stallCount` (t3o-10, D4) ────────────
+//
+// `resolveProgressedSinceLastNudge` reads the identical signal and is what
+// clears the stall counter, so a card nudged correctly could still have its
+// ladder reset by a sibling's merge and never reach a human.
+
+/** Nudged a day before the epoch, so the step is decisively overdue AND a
+    commit counts as progress only if it landed after that nudge. */
+const nudgedStep = (): BoardCardStepState =>
+  runningStep({ stallCount: 1, lastNudgeAt: OVERDUE, startedAt: OVERDUE });
+
+/** After the nudge, but far enough back that it does not shield the step from
+    the sweep — the window where the two branch-scoped reads must agree. */
+const SINCE_NUDGE = "1969-12-31T12:00:00.000Z";
+
+const stallOf = (board: BoardState): number => boardCardStepState(board, cardId)?.stallCount ?? -1;
+
+it.effect("a commit unique to the branch since the last nudge resets the stall count", () =>
+  withGovernor(
+    {
+      board: boardWithStep(nudgedStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+      latestBranchCommitIso: SINCE_NUDGE,
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        assert.strictEqual(stallOf(yield* board), 1);
+        yield* reactor.sweep;
+        // Progressed since the nudge → the streak is forgotten, so this stall
+        // is the first of a new one rather than the second of the old.
+        assert.strictEqual(stallOf(yield* board), 1);
+      }),
+  ),
+);
+
+it.effect("a base-sync commit since the last nudge does NOT reset the stall count", () =>
+  withGovernor(
+    {
+      board: boardWithStep(nudgedStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+      // A sibling's merge, synced in and sitting on the tip since the nudge.
+      latestCommitIso: SINCE_NUDGE,
+      latestBranchCommitIso: "",
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep;
+        // No work of this card's own → the stall counter climbs toward the
+        // ceiling, which is what eventually brings a human in.
+        assert.strictEqual(stallOf(yield* board), 2);
       }),
   ),
 );

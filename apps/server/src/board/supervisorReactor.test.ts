@@ -33,6 +33,7 @@ import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { ServerActivation } from "../serverActivation.ts";
 import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
 import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
@@ -134,7 +135,20 @@ function readModel(board: BoardState): OrchestrationReadModel {
 
 const aliveShell: OrchestrationThreadShell = {
   id: ThreadId.make("thread-1"),
-  session: { activeTurnId: "turn-1" },
+  session: { status: "running", activeTurnId: "turn-1" },
+  hasPendingUserInput: false,
+} as unknown as OrchestrationThreadShell;
+
+/** The shape a server restart leaves behind (t3o-10): upstream has marked the
+    orphaned session `error`, and the id of the turn that died with the process
+    is still on the projection. */
+const restartOrphanShell: OrchestrationThreadShell = {
+  id: ThreadId.make("thread-1"),
+  session: {
+    status: "error",
+    activeTurnId: "turn-1",
+    lastError: "Provider session did not survive a server restart.",
+  },
   hasPendingUserInput: false,
 } as unknown as OrchestrationThreadShell;
 
@@ -143,6 +157,15 @@ const aliveShell: OrchestrationThreadShell = {
 function reconcileCommandObjects(input: {
   readonly board: BoardState;
   readonly threadShells?: ReadonlyMap<string, OrchestrationThreadShell>;
+  /** Provide a `ServerActivation` (t3o-10, D3) whose effect is this function,
+      called with "everything dispatched so far". It runs exactly at the
+      boundary the reconcile waits on, which is what makes "it read nothing
+      before activation" an observation rather than a race. Absent (the
+      default) leaves the reference at its `undefined` default, so reconcile
+      waits for nothing — the shape every other test runs under. */
+  readonly gateOnActivation?: (
+    dispatchedSoFar: Effect.Effect<ReadonlyArray<OrchestrationCommand>>,
+  ) => Effect.Effect<void>;
 }): Effect.Effect<ReadonlyArray<OrchestrationCommand>> {
   const shells = input.threadShells ?? new Map<string, OrchestrationThreadShell>();
   return Effect.gen(function* () {
@@ -197,6 +220,12 @@ function reconcileCommandObjects(input: {
         }),
       ),
       BoardStepSlotsLive,
+      Layer.succeed(
+        ServerActivation,
+        input.gateOnActivation === undefined
+          ? undefined
+          : input.gateOnActivation(Ref.get(recorded)),
+      ),
     );
 
     // Run reconcile INSIDE the layer's scope so the reactor's worker fibers and
@@ -213,6 +242,9 @@ function reconcileCommandObjects(input: {
 function reconcileCommands(input: {
   readonly board: BoardState;
   readonly threadShells?: ReadonlyMap<string, OrchestrationThreadShell>;
+  readonly gateOnActivation?: (
+    dispatchedSoFar: Effect.Effect<ReadonlyArray<OrchestrationCommand>>,
+  ) => Effect.Effect<void>;
 }): Effect.Effect<ReadonlyArray<string>> {
   return reconcileCommandObjects(input).pipe(
     Effect.map((commands) => commands.map((command) => command.type)),
@@ -420,5 +452,55 @@ it.effect("boot: a step that completed while the server was down is settled and 
     assert.include(types, "board.card.settle-step");
     // Every step succeeded → board-driven Building → Code review advance (D18).
     assert.include(types, "board.card.move");
+  }),
+);
+
+// ── The restart orphan (t3o-10) ────────────────────────────────────────
+//
+// A server restart kills every provider session mid-turn. Upstream's
+// `reconcileProviderSessions` marks each orphaned session `error` — the
+// `Failed` the thread list shows — but the killed turn's id lingers on the
+// projection, so a liveness rule that reads `activeTurnId` alone sees a corpse
+// mid-turn and resume-watches it forever: slot held, card pulsing, nothing
+// running.
+
+it.effect("boot: a session upstream marked `error` is dead even with a stale activeTurnId", () =>
+  Effect.gen(function* () {
+    const types = yield* reconcileCommands({
+      board: { cards: [card], stepStates: [runningState], nextCardNumberByProject: {} },
+      threadShells: new Map([["thread-1", restartOrphanShell]]),
+    });
+    assert.include(types, "board.card.recover-step");
+    // The shell still EXISTS, so recovery drives the thread it has rather than
+    // respawning — which is upstream's own instruction on that error ("Send a
+    // new message to continue").
+    assert.include(types, "thread.turn.start");
+  }),
+);
+
+it.effect("boot reconcile reads nothing until server activation resolves (t3o-10, D3)", () =>
+  Effect.gen(function* () {
+    // What had been dispatched at the moment the activation boundary opened.
+    const atBoundary = yield* Ref.make<ReadonlyArray<string> | null>(null);
+    const types = yield* reconcileCommands({
+      board: { cards: [card], stepStates: [runningState], nextCardNumberByProject: {} },
+      threadShells: new Map([["thread-1", restartOrphanShell]]),
+      gateOnActivation: (dispatchedSoFar) =>
+        dispatchedSoFar.pipe(
+          Effect.flatMap((commands) =>
+            Ref.set(
+              atBoundary,
+              commands.map((command) => command.type),
+            ),
+          ),
+        ),
+    });
+    // The reconcile ran (it recovered the orphan)...
+    assert.include(types, "board.card.recover-step");
+    // ...and every bit of that happened AFTER activation. Reading earlier is
+    // the bug: the board's `reactors.start` phase runs before upstream's
+    // `provider-sessions.reconcile`, so a shell read then still shows the
+    // killed turn as active.
+    assert.deepStrictEqual(yield* Ref.get(atBoundary), []);
   }),
 );
