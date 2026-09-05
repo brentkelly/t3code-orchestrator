@@ -54,7 +54,7 @@ const turnStartRequested = (threadId: string, sequence: number): OrchestrationEv
     because asking IS the job there. `messages` is handed to the harness by
     reference so a test can write the agent's final message once the harness has
     spawned the thread and told it the id. */
-const planningBoard = (id: string, messages: Map<string, string>) => ({
+const planningBoard = (id: string, messages: Map<string, string>, stale?: ReadonlySet<string>) => ({
   board: { cards: [planningCard(id)], nextCardNumberByProject: {} },
   settings: settingsWith({
     building: [codexStep],
@@ -63,6 +63,7 @@ const planningBoard = (id: string, messages: Map<string, string>) => ({
     globalMaxConcurrent: 3,
   }),
   threadMessages: messages,
+  ...(stale === undefined ? {} : { staleThreadMessages: stale }),
 });
 
 /** Drive the card into a running, human-in-the-loop planning step and hand back
@@ -125,6 +126,31 @@ it.effect("a turn that ends with no question parks the step as stopped", () => {
       assert.strictEqual(parked?.attempt, 1);
       assert.strictEqual(parked?.stallCount, 0);
     }),
+  );
+});
+
+// A turn can end having said nothing — interrupted, errored, tool-only — and
+// then the newest assistant message belongs to an EARLIER turn. Reading it back
+// would re-park the card on a question the human has already answered, which is
+// the same "card asks for something it already has" defect in miniature.
+it.effect("ignores an assistant message written before the work resumed", () => {
+  const messages = new Map<string, string>();
+  const stale = new Set<string>();
+  return withGovernor(
+    planningBoard("stale", messages, stale),
+    ({ pumpDomain, pumpRuntime, board }) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning({ pumpDomain, board }, "stale");
+        // Unmistakably a question — and unmistakably old.
+        messages.set(String(threadId), "Which auth library do you want?");
+        stale.add(String(threadId));
+
+        yield* pumpRuntime(turnCompleted(threadId));
+
+        const parked = boardCardStepState(yield* board, BoardCardId.make("stale"));
+        assert.strictEqual(parked?.status, "awaiting-input");
+        assert.strictEqual(parked?.awaitingReason, "stopped");
+      }),
   );
 });
 
@@ -192,7 +218,7 @@ it.effect("answering a STRUCTURED question resumes the step — no turn ever sta
   );
 });
 
-it.effect("a turn-start domain event and a turn.started for the same turn resume once", () => {
+it.effect("a second resume signal on an already-running step is a no-op", () => {
   const messages = new Map<string, string>();
   return withGovernor(planningBoard("both", messages), ({ pumpDomain, pumpRuntime, board }) =>
     Effect.gen(function* () {
@@ -200,15 +226,41 @@ it.effect("a turn-start domain event and a turn.started for the same turn resume
       messages.set(String(threadId), "Which one?");
       yield* pumpRuntime(turnCompleted(threadId));
 
-      // A message send produces both signals. The second finds the step already
-      // running and does nothing — no second resume, no rejected dispatch.
       yield* pumpDomain(turnStartRequested(String(threadId), 2));
       const once = boardCardStepState(yield* board, BoardCardId.make("both"));
-      yield* pumpRuntime(turnStarted(threadId));
+      // Both signals can land for one resumption. The second finds the step
+      // already running and does nothing — no second resume, no rejected
+      // dispatch, no counters touched.
+      yield* pumpRuntime(userInputResolved(threadId));
       const twice = boardCardStepState(yield* board, BoardCardId.make("both"));
 
       assert.strictEqual(twice?.status, "running");
       assert.strictEqual(twice?.updatedAt, once?.updatedAt);
+    }),
+  );
+});
+
+// The signal the resume deliberately does NOT take (t3o-34, D5). Adapters
+// synthesise `turn.started` for assistant activity arriving with no active turn,
+// so acting on it would clear a card's badge with nobody having acted — and on a
+// stalled step it would zero `stallCount` and re-arm the sweep, quietly undoing
+// a t3o-17 escalation that is meant to stop until a human appears.
+it.effect("a synthetic turn.started does NOT un-park a step", () => {
+  const messages = new Map<string, string>();
+  return withGovernor(planningBoard("synthetic", messages), ({ pumpDomain, pumpRuntime, board }) =>
+    Effect.gen(function* () {
+      const threadId = yield* startPlanning({ pumpDomain, board }, "synthetic");
+      yield* pumpRuntime(turnCompleted(threadId));
+      assert.strictEqual(
+        boardCardStepState(yield* board, BoardCardId.make("synthetic"))?.status,
+        "awaiting-input",
+      );
+
+      yield* pumpRuntime(turnStarted(threadId));
+
+      const still = boardCardStepState(yield* board, BoardCardId.make("synthetic"));
+      assert.strictEqual(still?.status, "awaiting-input");
+      assert.strictEqual(still?.awaitingReason, "stopped");
     }),
   );
 });

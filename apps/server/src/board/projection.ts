@@ -1692,16 +1692,21 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       on one connection with no new plumbing — and upstream migration 029's
       `(thread_id, created_at, message_id)` index serves it directly.
 
-      A dedicated one-column, one-row read rather than
+      A dedicated two-column, one-row read rather than
       `ProjectionThreadMessageRepository.listByThreadId`, which returns the
       WHOLE thread: the supervisor wants the last message, and a planning
       interview's transcript is exactly the case where "the whole thread" is
-      expensive. */
-  const findLatestAssistantMessageText = SqlSchema.findOneOption({
+      expensive.
+
+      `createdAt` rides along so the caller can tell the newest message from a
+      RECENT one. A turn that ends having said nothing — interrupted, errored,
+      tool-only — leaves the previous turn's text newest, and reading that back
+      would re-park the card on a question the human has already answered. */
+  const findLatestAssistantMessage = SqlSchema.findOneOption({
     Request: ThreadId,
-    Result: Schema.Struct({ text: Schema.String }),
+    Result: Schema.Struct({ text: Schema.String, createdAt: IsoDateTime }),
     execute: (threadId) => sql`
-      SELECT text
+      SELECT text, created_at AS "createdAt"
       FROM projection_thread_messages
       WHERE thread_id = ${threadId}
         AND role = 'assistant'
@@ -1888,7 +1893,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     upsertBoardCardStepStateRow,
     listBoardCardStepStateRows,
     findBoardCardStepErrorRow,
-    findLatestAssistantMessageText,
+    findLatestAssistantMessage,
     deleteBoardPlansForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
@@ -3288,13 +3293,18 @@ export interface BoardSnapshotQueryMethods {
   readonly boardThreadTodo: (
     threadId: ThreadId,
   ) => Effect.Effect<BoardThreadTodoState | null, ProjectionRepositoryError>;
-  /** The most recent assistant message on a thread (t3o-34, D2), or null when
-      it has none. The supervisor passes it to `boardTextEndsWithQuestion`, so
-      the stop-signal reading stays a pure function with no SQL of its own —
-      the pattern `boardThreadTodo` established for the stall signal. */
-  readonly boardLatestAssistantText: (
+  /** The most recent assistant message on a thread (t3o-34, D2), with when it
+      was written, or null when the thread has none. The supervisor passes the
+      text to `boardTextEndsWithQuestion`, so the stop-signal reading stays a
+      pure function with no SQL of its own — the pattern `boardThreadTodo`
+      established for the stall signal — and uses the timestamp to ignore a
+      message the agent wrote before the work last resumed. */
+  readonly boardLatestAssistantMessage: (
     threadId: ThreadId,
-  ) => Effect.Effect<string | null, ProjectionRepositoryError>;
+  ) => Effect.Effect<
+    { readonly text: string; readonly createdAt: string } | null,
+    ProjectionRepositoryError
+  >;
   /** Boot reconciliation sweep of orphaned todo rows (t3o-18, AC 20). */
   readonly boardSweepThreadTodos: () => Effect.Effect<void, ProjectionRepositoryError>;
 }
@@ -3324,7 +3334,7 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
     typeof candidate.boardCardThreads === "function" &&
     typeof candidate.boardCardIdForThread === "function" &&
     typeof candidate.boardThreadTodo === "function" &&
-    typeof candidate.boardLatestAssistantText === "function" &&
+    typeof candidate.boardLatestAssistantMessage === "function" &&
     typeof candidate.boardSweepThreadTodos === "function"
     ? {
         boardCardDetail: candidate.boardCardDetail,
@@ -3333,7 +3343,7 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
         boardCardThreads: candidate.boardCardThreads,
         boardCardIdForThread: candidate.boardCardIdForThread,
         boardThreadTodo: candidate.boardThreadTodo,
-        boardLatestAssistantText: candidate.boardLatestAssistantText,
+        boardLatestAssistantMessage: candidate.boardLatestAssistantMessage,
         boardSweepThreadTodos: candidate.boardSweepThreadTodos,
       }
     : null;
@@ -3448,15 +3458,15 @@ export function boardSnapshotQueryMethods(
         ),
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodo:query")),
       ),
-    boardLatestAssistantText: (threadId) =>
-      queries.findLatestAssistantMessageText(threadId).pipe(
+    boardLatestAssistantMessage: (threadId) =>
+      queries.findLatestAssistantMessage(threadId).pipe(
         Effect.map(
           Option.match({
             onNone: () => null,
-            onSome: (row) => row.text,
+            onSome: (row) => ({ text: row.text, createdAt: row.createdAt }),
           }),
         ),
-        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.latestAssistantText:query")),
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.latestAssistantMessage:query")),
       ),
     boardSweepThreadTodos: () =>
       queries

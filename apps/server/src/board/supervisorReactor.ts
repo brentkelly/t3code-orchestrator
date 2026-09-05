@@ -432,22 +432,34 @@ const make = Effect.gen(function* () {
     return committedAt !== null && isAfter(committedAt, state.lastNudgeAt);
   });
 
-  /** Whether a step thread's last assistant message ended blocked on a human
-      answer (t3o-34, D2).
+  /** Whether the step's agent stopped with something for a human to answer
+      (t3o-34, D2).
    *
       The reactor does the SQL and `boardTextEndsWithQuestion` does the reading,
       the same split `progressedSinceLastNudge` uses to keep `recoveryDecision`
       pure. A read failure — or a thread with no assistant message at all —
       answers `false`, which routes a human-in-the-loop stop to the louder
-      "Needs a human" and leaves the unattended nudge exactly as it was. */
+      "Needs a human" and leaves the unattended nudge exactly as it was.
+
+      Only a message the agent wrote SINCE the work last resumed counts. A turn
+      that ends having said nothing — interrupted, errored, tool-only — leaves an
+      older message newest, and taking it at face value would re-park the card on
+      a question the human has already answered, and prepend "you asked a
+      question" to every nudge from then on. The reference point is
+      `lastNudgeAt`, which every resume and every nudge moves to now, falling
+      back to when the step started. */
   const endedWithQuestion = Effect.fn("board-supervisor-endedWithQuestion")(function* (
-    threadId: ThreadId | null,
+    state: Pick<BoardCardStepState, "threadId" | "lastNudgeAt" | "startedAt">,
   ) {
+    const threadId = state.threadId;
     if (threadId === null || boardQueries === null) return false;
-    const text = yield* boardQueries
-      .boardLatestAssistantText(threadId)
+    const message = yield* boardQueries
+      .boardLatestAssistantMessage(threadId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
-    return text === null ? false : boardTextEndsWithQuestion(text);
+    if (message === null) return false;
+    const since = state.lastNudgeAt ?? state.startedAt;
+    if (since !== null && !isAfter(message.createdAt, since)) return false;
+    return boardTextEndsWithQuestion(message.text);
   });
 
   /** The card + step the reactor is watching for a given thread, or null. */
@@ -2007,7 +2019,7 @@ const make = Effect.gen(function* () {
       hasTodoList: todo?.hasList ?? false,
       stageEntryInvocations,
       maxInvocationsPerStageEntry: exec.maxInvocationsPerStageEntry,
-      endedWithQuestion: yield* endedWithQuestion(input.state.threadId),
+      endedWithQuestion: yield* endedWithQuestion(input.state),
     });
 
     // Recovery gives up (t3o-17, D3/D4): consecutive stalls exhausted
@@ -2890,7 +2902,7 @@ const make = Effect.gen(function* () {
         commandId: yield* commandId("await-input"),
         cardId: found.card.id,
         stepId: found.state.stepId,
-        reason: (yield* endedWithQuestion(threadId)) ? "question" : "stopped",
+        reason: (yield* endedWithQuestion(found.state)) ? "question" : "stopped",
         createdAt: yield* nowIso,
       });
       return;
@@ -3716,6 +3728,35 @@ const make = Effect.gen(function* () {
    * board's own kickoff, nudge and retune turns arrive on this same event — or
    * settled, and neither has anything to resume.
    */
+  /**
+   * A parked step goes back to work (t3o-17 D3; t3o-34 D5). Exactly two signals
+   * reach here, and the pair is deliberate:
+   *
+   * - `thread.turn-start-requested` (domain) — a turn was ASKED for. The decider
+   *   emits it only for `thread.turn.start`, so it means a human or the board
+   *   sent a message. This is t3o-17's signal, and it covers every step that
+   *   parked between turns: a stall, or a turn that ended with a question in
+   *   prose.
+   * - `user-input.resolved` (runtime) — a structured question was ANSWERED.
+   *   That question is raised from INSIDE a running turn (the adapter's
+   *   `canUseTool` path) and answering it merely resolves the deferred the turn
+   *   is blocked on, so the same turn carries on: no turn is ever asked for and
+   *   none starts. This is the only signal that sees it.
+   *
+   * The runtime's `turn.started` is deliberately NOT one of them, though it
+   * looks like it belongs. Adapters synthesise it for assistant activity that
+   * arrives with no active turn (`ClaudeAdapter`, background/subagent output
+   * between prompts) — nobody sent anything. Resuming on that would clear the
+   * card's badge with no human involved, and on a `stalled` step it would be
+   * worse: `resume-step` zeroes `stallCount` and re-arms the timeout sweep, so a
+   * t3o-17 escalation that is supposed to stop until a human acts would quietly
+   * un-escalate itself. It also buys nothing the two signals above do not
+   * already cover, at the cost of a worker item for every turn start of every
+   * thread on the box.
+   *
+   * Both funnel through here, so whichever arrives second finds the step already
+   * `running` and does nothing.
+   */
   const resumeParkedStep = Effect.fn("board-supervisor-resumeParkedStep")(function* (
     threadId: ThreadId,
   ) {
@@ -3738,37 +3779,6 @@ const make = Effect.gen(function* () {
       yield* resumeParkedStep(event.payload.threadId);
     },
   );
-
-  /**
-   * The three ways a parked step goes back to work (t3o-34, D5). All of them
-   * matter, because the two ways a step PARKS end in different places:
-   *
-   * - `thread.turn-start-requested` (domain) — a human sent a message. This is
-   *   the t3o-17 signal, and it is the one that un-parks a step that stopped
-   *   between turns (a stall, or a turn that ended with a question in prose).
-   * - `turn.started` (runtime) — a turn actually began. Belt-and-braces for the
-   *   same case, and it also covers the board's own nudge.
-   * - `user-input.resolved` (runtime) — the human ANSWERED a structured
-   *   question, and this is the only one of the three that fires for it.
-   *
-   * That last case is the subtle one and it is worth being explicit about,
-   * because getting it wrong reintroduces this whole bug in a new place. A
-   * structured question is raised from INSIDE a running turn (the adapter's
-   * `canUseTool` path), and answering it merely resolves the deferred the turn
-   * is blocked on — the same turn carries on. So no turn ever starts, and
-   * neither turn-start signal fires. Without this the step would stay
-   * `awaiting-input` with the card showing a violet "Input needed" chip while
-   * the agent visibly worked: the exact lie this change exists to remove,
-   * merely relocated.
-   *
-   * All three funnel into the same guarded resume, so a signal that arrives
-   * second finds the step already `running` and does nothing.
-   */
-  const handleStepThreadResumed = Effect.fn("board-supervisor-handleStepThreadResumed")(function* (
-    threadId: ThreadId,
-  ) {
-    yield* resumeParkedStep(threadId);
-  });
 
   const reconcile = Effect.gen(function* () {
     // Sweep cached todo rows whose thread or link no longer exists (t3o-18,
@@ -4020,12 +4030,9 @@ const make = Effect.gen(function* () {
         // EVERY input request rather than only the ones a now-deleted board tool
         // remembered to double-report.
         if (input.event.type === "user-input.requested") return handleInputRequested(threadId);
-        // Work resuming on a parked step's thread (t3o-34, D5) — a turn
-        // starting, or a structured question being ANSWERED mid-turn, which
-        // starts no turn at all. See `handleStepThreadResumed`.
-        if (input.event.type === "turn.started" || input.event.type === "user-input.resolved") {
-          return handleStepThreadResumed(threadId);
-        }
+        // A structured question being ANSWERED (t3o-34, D5) — the one way a
+        // parked step goes back to work that no turn-start event sees.
+        if (input.event.type === "user-input.resolved") return resumeParkedStep(threadId);
         return Effect.void;
       }
       case "reconcile":
@@ -4093,14 +4100,12 @@ const make = Effect.gen(function* () {
         // agent question, which is what re-parks a step on the gate.
         if (event.type === "user-input.requested")
           return worker.enqueue({ source: "runtime", event });
-        // A parked step going back to work rides the same stream (t3o-34, D5).
-        // `user-input.resolved` is the load-bearing one: a structured question is
-        // raised from inside a RUNNING turn, so answering it starts no turn and
-        // emits no turn-start event anywhere — this is the only signal that sees
-        // it.
-        if (event.type === "turn.started" || event.type === "user-input.resolved") {
+        // `user-input.resolved` rides the same stream (t3o-34, D5): a structured
+        // question is raised from inside a RUNNING turn, so answering it starts
+        // no turn and emits no turn-start event anywhere. This is the only
+        // signal that sees a step un-parked that way.
+        if (event.type === "user-input.resolved")
           return worker.enqueue({ source: "runtime", event });
-        }
         // session.started matters only for a thread orphaned by a rejected
         // admit — the durable delivery point for its turn interrupt.
         if (event.type === "session.started" && orphanedThreads.has(String(event.threadId))) {

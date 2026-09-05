@@ -26,7 +26,7 @@ const snapshotStub = {
   boardCardIdForThread: (id: ThreadId) =>
     Effect.succeed(String(id) === String(threadId) ? cardId : null),
   boardThreadTodo: () => Effect.succeed(null),
-  boardLatestAssistantText: () => Effect.succeed(null),
+  boardLatestAssistantMessage: () => Effect.succeed(null),
   boardSweepThreadTodos: () => Effect.void,
 } as never;
 

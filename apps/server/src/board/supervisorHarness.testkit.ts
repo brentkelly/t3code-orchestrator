@@ -373,8 +373,13 @@ export function withGovernor(
     /** The last ASSISTANT message per thread id (t3o-34, D2): the reactor reads
         it to decide whether a stopped turn ended with something for a human to
         answer. Absent threads answer "no message", which reads as "no
-        question". */
+        question". Dated far in the future by default, so a fixture message
+        always counts as written since the step started; pass
+        `staleThreadMessages` for the opposite. */
     readonly threadMessages?: ReadonlyMap<string, string>;
+    /** Thread ids whose message should be dated BEFORE the step started, i.e.
+        text the agent wrote in an earlier turn and has not added to since. */
+    readonly staleThreadMessages?: ReadonlySet<string>;
     /** A `ServerConfig` layer (t3o-32): with one, a build/plan spawn stages
         the card's brief images from `<stateDir>/board/attachments`; without
         one the reactor stages nothing, as the other tests expect. */
@@ -491,6 +496,7 @@ export function withGovernor(
 
     const threadTodos = input.threadTodos ?? new Map();
     const threadMessages = input.threadMessages ?? new Map<string, string>();
+    const staleThreadMessages = input.staleThreadMessages ?? new Set<string>();
     const snapshotStub = {
       getCommandReadModel: () => Ref.get(model),
       getThreadShellById: (threadId: ThreadId) =>
@@ -522,8 +528,17 @@ export function withGovernor(
               },
         );
       },
-      boardLatestAssistantText: (threadId: ThreadId) =>
-        Effect.succeed(threadMessages.get(String(threadId)) ?? null),
+      boardLatestAssistantMessage: (threadId: ThreadId) => {
+        const text = threadMessages.get(String(threadId));
+        // Dated at one end of time or the other, so a fixture is unambiguously
+        // "written since the work resumed" or unambiguously not. The stale date
+        // is PRE-epoch on purpose: the harness clock starts at the epoch, so a
+        // step's `startedAt` is 1970 and anything later would read as fresh.
+        const createdAt = staleThreadMessages.has(String(threadId))
+          ? "1969-01-01T00:00:00.000Z"
+          : "2999-01-01T00:00:00.000Z";
+        return Effect.succeed(text === undefined ? null : { text, createdAt });
+      },
       boardSweepThreadTodos: () => Effect.void,
     } as unknown as ProjectionSnapshotQuery["Service"];
 
