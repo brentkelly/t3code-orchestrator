@@ -193,7 +193,7 @@ Control settings**.
 - **GitHub says it could not verify sign-in status** – T3 Code needs GitHub CLI 2.81.0 or newer to check sign-in status. Update `gh` (e.g., `brew upgrade gh`), then rescan
 - **Bitbucket not connecting** – Double-check your environment variables are set in the correct shell profile and the server was restarted
 - **Can't push to a remote** – Verify your Git remote URL matches the provider you've authenticated with (SSH vs HTTPS remotes may need different credentials)
-- **A project ignores its `gitenv` entry** – Confirm the key is the _absolute path to the project's main folder_ (not a subfolder or a symlink), the token is valid, and the `gitenv` file is readable by the account running the server. Entries apply to GitHub only
+- **A project ignores its `gitenv` entry** – Confirm the key points at the project's main folder — an absolute path, or a `~`-rooted path — the token is valid, and the `gitenv` file is readable by the account running the server. Entries apply to GitHub only
 
 **Need more help?** Check your provider's CLI documentation:
 
