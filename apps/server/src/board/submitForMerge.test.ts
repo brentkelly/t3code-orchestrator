@@ -222,13 +222,20 @@ it.effect("D6: the directed advance ignores the Build stage's autoAdvance switch
   ),
 );
 
-it.effect("an ordinary build step still advances one stage, to Code review", () =>
+it.effect("a REBUILD after a submit still advances one stage, to Code review", () =>
   withGovernor(
     {
       board: {
         cards: [heldBuildCard()],
         stepStates: [{ ...settledBuildStep, status: "running" }],
-        stepCompletions: [],
+        // The card was submitted once, dragged back to Building, and is being
+        // built again — so it carries a `submit` completion that will never be
+        // cleared. Routing on that COMPLETION rather than on the settle would
+        // send this rebuild straight to the merge stage the moment it finished,
+        // skipping review on a card nobody asked to skip review for (D5).
+        stepCompletions: [
+          { ...buildCompletion, stepId: BOARD_SUBMIT_STEP_ID, summary: "opened PR" },
+        ],
         nextCardNumberByProject: {},
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
@@ -262,6 +269,44 @@ it.effect("D9: a submit step that fails leaves the card in Building", () =>
         yield* pumpDomain(stepCompleted(cardId, "failed", 10, BOARD_SUBMIT_STEP_ID));
 
         assert.strictEqual(cardStage(yield* board, cardId), "building");
+      }),
+  ),
+);
+
+// ── A restart mid-step is re-driven, not lost ───────────────────────────────
+
+it.effect("D5: a submit step that completed while the server was down still routes the card", () =>
+  withGovernor(
+    {
+      // The state a crash mid-submit leaves behind: the agent reported
+      // `succeeded`, the settle never landed, and the step row is still
+      // `running`. Boot reconciliation settles it and asks the executor what
+      // happens next — which is the routing this feature is made of. Nothing
+      // durable had to be added to the card to survive this: the step row and
+      // its completion already were.
+      board: {
+        cards: [heldBuildCard()],
+        stepStates: [
+          {
+            ...settledBuildStep,
+            stepId: BOARD_SUBMIT_STEP_ID,
+            stepLabel: "Submit for merge",
+            status: "running",
+            threadId: ThreadId.make("thread-submit"),
+          },
+        ],
+        stepCompletions: [
+          buildCompletion,
+          { ...buildCompletion, stepId: BOARD_SUBMIT_STEP_ID, summary: "opened PR" },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ board, reactor }) =>
+      Effect.gen(function* () {
+        yield* reactor.drain;
+        assert.strictEqual(cardStage(yield* board, cardId), "merge");
       }),
   ),
 );
