@@ -3189,6 +3189,25 @@ const make = Effect.gen(function* () {
     // A provider that stamps no `turnId` keeps the old presence test: with no
     // identity to compare there is nothing better to do, and "assume the thread
     // is busy" is the conservative half of the trade.
+    //
+    // The inverse race — a genuinely live SECOND turn B (a recovery nudge)
+    // while the projection still names the ended turn A — does not reopen here,
+    // because the projection was never an authoritative "B is live" signal to
+    // begin with. `turn.started(B)` follows `turn.completed(A)` on the one
+    // ordered provider stream (B is only dispatched in reaction to A ending),
+    // so a projection that still shows `activeTurnId === A` has by definition
+    // not applied A's completion yet, let alone B's start: B is invisible to it.
+    // The old presence check only caught the nudge race in the sub-window where
+    // the projector had raced AHEAD to show B; in the equally-reachable window
+    // where it showed `null` (A cleared, B not yet set) the old code already
+    // fell through to exactly this park/recover. This change makes the A-shows
+    // window consistent with that pre-existing null window — it removes an
+    // accidental guard, not a reliable one — and it is REQUIRED for the fix
+    // above, where `activeTurnId` also equals the just-ended turn. The residual
+    // cost is a nudge landing on a step a retry already re-armed; that is
+    // bounded by the recovery ceiling (`maxInvocationsPerStageEntry` →
+    // escalate, never loop), whose failure mode is asking a human one turn
+    // early, not a stuck or corrupted card.
     const liveTurnId = shell?.session?.activeTurnId ?? null;
     if (
       shell !== undefined &&
