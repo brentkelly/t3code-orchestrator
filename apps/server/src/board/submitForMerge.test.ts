@@ -14,6 +14,7 @@
  * mode this whole feature replaces.
  */
 import {
+  BOARD_SEED_STAGES,
   BOARD_SUBMIT_STEP_ID,
   BoardCardId,
   BoardStageId,
@@ -482,4 +483,48 @@ it.effect("says why the card stayed when a gate closes while the submit step is 
         assert.include(String(payload?.detail), "CARD-2");
       }),
   ),
+);
+
+it.effect(
+  "says why the card stayed when the merge stage is deleted while the submit step runs",
+  () =>
+    withGovernor(
+      {
+        board: heldBoard(),
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      },
+      ({ reactor, board, model, decided, pumpDomain }) =>
+        Effect.gen(function* () {
+          assert.deepStrictEqual(yield* reactor.submitForMerge(cardId), { outcome: "started" });
+          yield* reactor.drain;
+
+          // The other race the pre-check cannot close: the merge-role stage is
+          // taken out of the pipeline while the step is pushing, so by the time
+          // the directed advance runs there is nowhere to send the card.
+          yield* Ref.update(model, (current) => {
+            const existing = current.board ?? EMPTY_BOARD_STATE;
+            return {
+              ...current,
+              board: {
+                ...existing,
+                stages: BOARD_SEED_STAGES.filter((stage) => stage.role !== "merge"),
+              },
+            };
+          });
+          yield* pumpDomain(stepCompleted(cardId, "succeeded", 10, BOARD_SUBMIT_STEP_ID));
+
+          // The card stays put — with a pushed branch and an open pull request
+          // behind it — and says so, exactly as the gate-closed race does.
+          assert.strictEqual(cardStage(yield* board, cardId), "building");
+          const notes = (yield* decided).filter(
+            (event) => event.type === "board.card-note-recorded",
+          );
+          assert.strictEqual(notes.length, 1);
+          const payload = notes[0]?.payload as
+            | { readonly kind?: unknown; readonly detail?: unknown }
+            | undefined;
+          assert.strictEqual(payload?.kind, "card-merge-refused");
+          assert.match(String(payload?.detail), /no longer has a stage with the "merge" role/);
+        }),
+    ),
 );

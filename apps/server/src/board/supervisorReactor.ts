@@ -1553,7 +1553,24 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     if (input.toRole !== undefined) {
       const target = boardStageWithRole(board, input.toRole);
-      if (target === null || target.stageId === input.card.stage) return;
+      if (target === null) {
+        // The stage this step was aimed at was deleted from the pipeline while
+        // the step ran — the same half-state as the gate-closed race below (the
+        // branch is pushed, the pull request is open) reached a different way,
+        // so it gets a sentence rather than a silent return. The card is held,
+        // so its forward button is the way out.
+        yield* dispatch({
+          type: "board.card.record-note",
+          commandId: yield* commandId("advance-directed-missing"),
+          cardId: input.card.id,
+          kind: "card-merge-refused",
+          detail: `Held the move: this board no longer has a stage with the "${input.toRole}" role.`,
+          createdAt: yield* nowIso,
+        });
+        return;
+      }
+      // Already there — the move is a no-op, not a held one, so nothing to say.
+      if (target.stageId === input.card.stage) return;
       const refusal = yield* dispatchRefusal({
         type: "board.card.move",
         commandId: yield* commandId("advance-directed"),
