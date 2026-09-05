@@ -16,6 +16,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+// T3o: per-project GitHub token overrides read `<stateDir>/gitenv` (t3o-34).
+import { initGitenv } from "./sourceControl/gitenv.ts";
 
 export const DEFAULT_PORT = 3773;
 
@@ -97,7 +99,11 @@ export class ServerConfig extends Context.Service<
   ) => layerTest(cwd, baseDirOrPrefix);
 }
 
-export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
+export const make = (config: ServerConfig["Service"]) => {
+  // T3o: point the gitenv module at this config's state dir (t3o-34).
+  initGitenv(config.stateDir);
+  return ServerConfig.of(config);
+};
 
 export const layer = (config: ServerConfig["Service"]) => Layer.succeed(ServerConfig, make(config));
 

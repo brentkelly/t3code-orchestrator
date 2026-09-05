@@ -88,11 +88,13 @@ const stepState = (
   stageLabel: "Building",
   attempt: 1,
   stallCount: 0,
+  awaitingReason: "question",
   lastNudgeAt: null,
   ...frozenConfig,
   threadId: ThreadId.make("thread-1"),
   status,
   slotHeld: true,
+  forceStart: false,
   startedAt: NOW,
   updatedAt: NOW,
   ...overrides,
@@ -242,6 +244,105 @@ it.effect("admit-step admitted → running with a thread and a held slot; queued
   }),
 );
 
+it.effect("force-start-step marks a queued step for admission over the cap (t3o-33)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [
+        stepState("card-1", "queued", { threadId: null, slotHeld: false, startedAt: null }),
+      ],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.force-start-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(event.type, "board.card-step-force-start-requested");
+    if (event.type === "board.card-step-force-start-requested") {
+      assert.strictEqual(event.payload.state.forceStart, true);
+      // Still queued and still slotless: the request records an intent, and the
+      // governor is the only thing that admits anything.
+      assert.strictEqual(event.payload.state.status, "queued");
+      assert.strictEqual(event.payload.state.slotHeld, false);
+    }
+  }),
+);
+
+it.effect("force-start-step refuses a step that is not queued (t3o-33)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const error = yield* decideFail(
+      {
+        type: "board.card.force-start-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        createdAt: NOW,
+      },
+      makeReadModel({
+        cards: [card],
+        stepStates: [stepState("card-1", "running")],
+        nextCardNumberByProject: {},
+      }),
+    );
+    assert.include(error.message, "not queued");
+  }),
+);
+
+it.effect("force-start-step refuses a card with no live step (t3o-33)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const error = yield* decideFail(
+      {
+        type: "board.card.force-start-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        createdAt: NOW,
+      },
+      makeReadModel({ cards: [card], stepStates: [], nextCardNumberByProject: {} }),
+    );
+    assert.include(error.message, "no live step");
+  }),
+);
+
+it.effect("admit-step spends the force-start override rather than carrying it (t3o-33)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const event = yield* decide(
+      {
+        type: "board.card.admit-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        admitted: true,
+        threadId: ThreadId.make("thread-1"),
+        createdAt: NOW,
+      },
+      makeReadModel({
+        cards: [card],
+        stepStates: [
+          stepState("card-1", "queued", {
+            threadId: null,
+            slotHeld: false,
+            startedAt: null,
+            forceStart: true,
+          }),
+        ],
+        nextCardNumberByProject: {},
+      }),
+    );
+    assert.strictEqual(event.type, "board.card-step-admitted");
+    if (event.type === "board.card-step-admitted") {
+      assert.strictEqual(event.payload.state.forceStart, false);
+    }
+  }),
+);
+
 it.effect(
   "recover-step increments the counters and lands the step in stalled, releasing its slot, when giving up (t3o-17)",
   () =>
@@ -323,6 +424,7 @@ it.effect(
             attempt: 3,
             stallCount: 3,
             slotHeld: false,
+            forceStart: false,
             lastError: "turn/setPermissionMode failed",
             lastNudgeAt: "2025-12-31T00:00:00.000Z",
           }),
@@ -440,6 +542,7 @@ it.effect("await-step-input only fires on a running step (D13: no retry consumed
         commandId: CommandId.make("c1"),
         cardId: card.id,
         stepId: "build",
+        reason: "question",
         createdAt: NOW,
       },
       makeReadModel({

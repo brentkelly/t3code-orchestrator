@@ -41,6 +41,10 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   derived from the step ledger, which still reads "round 1, review due" for a card that has never
   reached the review stage — so off the stage the pill, the round pill and the phase markers all go
   neutral and read "Not started" / "Not running" rather than spinning at a card sitting in Building.
+- **A stopped agent is never blue.** A step whose turn ended without completing is not working, so
+  it never wears the running dot. If it left a question behind it is violet ("Input needed"); if it
+  did not, it is amber ("Needs a human"). Both are the same fact — nobody is working on this card —
+  told at the volume the human's next move deserves.
 
 ## Deliberately outside the convention
 

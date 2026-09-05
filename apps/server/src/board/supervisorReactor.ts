@@ -38,6 +38,7 @@ import {
   boardStageWithRole,
   CommandId,
   BOARD_ENVELOPE_QUESTION_MECHANISM,
+  boardTextEndsWithQuestion,
   DEFAULT_BOARD_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EMPTY_BOARD_STATE,
@@ -429,6 +430,36 @@ const make = Effect.gen(function* () {
     if (state.mode !== "build" || worktreePath === null) return false;
     const committedAt = yield* latestCommitIso(worktreePath);
     return committedAt !== null && isAfter(committedAt, state.lastNudgeAt);
+  });
+
+  /** Whether the step's agent stopped with something for a human to answer
+      (t3o-34, D2).
+   *
+      The reactor does the SQL and `boardTextEndsWithQuestion` does the reading,
+      the same split `progressedSinceLastNudge` uses to keep `recoveryDecision`
+      pure. A read failure — or a thread with no assistant message at all —
+      answers `false`, which routes a human-in-the-loop stop to the louder
+      "Needs a human" and leaves the unattended nudge exactly as it was.
+
+      Only a message the agent wrote SINCE the work last resumed counts. A turn
+      that ends having said nothing — interrupted, errored, tool-only — leaves an
+      older message newest, and taking it at face value would re-park the card on
+      a question the human has already answered, and prepend "you asked a
+      question" to every nudge from then on. The reference point is
+      `lastNudgeAt`, which every resume and every nudge moves to now, falling
+      back to when the step started. */
+  const endedWithQuestion = Effect.fn("board-supervisor-endedWithQuestion")(function* (
+    state: Pick<BoardCardStepState, "threadId" | "lastNudgeAt" | "startedAt">,
+  ) {
+    const threadId = state.threadId;
+    if (threadId === null || boardQueries === null) return false;
+    const message = yield* boardQueries
+      .boardLatestAssistantMessage(threadId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    if (message === null) return false;
+    const since = state.lastNudgeAt ?? state.startedAt;
+    if (since !== null && !isAfter(message.createdAt, since)) return false;
+    return boardTextEndsWithQuestion(message.text);
   });
 
   /** The card + step the reactor is watching for a given thread, or null. */
@@ -955,7 +986,15 @@ const make = Effect.gen(function* () {
     );
     if (wouldConflict) return;
 
-    const admitted = yield* slots.acquire(state.providerInstanceId, input.limits);
+    // A human asked for this step over the cap (t3o-33), so the slot is TAKEN,
+    // not requested: `restore` is the same unconditional take boot
+    // reconciliation uses. The count stays honest — it simply sits above the
+    // ceiling until this step settles and releases it exactly once, like every
+    // other step — and the policy in `acquire` is never quietly bypassed on the
+    // ordinary path.
+    const admitted = yield* state.forceStart
+      ? slots.restore(state.providerInstanceId).pipe(Effect.as(true))
+      : slots.acquire(state.providerInstanceId, input.limits);
     if (!admitted) {
       // No slot right now. A fresh (pending) step is recorded queued so the card
       // shows its badge; a queued step stays put and is re-offered next boundary.
@@ -1166,8 +1205,17 @@ const make = Effect.gen(function* () {
         orderKey: card.orderKey,
       });
     }
-    for (const candidate of orderBoardQueue(candidates)) {
-      const entry = entries.get(`${String(candidate.cardId)}::${candidate.stepId}`);
+    // A force-started step (t3o-33) is offered FIRST, and its position in the
+    // priority order is irrelevant: it is not competing for a slot, it takes
+    // one. Leaving it in place would only make it wait behind candidates the
+    // governor is about to refuse anyway.
+    const ordered = orderBoardQueue(candidates).map((candidate) => ({
+      candidate,
+      entry: entries.get(`${String(candidate.cardId)}::${candidate.stepId}`),
+    }));
+    const forced = ordered.filter(({ entry }) => entry?.state.forceStart === true);
+    const rest = ordered.filter(({ entry }) => entry?.state.forceStart !== true);
+    for (const { entry } of [...forced, ...rest]) {
       if (entry !== undefined) yield* admitBuildCandidate(entry);
     }
   });
@@ -1988,6 +2036,7 @@ const make = Effect.gen(function* () {
       hasTodoList: todo?.hasList ?? false,
       stageEntryInvocations,
       maxInvocationsPerStageEntry: exec.maxInvocationsPerStageEntry,
+      endedWithQuestion: yield* endedWithQuestion(input.state),
     });
 
     // Recovery gives up (t3o-17, D3/D4): consecutive stalls exhausted
@@ -2842,6 +2891,7 @@ const make = Effect.gen(function* () {
           commandId: yield* commandId("await-input"),
           cardId: found.card.id,
           stepId: found.state.stepId,
+          reason: "question",
           createdAt: yield* nowIso,
         });
       }
@@ -2849,9 +2899,31 @@ const make = Effect.gen(function* () {
     }
     // A human-in-the-loop run that ends a turn without completing is WAITING on
     // the human, not dead (D5): no drop monitoring, no recovery, no attempt
-    // consumed. The card stays running until the human acts (or flips it to
-    // unattended, at which point supervision resumes on the same thread).
-    if (found.state.humanInLoop) return;
+    // consumed, no slot released. But it is NOT running either, and until t3o-34
+    // this arm said nothing at all — so the step stayed `running`, the shell's
+    // `stepRunning` stayed true, and the card pulsed its blue "being worked" dot
+    // for as long as it sat there. The agent had stopped.
+    //
+    // So park it, and say which kind of stop it was (D1/D3). The envelope asks
+    // agents to raise blockers through the structured mechanism and forbids
+    // ending a turn with a question in prose; they do it anyway, most of all in
+    // planning, where a question with a paragraph of consequence per option is a
+    // poor fit for a picker. Reading the last message is how the board stops
+    // depending on an instruction that does not hold.
+    if (found.state.humanInLoop) {
+      // Already parked and still parked: re-deciding the reason would churn a
+      // delta per turn.completed for no change.
+      if (found.state.status === "awaiting-input") return;
+      yield* dispatch({
+        type: "board.card.await-step-input",
+        commandId: yield* commandId("await-input"),
+        cardId: found.card.id,
+        stepId: found.state.stepId,
+        reason: (yield* endedWithQuestion(found.state)) ? "question" : "stopped",
+        createdAt: yield* nowIso,
+      });
+      return;
+    }
     // Unattended, running with no question → died mid-work. Awaiting-input with
     // no pending question → the human answered and the agent ran another turn
     // without completing (or died); either way death detection is re-armed.
@@ -2970,6 +3042,8 @@ const make = Effect.gen(function* () {
           commandId: yield* commandId("await-input"),
           cardId: card.id,
           stepId: state.stepId,
+          // An agent that reported `blocked` asked for a human by name.
+          reason: "question",
           createdAt: yield* nowIso,
         });
         return;
@@ -3001,6 +3075,7 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId("await-input"),
       cardId: watched.card.id,
       stepId: watched.state.stepId,
+      reason: "question",
       createdAt: yield* nowIso,
     });
   });
@@ -3643,38 +3718,78 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A human takes a stalled step back over (t3o-17, D3).
+   * Whether a `user-input.resolved` carries a real ANSWER, or is the same event
+   * a CANCELLATION emits (t3o-34, D5).
    *
-   * `stalled` means "nobody is working on this and nobody will until you act" —
-   * and sending a turn into the step's own thread IS the human acting. Until
-   * now the card kept its stop banner, its reason and its dark dot while the
-   * thread it points at was visibly working again; the only things that cleared
-   * them were restarting the stage (which throws the conversation away) and the
-   * agent completing the step.
+   * Every adapter resolves its pending-input deferred on teardown and falls
+   * through to the same emit — `ClaudeAdapter`'s `settleAsAborted` succeeds the
+   * deferred with `{}` and only checks `aborted` AFTER the event goes out;
+   * Grok and OpenCode send `{}` on their non-answered branches too. So
+   * "resolved" alone means "no longer pending", which stopping a thread
+   * satisfies just as well as answering it.
    *
-   * So a turn requested on a stalled step's thread puts the step back to
-   * `running`: the banner and the reason go, the dot re-lights, and supervision
-   * resumes on the thread the human just restarted — a turn that ends without
-   * completing the step is nudged as usual, and one that never starts re-stalls
-   * with the provider's new reason (`failStepAtSpawn`).
-   *
-   * Only from `stalled`. Every other status is either already supervised — the
-   * board's own kickoff, nudge and retune turns arrive on this same event — or
-   * settled, and neither has anything to resume.
+   * Resuming on that would be the hazard `turn.started` was dropped for, in a
+   * new place: a stopped thread would re-light the card's blue dot with nobody
+   * having answered anything, and on a `stalled` step it would zero
+   * `stallCount` and re-arm the sweep, undoing a t3o-17 escalation. An empty
+   * answer set is the one thing that separates the two, and it is the right
+   * reading either way — a cancelled question is still unanswered, so the card
+   * should keep saying so.
    */
+  const isAnsweredUserInput = (
+    event: Extract<ProviderRuntimeEvent, { type: "user-input.resolved" }>,
+  ): boolean => Object.keys(event.payload.answers).length > 0;
+
+  /**
+   * A parked step goes back to work (t3o-17 D3; t3o-34 D5). Exactly two signals
+   * reach here, and the pair is deliberate:
+   *
+   * - `thread.turn-start-requested` (domain) — a turn was ASKED for. The decider
+   *   emits it only for `thread.turn.start`, so it means a human or the board
+   *   sent a message. This is t3o-17's signal, and it covers every step that
+   *   parked between turns: a stall, or a turn that ended with a question in
+   *   prose.
+   * - `user-input.resolved` (runtime) — a structured question was ANSWERED, as
+   *   distinct from cancelled (`isAnsweredUserInput`). That question is raised
+   *   from INSIDE a running turn (the adapter's `canUseTool` path) and answering
+   *   it merely resolves the deferred the turn is blocked on, so the same turn
+   *   carries on: no turn is ever asked for and none starts. This is the only
+   *   signal that sees it.
+   *
+   * The runtime's `turn.started` is deliberately NOT one of them, though it
+   * looks like it belongs. Adapters synthesise it for assistant activity that
+   * arrives with no active turn (`ClaudeAdapter`, background/subagent output
+   * between prompts) — nobody sent anything. Resuming on that would clear the
+   * card's badge with no human involved, and on a `stalled` step it would be
+   * worse: `resume-step` zeroes `stallCount` and re-arms the timeout sweep, so a
+   * t3o-17 escalation that is supposed to stop until a human acts would quietly
+   * un-escalate itself. It also buys nothing the two signals above do not
+   * already cover, at the cost of a worker item for every turn start of every
+   * thread on the box.
+   *
+   * Both funnel through here, so whichever arrives second finds the step already
+   * `running` and does nothing.
+   */
+  const resumeParkedStep = Effect.fn("board-supervisor-resumeParkedStep")(function* (
+    threadId: ThreadId,
+  ) {
+    const board = yield* readBoard;
+    const found = stepThreadCard(board, threadId);
+    if (found === null) return;
+    if (found.state.status !== "stalled" && found.state.status !== "awaiting-input") return;
+    if (found.card.archivedAt !== null) return;
+    yield* dispatch({
+      type: "board.card.resume-step",
+      commandId: yield* commandId("resume-step"),
+      cardId: found.card.id,
+      stepId: found.state.stepId,
+      createdAt: yield* nowIso,
+    });
+  });
+
   const handleTurnStartRequested = Effect.fn("board-supervisor-handleTurnStartRequested")(
     function* (event: Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>) {
-      const board = yield* readBoard;
-      const found = stepThreadCard(board, event.payload.threadId);
-      if (found === null || found.state.status !== "stalled") return;
-      if (found.card.archivedAt !== null) return;
-      yield* dispatch({
-        type: "board.card.resume-step",
-        commandId: yield* commandId("resume-step"),
-        cardId: found.card.id,
-        stepId: found.state.stepId,
-        createdAt: yield* nowIso,
-      });
+      yield* resumeParkedStep(event.payload.threadId);
     },
   );
 
@@ -3835,6 +3950,11 @@ const make = Effect.gen(function* () {
         return handleCardUpdated(event);
       case "board.card-step-completed":
         return handleStepCompleted(event);
+      case "board.card-step-force-start-requested":
+        // A human took a slot over the cap (t3o-33). Scheduling here is what
+        // makes the click start the card: without it the override would sit on
+        // the row until some unrelated step boundary happened to run a pass.
+        return schedule();
       case "board.card-archived":
         return handleArchived(event);
       case "board.card-deleted":
@@ -3928,6 +4048,12 @@ const make = Effect.gen(function* () {
         // EVERY input request rather than only the ones a now-deleted board tool
         // remembered to double-report.
         if (input.event.type === "user-input.requested") return handleInputRequested(threadId);
+        // A structured question being ANSWERED (t3o-34, D5) — the one way a
+        // parked step goes back to work that no turn-start event sees. Only an
+        // actual ANSWER counts: see `isAnsweredUserInput`.
+        if (input.event.type === "user-input.resolved") {
+          return isAnsweredUserInput(input.event) ? resumeParkedStep(threadId) : Effect.void;
+        }
         return Effect.void;
       }
       case "reconcile":
@@ -3978,6 +4104,10 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-stage-thread-requested" &&
           event.type !== "board.card-updated" &&
           event.type !== "board.card-step-completed" &&
+          // A human's "start it anyway" (t3o-33). Rare, and the whole point is
+          // that it takes effect on the click rather than at the next step
+          // boundary, so it has to cross this filter.
+          event.type !== "board.card-step-force-start-requested" &&
           event.type !== "board.card-archived" &&
           event.type !== "board.card-deleted" &&
           event.type !== "board.plans-approved"
@@ -3994,6 +4124,12 @@ const make = Effect.gen(function* () {
         // case in an existing subscription, no new seam. It fires for every
         // agent question, which is what re-parks a step on the gate.
         if (event.type === "user-input.requested")
+          return worker.enqueue({ source: "runtime", event });
+        // `user-input.resolved` rides the same stream (t3o-34, D5): a structured
+        // question is raised from inside a RUNNING turn, so answering it starts
+        // no turn and emits no turn-start event anywhere. This is the only
+        // signal that sees a step un-parked that way.
+        if (event.type === "user-input.resolved")
           return worker.enqueue({ source: "runtime", event });
         // session.started matters only for a thread orphaned by a rejected
         // admit — the durable delivery point for its turn interrupt.

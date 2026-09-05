@@ -1204,6 +1204,25 @@ export function isBoardTerminalStepStatus(status: BoardStepStatus): boolean {
   return (BOARD_TERMINAL_STEP_STATUSES as ReadonlyArray<string>).includes(status);
 }
 
+/**
+ * Why an `awaiting-input` step is waiting (t3o-34, D3).
+ *
+ * `awaiting-input` already means "parked until a human acts", and both ways a
+ * step reaches it are that state — so this is a reason on one status, not two
+ * statuses. Only the words and the colour on the card differ.
+ *
+ * - `question` — there is something to ANSWER: a structured pending question, an
+ *   agent-reported `blocked` completion, or prose the stop-signal reader
+ *   (`boardTextEndsWithQuestion`) read as a question. Renders violet, "Input
+ *   needed".
+ * - `stopped` — there is something to LOOK AT: a human-in-the-loop turn ended
+ *   without completing the step and without asking anything. Renders amber,
+ *   "Needs a human".
+ */
+export const BOARD_STEP_AWAITING_REASONS = ["question", "stopped"] as const;
+export const BoardCardStepAwaitingReason = Schema.Literals(BOARD_STEP_AWAITING_REASONS);
+export type BoardCardStepAwaitingReason = typeof BoardCardStepAwaitingReason.Type;
+
 export const BoardCardStepState = Schema.Struct({
   cardId: BoardCardId,
   /** The stage's single step id (D1). Equal to the stage id, so a completion
@@ -1331,10 +1350,35 @@ export const BoardCardStepState = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   status: BoardStepStatus,
+  /** Why the step is `awaiting-input` (t3o-34, D3), and meaningless on every
+      other status — a step that leaves `awaiting-input` keeps whatever was last
+      written here, and no reader consults it off that status.
+   *
+   * A DECODING DEFAULT for the same replay reason as `stageLabel`: this struct
+   * is a replayed event payload, and every awaiting-input row written before
+   * t3o-34 reached that status through the structured-question path, which is
+   * exactly `question`. */
+  awaitingReason: BoardCardStepAwaitingReason.pipe(
+    Schema.withDecodingDefault(Effect.succeed("question" as const)),
+  ),
   /** Whether the step currently holds a concurrency slot (t3o-11). Tracked so
       release happens exactly once at every terminal outcome, including a crash
       — a leaked slot silently halves throughput. */
   slotHeld: Schema.Boolean,
+  /** Whether a human asked for this step to start OVER the concurrency cap
+      (t3o-33). Set by `board.card.force-start-step` on a `queued` step; the
+      governor then admits it ahead of the queue and takes its slot through the
+      unconditional `restore` rather than the capped `acquire`, so the count
+      stays balanced and the single release at every terminal outcome still
+      cancels it.
+   *
+   * Self-clearing: every step event carries the WHOLE state, so the fresh row
+   * admission writes has `forceStart: false` by construction and the override
+   * can never survive into the card's next step.
+   *
+   * A DECODING DEFAULT for the same replay reason as `stageLabel`: rows and
+   * events written before t3o-33 have no key at all. */
+  forceStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** When the step began running; null while pending/queued. */
   startedAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
@@ -1995,8 +2039,21 @@ export const BOARD_CARD_ATTENTION_REASONS = [
   /** The step settled and left the card where it stands: a human-in-the-loop
       build that finished, a failed step, a merge the forge refused. */
   "held",
-  /** A live thread asked the human a question (t3o-18, D13). */
+  /** A live thread asked the human a question (t3o-18, D13), or the step parked
+      on one it asked in prose (t3o-34, D4). */
   "input",
+  /** A human-in-the-loop step ended a turn without completing and without
+      asking anything (t3o-34, D4) — nobody is working and there is nothing to
+      answer, so the card needs a human to look at it.
+   *
+      Ranked BELOW `input`, which reads backwards until you notice the two are
+      about different threads: `awaitingInput` is an OR across every live thread
+      on the card, while `stepAwaiting` describes the one live step. A card can
+      easily have both — a step that stopped quietly, and a sibling thread with a
+      real pending question — and there the answerable fact is the more useful
+      one to show. Ranking the stop first would replace a question the human can
+      click through and answer with a chip that only says something halted. */
+  "stopped",
 ] as const;
 export type BoardCardAttentionReason = (typeof BOARD_CARD_ATTENTION_REASONS)[number];
 
@@ -2020,6 +2077,7 @@ const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> 
   approval: "warning",
   "review-held": "warning",
   held: "warning",
+  stopped: "warning",
   input: "attention",
 };
 
@@ -2039,7 +2097,14 @@ const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> 
 export function boardCardAttention(input: {
   readonly card: Pick<
     BoardCardShell,
-    "stage" | "stalled" | "held" | "awaitingInput" | "stepRunning" | "queued" | "archivedAt"
+    | "stage"
+    | "stalled"
+    | "held"
+    | "awaitingInput"
+    | "stepAwaiting"
+    | "stepRunning"
+    | "queued"
+    | "archivedAt"
     // `| undefined` throughout, not bare optionals: under
     // `exactOptionalPropertyTypes` a caller that spreads a shell it built by
     // destructuring holds `T | undefined` on these keys, and a bare optional
@@ -2150,12 +2215,32 @@ export function boardCardAttention(input: {
       detail: "This stage stopped without moving the card on — it needs a human to continue it",
     };
   }
-  if (card.awaitingInput) {
+  // The two halves of "the step parked on a human" (t3o-34, D4). Deliberately
+  // NOT stage-gated the way `held` is: `held` rests on the shell across a drag
+  // back to Backlog, whereas this is cleared the moment work resumes on the
+  // step's thread — and Planning, which sits well before the build role, is the
+  // stage where an agent asking in prose is most common.
+  //
+  // Anything ANSWERABLE comes first. The two facts are about different threads —
+  // `awaitingInput` ORs across every live thread on the card, `stepAwaiting`
+  // describes the one live step — so a card can have a quietly stopped step AND
+  // a sibling thread holding a real question. Showing the stop there would hide
+  // the question the human could actually answer behind a chip that says only
+  // that something halted.
+  if (card.awaitingInput || card.stepAwaiting === "question") {
     return {
       reason: "input",
       tone: ATTENTION_TONES.input,
       label: "Input needed",
       detail: "A thread on this card is waiting on your answer",
+    };
+  }
+  if (card.stepAwaiting === "stopped") {
+    return {
+      reason: "stopped",
+      tone: ATTENTION_TONES.stopped,
+      label: "Needs a human",
+      detail: "The agent stopped without asking anything — this step needs a human to continue it",
     };
   }
   return null;
@@ -2622,6 +2707,21 @@ export const BoardCardCompleteStepCommand = Schema.Struct({
 });
 export type BoardCardCompleteStepCommand = typeof BoardCardCompleteStepCommand.Type;
 
+/**
+ * Start a queued step NOW, deliberately over the concurrency cap (t3o-33).
+ *
+ * Carries no `stepId`: one step-state row per card (D4), so the server resolves
+ * the live step itself and can never be handed a stale one by a client that
+ * rendered the card a moment ago.
+ */
+export const BoardCardForceStartStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.force-start-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardForceStartStepCommand = typeof BoardCardForceStartStepCommand.Type;
+
 /** One proposed plan on `board_propose_plans`. `key` is an agent-chosen slug,
     unique within the proposal, that `dependsOn` entries reference — validated
     for existence and acyclicity on ingest (the offending edge is named on
@@ -2885,6 +2985,11 @@ export const BoardCardAwaitStepInputCommand = Schema.Struct({
   commandId: CommandId,
   cardId: BoardCardId,
   stepId: TrimmedNonEmptyString,
+  /** Why the step is parking (t3o-34, D3). Defaults to `question`, which is what
+      every pre-t3o-34 caller meant. */
+  reason: BoardCardStepAwaitingReason.pipe(
+    Schema.withDecodingDefault(Effect.succeed("question" as const)),
+  ),
   createdAt: IsoDateTime,
 });
 export type BoardCardAwaitStepInputCommand = typeof BoardCardAwaitStepInputCommand.Type;
@@ -3404,6 +3509,16 @@ export const BoardCardStepAdmittedPayload = Schema.Struct({
 });
 export type BoardCardStepAdmittedPayload = typeof BoardCardStepAdmittedPayload.Type;
 
+/** The queued step a human asked to start over the cap (t3o-33). Carries the
+    whole state like every other step event, so the projector upserts it and
+    the governor reads `forceStart` from the row it rehydrates. */
+export const BoardCardStepForceStartRequestedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardCardStepForceStartRequestedPayload =
+  typeof BoardCardStepForceStartRequestedPayload.Type;
+
 export const BoardCardStepAwaitingInputPayload = Schema.Struct({
   cardId: BoardCardId,
   state: BoardCardStepState,
@@ -3723,6 +3838,21 @@ export const BoardCardShell = Schema.Struct({
       at false while the client preserves the last known value
       (`applyBoardShellStreamEvent`). */
   held: Schema.Boolean,
+  /** Why the card's live step is parked on a human, or null when it is not
+      (t3o-34, D4).
+   *
+      The step status `awaiting-input` was invisible on the column card before
+      this: violet came only from the THREAD's `hasPendingUserInput`, which is
+      correct exactly while the two agree. They stop agreeing the moment a step
+      parks for a prose question or for a human-in-the-loop turn that ended with
+      nothing to answer — neither of which leaves a pending question on the
+      thread, and both of which used to leave the card pulsing blue.
+
+      Step-derived like `queued`/`stalled`/`held`, so it follows the same rule:
+      the snapshot and the `card-stalled` delta are authoritative, card-carrying
+      deltas rest it at null, and the client preserves the last known value
+      (`applyBoardShellStreamEvent`). */
+  stepAwaiting: Schema.NullOr(BoardCardStepAwaitingReason),
   // Thread-derived — joined from `board_card_thread_links` (902) and the
   // linked thread's shell; no new plumbing (t3o-04).
   threadState: BoardCardThreadState,
@@ -3960,6 +4090,10 @@ export function makeBoardCardShell(input: {
   /** Whether the card's step has settled and left the card where it stands.
       Real on the snapshot; rests false on card deltas. */
   readonly held?: boolean | undefined;
+  /** Why the card's live step is parked on a human, or null (t3o-34, D4). Real
+      on the snapshot; rests null on card deltas, which the client preserves
+      through exactly like `stalled`. */
+  readonly stepAwaiting?: BoardCardStepAwaitingReason | null | undefined;
   /** Whether the brief carries a picture. Omitted by producers that do not
       have the brief body in hand, which leaves the key absent so the client
       preserves its last known value. */
@@ -4013,6 +4147,7 @@ export function makeBoardCardShell(input: {
     stalled: input.stalled ?? false, // t3o-17 (D3): real on the snapshot, rests false on card deltas
     held: input.held ?? false, // real on the snapshot, rests false on card deltas
     stepRunning: input.stepRunning ?? false, // durable "being worked" flag: real on the snapshot, rests false on card deltas
+    stepAwaiting: input.stepAwaiting ?? null, // t3o-34 (D4): real on the snapshot, rests null on card deltas
     threadState,
     awaitingInput,
     activeThreadId: input.activeThreadId,
@@ -4193,6 +4328,13 @@ export const BoardCardStalledShellEvent = Schema.Struct({
       that change it; `card-queued` needs no copy, because a step is always
       SELECTED (clearing `held`) before it can be admitted. */
   held: Schema.Boolean,
+  /** And why the step is parked on a human, or null (t3o-34, D4). It rides this
+      delta for the same reason `held` does: the events that already emit
+      `card-stalled` (settled / selected / recovered) all clear it, and the one
+      event that SETS it — `board.card-step-awaiting-input`, which emitted no
+      shell delta at all before t3o-34 — now emits this one rather than a fourth
+      delta carrying a single field. */
+  stepAwaiting: Schema.NullOr(BoardCardStepAwaitingReason),
 });
 export type BoardCardStalledShellEvent = typeof BoardCardStalledShellEvent.Type;
 
@@ -4364,6 +4506,7 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardStageDeleteCommand,
   BoardCardStartStageThreadCommand,
   BoardCardCompleteStepCommand,
+  BoardCardForceStartStepCommand,
   BoardPlansProposeCommand,
   BoardPlanWriteCommand,
   BoardPlansApproveCommand,
@@ -4432,6 +4575,7 @@ export const BOARD_EVENT_TYPES = [
   "board.card-note-recorded",
   "board.card-step-selected",
   "board.card-step-admitted",
+  "board.card-step-force-start-requested",
   "board.card-step-awaiting-input",
   "board.card-step-recovered",
   "board.card-step-settled",
@@ -4624,6 +4768,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-step-admitted"),
       payload: BoardCardStepAdmittedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-force-start-requested"),
+      payload: BoardCardStepForceStartRequestedPayload,
     }),
     Schema.Struct({
       ...base,

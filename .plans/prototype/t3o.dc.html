@@ -2156,6 +2156,36 @@
                                       </sc-if>
                                       <span style="flex: 1"></span>
                                       <sc-if
+                                        value="{{ c.queued }}"
+                                        hint-placeholder-val="{{ false }}"
+                                      >
+                                        <span
+                                          title="{{ c.queueTip }}"
+                                          style="
+                                            display: inline-flex;
+                                            align-items: center;
+                                            gap: 4px;
+                                            font: 500 10.5px var(--font-sans);
+                                            color: var(--muted-fg);
+                                          "
+                                        >
+                                          <svg
+                                            width="11"
+                                            height="11"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2.2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                          >
+                                            <circle cx="12" cy="12" r="9"></circle>
+                                            <path d="M12 7v5l3 2"></path>
+                                          </svg>
+                                          {{ c.queueLabel }}
+                                        </span>
+                                      </sc-if>
+                                      <sc-if
                                         value="{{ c.blocked }}"
                                         hint-placeholder-val="{{ false }}"
                                       >
@@ -2935,6 +2965,37 @@
                       <circle cx="12" cy="12" r="9"></circle>
                     </svg>
                     Awaiting input
+                  </span>
+                </sc-if>
+                <sc-if value="{{ activeCard.queued }}" hint-placeholder-val="{{ false }}">
+                  <span
+                    title="{{ activeCard.queueDetail }}"
+                    style="
+                      display: inline-flex;
+                      align-items: center;
+                      gap: 5px;
+                      height: 18px;
+                      padding: 0 8px 0 6px;
+                      border-radius: 6px;
+                      font: 500 11px var(--font-sans);
+                      background: color-mix(in srgb, var(--attention) 14%, transparent);
+                      color: var(--attention-fg);
+                    "
+                  >
+                    <svg
+                      width="11"
+                      height="11"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="9"></circle>
+                      <path d="M12 7v5l3 2"></path>
+                    </svg>
+                    {{ activeCard.queueLabel }}
                   </span>
                 </sc-if>
                 <sc-if value="{{ cardModelsSet }}" hint-placeholder-val="{{ false }}">
@@ -5256,6 +5317,78 @@
                         gap: 14px;
                       "
                     >
+                      <sc-if value="{{ activeCard.queued }}" hint-placeholder-val="{{ false }}">
+                        <div
+                          style="
+                            display: flex;
+                            align-items: center;
+                            gap: 9px;
+                            flex: none;
+                            padding: 9px 11px;
+                            border: 1px solid color-mix(in srgb, var(--attention) 32%, transparent);
+                            border-radius: 10px;
+                            background: color-mix(in srgb, var(--attention) 6%, transparent);
+                          "
+                        >
+                          <svg
+                            width="13"
+                            height="13"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="var(--attention-fg)"
+                            stroke-width="2.2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            style="flex: none"
+                          >
+                            <circle cx="12" cy="12" r="9"></circle>
+                            <path d="M12 7v5l3 2"></path>
+                          </svg>
+                          <span
+                            style="
+                              flex: 1;
+                              min-width: 0;
+                              font: 400 12px/1.45 var(--font-sans);
+                              color: var(--muted-fg);
+                            "
+                            ><span style="font-weight: 600; color: var(--attention-fg)"
+                              >{{ activeCard.queueHeadline }}.</span
+                            >
+                            No agent has picked this up yet.</span
+                          >
+                          <button
+                            type="button"
+                            onClick="{{ activeCard.startNow }}"
+                            style="
+                              display: inline-flex;
+                              align-items: center;
+                              gap: 5px;
+                              height: 26px;
+                              padding: 0 9px;
+                              flex: none;
+                              border: 1px solid var(--input);
+                              border-radius: 7px;
+                              background: var(--popover);
+                              color: var(--fg);
+                              font: 500 11.5px var(--font-sans);
+                              cursor: pointer;
+                              box-shadow: var(--shadow-xs);
+                            "
+                            style-hover="background:var(--accent)"
+                          >
+                            <svg
+                              width="11"
+                              height="11"
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                              stroke="none"
+                            >
+                              <path d="M8 5.5v13l11-6.5z"></path>
+                            </svg>
+                            Start now
+                          </button>
+                        </div>
+                      </sc-if>
                       <sc-if value="{{ cardThread.empty }}" hint-placeholder-val="{{ false }}">
                         <div
                           style="
@@ -6133,26 +6266,127 @@
                   <div style="{{ cardRightColStyle }}">
                     <div style="{{ groupActionsStyle }}">
                       <sc-if value="{{ activeCard.canProgress }}" hint-placeholder-val="{{ true }}">
-                        <button
-                          type="button"
-                          onClick="{{ progressCard }}"
-                          style="{{ activeCard.progressStyle }}"
-                        >
-                          <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
+                        <div style="position: relative; display: flex; align-items: stretch">
+                          <button
+                            type="button"
+                            onClick="{{ progressCard }}"
+                            style="{{ activeCard.progressStyle }}"
                           >
-                            <path d="M5 12h14"></path>
-                            <path d="m12 5 7 7-7 7"></path>
-                          </svg>
-                          {{ activeCard.progressLabel }}
-                        </button>
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M5 12h14"></path>
+                              <path d="m12 5 7 7-7 7"></path>
+                            </svg>
+                            {{ activeCard.progressLabel }}
+                          </button>
+                          <sc-if
+                            value="{{ activeCard.canHotfix }}"
+                            hint-placeholder-val="{{ false }}"
+                          >
+                            <button
+                              type="button"
+                              onClick="{{ toggleHotfixMenu }}"
+                              title="Other ways to advance"
+                              style="{{ activeCard.hotfixCaretStyle }}"
+                            >
+                              <svg
+                                width="13"
+                                height="13"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="m6 9 6 6 6-6"></path>
+                              </svg>
+                            </button>
+                            <sc-if value="{{ hotfixMenuOpen }}" hint-placeholder-val="{{ false }}">
+                              <div
+                                onClick="{{ closeHotfixMenu }}"
+                                style="position: fixed; inset: 0; z-index: 55"
+                              ></div>
+                              <div
+                                style="
+                                  position: absolute;
+                                  top: calc(100% + 5px);
+                                  right: 0;
+                                  z-index: 60;
+                                  width: 262px;
+                                  padding: 5px;
+                                  border: 1px solid var(--border);
+                                  border-radius: 11px;
+                                  background: var(--popover);
+                                  box-shadow:
+                                    0 18px 34px -18px color-mix(in srgb, var(--fg) 30%, transparent),
+                                    var(--shadow-xs);
+                                "
+                              >
+                                <button
+                                  type="button"
+                                  onClick="{{ commitHotfix }}"
+                                  style="
+                                    display: flex;
+                                    align-items: flex-start;
+                                    gap: 9px;
+                                    width: 100%;
+                                    padding: 7px 9px;
+                                    border: none;
+                                    border-radius: 8px;
+                                    background: transparent;
+                                    text-align: left;
+                                    cursor: pointer;
+                                  "
+                                  style-hover="background:var(--accent)"
+                                >
+                                  <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="var(--muted-fg)"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    style="flex: none; margin-top: 2px"
+                                  >
+                                    <circle cx="18" cy="18" r="3"></circle>
+                                    <circle cx="6" cy="6" r="3"></circle>
+                                    <path d="M6 21V9a9 9 0 0 0 9 9"></path>
+                                  </svg>
+                                  <span style="min-width: 0">
+                                    <span
+                                      style="
+                                        display: block;
+                                        font: 500 12.5px var(--font-sans);
+                                        color: var(--fg);
+                                      "
+                                      >Submit for merge — no review</span
+                                    >
+                                    <span
+                                      style="
+                                        display: block;
+                                        margin-top: 2px;
+                                        font: 400 11.5px/1.4 var(--font-sans);
+                                        color: var(--muted-fg);
+                                      "
+                                      >Opens the PR as normal, straight to Ready for merge.</span
+                                    >
+                                  </span>
+                                </button>
+                              </div>
+                            </sc-if>
+                          </sc-if>
+                        </div>
                       </sc-if>
                       <sc-if
                         value="{{ activeCard.canStopLoop }}"
@@ -6176,6 +6410,123 @@
                           </svg>
                           {{ activeCard.stopLabel }}
                         </button>
+                      </sc-if>
+                      <sc-if value="{{ activeCard.queued }}" hint-placeholder-val="{{ false }}">
+                        <div
+                          style="
+                            display: flex;
+                            flex-direction: column;
+                            gap: 9px;
+                            padding: 11px 12px;
+                            border: 1px solid color-mix(in srgb, var(--attention) 38%, transparent);
+                            border-radius: 9px;
+                            background: color-mix(in srgb, var(--attention) 7%, transparent);
+                          "
+                        >
+                          <div style="display: flex; align-items: center; gap: 7px">
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="var(--attention-fg)"
+                              stroke-width="2.2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              style="flex: none"
+                            >
+                              <circle cx="12" cy="12" r="9"></circle>
+                              <path d="M12 7v5l3 2"></path>
+                            </svg>
+                            <span
+                              style="font: 600 12.5px var(--font-sans); color: var(--attention-fg)"
+                              >{{ activeCard.queueHeadline }}</span
+                            >
+                          </div>
+                          <div
+                            style="
+                              font: 400 11.5px/1.5 var(--font-sans);
+                              color: var(--muted-fg);
+                              text-wrap: pretty;
+                            "
+                          >
+                            {{ activeCard.queueDetail }}
+                          </div>
+                          <div style="display: flex; gap: 6px">
+                            <button
+                              type="button"
+                              onClick="{{ activeCard.startNow }}"
+                              title="Run this task now, over the agent limit"
+                              style="
+                                display: inline-flex;
+                                align-items: center;
+                                gap: 6px;
+                                height: 30px;
+                                padding: 0 11px;
+                                border: 1px solid var(--primary);
+                                border-radius: 8px;
+                                background: var(--primary);
+                                color: var(--primary-fg);
+                                font: 500 12.5px var(--font-sans);
+                                cursor: pointer;
+                                box-shadow: var(--shadow-xs);
+                              "
+                            >
+                              <svg
+                                width="13"
+                                height="13"
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                                stroke="none"
+                                style="flex: none"
+                              >
+                                <path d="M8 5.5v13l11-6.5z"></path>
+                              </svg>
+                              Start now
+                            </button>
+                            <sc-if
+                              value="{{ activeCard.canFront }}"
+                              hint-placeholder-val="{{ false }}"
+                            >
+                              <button
+                                type="button"
+                                onClick="{{ activeCard.moveToFront }}"
+                                title="Take the next free agent"
+                                style="
+                                  display: inline-flex;
+                                  align-items: center;
+                                  gap: 6px;
+                                  height: 30px;
+                                  padding: 0 11px;
+                                  border: 1px solid var(--input);
+                                  border-radius: 8px;
+                                  background: var(--popover);
+                                  color: var(--fg);
+                                  font: 500 12.5px var(--font-sans);
+                                  cursor: pointer;
+                                  box-shadow: var(--shadow-xs);
+                                "
+                                style-hover="background:var(--accent)"
+                              >
+                                <svg
+                                  width="13"
+                                  height="13"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  style="flex: none"
+                                >
+                                  <path d="M12 19V5"></path>
+                                  <path d="m5 12 7-7 7 7"></path>
+                                </svg>
+                                Move to front
+                              </button>
+                            </sc-if>
+                          </div>
+                        </div>
                       </sc-if>
                       <sc-if value="{{ activeCard.blocked }}" hint-placeholder-val="{{ false }}">
                         <div
@@ -6572,11 +6923,120 @@
                           Project ·
                           <span style="color: var(--fg)">{{ activeCard.projectName }}</span>
                         </div>
-                        <div>
-                          Branch ·
-                          <span style="font-family: var(--font-sans); color: var(--fg)"
-                            >{{ activeCard.branch }}</span
+                        <div
+                          style="display: flex; align-items: center; gap: 5px; position: relative"
+                        >
+                          <span>Base ·</span>
+                          <button
+                            type="button"
+                            onClick="{{ activeCard.toggleBranchMenu }}"
+                            style="
+                              display: inline-flex;
+                              align-items: center;
+                              gap: 5px;
+                              height: 20px;
+                              padding: 0 5px;
+                              margin-left: -3px;
+                              border: none;
+                              border-radius: 6px;
+                              background: transparent;
+                              color: var(--fg);
+                              cursor: pointer;
+                              font: 500 11.5px var(--font-mono);
+                            "
+                            style-hover="background:var(--accent)"
                           >
+                            <span>{{ activeCard.branch }}</span>
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="var(--muted-fg)"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              style="flex: none"
+                            >
+                              <path d="m6 9 6 6 6-6"></path>
+                            </svg>
+                          </button>
+                          <sc-if
+                            value="{{ activeCard.branchMenuOpen }}"
+                            hint-placeholder-val="{{ false }}"
+                          >
+                            <div
+                              onClick="{{ activeCard.toggleBranchMenu }}"
+                              style="position: fixed; inset: 0; z-index: 8"
+                            ></div>
+                            <div
+                              style="
+                                position: absolute;
+                                left: 0;
+                                bottom: calc(100% + 3px);
+                                z-index: 9;
+                                min-width: 200px;
+                                max-height: 220px;
+                                overflow-y: auto;
+                                padding: 4px;
+                                border: 1px solid var(--border);
+                                border-radius: 10px;
+                                background: var(--popover);
+                                box-shadow: var(--shadow-pop);
+                                display: flex;
+                                flex-direction: column;
+                                gap: 1px;
+                              "
+                            >
+                              <sc-for
+                                list="{{ activeCard.branchOptions }}"
+                                as="o"
+                                hint-placeholder-count="3"
+                              >
+                                <button
+                                  type="button"
+                                  onClick="{{ o.select }}"
+                                  style="{{ o.style }}"
+                                >
+                                  <span
+                                    style="
+                                      flex: 1;
+                                      min-width: 0;
+                                      overflow: hidden;
+                                      text-overflow: ellipsis;
+                                      white-space: nowrap;
+                                      text-align: left;
+                                      font-family: var(--font-mono);
+                                    "
+                                    >{{ o.name }}</span
+                                  >
+                                  <span
+                                    style="
+                                      flex: none;
+                                      font: 400 10px var(--font-sans);
+                                      color: var(--muted-fg);
+                                    "
+                                    >{{ o.hint }}</span
+                                  >
+                                  <sc-if value="{{ o.current }}" hint-placeholder-val="{{ false }}">
+                                    <svg
+                                      width="13"
+                                      height="13"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="2.2"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                      style="flex: none; color: var(--muted-fg)"
+                                    >
+                                      <path d="M20 6 9 17l-5-5"></path>
+                                    </svg>
+                                  </sc-if>
+                                </button>
+                              </sc-for>
+                            </div>
+                          </sc-if>
                         </div>
                         <sc-if
                           value="{{ activeCard.hasParent }}"
@@ -6692,27 +7152,279 @@
                   gap: 14px;
                 "
               >
-                <div>
-                  <label
-                    style="
-                      display: block;
-                      font: 500 12px var(--font-sans);
-                      color: var(--fg);
-                      margin-bottom: 6px;
-                    "
-                    >Project</label
-                  >
-                  <div style="display: flex; flex-wrap: wrap; gap: 6px">
-                    <sc-for list="{{ createProjects }}" as="p" hint-placeholder-count="3">
-                      <button type="button" onClick="{{ p.select }}" style="{{ p.style }}">
+                <div style="display: flex; gap: 10px">
+                  <div style="flex: 1.15; min-width: 0">
+                    <label
+                      style="
+                        display: block;
+                        font: 500 12px var(--font-sans);
+                        color: var(--fg);
+                        margin-bottom: 6px;
+                      "
+                      >Project</label
+                    >
+                    <div style="position: relative">
+                      <button
+                        type="button"
+                        onClick="{{ createProjectMenu.toggle }}"
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 8px;
+                          width: 100%;
+                          height: 34px;
+                          padding: 0 9px 0 11px;
+                          border: 1px solid var(--input);
+                          border-radius: 10px;
+                          background: var(--popover);
+                          color: var(--fg);
+                          cursor: pointer;
+                          box-shadow: var(--shadow-xs);
+                          font: 500 13px var(--font-sans);
+                        "
+                        style-hover="background:var(--accent)"
+                      >
                         <span
-                          style="width:7px;height:7px;border-radius:99px;flex:none;background:{{ p.dot }}"
+                          style="width:7px;height:7px;border-radius:99px;flex:none;background:{{ createProjectMenu.dot }}"
                         ></span>
-                        <span style="font-family: var(--font-sans); font-size: 12px"
-                          >{{ p.name }}</span
+                        <span
+                          style="
+                            flex: 1;
+                            min-width: 0;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                            white-space: nowrap;
+                            text-align: left;
+                          "
+                          >{{ createProjectMenu.label }}</span
                         >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="var(--muted-fg)"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          style="flex: none"
+                        >
+                          <path d="m6 9 6 6 6-6"></path>
+                        </svg>
                       </button>
-                    </sc-for>
+                      <sc-if
+                        value="{{ createProjectMenu.open }}"
+                        hint-placeholder-val="{{ false }}"
+                      >
+                        <div
+                          onClick="{{ createProjectMenu.toggle }}"
+                          style="position: fixed; inset: 0; z-index: 8"
+                        ></div>
+                        <div
+                          style="
+                            position: absolute;
+                            left: 0;
+                            right: 0;
+                            top: calc(100% + 4px);
+                            z-index: 9;
+                            padding: 4px;
+                            border: 1px solid var(--border);
+                            border-radius: 10px;
+                            background: var(--popover);
+                            box-shadow: var(--shadow-pop);
+                            display: flex;
+                            flex-direction: column;
+                            gap: 1px;
+                          "
+                        >
+                          <sc-for
+                            list="{{ createProjectMenu.options }}"
+                            as="o"
+                            hint-placeholder-count="3"
+                          >
+                            <button type="button" onClick="{{ o.select }}" style="{{ o.style }}">
+                              <span
+                                style="width:7px;height:7px;border-radius:99px;flex:none;background:{{ o.dot }}"
+                              ></span>
+                              <span
+                                style="
+                                  flex: 1;
+                                  min-width: 0;
+                                  overflow: hidden;
+                                  text-overflow: ellipsis;
+                                  white-space: nowrap;
+                                  text-align: left;
+                                "
+                                >{{ o.name }}</span
+                              >
+                              <sc-if value="{{ o.current }}" hint-placeholder-val="{{ false }}">
+                                <svg
+                                  width="13"
+                                  height="13"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="2.2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  style="flex: none; color: var(--muted-fg)"
+                                >
+                                  <path d="M20 6 9 17l-5-5"></path>
+                                </svg>
+                              </sc-if>
+                            </button>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </div>
+                  <div style="flex: 1; min-width: 0">
+                    <label
+                      style="
+                        display: flex;
+                        align-items: baseline;
+                        gap: 8px;
+                        font: 500 12px var(--font-sans);
+                        color: var(--fg);
+                        margin-bottom: 6px;
+                      "
+                      >Base branch<span
+                        style="font-weight: 400; font-size: 11.5px; color: var(--muted-fg)"
+                        >work branches off this</span
+                      ></label
+                    >
+                    <div style="position: relative">
+                      <button
+                        type="button"
+                        onClick="{{ createBranchMenu.toggle }}"
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 8px;
+                          width: 100%;
+                          height: 34px;
+                          padding: 0 9px 0 11px;
+                          border: 1px solid var(--input);
+                          border-radius: 10px;
+                          background: var(--popover);
+                          color: var(--fg);
+                          cursor: pointer;
+                          box-shadow: var(--shadow-xs);
+                          font: 500 12.5px var(--font-mono);
+                        "
+                        style-hover="background:var(--accent)"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="var(--muted-fg)"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          style="flex: none"
+                        >
+                          <line x1="6" y1="3" x2="6" y2="15"></line>
+                          <circle cx="18" cy="6" r="3"></circle>
+                          <circle cx="6" cy="18" r="3"></circle>
+                          <path d="M18 9a9 9 0 0 1-9 9"></path>
+                        </svg>
+                        <span
+                          style="
+                            flex: 1;
+                            min-width: 0;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                            white-space: nowrap;
+                            text-align: left;
+                          "
+                          >{{ createBranchMenu.label }}</span
+                        >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="var(--muted-fg)"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          style="flex: none"
+                        >
+                          <path d="m6 9 6 6 6-6"></path>
+                        </svg>
+                      </button>
+                      <sc-if value="{{ createBranchMenu.open }}" hint-placeholder-val="{{ false }}">
+                        <div
+                          onClick="{{ createBranchMenu.toggle }}"
+                          style="position: fixed; inset: 0; z-index: 8"
+                        ></div>
+                        <div
+                          style="
+                            position: absolute;
+                            left: 0;
+                            right: 0;
+                            top: calc(100% + 4px);
+                            z-index: 9;
+                            max-height: 220px;
+                            overflow-y: auto;
+                            padding: 4px;
+                            border: 1px solid var(--border);
+                            border-radius: 10px;
+                            background: var(--popover);
+                            box-shadow: var(--shadow-pop);
+                            display: flex;
+                            flex-direction: column;
+                            gap: 1px;
+                          "
+                        >
+                          <sc-for
+                            list="{{ createBranchMenu.options }}"
+                            as="o"
+                            hint-placeholder-count="3"
+                          >
+                            <button type="button" onClick="{{ o.select }}" style="{{ o.style }}">
+                              <span
+                                style="
+                                  flex: 1;
+                                  min-width: 0;
+                                  overflow: hidden;
+                                  text-overflow: ellipsis;
+                                  white-space: nowrap;
+                                  text-align: left;
+                                  font-family: var(--font-mono);
+                                "
+                                >{{ o.name }}</span
+                              >
+                              <span
+                                style="
+                                  flex: none;
+                                  font: 400 10px var(--font-sans);
+                                  color: var(--muted-fg);
+                                "
+                                >{{ o.hint }}</span
+                              >
+                              <sc-if value="{{ o.current }}" hint-placeholder-val="{{ false }}">
+                                <svg
+                                  width="13"
+                                  height="13"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="2.2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  style="flex: none; color: var(--muted-fg)"
+                                >
+                                  <path d="M20 6 9 17l-5-5"></path>
+                                </svg>
+                              </sc-if>
+                            </button>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
                   </div>
                 </div>
                 <div>
@@ -7429,10 +8141,18 @@
         { name: "Chore", color: "#f59e0b" },
       ];
       const PROJECTS = [
-        { id: "advisor", name: "core.agent.advisor", branch: "main", dot: "#8b8bf5" },
-        { id: "web", name: "mesh.web", branch: "feat/board", dot: "#38bdf8" },
-        { id: "relay", name: "mesh.relay", branch: "main", dot: "#f59e0b" },
+        { id: "advisor", name: "core.agent.advisor", branch: "main", dot: "#8b8bf5",
+          defaultBranch: "main",
+          branches: ["main", "develop", "release/2.4", "feat/board-mode"] },
+        { id: "web", name: "mesh.web", branch: "feat/board", dot: "#38bdf8",
+          defaultBranch: "main",
+          branches: ["main", "feat/board", "staging"] },
+        { id: "relay", name: "mesh.relay", branch: "main", dot: "#f59e0b",
+          defaultBranch: "main",
+          branches: ["main", "develop", "feat/fanout-backpressure"] },
       ];
+      const projectOf = (id) => PROJECTS.find((p) => p.id === id) || PROJECTS[0];
+      const defaultBranchOf = (id) => projectOf(id).defaultBranch;
       const PLAN = (title, bullets, files) =>
         `# ${title}\n\n## Approach\n${bullets.map((b) => "- " + b).join("\n")}\n\n## Files\n${files
           .map((f) => "  " + f)
@@ -7444,6 +8164,8 @@
         { key: "T3-195", p: "advisor", type: "Feature", status: "sprint", title: "Persist composer drafts per worktree", brief: "Drafts are keyed by thread today; switching worktrees loses the in-progress prompt." },
         { key: "T3-193", p: "advisor", type: "chore", status: "planning", t: "working", title: "Group worktrees by environment in the branch picker", brief: "The picker lists 40+ worktrees flat. Group by environment with a sticky header per group." },
         { key: "T3-188", p: "advisor", type: "Feature", status: "building", title: "Kanban board mode in the workspace shell", brief: "Add a top-level mode switch: threads or board. Board is per project, with drag between stages.", deps: ["T3-195"], plan: PLAN("Kanban board mode", ["Add workspaceMode atom persisted in client storage", "Mount BoardView beside ChatView under AppSidebarLayout", "Cards are server-authoritative events, same store as threads", "Dependencies are edges on the task record, validated on progress"], ["apps/web/src/components/BoardView.tsx", "apps/web/src/state/board.ts", "packages/contracts/src/task.ts"]) },
+        { key: "T3-176", p: "advisor", type: "bug", status: "building", t: "queued", title: "Active dot on a sub-board card doesn't roll up to the parent", brief: "A plan card running a thread shows its dot on the sub-board only, so the parent card looks idle." },
+        { key: "T3-171", p: "advisor", type: "chore", status: "building", t: "queued", title: "Prune worktrees for merged branches on launch", brief: "Merged worktrees pile up until someone clears them by hand." },
         { key: "T3-186", p: "advisor", type: "Feature", status: "building", t: "waiting", title: "Server-authoritative event sourcing cleanup", brief: "Collapse the duplicate client reducer so the server event log is the single source of truth.", plan: PLAN("Event sourcing cleanup", ["Delete the client-side mirror reducer", "Replay from the server log on reconnect", "Add a determinism test over recorded fixtures"], ["apps/server/src/events/log.ts", "packages/client-runtime/src/replay.ts"]) },
         { key: "T3-182", p: "advisor", type: "Feature", status: "review", t: "working", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
         { key: "T3-180", p: "advisor", type: "bug", status: "review", title: "Compaction leaves orphaned tool-call spans", brief: "After a compaction, spans whose parent turn was summarised away keep streaming into the timeline.", plan: PLAN("Orphaned span cleanup", ["Reparent live spans onto the summary turn", "Drop spans whose turn no longer exists", "Replay test over a recorded compaction"], ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"]), pr: { n: 287, title: "fix(runtime): reparent spans across compaction", add: 244, del: 96, files: ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"], state: "In review" } },
@@ -7712,6 +8434,9 @@
         { title: "/pullrequest feature/knowledge", age: "1d" },
       ];
 
+      // How many build agents may run at once. Extra work waits in a global queue.
+      const AGENT_CAP = 3;
+
       class Component extends DCLogic {
         constructor(props) {
           super(props);
@@ -7795,6 +8520,9 @@
             lp: { open: false, target: null, query: "", edit: null },
             dropZone: null,
             createProject: "advisor",
+            createBranch: "main",
+            createMenu: null,
+            cardBranchMenu: false,
             draftTitle: "",
             draftBrief: "",
             draftFiles: [],
@@ -7852,7 +8580,9 @@
                 : kind === "build"
                   ? th.state === "working"
                     ? "Implementing the approved plan — 3 of 6 files touched so far."
-                    : "Stopped after the third step. Resume whenever you're ready."
+                    : th.state === "queued"
+                      ? "Nothing has run yet. The build starts as soon as an agent is free, or start it now."
+                      : "Stopped after the third step. Resume whenever you're ready."
                   : rs
                     ? "PR #" + rs.rv.pr + " is open on " + rs.rv.forge + ". " + rs.roundLabel + " of the adversarial loop is " +
                       (rs.step
@@ -8370,6 +9100,45 @@
           });
         }
 
+        // Cards waiting on agent capacity, in the order they were enqueued.
+        queuedCards() {
+          return this.state.cards.filter((c) => !c.archived && c.tstate === "queued");
+        }
+        runningCount() {
+          return this.state.cards.filter((c) => !c.archived && c.tstate === "working").length;
+        }
+        queueInfo(card) {
+          if (!card || card.tstate !== "queued") return null;
+          const q = this.queuedCards();
+          const pos = q.findIndex((c) => c.id === card.id) + 1;
+          const running = this.runningCount();
+          const cap = Math.max(AGENT_CAP, running);
+          const ahead = pos - 1;
+          return {
+            pos,
+            total: q.length,
+            label: "Queued #" + pos,
+            headline: "Queued #" + pos + " for build",
+            detail:
+              running + " of " + cap + " agents busy" +
+              (ahead ? " · " + ahead + (ahead === 1 ? " task" : " tasks") + " ahead" : " · next in line") +
+              ". It starts on its own when an agent frees up.",
+            canFront: pos > 1,
+            startNow: () =>
+              this.setState((s) => ({
+                cards: s.cards.map((c) => (c.id === card.id ? { ...c, tstate: "working" } : c)),
+              })),
+            moveToFront: () =>
+              this.setState((s) => {
+                const rest = s.cards.filter((c) => c.id !== card.id);
+                const at = rest.findIndex((c) => !c.archived && c.tstate === "queued");
+                const next = rest.slice();
+                next.splice(at < 0 ? next.length : at, 0, card);
+                return { cards: next };
+              }),
+          };
+        }
+
         threadFor(c) {
           const kind =
             c.status === "planning"
@@ -8521,6 +9290,14 @@
         // Once a card is at review or past it, switching workflow would rewrite history.
         workflowLocked(card) {
           return this.stageIndex(card.status) >= this.stageIndex("review");
+        }
+        menuRowStyle(on) {
+          return (
+            "display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 8px;border:none;border-radius:7px;cursor:pointer;font:" +
+            (on ? "500" : "400") +
+            " 12.5px var(--font-sans);color:var(--fg);background:" +
+            (on ? "var(--accent)" : "transparent")
+          );
         }
         setWorkflow(id, wf) {
           this.setState((s) => ({
@@ -8840,6 +9617,7 @@
             const th = this.threadFor(c);
             const working = !!th && th.state === "working";
             const awaiting = !!th && th.state === "waiting";
+            const qi = this.queueInfo(c);
             const blocked = this.isBlocked(c);
             const hasDeps = c.depKeys.length > 0;
             const hasPlan = !!c.plan;
@@ -8990,7 +9768,10 @@
               },
               working,
               awaiting,
-              tip: awaiting ? "Awaiting input" : working ? "Thread running" : "",
+              queued: !!qi,
+              queueLabel: qi ? qi.label : "",
+              queueTip: qi ? qi.detail : "",
+              tip: awaiting ? "Awaiting input" : working ? "Thread running" : qi ? qi.detail : "",
               projectName: projName(c.project),
               keyStyle: showKeys ? this.keyPillStyle(projColor(c.project)) : "display:none",
               style:
@@ -9176,6 +9957,8 @@
                       createStatus: stage.id,
                       createTags: ["Feature"],
                       createProject: isAll ? "advisor" : p.id,
+                      createBranch: defaultBranchOf(isAll ? "advisor" : p.id),
+                      createMenu: null,
                       draftTitle: "",
                       draftBrief: "",
             draftFiles: [],
@@ -9227,11 +10010,19 @@
             const idx = this.stageIndex(active.status);
             const stage = STAGES[idx];
             const blocked = this.isBlocked(active);
+            const qActive = this.queueInfo(active);
             const rvNow = this.reviewState(active);
             const next = this.nextStage(active);
             const wf = this.workflowOf(active);
             const wfLocked = this.workflowLocked(active);
             const isPrimary = !!PRIMARY_ACTIONS[active.status];
+            // A finished build can also skip review and hand its PR straight to merge.
+            const canHotfix =
+              active.status === "building" &&
+              !!(stage.action && next) &&
+              next.id === "review" &&
+              active.tstate !== "working" &&
+              !blocked;
             briefNode = React.createElement("div", {
               dangerouslySetInnerHTML: { __html: active.brief },
             });
@@ -9259,6 +10050,13 @@
                 };
               }),
               blocked,
+              queued: !!qActive,
+              queueLabel: qActive ? qActive.label : "",
+              queueHeadline: qActive ? qActive.headline : "",
+              queueDetail: qActive ? qActive.detail : "",
+              canFront: !!qActive && qActive.canFront,
+              startNow: qActive ? qActive.startNow : () => {},
+              moveToFront: qActive ? qActive.moveToFront : () => {},
               blockedBy:
                 "Blocked by " +
                 active.depKeys
@@ -9294,7 +10092,13 @@
                 ";box-shadow:var(--shadow-xs);" +
                 (isPrimary
                   ? "border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg)"
-                  : "border:1px solid var(--input);background:var(--popover);color:var(--fg)"),
+                  : "border:1px solid var(--input);background:var(--popover);color:var(--fg)") +
+                (canHotfix
+                  ? ";flex:1;min-width:0;border-top-right-radius:0;border-bottom-right-radius:0"
+                  : ""),
+              canHotfix,
+              hotfixCaretStyle:
+                "display:inline-flex;align-items:center;justify-content:center;width:28px;height:34px;flex:none;margin-left:-1px;border-radius:0 8px 8px 0;cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid var(--input);background:var(--popover);color:var(--muted-fg)",
               hasPlan: !!active.plan,
               canStopLoop: !!(rvNow && rvNow.stepId),
               stopLabel: rvNow && rvNow.stopAfter ? "Stopping after round " + rvNow.cur.n : "Stop after this round",
@@ -9312,7 +10116,24 @@
               hasPr: !!active.pr,
               prLabel: active.pr ? "#" + active.pr.n : "",
               projectName: (PROJECTS.find((p) => p.id === active.project) || {}).name,
-              branch: (PROJECTS.find((p) => p.id === active.project) || {}).branch,
+              branch: active.baseBranch || defaultBranchOf(active.project),
+              branchMenuOpen: !!st.cardBranchMenu,
+              toggleBranchMenu: () => this.setState((s) => ({ cardBranchMenu: !s.cardBranchMenu })),
+              branchOptions: projectOf(active.project).branches.map((b) => ({
+                name: b,
+                hint: b === defaultBranchOf(active.project) ? "default" : "",
+                current: (active.baseBranch || defaultBranchOf(active.project)) === b,
+                select: () =>
+                  this.setState((s) => ({
+                    cardBranchMenu: false,
+                    cards: s.cards.map((c) =>
+                      c.id === active.id ? { ...c, baseBranch: b } : c,
+                    ),
+                  })),
+                style: this.menuRowStyle(
+                  (active.baseBranch || defaultBranchOf(active.project)) === b,
+                ),
+              })),
               created: active.created,
               hasParent: !!active.parentKey,
               parentKey: active.parentKey || "",
@@ -9442,7 +10263,9 @@
                   : kind === "build"
                     ? tMeta.state === "working"
                       ? "Implementing the approved plan — 3 of 6 files touched so far."
-                      : "Stopped after the third step. Resume whenever you're ready."
+                      : tMeta.state === "queued"
+                        ? "Nothing has run yet. The build starts as soon as an agent is free."
+                        : "Stopped after the third step. Resume whenever you're ready."
                     : "PR is up and checks are green. Waiting on review feedback.",
               question:
                 tMeta.state !== "waiting"
@@ -10424,6 +11247,7 @@
               this.setState({
                 cardMenuOpen: false,
                 cardModelsOpen: false,
+                hotfixMenuOpen: false,
                 activeId: null,
                 back: null,
                 cardMaxed: false,
@@ -10439,6 +11263,14 @@
               if (!active || this.isBlocked(active)) return;
               const next = this.nextStage(active);
               if (next) this.setStatus(active.id, next.id);
+            },
+            hotfixMenuOpen: !!st.hotfixMenuOpen,
+            toggleHotfixMenu: () => this.setState((s) => ({ hotfixMenuOpen: !s.hotfixMenuOpen })),
+            closeHotfixMenu: () => this.setState({ hotfixMenuOpen: false }),
+            commitHotfix: () => {
+              this.setState({ hotfixMenuOpen: false });
+              if (!active || this.isBlocked(active)) return;
+              this.setStatus(active.id, "merge");
             },
             openPlan: () =>
               this.setState({
@@ -10473,6 +11305,8 @@
                 createStatus: "backlog",
                 createTags: ["Feature"],
                 createProject: st.scope === "all" ? "advisor" : st.scope,
+                createBranch: defaultBranchOf(st.scope === "all" ? "advisor" : st.scope),
+                createMenu: null,
                 draftTitle: "",
                 draftBrief: "",
             draftFiles: [],
@@ -10542,28 +11376,48 @@
                   ";color:var(--fg)",
               };
             }),
-            createProjects: PROJECTS.map((p) => {
-              const on = st.createProject === p.id;
-              return {
-                id: p.id,
+            createProjectMenu: {
+              open: st.createMenu === "project",
+              label: projectOf(st.createProject).name,
+              dot: projectOf(st.createProject).dot,
+              toggle: () =>
+                this.setState((s) => ({ createMenu: s.createMenu === "project" ? null : "project" })),
+              options: PROJECTS.map((p) => ({
                 name: p.name,
                 dot: p.dot,
+                current: st.createProject === p.id,
+                hint: "",
                 select: () =>
                   this.setState({
                     createProject: p.id,
+                    createBranch: defaultBranchOf(p.id),
+                    createMenu: null,
                     draftDeps: [],
                     depQuery: "",
                     depIndex: 0,
                     depOpen: false,
                   }),
-                style:
-                  "display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:9px;cursor:pointer;font:500 13px var(--font-sans);box-shadow:var(--shadow-xs);border:1px solid " +
-                  (on ? "var(--primary)" : "var(--input)") +
-                  ";background:" +
-                  (on ? "var(--accent)" : "var(--popover)") +
-                  ";color:var(--fg)",
-              };
-            }),
+                style: this.menuRowStyle(st.createProject === p.id),
+              })),
+            },
+            createBranchMenu: {
+              open: st.createMenu === "branch",
+              label: st.createBranch || defaultBranchOf(st.createProject),
+              isDefault:
+                (st.createBranch || defaultBranchOf(st.createProject)) ===
+                defaultBranchOf(st.createProject),
+              toggle: () =>
+                this.setState((s) => ({ createMenu: s.createMenu === "branch" ? null : "branch" })),
+              options: projectOf(st.createProject).branches.map((b) => ({
+                name: b,
+                current: (st.createBranch || defaultBranchOf(st.createProject)) === b,
+                hint: b === defaultBranchOf(st.createProject) ? "default" : "",
+                select: () => this.setState({ createBranch: b, createMenu: null }),
+                style: this.menuRowStyle(
+                  (st.createBranch || defaultBranchOf(st.createProject)) === b,
+                ),
+              })),
+            },
             depChips: st.draftDeps.map((k) => {
               const c = st.cards.find((x) => x.key === k);
               return {
@@ -10653,6 +11507,7 @@
                 id: "c" + Date.now(),
                 key: prefix + nextNum,
                 project: this.state.createProject,
+              baseBranch: this.state.createBranch || defaultBranchOf(this.state.createProject),
                 tags: (this.state.createTags || []).slice(),
                 status: this.state.createStatus,
                 workflow: this.state.createWorkflow || "full",

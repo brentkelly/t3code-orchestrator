@@ -19,6 +19,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
+import { gitenvTokenEnv, resetGitenvForTesting } from "../sourceControl/gitenv.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -617,6 +618,56 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
+    }),
+  );
+  // t3o-34: the gitenv module is pointed at the state dir by this resolver — the
+  // path every `t3` server boot takes. A config built via `ServerConfig.layer`
+  // would initialise it through `make` and hide a missing seam here, so this
+  // deliberately goes through `resolveServerConfig` alone.
+  it.effect("points the gitenv module at the resolved state dir", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-config-gitenv-" });
+      const projectRoot = join(baseDir, "project");
+      yield* fs.makeDirectory(join(projectRoot, ".git"), { recursive: true });
+      resetGitenvForTesting();
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.none(),
+          port: Option.none(),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      yield* fs.makeDirectory(resolved.stateDir, { recursive: true });
+      yield* fs.writeFileString(
+        join(resolved.stateDir, "gitenv"),
+        `${projectRoot}=ghp_wiringProofToken0123456789\n`,
+      );
+      expect(gitenvTokenEnv(projectRoot)).toEqual({
+        GH_TOKEN: "ghp_wiringProofToken0123456789",
+        GITHUB_TOKEN: "ghp_wiringProofToken0123456789",
+      });
+      resetGitenvForTesting();
     }),
   );
 });

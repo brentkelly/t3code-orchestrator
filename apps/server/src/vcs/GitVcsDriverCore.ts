@@ -37,6 +37,8 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+// T3o: per-project GitHub token overrides for git subprocesses (t3o-34).
+import { gitenvTokenEnv } from "../sourceControl/gitenv.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 // `git worktree add` checks out the full tree, so on large repositories it can
@@ -753,6 +755,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               env: {
                 ...process.env,
                 ...input.env,
+                // T3o: per-project GitHub token override, for https remotes
+                // that authenticate via gh's credential helper. Merged last (bar
+                // the trace monitor) so gitenv wins, matching the `gh` seam's
+                // "gitenv wins over ambient" order (t3o-34).
+                ...gitenvTokenEnv(commandInput.cwd),
                 ...trace2Monitor.env,
               },
             }),

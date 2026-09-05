@@ -42,7 +42,13 @@ export function BoardPlanGraph({
   return (
     <div
       className={cn(
-        "flex overflow-x-auto rounded-xl border border-border bg-card p-3.5",
+        // `shrink-0` is load-bearing: the Plans panel mounts this in a
+        // scrolling flex column, and this box's own `overflow-x-auto` zeroes
+        // its automatic minimum height. Without it the column hands the chart
+        // all of its negative free space and the chart collapses to an empty
+        // strip — every other child of that column is `shrink-0` for the same
+        // reason.
+        "flex shrink-0 overflow-x-auto rounded-xl border border-border bg-card p-3.5",
         className,
       )}
     >

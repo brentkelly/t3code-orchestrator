@@ -44,6 +44,7 @@ import {
 } from "./BoardCardSummaryRow";
 import { projectAccent } from "./projectAccent";
 import { BoardHint } from "./BoardHint";
+import type { BoardQueueInfo } from "./boardQueueInfo";
 
 /** What a card needs to render its todo strip (t3o-18). All of it is joined
     client-side from state the client already holds — `boardCardThreads` off the
@@ -63,11 +64,6 @@ export interface BoardCardTodoContext {
 }
 
 const EMPTY_TODO_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
-
-export interface BoardCardQueueSlot {
-  readonly position: number;
-  readonly startsNext: boolean;
-}
 
 /**
  * The three attention tones as card-level treatments: border, fill tint, and
@@ -114,6 +110,9 @@ const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
   approval: <LayersIcon className="size-3" />,
   "review-held": <TriangleAlertIcon className="size-3" />,
   held: <PauseIcon className="size-3" />,
+  // Same mark as `held` (t3o-34, D4): both say "the pipeline is finished with
+  // this card and only a human moves it on", one settled and one not.
+  stopped: <PauseIcon className="size-3" />,
   input: <span className="size-2 shrink-0 rounded-full bg-attention" />,
 };
 
@@ -139,7 +138,7 @@ export function BoardCardContent({
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
-  readonly queueSlot: BoardCardQueueSlot | undefined;
+  readonly queueSlot: BoardQueueInfo | undefined;
   readonly selected: boolean;
   /** The parent card's key when this is a sub-board child (t3o-23); absent on
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
@@ -330,15 +329,12 @@ export function BoardCardContent({
         )}
         <span className="flex-1" />
         {queueSlot !== undefined ? (
-          <BoardHint
-            label={
-              queueSlot.startsNext
-                ? "Queued — starts next"
-                : `Queued — position ${queueSlot.position}`
-            }
-          >
+          // The tooltip carries the WHOLE reason (t3o-33), so why a card is
+          // waiting — and that it will start on its own — is readable without
+          // opening it.
+          <BoardHint label={`${queueSlot.headline}. ${queueSlot.detail}`}>
             <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
-              {queueSlot.startsNext ? "Next" : `Queued #${queueSlot.position}`}
+              {queueSlot.label}
             </span>
           </BoardHint>
         ) : null}
@@ -450,7 +446,7 @@ export function DraggableBoardCard({
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
-  readonly queueSlot: BoardCardQueueSlot | undefined;
+  readonly queueSlot: BoardQueueInfo | undefined;
   readonly selected: boolean;
   readonly dragging: boolean;
   readonly onSelect: (card: BoardCardShell) => void;

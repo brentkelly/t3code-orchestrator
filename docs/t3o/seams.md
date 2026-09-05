@@ -321,6 +321,16 @@ Brief attachments (`t3o-32`) added 6 markers: `contracts/assets.ts` 1, `AssetAcc
 claims member, mint case, resolve branch) and `ws.ts` +1 (6). The upload, storage, claim and
 manifest all live in board-owned files (`board/attachments.ts`, migration `032`).
 
+Per-project GitHub token overrides (`t3o-34`, see [gitenv](./gitenv.md)) added 15 markers across 7
+upstream-owned files: `config.ts` 2 (import + `initGitenv` in `make`, which only `pair` still reaches),
+`cli/config.ts` 2 (import + `initGitenv` at the end of `resolveServerConfig`, the real server boot
+path), `vcs/VcsProcess.ts` 3
+(import, `gh` env merge in `run`, exact-value scrub in `safeProcessOutput`),
+`vcs/GitVcsDriverCore.ts` 2 (import + env spread in the git spawn), `Layers/ClaudeAdapter.ts` 2,
+`acp/AcpSessionRuntime.ts` 2 and `Layers/CodexSessionRuntime.ts` 2 (import + env merge at each
+agent-session spawn). All the logic lives in the new `sourceControl/gitenv.ts`; every seam is an
+import or a one-expression env merge.
+
 The **unified status palette** (see [Status colours](./status-colours.md)) added 12 markers across
 9 upstream-owned files, 8 of them newly marked: `apps/web/src/index.css` 3 (the `--attention`
 token), `Sidebar.logic.ts` 1 and `Sidebar.tsx` 2 (thread status pills), `ComposerBanner.tsx` 1 (the

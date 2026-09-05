@@ -7,6 +7,7 @@ import {
   BoardCardId,
   boardCardShellFromCard,
   BOARD_SEED_STAGE_IDS,
+  BOARD_SEED_STAGES,
   BoardLabelId,
   BoardStageId,
   ProjectId,
@@ -22,7 +23,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyBoardCardPlacements,
-  boardBuildingQueueInfo,
+  boardBuildQueue,
+  boardRunningStepCount,
+  planBoardQueueMoveToFront,
   boardColumnAppendOrderKey,
   compareBoardCardShells,
   isBoardCardPlacementSettled,
@@ -211,6 +214,7 @@ describe("board shell reducer", () => {
       stalled: true,
       stepRunning: false,
       held: false,
+      stepAwaiting: null,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     expect(stalled.snapshotSequence).toBe(2);
@@ -221,6 +225,7 @@ describe("board shell reducer", () => {
       stalled: false,
       stepRunning: false,
       held: false,
+      stepAwaiting: null,
     });
     expect(cleared.cards?.[0]?.stalled).toBe(false);
   });
@@ -248,6 +253,7 @@ describe("board shell reducer", () => {
       stalled: true,
       stepRunning: false,
       held: false,
+      stepAwaiting: null,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
     expect(stalled.cards?.[0]?.queued).toBe(false);
@@ -273,6 +279,7 @@ describe("board shell reducer", () => {
       stalled: false,
       stepRunning: false,
       held: false,
+      stepAwaiting: null,
     });
     expect(cleared.cards?.[0]?.queued).toBe(true);
   });
@@ -287,6 +294,7 @@ describe("board shell reducer", () => {
         stalled: true,
         stepRunning: false,
         held: false,
+        stepAwaiting: null,
       },
     );
     expect(stalled.cards?.[0]?.stalled).toBe(true);
@@ -296,6 +304,40 @@ describe("board shell reducer", () => {
       card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
     });
     expect(reordered.cards?.[0]?.stalled).toBe(true); // preserved
+  });
+
+  it("carries the parked-on-a-human reason, and a drag never blanks it (t3o-34)", () => {
+    const parked = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.planning })] }),
+      {
+        kind: "card-stalled",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        stalled: false,
+        stepRunning: false,
+        held: false,
+        stepAwaiting: "stopped",
+      },
+    );
+    expect(parked.cards?.[0]?.stepAwaiting).toBe("stopped");
+    const reordered = applyShellStreamEvent(parked, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.planning, orderKey: "z" }),
+    });
+    expect(reordered.cards?.[0]?.stepAwaiting).toBe("stopped"); // preserved
+    // …and the resume clears it on the same delta that re-lights the dot.
+    const resumed = applyShellStreamEvent(reordered, {
+      kind: "card-stalled",
+      sequence: 4,
+      cardId: BoardCardId.make("card-1"),
+      stalled: false,
+      stepRunning: true,
+      held: false,
+      stepAwaiting: null,
+    });
+    expect(resumed.cards?.[0]?.stepAwaiting).toBeNull();
+    expect(resumed.cards?.[0]?.stepRunning).toBe(true);
   });
 
   it("card-plans updates the footer's plan count and no-ops on an unheld card", () => {
@@ -762,30 +804,124 @@ describe("isBoardCardPlacementSettled", () => {
   });
 });
 
-describe("boardBuildingQueueInfo", () => {
-  it("is empty while nothing carries the queued flag (t3o-11 populates it)", () => {
-    const column = [cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.building })];
-    expect(boardBuildingQueueInfo(column).size).toBe(0);
+describe("boardBuildQueue", () => {
+  const queuedCard = (id: string, stage: BoardStageId, orderKey: string) => ({
+    ...cardShell(id, { stage, orderKey }),
+    queued: true,
   });
 
-  it("numbers queued cards in column order and marks the head as starting next", () => {
-    const column = [
-      {
-        ...cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "c" }),
-        queued: false,
-      },
-      {
-        ...cardShell("card-b", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "m" }),
-        queued: true,
-      },
-      {
-        ...cardShell("card-c", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "t" }),
-        queued: true,
-      },
+  it("is empty while nothing carries the queued flag", () => {
+    const cards = [cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.building })];
+    expect(boardBuildQueue(cards, BOARD_SEED_STAGES).size).toBe(0);
+  });
+
+  it("numbers queued cards by drag order and marks the head as starting next", () => {
+    const cards = [
+      cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "c" }),
+      queuedCard("card-b", BOARD_SEED_STAGE_IDS.building, "m"),
+      queuedCard("card-c", BOARD_SEED_STAGE_IDS.building, "t"),
     ];
-    const queue = boardBuildingQueueInfo(column);
-    expect(queue.get("card-b")).toEqual({ position: 1, startsNext: true });
-    expect(queue.get("card-c")).toEqual({ position: 2, startsNext: false });
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES);
+    expect(queue.get("card-b")).toEqual({ position: 1, total: 2, ahead: 0, startsNext: true });
+    expect(queue.get("card-c")).toEqual({ position: 2, total: 2, ahead: 1, startsNext: false });
     expect(queue.has("card-a")).toBe(false);
+  });
+
+  // The governor admits the LATER stage first, so a Building card queued behind
+  // a review step is #2 however low its drag key is. This is the whole reason
+  // the derivation stopped reading one project's Building column.
+  it("puts a later stage ahead of an earlier one whatever the drag order says", () => {
+    const cards = [
+      queuedCard("card-building", BOARD_SEED_STAGE_IDS.building, "a"),
+      queuedCard("card-review", BOARD_SEED_STAGE_IDS.review, "z"),
+    ];
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES);
+    expect(queue.get("card-review")?.position).toBe(1);
+    expect(queue.get("card-building")?.position).toBe(2);
+  });
+
+  it("breaks an identical drag key by card id so every client agrees", () => {
+    const cards = [
+      queuedCard("card-z", BOARD_SEED_STAGE_IDS.building, "m"),
+      queuedCard("card-a", BOARD_SEED_STAGE_IDS.building, "m"),
+    ];
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES);
+    expect(queue.get("card-a")?.position).toBe(1);
+    expect(queue.get("card-z")?.position).toBe(2);
+  });
+
+  it("sorts a stage this client does not know about last, never first", () => {
+    const cards = [
+      queuedCard("card-known", BOARD_SEED_STAGE_IDS.building, "z"),
+      queuedCard("card-unknown", "stage-from-the-future" as BoardStageId, "a"),
+    ];
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES);
+    expect(queue.get("card-known")?.position).toBe(1);
+    expect(queue.get("card-unknown")?.position).toBe(2);
+  });
+});
+
+describe("boardRunningStepCount", () => {
+  it("counts the cards whose step is actually running, queued ones excluded", () => {
+    const cards = [
+      { ...cardShell("card-a", {}), stepRunning: true },
+      { ...cardShell("card-b", {}), stepRunning: true },
+      { ...cardShell("card-c", {}), queued: true },
+      cardShell("card-d", {}),
+    ];
+    expect(boardRunningStepCount(cards)).toBe(2);
+  });
+});
+
+describe("planBoardQueueMoveToFront", () => {
+  const queuedCard = (id: string, stage: BoardStageId, orderKey: string) => ({
+    ...cardShell(id, { stage, orderKey }),
+    queued: true,
+  });
+
+  it("returns a key that actually moves the card to the front", () => {
+    const cards = [
+      queuedCard("card-a", BOARD_SEED_STAGE_IDS.building, "c"),
+      queuedCard("card-b", BOARD_SEED_STAGE_IDS.building, "m"),
+    ];
+    const plan = planBoardQueueMoveToFront({
+      cards,
+      stages: BOARD_SEED_STAGES,
+      cardId: "card-b",
+    });
+    expect(plan).not.toBeNull();
+    const moved = cards.map((card) =>
+      card.cardId === "card-b" ? { ...card, orderKey: plan!.orderKey } : card,
+    );
+    expect(boardBuildQueue(moved, BOARD_SEED_STAGES).get("card-b")?.position).toBe(1);
+  });
+
+  it("returns null for the card already at the front", () => {
+    const cards = [
+      queuedCard("card-a", BOARD_SEED_STAGE_IDS.building, "c"),
+      queuedCard("card-b", BOARD_SEED_STAGE_IDS.building, "m"),
+    ];
+    expect(
+      planBoardQueueMoveToFront({ cards, stages: BOARD_SEED_STAGES, cardId: "card-a" }),
+    ).toBeNull();
+  });
+
+  // Drag order is the governor's LAST tiebreak, so no key wins against a later
+  // stage. Offering the button here would be offering a no-op.
+  it("returns null when reordering cannot beat a later stage", () => {
+    const cards = [
+      queuedCard("card-review", BOARD_SEED_STAGE_IDS.review, "z"),
+      queuedCard("card-building", BOARD_SEED_STAGE_IDS.building, "m"),
+    ];
+    expect(
+      planBoardQueueMoveToFront({ cards, stages: BOARD_SEED_STAGES, cardId: "card-building" }),
+    ).toBeNull();
+  });
+
+  it("returns null for a card that is not queued at all", () => {
+    const cards = [cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.building })];
+    expect(
+      planBoardQueueMoveToFront({ cards, stages: BOARD_SEED_STAGES, cardId: "card-a" }),
+    ).toBeNull();
   });
 });
