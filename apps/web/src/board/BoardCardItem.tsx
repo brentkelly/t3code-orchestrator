@@ -7,10 +7,18 @@
  * "working" dot slowly pulses (an opacity fade, not a spinner — no per-frame
  * layout, so it stays cheap on high-refresh displays; upstream AGENTS.md warns
  * against transform/loop animations that peg the GPU) so an actively-worked card
- * reads at a glance. The same dot slot turns to a static blue dot when the card
- * is awaiting input.
+ * reads at a glance. Blue is that dot's alone: awaiting input is the violet
+ * attention chip in the slot beside it, never this dot
+ * (`docs/t3o/status-colours.md`). The dot does also light for a split parent
+ * whose CHILD is working — the parent runs no step of its own while its
+ * sub-board builds.
  */
-import { boardCardChildAttentionLabel, isBoardReviewLoopHeld } from "@t3tools/contracts";
+import {
+  boardCardChildAttentionLabel,
+  boardCardChildRunningLabel,
+  isBoardCardWorking,
+  isBoardReviewLoopHeld,
+} from "@t3tools/contracts";
 import type {
   BoardCardAttention,
   BoardCardAttentionReason,
@@ -135,6 +143,7 @@ export function BoardCardContent({
   onOpenSubBoard,
   attention,
   childAttention,
+  childRunning,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -164,6 +173,11 @@ export function BoardCardContent({
       A split parent builds through its children, so one stuck child blocks the
       parent too and the parent wears the child's tone. */
   readonly childAttention?: BoardCardChildAttention | undefined;
+  /** How many of this card's CHILDREN are working right now
+      (`deriveBoardCardChildRunning`), which is what lights the working dot on a
+      parent that runs no step of its own. Absent on the surfaces that do not
+      resolve it (the drag ghost, the archive sheet). */
+  readonly childRunning?: number | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
@@ -185,6 +199,13 @@ export function BoardCardContent({
     progress.kind === "todos" && todos?.expanded === true
       ? todoThreads.filter((entry) => entry.threadId !== progress.todo.threadId)
       : EMPTY_TODO_THREADS;
+  // The card's own turn wins the dot's wording; a parent with nothing running
+  // of its own borrows its children's, counted.
+  const workingLabel = isBoardCardWorking(card)
+    ? "Thread running"
+    : childRunning !== undefined && childRunning > 0
+      ? boardCardChildRunningLabel(childRunning)
+      : null;
   // "This card is waiting on you" — the whole card, not just a badge, so a
   // board of forty cards answers "where am I needed" at a glance (the
   // prototype's treatment: tinted fill, coloured border, a 1px ring). The
@@ -290,25 +311,32 @@ export function BoardCardContent({
             </span>
           </BoardHint>
         ) : null}
-        {card.threadState === "working" || card.stepRunning ? (
+        {workingLabel === null ? null : (
           // Blue while the agent is working — green is reserved for done, and
-          // nothing else on the board may wear it. `threadState === "working"` lights
-          // only while a single linked thread is mid-turn; `stepRunning` is the
-          // durable half — true for a card's whole admitted-and-running step — so
-          // a loop stage (Code review's review/triage/adjudicate phases run as
-          // separate short-lived threads) stays lit across the per-phase spin-up
-          // gaps and goes dark only when genuinely queued, stalled, awaiting
-          // input or done. It pulses so "working" reads at a glance; a slow
-          // opacity fade (`animate-pulse`), not a spinner — no per-frame layout,
-          // so it stays cheap on high-refresh displays.
-          <BoardHint label="Thread running">
+          // nothing else on the board may wear it. `isBoardCardWorking` covers
+          // both halves: `threadState === "working"` lights only while a single
+          // linked thread is mid-turn, and `stepRunning` is the durable one —
+          // true for a card's whole admitted-and-running step — so a loop stage
+          // (Code review's review/triage/adjudicate phases run as separate
+          // short-lived threads) stays lit across the per-phase spin-up gaps and
+          // goes dark only when genuinely queued, stalled, awaiting input or
+          // done. It pulses so "working" reads at a glance; a slow opacity fade
+          // (`animate-pulse`), not a spinner — no per-frame layout, so it stays
+          // cheap on high-refresh displays.
+          //
+          // A split parent lights the SAME dot for a working child: it builds
+          // THROUGH its children and runs no step of its own while they go, so
+          // without the roll-up it reads identically whether the split is
+          // moving or the whole thing is queued behind a slot — which is the
+          // one distinction this dot exists to make. Only the tooltip differs.
+          <BoardHint label={workingLabel}>
             <span
-              aria-label="Thread running"
+              aria-label={workingLabel}
               role="img"
               className="size-2 shrink-0 animate-pulse rounded-full bg-info"
             />
           </BoardHint>
-        ) : null}
+        )}
         {chip === null ? null : (
           // ONE chip, whatever the reason: the card face has room for a single
           // status word, and rendering two was what let "Stalled" and "Input
@@ -443,6 +471,7 @@ export function DraggableBoardCard({
   onOpenSubBoard,
   attention,
   childAttention,
+  childRunning,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -460,6 +489,7 @@ export function DraggableBoardCard({
   readonly onOpenSubBoard?: (() => void) | undefined;
   readonly attention?: BoardCardAttention | null | undefined;
   readonly childAttention?: BoardCardChildAttention | undefined;
+  readonly childRunning?: number | undefined;
 }) {
   return (
     // Keyboard path: the card is a focusable button-role element — Enter/Space
@@ -506,6 +536,7 @@ export function DraggableBoardCard({
         onOpenSubBoard={onOpenSubBoard}
         attention={attention}
         childAttention={childAttention}
+        childRunning={childRunning}
       />
     </div>
   );

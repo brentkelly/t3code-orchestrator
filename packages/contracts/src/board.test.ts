@@ -30,7 +30,10 @@ import {
   boardBuildHumanInLoopDefault,
   boardCardAttention,
   boardCardChildAttentionLabel,
+  boardCardChildRunningLabel,
   deriveBoardCardChildAttention,
+  deriveBoardCardChildRunning,
+  isBoardCardWorking,
   boardCardPendingSplit,
   boardCardShellPendingSplit,
   boardCardUnfinishedChildren,
@@ -1258,5 +1261,86 @@ describe("cards that need a human (boardCardAttention)", () => {
         stages: BOARD_SEED_STAGES,
       }).size,
     ).toBe(0);
+  });
+});
+
+describe("children actively working (deriveBoardCardChildRunning)", () => {
+  const card = (overrides: Partial<BoardCardShell>): BoardCardShell => ({
+    ...fullyPopulatedShell,
+    stage: BOARD_SEED_STAGE_IDS.building,
+    stalled: false,
+    held: false,
+    awaitingInput: false,
+    stepRunning: false,
+    queued: false,
+    threadState: "none",
+    archivedAt: null,
+    planCount: 0,
+    planTotal: 0,
+    planDone: 0,
+    ...overrides,
+  });
+  const parentId = BoardCardId.make("card-parent");
+  const child = (id: string, overrides: Partial<BoardCardShell>): BoardCardShell => ({
+    ...card(overrides),
+    cardId: BoardCardId.make(id),
+    parentCardId: parentId,
+  });
+
+  it("reads both halves of the working dot on a child", () => {
+    // A child mid-turn and a child whose step is admitted-and-running between
+    // thread spawns both count — the same two signals the card face lights on.
+    expect(isBoardCardWorking(card({ threadState: "working" }))).toBe(true);
+    expect(isBoardCardWorking(card({ stepRunning: true, threadState: "stopped" }))).toBe(true);
+    expect(isBoardCardWorking(card({ queued: true }))).toBe(false);
+    expect(isBoardCardWorking(card({ stalled: true, threadState: "stopped" }))).toBe(false);
+  });
+
+  it("rolls a working child up to its parent, counted", () => {
+    const parent = card({ cardId: parentId, planTotal: 3, planDone: 0, held: true });
+    const running = deriveBoardCardChildRunning({
+      cards: [
+        parent,
+        child("c1", { threadState: "working" }),
+        child("c2", { stepRunning: true, threadState: "stopped" }),
+        child("c3", { queued: true }),
+      ],
+    });
+    // The queued child is not working, so it is not counted.
+    expect(running.get(parentId)).toBe(2);
+    expect(boardCardChildRunningLabel(2)).toBe("2 child threads running");
+    expect(boardCardChildRunningLabel(1)).toBe("1 child thread running");
+  });
+
+  it("rolls nothing up for a parent whose whole split is queued", () => {
+    // The distinction the dot exists to make: a parent runs no step of its own
+    // during a split, so with every child waiting for a slot it must stay dark.
+    const parent = card({ cardId: parentId, planTotal: 2, planDone: 0, held: true });
+    const running = deriveBoardCardChildRunning({
+      cards: [parent, child("c1", { queued: true }), child("c2", { queued: true })],
+    });
+    expect(running.size).toBe(0);
+  });
+
+  it("never counts a top-level card towards anything", () => {
+    // No `parentCardId`, so a working top-level card contributes to no
+    // roll-up — it lights its own dot and nothing else's.
+    expect(deriveBoardCardChildRunning({ cards: [card({ threadState: "working" })] }).size).toBe(0);
+  });
+
+  it("keeps each parent's count to its own children", () => {
+    const otherParentId = BoardCardId.make("card-other-parent");
+    const running = deriveBoardCardChildRunning({
+      cards: [
+        child("c1", { threadState: "working" }),
+        {
+          ...card({ threadState: "working" }),
+          cardId: BoardCardId.make("c2"),
+          parentCardId: otherParentId,
+        },
+      ],
+    });
+    expect(running.get(parentId)).toBe(1);
+    expect(running.get(otherParentId)).toBe(1);
   });
 });

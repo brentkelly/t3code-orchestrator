@@ -14,6 +14,7 @@ import {
   ThreadId,
   boardCardAttention,
   deriveBoardCardChildAttention,
+  deriveBoardCardChildRunning,
   makeBoardCardShell,
   type BoardCardShell,
   type BoardLabel,
@@ -313,6 +314,85 @@ describe("BoardCardContent (D7)", () => {
     expect(html).toContain("bg-info");
     // The working dot pulses so an actively-worked card reads at a glance.
     expect(html).toContain("animate-pulse");
+  });
+
+  it("lights the working dot on a split parent whose child is working", () => {
+    // The bug: a split parent builds THROUGH its children and runs no step of
+    // its own while they go, so on its own signals it reads exactly like a
+    // parent whose whole split is still queued. The children's dot rolls up.
+    const parent = shell("building", { planTotal: 2, planDone: 0, held: true });
+    const running = deriveBoardCardChildRunning({
+      cards: [
+        parent,
+        {
+          ...shell("building", { threadState: "working" }),
+          cardId: BoardCardId.make("card-2"),
+          parentCardId: parent.cardId,
+        },
+        {
+          ...shell("building", { queued: true }),
+          cardId: BoardCardId.make("card-3"),
+          parentCardId: parent.cardId,
+        },
+      ],
+    });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={parent}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(parent)}
+        childRunning={running.get(parent.cardId)}
+      />,
+    );
+    // The same blue pulsing dot, named for whose turn it is — and the queued
+    // sibling is not counted.
+    expect(html).toContain("1 child thread running");
+    expect(html).toContain("bg-info");
+    expect(html).toContain("animate-pulse");
+  });
+
+  it("leaves the dot dark on a split parent whose children are all queued", () => {
+    const parent = shell("building", { planTotal: 1, planDone: 0, held: true });
+    const running = deriveBoardCardChildRunning({
+      cards: [
+        parent,
+        {
+          ...shell("building", { queued: true }),
+          cardId: BoardCardId.make("card-2"),
+          parentCardId: parent.cardId,
+        },
+      ],
+    });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={parent}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(parent)}
+        childRunning={running.get(parent.cardId)}
+      />,
+    );
+    expect(html).not.toContain("child thread");
+    expect(html).not.toContain("Thread running");
+  });
+
+  it("keeps the card's own wording when it is working itself", () => {
+    // Own turn outranks the roll-up: the parent is not idling behind its
+    // children, so the dot says so plainly rather than counting them.
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building", { threadState: "working", planTotal: 2, planDone: 0 })}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        childRunning={2}
+      />,
+    );
+    expect(html).toContain("Thread running");
+    expect(html).not.toContain("child threads running");
   });
 
   it("shows no working dot on a settled card with no running step and no live turn", () => {

@@ -16,6 +16,7 @@ import {
   deriveBoardCardPlanProgress,
   boardCardAttention,
   deriveBoardCardChildAttention,
+  deriveBoardCardChildRunning,
   deriveBoardCardThreadState,
   isBoardProjectHidden,
   resolveBoardProjectAccent,
@@ -401,6 +402,19 @@ function EnvironmentBoard({
   const childAttentionFor = useCallback(
     (card: BoardCardShell) => childAttentionByParent.get(card.cardId),
     [childAttentionByParent],
+  );
+  // …and the working dot asked of the children too. A split parent builds
+  // THROUGH its children and runs no step of its own while they go, so on its
+  // own signals it reads the same whether the split is moving or the whole
+  // thing is queued — the one thing the dot is there to tell apart. Folded once
+  // for the board, like the roll-up above it, and just as free.
+  const childRunningByParent = useMemo(
+    () => deriveBoardCardChildRunning({ cards: Object.values(columns).flat() }),
+    [columns],
+  );
+  const childRunningFor = useCallback(
+    (card: BoardCardShell) => childRunningByParent.get(card.cardId),
+    [childRunningByParent],
   );
 
   // The parent this sub-board drills into, as a live (decorated) shell — null
@@ -1124,6 +1138,7 @@ function EnvironmentBoard({
               parentKeyFor={parentKeyFor}
               attentionFor={attentionFor}
               childAttentionFor={childAttentionFor}
+              childRunningFor={childRunningFor}
               addProjects={addProjects}
               cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
               labelsById={labelsById}

@@ -2308,6 +2308,59 @@ export function boardCardChildAttentionLabel(attention: BoardCardChildAttention)
     : `${attention.childCount} children need you`;
 }
 
+/**
+ * Is a card being actively worked right now — the "working dot" predicate.
+ *
+ * `threadState === "working"` lights only while a single linked thread is
+ * mid-turn; `stepRunning` is the durable half, true for a card's whole
+ * admitted-and-running step, so a loop stage stays lit across the gaps where
+ * one phase's thread has ended and the next has not spawned. Named once here
+ * because the card face is no longer the only surface asking: a split parent
+ * asks it of every child (`deriveBoardCardChildRunning`).
+ */
+export function isBoardCardWorking(
+  card: Pick<BoardCardShell, "threadState" | "stepRunning">,
+): boolean {
+  return card.threadState === "working" || card.stepRunning;
+}
+
+/**
+ * How many of each parent's children are actively working, keyed by parent
+ * card id. Returns only parents with at least one such child.
+ *
+ * A split parent builds THROUGH its children (t3o-23, D4) and runs no step of
+ * its own while they go, so on its own signals it reads exactly like a parent
+ * that is merely queued — which is the one distinction the working dot exists
+ * to make. Rolling the children's dot up to it answers "is this split moving?"
+ * from the root board, without drilling in.
+ *
+ * Client-side and free, like `deriveBoardCardChildAttention` beside it: every
+ * input is already on the shells the board holds, so the roll-up costs no
+ * payload, no delta and no server round trip.
+ */
+export function deriveBoardCardChildRunning(input: {
+  readonly cards: ReadonlyArray<
+    Pick<BoardCardShell, "threadState" | "stepRunning"> & {
+      readonly parentCardId?: BoardCardId;
+    }
+  >;
+}): ReadonlyMap<BoardCardId, number> {
+  const runningByParent = new Map<BoardCardId, number>();
+  for (const card of input.cards) {
+    if (card.parentCardId === undefined) continue;
+    if (!isBoardCardWorking(card)) continue;
+    runningByParent.set(card.parentCardId, (runningByParent.get(card.parentCardId) ?? 0) + 1);
+  }
+  return runningByParent;
+}
+
+/** The parent dot's tooltip for a child roll-up. Count-first like
+    `boardCardChildAttentionLabel`, and deliberately distinct from the card's
+    own "Thread running" — the dot means the same thing, but it is a child's. */
+export function boardCardChildRunningLabel(childCount: number): string {
+  return childCount === 1 ? "1 child thread running" : `${childCount} child threads running`;
+}
+
 // ── Key allocation ─────────────────────────────────────────────────────
 
 /**
