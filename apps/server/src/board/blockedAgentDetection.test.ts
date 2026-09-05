@@ -31,6 +31,7 @@ import {
   turnCompleted,
   turnStarted,
   userInputRequested,
+  userInputResolved,
   withGovernor,
   type Harness,
 } from "./supervisorHarness.testkit.ts";
@@ -165,7 +166,7 @@ it.effect("a human turn on the parked thread puts the step back to running", () 
   );
 });
 
-it.effect("answering a STRUCTURED question resumes the step, with no turn-start event", () => {
+it.effect("answering a STRUCTURED question resumes the step — no turn ever starts", () => {
   const messages = new Map<string, string>();
   return withGovernor(planningBoard("picker", messages), ({ pumpDomain, pumpRuntime, board }) =>
     Effect.gen(function* () {
@@ -176,12 +177,13 @@ it.effect("answering a STRUCTURED question resumes the step, with no turn-start 
         "awaiting-input",
       );
 
-      // A picker answer emits `thread.user-input-response-requested`, which goes
-      // straight to the provider — NO `thread.turn-start-requested` is ever
-      // produced. Only the runtime's own `turn.started` sees this, and without
-      // it the card would keep its violet "Input needed" chip while the agent
-      // visibly worked.
-      yield* pumpRuntime(turnStarted(threadId));
+      // The subtle case. A structured question is raised from INSIDE a running
+      // turn, and answering it only resolves the deferred that turn is blocked
+      // on — the same turn carries on. So no turn starts, neither turn-start
+      // signal fires, and `user-input.resolved` is the only thing the board
+      // sees. Without it the card keeps a violet "Input needed" chip while the
+      // agent visibly works.
+      yield* pumpRuntime(userInputResolved(threadId));
 
       const resumed = boardCardStepState(yield* board, BoardCardId.make("picker"));
       assert.strictEqual(resumed?.status, "running");

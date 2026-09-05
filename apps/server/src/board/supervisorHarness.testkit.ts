@@ -797,11 +797,19 @@ export const cardDeleted = (
 export const turnCompleted = (threadId: ThreadId): ProviderRuntimeEvent =>
   ({ type: "turn.completed", threadId }) as unknown as ProviderRuntimeEvent;
 
-/** A turn actually beginning on a thread (t3o-34, D5) — the runtime signal that
-    catches a step un-parked by a structured question being ANSWERED, which
-    produces no turn-start domain event at all. */
+/** A turn actually beginning on a thread (t3o-34, D5). */
 export const turnStarted = (threadId: ThreadId): ProviderRuntimeEvent =>
   ({ type: "turn.started", threadId }) as unknown as ProviderRuntimeEvent;
+
+/** A structured question being ANSWERED (t3o-34, D5). It is raised from inside a
+    running turn and answering it only resolves the deferred that turn is blocked
+    on, so no turn ever starts — this is the only signal a board sees. */
+export const userInputResolved = (threadId: ThreadId): ProviderRuntimeEvent =>
+  ({
+    type: "user-input.resolved",
+    threadId,
+    payload: { answers: {} },
+  }) as unknown as ProviderRuntimeEvent;
 
 /** An ORDINARY agent question (t3o-18, D13): the runtime event every provider
     emits when it asks a human, with no board tool call behind it. This is what

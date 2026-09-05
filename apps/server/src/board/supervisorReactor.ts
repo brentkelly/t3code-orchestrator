@@ -3740,24 +3740,31 @@ const make = Effect.gen(function* () {
   );
 
   /**
-   * The runtime's own "a turn is now running" signal, and the reason the resume
-   * cannot rest on `thread.turn-start-requested` alone (t3o-34, D5).
+   * The three ways a parked step goes back to work (t3o-34, D5). All of them
+   * matter, because the two ways a step PARKS end in different places:
    *
-   * That domain event is emitted for a `thread.turn.start` — a human SENDING a
-   * message. Answering a structured question is not that: it emits
-   * `thread.user-input-response-requested`, which `ProviderCommandReactor` hands
-   * straight to `respondToUserInput`, so no turn-start event is ever produced.
-   * Watching only the domain event would therefore leave a step parked by the
-   * STRUCTURED question path parked forever — a stale violet "Input needed" on a
-   * card whose agent is visibly working, which is the exact lie this change
-   * exists to remove, merely relocated.
+   * - `thread.turn-start-requested` (domain) — a human sent a message. This is
+   *   the t3o-17 signal, and it is the one that un-parks a step that stopped
+   *   between turns (a stall, or a turn that ended with a question in prose).
+   * - `turn.started` (runtime) — a turn actually began. Belt-and-braces for the
+   *   same case, and it also covers the board's own nudge.
+   * - `user-input.resolved` (runtime) — the human ANSWERED a structured
+   *   question, and this is the only one of the three that fires for it.
    *
-   * `turn.started` covers every way a turn begins — a message, a picker answer,
-   * the board's own nudge — so it is the honest signal. Both handlers funnel
-   * into the same guarded resume, and whichever arrives second finds the step
-   * already `running` and does nothing.
+   * That last case is the subtle one and it is worth being explicit about,
+   * because getting it wrong reintroduces this whole bug in a new place. A
+   * structured question is raised from INSIDE a running turn (the adapter's
+   * `canUseTool` path), and answering it merely resolves the deferred the turn
+   * is blocked on — the same turn carries on. So no turn ever starts, and
+   * neither turn-start signal fires. Without this the step would stay
+   * `awaiting-input` with the card showing a violet "Input needed" chip while
+   * the agent visibly worked: the exact lie this change exists to remove,
+   * merely relocated.
+   *
+   * All three funnel into the same guarded resume, so a signal that arrives
+   * second finds the step already `running` and does nothing.
    */
-  const handleTurnStarted = Effect.fn("board-supervisor-handleTurnStarted")(function* (
+  const handleStepThreadResumed = Effect.fn("board-supervisor-handleStepThreadResumed")(function* (
     threadId: ThreadId,
   ) {
     yield* resumeParkedStep(threadId);
@@ -4013,9 +4020,12 @@ const make = Effect.gen(function* () {
         // EVERY input request rather than only the ones a now-deleted board tool
         // remembered to double-report.
         if (input.event.type === "user-input.requested") return handleInputRequested(threadId);
-        // A turn actually STARTING is what un-parks a step (t3o-34, D5) — see
-        // `handleTurnStarted` for why the domain turn-start event is not enough.
-        if (input.event.type === "turn.started") return handleTurnStarted(threadId);
+        // Work resuming on a parked step's thread (t3o-34, D5) — a turn
+        // starting, or a structured question being ANSWERED mid-turn, which
+        // starts no turn at all. See `handleStepThreadResumed`.
+        if (input.event.type === "turn.started" || input.event.type === "user-input.resolved") {
+          return handleStepThreadResumed(threadId);
+        }
         return Effect.void;
       }
       case "reconcile":
@@ -4083,10 +4093,14 @@ const make = Effect.gen(function* () {
         // agent question, which is what re-parks a step on the gate.
         if (event.type === "user-input.requested")
           return worker.enqueue({ source: "runtime", event });
-        // `turn.started` rides the same stream (t3o-34, D5): the only signal
-        // that catches a step un-parked by a STRUCTURED question being answered,
-        // which produces no turn-start domain event at all.
-        if (event.type === "turn.started") return worker.enqueue({ source: "runtime", event });
+        // A parked step going back to work rides the same stream (t3o-34, D5).
+        // `user-input.resolved` is the load-bearing one: a structured question is
+        // raised from inside a RUNNING turn, so answering it starts no turn and
+        // emits no turn-start event anywhere — this is the only signal that sees
+        // it.
+        if (event.type === "turn.started" || event.type === "user-input.resolved") {
+          return worker.enqueue({ source: "runtime", event });
+        }
         // session.started matters only for a thread orphaned by a rejected
         // admit — the durable delivery point for its turn interrupt.
         if (event.type === "session.started" && orphanedThreads.has(String(event.threadId))) {
