@@ -25,8 +25,10 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 
 import {
+  aliveThreadShell,
   cardMoved,
   codexStep,
   makeBoardCard,
@@ -110,6 +112,64 @@ it.effect("a turn that ends with a prose question parks the step as awaiting inp
       assert.strictEqual(parked?.attempt, 1);
       assert.strictEqual(parked?.stallCount, 0);
     }),
+  );
+});
+
+// The projection race this handler used to lose (see the identity test in
+// `handleTurnCompleted`). The thread shell it reads is written by a DIFFERENT
+// subscriber of the same runtime stream, so when the turn-end handler runs the
+// session commonly still names the turn that just ended as the live one. Read
+// as presence, that says "another turn is working" and the step is never
+// parked — the exact production shape of the blue dot that would not go out.
+it.effect("parks even when the projection still shows the ENDED turn as live", () => {
+  const messages = new Map<string, string>();
+  return withGovernor(
+    planningBoard("lagging", messages),
+    ({ pumpDomain, pumpRuntime, board, shells }) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning({ pumpDomain, board }, "lagging");
+        messages.set(String(threadId), "Which auth library do you want?");
+        // `aliveThreadShell` is mid-turn on `turn-live` — and `turn-live` is the
+        // turn whose completion is about to arrive.
+        yield* Ref.update(
+          shells,
+          (current) =>
+            new Map([...current, [String(threadId), aliveThreadShell(String(threadId))]]),
+        );
+
+        yield* pumpRuntime(turnCompleted(threadId, "turn-live"));
+
+        const parked = boardCardStepState(yield* board, BoardCardId.make("lagging"));
+        assert.strictEqual(parked?.status, "awaiting-input");
+        assert.strictEqual(parked?.awaitingReason, "question");
+        assert.strictEqual(parked?.attempt, 1);
+      }),
+  );
+});
+
+// The other half of the same comparison, and the case the guard exists for: a
+// recovery nudge's turn really is live, so the ended turn's completion must not
+// park the card on a human while an agent is working in it.
+it.effect("leaves the step running while a DIFFERENT turn is live", () => {
+  const messages = new Map<string, string>();
+  return withGovernor(
+    planningBoard("nudged", messages),
+    ({ pumpDomain, pumpRuntime, board, shells }) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning({ pumpDomain, board }, "nudged");
+        messages.set(String(threadId), "Which auth library do you want?");
+        yield* Ref.update(
+          shells,
+          (current) =>
+            new Map([...current, [String(threadId), aliveThreadShell(String(threadId))]]),
+        );
+
+        // An EARLIER turn ending, while `turn-live` works on.
+        yield* pumpRuntime(turnCompleted(threadId, "turn-earlier"));
+
+        const still = boardCardStepState(yield* board, BoardCardId.make("nudged"));
+        assert.strictEqual(still?.status, "running");
+      }),
   );
 });
 

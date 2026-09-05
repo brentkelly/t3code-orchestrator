@@ -889,8 +889,15 @@ export const cardDeleted = (
     },
   }) as unknown as OrchestrationEvent;
 
-export const turnCompleted = (threadId: ThreadId): ProviderRuntimeEvent =>
-  ({ type: "turn.completed", threadId }) as unknown as ProviderRuntimeEvent;
+/** A turn ending. `turnId` names the turn that ENDED — pass it whenever the
+    fixture also gives the thread a shell, because that is the pair the turn-end
+    handler compares to tell a lagging projection from a live second turn. */
+export const turnCompleted = (threadId: ThreadId, turnId?: string): ProviderRuntimeEvent =>
+  ({
+    type: "turn.completed",
+    threadId,
+    ...(turnId === undefined ? {} : { turnId }),
+  }) as unknown as ProviderRuntimeEvent;
 
 /** A turn actually beginning on a thread (t3o-34, D5). */
 export const turnStarted = (threadId: ThreadId): ProviderRuntimeEvent =>
