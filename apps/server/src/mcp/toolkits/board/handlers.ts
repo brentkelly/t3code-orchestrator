@@ -550,11 +550,6 @@ export const boardHandlers = {
         liveState !== null &&
         liveState.stepId === stepId &&
         !isBoardTerminalStepStatus(liveState.status);
-      // The decider's own rule for "this call may record something": the step
-      // is live, or it already has a completion to retry. Mirrored here only to
-      // ORDER the errors — a call naming a step that is neither is rejected for
-      // that, not lectured about a payload it was never entitled to record.
-      const completable = existing !== undefined || liveMatch;
       const supersedes = existing !== undefined && existing.outcome !== "succeeded" && liveMatch;
       // The OTHER path where a retry is not a no-op: a `succeeded` record whose
       // payload nothing can read is repaired rather than re-emitted (T3O-14).
@@ -567,6 +562,17 @@ export const boardHandlers = {
         existing !== undefined &&
         existing.outcome === "succeeded" &&
         boardStepPayloadDefect({ stepId, payload: existing.payload }) !== null;
+      // The decider's own rule for "this call may record something": the step
+      // is live, or its recorded completion is a defective one this call may
+      // repair. Every other call is a pure idempotent no-op — the decider
+      // re-emits the stored completion and discards these arguments — so the
+      // checks below are scoped to it. Mirroring the rule also ORDERS the
+      // errors: a call naming a step that is neither live nor recorded is
+      // rejected for that, not lectured about a payload it was never entitled
+      // to record, and a confirming retry of a step that already completed
+      // validly still gets its documented `alreadyCompleted` reply rather than
+      // an error about arguments nothing was going to read.
+      const recordable = liveMatch || repairs;
       // The agent's structured payload is stored verbatim as an opaque JSON
       // string (D8: carried through unread), so a schema codec would add
       // nothing over a plain stringify — except for the one thing a stringify
@@ -585,7 +591,7 @@ export const boardHandlers = {
       // whose bytes are all in the wrong field — and once it trimmed enough to
       // fit, the board recorded the success with a null payload. Name the real
       // fault while it is still recoverable.
-      if (completable && payload === null && leaksSerialisedArguments(input.summary)) {
+      if (recordable && payload === null && leaksSerialisedArguments(input.summary)) {
         return yield* new BoardToolError({
           code: "invalid-input",
           message:
@@ -617,7 +623,7 @@ export const boardHandlers = {
       // dispatched, because the decider would pin the record forever and the
       // review loop would halt `unreadable` with no way back. The agent gets
       // the shape it was asked for and the step stays live for its retry.
-      if (completable && input.outcome === "succeeded") {
+      if (recordable && input.outcome === "succeeded") {
         const defect = boardStepPayloadDefect({ stepId, payload });
         if (defect !== null) {
           return yield* new BoardToolError({ code: "invalid-input", message: defect });

@@ -1893,14 +1893,25 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Step '${command.stepId}' has no recorded completion on card '${command.cardId}' to reopen.`,
         );
       }
-      // Refused on a readable record. Reopening is a repair, never a way to
-      // discard work that landed — that would let one click erase a round of
-      // review the loop is entitled to count.
+      // Reopening repairs ONE shape of record: a `succeeded` completion whose
+      // payload cannot be read. Everything else is refused, because reopening
+      // is never a way to re-run work that landed — that would let one click
+      // erase a round of review the loop is entitled to count — and never a way
+      // to rewrite a failure, which the recovery ladder already retries in
+      // place and whose summary says what actually went wrong. A defect is only
+      // ever reported for a step whose phase declares a payload shape, so this
+      // also confines the command to the review loop.
       const defect = boardStepPayloadDefect({
         stepId: existing.stepId,
         payload: existing.payload,
       });
-      if (existing.outcome === "succeeded" && defect === null) {
+      if (existing.outcome !== "succeeded") {
+        return yield* invariant(
+          command,
+          `Step '${command.stepId}' recorded '${existing.outcome}', not a success, so there is nothing to repair; the recovery ladder re-runs a step that did not succeed.`,
+        );
+      }
+      if (defect === null) {
         return yield* invariant(
           command,
           `Step '${command.stepId}' completed with a payload the board can read, so there is nothing to repair.`,

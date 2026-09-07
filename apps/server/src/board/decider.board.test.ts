@@ -2594,6 +2594,28 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  it.effect("board_reopen_step refuses a record that did not succeed", () =>
+    Effect.gen(function* () {
+      // A failure is not a broken success: the recovery ladder already re-runs
+      // it in place, and its summary is the record of what went wrong. Reopening
+      // one would overwrite that with the generic repair note for nothing. The
+      // same guard keeps the command inside the review loop — a step whose phase
+      // declares no payload shape can never report a defect to repair.
+      const failure = yield* decideFail(
+        reopenStep("review@2"),
+        cardReadModel({
+          cards: [makeCard({ id: "card-1", stage: BOARD_SEED_STAGE_IDS.review })],
+          stepStates: [liveStep("review@2", "failed")],
+          stepCompletions: [
+            recordedReview({ stepId: "review@2", outcome: "failed", summary: "Could not read it" }),
+          ],
+        }),
+      );
+      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.include(String(failure), "not a success");
+    }),
+  );
+
   it.effect("board_reopen_step refuses a step with no recorded completion", () =>
     Effect.gen(function* () {
       const failure = yield* decideFail(

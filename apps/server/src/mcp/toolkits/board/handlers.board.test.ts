@@ -787,6 +787,38 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("a confirming retry of a valid review step needs no payload of its own", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("confirm");
+      yield* startStep({ ...own, suffix: "confirm", stepId: "review@1" });
+      yield* boardHandlers
+        .board_complete_step({
+          stepId: "review@1",
+          outcome: "succeeded",
+          summary: "Reviewed",
+          payload: validReview,
+        })
+        .pipe(withScope(own.ownThread));
+      yield* settleStep({ ownCard: own.ownCard, suffix: "confirm", stepId: "review@1" });
+      // The payload contract guards what gets RECORDED. A repeat call on a step
+      // already recorded validly records nothing — the decider re-emits the
+      // stored completion and drops these arguments — so demanding a payload
+      // from it would break the documented retry-safety of the tool: an agent
+      // re-confirming after a dropped reply would be told its round was invalid.
+      const retry = yield* boardHandlers
+        .board_complete_step({ stepId: "review@1", outcome: "succeeded", summary: "Reviewed" })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(retry.alreadyCompleted, true);
+      assert.strictEqual(retry.outcome, "succeeded");
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 1);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
+      assert.strictEqual(context.steps[0]?.payload, JSON.stringify(validReview));
+      assert.strictEqual(context.steps[0]?.summary, "Reviewed");
+    }),
+  );
+
   it.effect("still rejects an explicit stepId that is not the caller's live step", () =>
     Effect.gen(function* () {
       yield* seed();
