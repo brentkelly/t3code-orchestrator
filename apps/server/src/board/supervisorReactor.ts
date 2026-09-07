@@ -3171,6 +3171,30 @@ const make = Effect.gen(function* () {
       }
     }
 
+    // The pull request has to merge into the branch this card is actually
+    // based on (T3O-5, D10). A retarget rebases the branch and moves the
+    // recorded base, but a pull request that was already open keeps whatever
+    // base it was created against: the board opens none itself, and the
+    // retarget round does not cross the Done boundary, so `startsNewRound` is
+    // false and no fresh one is opened either. Merging that pull request would
+    // land these commits on a branch the card is no longer based on, carrying
+    // every commit the two bases do not share.
+    //
+    // The sync step's prompt asks the agent to retarget it; this is what
+    // happens when that did not take. Refused rather than merged-anyway or
+    // silently retargeted here, because the board has no forge operation that
+    // moves a base — and a refusal a human reads beats a merge nobody asked
+    // for. Compared against the RECORDED base (the cut point), not the
+    // effective one: that is the branch the diff was actually built on, and
+    // the stale gate above has already reconciled the two.
+    const recordedBase = fresh.worktree?.baseRefName ?? null;
+    if (recordedBase !== null && pullRequest.baseRef !== recordedBase) {
+      return {
+        outcome: "refused" as const,
+        detail: `Its pull request still merges into '${pullRequest.baseRef}', but this card is based on '${recordedBase}'. Retarget the pull request at '${recordedBase}' before merging.`,
+      };
+    }
+
     const worktree = fresh.worktree;
     const model = yield* snapshotQuery.getCommandReadModel();
     // The card's own worktree when it still has one, else the project root:

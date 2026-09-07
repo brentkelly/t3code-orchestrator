@@ -306,8 +306,28 @@ export function composeBoardSyncPhasePrompt(input: {
   return [
     header,
     opening === null ? DEFAULT_BOARD_SYNC_PHASE_PROMPT : `${opening} ${boardSyncPhaseMechanics()}`,
+    retargeted === null ? null : boardSyncPhasePullRequestRetarget(retargeted),
     "To finish this step, complete with a succeeded outcome and a JSON payload { rebasedSha } naming the commit the rebased branch now points at. One review round then runs on the rebased diff before the card can merge — never skip the rebase or complete succeeded without having pushed it.",
-  ].join("\n\n");
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
+}
+
+/**
+ * The retarget's SECOND half (T3O-5): move the pull request too.
+ *
+ * Only ever appended on a retarget. A pull request opened before the retarget
+ * still names the branch it was created against, and nothing in the board moves
+ * it — the board opens no pull requests itself (the review phase's agent does,
+ * "opening one against its base ref if none exists"), and the retarget round
+ * does not cross the Done boundary, so no fresh one is opened either. Left
+ * alone, the review reads a diff against the old base while the branch sits on
+ * the new one, and the merge lands these commits on a branch the card is no
+ * longer based on. The merge gate refuses exactly that, which is what makes
+ * skipping this visible rather than silent.
+ */
+function boardSyncPhasePullRequestRetarget(retargetedTo: string): string {
+  return `If this card's branch already has an OPEN pull request, retarget it at \`${retargetedTo}\` as well, once the rebase has landed — \`gh pr edit --base ${retargetedTo}\` on GitHub, or the equivalent for this repository's forge. Its base still names the branch it was opened against, and nothing else moves it. The board refuses to merge a pull request whose base disagrees with the branch the card was rebased onto, so a pull request left pointing at the old base strands the card at Ready for merge.`;
 }
 
 /** The rebase MECHANICS half of `DEFAULT_BOARD_SYNC_PHASE_PROMPT` — fetch,

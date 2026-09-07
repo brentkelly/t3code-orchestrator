@@ -539,11 +539,16 @@ it.effect("still pauses a child a human explicitly put in the loop", () =>
 // child that sits at the merge stage waiting to be clicked breaks the chain
 // and strands every sibling that depends on it.
 
+/** A child's open pull request, aimed at the PARENT's integration branch —
+    the same branch `childWorktree` records, because that is what the child was
+    cut from and what the review stage opens its pull request against. The two
+    must agree or the merge gate refuses (T3O-5): a pull request whose base is
+    not the branch the card is based on would land unreviewed commits. */
 const openPr: VcsStatusChangeRequest = {
   number: 284,
   title: "Services index page",
   url: "https://github.com/acme/repo/pull/284",
-  baseRef: "board/tt-9",
+  baseRef: `board/${String(parentId)}`,
   headRef: "board/card-one",
   state: "open",
 };

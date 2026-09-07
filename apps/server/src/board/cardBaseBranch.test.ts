@@ -21,6 +21,7 @@ import {
   type BoardCardStepState,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
 import {
@@ -331,6 +332,23 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
     updatedAt: NOW,
   });
 
+  /** The card AFTER a retarget's sync landed: pinned at `base` and cut from it
+      too, so the retarget trigger is satisfied and only the pull request's own
+      base is still behind. */
+  const rebasedOnto = (base: string): BoardCard => ({
+    ...card(merge, base),
+    worktree: { ...readyWorktree("card-1"), baseRefName: base },
+  });
+
+  const openPr: VcsStatusChangeRequest = {
+    number: 284,
+    title: "Card 1",
+    url: "https://github.com/acme/repo/pull/284",
+    baseRef: "main",
+    headRef: "board/card-1",
+    state: "open",
+  };
+
   const convergedRound = {
     cardId: BoardCardId.make("card-1"),
     stepId: reviewStepId("review", 1),
@@ -425,6 +443,63 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
         );
         assert.strictEqual(recorded?.worktree?.baseRefName, "develop");
       }),
+    ),
+  );
+
+  it.effect("refuses to merge a pull request still aimed at the base the card left", () =>
+    // The retarget's other half. The rebase moved the branch and the recorded
+    // base onto `develop`, but the pull request opened before the retarget
+    // still merges into `main` — and nothing in the board moves it: the
+    // Ready-for-merge → review return does not cross the Done boundary, so the
+    // round is not a new one and no fresh pull request is opened. Merging it
+    // would land these commits on `main`, which is neither the branch they were
+    // rebased onto nor the one the card says it targets.
+    withGovernor(
+      {
+        board: {
+          cards: [rebasedOnto("develop")],
+          stepStates: [settledReviewStep()],
+          stepCompletions: [convergedRound],
+          nextCardNumberByProject: {},
+        },
+        settings,
+        pullRequest: { ...openPr, baseRef: "main" },
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const result = yield* h.reactor.mergePullRequest(BoardCardId.make("card-1"));
+          assert.strictEqual(result.outcome, "refused");
+          assert.include(
+            result.outcome === "refused" ? result.detail : "",
+            "still merges into 'main'",
+          );
+          // Refused BEFORE the forge is asked, so nothing lands on the wrong
+          // branch even momentarily.
+          assert.strictEqual((yield* h.mergeAttempts).length, 0);
+        }),
+    ),
+  );
+
+  it.effect("merges once the pull request has been retargeted to match", () =>
+    // The same card with the retarget completed on the forge: the gate is
+    // about the two disagreeing, not about the card having been retargeted.
+    withGovernor(
+      {
+        board: {
+          cards: [rebasedOnto("develop")],
+          stepStates: [settledReviewStep()],
+          stepCompletions: [convergedRound],
+          nextCardNumberByProject: {},
+        },
+        settings,
+        pullRequest: { ...openPr, baseRef: "develop" },
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const result = yield* h.reactor.mergePullRequest(BoardCardId.make("card-1"));
+          assert.strictEqual(result.outcome, "merged");
+          assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        }),
     ),
   );
 

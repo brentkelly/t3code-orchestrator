@@ -43,6 +43,12 @@ rebases the card's branch onto it, resolves any conflicts, runs your project's c
 force-pushes with `--force-with-lease`. One more review round then runs on the rebased change before
 the card can merge, so nothing reaches **Ready for merge** with a diff nobody reviewed.
 
+If the card already has a pull request open, the same step retargets it at the new base. That has to
+happen, because a pull request keeps whatever branch it was opened against: left alone it would show
+a diff against the old base and eventually merge into it. If it is somehow left behind, the card says
+so at **Ready for merge** and refuses to merge until the pull request and the card agree — you can
+retarget it on the forge yourself and click **Merge** again.
+
 If the rebase cannot be finished safely, it stops, leaves the worktree clean, and says why. The card
 keeps its amber note, because nothing has been reconciled.
 
@@ -55,7 +61,8 @@ accurate: the card really is pointing at a branch it has not been rebased onto.
   runs in your project folder rather than the card's worktree, so it is also told that what is
   checked out there may not be the code the card will change.
 - **Building** cuts the card's branch from the base.
-- **Code review** opens the card's pull request against it.
+- **Code review** opens the card's pull request against it, and retargets an existing one when you
+  change the base.
 
 If the branch you named does not exist anywhere — not locally, not on your remote — the card does
 not build. It says which branch it could not find, and you can fix the name and try again. It never

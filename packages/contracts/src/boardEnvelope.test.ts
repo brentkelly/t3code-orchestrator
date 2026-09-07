@@ -476,6 +476,27 @@ describe("composeBoardSyncPhasePrompt retarget wording (T3O-5, D10)", () => {
     }
   });
 
+  it("tells the agent to retarget an open pull request too", () => {
+    // The rebase alone leaves the pull request pointing at the branch it was
+    // opened against, so the review reads a diff against the old base and the
+    // merge would land on it. Nothing else in the board moves that base.
+    const retargeted = composeBoardSyncPhasePrompt({
+      round: 2,
+      baseRefName: "main",
+      retargetedTo: "develop",
+    });
+    expect(retargeted).toContain("OPEN pull request");
+    expect(retargeted).toContain("gh pr edit --base develop");
+  });
+
+  it("says nothing about pull requests when the base merely moved", () => {
+    // The tip-moved trigger rebases onto the SAME base, so an open pull
+    // request already points at the right branch — telling the agent to
+    // retarget it would be an instruction to change nothing.
+    const moved = composeBoardSyncPhasePrompt({ round: 2, baseRefName: "main" });
+    expect(moved).not.toContain("OPEN pull request");
+  });
+
   it("treats a retarget to the base it already records as no retarget", () => {
     const same = composeBoardSyncPhasePrompt({
       round: 1,
