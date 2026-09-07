@@ -61,6 +61,7 @@ function makeCard(
     humanInLoop: null,
     reviewOverrides: null,
     modelOverrides: null,
+    splitRationale: null,
     baseBranch: null,
     worktree: null,
     pullRequest: null,
@@ -1825,6 +1826,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           commandId: CommandId.make("cmd-propose"),
           cardId: BoardCardId.make("card-ready"),
           plans: [{ key: "p1", title: "Plan 1", summary: "First", dependsOn: [], body: "body" }],
+          splitRationale: null,
           createdAt: NOW,
         },
         "board.plan.write": {
@@ -2641,6 +2643,11 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  /** A rationale that clears the decider's 40-character floor — the default for
+      every multi-plan proposal that is not itself testing the split gate. */
+  const SPLIT_WHY =
+    "These two halves ship and review independently, so a shared branch would stall both.";
+
   const proposePlans = (
     plans: ReadonlyArray<{
       readonly key: string;
@@ -2649,6 +2656,10 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       readonly dependsOn?: ReadonlyArray<string>;
       readonly body?: string;
     }>,
+    // Undefined means "whatever a well-behaved caller would send": a rationale
+    // on a split, none on a single plan. A test aiming AT the gate passes an
+    // explicit value (including null) instead.
+    splitRationale?: string | null,
   ): BoardCommand =>
     ({
       type: "board.plans.propose",
@@ -2661,6 +2672,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         dependsOn: plan.dependsOn ?? [],
         body: plan.body ?? "body",
       })),
+      splitRationale:
+        splitRationale === undefined ? (plans.length >= 2 ? SPLIT_WHY : null) : splitRationale,
       createdAt: NOW,
     }) as const;
 
@@ -2828,6 +2841,96 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         boardPlanId(BoardCardId.make("card-1"), "base"),
       ]);
       assert.strictEqual(event.payload.plans[0]?.locked, false);
+    }),
+  );
+
+  // t3o card 11 — the split gate. A multi-plan proposal is the card-splitting
+  // mechanism, so the decider makes it a deliberate, on-the-record act rather
+  // than the shape the tool happens to advertise.
+  it.effect("board_propose_plans rejects a split with no rationale, teaching the rule", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        proposePlans([{ key: "a" }, { key: "b" }], null),
+        cardReadModel(),
+      );
+      const message = String(failure);
+      // The consequence, not just the missing field.
+      assert.include(message, "2 child cards");
+      assert.include(message, "human approval gate");
+      // Both ways forward: pass a rationale, or propose one plan.
+      assert.include(message, "splitRationale");
+      assert.include(message, "single plan");
+    }),
+  );
+
+  it.effect("board_propose_plans rejects a rationale that is too short or too long", () =>
+    Effect.gen(function* () {
+      const short = yield* decideFail(
+        proposePlans([{ key: "a" }, { key: "b" }], "because"),
+        cardReadModel(),
+      );
+      assert.include(String(short), "at least 40 characters");
+      const long = yield* decideFail(
+        proposePlans([{ key: "a" }, { key: "b" }], "x".repeat(2001)),
+        cardReadModel(),
+      );
+      assert.include(String(long), "at most 2000 characters");
+    }),
+  );
+
+  it.effect("board_propose_plans lands a substantive rationale on the event", () =>
+    Effect.gen(function* () {
+      const why = "The migration and the UI ship on separate branches and review separately.";
+      const event = yield* decide(proposePlans([{ key: "a" }, { key: "b" }], why), cardReadModel());
+      assert.strictEqual(event.type, "board.plans-proposed");
+      if (event.type !== "board.plans-proposed") return;
+      assert.strictEqual(event.payload.splitRationale, why);
+    }),
+  );
+
+  it.effect("board_propose_plans stores no rationale below two plans, even if one is passed", () =>
+    Effect.gen(function* () {
+      // Non-null below two plans is what would make "has a rationale" stop
+      // meaning "was split" — so a single plan forces null rather than
+      // rejecting, and a re-proposal down to one plan CLEARS a stored one in
+      // the same stroke that clears the pending split.
+      const event = yield* decide(
+        proposePlans(
+          [{ key: "a" }],
+          "A rationale long enough to clear the floor, on a single-plan proposal.",
+        ),
+        cardReadModel(),
+      );
+      assert.strictEqual(event.type, "board.plans-proposed");
+      if (event.type !== "board.plans-proposed") return;
+      assert.strictEqual(event.payload.splitRationale, null);
+
+      const empty = yield* decide(
+        proposePlans([], "Long enough to clear the floor, but no plans."),
+        cardReadModel(),
+      );
+      assert.strictEqual(empty.type, "board.plans-proposed");
+      if (empty.type !== "board.plans-proposed") return;
+      assert.strictEqual(empty.payload.splitRationale, null);
+    }),
+  );
+
+  it.effect("the split gate runs after the graph checks, so a bad graph is still named first", () =>
+    Effect.gen(function* () {
+      // A cycle in a rationale-less split reports the cycle: the structural
+      // rejection is the more specific one and must not be masked.
+      const cycle = yield* decideFail(
+        proposePlans(
+          [
+            { key: "a", dependsOn: ["b"] },
+            { key: "b", dependsOn: ["a"] },
+          ],
+          null,
+        ),
+        cardReadModel(),
+      );
+      assert.include(String(cycle), "cycle");
+      assert.notInclude(String(cycle), "splitRationale");
     }),
   );
 

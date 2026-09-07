@@ -61,6 +61,25 @@ describe("boardStepPostamble (envelope split)", () => {
     expect(promptFor({ role: null, humanInLoop: false })).not.toContain("board_propose_plans");
   });
 
+  // t3o card 11: the plan-role contract states that a SECOND plan splits the
+  // card, because that is the fact the planning agent was missing when it
+  // reached for a split on a one-line bug fix.
+  it("tells the plan role that two or more plans splits the card behind a human gate", () => {
+    const prompt = promptFor({ role: "plan", humanInLoop: false });
+    expect(prompt).toContain("ONE plan");
+    expect(prompt).toContain("child cards");
+    expect(prompt).toContain("human approval gate");
+    expect(prompt).toContain("splitRationale");
+  });
+
+  it("states the split rule for the plan role only", () => {
+    for (const role of ["build", null] as const) {
+      const prompt = promptFor({ role, humanInLoop: false });
+      expect(prompt).not.toContain("splitRationale");
+      expect(prompt).not.toContain("child cards");
+    }
+  });
+
   it("always carries the completion contract and the move guard, whatever the editable prompt says", () => {
     for (const role of ["plan", "build", null] as const) {
       for (const humanInLoop of [true, false]) {
@@ -347,6 +366,10 @@ describe("default prompts carry intent only", () => {
   it("do not carry the force-appended contract sentences", () => {
     expect(DEFAULT_BOARD_BUILD_PROMPT).not.toContain("completion tool");
     expect(DEFAULT_BOARD_PLANNING_PROMPT).not.toContain("board_propose_plans");
+    // The split rule is protocol too (t3o card 11), so it lives in the envelope
+    // and NOT here: a user who has already rewritten their Planning prompt still
+    // gets it, and no rewrite can delete it.
+    expect(DEFAULT_BOARD_PLANNING_PROMPT).not.toContain("splitRationale");
     // The forced payload shape (its field names) belongs to the protocol, not
     // the editable prompt. The prompt may name severities as craft, so the canary
     // is the payload field `reviewedSha`, which only the protocol carries.

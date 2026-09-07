@@ -1077,6 +1077,21 @@ export const BoardCard = Schema.Struct({
   modelOverrides: Schema.NullOr(BoardCardModelOverrides).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Why this card's planning proposed a SPLIT (t3o card 11); null when its
+      latest proposal was a single plan, which is every card that has never
+      proposed a split and every card re-planned back down to one.
+
+      Non-null means "the last proposal split this card", exactly — the decider
+      forces it to null below two plans. Approval does NOT clear it: after
+      approval the plans are frozen as the record of what was materialised, and
+      this is the record of why. Decodes to null on every event payload written
+      before this spec, so a from-empty replay of an older log matches the
+      table-rehydrated model — the same guarantee `modelOverrides` makes, with
+      migration 035's `split_rationale` column defaulting to NULL to the same
+      end. */
+  splitRationale: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** The branch this card's work is cut from and merges back into (T3O-5, D1),
       or null to FOLLOW THE PROJECT DEFAULT — resolved LIVE on every read, never
       snapshotted into this column when the card is provisioned.
@@ -2948,6 +2963,17 @@ export const BoardPlansProposeCommand = Schema.Struct({
   cardId: BoardCardId,
   /** Ordered; replaces the card's whole plan set. An empty array clears it. */
   plans: Schema.Array(BoardProposedPlanInput),
+  /** Why this card is being SPLIT (t3o card 11) — required by the decider once
+      `plans` holds two or more, because that is what a multi-plan proposal
+      does: one child card per plan, behind a human approval gate. Argues for
+      the proposal as a whole, so it is a sibling of `plans` rather than a
+      per-plan field, and the human reads it at the gate it is arguing for.
+
+      Bounds (40–2000 characters) live in the decider, not the schema: one choke
+      point for every caller, and a rejection that can teach the rule instead of
+      surfacing a decode error. Forced to null below two plans, so a non-null
+      value means "a split was proposed", exactly. */
+  splitRationale: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardPlansProposeCommand = typeof BoardPlansProposeCommand.Type;
@@ -3360,7 +3386,7 @@ export const BoardCardCreatedPayload = Schema.Struct({
   /** The card's pinned base branch (T3O-5, D1). Key-optional: absent on every
       event written before this spec and on every card created without an
       explicit base, both of which mean "follow the project default" — the same
-      null migration 035's column defaults to, so replay equals rehydration. */
+      null migration 036's column defaults to, so replay equals rehydration. */
   baseBranch: Schema.optionalKey(TrimmedNonEmptyString),
   /** A child arrives with its plan's BODY as its brief — but the decider has
       no SQL client and bodies never ride the read model (D8), so the created
@@ -3630,6 +3656,15 @@ export const BoardPlansProposedPayload = Schema.Struct({
   cardId: BoardCardId,
   /** The resolved plan set (metadata + body) — replaces the card's plans. */
   plans: Schema.Array(BoardPlanWithBody),
+  /** The split's justification, decided (t3o card 11): non-null exactly when
+      this proposal splits the card, i.e. `plans.length >= 2`. Replaces whatever
+      the card carried, so re-proposing down to one plan clears it in the same
+      stroke that clears the pending split. Decodes to null on every payload
+      written before this spec, so a from-empty replay of an older log matches
+      the table-rehydrated model. */
+  splitRationale: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type BoardPlansProposedPayload = typeof BoardPlansProposedPayload.Type;
 

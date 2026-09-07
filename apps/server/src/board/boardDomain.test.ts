@@ -346,6 +346,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete"
         commandId: CommandId.make("cmd-one-plan"),
         cardId: cardOne,
         plans: [{ key: "p1", title: "Plan one", summary: "Do it", dependsOn: [], body: "# Plan" }],
+        splitRationale: null,
         createdAt: t0,
       });
       const withPlan = yield* snapshotQuery.getCommandReadModel();

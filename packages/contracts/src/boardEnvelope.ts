@@ -49,9 +49,22 @@ export const BOARD_ENVELOPE_MOVE_GUARD =
   "Never move the card between stages yourself; finish your work and the board or a human moves the card on.";
 
 /** The `plan` role's deliverable contract (role-keyed so a user rewrite of the
-    editable Planning prompt cannot break the plan pipeline). */
-export const BOARD_ENVELOPE_PLAN_DELIVERABLE =
-  "When the plan is agreed, record it with board_propose_plans.";
+    editable Planning prompt cannot break the plan pipeline).
+
+    T3o card 11: it also states what a SECOND plan means. The planning agent was
+    never told that `board_propose_plans` is the card-splitting mechanism — the
+    tool advertises an array with a dependency graph, so decomposition read as
+    the expected output, and the cost (child cards behind a human approval gate
+    that hard-blocks every forward move) was invisible at the point of call.
+    Stating it here rather than in `DEFAULT_BOARD_PLANNING_PROMPT` is deliberate:
+    a user who has already customised their Planning prompt still gets the rule,
+    and no rewrite can delete it. */
+export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
+  "When the plan is agreed, record it with board_propose_plans, as ONE plan.",
+  "Two or more plans is not a longer plan — it splits this card into that many child cards, each with its own branch, build and code review, and holds the card behind a human approval gate until someone approves it.",
+  "Split only when this card is a large feature whose parts are worth building and reviewing one at a time, or whose parts could be built concurrently for a real speed-up; then pass splitRationale saying why.",
+  "A bug fix, a contained change, or work that is merely long is one plan with several sections.",
+].join(" ");
 
 /** The frozen execution config a spawn needs, read off the step-state run row
     (D12). */

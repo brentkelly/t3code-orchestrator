@@ -68,6 +68,7 @@ const card: BoardCard = {
   humanInLoop: null,
   reviewOverrides: null,
   modelOverrides: null,
+  splitRationale: null,
   baseBranch: null,
   worktree: {
     branch: "board/t3-1",

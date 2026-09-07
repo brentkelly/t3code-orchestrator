@@ -1134,7 +1134,16 @@ function ActionsSection({
         // resolved — the decider refuses every forward move while it stands.
         // Amber, matching the card face's "Needs approval" state (distinct
         // from the blue "Input needed" a thread question raises).
-        <BoardHint label="This card's planning proposed a multi-part split; approve it to materialise the plan cards">
+        // The hint is planning's own argument for the split when it left one
+        // (t3o card 11), so the reason is readable without opening the pane;
+        // the generic sentence covers a split proposed before rationales
+        // existed.
+        <BoardHint
+          label={
+            card.splitRationale ??
+            "This card's planning proposed a multi-part split; approve it to materialise the plan cards"
+          }
+        >
           <button
             className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-amber-500/60 bg-amber-500/15 px-3 text-[13px] font-medium text-amber-700 shadow-xs hover:bg-amber-500/25 dark:text-amber-300"
             onClick={() => props.onApproveSplit()}
@@ -1938,6 +1947,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 stages={props.stages}
                 canApproveSplit={props.canApproveSplit}
                 approveTargetLabel={props.approveSplitTargetLabel}
+                splitRationale={card.splitRationale}
                 onApproveSplit={props.onApproveSplit}
                 onOpenChild={props.onOpenChildInSubBoard}
               />

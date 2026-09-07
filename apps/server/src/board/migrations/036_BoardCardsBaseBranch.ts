@@ -17,6 +17,13 @@
 // would buy in-flight cards immunity from a default move at the cost of that
 // stranding, and of making "no opinion" indistinguishable from a pin the user
 // never expressed; a card that wants the immunity pins the branch itself.
+//
+// Numbered 036 and not 035: this column was written as 035 on its own branch,
+// and trunk landed `split_rationale` as 035 first. That leaves one database
+// shape the ledger cannot repair by itself — a dev database that applied the
+// earlier 035 has its high-water mark at 35, so upstream's 035 is skipped
+// forever and `split_rationale` never arrives. Hence the second guarded add
+// below: a no-op on every ordinary database, and the repair on that one.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -29,5 +36,11 @@ export default Effect.gen(function* () {
 
   if (!has("base_branch")) {
     yield* sql`ALTER TABLE board_cards ADD COLUMN base_branch TEXT`;
+  }
+
+  // See the renumber note above. Identical to 035's own guarded add, so a
+  // database that ran 035 normally reaches this already satisfied.
+  if (!has("split_rationale")) {
+    yield* sql`ALTER TABLE board_cards ADD COLUMN split_rationale TEXT`;
   }
 });

@@ -251,6 +251,15 @@ function findDependencyCycle(input: {
 }
 
 /**
+ * Bounds on a split's justification (t3o card 11). The floor exists only to
+ * refuse lazy one-word compliance — it is not a quality bar, and nothing here
+ * pretends to read the text. The ceiling stops the rationale becoming a second
+ * brief on a row that is projected to every client.
+ */
+const SPLIT_RATIONALE_MIN_LENGTH = 40;
+const SPLIT_RATIONALE_MAX_LENGTH = 2000;
+
+/**
  * First dependency edge within a plan proposal (keyed by plan `key`) whose
  * addition closes a cycle, with the closing path for the rejection message.
  * The proposal is self-contained — every edge references a key in the same
@@ -2011,7 +2020,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     }
 
     case "board.plans.propose": {
-      yield* requireActiveBoardCard({ board, command });
+      const proposalCard = yield* requireActiveBoardCard({ board, command });
       // An approved split freezes the plans (t3o-23, D7): they are the record
       // of what was materialised, and the work now lives on the child cards.
       // Only LIVE children freeze — a fully-archived round is gone and a
@@ -2059,6 +2068,37 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Plan dependency edge '${cycle.from} -> ${cycle.to}' would create a cycle: ${cycle.path.join(" -> ")}.`,
         );
       }
+      // A multi-plan proposal IS a card split (t3o card 11), so it has to argue
+      // for itself. The rejection is the third teaching surface after the
+      // envelope and the tool description — it lands at the exact moment the
+      // mistake is made, so it names the consequence and BOTH ways forward
+      // rather than just a missing field.
+      //
+      // Non-null below two plans is impossible by construction: a single-plan
+      // proposal stores null even when one was passed, which is what makes
+      // "non-null" mean "the last proposal split this card" and what clears the
+      // rationale when a card is re-planned back down to one plan.
+      const splitRationale = command.plans.length >= 2 ? command.splitRationale : null;
+      if (command.plans.length >= 2) {
+        if (splitRationale === null) {
+          return yield* invariant(
+            command,
+            `Card '${proposalCard.key}': ${command.plans.length} plans splits this card into ${command.plans.length} child cards, each with its own branch, build and review, and holds it behind a human approval gate. Pass splitRationale (at least ${SPLIT_RATIONALE_MIN_LENGTH} characters) explaining why this card needs splitting, or propose a single plan with several sections.`,
+          );
+        }
+        if (splitRationale.length < SPLIT_RATIONALE_MIN_LENGTH) {
+          return yield* invariant(
+            command,
+            `splitRationale must be at least ${SPLIT_RATIONALE_MIN_LENGTH} characters explaining why this card needs splitting into ${command.plans.length} child cards; propose a single plan if it does not.`,
+          );
+        }
+        if (splitRationale.length > SPLIT_RATIONALE_MAX_LENGTH) {
+          return yield* invariant(
+            command,
+            `splitRationale must be at most ${SPLIT_RATIONALE_MAX_LENGTH} characters; the plan bodies carry the detail.`,
+          );
+        }
+      }
       // Preserve createdAt for a plan key that already exists (a re-proposal
       // edits in place); a genuinely new plan starts now.
       const existingById = new Map(
@@ -2087,7 +2127,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           commandId: command.commandId,
         })),
         type: "board.plans-proposed",
-        payload: { cardId: command.cardId, plans },
+        payload: { cardId: command.cardId, plans, splitRationale },
       };
     }
 

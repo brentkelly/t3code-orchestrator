@@ -312,10 +312,18 @@ export const BoardUpdateCardTool = Tool.make("board_update_card", {
 // ── Plan tools ─────────────────────────────────────────────────────────
 
 export const BoardProposePlansTool = Tool.make("board_propose_plans", {
+  // T3o card 11: the array framing is inverted deliberately. Advertising "an
+  // ordered set of plans" with a dependency graph read as "the expected output
+  // is a decomposition", and a single plan read as under-using the tool — so
+  // the description now leads with the split's consequence, and the split
+  // itself has to argue for the human click it triggers.
   description:
-    "Propose an ordered set of plans for your card (the planning output). Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys, and a markdown body. The whole proposal is validated on ingest — unique keys, known dependency references, and no cycles — and rejected naming the offending edge, so a broken graph is caught now, not later. Proposing again replaces the card's whole plan set. Your card is resolved from your thread.",
+    "Record your card's plan (the planning output). Pass ONE plan in almost every case: the array is how a card is SPLIT, and two or more plans each become a child card with its own branch, build and review, behind a human approval gate that blocks the card until a human approves it. Split only for a large feature worth building and reviewing in separate pieces, or where building parts concurrently buys a real speed-up — and then splitRationale is required and is shown to the human at the gate. Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys (only meaningful in a split), and a markdown body. Validated on ingest — unique keys, known dependency references, and no cycles — and rejected naming the offending edge. Proposing again replaces the card's whole plan set. Your card is resolved from your thread.",
   parameters: Schema.Struct({
     plans: Schema.Array(BoardProposedPlanInput),
+    /** Required once `plans` holds two or more (enforced by the decider, which
+        also nulls it below two). Omitted is the single-plan case. */
+    splitRationale: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   }),
   success: Schema.Struct({ planIds: Schema.Array(BoardPlan.fields.planId) }),
   failure: BoardToolError,
