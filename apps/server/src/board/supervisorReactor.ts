@@ -1608,14 +1608,25 @@ const make = Effect.gen(function* () {
     function* (card: BoardCard) {
       const recorded = card.worktree?.baseRefName ?? null;
       if (recorded === null || !boardCardHasLiveBranch(card)) return null;
-      const model = yield* snapshotQuery.getCommandReadModel();
-      const cwd = projectCwd(model, card);
-      if (cwd === null) return null;
-      const { defaultBranch } = yield* resolveDefaultBranch(cwd);
+      // The project default is the only input that costs git, and it is needed
+      // for exactly one shape: an unpinned top-level card. A pinned card
+      // answers from its own field, and a child from its parent's slice — so
+      // the common case of this check (which runs at every stage plan and every
+      // merge crossing) does no I/O at all.
+      const needsDefault = card.parentCardId === null && card.baseBranch === null;
+      const defaultBranch = needsDefault
+        ? yield* Effect.gen(function* () {
+            const model = yield* snapshotQuery.getCommandReadModel();
+            const cwd = projectCwd(model, card);
+            if (cwd === null) return null;
+            const resolved = yield* resolveDefaultBranch(cwd);
+            return resolved.defaultBranch === "" ? null : resolved.defaultBranch;
+          })
+        : null;
       const effective = resolveBoardCardEffectiveBase({
         card,
-        cards: (yield* readBoard).cards,
-        defaultBranch: defaultBranch === "" ? null : defaultBranch,
+        cards: needsDefault ? [] : (yield* readBoard).cards,
+        defaultBranch,
       });
       return effective !== null && effective !== recorded ? effective : null;
     },
