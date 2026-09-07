@@ -31,6 +31,8 @@ import {
   boardCardUnfinishedChildren,
   BoardCardId,
   BoardCardModelOverrides,
+  boardCardHasLiveBranch,
+  isBoardCardBaseBranchShape,
   isEmptyBoardCardModelOverrides,
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterSubBoardFloor,
@@ -397,6 +399,30 @@ const validateModelOverrides = Effect.fn("validateModelOverrides")(function* (in
 });
 
 /**
+ * Validate a card's incoming base branch (T3O-5, D5).
+ *
+ * SHAPE ONLY — the decider is pure and cannot ask git whether the branch
+ * exists; the reactor checks that at provisioning time, where it can fail the
+ * worktree with a card-visible reason. What is rejected here are the shapes
+ * that would break SILENTLY downstream (`isBoardCardBaseBranchShape`): an
+ * `origin/`-prefixed or `refs/`-qualified name would leave `measureBaseTip`
+ * quietly measuring nothing and `pullMergedBaseBranch` creating a local branch
+ * literally called `origin/develop`.
+ */
+const validateBaseBranch = Effect.fn("validateBaseBranch")(function* (input: {
+  readonly command: BoardCardCommand;
+  readonly proposed: string;
+}) {
+  if (!isBoardCardBaseBranchShape(input.proposed)) {
+    return yield* invariant(
+      input.command,
+      `Base branch '${input.proposed}' is not a local branch name; pass the local name (for example 'develop', never 'origin/develop' or 'refs/heads/develop').`,
+    );
+  }
+  return input.proposed;
+});
+
+/**
  * Validate and normalise a card's incoming review-loop overrides (t3o-22).
  *
  * Two rules, both here rather than in the pane, because the client is not the
@@ -700,6 +726,20 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         }
       }
 
+      // The per-card base branch (T3O-5, D1/D4). A sub-board child inherits its
+      // parent's integration branch and never consults its own field, so a base
+      // stored on one would be dead data no resolver reads — reject rather than
+      // keep a read model that lies about what the card will branch from.
+      const baseBranch =
+        command.baseBranch === undefined
+          ? null
+          : command.parentCardId !== undefined
+            ? yield* invariant(
+                command,
+                `Card '${command.cardId}' is a sub-board child of '${command.parentCardId}' and inherits that card's integration branch; it cannot set its own base branch.`,
+              )
+            : yield* validateBaseBranch({ command, proposed: command.baseBranch });
+
       const cardNumber = board.nextCardNumberByProject[command.projectId] ?? 1;
       const keyPrefix = command.keyPrefix ?? DEFAULT_BOARD_KEY_PREFIX;
       return {
@@ -722,6 +762,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           // A hand-created child (t3o-25) carries its parent exactly as a
           // materialised one does; it just has no source plan.
           ...(command.parentCardId === undefined ? {} : { parentCardId: command.parentCardId }),
+          // Key-optional like `brief`: absent IS "follow the project default",
+          // which is what every pre-spec event decodes to (T3O-5, D1).
+          ...(baseBranch === null ? {} : { baseBranch }),
           dependsOn,
           stage,
           orderKey: command.orderKey,
@@ -1002,7 +1045,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.externalRef === undefined &&
         command.humanInLoop === undefined &&
         command.reviewOverrides === undefined &&
-        command.modelOverrides === undefined
+        command.modelOverrides === undefined &&
+        command.baseBranch === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -1067,6 +1111,22 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             ? null
             : yield* validateModelOverrides({ board, command, proposed: command.modelOverrides });
 
+      // The base branch (T3O-5, D1/D4). Rejected outright on a sub-board child,
+      // which resolves its parent's integration branch whatever its own field
+      // says — storing one would be a read model that lies about what the card
+      // branches from. `null` clears the pin back to the project default.
+      const baseBranch =
+        command.baseBranch === undefined
+          ? card.baseBranch
+          : card.parentCardId !== null
+            ? yield* invariant(
+                command,
+                `Card '${command.cardId}' is a sub-board child of '${card.parentCardId}' and inherits that card's integration branch; it cannot set its own base branch.`,
+              )
+            : command.baseBranch === null
+              ? null
+              : yield* validateBaseBranch({ command, proposed: command.baseBranch });
+
       const dependsOn = proposedDependsOn ?? card.dependsOn;
       const nextCard: BoardCard = {
         ...card,
@@ -1087,6 +1147,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         humanInLoop: command.humanInLoop === undefined ? card.humanInLoop : command.humanInLoop,
         reviewOverrides,
         modelOverrides,
+        baseBranch,
         updatedAt: command.createdAt,
       };
       return {
@@ -2276,6 +2337,49 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         payload: {
           cardId: command.cardId,
           branch: command.branch,
+          baseRefName: command.baseRefName,
+          card: nextCard,
+        },
+      };
+    }
+
+    case "board.card.record-base-ref": {
+      // A retarget rebase actually landed (T3O-5, D6): move the RECORDED base
+      // and nothing else, so the derived divergence line clears and
+      // `measureBaseTip` starts measuring against the branch the card is now
+      // really on.
+      //
+      // Accepts exactly the LIVE statuses. `failed` may never have created the
+      // ref and `reclaimed` has had it deleted, so on neither is there a branch
+      // a rebase could have moved — recording one would assert a reconciliation
+      // that did not happen.
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (card.worktree === null || !boardCardHasLiveBranch(card)) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has no live branch; there is no recorded base to move.`,
+        );
+      }
+      if (card.worktree.baseRefName === command.baseRefName) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' already records base '${command.baseRefName}'; nothing to record.`,
+        );
+      }
+      const nextCard: BoardCard = {
+        ...card,
+        worktree: { ...card.worktree, baseRefName: command.baseRefName },
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-base-ref-recorded",
+        payload: {
+          cardId: command.cardId,
           baseRefName: command.baseRefName,
           card: nextCard,
         },

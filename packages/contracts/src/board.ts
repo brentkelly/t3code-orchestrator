@@ -1063,6 +1063,27 @@ export const BoardCard = Schema.Struct({
   modelOverrides: Schema.NullOr(BoardCardModelOverrides).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The branch this card's work is cut from and merges back into (T3O-5, D1),
+      or null to FOLLOW THE PROJECT DEFAULT resolved at provisioning time.
+
+      A nullable OVERRIDE, not a stored concrete value: null is what every card
+      created before this spec decodes to and what a card whose picker still
+      says "default" stores, so a project that later moves its default does not
+      strand a fleet of cards pinned to a dead branch. Modelled field-for-field
+      on `modelOverrides` — nullable column, decoding default of null — so a
+      from-empty replay of an older log matches the table-rehydrated model.
+
+      A LOCAL branch name, never `origin/`-prefixed and never `refs/`-qualified
+      (D7): `measureBaseTip`, `pullMergedBaseBranch` and the retarget rebase all
+      resolve it as `refs/heads/<name>`, and each of the three breaks silently
+      on a remote-qualified one. `isBoardCardBaseBranchShape` is the shared gate.
+
+      Read through `resolveBoardCardEffectiveBase`, never directly: a sub-board
+      child inherits its parent's integration branch and never consults its own
+      field (D4), which is why the decider refuses to set one on a child. */
+  baseBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -2449,6 +2470,13 @@ export const BoardCardCreateCommand = Schema.Struct({
   /** Overrides DEFAULT_BOARD_KEY_PREFIX; the t3o-07 settings surface will
       supply the per-project value. */
   keyPrefix: Schema.optional(TrimmedNonEmptyString),
+  /** The branch this card's work branches off (T3O-5, D1). Absent follows the
+      project default — which is what the create dialog sends when the picker
+      still reads `default`, so "no opinion" and "pinned to whatever main is
+      called today" stay different states. Shape-validated by the decider
+      (`isBoardCardBaseBranchShape`); its existence is checked by the reactor at
+      provisioning time, which is where git is. */
+  baseBranch: Schema.optional(TrimmedNonEmptyString),
   /** Create the card as a sub-board child of this parent (t3o-25): the
       drill-in view's create dialog presets it. The decider requires the
       parent to be a live top-level card in the same project, restricts the
@@ -2518,6 +2546,11 @@ export const BoardCardUpdateCommand = Schema.Struct({
       not have, so a stale popover cannot strand an override on a deleted
       stage where nothing would ever read it. */
   modelOverrides: Schema.optional(Schema.NullOr(BoardCardModelOverrides)),
+  /** The card's base branch (T3O-5, D1). Absent leaves it unchanged; `null`
+      clears it back to the project default; a string pins it. Rejected outright
+      on a sub-board child (D4), which inherits its parent's integration branch
+      and would otherwise store dead data no resolver reads. */
+  baseBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -2885,6 +2918,31 @@ export const BoardCardRecordIntegrationBranchCommand = Schema.Struct({
 export type BoardCardRecordIntegrationBranchCommand =
   typeof BoardCardRecordIntegrationBranchCommand.Type;
 
+/**
+ * Move a card's RECORDED base ref after a retarget rebase actually happened
+ * (T3O-5, D6). Server-internal, and deliberately narrow: it touches
+ * `worktree.baseRefName` and nothing else.
+ *
+ * `record-worktree` cannot be reused — it hard-requires `status ===
+ * "provisioning"` — and neither can `record-integration-branch`, which refuses
+ * every LIVE slice. This one accepts exactly the live statuses (`branch-only`,
+ * `provisioning`, `ready`), because a live branch is the only thing a rebase
+ * can have moved.
+ *
+ * Dispatched only when a retarget sync step completes `succeeded`. A failed
+ * rebase leaves the recorded base where it was, so the card keeps showing an
+ * unreconciled state — which is the truth.
+ */
+export const BoardCardRecordBaseRefCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-base-ref"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  /** The local branch the card's branch has now actually been rebased onto. */
+  baseRefName: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordBaseRefCommand = typeof BoardCardRecordBaseRefCommand.Type;
+
 export const BoardCardFailWorktreeCommand = Schema.Struct({
   type: Schema.Literal("board.card.fail-worktree"),
   commandId: CommandId,
@@ -3188,6 +3246,11 @@ export const BoardCardCreatedPayload = Schema.Struct({
       create. */
   parentCardId: Schema.optionalKey(BoardCardId),
   sourcePlanId: Schema.optionalKey(BoardPlanId),
+  /** The card's pinned base branch (T3O-5, D1). Key-optional: absent on every
+      event written before this spec and on every card created without an
+      explicit base, both of which mean "follow the project default" — the same
+      null migration 035's column defaults to, so replay equals rehydration. */
+  baseBranch: Schema.optionalKey(TrimmedNonEmptyString),
   /** A child arrives with its plan's BODY as its brief — but the decider has
       no SQL client and bodies never ride the read model (D8), so the created
       payload carries this pointer instead of the text and the SQL projector
@@ -3484,6 +3547,15 @@ export const BoardCardIntegrationBranchRecordedPayload = Schema.Struct({
 });
 export type BoardCardIntegrationBranchRecordedPayload =
   typeof BoardCardIntegrationBranchRecordedPayload.Type;
+
+/** A completed retarget rebase moved the card's recorded base (T3O-5, D6);
+    `card` carries the updated worktree slice. */
+export const BoardCardBaseRefRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  baseRefName: TrimmedNonEmptyString,
+  card: BoardCard,
+});
+export type BoardCardBaseRefRecordedPayload = typeof BoardCardBaseRefRecordedPayload.Type;
 // Worktree lifecycle payloads (t3o-09). Each carries the whole post-change
 // card, like every other non-created board event, so the shell-delta mapping
 // stays a pure function of the event and the projectors upsert exactly what
@@ -4621,6 +4693,7 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardProvisionWorktreeCommand,
   BoardCardRecordWorktreeCommand,
   BoardCardRecordIntegrationBranchCommand,
+  BoardCardRecordBaseRefCommand,
   BoardCardFailWorktreeCommand,
   BoardCardReclaimWorktreeCommand,
   BoardCardRecordPullRequestCommand,
@@ -4662,6 +4735,7 @@ export const BOARD_EVENT_TYPES = [
   "board.plan-written",
   "board.plans-approved",
   "board.card-integration-branch-recorded",
+  "board.card-base-ref-recorded",
   "board.card-worktree-provisioning",
   "board.card-worktree-ready",
   "board.card-worktree-failed",
@@ -4823,6 +4897,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-integration-branch-recorded"),
       payload: BoardCardIntegrationBranchRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-base-ref-recorded"),
+      payload: BoardCardBaseRefRecordedPayload,
     }),
     Schema.Struct({
       ...base,
@@ -6746,6 +6825,126 @@ export function resolveBoardCardStageModelOverride(input: {
     input.parent?.modelOverrides?.[input.stageId] ??
     null
   );
+}
+
+/**
+ * Whether a string is a usable per-card base branch (T3O-5, D5).
+ *
+ * SHAPE ONLY. The decider is pure and cannot query git, so existence is checked
+ * at provisioning time by the reactor, which is where git is. What this rules
+ * out is the shapes that would break SILENTLY:
+ *
+ * - a `refs/`-qualified name, because every reader re-qualifies it as
+ *   `refs/heads/<name>` and `refs/heads/refs/heads/main` resolves to nothing;
+ * - an `origin/`-prefixed name (D7/D12), because `measureBaseTip` would stop
+ *   measuring staleness with no error, `pullMergedBaseBranch` would create a
+ *   local branch literally named `origin/develop`, and the retarget rebase
+ *   would target a ref that drifts under the branch. The picker normalises a
+ *   remote-only ref to its local name before it ever gets here;
+ * - whitespace, a leading or trailing `/`, and `..`, none of which git accepts
+ *   in a branch name anyway.
+ *
+ * Shared by the decider and the picker so a rejected value is one the UI never
+ * offered in the first place.
+ */
+export function isBoardCardBaseBranchShape(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  if (trimmed !== value) return false;
+  if (/\s/.test(trimmed)) return false;
+  if (trimmed.startsWith("refs/")) return false;
+  if (trimmed.startsWith("origin/")) return false;
+  if (trimmed.startsWith("/") || trimmed.endsWith("/")) return false;
+  if (trimmed.includes("..")) return false;
+  return true;
+}
+
+/**
+ * The branch a card's work is cut from and merges back into (T3O-5, D2/D3) —
+ * the ONE definition the web renders, the decider guards and the reactor
+ * provisions from, so "what is this card's base?" can never be answered two
+ * ways.
+ *
+ * A TOP-LEVEL card answers with its own pinned `baseBranch`, or the project
+ * default when it has none. That is the single rung this spec adds.
+ *
+ * A SUB-BOARD CHILD ignores its own field entirely (D4) and inherits, exactly
+ * as it did before this spec: a LIVE parent branch (`branch-only`,
+ * `provisioning`, `ready` — the statuses under which the ref exists or is being
+ * created) always wins, because for a split parent that branch IS the
+ * integration base its children were approved onto, including a second-round
+ * split whose fresh slice must beat the retired round's merged pull request.
+ * `failed` and `reclaimed` are not live and fall through rather than name a ref
+ * that may not exist; the caller's null path re-runs the integration-branch
+ * machinery for exactly those states.
+ *
+ * With no live branch, a parent whose pull request MERGED yields that pull
+ * request's own `baseRef` — the branch the parent's work actually merged INTO,
+ * not the project default: on a nested sub-board the parent may have merged
+ * into an integration branch, and cutting the child from the default would
+ * silently drop every sibling already integrated there. Read through
+ * `boardCardDisplayPullRequest`, because a parent dragged back out of Done has
+ * had its merged pull request retired into the history.
+ *
+ * `defaultBranch` null means "not resolved" (a client that has not loaded the
+ * project's refs yet); a top-level card with no pin then answers null rather
+ * than inventing a branch name.
+ */
+export function resolveBoardCardEffectiveBase(input: {
+  readonly card: Pick<BoardCard, "parentCardId" | "baseBranch">;
+  readonly cards: ReadonlyArray<
+    Pick<BoardCard, "id" | "worktree" | "pullRequest" | "pullRequestHistory">
+  >;
+  readonly defaultBranch: string | null;
+}): string | null {
+  if (input.card.parentCardId === null) return input.card.baseBranch ?? input.defaultBranch;
+  const parent = input.cards.find((candidate) => candidate.id === input.card.parentCardId);
+  const worktree = parent?.worktree ?? null;
+  const liveBranch =
+    worktree !== null &&
+    (worktree.status === "ready" ||
+      worktree.status === "provisioning" ||
+      worktree.status === "branch-only")
+      ? worktree.branch
+      : null;
+  if (liveBranch !== null) return liveBranch;
+  const finished = parent === undefined ? null : boardCardDisplayPullRequest(parent);
+  if (finished?.state === "merged") return finished.baseRef;
+  return null;
+}
+
+/** The worktree statuses under which a card's branch REF exists on disk (or is
+    being created right now) — the same ladder `resolveBoardCardEffectiveBase`
+    treats as a live parent branch. `failed` may never have created the ref and
+    `reclaimed` has had it deleted, so neither counts. */
+export function boardCardHasLiveBranch(card: Pick<BoardCard, "worktree">): boolean {
+  const status = card.worktree?.status ?? null;
+  return status === "branch-only" || status === "provisioning" || status === "ready";
+}
+
+/**
+ * Whether the card's branch was cut from a DIFFERENT branch than the one it is
+ * now based on (T3O-5, D10/D14) — the retarget-sync trigger and the card's
+ * amber divergence line, which are deliberately the same condition so the
+ * warning cannot outlive the rebase that fixes it or appear before one is
+ * needed.
+ *
+ * DERIVED, never stored: a user who retargets and then reverts sees it clear
+ * itself with no further action. False whenever the card has no live branch —
+ * there is nothing cut yet to be diverged from — and whenever the effective
+ * base cannot be resolved, because staleness is measured, never assumed.
+ */
+export function isBoardCardBaseRetargeted(input: {
+  readonly card: Pick<BoardCard, "parentCardId" | "baseBranch" | "worktree">;
+  readonly cards: ReadonlyArray<
+    Pick<BoardCard, "id" | "worktree" | "pullRequest" | "pullRequestHistory">
+  >;
+  readonly defaultBranch: string | null;
+}): boolean {
+  const recorded = input.card.worktree?.baseRefName ?? null;
+  if (recorded === null || !boardCardHasLiveBranch(input.card)) return false;
+  const effective = resolveBoardCardEffectiveBase(input);
+  return effective !== null && effective !== recorded;
 }
 
 /** The per-project key prefix as STORED, falling back to the compiled-in

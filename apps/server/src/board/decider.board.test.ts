@@ -61,6 +61,7 @@ function makeCard(
     humanInLoop: null,
     reviewOverrides: null,
     modelOverrides: null,
+    baseBranch: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -1828,6 +1829,15 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           cardId: BoardCardId.make("card-ready"),
           branch: "board/card-ready",
           baseRefName: "main",
+          createdAt: NOW,
+        },
+        // Moves the RECORDED base after a retarget rebase (T3O-5, D6) — a
+        // worktree-slice write on a live branch, never a move.
+        "board.card.record-base-ref": {
+          type: "board.card.record-base-ref",
+          commandId: CommandId.make("cmd-record-base-ref"),
+          cardId: BoardCardId.make("card-worktree"),
+          baseRefName: "develop",
           createdAt: NOW,
         },
         "board.card.provision-worktree": {

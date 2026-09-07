@@ -23,7 +23,7 @@
  * and reclamation through `GitVcsDriver.removeWorktree` — gated by a
  * clean-and-pushed check so uncommitted work is never deleted to save disk.
  */
-import { boardCardDisplayPullRequest } from "@t3tools/contracts";
+import { resolveBoardCardEffectiveBase } from "@t3tools/contracts";
 import type { BoardCard, BoardCardWorktreeReclaimOutcome } from "@t3tools/contracts";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
@@ -43,61 +43,26 @@ export function boardCardWorktreeBranchName(card: Pick<BoardCard, "key">): strin
 }
 
 /**
- * The base ref a card's branch is cut from (D6/D12): the project's default
- * branch for a top-level card, or the parent card's integration branch for a
- * sub-board plan card. Returns null when a plan card's parent has no branch
- * yet — the caller turns that into a visible failure rather than cutting from
- * the wrong base. Pure, so it is decided in the read model, never by querying
- * git.
+ * The base ref a card's branch is cut from (D6/D12, T3O-5 D2): the card's own
+ * pinned `baseBranch` — or the project's default branch when it has none — for
+ * a top-level card, and the parent card's integration branch for a sub-board
+ * plan card. Returns null when a plan card's parent has no branch yet: the
+ * caller turns that into a visible failure rather than cutting from the wrong
+ * base.
  *
- * Precedence (t3o-23): a LIVE parent branch always wins. `branch-only`,
- * `provisioning` and `ready` are the statuses under which the branch ref
- * exists (or is being created right now), and for a split parent that branch
- * IS the integration base its children were approved onto — including a
- * SECOND-ROUND split, where a previously merged parent was dragged back and
- * re-approved: its fresh `branch-only` slice must beat the retired round's
- * merged pull request, or every child would silently cut from (and PR into)
- * the old round's base, bypassing the integration branch and the final
- * integration review. `failed` and `reclaimed` are NOT live — a failed
- * provision may never have created the ref, and a reclaimed slice's branch
- * was (or is about to be) deleted — so they fall through rather than name a
- * ref that may not exist; the caller's null-path re-runs the integration
- * branch machinery for exactly those states.
- *
- * With no live branch, a parent whose pull request has MERGED yields the pull
- * request's own `baseRef` — the branch the parent's work actually merged
- * INTO, not the project default: on a nested sub-board the parent may have
- * merged into an integration branch, and cutting the child from the default
- * would silently drop every sibling already integrated there. Read through
- * `boardCardDisplayPullRequest`, not `parent.pullRequest`, because a parent
- * dragged back out of Done has had its merged pull request RETIRED into the
- * history — `pullRequest` is null from that moment until the new round opens
- * one.
- *
- * A parent that reached Done without a merged pull request keeps its branch
- * (nothing deleted it) and keeps being the base, unchanged.
+ * A one-line delegate to `resolveBoardCardEffectiveBase`, which holds the whole
+ * precedence ladder and its rationale. Shared with the web (T3O-5, D3) so "what
+ * is this card's base?" is answered once: the card detail, the picker's value,
+ * the amber divergence line and this resolver all read the same function.
  */
 export function resolveBoardCardBaseRef(input: {
-  readonly card: Pick<BoardCard, "parentCardId">;
+  readonly card: Pick<BoardCard, "parentCardId" | "baseBranch">;
   readonly cards: ReadonlyArray<
     Pick<BoardCard, "id" | "worktree" | "pullRequest" | "pullRequestHistory">
   >;
   readonly defaultBranch: string;
 }): string | null {
-  if (input.card.parentCardId === null) return input.defaultBranch;
-  const parent = input.cards.find((candidate) => candidate.id === input.card.parentCardId);
-  const worktree = parent?.worktree ?? null;
-  const liveBranch =
-    worktree !== null &&
-    (worktree.status === "ready" ||
-      worktree.status === "provisioning" ||
-      worktree.status === "branch-only")
-      ? worktree.branch
-      : null;
-  if (liveBranch !== null) return liveBranch;
-  const finished = parent === undefined ? null : boardCardDisplayPullRequest(parent);
-  if (finished?.state === "merged") return finished.baseRef;
-  return null;
+  return resolveBoardCardEffectiveBase(input);
 }
 
 export interface BoardCardWorktreeProvisionResult {

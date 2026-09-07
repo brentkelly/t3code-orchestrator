@@ -49,6 +49,7 @@ const card = (attachments: BoardCard["attachments"] = []): BoardCard => ({
   humanInLoop: null,
   reviewOverrides: null,
   modelOverrides: null,
+  baseBranch: null,
   worktree: null,
   pullRequest: null,
   pullRequestHistory: [],

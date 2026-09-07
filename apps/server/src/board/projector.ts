@@ -52,6 +52,7 @@ import {
   BoardLabelUpdatedPayload,
   BoardPlansApprovedPayload,
   BoardPlansProposedPayload,
+  BoardCardBaseRefRecordedPayload,
   BoardCardIntegrationBranchRecordedPayload,
   BoardPlanWrittenPayload,
   BoardStageCreatedPayload,
@@ -113,6 +114,9 @@ const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWritte
 const decodeBoardPlansApprovedPayload = Schema.decodeUnknownEffect(BoardPlansApprovedPayload);
 const decodeBoardCardIntegrationBranchRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardIntegrationBranchRecordedPayload,
+);
+const decodeBoardCardBaseRefRecordedPayload = Schema.decodeUnknownEffect(
+  BoardCardBaseRefRecordedPayload,
 );
 const decodeBoardCardWorktreeProvisioningPayload = Schema.decodeUnknownEffect(
   BoardCardWorktreeProvisioningPayload,
@@ -208,6 +212,12 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     humanInLoop: null,
     reviewOverrides: null,
     modelOverrides: null,
+    // The card's base branch (T3O-5, D1) rides the flat created payload: the
+    // create dialog's picker sends one only when the user pinned a branch, so
+    // absent — every legacy event, every card that follows the project default,
+    // and every materialised sub-board child (which inherits its parent's
+    // integration branch, D4) — is null.
+    baseBranch: payload.baseBranch ?? null,
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
     worktree: null,
@@ -585,6 +595,12 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    case "board.card-base-ref-recorded":
+      return decodeBoardCardBaseRefRecordedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     case "board.card-worktree-provisioning":
       return decodeBoardCardWorktreeProvisioningPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
@@ -771,6 +787,9 @@ export function boardShellStreamEvent(
     // event carries the whole card, so the re-upsert costs nothing extra.
     case "board.plans-approved":
     case "board.card-integration-branch-recorded":
+    // A retarget rebase moved the recorded base (T3O-5, D6). Detail state, but
+    // the event carries the whole card, so the re-upsert is free.
+    case "board.card-base-ref-recorded":
     // The PR link IS on the bounded shell (`hasPr` / `prNumber`), and it rides
     // the card aggregate — so this delta carries the real value like any other
     // card field, with no absent-means-preserve dance.

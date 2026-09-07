@@ -98,6 +98,17 @@ const childCard = (id: string, stage: string, archivedAt: string | null = null):
   archivedAt,
 });
 
+/** A child's ready worktree, cut from the PARENT's integration branch — what
+    `resolveBoardCardBaseRef` hands provisioning for a sub-board child, and so
+    what its slice really records. Spelled out rather than reusing the top-level
+    `readyWorktree`'s `main`, because a child whose recorded base disagrees with
+    its parent's live branch reads as retargeted (T3O-5, D10) and would earn a
+    sync step no production child ever gets. */
+const childWorktree = (id: string): BoardCardWorktree => ({
+  ...readyWorktree(id),
+  baseRefName: `board/${String(parentId)}`,
+});
+
 /** A child waiting on a sibling, the shape the plan graph materialises. */
 const childWaitingOn = (
   id: string,
@@ -477,7 +488,7 @@ it.effect(
           // move, observed as any move is) selects its build step.
           yield* pumpDomain(
             movedToBuilding(
-              { ...materialisedChild("card-one", "building"), worktree: readyWorktree("card-one") },
+              { ...materialisedChild("card-one", "building"), worktree: childWorktree("card-one") },
               2,
             ),
           );
@@ -508,7 +519,7 @@ it.effect("still pauses a child a human explicitly put in the loop", () =>
             {
               ...materialisedChild("card-one", "building"),
               humanInLoop: true,
-              worktree: readyWorktree("card-one"),
+              worktree: childWorktree("card-one"),
             },
             2,
           ),
@@ -544,7 +555,7 @@ const DONE = String(BOARD_SEED_STAGE_IDS.done);
     open on — the state the review stage's auto-advance leaves it in. */
 const childAtMerge = (id: string): BoardCard => ({
   ...childCard(id, MERGE),
-  worktree: readyWorktree(id),
+  worktree: childWorktree(id),
 });
 
 /** A child arriving at the merge stage off its review auto-advance. */
@@ -924,7 +935,7 @@ it.effect("PIPELINE 2: a child's finished build auto-advances to review and it a
       board: {
         cards: [
           parentCard(),
-          { ...childCard("card-one", "building"), worktree: readyWorktree("card-one") },
+          { ...childCard("card-one", "building"), worktree: childWorktree("card-one") },
         ],
         stepStates: [runningBuildStep(BoardCardId.make("card-one"))],
         nextCardNumberByProject: {},
@@ -992,7 +1003,7 @@ it.effect("PIPELINE 3: a child's converged review auto-merges it through to Done
           parentCard(),
           {
             ...childCard("card-one", "review"),
-            worktree: readyWorktree("card-one"),
+            worktree: childWorktree("card-one"),
             reviewOverrides: { rounds: 1, stopAfterRound: null, roundModels: {} },
           },
         ],

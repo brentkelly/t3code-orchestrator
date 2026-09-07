@@ -100,6 +100,7 @@ const expectedCard = {
   humanInLoop: null,
   reviewOverrides: null,
   modelOverrides: null,
+  baseBranch: null,
   worktree: null,
   pullRequest: null,
   pullRequestHistory: [],

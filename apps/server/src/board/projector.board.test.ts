@@ -62,6 +62,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     humanInLoop: null,
     reviewOverrides: null,
     modelOverrides: null,
+    baseBranch: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
