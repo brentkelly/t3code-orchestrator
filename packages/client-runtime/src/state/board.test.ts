@@ -215,6 +215,7 @@ describe("board shell reducer", () => {
       stepRunning: false,
       held: false,
       stepAwaiting: null,
+      stepConflictFix: false,
       queued: false,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
@@ -227,6 +228,7 @@ describe("board shell reducer", () => {
       stepRunning: false,
       held: false,
       stepAwaiting: null,
+      stepConflictFix: false,
       queued: false,
     });
     expect(cleared.cards?.[0]?.stalled).toBe(false);
@@ -256,6 +258,7 @@ describe("board shell reducer", () => {
       stepRunning: false,
       held: false,
       stepAwaiting: null,
+      stepConflictFix: false,
       queued: false,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
@@ -286,6 +289,7 @@ describe("board shell reducer", () => {
       stepRunning: false,
       held: true,
       stepAwaiting: null,
+      stepConflictFix: false,
       queued: false,
     });
     expect(settled.cards?.[0]?.queued).toBe(false);
@@ -303,6 +307,7 @@ describe("board shell reducer", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: null,
+        stepConflictFix: false,
         queued: false,
       },
     );
@@ -326,6 +331,7 @@ describe("board shell reducer", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: "stopped",
+        stepConflictFix: false,
         queued: false,
       },
     );
@@ -345,10 +351,53 @@ describe("board shell reducer", () => {
       stepRunning: true,
       held: false,
       stepAwaiting: null,
+      stepConflictFix: false,
       queued: false,
     });
     expect(resumed.cards?.[0]?.stepAwaiting).toBeNull();
     expect(resumed.cards?.[0]?.stepRunning).toBe(true);
+  });
+
+  it("carries the conflict-fix flag, and a drag never blanks it (T3O-9)", () => {
+    const fixing = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge })] }),
+      {
+        kind: "card-stalled",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        stalled: false,
+        // Selected but not yet admitted: the merge is already held, which is
+        // exactly the window the build-queue pill cannot cover.
+        stepRunning: false,
+        held: false,
+        stepAwaiting: null,
+        stepConflictFix: true,
+        queued: true,
+      },
+    );
+    expect(fixing.cards?.[0]?.stepConflictFix).toBe(true);
+    // A card-carrying delta rests the flag at false, so the reducer has to
+    // preserve it — otherwise renaming a card mid-fix clears the pill.
+    const renamed = applyShellStreamEvent(fixing, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge, title: "Renamed" }),
+    });
+    expect(renamed.cards?.[0]?.stepConflictFix).toBe(true);
+    expect(renamed.cards?.[0]?.title).toBe("Renamed");
+    // …and the settle clears it on the same delta that raises `held`.
+    const settled = applyShellStreamEvent(renamed, {
+      kind: "card-stalled",
+      sequence: 4,
+      cardId: BoardCardId.make("card-1"),
+      stalled: false,
+      stepRunning: false,
+      held: true,
+      stepAwaiting: null,
+      stepConflictFix: false,
+      queued: false,
+    });
+    expect(settled.cards?.[0]?.stepConflictFix).toBe(false);
   });
 
   it("card-plans updates the footer's plan count and no-ops on an unheld card", () => {

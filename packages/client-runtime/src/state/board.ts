@@ -76,6 +76,7 @@ import {
   renameBoardStage,
   reorderBoardCard,
   forceStartBoardCardStep,
+  reopenBoardCardStep,
   reorderBoardStage,
   startBoardStageThread,
   submitBoardCardForMerge,
@@ -97,6 +98,7 @@ import {
   type RenameBoardStageInput,
   type ReorderBoardCardInput,
   type ForceStartBoardCardStepInput,
+  type ReopenBoardCardStepInput,
   type ReorderBoardStageInput,
   type StartBoardStageThreadInput,
   type UnarchiveBoardCardInput,
@@ -127,6 +129,7 @@ export type {
   RenameBoardStageInput,
   ReorderBoardCardInput,
   ForceStartBoardCardStepInput,
+  ReopenBoardCardStepInput,
   ReorderBoardStageInput,
   StartBoardStageThreadInput,
   UnarchiveBoardCardInput,
@@ -312,7 +315,14 @@ export function applyBoardShellStreamEvent(
       // asserting a false/zero — absent means "unchanged, keep what you have".
       // A present key is authoritative, including `false`/`0`: clearing an
       // image out of a brief has to clear the icon.
-      const withBodyDerived = preserveAbsentShellFields(withStepAwaiting, existing);
+      // `stepConflictFix` (T3O-9) comes off the same slice and rests at false on
+      // a card-carrying delta, so preserve it too — otherwise a label edit on a
+      // card whose merge is held by conflicts clears the pill that says so.
+      const withConflictFix =
+        existing === undefined || existing.stepConflictFix === withStepAwaiting.stepConflictFix
+          ? withStepAwaiting
+          : { ...withStepAwaiting, stepConflictFix: existing.stepConflictFix };
+      const withBodyDerived = preserveAbsentShellFields(withConflictFix, existing);
       const card = withDerivedThreadFields(
         withBodyDerived,
         (threadId) => snapshot.threads.find((thread) => thread.id === threadId),
@@ -361,13 +371,19 @@ export function applyBoardShellStreamEvent(
       // nothing to the column card before. Every other emitter clears it, so
       // answering the question clears the badge on the same event that re-lights
       // the dot.
+      //
+      // And `stepConflictFix` (T3O-9): the fix's own select-step raises it, its
+      // settle lowers it, and the awaiting/recovered emitters carry it through —
+      // so the amber "Conflicts" pill tracks the step rather than an in-memory
+      // server arm that a restart would drop.
       const nextCards = Arr.map(cards, (card) => {
         if (card.cardId !== event.cardId) return card;
         return card.stalled === event.stalled &&
           card.queued === event.queued &&
           card.stepRunning === event.stepRunning &&
           card.held === event.held &&
-          card.stepAwaiting === event.stepAwaiting
+          card.stepAwaiting === event.stepAwaiting &&
+          card.stepConflictFix === event.stepConflictFix
           ? card
           : {
               ...card,
@@ -376,6 +392,7 @@ export function applyBoardShellStreamEvent(
               stepRunning: event.stepRunning,
               held: event.held,
               stepAwaiting: event.stepAwaiting,
+              stepConflictFix: event.stepConflictFix,
             };
       });
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
@@ -957,6 +974,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
     forceStartStep: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:force-start-step",
       execute: (input: ForceStartBoardCardStepInput) => forceStartBoardCardStep(input),
+    }),
+    /** Send a settled step back because its recorded payload cannot be read
+        (T3O-14) — the way out of a review round that halted `unreadable`. */
+    reopenStep: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:reopen-step",
+      execute: (input: ReopenBoardCardStepInput) => reopenBoardCardStep(input),
     }),
     updateCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:update-card",

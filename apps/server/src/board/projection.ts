@@ -56,6 +56,7 @@ import {
   parseReviewStepId,
   isBoardEvent,
   isEmptyBoardCardModelOverrides,
+  isBoardConflictFixLive,
   isBoardTerminalStepStatus,
   makeBoardCardShell,
   ProviderInstanceId,
@@ -2909,6 +2910,7 @@ export function withBoardShellCards(
       const runningByCard = new Set<BoardCardId>();
       const heldByCard = new Set<BoardCardId>();
       const awaitingByCard = new Map<BoardCardId, BoardCardStepAwaitingReason>();
+      const conflictFixByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
         // The second step-state field on the bounded shell (t3o-17, D3): a card
@@ -2933,6 +2935,12 @@ export function withBoardShellCards(
         if (row.status === "awaiting-input") {
           awaitingByCard.set(row.cardId, row.awaitingReason ?? "question");
         }
+        // Whether the live step is a merge conflict fix (T3O-9). Read off the
+        // PERSISTED step label through the same predicate the delta uses, so a
+        // reconnect mid-fix renders identically to the live stream — and so a
+        // restart, which drops the reactor's in-memory merge arm, does not drop
+        // the card's explanation with it.
+        if (isBoardConflictFixLive(row)) conflictFixByCard.add(row.cardId);
       }
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
@@ -2978,6 +2986,7 @@ export function withBoardShellCards(
           stepRunning: runningByCard.has(row.cardId),
           held: heldByCard.has(row.cardId),
           stepAwaiting: awaitingByCard.get(row.cardId) ?? null,
+          stepConflictFix: conflictFixByCard.has(row.cardId),
           thread: liveThreads,
         });
       });

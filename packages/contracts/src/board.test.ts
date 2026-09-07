@@ -37,6 +37,12 @@ import {
   deriveBoardCardChildAttention,
   deriveBoardCardChildRunning,
   isBoardCardWorking,
+  isBoardConflictFixLive,
+  boardSelectedStepLabel,
+  reviewStepLabel,
+  BOARD_REVIEW_PHASE_IDS,
+  BOARD_CONFLICT_STEP_LABEL,
+  BOARD_STEP_STATUSES,
   boardCardPendingSplit,
   boardCardShellPendingSplit,
   boardCardUnfinishedChildren,
@@ -108,6 +114,7 @@ const fullyPopulatedShell = {
   stalled: true,
   stepRunning: true,
   stepAwaiting: "stopped",
+  stepConflictFix: true,
   held: true,
   threadState: "waiting",
   awaitingInput: true,
@@ -366,6 +373,9 @@ describe("board card shell derivation", () => {
     expect(shell.queued).toBe(false);
     // `stalled` (t3o-17, D3) rests at false the same way.
     expect(shell.stalled).toBe(false);
+    // `stepConflictFix` (T3O-9) rests at false the same way: a card-carrying
+    // delta cannot see the step row, so it must not assert "no conflict".
+    expect(shell.stepConflictFix).toBe(false);
     // post-MVP sub-boards and review pipeline: key-optional and absent, so
     // an unsourced field costs zero wire bytes per card.
     expect("planTotal" in shell).toBe(false);
@@ -499,6 +509,36 @@ describe("board card shell derivation", () => {
     expect(stalled.stalled).toBe(true);
     // A stalled card is not, by that fact, queued (distinct step-state fields).
     expect(stalled.queued).toBe(false);
+  });
+
+  it("threads a real conflict-fix flag through makeBoardCardShell (T3O-9)", () => {
+    const fixing = makeBoardCardShell({
+      cardId: BoardCardId.make("card-1"),
+      key: "T3O-1",
+      projectId: ProjectId.make("project-1"),
+      labelIds: [],
+      stage: BOARD_SEED_STAGE_IDS.merge,
+      orderKey: "m",
+      title: "Card",
+      blocked: false,
+      dependencyCount: 0,
+      hasBrief: false,
+      activeThreadId: null,
+      stepConflictFix: true,
+    });
+    expect(fixing.stepConflictFix).toBe(true);
+    // The flag says WHAT the step is, never how it is doing — the running /
+    // queued / stalled flags keep their own jobs and the renderer composes them.
+    expect(fixing.stepRunning).toBe(false);
+    expect(fixing.queued).toBe(false);
+    expect(fixing.stalled).toBe(false);
+  });
+
+  it("the conflict-fix flag keeps the shell within the fixed budget (T3O-9)", () => {
+    expect(fullyPopulatedShell.stepConflictFix).toBe(true);
+    expect(utf8Bytes(encodeShell(fullyPopulatedShell))).toBeLessThanOrEqual(
+      BOARD_CARD_SHELL_BYTE_BUDGET,
+    );
   });
 
   it("the queued flag keeps the shell within the fixed budget (t3o-11, D11)", () => {
@@ -1587,5 +1627,82 @@ describe("isBoardCardBaseRetargeted (T3O-5, D14)", () => {
         defaultBranch: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe("a live merge conflict fix (isBoardConflictFixLive, T3O-9)", () => {
+  const row = (
+    overrides: Partial<Pick<BoardCardStepState, "stepLabel" | "status">>,
+  ): Pick<BoardCardStepState, "stepLabel" | "status"> => ({
+    stepLabel: BOARD_CONFLICT_STEP_LABEL,
+    status: "running",
+    ...overrides,
+  });
+
+  /** The whole status vocabulary, so a new status has to be classified here
+      rather than silently landing on one side of the line. */
+  const LIVE_STATUSES = ["pending", "queued", "running", "awaiting-input", "completing"] as const;
+  const NOT_LIVE_STATUSES = ["stalled", "succeeded", "failed", "abandoned"] as const;
+
+  it("covers every step status exactly once", () => {
+    expect([...LIVE_STATUSES, ...NOT_LIVE_STATUSES].toSorted()).toEqual(
+      [...BOARD_STEP_STATUSES].toSorted(),
+    );
+  });
+
+  it("is live across the whole non-terminal window, queue included", () => {
+    for (const status of LIVE_STATUSES) {
+      expect(isBoardConflictFixLive(row({ status })), status).toBe(true);
+    }
+  });
+
+  it("is not live once the step settles — or stalls", () => {
+    for (const status of NOT_LIVE_STATUSES) {
+      // `stalled` is excluded deliberately: it already draws the louder
+      // "Stalled" chip, and two chips claiming the same card is exactly what
+      // `boardCardAttention`'s ranking exists to prevent.
+      expect(isBoardConflictFixLive(row({ status })), status).toBe(false);
+    }
+  });
+
+  it("ignores a step that is not a conflict fix, however busy it looks", () => {
+    // The unarmed merge-stage re-entry conversation: a running step at the
+    // merge stage with no step identity (t3o-19, D4). This is the case the old
+    // `stepRunning` inference called a conflict fix.
+    expect(isBoardConflictFixLive(row({ stepLabel: null }))).toBe(false);
+    expect(isBoardConflictFixLive(row({ stepLabel: "review@2" }))).toBe(false);
+  });
+});
+
+describe("stamping a selected step's label (boardSelectedStepLabel, T3O-9)", () => {
+  it("stamps the reserved label on the armed fix, and reads back as live", () => {
+    const stamped = boardSelectedStepLabel(true, null);
+    expect(stamped).toBe(BOARD_CONFLICT_STEP_LABEL);
+    expect(isBoardConflictFixLive({ stepLabel: stamped, status: "running" })).toBe(true);
+  });
+
+  it("passes an ordinary executor label through untouched", () => {
+    expect(boardSelectedStepLabel(false, reviewStepLabel("triage", 2))).toBe("Triage · round 2");
+    expect(boardSelectedStepLabel(false, null)).toBe(null);
+  });
+
+  it("takes the reserved label off a plan the reactor did not arm", () => {
+    // The label is the fix's whole identity downstream — the `card-stalled`
+    // delta is projected from one event and cannot reach board state to ask
+    // what role the step's stage plays — so an executor naming its step
+    // `Conflicts` would otherwise light the pill and disable Merge on a card
+    // whose merge is not held.
+    const stamped = boardSelectedStepLabel(false, BOARD_CONFLICT_STEP_LABEL);
+    expect(stamped).toBe(null);
+    expect(isBoardConflictFixLive({ stepLabel: stamped, status: "running" })).toBe(false);
+  });
+
+  it("is not a label today's review loop can mint", () => {
+    // Pins the only executor that names steps: every phase, first rounds.
+    for (const phase of [...BOARD_REVIEW_PHASE_IDS, "sync"] as const) {
+      for (let round = 1; round <= 5; round += 1) {
+        expect(reviewStepLabel(phase, round)).not.toBe(BOARD_CONFLICT_STEP_LABEL);
+      }
+    }
   });
 });

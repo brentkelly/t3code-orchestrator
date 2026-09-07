@@ -77,6 +77,7 @@ import {
   FileTextIcon,
   ArrowUpIcon,
   LayersIcon,
+  LoaderCircleIcon,
   LockIcon,
   MessageSquareIcon,
   SquareIcon,
@@ -121,6 +122,7 @@ import {
 } from "./BoardCardFields";
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
 import { BoardCardStepFailure } from "./BoardCardStepFailure";
+import { type BoardConflictFixInfo } from "./boardConflictFix";
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
@@ -315,6 +317,8 @@ export interface BoardCardDetailViewProps {
   /** Whether the executor is driving the card (running or queued for a slot). */
   readonly reviewStepActive?: boolean | undefined;
   readonly onResumeReview?: ((rounds: number) => void) | undefined;
+  /** Reopen a review round whose recorded payload cannot be read (T3O-14). */
+  readonly onReopenReviewStep?: ((stepId: string) => void) | undefined;
   readonly onSetReviewRounds?: ((rounds: number) => void) | undefined;
   readonly onSetReviewRoundModel?:
     | ((round: number, model: BoardReviewRoundOverride | null) => void)
@@ -377,9 +381,11 @@ export interface BoardCardDetailViewProps {
       it — clicking through is a moment the user is about to learn whether the
       card's link is stale, so it may as well not be. */
   readonly onOpenPullRequest: (url: string) => void;
-  /** Whether a conflict-resolution step is running on this card. Nothing else
-      runs in the merge stage, so a live step there can only be that. */
-  readonly conflictStepRunning: boolean;
+  /** The card's merge-conflict story (T3O-9), or null when its merge is not
+      held: the banner's words, and the one thing that disables Merge. Resolved
+      by the container, which holds both the shell flag and the pull request's
+      base branch. */
+  readonly conflictFix: BoardConflictFixInfo | null;
   /** The shell's `held`, ranked by `boardCardAttention` — the build stage's
       forward button appears only on it (t3o-06 held-build-forward-button). */
   readonly stepHeld?: boolean;
@@ -673,6 +679,53 @@ function BriefBody({
       </BoardHint>
       {attachRow}
     </>
+  );
+}
+
+/**
+ * The merge-conflict banner (T3O-9) — the answer to "why is the Merge button
+ * dead", stated where it is read before anything else: directly under the
+ * card's title, above the layout split, so both the wide and the narrow form
+ * carry it.
+ *
+ * Amber, matching the column card's pill and the same held reading: the merge
+ * is held until the thread finishes. It keeps the mockup's spinner, which the
+ * board face drops — one animating element in an open modal is a different
+ * proposition from thirty on a board.
+ */
+function ConflictBanner({
+  info,
+  onViewThread,
+}: {
+  readonly info: BoardConflictFixInfo;
+  /** Put the conflict thread on screen. Absent in the narrow layout, which has
+      no thread pane at all — its Threads section lists the thread a few lines
+      below this instead. */
+  readonly onViewThread?: (() => void) | undefined;
+}) {
+  return (
+    <div className="mx-3.5 mt-2.5 flex items-center gap-2.5 rounded-[10px] border border-amber-500/40 bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] py-2.5 pl-3 pr-2.5 dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]">
+      <LoaderCircleIcon
+        aria-hidden="true"
+        className="size-3.5 shrink-0 animate-spin text-amber-600 dark:text-amber-400"
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-[12.5px] font-medium text-foreground">{info.headline}</span>
+        <span className="text-[11.5px] leading-[1.45] text-pretty text-muted-foreground">
+          {info.detail}
+        </span>
+      </div>
+      {onViewThread === undefined ? null : (
+        <button
+          className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+          onClick={onViewThread}
+          type="button"
+        >
+          <MessageSquareIcon className="size-3" />
+          View thread
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -993,7 +1046,7 @@ function ActionsSection({
   const actionContext = {
     pullRequestState: pullRequest?.state ?? null,
     pullRequestNumber: pullRequest?.number ?? null,
-    conflictStepRunning: props.conflictStepRunning,
+    conflictFixLive: props.conflictFix !== null,
     stepHeld: props.stepHeld === true,
     hasBranch: card.worktree !== null,
     blocked: card.blocked,
@@ -1776,6 +1829,27 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
       <TitleBody onSave={props.onSaveTitle} title={card.title} />
 
+      {/* One insertion above the layout split covers both forms (T3O-9). Only
+          the wide one offers `View thread`: the narrow layout has no thread
+          pane to send anyone to. */}
+      {props.conflictFix === null ? null : (
+        <ConflictBanner
+          info={props.conflictFix}
+          onViewThread={
+            wide
+              ? () => {
+                  // Clearing the pinned tab restores the card's default, which
+                  // at the merge stage IS the conflict fix's thread — the same
+                  // one `initialBoardCardThreadId` resolves for a card sitting
+                  // there. No navigation: the modal stays open on the card.
+                  setSelectedThreadId(null);
+                  setPane("thread");
+                }
+              : undefined
+          }
+        />
+      )}
+
       {wide ? (
         <div className="mt-3 grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_336px] border-t border-border">
           {activePane === "brief" ? (
@@ -1834,6 +1908,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onSetRoundModel={props.onSetReviewRoundModel}
                 phaseRuntimeMode={props.reviewPhaseRuntimeMode}
                 onResume={props.onResumeReview}
+                onReopenStep={props.onReopenReviewStep}
                 onSetRounds={props.onSetReviewRounds}
                 overrides={props.reviewOverrides}
                 roundsStarted={props.reviewRoundsStarted}

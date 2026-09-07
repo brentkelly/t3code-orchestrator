@@ -5,7 +5,9 @@
  * counter bump is monotonic.
  */
 import {
+  BOARD_CONFLICT_STEP_LABEL,
   BOARD_SEED_LABEL_IDS,
+  BOARD_SEED_STAGE_IDS,
   BoardCardId,
   BoardPlanId,
   BoardStageId,
@@ -683,6 +685,7 @@ describe("board projector", () => {
         // A settled step is the card parking: `held` is raised here.
         held: true,
         stepAwaiting: null,
+        stepConflictFix: false,
         queued: false,
       });
       // t3o-34 (D4): parking on a human is a column-card fact now, and this
@@ -705,6 +708,7 @@ describe("board projector", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: "stopped",
+        stepConflictFix: false,
         queued: false,
       });
     }),
@@ -795,6 +799,7 @@ describe("board projector", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: null,
+        stepConflictFix: false,
         queued: false,
       });
       // An ordinary retry (status running) clears the badge.
@@ -811,6 +816,7 @@ describe("board projector", () => {
         stepRunning: true,
         held: false,
         stepAwaiting: null,
+        stepConflictFix: false,
         queued: false,
       });
       // A fresh stage run (select-step) also clears any lingering stalled badge.
@@ -830,8 +836,101 @@ describe("board projector", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: null,
+        stepConflictFix: false,
         queued: false,
       });
+    }),
+  );
+
+  it.effect("a conflict fix raises the flag on select and drops it on settle (T3O-9)", () =>
+    Effect.sync(() => {
+      const conflictState = {
+        cardId,
+        stepId: String(BOARD_SEED_STAGE_IDS.merge),
+        // The stamp the reactor writes on the ARMED fix, and the only thing
+        // that tells this step apart from the clean merge-stage conversation a
+        // human can open by hand.
+        stepLabel: BOARD_CONFLICT_STEP_LABEL,
+        stageLabel: "Ready for merge",
+        attempt: 1,
+        stallCount: 0,
+        lastNudgeAt: null,
+        baseTipAtRoundStart: null,
+        lastError: null,
+        awaitingReason: "question" as const,
+        prompt: "resolve the conflicts",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        mode: "build" as const,
+        runtimeMode: "full-access" as const,
+        humanInLoop: false,
+        maxAttempts: 3,
+        timeoutMs: 1000,
+        threadId: null,
+        status: "pending" as const,
+        slotHeld: false,
+        forceStart: false,
+        startedAt: null,
+        updatedAt: NOW,
+      };
+      const delta = (event: BoardEvent) =>
+        Option.getOrThrow(boardShellStreamEvent(event)) as { readonly stepConflictFix: boolean };
+      const selected: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-selected",
+        payload: { cardId, state: conflictState },
+      };
+      // Raised by the fix's own select-step — before an agent exists, which is
+      // what lets the pill cover the wait for a slot.
+      assert.strictEqual(delta(selected).stepConflictFix, true);
+      // Carried through a question and an ordinary recovery: the merge is still
+      // held either way.
+      assert.strictEqual(
+        delta({
+          ...eventBase,
+          type: "board.card-step-awaiting-input",
+          payload: {
+            cardId,
+            state: { ...conflictState, status: "awaiting-input", awaitingReason: "question" },
+          },
+        }).stepConflictFix,
+        true,
+      );
+      assert.strictEqual(
+        delta({
+          ...eventBase,
+          type: "board.card-step-recovered",
+          payload: { cardId, state: { ...conflictState, status: "running" } },
+        }).stepConflictFix,
+        true,
+      );
+      // Dropped when recovery gives up — the louder Stalled chip takes over —
+      // and when the step settles, whichever way it went.
+      assert.strictEqual(
+        delta({
+          ...eventBase,
+          type: "board.card-step-recovered",
+          payload: { cardId, state: { ...conflictState, status: "stalled" } },
+        }).stepConflictFix,
+        false,
+      );
+      assert.strictEqual(
+        delta({
+          ...eventBase,
+          type: "board.card-step-settled",
+          payload: { cardId, state: { ...conflictState, status: "failed" } },
+        }).stepConflictFix,
+        false,
+      );
+      // And a merge-stage step with NO label is a conversation, never a fix.
+      assert.strictEqual(
+        delta({
+          ...eventBase,
+          type: "board.card-step-selected",
+          payload: { cardId, state: { ...conflictState, stepLabel: null } },
+        }).stepConflictFix,
+        false,
+      );
     }),
   );
 

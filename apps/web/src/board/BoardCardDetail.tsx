@@ -59,6 +59,7 @@ import { getCustomModelOptionsByInstance, resolveAppModelSelectionState } from "
 import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils";
 import { boardEnvironment } from "../state/board";
 import { boardAttachmentLimits } from "./boardAttachmentUpload";
+import { boardConflictFix } from "./boardConflictFix";
 import { boardQueueInfo } from "./boardQueueInfo";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
@@ -146,6 +147,7 @@ export function BoardCardDetail({
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
   const reorderCard = useAtomCommand(boardEnvironment.reorderCard);
   const forceStartStep = useAtomCommand(boardEnvironment.forceStartStep);
+  const reopenStep = useAtomCommand(boardEnvironment.reopenStep);
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
   const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
@@ -234,14 +236,28 @@ export function BoardCardDetail({
   }, []);
 
   const card = detail?.card ?? null;
-  /** Whether a conflict-resolution step is running on this card. The merge
-      stage auto-executes nothing, so a live step there can only be that one —
-      which is exactly what disables the Merge button while the branch is being
-      rewritten under the pull request. */
-  const conflictStepRunning = useMemo(
-    () => (snapshot?.cards ?? []).find((shell) => shell.cardId === cardId)?.stepRunning === true,
-    [snapshot, cardId],
-  );
+  /** Whether a merge conflict fix is live on this card (T3O-9) — the branch is
+      being rewritten under the pull request, so merging now is meaningless.
+   *
+      Read off the server's `stepConflictFix`, which is derived from the step
+      row's persisted label, rather than from `stepRunning` at a merge-role
+      stage. That inference rested on "the merge stage runs nothing else", which
+      is untrue — a human can restart the stage's thread by hand and get a clean
+      conversation, and that greyed out Merge with "Resolving conflicts…" for a
+      conflict fix that did not exist. Now that click reaches the server, which
+      refuses it with a true sentence ("A thread is already open on this stage")
+      instead of a false button state. */
+  const conflictFix = useMemo(() => {
+    const shell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+    if (shell === undefined) return null;
+    return boardConflictFix({
+      live: shell.stepConflictFix,
+      queued: shell.queued,
+      // Only the modal names the base branch: the shell carries none, and it
+      // should not grow one for a tooltip.
+      baseRef: detail?.card.pullRequest?.baseRef ?? null,
+    });
+  }, [snapshot, cardId, detail]);
   /** Whether the card's step has SETTLED and left the card standing — the same
       `held` the card face reads for its "Needs a human" chip, ranked by
       `boardCardAttention` so the chip and the detail's forward button can never
@@ -812,7 +828,7 @@ export function BoardCardDetail({
       onLinkThread={(threadId, role) =>
         runCommand(linkThread({ environmentId, input: { cardId: card.id, threadId, role } }))
       }
-      conflictStepRunning={conflictStepRunning}
+      conflictFix={conflictFix}
       stepHeld={stepHeld}
       merging={merging}
       onMergePullRequest={() => {
@@ -926,6 +942,13 @@ export function BoardCardDetail({
       reviewRoundsStarted={reviewRoundsRecorded}
       reviewStepActive={cardShell?.stepRunning === true || cardShell?.queued === true}
       onSetReviewRounds={(rounds) => patchReviewOverrides({ rounds })}
+      // The way out of a phase that recorded a payload nothing can read
+      // (T3O-14). The pane hands back the halted step's own id — any of the
+      // four phases can be the broken one — and the server refuses a readable
+      // record, so a stale pane cannot discard work that actually landed.
+      onReopenReviewStep={(stepId) =>
+        runCommand(reopenStep({ environmentId, input: { cardId: card.id, stepId } }))
+      }
       onResumeReview={(rounds) =>
         // "Run round N+1" is a resume, so it says both halves outright: at
         // least enough budget to reach that round (never LESS than the card

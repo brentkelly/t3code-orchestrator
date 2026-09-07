@@ -170,6 +170,27 @@ describe("deriveBoardReviewLoop", () => {
     expect(loop.status).toBe("unreadable");
     expect(loop.rounds[0]?.outcome).toBe("unreadable");
     expect(loop.rounds[0]?.reviewMalformed).toBe(true);
+    // The step the pane's Reopen sends back.
+    expect(loop.unreadableStepId).toBe("review@1");
+    expect(loop.rounds[0]?.unreadablePhase).toBe("review");
+  });
+
+  // T3O-14 round 2: a broken triage/adjudicate/sync record used to advance the
+  // pane's loop as silently as it advanced the executor's, so the one state the
+  // board cannot repair by itself had no surface and no Reopen.
+  it("names the broken phase whichever one recorded the unreadable payload", () => {
+    const loop = deriveBoardReviewLoop(
+      [completion("review@1", review([finding("nitpick")])), completion("triage@1", "{not json")],
+      5,
+    );
+    expect(loop.status).toBe("unreadable");
+    expect(loop.unreadableStepId).toBe("triage@1");
+    // The ROUND is unreadable — but its review is not, so the findings it
+    // raised still render; only their dispositions are missing.
+    expect(loop.rounds[0]?.outcome).toBe("unreadable");
+    expect(loop.rounds[0]?.unreadablePhase).toBe("triage");
+    expect(loop.rounds[0]?.reviewMalformed).toBe(false);
+    expect(loop.rounds[0]?.findings).toHaveLength(1);
   });
 
   // T3O-2: the pane is where the loss was visible — a round that ran to a

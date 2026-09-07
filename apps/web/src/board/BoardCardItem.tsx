@@ -30,7 +30,7 @@ import type {
   BoardLabelId,
   ThreadId,
 } from "@t3tools/contracts";
-import { LayersIcon, LockIcon, PauseIcon, TriangleAlertIcon } from "lucide-react";
+import { GitMergeIcon, LayersIcon, LockIcon, PauseIcon, TriangleAlertIcon } from "lucide-react";
 import type { DragEvent, ReactNode } from "react";
 
 import { cn } from "../lib/utils";
@@ -40,6 +40,7 @@ import {
   pickBoardCardTodoThread,
   type BoardTodoThreadState,
 } from "./boardCardProgressBlock";
+import { boardConflictFix } from "./boardConflictFix";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
@@ -249,6 +250,13 @@ export function BoardCardContent({
   // row's chip — so it keys off `planTotal` alone and the drag ghost / archive
   // sheet keep the pile.
   const wearsStack = card.planTotal !== undefined && card.planTotal > 0;
+  // "This card's merge is held by conflicts" (T3O-9) — a server fact off the
+  // step row, not a guess at a running merge-stage step. A Done card is muted
+  // and asking for nothing, so it never wears the pill; the flag is already
+  // false by then, and the guard just says so out loud.
+  const conflictFix = summary.muted
+    ? null
+    : boardConflictFix({ live: card.stepConflictFix, queued: card.queued });
   return (
     <article
       className={cn(
@@ -369,6 +377,31 @@ export function BoardCardContent({
             </span>
           </BoardHint>
         ) : null}
+        {conflictFix === null ? null : (
+          // Amber, and NO spinner (T3O-9). The card is both held and running at
+          // once, so the pill has to pick a vocabulary and it picks the held
+          // reading: its claim is that the MERGE is held, which is the same
+          // fact that disables the Merge button. The running half is not lost —
+          // the blue dot above is lit beside it — and dropping the mockup's
+          // spinner keeps a second continuously animating element off a board
+          // that can show thirty cards at once.
+          //
+          // It sits in the right-hand cluster, styled like `Blocked` rather
+          // than the prototype's tinted uppercase capsule: two amber held-chips
+          // side by side in different styling would read as two different kinds
+          // of thing. The LEFT slot is untouched — that belongs to
+          // `boardCardAttention`'s single ranked chip, and this is not an
+          // attention state, because nothing is waiting on the human.
+          <BoardHint label={conflictFix.tooltip}>
+            <span
+              aria-label={conflictFix.tooltip}
+              className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-warning-foreground"
+            >
+              <GitMergeIcon className="size-3" />
+              {conflictFix.label}
+            </span>
+          </BoardHint>
+        )}
         {card.blocked ? (
           // Only the GATE lives up here (it starts at Ready, D18). A card
           // carries dependencies long before they gate it, and that count is

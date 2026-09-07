@@ -28,6 +28,7 @@ import {
   boardCardUnfinishedChildren,
   boardCardStepState,
   boardRunLabel,
+  boardSelectedStepLabel,
   boardNextStageId,
   boardNonTerminalStepStates,
   boardSeedStageRole,
@@ -1862,7 +1863,19 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId("select-step"),
       cardId: card.id,
       stepId: plan.stepId,
-      stepLabel: plan.stepLabel,
+      // The armed conflict fix is stamped with its own step label (T3O-9), which
+      // is what makes "this card's merge is held by conflicts" a persisted fact
+      // instead of a client-side guess at a running merge-stage step. Stamped
+      // HERE because this is the one place that knows the card is armed; the
+      // executor is role-blind by design. `recoverStep` re-dispatches the row's
+      // label, so a nudged fix keeps it, and the unarmed re-entry conversation
+      // above selects with `stepLabel: null` and so is never one.
+      //
+      // Through `boardSelectedStepLabel` rather than a ternary, because the
+      // label IS the fix's identity downstream: it also takes the reserved
+      // label back off a plan that was not armed, so no future executor can
+      // light the conflict pill and disable Merge by naming a step `Conflicts`.
+      stepLabel: boardSelectedStepLabel(armedConflictFix, plan.stepLabel),
       stageLabel: stage.label,
       prompt,
       providerInstanceId: plan.model.instanceId,
@@ -3595,7 +3608,32 @@ const make = Effect.gen(function* () {
     const card = board.cards.find((candidate) => candidate.id === completion.cardId);
     const state = boardCardStepState(board, completion.cardId);
     if (card === undefined || state === null || state.stepId !== completion.stepId) return;
-    if (isBoardTerminalStepStatus(state.status)) return; // idempotent: already settled
+    if (isBoardTerminalStepStatus(state.status)) {
+      // Ordinarily an already-settled step means this is an idempotent retry
+      // and there is nothing to do. A REPAIRED completion is the exception
+      // (T3O-14): the ledger row the stage executor reads just changed — an
+      // unreadable `succeeded` payload replaced with a readable one, or the
+      // round reopened from the pane — so the stage has to be asked again what
+      // runs next, or the card stays exactly as stuck as the broken record left
+      // it. `replanSettledStage` is the same role-agnostic re-plan a card edit
+      // uses, and acts only on a `run` plan, so a repair the executor has
+      // nothing new to do about stays a no-op.
+      if (event.payload.repaired === true) {
+        // The phase that recorded the broken result is finished with its
+        // thread, exactly as an intra-stage continuation is. Best-effort: a
+        // thread still mid-turn (the agent repairing its own completion) is
+        // refused by the settle guard and simply skipped.
+        if (state.threadId !== null) {
+          yield* dispatchOptional({
+            type: "thread.settle",
+            commandId: yield* commandId("settle-repaired-phase"),
+            threadId: state.threadId,
+          });
+        }
+        yield* replanSettledStage(card);
+      }
+      return;
+    }
     // Refresh trigger: a step boundary in the review stage. The review loop
     // needs the PR open to post on, so this is both the moment the link most
     // likely first appears and a natural heartbeat that catches a PR merged or
