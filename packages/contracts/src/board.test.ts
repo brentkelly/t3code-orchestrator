@@ -1549,6 +1549,36 @@ describe("isBoardCardBaseRetargeted (T3O-5, D14)", () => {
     }
   });
 
+  it("an unpinned card in flight follows the project default when the project MOVES it", () => {
+    // The unpinned rung is resolved live, the cut point is a snapshot, so
+    // moving a project's default retargets every unpinned card that already
+    // has a branch — deliberate (D2), and the reason the picker stores null for
+    // the default rather than its name. Locked here because both readings look
+    // reasonable in isolation: without this, "follow the default" could be
+    // quietly narrowed to "the default as of provisioning" and nothing would
+    // fail.
+    expect(
+      isBoardCardBaseRetargeted({
+        card: { parentCardId: null, baseBranch: null, worktree: worktree("main") },
+        cards: [],
+        defaultBranch: "develop",
+      }),
+    ).toBe(true);
+  });
+
+  it("pinning the branch it was cut from is how a card sits out a default move", () => {
+    // Same project change as above; this card expressed an opinion, so it is
+    // not carried along. The pin is the documented opt-out, so it has to be a
+    // real one.
+    expect(
+      isBoardCardBaseRetargeted({
+        card: { parentCardId: null, baseBranch: "main", worktree: worktree("main") },
+        cards: [],
+        defaultBranch: "develop",
+      }),
+    ).toBe(false);
+  });
+
   it("is false when the base cannot be resolved: staleness is measured, never assumed", () => {
     expect(
       isBoardCardBaseRetargeted({

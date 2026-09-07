@@ -20,6 +20,11 @@ Leaving the picker alone is not the same as picking the default by hand: a card 
 expressed an opinion follows your project's default wherever it goes, so renaming or moving that
 default carries the card with it.
 
+That includes cards already building. If you move your project's default while such a card is in
+flight, it is treated exactly as though you had retargeted it by hand — amber note, rebase onto the
+new default during its next review round. Pick a branch by hand on any card you want left where it
+is.
+
 ## Changing it on an open card
 
 The card's detail shows **Base ·** with the branch it works against, next to Project and Branch.

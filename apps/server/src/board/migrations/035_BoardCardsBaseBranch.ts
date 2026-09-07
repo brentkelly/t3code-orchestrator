@@ -4,15 +4,19 @@
 // defaulting to NULL:
 //
 //   base_branch — the LOCAL branch name this card's work is cut from and merges
-//     back into (D1). NULL means "follow the project default, resolved at
-//     provisioning time" — today's behaviour — and MUST match the decoding
-//     default on BoardCard.baseBranch (contracts board.ts), so a from-empty
-//     replay of a log written before this spec decodes each card's base to null
-//     and a pre-existing row rehydrates to null: replay equals rehydration.
+//     back into (D1). NULL means "follow the project default", resolved live by
+//     `resolveBoardCardEffectiveBase` on every read rather than snapshotted into
+//     this column — today's behaviour — and MUST match the decoding default on
+//     BoardCard.baseBranch (contracts board.ts), so a from-empty replay of a log
+//     written before this spec decodes each card's base to null and a
+//     pre-existing row rehydrates to null: replay equals rehydration.
 //
 // A nullable OVERRIDE rather than a materialised branch name, so a project that
 // later moves its default does not strand a fleet of cards pinned to a branch
-// that no longer exists.
+// that no longer exists. Writing the resolved default in here at provisioning
+// would buy in-flight cards immunity from a default move at the cost of that
+// stranding, and of making "no opinion" indistinguishable from a pin the user
+// never expressed; a card that wants the immunity pins the branch itself.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 

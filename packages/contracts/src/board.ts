@@ -1064,12 +1064,19 @@ export const BoardCard = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** The branch this card's work is cut from and merges back into (T3O-5, D1),
-      or null to FOLLOW THE PROJECT DEFAULT resolved at provisioning time.
+      or null to FOLLOW THE PROJECT DEFAULT — resolved LIVE on every read, never
+      snapshotted into this column when the card is provisioned.
 
       A nullable OVERRIDE, not a stored concrete value: null is what every card
       created before this spec decodes to and what a card whose picker still
       says "default" stores, so a project that later moves its default does not
-      strand a fleet of cards pinned to a dead branch. Modelled field-for-field
+      strand a fleet of cards pinned to a dead branch — it carries them along
+      instead. That tracking is the point, and it reaches cards ALREADY IN
+      FLIGHT: one cut from yesterday's default reads as retargeted the moment
+      the default moves, which raises its amber divergence line and earns it a
+      rebase onto the new one, exactly as a hand-picked retarget would. A card
+      that wants to sit out a default move pins its branch instead of following.
+      Modelled field-for-field
       on `modelOverrides` — nullable column, decoding default of null — so a
       from-empty replay of an older log matches the table-rehydrated model.
 
@@ -6867,6 +6874,15 @@ export function isBoardCardBaseBranchShape(value: string): boolean {
  *
  * A TOP-LEVEL card answers with its own pinned `baseBranch`, or the project
  * default when it has none. That is the single rung this spec adds.
+ *
+ * The unpinned rung is resolved on every call against the default AS IT IS
+ * NOW, deliberately (D2): "follow the default" that stopped following the day
+ * the card was cut would be a pin nobody asked for. The cut point
+ * (`worktree.baseRefName`) is by contrast a snapshot, so the two disagree
+ * whenever a project moves its default under a card that already has a branch —
+ * which is the retarget `isBoardCardBaseRetargeted` is there to surface, not a
+ * drift to paper over. Bounded by the same amber line, confirm-free because the
+ * user changed the project rather than the card, and opted out of by pinning.
  *
  * A SUB-BOARD CHILD ignores its own field entirely (D4) and inherits, exactly
  * as it did before this spec: a LIVE parent branch (`branch-only`,
