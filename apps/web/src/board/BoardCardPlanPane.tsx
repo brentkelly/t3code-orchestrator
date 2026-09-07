@@ -33,6 +33,7 @@ export function BoardCardPlanPane({
   stages = [],
   canApproveSplit = false,
   approveTargetLabel = null,
+  splitRationale = null,
   onApproveSplit,
   onOpenChild,
 }: {
@@ -47,6 +48,11 @@ export function BoardCardPlanPane({
   readonly canApproveSplit?: boolean;
   /** The floor stage's label, for the confirm copy ("land in Ready"). */
   readonly approveTargetLabel?: string | null;
+  /** Why planning proposed this split (t3o card 11) — the argument for the
+      click, read at the moment of the click. Null on a card whose latest
+      proposal was a single plan, and on every split proposed before the
+      rationale existed. */
+  readonly splitRationale?: string | null;
   readonly onApproveSplit?: (() => void) | undefined;
   /** Open one child inside this card's sub-board (t3o-25, AC4); absent keeps
       the chips informational. */
@@ -95,6 +101,13 @@ export function BoardCardPlanPane({
             Materialise {plans.length} plan cards
             {approveTargetLabel === null ? "" : ` into ${approveTargetLabel}`}?
           </p>
+          {splitRationale === null ? null : (
+            // Planning's own case for splitting, above the list of what that
+            // costs — the two things the decision weighs, side by side.
+            <p className="mt-1.5 border-l-2 border-border pl-2 text-[12px] italic text-muted-foreground">
+              {splitRationale}
+            </p>
+          )}
           <ul className="mt-1.5 space-y-0.5 text-[12px] text-muted-foreground">
             {plans.map((plan) => (
               <li key={plan.planId}>
