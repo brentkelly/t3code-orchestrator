@@ -70,6 +70,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     humanInLoop: null,
     reviewOverrides: null,
     modelOverrides: null,
+    baseBranch: null,
     worktree: null,
     blocked: false,
     archivedAt: null,
@@ -162,6 +163,12 @@ function splitShells(count: number) {
 const noop = () => {};
 const baseProps = {
   environmentId,
+  baseBranch: {
+    effective: "main",
+    retargeted: false,
+    inheritedFrom: null,
+    workspaceRoot: "/tmp/project",
+  },
   onMergePullRequest: noop,
   onOpenPullRequest: noop,
   conflictStepRunning: false,

@@ -29,6 +29,7 @@ import {
   activeBoardCardThreadId,
   boardCardArchiveNeedsConfirmation,
   boardCardDisplayPullRequest,
+  boardCardHasLiveBranch,
   boardStageIndex,
   boardNextStageId,
   boardStagesInOrder,
@@ -101,6 +102,8 @@ import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
+import { BoardBaseBranchConfirmDialog } from "./BoardBaseBranchConfirmDialog";
+import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
 import {
   BoardBriefAttachRow,
   BoardBriefThumbnailStrip,
@@ -424,6 +427,27 @@ export interface BoardCardDetailViewProps {
   /** The children's shells, for the Plans panel's live per-child state
       (t3o-29, D1). Empty on every card without a split. */
   readonly childShells?: ReadonlyArray<BoardCardShell> | undefined;
+  /** The card's base branch (T3O-5, D13): what it branches off and merges back
+      into, resolved through `resolveBoardCardEffectiveBase` by the container —
+      the one layer that can see the project's default branch. */
+  readonly baseBranch: {
+    /** The effective base, or null while the project's default is unresolved. */
+    readonly effective: string | null;
+    /** Whether the card's branch was cut from a DIFFERENT base than the one it
+        now names (D14) — the amber divergence line's whole input, derived so it
+        clears itself the moment the two agree again. */
+    readonly retargeted: boolean;
+    /** The parent whose integration branch a sub-board child inherits, which
+        makes the row read-only and names where the value came from. Null on a
+        top-level card. */
+    readonly inheritedFrom: string | null;
+    /** The project's checkout, for the picker's ref query; null when the
+        project is not on this server. */
+    readonly workspaceRoot: string | null;
+  };
+  /** Write the card's base branch; null clears the pin back to the project
+      default. Absent on a sub-board child, which has no base of its own. */
+  readonly onSetBaseBranch?: ((baseBranch: string | null) => void) | undefined;
 }
 
 export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
@@ -1200,6 +1224,7 @@ function humanInLoopDefaultHint(humanInLoop: {
 }
 
 function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
+  const base = props.baseBranch;
   return (
     <div className="border-t border-border p-3.5 text-[11.5px]/[1.7] text-muted-foreground">
       <div>
@@ -1211,7 +1236,87 @@ function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
           Branch · <span className="text-foreground">{props.branch}</span>
         </div>
       )}
+      {/* Base branch (T3O-5, D13). Sits beside `Branch ·`, which shows the
+          ACTIVE THREAD's branch, so the two read coherently: what the card
+          works on, and what it works off. A sub-board child is read-only and
+          names its parent — not hidden, because someone on a child deserves to
+          know what it branches off without hunting for the parent. */}
+      <BoardBaseBranchRow props={props} />
       <div>Created · {formatRelativeTimeLabel(props.detail.card.createdAt)}</div>
+      {base.retargeted && base.effective !== null ? (
+        // Derived, never stored (D14): between retargeting and the rebase that
+        // honours it, the card's stated base and its actual cut point disagree,
+        // and anyone opening the card — including someone who did not click —
+        // deserves to see that. Reverting the base clears this with no further
+        // action, and the rebase that fixes it cannot leave it behind.
+        // Amber, per docs/t3o/status-colours.md: a stale merge base is blocked
+        // work, not a card waiting on a human decision.
+        <div className="mt-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-warning-foreground">
+          Cut from{" "}
+          <span className="font-mono">{props.detail.card.worktree?.baseRefName ?? "?"}</span>, now
+          based on <span className="font-mono">{base.effective}</span>. It is rebased onto{" "}
+          <span className="font-mono">{base.effective}</span> at the next code review round.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProps }) {
+  const base = props.baseBranch;
+  const onSet = props.onSetBaseBranch;
+  const card = props.detail.card;
+  const [confirming, setConfirming] = useState<{ readonly next: string | null } | null>(null);
+  // The confirmation gate (D14). The trigger is a LIVE branch — the same ladder
+  // the base resolver treats as live — because that is exactly when a retarget
+  // costs a rebase and a force-push rather than nothing at all. A `failed`
+  // slice may never have created the ref and a `reclaimed` one has had it
+  // deleted, so neither asks.
+  const cutFrom = boardCardHasLiveBranch(card) ? (card.worktree?.baseRefName ?? null) : null;
+
+  if (base.inheritedFrom !== null || onSet === undefined) {
+    return base.effective === null ? null : (
+      <div>
+        Base · <span className="text-foreground">{base.effective}</span>
+        {base.inheritedFrom === null ? null : (
+          <span className="text-muted-foreground/70"> · from {base.inheritedFrom}</span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <span>Base ·</span>
+      <BoardBaseBranchSelect
+        align="end"
+        baseBranch={card.baseBranch}
+        className="h-5 px-1 text-[11.5px] text-foreground"
+        environmentId={props.environmentId}
+        onSelect={(next) => {
+          if (cutFrom !== null && next !== cutFrom) {
+            setConfirming({ next });
+            return;
+          }
+          onSet(next);
+        }}
+        size="xs"
+        workspaceRoot={base.workspaceRoot}
+      />
+      <BoardBaseBranchConfirmDialog
+        branch={card.worktree?.branch ?? ""}
+        cardKey={card.key}
+        currentBase={cutFrom ?? ""}
+        nextBase={confirming?.next ?? null}
+        onConfirm={() => {
+          if (confirming !== null) onSet(confirming.next);
+          setConfirming(null);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setConfirming(null);
+        }}
+        open={confirming !== null}
+      />
     </div>
   );
 }
