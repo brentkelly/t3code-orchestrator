@@ -105,6 +105,7 @@ export function BoardCardPlanPane({
             // Planning's own case for splitting, above the list of what that
             // costs — the two things the decision weighs, side by side.
             <p className="mt-1.5 border-l-2 border-border pl-2 text-[12px] italic text-muted-foreground">
+              <span className="font-medium not-italic">Why split: </span>
               {splitRationale}
             </p>
           )}
