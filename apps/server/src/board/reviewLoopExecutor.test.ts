@@ -109,6 +109,7 @@ const plan = (
   liveStepId: string | null = null,
   baseStale = false,
   cardOverride: BoardCardStageModelOverride | null = null,
+  baseRetargetedTo: string | null = null,
 ): BoardStagePlan =>
   ReviewLoopExecutor.planNext({
     card: { ...card, reviewOverrides: overrides },
@@ -120,6 +121,7 @@ const plan = (
       liveStepId,
       settledStepId: null,
       baseStale,
+      baseRetargetedTo,
     },
   });
 
@@ -768,6 +770,7 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
     expect(result.kind === "run" && result.stepId).toBe("review@1");
@@ -811,6 +814,7 @@ describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: true,
+        baseRetargetedTo: null,
       },
     });
     expect(result.kind === "run" && result.prompt).toContain("`main`");

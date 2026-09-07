@@ -57,6 +57,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -87,6 +88,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -105,6 +107,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -135,6 +138,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -157,6 +161,7 @@ describe("SimpleStageExecutor.planNext (D15)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -195,6 +200,7 @@ describe("per-card model overrides (t3o-29)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -217,6 +223,7 @@ describe("per-card model overrides (t3o-29)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -237,6 +244,7 @@ describe("per-card model overrides (t3o-29)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -254,6 +262,7 @@ describe("per-card model overrides (t3o-29)", () => {
         liveStepId: null,
         settledStepId: null,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -288,6 +297,7 @@ describe("BuildStageExecutor.planNext (t3o-07, D4/D5)", () => {
         liveStepId: null,
         settledStepId: BOARD_SUBMIT_STEP_ID,
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -303,6 +313,7 @@ describe("BuildStageExecutor.planNext (t3o-07, D4/D5)", () => {
       liveStepId: null,
       settledStepId: "building",
       baseStale: false,
+      baseRetargetedTo: null,
     };
     const input = { card, config: config(), completions: [], runState };
 
@@ -322,6 +333,7 @@ describe("BuildStageExecutor.planNext (t3o-07, D4/D5)", () => {
       liveStepId: null,
       settledStepId: null,
       baseStale: false,
+      baseRetargetedTo: null,
     };
     const input = { card, config: config(), completions: [], runState };
 
@@ -346,6 +358,7 @@ describe("BuildStageExecutor.planNext (t3o-07, D4/D5)", () => {
         // The BUILD step just settled; the submit completion is history.
         settledStepId: "building",
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 
@@ -364,6 +377,7 @@ describe("BuildStageExecutor.planNext (t3o-07, D4/D5)", () => {
         liveStepId: null,
         settledStepId: "review@1",
         baseStale: false,
+        baseRetargetedTo: null,
       },
     });
 

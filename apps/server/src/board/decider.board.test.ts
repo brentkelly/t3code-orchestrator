@@ -62,6 +62,7 @@ function makeCard(
     reviewOverrides: null,
     modelOverrides: null,
     splitRationale: null,
+    baseBranch: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -1854,6 +1855,15 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           baseRefName: "main",
           createdAt: NOW,
         },
+        // Moves the RECORDED base after a retarget rebase (T3O-5, D6) — a
+        // worktree-slice write on a live branch, never a move.
+        "board.card.record-base-ref": {
+          type: "board.card.record-base-ref",
+          commandId: CommandId.make("cmd-record-base-ref"),
+          cardId: BoardCardId.make("card-worktree"),
+          baseRefName: "develop",
+          createdAt: NOW,
+        },
         "board.card.provision-worktree": {
           type: "board.card.provision-worktree",
           commandId: CommandId.make("cmd-provision"),
@@ -2965,5 +2975,117 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           assert.strictEqual(ok.payload.body, "new body");
         }
       }),
+  );
+
+  // ── Per-card base branch (T3O-5, D1/D4/D5) ───────────────────────────
+
+  const updateBase = (cardId: string, baseBranch: string | null): BoardCommand => ({
+    type: "board.card.update",
+    commandId: CommandId.make(`cmd-base-${cardId}`),
+    cardId: BoardCardId.make(cardId),
+    baseBranch,
+    createdAt: NOW,
+  });
+
+  it.effect("AC16: a create without a base branch carries no key at all", () =>
+    Effect.gen(function* () {
+      // Absent and "pinned to whatever main is called today" must stay
+      // different states, or a project that later moves its default would
+      // strand every card ever created on a branch that no longer exists.
+      const event = yield* decide(
+        createCommand({ cardId: "card-new" }),
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.strictEqual(event.type, "board.card-created");
+      if (event.type === "board.card-created") {
+        assert.isFalse("baseBranch" in event.payload);
+      }
+    }),
+  );
+
+  it.effect("a create with a base branch carries it onto the card", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        { ...createCommand({ cardId: "card-new" }), baseBranch: "develop" },
+        makeReadModel({ board: seededBoard() }),
+      );
+      assert.strictEqual(event.type, "board.card-created");
+      if (event.type === "board.card-created") {
+        assert.strictEqual(event.payload.baseBranch, "develop");
+      }
+    }),
+  );
+
+  it.effect("AC4: rejects the ref shapes that would break silently downstream", () =>
+    Effect.gen(function* () {
+      const card = makeCard({ id: "card-1", stage: "ready" });
+      const board = seededBoard([card]);
+      for (const bad of ["origin/develop", "refs/heads/develop"]) {
+        assert.match(
+          String(yield* decideFail(updateBase("card-1", bad), makeReadModel({ board }))),
+          /not a local branch name/,
+        );
+        assert.match(
+          String(
+            yield* decideFail(
+              { ...createCommand({ cardId: "card-new" }), baseBranch: bad },
+              makeReadModel({ board }),
+            ),
+          ),
+          /not a local branch name/,
+        );
+      }
+    }),
+  );
+
+  it.effect("AC3: refuses a base branch on a sub-board child, naming its parent", () =>
+    // A child resolves its parent's integration branch whatever its own field
+    // says, so a stored base would be dead data the resolver ignores — and a
+    // read model that says a card branches from somewhere it does not is worse
+    // than a refused edit.
+    Effect.gen(function* () {
+      const parent = makeCard({ id: "card-parent", stage: "building" });
+      const child = makeCard({
+        id: "card-child",
+        stage: "building",
+        parentCardId: BoardCardId.make("card-parent"),
+      });
+      const failure = yield* decideFail(
+        updateBase("card-child", "develop"),
+        makeReadModel({ board: seededBoard([parent, child]) }),
+      );
+      assert.match(String(failure), /sub-board child of 'card-parent'/);
+    }),
+  );
+
+  it.effect("clears the pin back to the project default on null", () =>
+    Effect.gen(function* () {
+      const card = makeCard({ id: "card-1", stage: "ready", baseBranch: "develop" });
+      const event = yield* decide(
+        updateBase("card-1", null),
+        makeReadModel({ board: seededBoard([card]) }),
+      );
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type === "board.card-updated") {
+        assert.strictEqual(event.payload.card.baseBranch, null);
+      }
+    }),
+  );
+
+  it.effect("an update that ONLY moves the base branch is a real change, not a no-op", () =>
+    // The no-changes guard rejects an update carrying nothing. A base-only edit
+    // has to get past it, or the picker on an otherwise untouched card would
+    // silently do nothing.
+    Effect.gen(function* () {
+      const card = makeCard({ id: "card-1", stage: "ready" });
+      const event = yield* decide(
+        updateBase("card-1", "develop"),
+        makeReadModel({ board: seededBoard([card]) }),
+      );
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type === "board.card-updated") {
+        assert.strictEqual(event.payload.card.baseBranch, "develop");
+      }
+    }),
   );
 });

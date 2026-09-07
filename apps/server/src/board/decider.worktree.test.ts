@@ -52,6 +52,7 @@ function makeCard(
     reviewOverrides: null,
     modelOverrides: null,
     splitRationale: null,
+    baseBranch: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -804,6 +805,93 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
         makeReadModel(boardWith([card])),
       );
       assert.match(String(failure), /no worktree to reclaim/);
+    }),
+  );
+
+  // ── T3O-5, D6: record-base-ref moves a completed retarget's recorded base ──
+
+  const recordBaseRef = (cardId: string, baseRefName: string) =>
+    ({
+      type: "board.card.record-base-ref",
+      commandId: CommandId.make(`cmd-record-base-${cardId}-${baseRefName}`),
+      cardId: BoardCardId.make(cardId),
+      baseRefName,
+      createdAt: NOW,
+    }) as const satisfies BoardCommand;
+
+  it.effect("AC13: a completed retarget moves the recorded base and nothing else", () =>
+    Effect.gen(function* () {
+      const card = makeCard({ id: "card-1", worktree: readyWorktree });
+      const event = yield* decide(
+        recordBaseRef("card-1", "develop"),
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-base-ref-recorded");
+      if (event.type === "board.card-base-ref-recorded") {
+        assert.strictEqual(event.payload.card.worktree?.baseRefName, "develop");
+        // Narrow by construction: the rest of the slice is the rebase's
+        // business, not this command's. A `record-worktree`-shaped write here
+        // would silently re-`ready` a slice mid-provision.
+        assert.strictEqual(event.payload.card.worktree?.branch, readyWorktree.branch);
+        assert.strictEqual(event.payload.card.worktree?.path, readyWorktree.path);
+        assert.strictEqual(event.payload.card.worktree?.status, "ready");
+      }
+    }),
+  );
+
+  it.effect("accepts every LIVE slice, since a rebase can have moved any of them", () =>
+    Effect.gen(function* () {
+      for (const status of ["branch-only", "provisioning", "ready"] as const) {
+        const card = makeCard({
+          id: "card-1",
+          worktree: { ...readyWorktree, status, path: status === "ready" ? "/tmp/wt" : null },
+        });
+        const event = yield* decide(
+          recordBaseRef("card-1", "develop"),
+          makeReadModel(boardWith([card])),
+        );
+        assert.strictEqual(event.type, "board.card-base-ref-recorded");
+      }
+    }),
+  );
+
+  it.effect("refuses a slice with no live branch: nothing there was rebased", () =>
+    Effect.gen(function* () {
+      // `failed` may never have created the ref and `reclaimed` has had it
+      // deleted, so recording a new base on either would assert a
+      // reconciliation that did not happen.
+      for (const status of ["failed", "reclaimed"] as const) {
+        const card = makeCard({
+          id: "card-1",
+          worktree: { ...readyWorktree, status, path: null },
+        });
+        const failure = yield* decideFail(
+          recordBaseRef("card-1", "develop"),
+          makeReadModel(boardWith([card])),
+        );
+        assert.match(String(failure), /no live branch/);
+      }
+      const noSlice = makeCard({ id: "card-1", worktree: null });
+      assert.match(
+        String(
+          yield* decideFail(
+            recordBaseRef("card-1", "develop"),
+            makeReadModel(boardWith([noSlice])),
+          ),
+        ),
+        /no live branch/,
+      );
+    }),
+  );
+
+  it.effect("refuses a no-op re-record rather than landing an empty event", () =>
+    Effect.gen(function* () {
+      const card = makeCard({ id: "card-1", worktree: readyWorktree });
+      const failure = yield* decideFail(
+        recordBaseRef("card-1", readyWorktree.baseRefName),
+        makeReadModel(boardWith([card])),
+      );
+      assert.match(String(failure), /already records base/);
     }),
   );
 });

@@ -55,6 +55,7 @@ function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: str
     reviewOverrides: null,
     modelOverrides: null,
     splitRationale: null,
+    baseBranch: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

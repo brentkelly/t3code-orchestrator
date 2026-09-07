@@ -567,6 +567,11 @@ describe("replay equals rehydration for a pre-t3o-22 log", () => {
     // decode to null overrides rather than an empty map — `{}` and `null` would
     // make a replayed card and a rehydrated one compare unequal.
     assert.strictEqual(decodeBoardCard(legacy).modelOverrides, null);
+    // T3O-5 AC5, the same guarantee for the per-card base branch: migration
+    // 036's `base_branch` column defaults to NULL, and a card created before
+    // this spec genuinely HAD no base branch, so replaying its payload must
+    // reach null — "follow the project default" — rather than any branch name.
+    assert.strictEqual(decodeBoardCard(legacy).baseBranch, null);
   });
 });
 

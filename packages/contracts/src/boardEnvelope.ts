@@ -82,7 +82,17 @@ export interface ComposeStepPromptStep {
 }
 
 export interface ComposeStepPromptInput {
-  readonly card: { readonly key: string; readonly title: string; readonly stage: string };
+  readonly card: {
+    readonly key: string;
+    readonly title: string;
+    readonly stage: string;
+    /** The card's effective base branch (T3O-5, D9) — what its work branches
+        off and merges back into, resolved through
+        `resolveBoardCardEffectiveBase`. Null when it could not be resolved (no
+        workspace, an unresolvable default), in which case the envelope says
+        nothing rather than interpolating placeholder English as a branch name. */
+    readonly baseBranch?: string | null;
+  };
   /** The stage's human label, frozen onto the run row at stage entry (t3o-19,
       D5). Null on a legacy row that predates the freeze, where the stage id is
       the only name available. */
@@ -114,6 +124,9 @@ function completionCall(step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel"
 export function boardStepPreamble(
   input: Pick<ComposeStepPromptInput, "card" | "stageLabel"> & {
     readonly step: Pick<ComposeStepPromptStep, "stepLabel">;
+    /** The stage's effective role (T3O-5, D9): only a `plan`-role step gets the
+        project-root caveat on the base-branch line. */
+    readonly role?: BoardStageRole | null;
   },
 ): string {
   const { card, step } = input;
@@ -121,8 +134,37 @@ export function boardStepPreamble(
   return [
     `You are working card ${card.key}, titled "${card.title}".`,
     step.stepLabel === null ? `Stage: ${stage}.` : `Stage: ${stage}. Step: ${step.stepLabel}.`,
+    ...boardBaseBranchLines({ baseBranch: card.baseBranch ?? null, role: input.role ?? null }),
     `Call board_get_card_context for the brief, plan, dependencies and prior progress.`,
   ].join("\n");
+}
+
+/**
+ * The base-branch orientation line (T3O-5, D9), stated on EVERY stage — one
+ * sentence that answers all three of the brief's pipeline requirements at once.
+ *
+ * Code review needs it most: the shipped review prompt already says "opening one
+ * against its base ref if none exists", and without this the agent has to dig
+ * that out of the context JSON and hope. Building is already checked out on a
+ * branch cut from it, so the line is harmless reinforcement there.
+ *
+ * A `plan`-role step gets a second clause. Plan-mode steps run in the PROJECT
+ * WORKSPACE ROOT with no branch of their own (`admitPlanStep`), so the agent
+ * reads whatever the root happens to have checked out — which may not be the
+ * code the card will change.
+ */
+function boardBaseBranchLines(input: {
+  readonly baseBranch: string | null;
+  readonly role: BoardStageRole | null;
+}): ReadonlyArray<string> {
+  if (input.baseBranch === null) return [];
+  const caveat =
+    input.role === "plan"
+      ? " You are reading the project workspace root, which may have a different branch checked out, so plan against that base rather than whatever is checked out here."
+      : "";
+  return [
+    `This card's base branch is \`${input.baseBranch}\` — its work branches off and merges back into that.${caveat}`,
+  ];
 }
 
 /** The system postamble (D5): branches on human-in-the-loop (an unattended run
@@ -168,7 +210,7 @@ export function boardStepPostamble(input: {
  * the human-in-the-loop stance.
  */
 export function composeStepPrompt(input: ComposeStepPromptInput): string {
-  const preamble = boardStepPreamble(input);
+  const preamble = boardStepPreamble({ ...input, role: input.role });
   const postamble = boardStepPostamble({
     humanInLoop: input.step.humanInLoop,
     role: input.role,
@@ -253,14 +295,62 @@ export function composeBoardSyncPhasePrompt(input: {
       its own checkout) rather than interpolating placeholder English into the
       prompt as if it were a branch name. */
   readonly baseRefName: string | null;
+  /** The base the card is now TARGETED at, when a human retargeted it (T3O-5,
+      D10) and it differs from `baseRefName`. Absent/null is the t3o-24 case:
+      the same base, whose tip merely moved. The rebase machinery is identical
+      either way; only the opening sentence differs, because "a sibling card
+      merged into it" is simply false for a retarget. */
+  readonly retargetedTo?: string | null;
 }): string {
+  const retargeted =
+    input.retargetedTo != null && input.retargetedTo !== input.baseRefName
+      ? input.retargetedTo
+      : null;
   const header =
-    input.baseRefName === null
-      ? `Code review, Sync base step, after round ${input.round}.`
-      : `Code review, Sync base step, after round ${input.round}. This card's base branch is \`${input.baseRefName}\`.`;
+    retargeted !== null
+      ? `Code review, Sync base step, after round ${input.round}. This card's base branch is now \`${retargeted}\`.`
+      : input.baseRefName === null
+        ? `Code review, Sync base step, after round ${input.round}.`
+        : `Code review, Sync base step, after round ${input.round}. This card's base branch is \`${input.baseRefName}\`.`;
+  const opening =
+    retargeted !== null
+      ? `This card's base branch has CHANGED: it was cut from \`${input.baseRefName ?? "its previous base"}\` and has been retargeted at \`${retargeted}\`, so the diff that was reviewed is no longer the diff that would merge. Your whole job is to rebase this card's branch onto \`${retargeted}\`, in this worktree.`
+      : null;
   return [
     header,
-    DEFAULT_BOARD_SYNC_PHASE_PROMPT,
+    opening === null ? DEFAULT_BOARD_SYNC_PHASE_PROMPT : `${opening} ${boardSyncPhaseMechanics()}`,
+    retargeted === null ? null : boardSyncPhasePullRequestRetarget(retargeted),
     "To finish this step, complete with a succeeded outcome and a JSON payload { rebasedSha } naming the commit the rebased branch now points at. One review round then runs on the rebased diff before the card can merge — never skip the rebase or complete succeeded without having pushed it.",
-  ].join("\n\n");
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
+}
+
+/**
+ * The retarget's SECOND half (T3O-5): move the pull request too.
+ *
+ * Only ever appended on a retarget. A pull request opened before the retarget
+ * still names the branch it was created against, and nothing in the board moves
+ * it — the board opens no pull requests itself (the review phase's agent does,
+ * "opening one against its base ref if none exists"), and the retarget round
+ * does not cross the Done boundary, so no fresh one is opened either. Left
+ * alone, the review reads a diff against the old base while the branch sits on
+ * the new one, and the merge lands these commits on a branch the card is no
+ * longer based on. The merge gate refuses exactly that, which is what makes
+ * skipping this visible rather than silent.
+ */
+function boardSyncPhasePullRequestRetarget(retargetedTo: string): string {
+  return `If this card's branch already has an OPEN pull request, retarget it at \`${retargetedTo}\` as well, once the rebase has landed — \`gh pr edit --base ${retargetedTo}\` on GitHub, or the equivalent for this repository's forge. Its base still names the branch it was opened against, and nothing else moves it. The board refuses to merge a pull request whose base disagrees with the branch the card was rebased onto, so a pull request left pointing at the old base strands the card at Ready for merge.`;
+}
+
+/** The rebase MECHANICS half of `DEFAULT_BOARD_SYNC_PHASE_PROMPT` — fetch,
+    rebase, resolve preserving both sides, run the checks, force-with-lease,
+    abort clean and complete `failed` if unsafe. Correct verbatim for both
+    triggers, so a retarget swaps only the opening sentence rather than forking
+    the prompt (T3O-5, D10). Split by locating the first sentence boundary: the
+    default prompt opens with exactly one sentence of WHY. */
+function boardSyncPhaseMechanics(): string {
+  const marker = "Fetch the base branch";
+  const at = DEFAULT_BOARD_SYNC_PHASE_PROMPT.indexOf(marker);
+  return at < 0 ? DEFAULT_BOARD_SYNC_PHASE_PROMPT : DEFAULT_BOARD_SYNC_PHASE_PROMPT.slice(at);
 }

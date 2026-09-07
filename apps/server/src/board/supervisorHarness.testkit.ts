@@ -184,6 +184,7 @@ export const makeBoardCard = (input: {
   reviewOverrides: null,
   modelOverrides: null,
   splitRationale: null,
+  baseBranch: null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],
@@ -406,6 +407,10 @@ export type Harness = {
       `rev-parse refs/heads/<ref>` answers from now on. Every unset ref answers
       the stub's historic "main", so existing fixtures never read stale. */
   readonly setBaseTip: (ref: string, tip: string) => void;
+  /** Every `git` argv the reactor ran, in order. A test asserting that a
+      remote-only base was MATERIALISED (T3O-5, D7) has nowhere else to read it:
+      `git branch develop origin/develop` leaves no trace on the card. */
+  readonly gitInvocations: Effect.Effect<ReadonlyArray<ReadonlyArray<string>>>;
 };
 
 /**
@@ -437,6 +442,15 @@ export function withGovernor(
         Defaults to `latestCommitIso`, so a fixture that only cares "the agent
         committed" keeps reading naturally. */
     readonly latestBranchCommitIso?: string;
+    /** Local branches the stubbed repository does NOT have: a
+        `rev-parse refs/heads/<ref>` for one answers exit 1 with empty stdout,
+        which is what the reactor's base materialisation really sees (T3O-5,
+        D7). Every other ref stays present, so existing fixtures are untouched. */
+    readonly missingBranches?: ReadonlyArray<string>;
+    /** Branches that exist only as `refs/remotes/origin/<ref>`. Combined with
+        `missingBranches` this is the remote-only base the reactor has to
+        materialise locally before it can cut from it. */
+    readonly remoteOnlyBranches?: ReadonlyArray<string>;
     /** Make every git call answer as it does outside a repository: empty
         stdout, exit 128. The driver runs with `allowNonZeroExit`, so this is
         what the reactor's base-branch probes really see when a project's
@@ -721,6 +735,11 @@ export function withGovernor(
     // Movable branch tips for the rev-parse stub (t3o-24) — a plain map, so a
     // test can slide a base tip between pumps without an Effect.
     const baseTips = new Map<string, string>();
+    // Every git argv the reactor ran, and the branches it created through this
+    // stub — the two things a base-materialisation assertion needs and the card
+    // does not record.
+    const gitInvocationLog: Array<ReadonlyArray<string>> = [];
+    const createdBranches = new Set<string>();
     const gitStub = {
       // Branch cleanup's first call. Its absence used to make
       // `deleteCardBranch` throw straight into the reactor's catch-all,
@@ -753,6 +772,7 @@ export function withGovernor(
           },
         }),
       execute: (request: { readonly args?: ReadonlyArray<string> }) => {
+        gitInvocationLog.push(request.args ?? []);
         if (input.notAGitRepo === true) {
           return Effect.succeed({
             stdout: "",
@@ -765,11 +785,30 @@ export function withGovernor(
         // the stub's historic "main" so nothing existing reads differently.
         const ref = request.args?.find((arg) => arg.startsWith("refs/heads/"));
         if (request.args?.[0] === "rev-parse" && ref !== undefined) {
+          const name = ref.slice("refs/heads/".length);
+          // A branch the fixture says is absent answers as git really does:
+          // exit 1, nothing on stdout (T3O-5, D7). `createdBranches` is what a
+          // `git branch <name> <start>` in this same stub added, so
+          // materialising a remote-only base actually makes it present.
+          if (input.missingBranches?.includes(name) === true && !createdBranches.has(name)) {
+            return Effect.succeed({ stdout: "", stderr: "", exitCode: 1 });
+          }
           return Effect.succeed({
-            stdout: baseTips.get(ref.slice("refs/heads/".length)) ?? "main",
+            stdout: baseTips.get(name) ?? "main",
             stderr: "",
             exitCode: 0,
           });
+        }
+        const remoteRef = request.args?.find((arg) => arg.startsWith("refs/remotes/"));
+        if (request.args?.[0] === "rev-parse" && remoteRef !== undefined) {
+          const name = remoteRef.slice("refs/remotes/origin/".length);
+          return input.remoteOnlyBranches?.includes(name) === true
+            ? Effect.succeed({ stdout: "remote-tip", stderr: "", exitCode: 0 })
+            : Effect.succeed({ stdout: "", stderr: "", exitCode: 1 });
+        }
+        if (request.args?.[0] === "branch" && request.args[1] !== undefined) {
+          createdBranches.add(request.args[1]);
+          return Effect.succeed({ stdout: "", stderr: "", exitCode: 0 });
         }
         // `git log -1 --format=%cI` answers the configured commit time (the
         // sweep's commit-liveness signal). A `--not` in the args makes it the
@@ -898,6 +937,7 @@ export function withGovernor(
           removedWorktrees: Ref.get(removedWorktrees),
           settledThreads: Ref.get(settled),
           setBaseTip: (ref, tip) => void baseTips.set(ref, tip),
+          gitInvocations: Effect.sync(() => [...gitInvocationLog]),
         });
       }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
     );

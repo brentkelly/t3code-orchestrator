@@ -19,7 +19,10 @@ import {
   BOARD_LABEL_NAME_MAX_LENGTH,
   BOARD_SEED_STAGE_IDS,
   boardModelSelectionOfOverride,
+  isBoardCardBaseBranchShape,
+  isBoardCardBaseRetargeted,
   isEmptyBoardCardModelOverrides,
+  resolveBoardCardEffectiveBase,
   resolveBoardCardStageModelOverride,
   BoardCardId,
   boardCardArchiveNeedsConfirmation,
@@ -58,6 +61,7 @@ import {
   type BoardPlan,
   type BoardState,
 } from "./board.ts";
+import type { BoardCardWorktree } from "./board.ts";
 import { OrchestrationShellSnapshot } from "./orchestration.ts";
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -147,6 +151,7 @@ const typicalCard = (index: number): BoardCard => ({
   reviewOverrides: null,
   modelOverrides: null,
   splitRationale: null,
+  baseBranch: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",
@@ -1445,6 +1450,184 @@ describe("children actively working (deriveBoardCardChildRunning)", () => {
     });
     expect(running.get(parentId)).toBe(1);
     expect(running.get(otherParentId)).toBe(1);
+  });
+});
+
+// ── Per-card base branch (T3O-5) ────────────────────────────────────────────
+
+describe("base branch shape (T3O-5, D5)", () => {
+  it("accepts an ordinary local branch name, slashes and all", () => {
+    for (const name of ["main", "develop", "release/2.4", "feat/board-mode", "v1.0"]) {
+      expect(isBoardCardBaseBranchShape(name)).toBe(true);
+    }
+  });
+
+  it("rejects the two shapes that would break silently downstream", () => {
+    // `measureBaseTip`, `pullMergedBaseBranch` and the rebase target all
+    // re-qualify a recorded base as `refs/heads/<name>`. An `origin/`-prefixed
+    // or `refs/`-qualified value does not error there — it quietly measures
+    // nothing, or creates a local branch literally called `origin/develop`.
+    expect(isBoardCardBaseBranchShape("origin/develop")).toBe(false);
+    expect(isBoardCardBaseBranchShape("refs/heads/develop")).toBe(false);
+  });
+
+  it("rejects the shapes git would not accept as a branch name either", () => {
+    for (const name of ["", "   ", " develop", "develop ", "a b", "/develop", "develop/", "a..b"]) {
+      expect(isBoardCardBaseBranchShape(name)).toBe(false);
+    }
+  });
+});
+
+describe("resolveBoardCardEffectiveBase (T3O-5, D2/D3)", () => {
+  const topLevel = (baseBranch: string | null) => ({ parentCardId: null, baseBranch });
+
+  it("AC1: a card with no pin follows the project default", () => {
+    expect(
+      resolveBoardCardEffectiveBase({ card: topLevel(null), cards: [], defaultBranch: "main" }),
+    ).toBe("main");
+  });
+
+  it("AC2: a pinned card resolves its pin", () => {
+    expect(
+      resolveBoardCardEffectiveBase({
+        card: topLevel("develop"),
+        cards: [],
+        defaultBranch: "main",
+      }),
+    ).toBe("develop");
+  });
+
+  it("answers null rather than inventing a branch when the default is unresolved", () => {
+    // A client that has not loaded the project's refs yet must render nothing,
+    // not a guess: the picker's value, the amber line and the reactor all read
+    // this one function.
+    expect(
+      resolveBoardCardEffectiveBase({ card: topLevel(null), cards: [], defaultBranch: null }),
+    ).toBeNull();
+  });
+
+  it("AC3: a child inherits its parent's live branch, whatever its own field says", () => {
+    const parent = {
+      id: BoardCardId.make("card-parent"),
+      worktree: {
+        branch: "board/card-parent",
+        baseRefName: "main",
+        path: null,
+        status: "branch-only" as const,
+        attempts: 1,
+        lastError: null,
+        reclaimBlockedReason: null,
+      },
+      pullRequest: null,
+      pullRequestHistory: [],
+    };
+    expect(
+      resolveBoardCardEffectiveBase({
+        // Dead data by construction — the decider refuses to write it — and the
+        // resolver must ignore it even so, or a stale row would silently
+        // redirect a child away from its integration branch.
+        card: { parentCardId: parent.id, baseBranch: "develop" },
+        cards: [parent],
+        defaultBranch: "main",
+      }),
+    ).toBe("board/card-parent");
+  });
+});
+
+describe("isBoardCardBaseRetargeted (T3O-5, D14)", () => {
+  const worktree = (baseRefName: string, status: BoardCardWorktree["status"] = "ready") => ({
+    branch: "board/T3-1",
+    baseRefName,
+    path: status === "branch-only" ? null : "/tmp/wt",
+    status,
+    attempts: 1,
+    lastError: null,
+    reclaimBlockedReason: null,
+  });
+
+  it("is true when the card's stated base is not the one its branch was cut from", () => {
+    expect(
+      isBoardCardBaseRetargeted({
+        card: { parentCardId: null, baseBranch: "develop", worktree: worktree("main") },
+        cards: [],
+        defaultBranch: "main",
+      }),
+    ).toBe(true);
+  });
+
+  it("AC19: reverting the pin clears it, with no stored flag to unset", () => {
+    expect(
+      isBoardCardBaseRetargeted({
+        card: { parentCardId: null, baseBranch: null, worktree: worktree("main") },
+        cards: [],
+        defaultBranch: "main",
+      }),
+    ).toBe(false);
+  });
+
+  it("is false before a branch exists, and after one is reclaimed", () => {
+    // Nothing is cut yet (or the ref is gone), so there is nothing to be
+    // diverged FROM — a warning here would be about a rebase nobody needs.
+    expect(
+      isBoardCardBaseRetargeted({
+        card: { parentCardId: null, baseBranch: "develop", worktree: null },
+        cards: [],
+        defaultBranch: "main",
+      }),
+    ).toBe(false);
+    for (const status of ["failed", "reclaimed"] as const) {
+      expect(
+        isBoardCardBaseRetargeted({
+          card: {
+            parentCardId: null,
+            baseBranch: "develop",
+            worktree: worktree("main", status),
+          },
+          cards: [],
+          defaultBranch: "main",
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("an unpinned card in flight follows the project default when the project MOVES it", () => {
+    // The unpinned rung is resolved live, the cut point is a snapshot, so
+    // moving a project's default retargets every unpinned card that already
+    // has a branch — deliberate (D2), and the reason the picker stores null for
+    // the default rather than its name. Locked here because both readings look
+    // reasonable in isolation: without this, "follow the default" could be
+    // quietly narrowed to "the default as of provisioning" and nothing would
+    // fail.
+    expect(
+      isBoardCardBaseRetargeted({
+        card: { parentCardId: null, baseBranch: null, worktree: worktree("main") },
+        cards: [],
+        defaultBranch: "develop",
+      }),
+    ).toBe(true);
+  });
+
+  it("pinning the branch it was cut from is how a card sits out a default move", () => {
+    // Same project change as above; this card expressed an opinion, so it is
+    // not carried along. The pin is the documented opt-out, so it has to be a
+    // real one.
+    expect(
+      isBoardCardBaseRetargeted({
+        card: { parentCardId: null, baseBranch: "main", worktree: worktree("main") },
+        cards: [],
+        defaultBranch: "develop",
+      }),
+    ).toBe(false);
+  });
+
+  it("is false when the base cannot be resolved: staleness is measured, never assumed", () => {
+    expect(
+      isBoardCardBaseRetargeted({
+        card: { parentCardId: null, baseBranch: null, worktree: worktree("main") },
+        cards: [],
+        defaultBranch: null,
+      }),
+    ).toBe(false);
   });
 });
 

@@ -52,6 +52,7 @@ function makeCard(
     reviewOverrides: null,
     modelOverrides: null,
     splitRationale: null,
+    baseBranch: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

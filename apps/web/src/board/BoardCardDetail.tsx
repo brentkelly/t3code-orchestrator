@@ -22,6 +22,8 @@ import {
   areBoardStagesAdjacent,
   boardCardAttention,
   boardStageWithRole,
+  isBoardCardBaseRetargeted,
+  resolveBoardCardEffectiveBase,
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterBuild,
   deriveBoardCardThreadState,
@@ -62,6 +64,7 @@ import { boardQueueInfo } from "./boardQueueInfo";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
+import { usePaginatedBranches } from "../state/queries";
 import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
 import { usePrimarySettings } from "../hooks/useSettings";
@@ -478,6 +481,31 @@ export function BoardCardDetail({
   // request is durable on the step row, so asking again is harmless.
   const [forceStartPending, setForceStartPending] = useState(false);
 
+  // ── Base branch (T3O-5, D3/D13) ────────────────────────────────────────
+  // The container resolves the card's base because it is the only layer that
+  // can see the project's default branch — the effective base is one shared
+  // function (`resolveBoardCardEffectiveBase`), so the detail row, the picker's
+  // value, the divergence line and the reactor cannot disagree about it.
+  //
+  // The default is read from the project's ref list rather than guessed:
+  // `VcsRef.isDefault` is the same fact `resolveDefaultBranch` reads
+  // server-side. A card carrying a PIN never needs it, so the query is skipped
+  // there — and when it is not skipped it shares the picker's atom exactly,
+  // so opening a card costs one ref listing, not two.
+  const baseBranchProject =
+    snapshot?.projects.find((entry) => entry.id === card?.projectId) ?? null;
+  const baseBranchWorkspaceRoot = baseBranchProject?.workspaceRoot ?? null;
+  const projectRefs = usePaginatedBranches(
+    useMemo(
+      () => ({
+        environmentId,
+        cwd: card !== null && card.baseBranch === null ? baseBranchWorkspaceRoot : null,
+      }),
+      [baseBranchWorkspaceRoot, card, environmentId],
+    ),
+  );
+  const projectDefaultBranch = projectRefs.refs.find((ref) => ref.isDefault)?.name ?? null;
+
   if (detail === null || card === null) {
     // The shell already knows the stage, so the empty frame opens at the width
     // the detail will need — no jump from sheet to working surface.
@@ -498,6 +526,36 @@ export function BoardCardDetail({
     activeThreadId === null
       ? null
       : (snapshot?.threads.find((thread) => thread.id === activeThreadId)?.branch ?? null);
+
+  // A sub-board child reads its inherited base off its OWN recorded slice
+  // rather than re-deriving the parent's: the bounded shell carries no worktree,
+  // so the parent's live integration branch is simply not on the client — and
+  // `worktree.baseRefName` IS that branch, written by the very resolver the row
+  // would otherwise duplicate. Before provisioning there is nothing to show, and
+  // a child's row is read-only anyway, so no human can retarget it into
+  // disagreement.
+  const baseBranchInfo =
+    card.parentCardId !== null
+      ? {
+          effective: card.worktree?.baseRefName ?? null,
+          retargeted: false,
+          inheritedFrom: parentCard?.key ?? "its parent",
+          workspaceRoot: baseBranchWorkspaceRoot,
+        }
+      : {
+          effective: resolveBoardCardEffectiveBase({
+            card,
+            cards: [],
+            defaultBranch: projectDefaultBranch,
+          }),
+          retargeted: isBoardCardBaseRetargeted({
+            card,
+            cards: [],
+            defaultBranch: projectDefaultBranch,
+          }),
+          inheritedFrom: null,
+          workspaceRoot: baseBranchWorkspaceRoot,
+        };
 
   // Per-card human-in-the-loop stance on the Build role (D6): shown only when
   // the card is on the build stage. The default flips on whether the card has a
@@ -669,6 +727,15 @@ export function BoardCardDetail({
       onRestartStage={restartStage}
       onCreateBlankThread={createBlankThread}
       branch={branch}
+      baseBranch={baseBranchInfo}
+      onSetBaseBranch={
+        card.parentCardId === null
+          ? (next) =>
+              runCommand(
+                updateCard({ environmentId, input: { cardId: card.id, baseBranch: next } }),
+              )
+          : undefined
+      }
       humanInLoop={humanInLoop}
       onSetHumanInLoop={(value) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, humanInLoop: value } }))

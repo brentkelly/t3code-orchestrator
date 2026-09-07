@@ -97,7 +97,7 @@ it.effect("derives a namespaced, sanitised branch name from the card key", () =>
 it.effect("resolves a top-level card's base to the project default branch", () =>
   Effect.sync(() => {
     const base = resolveBoardCardBaseRef({
-      card: { parentCardId: null },
+      card: { parentCardId: null, baseBranch: null },
       cards: [],
       defaultBranch: "main",
     });
@@ -122,7 +122,7 @@ it.effect("resolves a plan card's base to its parent's integration branch", () =
       pullRequestHistory: [],
     };
     const base = resolveBoardCardBaseRef({
-      card: { parentCardId: "parent" as never },
+      card: { parentCardId: "parent" as never, baseBranch: null },
       cards: [parent],
       defaultBranch: "main",
     });
@@ -159,7 +159,7 @@ it.effect("falls back to the merged base only when the parent has no live branch
       pullRequestHistory: [],
     };
     const base = resolveBoardCardBaseRef({
-      card: { parentCardId: "parent" as never },
+      card: { parentCardId: "parent" as never, baseBranch: null },
       cards: [parent],
       defaultBranch: "main",
     });
@@ -175,7 +175,7 @@ it.effect("falls back to the merged base only when the parent has no live branch
     };
     assert.strictEqual(
       resolveBoardCardBaseRef({
-        card: { parentCardId: "parent" as never },
+        card: { parentCardId: "parent" as never, baseBranch: null },
         cards: [ontoIntegration],
         defaultBranch: "main",
       }),
@@ -194,7 +194,7 @@ it.effect("falls back to the merged base only when the parent has no live branch
     };
     assert.strictEqual(
       resolveBoardCardBaseRef({
-        card: { parentCardId: "parent" as never },
+        card: { parentCardId: "parent" as never, baseBranch: null },
         cards: [reopened],
         defaultBranch: "main",
       }),
@@ -210,7 +210,7 @@ it.effect("falls back to the merged base only when the parent has no live branch
     };
     assert.strictEqual(
       resolveBoardCardBaseRef({
-        card: { parentCardId: "parent" as never },
+        card: { parentCardId: "parent" as never, baseBranch: null },
         cards: [unmerged],
         defaultBranch: "main",
       }),
@@ -228,7 +228,7 @@ it.effect("falls back to the merged base only when the parent has no live branch
     };
     assert.strictEqual(
       resolveBoardCardBaseRef({
-        card: { parentCardId: "parent" as never },
+        card: { parentCardId: "parent" as never, baseBranch: null },
         cards: [secondRound],
         defaultBranch: "main",
       }),
@@ -246,7 +246,7 @@ it.effect("returns null when a plan card's parent has no branch yet", () =>
       pullRequestHistory: [],
     };
     const base = resolveBoardCardBaseRef({
-      card: { parentCardId: "parent" as never },
+      card: { parentCardId: "parent" as never, baseBranch: null },
       cards: [parent],
       defaultBranch: "main",
     });

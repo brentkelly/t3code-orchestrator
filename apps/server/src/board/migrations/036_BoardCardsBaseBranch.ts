@@ -1,0 +1,46 @@
+// T3o: the per-card base branch on board_cards (T3O-5).
+//
+// One column, additive and guarded exactly like 029's `model_overrides`, and
+// defaulting to NULL:
+//
+//   base_branch — the LOCAL branch name this card's work is cut from and merges
+//     back into (D1). NULL means "follow the project default", resolved live by
+//     `resolveBoardCardEffectiveBase` on every read rather than snapshotted into
+//     this column — today's behaviour — and MUST match the decoding default on
+//     BoardCard.baseBranch (contracts board.ts), so a from-empty replay of a log
+//     written before this spec decodes each card's base to null and a
+//     pre-existing row rehydrates to null: replay equals rehydration.
+//
+// A nullable OVERRIDE rather than a materialised branch name, so a project that
+// later moves its default does not strand a fleet of cards pinned to a branch
+// that no longer exists. Writing the resolved default in here at provisioning
+// would buy in-flight cards immunity from a default move at the cost of that
+// stranding, and of making "no opinion" indistinguishable from a pin the user
+// never expressed; a card that wants the immunity pins the branch itself.
+//
+// Numbered 036 and not 035: this column was written as 035 on its own branch,
+// and trunk landed `split_rationale` as 035 first. That leaves one database
+// shape the ledger cannot repair by itself — a dev database that applied the
+// earlier 035 has its high-water mark at 35, so upstream's 035 is skipped
+// forever and `split_rationale` never arrives. Hence the second guarded add
+// below: a no-op on every ordinary database, and the repair on that one.
+import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+export default Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const columns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(board_cards)
+  `;
+  const has = (name: string) => columns.some((column) => column.name === name);
+
+  if (!has("base_branch")) {
+    yield* sql`ALTER TABLE board_cards ADD COLUMN base_branch TEXT`;
+  }
+
+  // See the renumber note above. Identical to 035's own guarded add, so a
+  // database that ran 035 normally reaches this already satisfied.
+  if (!has("split_rationale")) {
+    yield* sql`ALTER TABLE board_cards ADD COLUMN split_rationale TEXT`;
+  }
+});

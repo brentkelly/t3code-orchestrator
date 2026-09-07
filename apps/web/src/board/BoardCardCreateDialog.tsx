@@ -67,6 +67,7 @@ import {
   useBoardBriefAttachments,
 } from "./BoardBriefAttachments";
 import { boardAttachmentLimits } from "./boardAttachmentUpload";
+import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
 import { BoardLabelField } from "./BoardLabelField";
 import { boardStageLabel } from "./boardStages";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
@@ -139,6 +140,9 @@ export function BoardCardCreateDialog({
 
   const initialProjectId = defaultProjectId ?? projects[0]?.id ?? null;
   const [projectId, setProjectId] = useState<ProjectId | null>(initialProjectId);
+  // The card's base branch (T3O-5, D13): null follows the chosen project's
+  // default, which is what the picker reads until someone changes it.
+  const [baseBranch, setBaseBranch] = useState<string | null>(null);
   const [stage, setStage] = useState<BoardStageId>(defaultStage);
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
@@ -156,6 +160,7 @@ export function BoardCardCreateDialog({
   useEffect(() => {
     if (open && !wasOpen.current) {
       setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
+      setBaseBranch(null);
       setStage(defaultStage);
       setTitle("");
       setBrief("");
@@ -210,6 +215,12 @@ export function BoardCardCreateDialog({
   // The stages a card may be created into: every stage (D10) for a top-level
   // card, the materialisation floor onward for a sub-board child (t3o-25) —
   // the same subset the decider lets a child occupy.
+  // The chosen project's checkout — where the base branch's refs live (D11).
+  // Null when the project is not on this server, which disables the picker
+  // rather than querying refs of nothing.
+  const workspaceRoot =
+    snapshot?.projects.find((project) => project.id === projectId)?.workspaceRoot ?? null;
+
   const stageOptions = useMemo(() => {
     const stageState = stageStateOf(stages);
     const ordered = boardStagesInOrder(stageState);
@@ -271,6 +282,10 @@ export function BoardCardCreateDialog({
         labels: labelIds,
         dependsOn,
         ...(trimmedBrief.length === 0 ? {} : { brief: trimmedBrief }),
+        // Absent when the picker was never moved off the project default
+        // (T3O-5, D12/D16): "no opinion" and "pinned to whatever main is
+        // called today" must not collapse into the same stored value.
+        ...(baseBranch === null ? {} : { baseBranch }),
         // The child preset (t3o-25): a card created inside a drill-in is that
         // parent's child, exactly as if a plan had materialised it.
         ...(subBoardParentId === null ? {} : { parentCardId: subBoardParentId }),
@@ -352,55 +367,86 @@ export function BoardCardCreateDialog({
             </p>
           ) : null}
 
-          <div className="min-w-0">
-            <BoardSectionHeading className="mb-[7px]">Project</BoardSectionHeading>
-            <Select
-              items={projects.map((project) => ({
-                value: project.id as string,
-                label: project.title,
-              }))}
-              modal={false}
-              onValueChange={(value: string | null) => {
-                if (value === null || value === projectId) return;
-                setProjectId(value as ProjectId);
-                // Chosen dependencies belong to the old project, so they can no
-                // longer be depended on — drop them rather than submit an
-                // out-of-project edge.
-                setDependsOn([]);
-              }}
-              value={projectId ?? ""}
-            >
-              <SelectTrigger aria-label="Project" size="sm">
-                {projectId === null ? null : (
-                  <span
-                    className={cn(
-                      "size-2 shrink-0 rounded-full",
-                      projectAccent(projectId, resolveBoardProjectAccent(boardSettings, projectId))
-                        .dot,
-                    )}
-                  />
-                )}
-                <SelectValue placeholder="Project" />
-              </SelectTrigger>
-              <SelectPopup>
-                {projects.map((project) => (
-                  <SelectItem key={project.id} value={project.id}>
-                    <span className="inline-flex items-center gap-1.5">
-                      <span
-                        className={cn(
-                          "size-2 rounded-full",
-                          projectAccent(
-                            project.id,
-                            resolveBoardProjectAccent(boardSettings, project.id),
-                          ).dot,
-                        )}
-                      />
-                      {project.title}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
+          {/* Project and Base branch share a row (T3O-5, D13): the base is a
+              property of the project's checkout, so the two read as one
+              decision. A sub-board child never gets here — the drill-in's
+              create dialog presets a parent, and a child inherits that
+              parent's integration branch (D4). */}
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <BoardSectionHeading className="mb-[7px]">Project</BoardSectionHeading>
+              <Select
+                items={projects.map((project) => ({
+                  value: project.id as string,
+                  label: project.title,
+                }))}
+                modal={false}
+                onValueChange={(value: string | null) => {
+                  if (value === null || value === projectId) return;
+                  setProjectId(value as ProjectId);
+                  // Chosen dependencies belong to the old project, so they can no
+                  // longer be depended on — drop them rather than submit an
+                  // out-of-project edge.
+                  setDependsOn([]);
+                  // Same reasoning for the base branch (T3O-5, D13): a branch
+                  // named in the old project's checkout says nothing about the
+                  // new one. Back to that project's default.
+                  setBaseBranch(null);
+                }}
+                value={projectId ?? ""}
+              >
+                <SelectTrigger aria-label="Project" size="sm">
+                  {projectId === null ? null : (
+                    <span
+                      className={cn(
+                        "size-2 shrink-0 rounded-full",
+                        projectAccent(
+                          projectId,
+                          resolveBoardProjectAccent(boardSettings, projectId),
+                        ).dot,
+                      )}
+                    />
+                  )}
+                  <SelectValue placeholder="Project" />
+                </SelectTrigger>
+                <SelectPopup>
+                  {projects.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "size-2 rounded-full",
+                            projectAccent(
+                              project.id,
+                              resolveBoardProjectAccent(boardSettings, project.id),
+                            ).dot,
+                          )}
+                        />
+                        {project.title}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
+
+            {subBoardParentId === null ? (
+              <div className="min-w-0 flex-1">
+                <BoardSectionHeading className="mb-[7px]">
+                  Base branch{" "}
+                  <span className="font-normal text-muted-foreground normal-case">
+                    work branches off this
+                  </span>
+                </BoardSectionHeading>
+                <BoardBaseBranchSelect
+                  baseBranch={baseBranch}
+                  className="h-8 w-full"
+                  environmentId={environmentId}
+                  onSelect={(next) => setBaseBranch(next)}
+                  workspaceRoot={workspaceRoot}
+                />
+              </div>
+            ) : null}
           </div>
 
           {/* Labels — pills for what is chosen, one autocomplete to change it. */}

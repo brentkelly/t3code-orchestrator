@@ -176,6 +176,10 @@ export function reviewLoopDecision(input: {
   /** The card's recorded base branch, for the sync prompt; null when the card
       has no worktree slice (in which case `baseStale` is false anyway). */
   readonly baseRefName: string | null;
+  /** The base a human RETARGETED the card at (T3O-5, D10), when that differs
+      from `baseRefName`; null for the ordinary tip-moved staleness. Read only
+      to word the sync prompt — the rebase mechanics are identical either way. */
+  readonly baseRetargetedTo: string | null;
 }): BoardStagePlan {
   const { review, config, overrides } = input;
   const done = succeededReviewSteps(input.completions);
@@ -247,6 +251,7 @@ export function reviewLoopDecision(input: {
     prompt: composeBoardSyncPhasePrompt({
       round,
       baseRefName: input.baseRefName,
+      retargetedTo: input.baseRetargetedTo,
     }),
     model: config.model,
     runtimeMode: config.runtimeMode,
@@ -392,6 +397,7 @@ export const ReviewLoopExecutor: BoardStageExecutor = {
       // Reactor-measured (t3o-24, D1): pure planNext cannot rev-parse.
       baseStale: input.runState.baseStale,
       baseRefName: input.card.worktree?.baseRefName ?? null,
+      baseRetargetedTo: input.runState.baseRetargetedTo,
     });
   },
 };

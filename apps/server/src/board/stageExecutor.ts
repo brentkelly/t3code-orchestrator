@@ -121,6 +121,15 @@ export interface BoardStageRunState {
       decide whether a sync-base step stands between the loop and `succeeded`;
       every other executor ignores it. */
   readonly baseStale: boolean;
+  /** The base the card has been RETARGETED at (T3O-5, D10), when a human moved
+      the picker after the branch was cut and the recorded base has not caught
+      up; null on the ordinary tip-moved staleness and whenever nothing was
+      retargeted. Reactor-resolved for the same reason `baseStale` is —
+      `resolveBoardCardEffectiveBase` needs the project's default branch, which
+      only git can answer. The review-loop executor reads it to word the sync
+      step's prompt: "a sibling merged into it" is simply false for a retarget,
+      and the rebase mechanics are identical either way. */
+  readonly baseRetargetedTo: string | null;
   /** The step that just SETTLED, or null on stage entry (t3o-07, D5).
    *
    * Distinct from `liveStepId`, which means "in flight": a run state that can

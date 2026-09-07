@@ -179,6 +179,10 @@ const BoardCardDbRow = Schema.Struct({
       replay equals rehydration (t3o card 11). Plain text, not JSON: one prose
       paragraph the human reads at the Approve split gate. */
   splitRationale: BoardCard.fields.splitRationale,
+  /** NULL for every row written before migration 036, and for every card that
+      follows its project's default branch — indistinguishable on purpose, which
+      is what makes replay equal rehydration (T3O-5, D1). */
+  baseBranch: BoardCard.fields.baseBranch,
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -561,6 +565,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
       ? null
       : card.modelOverrides,
     splitRationale: card.splitRationale,
+    baseBranch: card.baseBranch,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -607,6 +612,7 @@ function rowToBoardCard(
     reviewOverrides: row.reviewOverrides,
     modelOverrides: row.modelOverrides,
     splitRationale: row.splitRationale,
+    baseBranch: row.baseBranch,
     blocked: row.blocked !== 0,
     threadLinks,
     attachments,
@@ -665,6 +671,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides,
         model_overrides,
         split_rationale,
+        base_branch,
         blocked,
         archived_at,
         created_at,
@@ -691,6 +698,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.reviewOverrides},
         ${row.modelOverrides},
         ${row.splitRationale},
+        ${row.baseBranch},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -717,6 +725,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides = excluded.review_overrides,
         model_overrides = excluded.model_overrides,
         split_rationale = excluded.split_rationale,
+        base_branch = excluded.base_branch,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -753,6 +762,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides AS "reviewOverrides",
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
+        base_branch AS "baseBranch",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -975,6 +985,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides AS "reviewOverrides",
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
+        base_branch AS "baseBranch",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -2659,6 +2670,13 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       case "board.card-integration-branch-recorded":
         // Detail-only state (the worktree slice); the rail says nothing — the
         // approval row above already covers the moment.
+        yield* upsertCard(event.payload.card);
+        return;
+
+      case "board.card-base-ref-recorded":
+        // A retarget rebase landed (T3O-5, D6) and moved the recorded base.
+        // Detail-only, and the rail says nothing: the sync step's own
+        // completion row already covers the moment.
         yield* upsertCard(event.payload.card);
         return;
 

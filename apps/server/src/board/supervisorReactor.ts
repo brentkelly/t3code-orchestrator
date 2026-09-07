@@ -37,7 +37,10 @@ import {
   boardStepErrorSummary,
   boardStageIndex,
   isBoardStageAtOrAfterBuild,
+  boardCardHasLiveBranch,
   boardStageWithRole,
+  parseReviewStepId,
+  resolveBoardCardEffectiveBase,
   CommandId,
   BOARD_ENVELOPE_QUESTION_MECHANISM,
   boardTextEndsWithQuestion,
@@ -809,6 +812,59 @@ const make = Effect.gen(function* () {
     return { defaultBranch, detachedHead: currentBranch === "HEAD" };
   });
 
+  /**
+   * Make sure `base` names a LOCAL branch in `cwd` (T3O-5, D7), creating it
+   * from `<remote>/<base>` when it exists only on the remote. Answers whether
+   * the caller may go on to cut from it.
+   *
+   * Why this and not "just use origin/develop": three call sites re-qualify the
+   * recorded base as a local ref and each fails SILENTLY on a remote-qualified
+   * one — `measureBaseTip` stops measuring staleness with no error,
+   * `pullMergedBaseBranch` creates a local branch literally named
+   * `origin/develop`, and the retarget rebase targets a ref that drifts under
+   * the branch. Materialising once here keeps every reader honest.
+   *
+   * Idempotent: a base that already exists locally is the desired state, and a
+   * raced creation is re-checked rather than treated as fatal.
+   */
+  const ensureLocalBaseBranch = Effect.fn("board-supervisor-ensureLocalBaseBranch")(function* (
+    cwd: string,
+    base: string,
+  ) {
+    const gitRef = (args: ReadonlyArray<string>) =>
+      git
+        .execute({
+          operation: "boardCardWorktree.baseRef",
+          cwd,
+          args: [...args],
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
+          Effect.catchCause(() => Effect.succeed("")),
+        );
+    if ((yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`])) !== "") {
+      return true;
+    }
+    const remoteName = yield* git
+      .resolvePrimaryRemoteName(cwd)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (remoteName === null) return false;
+    if (
+      (yield* gitRef([
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/remotes/${remoteName}/${base}`,
+      ])) === ""
+    ) {
+      return false;
+    }
+    yield* gitRef(["branch", base, `${remoteName}/${base}`]);
+    return (yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`])) !== "";
+  });
+
   const ensureWorktree = Effect.fn("board-supervisor-ensureWorktree")(function* (card: BoardCard) {
     if (card.worktree !== null && card.worktree.status === "ready" && card.worktree.path !== null) {
       return card.worktree.path;
@@ -876,6 +932,22 @@ const make = Effect.gen(function* () {
           : detachedHead
             ? `The project checkout at ${cwd} is on a detached HEAD, so there is no branch to cut the card's branch from.`
             : `${cwd} is not a git repository, or has no commits yet, so there is no branch to cut the card's branch from.`,
+      );
+      return null;
+    }
+    // The base must exist LOCALLY (T3O-5, D7): `worktree.baseRefName` is read
+    // back as `refs/heads/<base>` by `measureBaseTip`, fetched as
+    // `<base>:<base>` by `pullMergedBaseBranch`, and used verbatim as the
+    // rebase target — each breaks silently on a remote-qualified name. So a
+    // base that exists only on the remote is materialised first, exactly as
+    // `ensureIntegrationBranch` materialises its own branch below.
+    if (!(yield* ensureLocalBaseBranch(cwd, baseRefName))) {
+      // Never fall back to the default. A card pinned to `release/2.4` that
+      // silently builds off `main` is worse than a card that does not build,
+      // and this path is card-visible and retryable.
+      yield* failWorktree(
+        card,
+        `The card's base branch '${baseRefName}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the card's branch from.`,
       );
       return null;
     }
@@ -1131,10 +1203,21 @@ const make = Effect.gen(function* () {
 
   /** The prompt for a step's run, composed from the frozen run row (D12). The
       role keys the envelope's deliverable postamble segment; roles are seeded,
-      never created, so the card's stage id resolves it without a board read. */
-  const stepPromptFor = (card: BoardCard, state: BoardCardStepState): string =>
-    composeStepPrompt({
-      card,
+      never created, so the card's stage id resolves it without a board read.
+
+      The base branch (T3O-5, D9) is the one thing that needs a lookup: the
+      envelope names it on every stage, and answering it for an UNPINNED card
+      means asking git what the project's default branch is. Preference order is
+      the concrete fact first — `worktree.baseRefName` is what the branch was
+      really cut from — then the pin, then the resolved default, so a build or
+      review step states the branch it is genuinely working against rather than
+      the one someone has just retargeted it at but not yet rebased onto. */
+  const stepPromptFor = Effect.fn("board-supervisor-stepPromptFor")(function* (
+    card: BoardCard,
+    state: BoardCardStepState,
+  ) {
+    return composeStepPrompt({
+      card: { ...card, baseBranch: yield* resolvePromptBaseBranch(card) },
       stageLabel: state.stageLabel,
       step: {
         stepId: state.stepId,
@@ -1144,6 +1227,27 @@ const make = Effect.gen(function* () {
       },
       role: boardSeedStageRole(card.stage),
     });
+  });
+
+  /** The base branch the envelope states, or null when it cannot be resolved —
+      in which case the envelope says nothing rather than putting placeholder
+      English where a branch name belongs. */
+  const resolvePromptBaseBranch = Effect.fn("board-supervisor-resolvePromptBaseBranch")(function* (
+    card: BoardCard,
+  ) {
+    const recorded = card.worktree?.baseRefName ?? null;
+    if (recorded !== null) return recorded;
+    if (card.baseBranch !== null) return card.baseBranch;
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const cwd = projectCwd(model, card);
+    if (cwd === null) return null;
+    const { defaultBranch } = yield* resolveDefaultBranch(cwd);
+    return resolveBoardCardEffectiveBase({
+      card,
+      cards: (yield* readBoard).cards,
+      defaultBranch: defaultBranch === "" ? null : defaultBranch,
+    });
+  });
 
   // Offer one build-mode step to the governor: acquire a slot under the resolved
   // caps and spawn its thread on the card's worktree, or leave it queued (D11).
@@ -1231,7 +1335,7 @@ const make = Effect.gen(function* () {
       worktreePath: input.worktreePath,
       branch: card.worktree?.branch ?? null,
       runSetup: true,
-      text: stepPromptFor(card, state),
+      text: yield* stepPromptFor(card, state),
     });
     if (threadId === null) {
       // No thread was created, so release the slot this candidate just acquired
@@ -1327,7 +1431,7 @@ const make = Effect.gen(function* () {
       worktreePath: cwd,
       branch: null,
       runSetup: false,
-      text: stepPromptFor(card, state),
+      text: yield* stepPromptFor(card, state),
     });
     // A plan step holds no slot, so a failed spawn leaks no capacity — but it
     // must still not be admitted against a thread that was never created.
@@ -1463,6 +1567,23 @@ const make = Effect.gen(function* () {
   const resolveBaseStale = Effect.fn("board-supervisor-resolveBaseStale")(function* (
     card: BoardCard,
   ) {
+    // ── RETARGET (T3O-5, D10) ────────────────────────────────────────────
+    // Evaluated at ANY level, unlike the tip-moved condition below. A human
+    // pointed the card at a different branch after it was cut, so the card's
+    // stated base and its actual cut point disagree: opening a pull request
+    // against the new base would show every commit the old base has that the
+    // new one does not — a review of a diff nobody wrote. Reusing the sync
+    // step is what makes the picker honest after the branch exists.
+    //
+    // CONSEQUENCE, deliberate: a TOP-LEVEL card can now receive a sync step,
+    // which it never could before.
+    if (yield* resolveBaseRetargeted(card)) return true;
+    // ── TIP MOVED (t3o-24, D1) ───────────────────────────────────────────
+    // Scoped to sub-board children exactly as it was: siblings are CREATED to
+    // collide on their shared base, while a top-level card's base moving is the
+    // universal condition of trunk development, reviewed at the human's
+    // discretion. Widening it would change behaviour for every card on the
+    // board.
     if (card.parentCardId === null) return false;
     const board = yield* readBoard;
     const recorded = boardCardStepState(board, card.id)?.baseTipAtRoundStart ?? null;
@@ -1470,6 +1591,52 @@ const make = Effect.gen(function* () {
     const tip = yield* measureBaseTip(card);
     if (tip === null) return false;
     return tip !== recorded;
+  });
+
+  /**
+   * The base the card has been RETARGETED at (T3O-5, D10/D14) — its effective
+   * base when that differs from the one its branch was actually cut from — or
+   * null when the two agree, when it has no live branch, or when the base
+   * cannot be resolved (staleness is measured, never assumed).
+   *
+   * The retarget trigger, the sync prompt's new target, and the value
+   * `record-base-ref` writes once the rebase lands, all from one place; the
+   * card's amber divergence line renders from the same derived condition, so
+   * the warning cannot outlive the rebase that clears it or appear before one
+   * is needed.
+   */
+  const resolveBaseRetargetTarget = Effect.fn("board-supervisor-resolveBaseRetargetTarget")(
+    function* (card: BoardCard) {
+      const recorded = card.worktree?.baseRefName ?? null;
+      if (recorded === null || !boardCardHasLiveBranch(card)) return null;
+      // The project default is the only input that costs git, and it is needed
+      // for exactly one shape: an unpinned top-level card. A pinned card
+      // answers from its own field, and a child from its parent's slice — so
+      // the common case of this check (which runs at every stage plan and every
+      // merge crossing) does no I/O at all.
+      const needsDefault = card.parentCardId === null && card.baseBranch === null;
+      const defaultBranch = needsDefault
+        ? yield* Effect.gen(function* () {
+            const model = yield* snapshotQuery.getCommandReadModel();
+            const cwd = projectCwd(model, card);
+            if (cwd === null) return null;
+            const resolved = yield* resolveDefaultBranch(cwd);
+            return resolved.defaultBranch === "" ? null : resolved.defaultBranch;
+          })
+        : null;
+      const effective = resolveBoardCardEffectiveBase({
+        card,
+        cards: needsDefault ? [] : (yield* readBoard).cards,
+        defaultBranch,
+      });
+      return effective !== null && effective !== recorded ? effective : null;
+    },
+  );
+
+  const resolveBaseRetargeted = Effect.fn("board-supervisor-resolveBaseRetargeted")(function* (
+    card: BoardCard,
+  ) {
+    return (yield* resolveBaseRetargetTarget(card)) !== null;
   });
 
   // The tip a select-step command records (t3o-24, D1): measured fresh when
@@ -1638,6 +1805,7 @@ const make = Effect.gen(function* () {
         liveStepId: null,
         settledStepId: null,
         baseStale: yield* resolveBaseStale(card),
+        baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
       },
     });
     if (plan.kind === "complete") {
@@ -2079,6 +2247,7 @@ const make = Effect.gen(function* () {
         liveStepId: null,
         settledStepId: state.stepId,
         baseStale: yield* resolveBaseStale(card),
+        baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
       },
     });
     switch (plan.kind) {
@@ -2224,6 +2393,7 @@ const make = Effect.gen(function* () {
         liveStepId: null,
         settledStepId: null,
         baseStale: yield* resolveBaseStale(card),
+        baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
       },
     });
     if (plan.kind !== "run") return;
@@ -2976,11 +3146,17 @@ const make = Effect.gen(function* () {
     // The merge-click staleness gate (t3o-24, D2): the crossing was checked
     // when the card entered this stage, but the human may have PARKED it here
     // while a sibling merged underneath — so the click re-measures. A stale
-    // child goes back to the review-role stage (where the sync-base step and
+    // card goes back to the review-role stage (where the sync-base step and
     // the gate round run) instead of merging a diff that was never reviewed
     // against the base it merges into. Skipped when the board has no
     // review-role stage to send it to — there is then no loop to gate with.
-    if (fresh.parentCardId !== null && (yield* resolveBaseStale(fresh))) {
+    //
+    // The sub-board scope test that used to sit here has moved INTO
+    // `resolveBaseStale` (T3O-5, D10), which is the only place that can tell
+    // the two staleness conditions apart: tip-moved is still children-only,
+    // while a RETARGET applies at any level — and a top-level card is exactly
+    // where retargeting happens, since a child's picker is read-only.
+    if (yield* resolveBaseStale(fresh)) {
       const reviewStage = boardStageWithRole(stages, "review");
       if (reviewStage !== null) {
         // A conflict-fix completion re-entering here must not leave the merge
@@ -3006,6 +3182,30 @@ const make = Effect.gen(function* () {
         });
         return { outcome: "stale-base" } as const;
       }
+    }
+
+    // The pull request has to merge into the branch this card is actually
+    // based on (T3O-5, D10). A retarget rebases the branch and moves the
+    // recorded base, but a pull request that was already open keeps whatever
+    // base it was created against: the board opens none itself, and the
+    // retarget round does not cross the Done boundary, so `startsNewRound` is
+    // false and no fresh one is opened either. Merging that pull request would
+    // land these commits on a branch the card is no longer based on, carrying
+    // every commit the two bases do not share.
+    //
+    // The sync step's prompt asks the agent to retarget it; this is what
+    // happens when that did not take. Refused rather than merged-anyway or
+    // silently retargeted here, because the board has no forge operation that
+    // moves a base — and a refusal a human reads beats a merge nobody asked
+    // for. Compared against the RECORDED base (the cut point), not the
+    // effective one: that is the branch the diff was actually built on, and
+    // the stale gate above has already reconciled the two.
+    const recordedBase = fresh.worktree?.baseRefName ?? null;
+    if (recordedBase !== null && pullRequest.baseRef !== recordedBase) {
+      return {
+        outcome: "refused" as const,
+        detail: `Its pull request still merges into '${pullRequest.baseRef}', but this card is based on '${recordedBase}'. Retarget the pull request at '${recordedBase}' before merging.`,
+      };
     }
 
     const worktree = fresh.worktree;
@@ -3448,6 +3648,28 @@ const make = Effect.gen(function* () {
     switch (completion.outcome) {
       case "succeeded":
         yield* settleStep({ card, state, outcome: "succeeded" });
+        // A RETARGET sync that succeeded actually rebased the branch onto the
+        // new base (T3O-5, D10), so move the recorded base to match: the
+        // derived divergence line clears, `measureBaseTip` starts measuring
+        // against the branch the card is really on, and the pull request's
+        // diff is the one somebody wrote. Dispatched BEFORE `continueStage`, so
+        // the gate round that follows plans against the reconciled fact.
+        //
+        // Only on `succeeded`. A failed rebase leaves the recorded base where
+        // it was and the card keeps showing an unreconciled state — which is
+        // the truth, and what makes the next round plan another sync.
+        if (parseReviewStepId(state.stepId)?.phase === "sync") {
+          const retargetedTo = yield* resolveBaseRetargetTarget(card);
+          if (retargetedTo !== null) {
+            yield* dispatch({
+              type: "board.card.record-base-ref",
+              commandId: yield* commandId("record-base-ref"),
+              cardId: card.id,
+              baseRefName: retargetedTo,
+              createdAt: yield* nowIso,
+            });
+          }
+        }
         // The conflict-resolution step reporting success finishes the merge the
         // human already asked for. Gated on the pending-merge set, NOT merely
         // on the stage: a thread a human restarted by hand in this stage must
@@ -3836,6 +4058,25 @@ const make = Effect.gen(function* () {
       );
       return;
     }
+    // The integration branch is cut from the PARENT's base (T3O-5, D8), not
+    // unconditionally from the project default. This is a latent bug the
+    // per-card base exposes rather than new behaviour: without it a split
+    // parent based on `release/2.4` would get an integration branch cut from
+    // `main`, and every child would silently inherit the error. A parent with
+    // no pin resolves to the default, which is exactly what this used to do.
+    const integrationBase =
+      resolveBoardCardEffectiveBase({
+        card,
+        cards: (yield* readBoard).cards,
+        defaultBranch,
+      }) ?? defaultBranch;
+    if (!(yield* ensureLocalBaseBranch(cwd, integrationBase))) {
+      yield* failWorktree(
+        card,
+        `The card's base branch '${integrationBase}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the integration branch from.`,
+      );
+      return;
+    }
     // Idempotent on retry: an existing branch is the desired state, not an
     // error (an earlier attempt may have created it and died before the
     // record landed).
@@ -3845,7 +4086,7 @@ const make = Effect.gen(function* () {
         .execute({
           operation: "boardIntegrationBranch.create",
           cwd,
-          args: ["branch", branch, defaultBranch],
+          args: ["branch", branch, integrationBase],
           timeoutMs: 10_000,
           allowNonZeroExit: true,
         })
@@ -3871,7 +4112,7 @@ const make = Effect.gen(function* () {
         if (nowExists === "") {
           yield* failWorktree(
             card,
-            `Could not create the integration branch '${branch}' from '${defaultBranch}'.`,
+            `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
           );
           return;
         }
@@ -3905,7 +4146,7 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId("record-integration-branch"),
       cardId: card.id,
       branch,
-      baseRefName: defaultBranch,
+      baseRefName: integrationBase,
       createdAt: yield* nowIso,
     });
   });
@@ -3964,7 +4205,7 @@ const make = Effect.gen(function* () {
     const card = event.payload.card;
     const board = yield* readBoard;
     // ── The review→merge crossing gate (t3o-24, D2) ────────────────────────
-    // A sub-board child ARRIVING at the merge-role stage on a forward move —
+    // A card ARRIVING at the merge-role stage on a forward move —
     // the auto-advance that raced a sibling's merge, or a human drag — is
     // checked against its recorded round-start tip. Stale sends it straight
     // back to the review-role stage, where `beginStageRun`'s plan enqueues the
@@ -3978,12 +4219,13 @@ const make = Effect.gen(function* () {
       const fromIndex = boardStageIndex(board, event.payload.fromStage);
       const toIndex = boardStageIndex(board, event.payload.toStage);
       if (
-        card.parentCardId !== null &&
         toStage !== null &&
         effectiveBoardStageRole(toStage) === "merge" &&
         reviewStage !== null &&
         fromIndex >= 0 &&
         toIndex > fromIndex &&
+        // Scope lives in `resolveBaseStale` (T3O-5, D10), not here: tip-moved
+        // stays children-only, a retarget applies at any level.
         (yield* resolveBaseStale(card))
       ) {
         yield* dispatch({

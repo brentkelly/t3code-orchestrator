@@ -412,3 +412,78 @@ it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete"
     }),
   );
 });
+
+it.layer(makeBoardDomainTestLayer("t3o-board-base-branch-test-"))(
+  "per-card base branch (T3O-5)",
+  (it) => {
+    it.effect("survives the SQL round trip, and replay agrees with rehydration", () =>
+      // The base branch crosses seven projection touch points (row schema,
+      // encode, decode, insert, upsert, both select lists), and a column missed
+      // in any one of them is invisible until a server restart quietly hands
+      // every card its project default back. So this drives the real tables:
+      // pin, clear, re-pin, then compare a from-empty replay against what the
+      // rows rehydrate to.
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+        yield* engine.dispatch(createProject(projectA, "a"));
+        yield* engine.dispatch({
+          ...createCard({ cardId: cardOne, projectId: projectA, orderKey: "m", n: "one" }),
+          baseBranch: "develop",
+        });
+        // A card created without one, which must stay null rather than
+        // materialising the project default.
+        yield* engine.dispatch(
+          createCard({ cardId: cardTwo, projectId: projectA, orderKey: "t", n: "two" }),
+        );
+
+        const created = yield* snapshotQuery.getCommandReadModel();
+        assert.strictEqual(
+          created.board?.cards.find((card) => card.id === cardOne)?.baseBranch,
+          "develop",
+        );
+        assert.strictEqual(
+          created.board?.cards.find((card) => card.id === cardTwo)?.baseBranch,
+          null,
+        );
+
+        // Clearing writes NULL, which is the same value "never pinned" holds —
+        // that indistinguishability is what makes replay equal rehydration.
+        yield* engine.dispatch({
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-clear-base"),
+          cardId: cardOne,
+          baseBranch: null,
+          createdAt: t0,
+        });
+        assert.strictEqual(
+          (yield* snapshotQuery.getCommandReadModel()).board?.cards.find(
+            (card) => card.id === cardOne,
+          )?.baseBranch,
+          null,
+        );
+
+        yield* engine.dispatch({
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-repin-base"),
+          cardId: cardTwo,
+          baseBranch: "release/2.4",
+          createdAt: t0,
+        });
+
+        const rehydrated = yield* snapshotQuery.getCommandReadModel();
+        assert.strictEqual(
+          rehydrated.board?.cards.find((card) => card.id === cardTwo)?.baseBranch,
+          "release/2.4",
+        );
+
+        let replayed = createEmptyReadModel(t0);
+        for (const event of Array.from(yield* Stream.runCollect(engine.readEvents(0)))) {
+          replayed = yield* projectEvent(replayed, event);
+        }
+        assert.deepStrictEqual(replayed.board, rehydrated.board);
+      }),
+    );
+  },
+);
