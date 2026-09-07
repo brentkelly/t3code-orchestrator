@@ -90,6 +90,7 @@ import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { isAutoSettlementCandidate } from "../orchestration/ThreadSettlementPolicy.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerConfig from "../config.ts";
@@ -123,6 +124,7 @@ import {
   type BoardQueueCandidate,
 } from "./supervisor.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
+import { boardReleasedThreadIds } from "./threadRelease.ts";
 
 /** What a Merge click did, for the RPC to turn into a toast. */
 export type BoardMergeAttemptResult =
@@ -168,6 +170,10 @@ export interface SupervisorReactorShape {
       production the worker runs it on a timer; exposed so tests can drive the
       liveness clock deterministically. */
   readonly sweep: Effect.Effect<void>;
+  /** One release pass: settle every thread the board is finished with (t3o-13).
+      Runs on the same timer as the sweep and at every step boundary; exposed so
+      tests can drive the retry that lands after an agent's turn ends. */
+  readonly releaseThreads: Effect.Effect<void>;
   /** Resolves when the internal queue is empty and idle (test hook). */
   readonly drain: Effect.Effect<void>;
   /** Re-resolve one card's pull request from the forge and record any change.
@@ -314,26 +320,41 @@ const make = Effect.gen(function* () {
    *  plain helper logging it at WARN turns the normal path into a stream of
    *  warnings about nothing.
    *
-   *  Only an invariant refusal is demoted — that is the decider saying "this
-   *  command does not apply", which is what these callers asked about. Anything
-   *  else (a storage failure, a defect) is still a warning, because none of
-   *  these call sites is speculating about THAT. */
+   *  Only a refusal is demoted — that is the decider saying "this command does
+   *  not apply", which is what these callers asked about. Anything else (a
+   *  storage failure, a defect) is still a warning, because none of these call
+   *  sites is speculating about THAT.
+   *
+   *  Two tags count as a refusal. `OrchestrationCommandInvariantError` is the
+   *  general one. `OrchestrationThreadSettleBlockedError` is the settle guard
+   *  saying the thread is still busy, which for the release sweep (t3o-13) is
+   *  not merely expected but the NORMAL answer — an agent reports its step
+   *  complete from inside its own turn — so logging it at WARN would turn the
+   *  healthy path into a stream of warnings about nothing.
+   *
+   *  Returns whether the command LANDED, so a caller that is retrying until it
+   *  does (again, the release sweep) can stop asking. */
   const dispatchOptional = (command: Parameters<typeof engine.dispatch>[0]) =>
     engine.dispatch(command).pipe(
+      Effect.as(true),
       Effect.catchCause((cause) => {
         const refusal = Cause.findErrorOption(cause).pipe(
-          Option.filter((error) => error._tag === "OrchestrationCommandInvariantError"),
+          Option.filter(
+            (error) =>
+              error._tag === "OrchestrationCommandInvariantError" ||
+              error._tag === "OrchestrationThreadSettleBlockedError",
+          ),
           Option.getOrUndefined,
         );
         return refusal === undefined
           ? Effect.logWarning("board supervisor dispatch failed", {
               commandType: (command as { readonly type?: string }).type,
               cause: Cause.pretty(cause),
-            })
+            }).pipe(Effect.as(false))
           : Effect.logDebug("board supervisor dispatch refused", {
               commandType: (command as { readonly type?: string }).type,
-              detail: refusal.detail,
-            });
+              detail: "detail" in refusal ? refusal.detail : refusal.message,
+            }).pipe(Effect.as(false));
       }),
     );
 
@@ -455,6 +476,85 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
   });
+
+  // Threads the board unlinked while they were still alive — a leftover step a
+  // stage move abandoned, a conflict fix that finished. An unlink of a LIVE
+  // thread removes the link outright, so these are the one release
+  // `boardReleasedThreadIds` cannot derive from the card. Entries clear the
+  // first time a settle lands, so the set stays bounded by "abandoned this
+  // process".
+  const abandonedThreads = new Set<string>();
+
+  /**
+   * Settle every thread the board is finished with (t3o-13).
+   *
+   * The ONE place the board settles a thread. It re-derives the whole released
+   * set from state rather than settling at the moment a thread becomes finished,
+   * because that moment is exactly when the settle cannot land: an agent reports
+   * its step complete from inside its own turn, and the decider refuses to
+   * settle a thread whose session is still running. Every trigger therefore
+   * calls this, and a refused settle is retried by the next one — a step
+   * boundary, the 30-second sweep, or boot reconcile.
+   *
+   * `thread.auto-settle` rather than `thread.settle` for the two guards it adds
+   * over the plain command: it refuses an already-settled thread (so a repeating
+   * sweep does not re-emit a `thread.settled` event per thread per pass) and it
+   * refuses one a human explicitly un-settled (so "keep this in my inbox"
+   * sticks).
+   *
+   * The two pre-filters are not those guards duplicated — they are what keeps a
+   * settle nobody could accept from writing a REJECTED command receipt on every
+   * pass, forever. They are split by cost, because a mature board holds hundreds
+   * of released threads and all but a handful are settled already:
+   *
+   *  1. From the read model already in hand: gone, or its settlement already
+   *     decided. Free, and on a settled board it retires the entire set.
+   *  2. `isAutoSettlementCandidate` on the survivors' thread shells — the same
+   *     policy upstream's inactivity sweep gates on, so "can this be settled
+   *     automatically" has one definition. It costs a query per candidate, which
+   *     is why it runs second: after (1), on a steady board, there are none.
+   */
+  const releaseFinishedThreads = Effect.gen(function* () {
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const board = model.board ?? EMPTY_BOARD_STATE;
+    const threads = new Map(model.threads.map((thread) => [String(thread.id), thread]));
+    const now = yield* nowIso;
+    for (const threadId of boardReleasedThreadIds(board, abandonedThreads)) {
+      const thread = threads.get(String(threadId));
+      if (
+        thread === undefined ||
+        thread.deletedAt !== null ||
+        thread.archivedAt !== null ||
+        thread.settledOverride !== null
+      ) {
+        // Nothing left to ask about — and an abandoned thread that reaches this
+        // is finished business, so stop carrying it.
+        abandonedThreads.delete(String(threadId));
+        continue;
+      }
+      const shell = yield* snapshotQuery
+        .getThreadShellById(threadId)
+        .pipe(Effect.map(Option.getOrUndefined));
+      // Busy is the common refusal, and it is why this is a sweep rather than a
+      // single shot: the agent that just reported its step complete is still
+      // mid-turn. An unanswered approval is the other one, and unlike busy it
+      // can last for days — which is exactly the receipt-per-pass this avoids.
+      if (shell === undefined || !isAutoSettlementCandidate(shell, now)) continue;
+      const landed = yield* dispatchOptional({
+        type: "thread.auto-settle",
+        commandId: yield* commandId("release-thread"),
+        threadId,
+        snapshotSequence: model.snapshotSequence,
+      });
+      if (landed) abandonedThreads.delete(String(threadId));
+    }
+  }).pipe(
+    // Total, like the timeout sweep it rides with: a read-model hiccup must not
+    // take down the handler that asked, and the next pass asks again anyway.
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: thread release failed", { cause: Cause.pretty(cause) }),
+    ),
+  );
 
   const isAfter = (candidate: string, floor: string): boolean => {
     const a = Date.parse(candidate);
@@ -1181,6 +1281,9 @@ const make = Effect.gen(function* () {
         threadId,
         createdAt: yield* nowIso,
       });
+      // Unlinked while alive, so no card derives it any more (t3o-13). It is a
+      // thread for a step the board refused to admit — nothing will use it.
+      abandonedThreads.add(String(threadId));
     }
   });
 
@@ -1978,22 +2081,6 @@ const make = Effect.gen(function* () {
         // the whole continuation) leaves a manual stage's `complete` → auto-
         // advance path intact — this blocks a spurious SPAWN, not a crossing.
         if (!exec.autoExecute) return;
-        // The card is finished with the phase that just settled: the loop is
-        // moving to the NEXT step within this stage (the review loop is the one
-        // stage that lands here). Settle that phase's thread so it drops out of
-        // the inbox as the next phase spins up — the card keeps the tab, this
-        // only clears the inbox. Best-effort: a thread still mid-turn is refused
-        // by the settle guard and simply skipped; the swallow-on-reject dispatch
-        // never derails the continuation. The stage's FINAL phase does not reach
-        // this arm (it `complete`s → advances), so its thread is settled by the
-        // graduation sweep in `handleCardMoved` instead.
-        if (state.threadId !== null) {
-          yield* dispatchOptional({
-            type: "thread.settle",
-            commandId: yield* commandId("settle-phase"),
-            threadId: state.threadId,
-          });
-        }
         // A continuation is executor-driven, never a human re-entry: inject the
         // planned prompt and honour the stage's own human-in-the-loop stance.
         const humanInLoop = resolveHumanInLoop(board, settings, card, exec);
@@ -3326,11 +3413,9 @@ const make = Effect.gen(function* () {
               threadId: state.threadId,
               createdAt: yield* nowIso,
             });
-            yield* dispatchOptional({
-              type: "thread.settle",
-              commandId: yield* commandId("settle-conflict-fix"),
-              threadId: state.threadId,
-            });
+            // Unlinking a LIVE thread removes the link outright, so nothing can
+            // derive this release from the card afterwards (t3o-13): name it.
+            abandonedThreads.add(String(state.threadId));
           }
           yield* schedule();
           // The human clicked Merge, watched it say "resolving conflicts", and
@@ -3364,6 +3449,13 @@ const make = Effect.gen(function* () {
         // a multi-step stage (the review loop) selects its next round-scoped
         // step here instead. Then let the freed slot flow to the queue.
         yield* continueStage({ card, state });
+        // The step that just succeeded is behind the card — either the loop
+        // moved to the next phase within the stage, or the stage advanced. Ask
+        // for the threads it left behind (t3o-13). This one almost never lands
+        // on the first ask: the agent reports its step complete from INSIDE its
+        // turn, so its session is still `running` and the decider refuses. The
+        // retry that does land is the sweep, on this thread's `turn.completed`.
+        yield* releaseFinishedThreads;
         yield* schedule();
         return;
       case "failed":
@@ -3498,6 +3590,8 @@ const make = Effect.gen(function* () {
     // is reclaimed EARLIER, at Done, and never whether it is reclaimed at all.
     // A worktree may not outlive its card.
     yield* reclaimCardWorktree(card);
+    // An archived card is done with every thread it holds (t3o-13).
+    yield* releaseFinishedThreads;
     // An archived child counts as finished (t3o-23, D6), so this may have
     // been the parent's last unfinished one — or the one whose finishing
     // unblocks a sibling still waiting on the floor (t3o-28, D3).
@@ -3860,6 +3954,10 @@ const make = Effect.gen(function* () {
         // thread, breaking the one-writer invariant. Best-effort, like every
         // other orphan interrupt (the dispatch helper swallows a reject).
         yield* interruptOrphan(existing.threadId);
+        // Unlinking a LIVE thread removes the link outright, so the release
+        // sweep can no longer derive this thread from the card (t3o-13). The
+        // card is finished with it — the interrupt above says so — so name it.
+        abandonedThreads.add(String(existing.threadId));
         // Reflect the unlink onto the card handed to the kickoff: `beginStageRun`
         // reads the links to decide whether a live stage thread already exists,
         // and the leftover link we just tombstoned (its role is the old step id
@@ -3877,27 +3975,8 @@ const make = Effect.gen(function* () {
       // The abandoned step may have held a slot — offer it to the queue.
       yield* schedule();
     }
-    // Graduation sweep: the card finished a whole stage and moved to a later
-    // one, so settle every thread still linked to it — the just-completed
-    // stage's thread plus any earlier one left active — dropping them out of
-    // the inbox (the links stay, so the card keeps its tabs). Only on a FORWARD
-    // move: a backward drag is a reopen and must leave threads untouched. The
-    // leftover in-flight step (if any) was just unlinked above, so the tombstone
-    // filter skips it; the destination's fresh thread is not linked yet.
-    // Best-effort: a thread still mid-turn is refused by the settle guard and
-    // skipped, matching "settle any unsettled threads that are not running".
     const fromIndex = boardStageIndex(board, event.payload.fromStage);
     const toIndex = boardStageIndex(board, event.payload.toStage);
-    if (fromIndex >= 0 && toIndex > fromIndex) {
-      for (const link of kickoffCard.threadLinks) {
-        if (link.tombstonedAt !== null) continue;
-        yield* dispatchOptional({
-          type: "thread.settle",
-          commandId: yield* commandId("settle-graduated"),
-          threadId: link.threadId,
-        });
-      }
-    }
     // Refresh trigger: a stage change. The card may have crossed into the
     // merge stage (where the Merge button needs a current PR state) or into
     // Done (where the settle gates on it), and either way this is a moment the
@@ -3907,6 +3986,10 @@ const make = Effect.gen(function* () {
     yield* refreshCardPullRequest(card, card.stage);
 
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
+    // The card changed stage, so the threads it left behind are finished work
+    // (t3o-13). Run AFTER the kickoff, so the destination's own freshly linked
+    // thread is already the card's current work and is left alone.
+    yield* releaseFinishedThreads;
 
     // A sub-board child reaching the merge-role stage merges itself down
     // (see `autoMergeChild`). Deliberately BEFORE the cascade block below
@@ -4299,6 +4382,14 @@ const make = Effect.gen(function* () {
         yield* settleCardAtDone(card);
       }
     }
+    // Settle every thread the board finished with while the server was down —
+    // and every one it finished with before this shipped (t3o-13). The release
+    // is a predicate over state rather than an event to catch, so boot needs no
+    // backlog to replay: it simply asks the question once, and a settle that
+    // could not land is retried by the 30s sweep. Unlike the Done sweep above
+    // this is free and self-terminating by construction — no forge calls, and a
+    // settled thread stops being a candidate the moment it settles.
+    yield* releaseFinishedThreads;
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: reconciliation failed", { cause: Cause.pretty(cause) }),
@@ -4419,7 +4510,14 @@ const make = Effect.gen(function* () {
           // The ended turn's own id rides through: it is what lets the handler
           // tell a projection that has not caught up yet from a genuinely live
           // second turn.
-          return handleTurnCompleted(threadId, input.event.turnId);
+          // A turn ending is the moment a thread stops being busy, which is
+          // the one reason a release is refused on the hot path (t3o-13). Ask
+          // again here, after the handler has settled the step this turn
+          // finished, and a finished thread drops out of the inbox within a
+          // beat rather than waiting for the periodic sweep.
+          return handleTurnCompleted(threadId, input.event.turnId).pipe(
+            Effect.andThen(releaseFinishedThreads),
+          );
         }
         // An ordinary agent question (t3o-18, D13): re-sourced from the runtime
         // event on the stream the reactor already consumes, so it fires for
@@ -4437,7 +4535,14 @@ const make = Effect.gen(function* () {
       case "reconcile":
         return reconcile;
       case "timeout-sweep":
-        return sweepTimeouts;
+        // The release sweep rides the same tick (t3o-13): it is a board read
+        // and an in-memory pass, it must be serialised against the handlers for
+        // the same reason the timeout sweep is, and 30s is already the board's
+        // "check on things nothing told us about" cadence. It is also the only
+        // path that retries a release nothing else will ask about again — a
+        // thread whose turn.completed was dropped, or a card the server
+        // restarted underneath.
+        return sweepTimeouts.pipe(Effect.andThen(releaseFinishedThreads));
     }
   };
 
@@ -4535,6 +4640,7 @@ const make = Effect.gen(function* () {
     start,
     reconcile,
     sweep: sweepTimeouts,
+    releaseThreads: releaseFinishedThreads,
     drain: worker.drain,
     // Both run OUTSIDE the serialised worker: they are request-scoped, the
     // caller is waiting on the answer, and neither touches step state — the

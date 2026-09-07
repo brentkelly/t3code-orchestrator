@@ -1,5 +1,31 @@
 # Auto-settle card threads when a card is finished with them
 
+> **Superseded by T3O-13.** The two-trigger design below shipped and did not
+> work: decision 3 assumed the decider's settle guard would skip the odd
+> still-running thread, when in fact it refused nearly every settle the board
+> ever fired. An agent reports its step complete from INSIDE its own turn, so its
+> session is `running` at exactly the moment the board asks — in the maintainer's
+> database not one of 93 review-phase settles had ever been accepted, and 30-odd
+> finished threads sat in the inbox forever. The rule below (which threads) was
+> right; the delivery (fire once, at the moment of finishing) was not.
+>
+> What ships now is in `apps/server/src/board/threadRelease.ts`. The release is a
+> PREDICATE over board state rather than an event to catch, re-derived by the
+> supervisor reactor at every step boundary, on each turn ending, on the 30-second
+> sweep and at boot — so a settle refused mid-turn simply lands at the next pass,
+> and a restart re-derives the whole set rather than losing it. Two consequences
+> differ from what is written below and are deliberate:
+>
+> - **Backward moves settle too** (reversing decision 2 / acceptance criterion 3).
+>   A settle is not a one-way door — the decider un-settles any thread whose
+>   session comes alive — so a card returning to a stage brings its thread back
+>   with it, and holding finished threads open against a reopen that may never
+>   happen buys nothing.
+> - **The command is `thread.auto-settle`, not `thread.settle`** (replacing
+>   decision 5's idempotency argument). A repeating sweep must neither re-emit
+>   `thread.settled` on every pass nor override a human's explicit un-settle;
+>   auto-settle refuses both, where the plain command re-emits.
+
 ## Goal
 
 When a card is finished with a thread, automatically dispatch the orchestration
