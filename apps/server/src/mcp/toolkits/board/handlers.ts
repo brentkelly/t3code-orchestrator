@@ -16,6 +16,7 @@ import {
   boardCardStepCompletions,
   boardCardStepState,
   boardLabelCatalogue,
+  boardStepPayloadDefect,
   isBoardTerminalStepStatus,
   boardPlanId,
   BoardCardId,
@@ -71,6 +72,27 @@ const nonEmpty = (value: string | undefined, fallback: string): string =>
 const BOARD_STEP_PAYLOAD_MAX_BYTES = 16_384;
 const BOARD_STEP_SUMMARY_MAX_BYTES = 2_048;
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
+
+/**
+ * Fragments of a serialised tool CALL, which no hand-written summary contains
+ * (T3O-14).
+ *
+ * A caller whose arguments were not parsed into distinct fields hands the tool
+ * one giant `summary` with the rest of the call still marked up inside it, and
+ * no `payload` at all — the CAA-5 `review@10` failure, where the summary ran
+ * `…PR review.</summary>\n<parameter name="payload">{"reviewedSha":…`. The
+ * board cannot fix the caller, but it can name what actually went wrong
+ * instead of complaining about a summary length the agent never chose.
+ *
+ * Both markers are XML the harness emits around arguments; `</summary>` is
+ * deliberately NOT one of them, because a summary quoting a `<details>` block
+ * legitimately contains it, and a false positive here would block a completion
+ * that is fine.
+ */
+const LEAKED_ARGUMENT_MARKERS = ["<parameter name=", "</parameter>"] as const;
+
+const leaksSerialisedArguments = (summary: string): boolean =>
+  LEAKED_ARGUMENT_MARKERS.some((marker) => summary.includes(marker));
 
 const internalError = (cause: { readonly message?: string }): BoardToolError =>
   new BoardToolError({ code: "internal", message: nonEmpty(cause.message, "Board tool failed.") });
@@ -524,12 +546,33 @@ export const boardHandlers = {
       // agent "already completed: failed" about a call the board just recorded
       // as succeeded.
       const liveState = boardCardStepState(board, card.id);
-      const supersedes =
-        existing !== undefined &&
-        existing.outcome !== "succeeded" &&
+      const liveMatch =
         liveState !== null &&
         liveState.stepId === stepId &&
         !isBoardTerminalStepStatus(liveState.status);
+      const supersedes = existing !== undefined && existing.outcome !== "succeeded" && liveMatch;
+      // The OTHER path where a retry is not a no-op: a `succeeded` record whose
+      // payload nothing can read is repaired rather than re-emitted (T3O-14).
+      // The decider decides it — this mirrors the rule so the reply does not
+      // tell the agent "already completed" about a record it just replaced.
+      // Conditional on validity in both directions: only a defective record is
+      // repairable, and only a valid completion may repair it, which the
+      // payload check further down enforces before anything is dispatched.
+      const repairs =
+        existing !== undefined &&
+        existing.outcome === "succeeded" &&
+        boardStepPayloadDefect({ stepId, payload: existing.payload }) !== null;
+      // The decider's own rule for "this call may record something": the step
+      // is live, or its recorded completion is a defective one this call may
+      // repair. Every other call is a pure idempotent no-op — the decider
+      // re-emits the stored completion and discards these arguments — so the
+      // checks below are scoped to it. Mirroring the rule also ORDERS the
+      // errors: a call naming a step that is neither live nor recorded is
+      // rejected for that, not lectured about a payload it was never entitled
+      // to record, and a confirming retry of a step that already completed
+      // validly still gets its documented `alreadyCompleted` reply rather than
+      // an error about arguments nothing was going to read.
+      const recordable = liveMatch || repairs;
       // The agent's structured payload is stored verbatim as an opaque JSON
       // string (D8: carried through unread), so a schema codec would add
       // nothing over a plain stringify — except for the one thing a stringify
@@ -541,10 +584,25 @@ export const boardHandlers = {
         input.payload === undefined ? undefined : unwrapStringifiedBoardStepPayload(input.payload);
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       const payload = structured === undefined ? null : JSON.stringify(structured);
+      // The payload never arrived as its own argument (T3O-14). Checked BEFORE
+      // the caps, because this is exactly what the cap check used to misreport:
+      // the summary carrying a whole payload IS over the summary cap, so the
+      // agent was told to shorten its prose — advice that cannot fix a call
+      // whose bytes are all in the wrong field — and once it trimmed enough to
+      // fit, the board recorded the success with a null payload. Name the real
+      // fault while it is still recoverable.
+      if (recordable && payload === null && leaksSerialisedArguments(input.summary)) {
+        return yield* new BoardToolError({
+          code: "invalid-input",
+          message:
+            "The summary contains serialised tool-call markup and no payload argument arrived, so the payload was folded into the summary rather than passed as its own field. Send the prose as `summary` and the structured result as the separate `payload` argument, then complete the step again.",
+        });
+      }
       // The completion enters the event log, the in-memory read model and every
       // subscribeCard detail frame for the card's lifetime (D8 discipline:
       // bodies never enter the read model) — one oversized call must not bloat
       // them permanently, so both sizes are capped with an actionable reject.
+      // Each cap names the field that actually overflowed.
       if (payload !== null && utf8ByteLength(payload) > BOARD_STEP_PAYLOAD_MAX_BYTES) {
         return yield* new BoardToolError({
           code: "invalid-input",
@@ -554,8 +612,22 @@ export const boardHandlers = {
       if (utf8ByteLength(input.summary) > BOARD_STEP_SUMMARY_MAX_BYTES) {
         return yield* new BoardToolError({
           code: "invalid-input",
-          message: `The summary is ${utf8ByteLength(input.summary)} bytes, over the ${BOARD_STEP_SUMMARY_MAX_BYTES}-byte cap. Summarise in a few sentences; details belong in the payload.`,
+          // An oversized summary with no payload beside it is the leak's other
+          // shape — the markers may be gone, but a summary this big on a call
+          // that reported no structured result usually swallowed one.
+          message: `The summary is ${utf8ByteLength(input.summary)} bytes, over the ${BOARD_STEP_SUMMARY_MAX_BYTES}-byte cap. Summarise in a few sentences; details belong in the payload.${payload === null ? " No payload argument arrived with it: if this summary contains one, resend it as the separate `payload` argument rather than shortening it away." : ""}`,
         });
+      }
+      // A step that must produce structured output may not record a success
+      // that nothing can read (T3O-14). Refused HERE, before the command is
+      // dispatched, because the decider would pin the record forever and the
+      // review loop would halt `unreadable` with no way back. The agent gets
+      // the shape it was asked for and the step stays live for its retry.
+      if (recordable && input.outcome === "succeeded") {
+        const defect = boardStepPayloadDefect({ stepId, payload });
+        if (defect !== null) {
+          return yield* new BoardToolError({ code: "invalid-input", message: defect });
+        }
       }
       const command: BoardCardCompleteStepCommand = {
         type: "board.card.complete-step",
@@ -569,10 +641,11 @@ export const boardHandlers = {
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps, command);
+      const replaced = supersedes || repairs;
       return {
         stepId,
-        outcome: supersedes ? input.outcome : (existing?.outcome ?? input.outcome),
-        alreadyCompleted: existing !== undefined && !supersedes,
+        outcome: replaced ? input.outcome : (existing?.outcome ?? input.outcome),
+        alreadyCompleted: existing !== undefined && !replaced,
       };
     }),
 

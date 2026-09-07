@@ -143,6 +143,7 @@ export function BoardCardDetail({
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
   const reorderCard = useAtomCommand(boardEnvironment.reorderCard);
   const forceStartStep = useAtomCommand(boardEnvironment.forceStartStep);
+  const reopenStep = useAtomCommand(boardEnvironment.reopenStep);
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
   const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
@@ -859,6 +860,13 @@ export function BoardCardDetail({
       reviewRoundsStarted={reviewRoundsRecorded}
       reviewStepActive={cardShell?.stepRunning === true || cardShell?.queued === true}
       onSetReviewRounds={(rounds) => patchReviewOverrides({ rounds })}
+      // The way out of a phase that recorded a payload nothing can read
+      // (T3O-14). The pane hands back the halted step's own id — any of the
+      // four phases can be the broken one — and the server refuses a readable
+      // record, so a stale pane cannot discard work that actually landed.
+      onReopenReviewStep={(stepId) =>
+        runCommand(reopenStep({ environmentId, input: { cardId: card.id, stepId } }))
+      }
       onResumeReview={(rounds) =>
         // "Run round N+1" is a resume, so it says both halves outright: at
         // least enough budget to reach that round (never LESS than the card

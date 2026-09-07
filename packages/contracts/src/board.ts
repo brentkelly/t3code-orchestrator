@@ -791,11 +791,25 @@ export const BOARD_REVIEW_LOOP_OUTCOMES = [
 export const BoardReviewLoopOutcome = Schema.Literals(BOARD_REVIEW_LOOP_OUTCOMES);
 export type BoardReviewLoopOutcome = typeof BoardReviewLoopOutcome.Type;
 
-/** The two outcomes that end a loop WITHOUT a clean review pass, and so must
-    never auto-advance a card (D1). Named once because the reactor, the pane and
-    the card face each need the same answer to "did this actually pass?". */
+/** The outcomes that end a loop WITHOUT a clean review pass, and so must never
+    auto-advance a card (D1). Named once because the reactor, the pane and the
+    card face each need the same answer to "did this actually pass?".
+
+    `unreadable` joined them in T3O-14. It always ended the loop without a pass
+    — the executor has refused to converge on a payload it cannot read since
+    t3o-16 — but it was missing from this list, so the one ending that needs a
+    human MOST was also the only one the column card never flagged: the card
+    stopped moving wearing no attention reason at all. */
 export function isBoardReviewLoopHeld(outcome: BoardReviewLoopOutcome): boolean {
-  return outcome === "round-cap" || outcome === "stopped";
+  return outcome === "round-cap" || outcome === "stopped" || outcome === "unreadable";
+}
+
+/** The chip/flag wording for a held loop, in one place so the column card, the
+    summary row and the pane cannot disagree about what stopped it. */
+export function boardReviewHeldLabel(outcome: BoardReviewLoopOutcome): string {
+  if (outcome === "stopped") return "Stopped";
+  if (outcome === "unreadable") return "Unreadable";
+  return "No convergence";
 }
 
 /**
@@ -2183,11 +2197,13 @@ export function boardCardAttention(input: {
       return {
         reason: "review-held",
         tone: ATTENTION_TONES["review-held"],
-        label: outcome === "stopped" ? "Stopped" : "No convergence",
+        label: boardReviewHeldLabel(outcome),
         detail:
           outcome === "stopped"
             ? "The review loop stopped without a clean pass — needs a human"
-            : "The review loop ran every round without converging — needs a human",
+            : outcome === "unreadable"
+              ? "A review phase recorded a payload nothing can read — reopen the round from the review pane"
+              : "The review loop ran every round without converging — needs a human",
       };
     }
   }
@@ -2784,6 +2800,31 @@ export const BoardCardCompleteStepCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardCompleteStepCommand = typeof BoardCardCompleteStepCommand.Type;
+
+/**
+ * Reopen a settled step whose recorded `succeeded` payload cannot be read
+ * (T3O-14) — the human's way out of the deadlock a broken completion causes.
+ *
+ * A `succeeded` completion is pinned by the idempotency rule, so a review phase
+ * that recorded an unreadable payload can be neither trusted nor re-run: the
+ * loop halts `unreadable` and nothing in the board would ever ask again. This
+ * supersedes that record with a `failed` one, which is what the ledger should
+ * have held all along — the step claimed a result it did not produce — and the
+ * executor, which counts only `succeeded` completions, plans the round again.
+ *
+ * Refused on a step whose payload IS readable: this is a repair for a broken
+ * record, never a way to re-run work that landed. Names the step explicitly
+ * (unlike `force-start-step`) because the step it repairs is precisely NOT the
+ * card's live one — there is none.
+ */
+export const BoardCardReopenStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.reopen-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardReopenStepCommand = typeof BoardCardReopenStepCommand.Type;
 
 /**
  * Start a queued step NOW, deliberately over the concurrency cap (t3o-33).
@@ -3464,6 +3505,17 @@ export const BoardCardStepCompletedPayload = Schema.Struct({
       t3o-22 — the SQL projection recomputes from the ledger when it is absent,
       which is what keeps a from-empty replay of an older log correct. */
   reviewSummary: Schema.optionalKey(BoardCardReviewSummary),
+  /** This completion REPLACED the settled step's recorded one (T3O-14) — an
+      unreadable `succeeded` record repaired by a re-call, or reopened from the
+      Review pane.
+
+      The reactor needs it: `handleStepCompleted` ignores a completion whose
+      step has already settled, which is exactly right for an idempotent retry
+      and exactly wrong for a repair — the record the stage executor reads just
+      changed, so the stage has to be asked again what runs next. Absent means
+      "an ordinary completion", so every event written before T3O-14 replays
+      unchanged. */
+  repaired: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCardStepCompletedPayload = typeof BoardCardStepCompletedPayload.Type;
 
@@ -4636,6 +4688,7 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardStageDeleteCommand,
   BoardCardStartStageThreadCommand,
   BoardCardCompleteStepCommand,
+  BoardCardReopenStepCommand,
   BoardCardForceStartStepCommand,
   BoardPlansProposeCommand,
   BoardPlanWriteCommand,
@@ -5582,7 +5635,7 @@ export const BOARD_REVIEW_PHASE_LABELS: Record<BoardReviewPhaseId, string> = {
   adjudicate: "Adjudicate",
 };
 
-const BOARD_REVIEW_STEP_PHASE_LABELS: Record<BoardReviewStepPhase, string> = {
+export const BOARD_REVIEW_STEP_PHASE_LABELS: Record<BoardReviewStepPhase, string> = {
   ...BOARD_REVIEW_PHASE_LABELS,
   sync: "Sync base",
 };
@@ -5676,6 +5729,72 @@ export function parseBoardStepPayloadJson(payload: string | null): unknown {
 const decodeBoardReviewPayloadOption = Schema.decodeUnknownOption(BoardReviewPayload);
 const decodeBoardTriagePayloadOption = Schema.decodeUnknownOption(BoardTriagePayload);
 const decodeBoardAdjudicatePayloadOption = Schema.decodeUnknownOption(BoardAdjudicatePayload);
+const decodeBoardSyncPayloadOption = Schema.decodeUnknownOption(BoardSyncPayload);
+
+/**
+ * The payload shape a review-loop step MUST record to be usable (T3O-14).
+ *
+ * Every phase states an exact JSON shape in its prompt protocol
+ * (`boardReviewPhaseProtocol`), and every reader — the executor's convergence
+ * gate, the walk, the Review pane — decodes it. Until T3O-14 nothing checked
+ * it at the door, so a `succeeded` completion carrying `null` was pinned by
+ * the idempotency rule into a record that could neither be read nor re-run:
+ * the loop halted `unreadable` with no way back (the observed CAA-5
+ * `review@10` deadlock, where the caller's `payload` argument arrived folded
+ * into `summary`).
+ *
+ * This is the single definition of "usable", shared by the completion handler
+ * (which refuses to persist a defective success) and the decider (which lets a
+ * defective success be superseded instead of freezing it). It describes the
+ * shape in the SAME words as the prompt protocol so a rejected agent is told
+ * exactly what it was already asked for.
+ */
+const BOARD_REVIEW_STEP_PAYLOAD_CONTRACTS: Record<
+  BoardReviewStepPhase,
+  { readonly shape: string; readonly decode: (value: unknown) => Option.Option<unknown> }
+> = {
+  review: {
+    shape: "{ reviewedSha, findings: [{ id, severity, file, line, title, detail }] }",
+    decode: decodeBoardReviewPayloadOption,
+  },
+  triage: {
+    shape: '{ fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }',
+    decode: decodeBoardTriagePayloadOption,
+  },
+  adjudicate: {
+    shape: "{ verdicts: [{ findingId, verdict, note }] }",
+    decode: decodeBoardAdjudicatePayloadOption,
+  },
+  sync: { shape: "{ rebasedSha }", decode: decodeBoardSyncPayloadOption },
+};
+
+/**
+ * Why a step's stored payload cannot be read, or `null` when it can (T3O-14).
+ *
+ * Only review-loop step ids carry a required shape; every other step's payload
+ * is opaque to the board (D8, carried through unread) and always passes. The
+ * caller decides WHEN to ask — the contract is about a `succeeded` completion,
+ * since a `failed` or `blocked` one is not claiming to have produced anything.
+ *
+ * The returned string is agent-facing: it names the phase, the shape and what
+ * to do about it.
+ */
+export function boardStepPayloadDefect(input: {
+  readonly stepId: string;
+  readonly payload: string | null;
+}): string | null {
+  const parsed = parseReviewStepId(input.stepId);
+  if (parsed === null) return null;
+  const contract = BOARD_REVIEW_STEP_PAYLOAD_CONTRACTS[parsed.phase];
+  const label = `The '${input.stepId}' step succeeds only with a payload shaped ${contract.shape}`;
+  if (input.payload === null) {
+    return `${label}, and none was recorded. Send the structured result as the tool's own \`payload\` argument — never inside \`summary\` — and complete the step again. If you cannot produce one, complete with outcome failed instead.`;
+  }
+  if (Option.isNone(contract.decode(parseBoardStepPayloadJson(input.payload)))) {
+    return `${label}, and the one recorded does not parse to it. Re-send a payload of that exact shape, or complete with outcome failed instead.`;
+  }
+  return null;
+}
 
 export interface BoardReviewLoopWalk {
   /** The phase the loop runs next, while it still runs. */
@@ -5683,6 +5802,11 @@ export interface BoardReviewLoopWalk {
   readonly status: BoardReviewLoopOutcome;
   /** The round the loop is in, or ended on. At least 1. */
   readonly currentRound: number;
+  /** The step that halted the walk `unreadable`, and null in every other
+      status. Carried out because the recovery the user is offered has to name
+      and reopen the ONE broken record, and "round N" alone does not say which
+      of the round's phases wrote it (T3O-14). */
+  readonly unreadableStepId: string | null;
 }
 
 /**
@@ -5700,9 +5824,9 @@ export interface BoardReviewLoopWalk {
  * can import both this and `reviewLoopDecision` — drives the same completions
  * through each and asserts they agree, so the copies cannot drift.
  *
- * The distinctions it exists to preserve: a malformed review payload is never
- * read as "no findings"; a loop that ran out of budget is never reported as one
- * that passed; and a loop the user stopped is neither.
+ * The distinctions it exists to preserve: a malformed payload is never read as
+ * "the phase said nothing"; a loop that ran out of budget is never reported as
+ * one that passed; and a loop the user stopped is neither.
  */
 export function boardReviewLoopWalk(input: {
   readonly completions: ReadonlyArray<BoardStepCompletion>;
@@ -5716,6 +5840,24 @@ export function boardReviewLoopWalk(input: {
     done.set(completion.stepId, completion);
   }
 
+  // A recorded phase whose payload nothing can read, or null when it reads.
+  //
+  // Every phase the walk consults gets this, not review alone (T3O-14): the
+  // completion handler refuses a defective payload on all four phases, so the
+  // only records that can reach here are ones written before that door existed,
+  // and a broken success is exactly what `unreadable` + Reopen are for. Letting
+  // a broken triage or sync record advance the loop would leave the one state
+  // the board cannot repair silently invisible — the deadlock this card fixes,
+  // one phase over.
+  const unreadableStep = (completion: BoardStepCompletion | undefined): string | null => {
+    if (completion === undefined) return null;
+    const defect = boardStepPayloadDefect({
+      stepId: completion.stepId,
+      payload: completion.payload,
+    });
+    return defect === null ? null : completion.stepId;
+  };
+
   for (let round = 1; ; round++) {
     // A round past the budget still walks when the PREVIOUS round recorded a
     // sync step (t3o-24, D3): the gate round on the rebased diff is owed
@@ -5723,23 +5865,62 @@ export function boardReviewLoopWalk(input: {
     // budget round is stopped by the cap.
     const gateRound = round > 1 && done.get(reviewStepId("sync", round - 1)) !== undefined;
     if (round > input.maxRounds && !gateRound) {
-      return { next: null, status: "round-cap", currentRound: Math.max(1, round - 1) };
+      return {
+        next: null,
+        status: "round-cap",
+        currentRound: Math.max(1, round - 1),
+        unreadableStepId: null,
+      };
     }
     const review = done.get(reviewStepId("review", round));
     if (review === undefined) {
-      return { next: { phase: "review", round }, status: "running", currentRound: round };
+      return {
+        next: { phase: "review", round },
+        status: "running",
+        currentRound: round,
+        unreadableStepId: null,
+      };
     }
     const payload = decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(review.payload));
     if (Option.isNone(payload)) {
-      return { next: null, status: "unreadable", currentRound: round };
+      return {
+        next: null,
+        status: "unreadable",
+        currentRound: round,
+        unreadableStepId: review.stepId,
+      };
     }
     const findings = payload.value.findings;
     const blocking = findings.some((finding) => isBoardReviewBlockingSeverity(finding.severity));
-    if (findings.length > 0 && done.get(reviewStepId("triage", round)) === undefined) {
-      return { next: { phase: "triage", round }, status: "running", currentRound: round };
+    const triage = done.get(reviewStepId("triage", round));
+    if (findings.length > 0) {
+      if (triage === undefined) {
+        return {
+          next: { phase: "triage", round },
+          status: "running",
+          currentRound: round,
+          unreadableStepId: null,
+        };
+      }
+      const broken = unreadableStep(triage);
+      if (broken !== null) {
+        return { next: null, status: "unreadable", currentRound: round, unreadableStepId: broken };
+      }
     }
-    if (blocking && done.get(reviewStepId("adjudicate", round)) === undefined) {
-      return { next: { phase: "adjudicate", round }, status: "running", currentRound: round };
+    const adjudicate = done.get(reviewStepId("adjudicate", round));
+    if (blocking) {
+      if (adjudicate === undefined) {
+        return {
+          next: { phase: "adjudicate", round },
+          status: "running",
+          currentRound: round,
+          unreadableStepId: null,
+        };
+      }
+      const broken = unreadableStep(adjudicate);
+      if (broken !== null) {
+        return { next: null, status: "unreadable", currentRound: round, unreadableStepId: broken };
+      }
     }
     // The loop check, the executor's alone: a round with nothing blocking is
     // the only exit that means the code passed — UNLESS a sync step was
@@ -5747,14 +5928,19 @@ export function boardReviewLoopWalk(input: {
     // diff, so the verdict belongs to the gate round that follows the rebase,
     // and the walk moves on to it.
     if (!blocking) {
-      if (done.get(reviewStepId("sync", round)) === undefined) {
-        return { next: null, status: "converged", currentRound: round };
+      const sync = done.get(reviewStepId("sync", round));
+      if (sync === undefined) {
+        return { next: null, status: "converged", currentRound: round, unreadableStepId: null };
+      }
+      const broken = unreadableStep(sync);
+      if (broken !== null) {
+        return { next: null, status: "unreadable", currentRound: round, unreadableStepId: broken };
       }
       continue;
     }
     // A stop the user asked for outranks budget that merely remains (D5).
     if (input.stopAfterRound === round) {
-      return { next: null, status: "stopped", currentRound: round };
+      return { next: null, status: "stopped", currentRound: round, unreadableStepId: null };
     }
   }
 }
