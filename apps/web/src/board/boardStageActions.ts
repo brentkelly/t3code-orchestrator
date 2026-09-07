@@ -71,8 +71,8 @@ export type BoardStagePrimaryAction =
       readonly kind: "merge";
       readonly label: string;
       readonly emphasised: true;
-      /** Set while a conflict-resolution step is running: the branch is being
-          rewritten under the pull request, so merging now is meaningless. */
+      /** Set while a merge conflict fix is live: the branch is being rewritten
+          under the pull request, so merging now is meaningless. */
       readonly disabled: boolean;
       /** Why the button is disabled, for the tooltip. Null when enabled. */
       readonly disabledReason: string | null;
@@ -90,10 +90,13 @@ export interface BoardStagePrimaryActionContext {
       merged, dragged back out of Done, worked on again — and an unnumbered
       "Merge" leaves the one moment that matters ambiguous. */
   readonly pullRequestNumber?: number | null;
-  /** Whether a step is running on this card in the merge stage. Nothing else
-      runs there — the stage does not auto-execute — so a live step can only be
-      the conflict-resolution one. */
-  readonly conflictStepRunning?: boolean;
+  /** Whether a merge conflict fix is live on this card — the shell's
+      `stepConflictFix` (T3O-9), which is derived from the step row's persisted
+      label rather than inferred from a running step at the merge stage. That
+      inference was wrong for the clean merge-stage conversation a human can
+      start by hand, which greyed the button out for a fix that did not exist;
+      such a click now reaches the server, which refuses it by name. */
+  readonly conflictFixLive?: boolean;
   /** Whether the card's step has SETTLED and left the card standing (the
       shell's `held`, ranked by `boardCardAttention`). The build role has no
       human forward gate while the pipeline is driving it — but once its step
@@ -187,7 +190,7 @@ export function boardStagePrimaryAction(
   // through to the ordinary forward move below, so a card whose PR someone
   // merged on GitHub — or a card that never had one — still has a way to Done.
   if (currentRole === "merge" && context?.pullRequestState === "open") {
-    const disabled = context.conflictStepRunning === true;
+    const disabled = context.conflictFixLive === true;
     return {
       kind: "merge",
       label: context.pullRequestNumber == null ? "Merge" : `Merge PR #${context.pullRequestNumber}`,

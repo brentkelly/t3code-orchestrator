@@ -24,6 +24,7 @@ import {
   type BoardLabel,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
+import { boardConflictFix } from "./boardConflictFix";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 // The Threads section deep-links with TanStack Router's <Link>, which needs a
@@ -164,7 +165,7 @@ const baseProps = {
   environmentId,
   onMergePullRequest: noop,
   onOpenPullRequest: noop,
-  conflictStepRunning: false,
+  conflictFix: null,
   stepFailure: null,
   merging: false,
   catalogue: [] as ReadonlyArray<BoardLabel>,
@@ -295,6 +296,50 @@ describe("BoardCardDetailPanel", () => {
       />,
     );
     expect(backlog).toContain(">Review</button>");
+  });
+
+  it("banners the held merge under the title, with a way to the thread (T3O-9)", () => {
+    // The answer to "why is the Merge button dead", where it is read before
+    // anything else. The wide form offers `View thread`; the merge stage has a
+    // thread pane, so this card is wide.
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        conflictFix={boardConflictFix({ live: true, baseRef: "t3o" })}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge })}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Resolving conflicts against t3o");
+    expect(html).toContain("The merge holds until the thread finishes.");
+    expect(html).toContain("View thread");
+  });
+
+  it("carries the same banner in the narrow form, without the thread button (T3O-9)", () => {
+    // The narrow layout has no thread pane to send anyone to — its Threads
+    // section lists the thread a few lines below the banner instead — so the
+    // button that would do nothing is absent rather than dead.
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        conflictFix={boardConflictFix({ live: true, baseRef: "main" })}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.backlog })}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Resolving conflicts against main");
+    expect(html).not.toContain("View thread");
+  });
+
+  it("shows no banner when the card's merge is not held (T3O-9)", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge })}
+        projectName="P"
+      />,
+    );
+    expect(html).not.toContain("Resolving conflicts");
   });
 
   it("renders an archived dependency as the card it is, not as an unknown id", () => {
