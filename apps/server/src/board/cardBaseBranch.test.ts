@@ -149,6 +149,79 @@ describe("provisioning honours the card's base branch (T3O-5, D2/D7)", () => {
   );
 });
 
+describe("the run prompt names the card's base branch (T3O-5, D9)", () => {
+  const turnText = (commands: ReadonlyArray<OrchestrationCommand>) => {
+    const turn = commands.find((command) => command.type === "thread.turn.start");
+    return turn?.type === "thread.turn.start" ? turn.message.text : "";
+  };
+
+  it.effect("AC10: a build step is told the branch it is working against", () =>
+    // Reinforcement on Build, but the same line is what makes Code review's
+    // shipped "open one against its base ref" instruction resolvable at all.
+    withGovernor(
+      { board: boardOf(unprovisioned({ id: "card-1", baseBranch: "develop" })), settings },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(
+            movedToBuilding(unprovisioned({ id: "card-1", baseBranch: "develop" }), 1),
+          );
+          assert.include(turnText(yield* h.commands), "This card's base branch is `develop`");
+        }),
+    ),
+  );
+
+  it.effect("AC10: an unpinned card is told its project's default branch", () =>
+    withGovernor({ board: boardOf(unprovisioned({ id: "card-1" })), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(movedToBuilding(unprovisioned({ id: "card-1" }), 1));
+        assert.include(turnText(yield* h.commands), "This card's base branch is `main`");
+      }),
+    ),
+  );
+
+  it.effect("AC10: only a plan step carries the project-root caveat", () =>
+    // A plan step runs in the workspace ROOT with no branch of its own, so it
+    // reads whatever the root has checked out — which may not be the code the
+    // card will change.
+    Effect.gen(function* () {
+      const planning = String(BOARD_SEED_STAGE_IDS.planning);
+      const planCard: BoardCard = {
+        ...makeBoardCard({ id: "card-1", stage: planning, orderKey: "m" }),
+        baseBranch: "develop",
+      };
+      yield* withGovernor(
+        {
+          board: boardOf(planCard),
+          settings: settingsWith({
+            building: [codexStep],
+            globalMaxConcurrent: 4,
+            planning: codexStep,
+          }),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain(
+              cardMoved(planCard, String(BOARD_SEED_STAGE_IDS.sprint), planning, 1),
+            );
+            const text = turnText(yield* h.commands);
+            assert.include(text, "This card's base branch is `develop`");
+            assert.include(text, "project workspace root");
+          }),
+      );
+      yield* withGovernor(
+        { board: boardOf(unprovisioned({ id: "card-2", baseBranch: "develop" })), settings },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain(
+              movedToBuilding(unprovisioned({ id: "card-2", baseBranch: "develop" }), 1),
+            );
+            assert.notInclude(turnText(yield* h.commands), "project workspace root");
+          }),
+      );
+    }),
+  );
+});
+
 describe("a split's integration branch is cut from the parent's base (T3O-5, D8)", () => {
   it.effect("AC9: a parent pinned to release/2.4 gets an integration branch cut from it", () =>
     // A latent bug the per-card base exposes rather than new behaviour: cutting

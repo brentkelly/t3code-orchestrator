@@ -1202,10 +1202,21 @@ const make = Effect.gen(function* () {
 
   /** The prompt for a step's run, composed from the frozen run row (D12). The
       role keys the envelope's deliverable postamble segment; roles are seeded,
-      never created, so the card's stage id resolves it without a board read. */
-  const stepPromptFor = (card: BoardCard, state: BoardCardStepState): string =>
-    composeStepPrompt({
-      card,
+      never created, so the card's stage id resolves it without a board read.
+
+      The base branch (T3O-5, D9) is the one thing that needs a lookup: the
+      envelope names it on every stage, and answering it for an UNPINNED card
+      means asking git what the project's default branch is. Preference order is
+      the concrete fact first — `worktree.baseRefName` is what the branch was
+      really cut from — then the pin, then the resolved default, so a build or
+      review step states the branch it is genuinely working against rather than
+      the one someone has just retargeted it at but not yet rebased onto. */
+  const stepPromptFor = Effect.fn("board-supervisor-stepPromptFor")(function* (
+    card: BoardCard,
+    state: BoardCardStepState,
+  ) {
+    return composeStepPrompt({
+      card: { ...card, baseBranch: yield* resolvePromptBaseBranch(card) },
       stageLabel: state.stageLabel,
       step: {
         stepId: state.stepId,
@@ -1215,6 +1226,27 @@ const make = Effect.gen(function* () {
       },
       role: boardSeedStageRole(card.stage),
     });
+  });
+
+  /** The base branch the envelope states, or null when it cannot be resolved —
+      in which case the envelope says nothing rather than putting placeholder
+      English where a branch name belongs. */
+  const resolvePromptBaseBranch = Effect.fn("board-supervisor-resolvePromptBaseBranch")(function* (
+    card: BoardCard,
+  ) {
+    const recorded = card.worktree?.baseRefName ?? null;
+    if (recorded !== null) return recorded;
+    if (card.baseBranch !== null) return card.baseBranch;
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const cwd = projectCwd(model, card);
+    if (cwd === null) return null;
+    const { defaultBranch } = yield* resolveDefaultBranch(cwd);
+    return resolveBoardCardEffectiveBase({
+      card,
+      cards: (yield* readBoard).cards,
+      defaultBranch: defaultBranch === "" ? null : defaultBranch,
+    });
+  });
 
   // Offer one build-mode step to the governor: acquire a slot under the resolved
   // caps and spawn its thread on the card's worktree, or leave it queued (D11).
@@ -1302,7 +1334,7 @@ const make = Effect.gen(function* () {
       worktreePath: input.worktreePath,
       branch: card.worktree?.branch ?? null,
       runSetup: true,
-      text: stepPromptFor(card, state),
+      text: yield* stepPromptFor(card, state),
     });
     if (threadId === null) {
       // No thread was created, so release the slot this candidate just acquired
@@ -1398,7 +1430,7 @@ const make = Effect.gen(function* () {
       worktreePath: cwd,
       branch: null,
       runSetup: false,
-      text: stepPromptFor(card, state),
+      text: yield* stepPromptFor(card, state),
     });
     // A plan step holds no slot, so a failed spawn leaks no capacity — but it
     // must still not be admitted against a thread that was never created.
