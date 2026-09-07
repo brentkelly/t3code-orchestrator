@@ -28,6 +28,7 @@ import {
   boardStepPostamble,
   boardStepPreamble,
   composeBoardReviewPhasePrompt,
+  composeBoardSyncPhasePrompt,
   composeStepPrompt,
 } from "./boardEnvelope.ts";
 const promptFor = (input: {
@@ -370,5 +371,117 @@ describe("effective stage role (plan)", () => {
     expect(
       effectiveBoardStageRole({ stageId: BoardStageId.make("2f6c9c2a-custom"), role: null }),
     ).toBe(null);
+  });
+});
+
+// ── The base-branch orientation line (T3O-5, D9) ────────────────────────────
+// The card's base is stated on EVERY stage, in one line, which is what answers
+// the brief's plan/build/review requirements at once — Code review most of all,
+// whose shipped prompt already says "opening one against its base ref" and
+// until now gave the agent nothing resolvable to read that against.
+
+describe("boardStepPreamble base branch (T3O-5, D9)", () => {
+  const preambleFor = (input: {
+    readonly baseBranch?: string | null;
+    readonly role?: "plan" | "build" | "review" | null;
+  }) =>
+    boardStepPreamble({
+      card: {
+        key: "T3-1",
+        title: "Ship it",
+        stage: "building",
+        ...(input.baseBranch === undefined ? {} : { baseBranch: input.baseBranch }),
+      },
+      stageLabel: "Building",
+      step: { stepLabel: null },
+      role: input.role ?? null,
+    });
+
+  it("names the base on every stage", () => {
+    for (const role of ["plan", "build", "review", null] as const) {
+      expect(preambleFor({ baseBranch: "develop", role })).toContain(
+        "This card's base branch is `develop`",
+      );
+    }
+  });
+
+  it("says nothing at all when the base could not be resolved", () => {
+    // Never placeholder English standing in for a branch name: an agent told
+    // its base is "the default branch" learns nothing it can run git against.
+    expect(preambleFor({ baseBranch: null })).not.toContain("base branch");
+    expect(preambleFor({})).not.toContain("base branch");
+  });
+
+  it("adds the project-root caveat to a plan-role step and to no other", () => {
+    // A plan step runs in the project workspace root with no branch of its own,
+    // so it reads whatever the root happens to have checked out.
+    const plan = preambleFor({ baseBranch: "release/2.4", role: "plan" });
+    expect(plan).toContain("project workspace root");
+    for (const role of ["build", "review", null] as const) {
+      expect(preambleFor({ baseBranch: "release/2.4", role })).not.toContain(
+        "project workspace root",
+      );
+    }
+  });
+
+  it("rides the composed run prompt, not just the preamble in isolation", () => {
+    const prompt = composeStepPrompt({
+      card: { key: "T3-1", title: "Ship it", stage: "review", baseBranch: "develop" },
+      stageLabel: "Code review",
+      step: { stepId: "review@1", stepLabel: "Review · round 1", prompt: "", humanInLoop: false },
+      role: "review",
+    });
+    expect(prompt).toContain("This card's base branch is `develop`");
+  });
+});
+
+describe("composeBoardSyncPhasePrompt retarget wording (T3O-5, D10)", () => {
+  it("keeps the tip-moved prompt exactly as it was", () => {
+    const moved = composeBoardSyncPhasePrompt({ round: 2, baseRefName: "board/T3-1" });
+    expect(moved).toContain("a sibling card merged into it");
+    expect(moved).toContain("This card's base branch is `board/T3-1`");
+    expect(moved).not.toContain("has CHANGED");
+  });
+
+  it("names both the old and the new base on a retarget, and drops the sibling claim", () => {
+    // "A sibling card merged into it" is simply false for a retarget, and the
+    // agent acting on it would go looking for a merge that never happened.
+    const retargeted = composeBoardSyncPhasePrompt({
+      round: 2,
+      baseRefName: "main",
+      retargetedTo: "develop",
+    });
+    expect(retargeted).not.toContain("a sibling card merged into it");
+    expect(retargeted).toContain("was cut from `main`");
+    expect(retargeted).toContain("retargeted at `develop`");
+    expect(retargeted).toContain("This card's base branch is now `develop`");
+  });
+
+  it("keeps the whole rebase mechanic on the retarget path", () => {
+    // The machinery is correct verbatim for both triggers, so only the opening
+    // sentence forks — a retarget that lost the force-with-lease rule or the
+    // abort-clean rule would be a different, more dangerous step.
+    const retargeted = composeBoardSyncPhasePrompt({
+      round: 1,
+      baseRefName: "main",
+      retargetedTo: "develop",
+    });
+    for (const clause of [
+      "Fetch the base branch",
+      "--force-with-lease",
+      "git rebase --abort",
+      "run the project's own checks",
+    ]) {
+      expect(retargeted).toContain(clause);
+    }
+  });
+
+  it("treats a retarget to the base it already records as no retarget", () => {
+    const same = composeBoardSyncPhasePrompt({
+      round: 1,
+      baseRefName: "develop",
+      retargetedTo: "develop",
+    });
+    expect(same).toBe(composeBoardSyncPhasePrompt({ round: 1, baseRefName: "develop" }));
   });
 });

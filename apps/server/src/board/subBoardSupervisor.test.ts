@@ -13,6 +13,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
+  type BoardCardWorktree,
   type BoardCardStepState,
   type BoardSettings,
   type OrchestrationCommand,

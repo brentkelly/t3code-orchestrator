@@ -3090,11 +3090,17 @@ const make = Effect.gen(function* () {
     // The merge-click staleness gate (t3o-24, D2): the crossing was checked
     // when the card entered this stage, but the human may have PARKED it here
     // while a sibling merged underneath — so the click re-measures. A stale
-    // child goes back to the review-role stage (where the sync-base step and
+    // card goes back to the review-role stage (where the sync-base step and
     // the gate round run) instead of merging a diff that was never reviewed
     // against the base it merges into. Skipped when the board has no
     // review-role stage to send it to — there is then no loop to gate with.
-    if (fresh.parentCardId !== null && (yield* resolveBaseStale(fresh))) {
+    //
+    // The sub-board scope test that used to sit here has moved INTO
+    // `resolveBaseStale` (T3O-5, D10), which is the only place that can tell
+    // the two staleness conditions apart: tip-moved is still children-only,
+    // while a RETARGET applies at any level — and a top-level card is exactly
+    // where retargeting happens, since a child's picker is read-only.
+    if (yield* resolveBaseStale(fresh)) {
       const reviewStage = boardStageWithRole(stages, "review");
       if (reviewStage !== null) {
         // A conflict-fix completion re-entering here must not leave the merge
@@ -4094,7 +4100,7 @@ const make = Effect.gen(function* () {
     const card = event.payload.card;
     const board = yield* readBoard;
     // ── The review→merge crossing gate (t3o-24, D2) ────────────────────────
-    // A sub-board child ARRIVING at the merge-role stage on a forward move —
+    // A card ARRIVING at the merge-role stage on a forward move —
     // the auto-advance that raced a sibling's merge, or a human drag — is
     // checked against its recorded round-start tip. Stale sends it straight
     // back to the review-role stage, where `beginStageRun`'s plan enqueues the
@@ -4108,12 +4114,13 @@ const make = Effect.gen(function* () {
       const fromIndex = boardStageIndex(board, event.payload.fromStage);
       const toIndex = boardStageIndex(board, event.payload.toStage);
       if (
-        card.parentCardId !== null &&
         toStage !== null &&
         effectiveBoardStageRole(toStage) === "merge" &&
         reviewStage !== null &&
         fromIndex >= 0 &&
         toIndex > fromIndex &&
+        // Scope lives in `resolveBaseStale` (T3O-5, D10), not here: tip-moved
+        // stays children-only, a retarget applies at any level.
         (yield* resolveBaseStale(card))
       ) {
         yield* dispatch({
