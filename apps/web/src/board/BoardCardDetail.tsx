@@ -32,6 +32,7 @@ import {
   type BoardState,
   type EnvironmentId,
   boardReviewRoundsStarted,
+  reviewStepId,
   effectiveBoardReviewRounds,
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   type BoardCardReviewOverrides,
@@ -143,6 +144,7 @@ export function BoardCardDetail({
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
   const reorderCard = useAtomCommand(boardEnvironment.reorderCard);
   const forceStartStep = useAtomCommand(boardEnvironment.forceStartStep);
+  const reopenStep = useAtomCommand(boardEnvironment.reopenStep);
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
   const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
@@ -859,6 +861,17 @@ export function BoardCardDetail({
       reviewRoundsStarted={reviewRoundsRecorded}
       reviewStepActive={cardShell?.stepRunning === true || cardShell?.queued === true}
       onSetReviewRounds={(rounds) => patchReviewOverrides({ rounds })}
+      // The way out of a round that recorded a payload nothing can read
+      // (T3O-14). The server refuses it on a readable record, so a stale pane
+      // cannot discard a round that actually landed.
+      onReopenReviewRound={(round) =>
+        runCommand(
+          reopenStep({
+            environmentId,
+            input: { cardId: card.id, stepId: reviewStepId("review", round) },
+          }),
+        )
+      }
       onResumeReview={(rounds) =>
         // "Run round N+1" is a resume, so it says both halves outright: at
         // least enough budget to reach that round (never LESS than the card

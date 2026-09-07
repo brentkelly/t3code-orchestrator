@@ -311,18 +311,20 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     return { ownCard, ownThread };
   });
 
-  /** Put a live, admitted step on `ownCard`, owned by `ownThread`. */
+  /** Put a live, admitted step on `ownCard`, owned by `ownThread`. `stepId`
+      defaults to the one-step stage's id; a review-loop test passes its own. */
   const startStep = Effect.fn("startStep")(function* (input: {
     readonly ownCard: BoardCardId;
     readonly ownThread: ThreadId;
     readonly suffix: string;
+    readonly stepId?: string;
   }) {
     const engine = yield* OrchestrationEngineService;
     yield* engine.dispatch({
       type: "board.card.select-step",
       commandId: CommandId.make(`cmd-select-${input.suffix}`),
       cardId: input.ownCard,
-      stepId: "building",
+      stepId: input.stepId ?? "building",
       stepLabel: null,
       stageLabel: "Building",
       prompt: "",
@@ -340,7 +342,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       type: "board.card.admit-step",
       commandId: CommandId.make(`cmd-admit-${input.suffix}`),
       cardId: input.ownCard,
-      stepId: "building",
+      stepId: input.stepId ?? "building",
       admitted: true,
       threadId: input.ownThread,
       createdAt: t0,
@@ -353,13 +355,14 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   const settleStep = Effect.fn("settleStep")(function* (input: {
     readonly ownCard: BoardCardId;
     readonly suffix: string;
+    readonly stepId?: string;
   }) {
     const engine = yield* OrchestrationEngineService;
     yield* engine.dispatch({
       type: "board.card.settle-step",
       commandId: CommandId.make(`cmd-settle-${input.suffix}`),
       cardId: input.ownCard,
-      stepId: "building",
+      stepId: input.stepId ?? "building",
       outcome: "succeeded",
       createdAt: t0,
     });
@@ -571,6 +574,248 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       assert.include(failure.message, "another thread");
       const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
       assert.strictEqual(context.steps.length, 0);
+    }),
+  );
+
+  // ── T3O-14: a broken completion must not become a deadlock ───────────
+  //
+  // On card CAA-5, step `review@10`, the caller's `payload` argument arrived
+  // folded into `summary` — tags and all — and `payload` persisted as null. The
+  // board recorded a `succeeded` review nothing could read; the loop refused to
+  // converge on it (correctly), the idempotency rule refused to let it be
+  // rewritten, and the executor cannot re-run a step already recorded. Triage
+  // never started and the card was stuck for good.
+
+  const validReview = { reviewedSha: "abc123", findings: [] };
+
+  it.effect("refuses a succeeded review step that recorded no payload", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("review-null");
+      yield* startStep({ ...own, suffix: "review-null", stepId: "review@1" });
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_complete_step({ stepId: "review@1", outcome: "succeeded", summary: "Reviewed it" })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "reviewedSha");
+      // Nothing was persisted, so nothing is frozen: the step is still live and
+      // the agent's retry can land.
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 0);
+      assert.strictEqual(context.currentStep?.stepId, "review@1");
+      // And the retry does land.
+      const retry = yield* boardHandlers
+        .board_complete_step({
+          stepId: "review@1",
+          outcome: "succeeded",
+          summary: "Reviewed it",
+          payload: validReview,
+        })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(retry.alreadyCompleted, false);
+    }),
+  );
+
+  it.effect("refuses a review payload of the wrong shape rather than pinning it", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("review-shape");
+      yield* startStep({ ...own, suffix: "review-shape", stepId: "review@1" });
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_complete_step({
+            stepId: "review@1",
+            outcome: "succeeded",
+            summary: "Reviewed it",
+            payload: { notes: "looks fine" },
+          })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 0);
+    }),
+  );
+
+  it.effect("lets a phase that produced nothing report failed, payload or not", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("review-failed");
+      yield* startStep({ ...own, suffix: "review-failed", stepId: "review@1" });
+      // The healthy escape hatch the prompt protocol names: a reviewer that
+      // cannot produce findings completes `failed` and the recovery ladder
+      // takes it. The payload contract is about a claim of success.
+      const result = yield* boardHandlers
+        .board_complete_step({
+          stepId: "review@1",
+          outcome: "failed",
+          summary: "Could not read the diff",
+        })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(result.outcome, "failed");
+    }),
+  );
+
+  it.effect("names the payload, not the summary, when the payload was folded in", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("leak");
+      yield* startStep({ ...own, suffix: "leak", stepId: "review@1" });
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_complete_step({
+            stepId: "review@1",
+            outcome: "succeeded",
+            // Verbatim the shape CAA-5 recorded: the summary runs on into the
+            // serialised markup of the argument that never arrived.
+            summary:
+              'Completed the round-10 PR review.</summary>\n<parameter name="payload">{"reviewedSha":"abc123","findings":[]}',
+          })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      // The message the agent could not act on was "the summary is N bytes".
+      assert.include(failure.message, "payload");
+      assert.notInclude(failure.message, "over the 2048-byte cap");
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 0);
+    }),
+  );
+
+  it.effect("each byte cap names the field that actually overflowed", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("caps");
+      yield* startStep({ ...own, suffix: "caps" });
+      const oversizedPayload = yield* Effect.flip(
+        boardHandlers
+          .board_complete_step({
+            outcome: "succeeded",
+            summary: "Built it",
+            payload: { blob: "x".repeat(20_000) },
+          })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.include(oversizedPayload.message, "The payload serialises to");
+      const oversizedSummary = yield* Effect.flip(
+        boardHandlers
+          .board_complete_step({ outcome: "succeeded", summary: "y".repeat(4_000) })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.include(oversizedSummary.message, "The summary is");
+      // With no payload beside it, an oversized summary is the leak's other
+      // shape, so the message points at the field that may have swallowed one
+      // instead of only telling the agent to write less.
+      assert.include(oversizedSummary.message, "`payload`");
+    }),
+  );
+
+  it.effect("repairs a succeeded review step whose stored payload cannot be read", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("repair");
+      yield* startStep({ ...own, suffix: "repair", stepId: "review@1" });
+      const engine = yield* OrchestrationEngineService;
+      // The record CAA-5 was left holding — written straight to the engine,
+      // because the handler now refuses to create one.
+      yield* engine.dispatch({
+        type: "board.card.complete-step",
+        commandId: CommandId.make("cmd-broken-review"),
+        cardId: own.ownCard,
+        stepId: "review@1",
+        outcome: "succeeded",
+        summary: "Reviewed it",
+        payload: null,
+        threadId: own.ownThread,
+        createdAt: t0,
+      });
+      // …and settled, which is where the loop leaves it: no live step, so the
+      // recovery-retry path that supersedes a FAILED completion cannot help.
+      yield* settleStep({ ownCard: own.ownCard, suffix: "repair", stepId: "review@1" });
+
+      const repaired = yield* boardHandlers
+        .board_complete_step({
+          stepId: "review@1",
+          outcome: "succeeded",
+          summary: "Re-recording round 1",
+          payload: validReview,
+        })
+        .pipe(withScope(own.ownThread));
+      // NOT `alreadyCompleted` — the call did something.
+      assert.strictEqual(repaired.alreadyCompleted, false);
+      assert.strictEqual(repaired.outcome, "succeeded");
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 1);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
+      assert.strictEqual(context.steps[0]?.payload, JSON.stringify(validReview));
+      assert.strictEqual(context.steps[0]?.summary, "Re-recording round 1");
+    }),
+  );
+
+  it.effect("a repaired step freezes again once its payload is readable", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("refreeze");
+      yield* startStep({ ...own, suffix: "refreeze", stepId: "review@1" });
+      yield* boardHandlers
+        .board_complete_step({
+          stepId: "review@1",
+          outcome: "succeeded",
+          summary: "Reviewed",
+          payload: validReview,
+        })
+        .pipe(withScope(own.ownThread));
+      yield* settleStep({ ownCard: own.ownCard, suffix: "refreeze", stepId: "review@1" });
+      // The regression the repair path must not cost: a VALIDLY completed step
+      // is still immutable, so a second reviewer report cannot overwrite the
+      // round the loop already counted.
+      const retry = yield* boardHandlers
+        .board_complete_step({
+          stepId: "review@1",
+          outcome: "succeeded",
+          summary: "Second thoughts",
+          payload: { reviewedSha: "def456", findings: [] },
+        })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(retry.alreadyCompleted, true);
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
+      assert.strictEqual(context.steps[0]?.payload, JSON.stringify(validReview));
+      assert.strictEqual(context.steps[0]?.summary, "Reviewed");
+    }),
+  );
+
+  it.effect("a confirming retry of a valid review step needs no payload of its own", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("confirm");
+      yield* startStep({ ...own, suffix: "confirm", stepId: "review@1" });
+      yield* boardHandlers
+        .board_complete_step({
+          stepId: "review@1",
+          outcome: "succeeded",
+          summary: "Reviewed",
+          payload: validReview,
+        })
+        .pipe(withScope(own.ownThread));
+      yield* settleStep({ ownCard: own.ownCard, suffix: "confirm", stepId: "review@1" });
+      // The payload contract guards what gets RECORDED. A repeat call on a step
+      // already recorded validly records nothing — the decider re-emits the
+      // stored completion and drops these arguments — so demanding a payload
+      // from it would break the documented retry-safety of the tool: an agent
+      // re-confirming after a dropped reply would be told its round was invalid.
+      const retry = yield* boardHandlers
+        .board_complete_step({ stepId: "review@1", outcome: "succeeded", summary: "Reviewed" })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(retry.alreadyCompleted, true);
+      assert.strictEqual(retry.outcome, "succeeded");
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 1);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
+      assert.strictEqual(context.steps[0]?.payload, JSON.stringify(validReview));
+      assert.strictEqual(context.steps[0]?.summary, "Reviewed");
     }),
   );
 

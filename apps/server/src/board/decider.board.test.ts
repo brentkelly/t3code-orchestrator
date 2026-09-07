@@ -1636,6 +1636,9 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       const recoverCard = makeCard({ id: "card-recover", stage: "building" });
       const resumeCard = makeCard({ id: "card-resume", stage: "building" });
       const settleCard = makeCard({ id: "card-settle", stage: "building" });
+      // reopen-step only accepts a settled step whose recorded payload cannot
+      // be read (T3O-14), so the catalog's card carries exactly that record.
+      const reopenCard = makeCard({ id: "card-reopen", stage: BOARD_SEED_STAGE_IDS.review });
       const briefAttachment = {
         id: BoardCardAttachmentId.make("att-1"),
         name: "bug.png",
@@ -1669,6 +1672,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             settleCard,
             splitCard,
             attachedCard,
+            reopenCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           plans: [readyPlan, ...splitPlans],
@@ -1684,6 +1688,17 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             // complete-step validates against the card's LIVE step, so the
             // catalog's completion needs one to succeed against.
             makeStepState("card-ready", "running", "build"),
+          ],
+          stepCompletions: [
+            {
+              cardId: BoardCardId.make("card-reopen"),
+              stepId: "review@1",
+              outcome: "succeeded" as const,
+              summary: "Reviewed",
+              payload: null,
+              threadId: null,
+              completedAt: NOW,
+            },
           ],
           nextCardNumberByProject: {},
         },
@@ -1795,6 +1810,13 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           summary: "Built",
           payload: null,
           threadId: null,
+          createdAt: NOW,
+        },
+        "board.card.reopen-step": {
+          type: "board.card.reopen-step",
+          commandId: CommandId.make("cmd-reopen"),
+          cardId: BoardCardId.make("card-reopen"),
+          stepId: "review@1",
           createdAt: NOW,
         },
         "board.plans.propose": {
@@ -2417,6 +2439,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     readonly stepId: string;
     readonly outcome: "succeeded" | "blocked" | "failed";
     readonly summary: string;
+    readonly payload?: unknown;
   }): BoardCommand =>
     ({
       type: "board.card.complete-step",
@@ -2425,10 +2448,188 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       stepId: input.stepId,
       outcome: input.outcome,
       summary: input.summary,
-      payload: null,
+      payload: input.payload === undefined ? null : JSON.stringify(input.payload),
       threadId: null,
       createdAt: NOW,
     }) as const;
+
+  const reopenStep = (stepId: string): BoardCommand =>
+    ({
+      type: "board.card.reopen-step",
+      commandId: CommandId.make(`cmd-reopen-${stepId}`),
+      cardId: BoardCardId.make("card-1"),
+      stepId,
+      createdAt: NOW,
+    }) as const;
+
+  /** A review completion already in the ledger, as the read model holds it. */
+  const recordedReview = (input: {
+    readonly stepId: string;
+    readonly outcome?: "succeeded" | "failed";
+    readonly payload?: unknown;
+    readonly summary?: string;
+  }) => ({
+    cardId: BoardCardId.make("card-1"),
+    stepId: input.stepId,
+    outcome: input.outcome ?? ("succeeded" as const),
+    summary: input.summary ?? "Reviewed",
+    payload: input.payload === undefined ? null : JSON.stringify(input.payload),
+    threadId: ThreadId.make("thread-1"),
+    completedAt: NOW,
+  });
+
+  const validReviewPayload = { reviewedSha: "abc123", findings: [] };
+
+  // ── T3O-14: idempotency is conditional on VALIDITY ───────────────────
+
+  it.effect("board_complete_step repairs a succeeded review step nothing can read", () =>
+    Effect.gen(function* () {
+      // The CAA-5 record: `succeeded`, payload null, the step long settled — so
+      // there is no live step, and the failed-retry supersede rule cannot help.
+      // Pinning this is what made one malformed call a permanent deadlock.
+      const repaired = yield* decide(
+        completeStep({
+          stepId: "review@10",
+          outcome: "succeeded",
+          summary: "Re-recording round 10",
+          payload: validReviewPayload,
+        }),
+        cardReadModel({
+          stepStates: [liveStep("review@10", "succeeded")],
+          stepCompletions: [recordedReview({ stepId: "review@10" })],
+        }),
+      );
+      assert.strictEqual(repaired.type, "board.card-step-completed");
+      if (repaired.type !== "board.card-step-completed") return;
+      assert.strictEqual(repaired.payload.completion.summary, "Re-recording round 10");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
+      assert.strictEqual(repaired.payload.completion.payload, JSON.stringify(validReviewPayload));
+      // The reactor ignores a completion whose step already settled, so the
+      // repair has to say it was one or the loop never restarts.
+      assert.strictEqual(repaired.payload.repaired, true);
+    }),
+  );
+
+  it.effect("board_complete_step will not replace a broken record with another one", () =>
+    Effect.gen(function* () {
+      // Repair means repair. A second payload-less success is not a fix, and
+      // letting it through would rewrite the ledger for nothing.
+      const retried = yield* decide(
+        completeStep({ stepId: "review@10", outcome: "succeeded", summary: "Still nothing" }),
+        cardReadModel({
+          stepStates: [liveStep("review@10", "succeeded")],
+          stepCompletions: [recordedReview({ stepId: "review@10" })],
+        }),
+      );
+      assert.strictEqual(retried.type, "board.card-step-completed");
+      if (retried.type !== "board.card-step-completed") return;
+      assert.strictEqual(retried.payload.completion.summary, "Reviewed");
+      assert.strictEqual(retried.payload.repaired, undefined);
+    }),
+  );
+
+  it.effect("board_complete_step still pins a review step that recorded a readable payload", () =>
+    Effect.gen(function* () {
+      const retried = yield* decide(
+        completeStep({
+          stepId: "review@1",
+          outcome: "succeeded",
+          summary: "Second thoughts",
+          payload: { reviewedSha: "def456", findings: [] },
+        }),
+        cardReadModel({
+          stepStates: [liveStep("review@1", "succeeded")],
+          stepCompletions: [recordedReview({ stepId: "review@1", payload: validReviewPayload })],
+        }),
+      );
+      assert.strictEqual(retried.type, "board.card-step-completed");
+      if (retried.type !== "board.card-step-completed") return;
+      assert.strictEqual(retried.payload.completion.summary, "Reviewed");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserts the exact stored encoding.
+      assert.strictEqual(retried.payload.completion.payload, JSON.stringify(validReviewPayload));
+      assert.strictEqual(retried.payload.repaired, undefined);
+    }),
+  );
+
+  // ── T3O-14: the explicit reopen affordance ───────────────────────────
+
+  it.effect("board_reopen_step sends a broken round back as failed so it runs again", () =>
+    Effect.gen(function* () {
+      const reopened = yield* decide(
+        reopenStep("review@10"),
+        cardReadModel({
+          cards: [makeCard({ id: "card-1", stage: BOARD_SEED_STAGE_IDS.review })],
+          stepStates: [liveStep("review@10", "succeeded")],
+          stepCompletions: [recordedReview({ stepId: "review@10" })],
+        }),
+      );
+      assert.strictEqual(reopened.type, "board.card-step-completed");
+      if (reopened.type !== "board.card-step-completed") return;
+      // `failed` is what the ledger should have held all along, and it is what
+      // puts the round back in front of the executor: the walk counts only
+      // SUCCEEDED completions, so `review@10` is due again.
+      assert.strictEqual(reopened.payload.completion.outcome, "failed");
+      assert.strictEqual(reopened.payload.completion.payload, null);
+      assert.include(reopened.payload.completion.summary, "Reopened");
+      // Whose run it was survives — the step is re-planned, not re-assigned.
+      assert.strictEqual(reopened.payload.completion.threadId, ThreadId.make("thread-1"));
+      assert.strictEqual(reopened.payload.repaired, true);
+    }),
+  );
+
+  it.effect("board_reopen_step refuses a round that recorded a readable payload", () =>
+    Effect.gen(function* () {
+      // Reopening is a repair, never a way to discard a round that landed: one
+      // click must not be able to erase review the loop is entitled to count.
+      const failure = yield* decideFail(
+        reopenStep("review@1"),
+        cardReadModel({
+          cards: [makeCard({ id: "card-1", stage: BOARD_SEED_STAGE_IDS.review })],
+          stepStates: [liveStep("review@1", "succeeded")],
+          stepCompletions: [recordedReview({ stepId: "review@1", payload: validReviewPayload })],
+        }),
+      );
+      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.include(String(failure), "nothing to repair");
+    }),
+  );
+
+  it.effect("board_reopen_step refuses a record that did not succeed", () =>
+    Effect.gen(function* () {
+      // A failure is not a broken success: the recovery ladder already re-runs
+      // it in place, and its summary is the record of what went wrong. Reopening
+      // one would overwrite that with the generic repair note for nothing. The
+      // same guard keeps the command inside the review loop — a step whose phase
+      // declares no payload shape can never report a defect to repair.
+      const failure = yield* decideFail(
+        reopenStep("review@2"),
+        cardReadModel({
+          cards: [makeCard({ id: "card-1", stage: BOARD_SEED_STAGE_IDS.review })],
+          stepStates: [liveStep("review@2", "failed")],
+          stepCompletions: [
+            recordedReview({ stepId: "review@2", outcome: "failed", summary: "Could not read it" }),
+          ],
+        }),
+      );
+      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.include(String(failure), "not a success");
+    }),
+  );
+
+  it.effect("board_reopen_step refuses a step with no recorded completion", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        reopenStep("review@3"),
+        cardReadModel({
+          cards: [makeCard({ id: "card-1", stage: BOARD_SEED_STAGE_IDS.review })],
+          stepStates: [liveStep("review@1", "succeeded")],
+          stepCompletions: [recordedReview({ stepId: "review@1" })],
+        }),
+      );
+      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.include(String(failure), "no recorded completion");
+    }),
+  );
 
   const proposePlans = (
     plans: ReadonlyArray<{
