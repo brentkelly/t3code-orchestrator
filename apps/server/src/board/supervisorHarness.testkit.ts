@@ -183,6 +183,7 @@ export const makeBoardCard = (input: {
   humanInLoop: null,
   reviewOverrides: null,
   modelOverrides: null,
+  splitRationale: null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],

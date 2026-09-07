@@ -37,6 +37,10 @@ reads each file's frontmatter. `.gitignore` re-includes the directory directly b
 ignore line. A commit that touches only `.plans/` needs `--no-verify`, because the format hook
 fails on that directory.
 
+The numbered `.plans/t3o-NN-*.md` series is the fork's own build order, not a template for how a
+board card's plan should be shaped. A card's planning output is ONE plan unless the card genuinely
+needs splitting — two or more plans means two or more child cards, behind a human approval gate.
+
 ### Branches — the rule that matters most
 
 - **`t3o` is the working trunk and the default branch.** All work happens here. All PRs target it.

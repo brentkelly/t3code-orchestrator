@@ -61,6 +61,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   humanInLoop: null,
   reviewOverrides: null,
   modelOverrides: null,
+  splitRationale: null,
   worktree: null,
   blocked: false,
   archivedAt: null,

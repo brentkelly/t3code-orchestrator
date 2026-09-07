@@ -174,6 +174,11 @@ const BoardCardDbRow = Schema.Struct({
       has never set a per-stage model override — indistinguishable on purpose,
       exactly as `reviewOverrides` is, so replay equals rehydration (t3o-29). */
   modelOverrides: Schema.NullOr(Schema.fromJsonString(BoardCardModelOverrides)),
+  /** NULL for every row written before migration 035, and for every card whose
+      latest plan proposal was a single plan — indistinguishable on purpose, so
+      replay equals rehydration (t3o card 11). Plain text, not JSON: one prose
+      paragraph the human reads at the Approve split gate. */
+  splitRationale: BoardCard.fields.splitRationale,
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -555,6 +560,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     modelOverrides: isEmptyBoardCardModelOverrides(card.modelOverrides)
       ? null
       : card.modelOverrides,
+    splitRationale: card.splitRationale,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -600,6 +606,7 @@ function rowToBoardCard(
     pullRequestFloor: row.pullRequestFloor,
     reviewOverrides: row.reviewOverrides,
     modelOverrides: row.modelOverrides,
+    splitRationale: row.splitRationale,
     blocked: row.blocked !== 0,
     threadLinks,
     attachments,
@@ -657,6 +664,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request_floor,
         review_overrides,
         model_overrides,
+        split_rationale,
         blocked,
         archived_at,
         created_at,
@@ -682,6 +690,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.pullRequestFloor},
         ${row.reviewOverrides},
         ${row.modelOverrides},
+        ${row.splitRationale},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -707,6 +716,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request_floor = excluded.pull_request_floor,
         review_overrides = excluded.review_overrides,
         model_overrides = excluded.model_overrides,
+        split_rationale = excluded.split_rationale,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -742,6 +752,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request_floor AS "pullRequestFloor",
         review_overrides AS "reviewOverrides",
         model_overrides AS "modelOverrides",
+        split_rationale AS "splitRationale",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -963,6 +974,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pull_request_floor AS "pullRequestFloor",
         review_overrides AS "reviewOverrides",
         model_overrides AS "modelOverrides",
+        split_rationale AS "splitRationale",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -1588,6 +1600,23 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  /** Write a card's split justification (t3o card 11). Its own statement for
+      the same reason the review-summary cache is: `board.plans-proposed`
+      carries the card id and the plans, never the card, so there is no card to
+      upsert — and the in-memory projector does the same targeted field set, so
+      the two cannot diverge. */
+  const updateBoardCardSplitRationaleRow = SqlSchema.void({
+    Request: Schema.Struct({
+      cardId: BoardCardId,
+      splitRationale: BoardCard.fields.splitRationale,
+    }),
+    execute: (row) => sql`
+      UPDATE board_cards
+      SET split_rationale = ${row.splitRationale}
+      WHERE card_id = ${row.cardId}
+    `,
+  });
+
   const listBoardCardStepRowsForCard = SqlSchema.findAll({
     Request: BoardCardId,
     Result: BoardCardStepDbRow,
@@ -1896,6 +1925,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     findBoardCardIdForLiveThread,
     listBoardCardStepRowsForCard,
     updateBoardCardReviewSummaryRow,
+    updateBoardCardSplitRationaleRow,
     upsertBoardCardStepRow,
     listBoardCardStepRows,
     upsertBoardCardStepStateRow,
@@ -2591,6 +2621,17 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         return;
 
       case "board.plans-proposed":
+        // The split justification rides the card row (t3o card 11), mirroring
+        // the in-memory projector's targeted field set — the event carries no
+        // card to upsert.
+        yield* queries
+          .updateBoardCardSplitRationaleRow({
+            cardId: event.payload.cardId,
+            splitRationale: event.payload.splitRationale,
+          })
+          .pipe(
+            Effect.mapError(toPersistenceSqlError("BoardCardsProjection.splitRationale:query")),
+          );
         yield* replacePlans(event.payload.cardId, event.payload.plans);
         yield* recordActivity({
           event,

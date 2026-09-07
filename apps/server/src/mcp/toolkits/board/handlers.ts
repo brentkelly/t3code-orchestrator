@@ -810,6 +810,9 @@ export const boardHandlers = {
         commandId: yield* mintCommandId,
         cardId: card.id,
         plans: input.plans,
+        // Optional on the tool, explicit on the command (t3o card 11): the
+        // decider is the one place that decides whether a split needs one.
+        splitRationale: input.splitRationale ?? null,
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps, command);

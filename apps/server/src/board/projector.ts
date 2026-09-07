@@ -217,6 +217,8 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     pullRequest: null,
     pullRequestHistory: [],
     pullRequestFloor: null,
+    // And no split has been proposed on a card that has never planned (card 11).
+    splitRationale: null,
     blocked: false,
     archivedAt: null,
     createdAt: payload.createdAt,
@@ -418,6 +420,26 @@ function upsertStepState(
   return { ...model, board: { ...board, stepStates } };
 }
 
+/** Set one card's split justification (t3o card 11). Its own helper rather than
+    a card upsert because `board.plans-proposed` carries the card id and the
+    plans, never the card — and a no-op for an unknown id, matching the plan
+    slice's behaviour on the same event. */
+function setCardSplitRationale(
+  model: OrchestrationReadModel,
+  cardId: BoardCardId,
+  splitRationale: BoardCard["splitRationale"],
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  if (!board.cards.some((card) => card.id === cardId)) return model;
+  return {
+    ...model,
+    board: {
+      ...board,
+      cards: board.cards.map((card) => (card.id === cardId ? { ...card, splitRationale } : card)),
+    },
+  };
+}
+
 /** Replace a card's whole plan set (board_propose_plans is a wholesale
     replace). Bodies are stripped — they live only in `board_plans`. */
 function replaceCardPlans(
@@ -555,8 +577,12 @@ export function projectBoardEvent(
       return decodeBoardPlansProposedPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) =>
+          // The split justification rides the card, not the plan set (card 11),
+          // so it is a targeted field set rather than a card upsert: this event
+          // carries the card id and the plans, never the card itself. Applied
+          // BEFORE the plans so an unknown card id is a no-op on both.
           replaceCardPlans(
-            model,
+            setCardSplitRationale(model, payload.cardId, payload.splitRationale),
             payload.cardId,
             // Strip the body — read model holds metadata only (D8).
             payload.plans.map(({ body: _body, ...plan }) => plan),

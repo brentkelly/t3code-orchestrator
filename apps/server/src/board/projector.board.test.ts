@@ -64,6 +64,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     humanInLoop: null,
     reviewOverrides: null,
     modelOverrides: null,
+    splitRationale: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -351,7 +352,11 @@ describe("board projector", () => {
     const proposed: BoardEvent = {
       ...eventBase,
       type: "board.plans-proposed",
-      payload: { cardId, plans: [plan("one", 0), plan("two", 1)] },
+      payload: {
+        cardId,
+        plans: [plan("one", 0), plan("two", 1)],
+        splitRationale: "Two halves worth reviewing on their own branches.",
+      },
     };
     assert.deepStrictEqual(Option.getOrNull(boardShellStreamEvent(proposed)), {
       kind: "card-plans",

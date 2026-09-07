@@ -980,6 +980,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
             { key: "base", title: "Base", summary: "s", dependsOn: [], body: "base body" },
             { key: "leaf", title: "Leaf", summary: "s", dependsOn: ["base"], body: "leaf body" },
           ],
+          splitRationale: "Base and leaf ship on their own branches and review one at a time.",
         })
         .pipe(withScope(linkedThread));
       assert.deepStrictEqual(proposed.planIds, [
@@ -1016,6 +1017,32 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       );
       assert.strictEqual(failure.code, "rejected");
       assert.include(failure.message, "cycle");
+    }),
+  );
+
+  // t3o card 11: the tool is where the split rule is enforced in practice, so
+  // the rejection has to arrive HERE — at the moment the agent makes the call —
+  // rather than only in the decider's unit tests.
+  it.effect("board_propose_plans refuses a split with no rationale, and forwards a real one", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const twoPlans = [
+        { key: "a", title: "A", summary: "s", dependsOn: [], body: "" },
+        { key: "b", title: "B", summary: "s", dependsOn: [], body: "" },
+      ];
+      const failure = yield* Effect.flip(
+        boardHandlers.board_propose_plans({ plans: twoPlans }).pipe(withScope(linkedThread)),
+      );
+      assert.strictEqual(failure.code, "rejected");
+      assert.include(failure.message, "2 child cards");
+      assert.include(failure.message, "splitRationale");
+
+      const why = "Each half wants its own branch, build and review, and they can run at once.";
+      yield* boardHandlers
+        .board_propose_plans({ plans: twoPlans, splitRationale: why })
+        .pipe(withScope(linkedThread));
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(linkedThread));
+      assert.strictEqual(context.card.splitRationale, why);
     }),
   );
 
