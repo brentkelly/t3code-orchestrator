@@ -70,6 +70,10 @@ import {
   BoardPullRequestGateway,
   BoardPullRequestGatewayError,
 } from "./BoardPullRequestGateway.ts";
+import {
+  OrchestrationCommandInvariantError,
+  OrchestrationThreadSettleBlockedError,
+} from "../orchestration/Errors.ts";
 import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
@@ -110,6 +114,8 @@ export const aliveThreadShell = (threadId: string): OrchestrationThreadShell =>
     id: threadId,
     hasPendingUserInput: false,
     hasPendingApprovals: false,
+    archivedAt: null,
+    settledOverride: null,
     session: { status: "running", activeTurnId: "turn-live" },
   }) as unknown as OrchestrationThreadShell;
 
@@ -125,11 +131,26 @@ export const failedThreadShell = (
     id: threadId,
     hasPendingUserInput: false,
     hasPendingApprovals: false,
+    archivedAt: null,
+    settledOverride: null,
     session: {
       status: "error",
       activeTurnId: options?.staleActiveTurnId === false ? null : "turn-killed",
       lastError: "Provider session did not survive a server restart.",
     },
+  }) as unknown as OrchestrationThreadShell;
+
+/** A thread shell between turns: the agent has stopped, nothing is pending.
+    What a board thread looks like the moment its turn ends — and therefore the
+    moment a release the decider refused mid-turn can finally land (t3o-13). */
+export const idleThreadShell = (threadId: string): OrchestrationThreadShell =>
+  ({
+    id: threadId,
+    hasPendingUserInput: false,
+    hasPendingApprovals: false,
+    archivedAt: null,
+    settledOverride: null,
+    session: { status: "ready", activeTurnId: null },
   }) as unknown as OrchestrationThreadShell;
 
 /** A board card in an arbitrary stage. `worktree` defaults to null (no worktree
@@ -205,6 +226,30 @@ const threadRow = (
   checkpoints: [],
   session: null,
 });
+
+/** The read-model row for a thread the FIXTURE seeded rather than the reactor
+    spawning it. A thread with a shell exists in production's read model too, and
+    the release sweep (t3o-13) reads that row to decide whether a thread is
+    already settled — so a double that left them out would have the sweep skip
+    every seeded thread and prove nothing. */
+const seededThreadRow = (threadId: string, shell: OrchestrationThreadShell): OrchestrationThread =>
+  ({
+    id: ThreadId.make(threadId),
+    projectId,
+    title: threadId,
+    latestTurn: null,
+    createdAt: NOW,
+    updatedAt: NOW,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+    messages: [],
+    proposedPlans: [],
+    activities: [],
+    checkpoints: [],
+    session: shell.session ?? null,
+  }) as unknown as OrchestrationThread;
 
 export const readModel = (board: BoardState): OrchestrationReadModel => ({
   snapshotSequence: 0,
@@ -351,6 +396,11 @@ export type Harness = {
   readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every worktree path the reactor removed, in order. */
   readonly removedWorktrees: Effect.Effect<ReadonlyArray<string>>;
+  /** Every thread that actually SETTLED, as opposed to every settle the reactor
+      asked for (t3o-13). The two differ exactly when the decider's guard refuses
+      — a thread mid-turn — which is the failure the release sweep exists for, so
+      an assertion about settling has to read this rather than `commands`. */
+  readonly settledThreads: Effect.Effect<ReadonlySet<string>>;
   /** Move a branch tip in the stubbed driver (t3o-24): what
       `rev-parse refs/heads/<ref>` answers from now on. Every unset ref answers
       the stub's historic "main", so existing fixtures never read stale. */
@@ -436,7 +486,12 @@ export function withGovernor(
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
-    const model = yield* Ref.make(readModel(input.board));
+    const model = yield* Ref.make<OrchestrationReadModel>({
+      ...readModel(input.board),
+      threads: [...(input.initialShells ?? new Map()).entries()].map(([threadId, shell]) =>
+        seededThreadRow(threadId, shell),
+      ),
+    });
     const shells = yield* Ref.make<ReadonlyMap<string, OrchestrationThreadShell>>(
       input.initialShells ?? new Map(),
     );
@@ -473,6 +528,9 @@ export function withGovernor(
       new Set(input.initialShells === undefined ? [] : [...input.initialShells.keys()]),
     );
     const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
+    // Threads the double actually SETTLED, as opposed to the settles the reactor
+    // merely asked for (which land in `commands` either way).
+    const settled = yield* Ref.make<ReadonlySet<string>>(new Set<string>());
     const dispatchThreadCommand = (command: OrchestrationCommand) =>
       Effect.gen(function* () {
         if (command.type === "thread.create") {
@@ -504,6 +562,42 @@ export function withGovernor(
           yield* Ref.update(model, (current) => ({
             ...current,
             threads: current.threads.filter((thread) => thread.id !== command.threadId),
+          }));
+          return;
+        }
+        if (command.type === "thread.settle" || command.type === "thread.auto-settle") {
+          // The settle GUARD, modelled (t3o-13). Without it the double accepted
+          // every settle the board ever fired, so the suite proved that the
+          // board ASKED and never that a thread settled — while in production
+          // the decider refused essentially all of them, because an agent
+          // reports its step complete from inside its own still-running turn.
+          // That is the exact double-vs-reality gap this file exists to close.
+          const shell = (yield* Ref.get(shells)).get(String(command.threadId));
+          if (shell?.session?.status === "starting" || shell?.session?.status === "running") {
+            return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
+          }
+          // `thread.auto-settle`'s own extra guard: it declines a thread whose
+          // override is already decided, so a repeating sweep neither re-emits
+          // nor overrides a human's explicit un-settle.
+          const already = (yield* Ref.get(settled)).has(String(command.threadId));
+          if (already && command.type === "thread.auto-settle") {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `thread ${command.threadId} changed before automatic settlement`,
+            });
+          }
+          yield* Ref.update(settled, (current) => new Set(current).add(String(command.threadId)));
+          // Reflect the settle onto the read model, as the projection does: the
+          // release sweep reads `settledOverride` to skip a thread that is
+          // already decided, and a double that never wrote it would have the
+          // sweep re-ask on every pass.
+          yield* Ref.update(model, (current) => ({
+            ...current,
+            threads: current.threads.map((thread) =>
+              thread.id === command.threadId
+                ? { ...thread, settledOverride: "settled" as const, settledAt: NOW }
+                : thread,
+            ),
           }));
           return;
         }
@@ -546,7 +640,20 @@ export function withGovernor(
     const threadMessages = input.threadMessages ?? new Map<string, string>();
     const staleThreadMessages = input.staleThreadMessages ?? new Set<string>();
     const snapshotStub = {
-      getCommandReadModel: () => Ref.get(model),
+      // The thread rows carry the CURRENT shell session, so a fixture that moves
+      // a thread from mid-turn to idle moves both the shell the decider guard
+      // reads and the row the release sweep pre-filters on — one source of
+      // truth, as in production, rather than two that can disagree.
+      getCommandReadModel: () =>
+        Effect.all([Ref.get(model), Ref.get(shells)]).pipe(
+          Effect.map(([current, currentShells]) => ({
+            ...current,
+            threads: current.threads.map((thread) => {
+              const shell = currentShells.get(String(thread.id));
+              return shell === undefined ? thread : { ...thread, session: shell.session ?? null };
+            }),
+          })),
+        ),
       getThreadShellById: (threadId: ThreadId) =>
         Ref.get(shells).pipe(
           Effect.map((m) => {
@@ -788,6 +895,7 @@ export function withGovernor(
           decided: Ref.get(decided),
           mergeAttempts: Ref.get(mergeAttempts),
           removedWorktrees: Ref.get(removedWorktrees),
+          settledThreads: Ref.get(settled),
           setBaseTip: (ref, tip) => void baseTips.set(ref, tip),
         });
       }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
