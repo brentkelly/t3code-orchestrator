@@ -53,6 +53,7 @@ import {
   isBoardTerminalStepStatus,
   MessageId,
   effectiveBoardRuntimeMode,
+  resolveBoardCardForThread,
   resolveBoardStageExecution,
   resolveBoardDefaultModelSelection,
   resolveBoardStageModelSelection,
@@ -3239,12 +3240,14 @@ const make = Effect.gen(function* () {
   });
 
   const handleTurnCompleted = Effect.fn("board-supervisor-handleTurnCompleted")(function* (
+    /** Read by the caller, which needs the same board to decide whether this is
+        even a board thread — see `handleTurnEnded`. */
+    board: BoardState,
     threadId: ThreadId,
     /** The turn that just ENDED, off the runtime event. Optional because the
         base event schema makes it optional and not every adapter stamps it. */
     completedTurnId: TurnId | undefined,
   ) {
-    const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
     if (found === null) return;
     if (found.state.status !== "running" && found.state.status !== "awaiting-input") return;
@@ -3350,6 +3353,38 @@ const make = Effect.gen(function* () {
     // no pending question → the human answered and the agent ran another turn
     // without completing (or died); either way death detection is re-armed.
     yield* recoverStep(found);
+  });
+
+  /**
+   * A turn ending, on the ONE runtime stream the reactor consumes.
+   *
+   * That stream is unscoped: `turn.completed` arrives for every thread on the
+   * machine, whether the board spawned it or not. So this reads the board once
+   * and spends it twice — on the step handler, and on the question of whether
+   * the release sweep (t3o-13) has anything to do at all.
+   *
+   * A turn ending is the moment a thread stops being busy, which is the one
+   * reason a release is refused on the hot path. Asking again here — after the
+   * handler has settled the step this turn finished — drops a finished thread
+   * out of the inbox within a beat rather than at the next periodic sweep. But
+   * only its OWN thread ending can have unblocked it, so a thread the board does
+   * not own buys nothing: the sweep would walk every card and pay a thread-shell
+   * read per unsettled candidate, on an event a busy machine fires constantly.
+   * Ownership is the broad test (any live link, or a thread the board abandoned
+   * mid-flight), not "the card's current step" — the thread a release is usually
+   * waiting on is the one that just finished a step, whose step row has already
+   * moved on to the next thread.
+   */
+  const handleTurnEnded = Effect.fn("board-supervisor-handleTurnEnded")(function* (
+    threadId: ThreadId,
+    completedTurnId: TurnId | undefined,
+  ) {
+    const board = yield* readBoard;
+    yield* handleTurnCompleted(board, threadId, completedTurnId);
+    const owned =
+      resolveBoardCardForThread(board, threadId) !== null || abandonedThreads.has(String(threadId));
+    if (!owned) return;
+    yield* releaseFinishedThreads;
   });
 
   const handleStepCompleted = Effect.fn("board-supervisor-handleStepCompleted")(function* (
@@ -4510,14 +4545,7 @@ const make = Effect.gen(function* () {
           // The ended turn's own id rides through: it is what lets the handler
           // tell a projection that has not caught up yet from a genuinely live
           // second turn.
-          // A turn ending is the moment a thread stops being busy, which is
-          // the one reason a release is refused on the hot path (t3o-13). Ask
-          // again here, after the handler has settled the step this turn
-          // finished, and a finished thread drops out of the inbox within a
-          // beat rather than waiting for the periodic sweep.
-          return handleTurnCompleted(threadId, input.event.turnId).pipe(
-            Effect.andThen(releaseFinishedThreads),
-          );
+          return handleTurnEnded(threadId, input.event.turnId);
         }
         // An ordinary agent question (t3o-18, D13): re-sourced from the runtime
         // event on the stream the reactor already consumes, so it fires for

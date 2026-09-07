@@ -216,6 +216,60 @@ it.effect("the periodic release sweep lands a settle that was refused earlier", 
   ),
 );
 
+// ── …but only for a thread the board owns ───────────────────────────────────
+// The reactor consumes one unscoped runtime stream, so `turn.completed` arrives
+// for EVERY thread on the machine. The release retry is a promptness
+// optimisation over the periodic sweep, and it can only ever be unblocked by the
+// finished thread's OWN turn ending — so a stranger's turn must not buy a board
+// scan plus a thread-shell read per released thread on an event a busy machine
+// fires constantly.
+it.effect("a turn ending on a thread the board does not own runs no release sweep", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          {
+            ...makeBoardCard({ id: "card-1", stage: "merge", orderKey: "m" }),
+            threadLinks: [link("thread-build-1", String(BOARD_SEED_STAGE_IDS.building))],
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      // Mid-turn at boot, so the reconcile sweep refuses it and the settle is
+      // still outstanding when the stranger's turn ends.
+      initialShells: shellsFor([["thread-build-1", aliveThreadShell("thread-build-1")]]),
+    },
+    ({ pumpRuntime, reactor, shells, settledThreads }) =>
+      Effect.gen(function* () {
+        // Let boot reconcile run first, against the busy shell, so the settle it
+        // asks for is refused and the only sweep left is the one under test.
+        yield* reactor.drain;
+        // Now settleable: idle, released, and nothing else refuses it. The only
+        // thing standing between it and a settle is whether the sweep runs.
+        yield* Ref.set(
+          shells,
+          shellsFor([
+            ["thread-build-1", idleThreadShell("thread-build-1")],
+            ["thread-stranger", idleThreadShell("thread-stranger")],
+          ]),
+        );
+        yield* pumpRuntime(turnCompleted(ThreadId.make("thread-stranger")));
+        assert.ok(
+          !(yield* settledThreads).has("thread-build-1"),
+          "a stranger's turn ending did not trigger the board's release sweep",
+        );
+        // And the fixture really was one sweep away from settling, so the
+        // assertion above is about the gate and not about an unsettleable thread.
+        yield* reactor.releaseThreads;
+        assert.ok(
+          (yield* settledThreads).has("thread-build-1"),
+          "the board's own sweep still settles it",
+        );
+      }),
+  ),
+);
+
 // A thread with an unanswered approval is blocked-on-YOU work, and the decider
 // refuses to settle it. Unlike a busy thread that refusal can last for days, so
 // the sweep has to recognise it rather than re-ask every half minute forever —

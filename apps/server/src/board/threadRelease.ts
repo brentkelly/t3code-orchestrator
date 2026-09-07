@@ -61,10 +61,17 @@
  * A thread the board UNLINKED while it was alive — a leftover step abandoned by
  * a stage move, a conflict fix that finished — is not derivable from the card at
  * all, because unlinking a live thread removes the link outright. The reactor
- * names those explicitly through `abandoned`; they are rare, and the pending set
- * is in-memory because the only thing lost on a restart is the promptness, not
- * the settle (upstream's `ThreadSettlementReactor` eventually sweeps a thread
- * that is linked to nothing).
+ * names those explicitly through `abandoned`, and that set is in-memory, which
+ * is the one hole left here: a restart in the window between the unlink and the
+ * settle landing loses the thread, and nothing re-derives it, because the
+ * removed link left no trace to re-derive it FROM. Upstream's
+ * `ThreadSettlementReactor` is a partial backstop rather than a guarantee — its
+ * `shouldAutoSettleThread` only settles on a merged/closed pull request or after
+ * `sidebarAutoSettleAfterDays`, so with neither configured the thread stays in
+ * the inbox until a human settles it by hand. It is a small hole (the window is
+ * one sweep, abandoning a live thread is rare, and the cost is one stale inbox
+ * row rather than lost work), and closing it properly means a durable record of
+ * "the board is done with this thread" — which is a bigger idea than this file.
  */
 import {
   boardCardStepState,
