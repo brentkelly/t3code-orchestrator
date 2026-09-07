@@ -35,9 +35,10 @@ export function BoardBaseBranchConfirmDialog({
   readonly branch: string;
   /** What that branch was actually cut from (`worktree.baseRefName`). */
   readonly currentBase: string;
-  /** The base being chosen; null when the user picked the project default and
-      the label for it is not resolvable here. */
-  readonly nextBase: string | null;
+  /** The branch being chosen, by name. Always a real branch — a click on the
+      project default names that branch even though it STORES null, so the copy
+      never has to say "the default" at someone who just picked `main`. */
+  readonly nextBase: string;
   readonly onConfirm: () => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
@@ -50,10 +51,7 @@ export function BoardBaseBranchConfirmDialog({
           <AlertDialogDescription>
             <code className="font-mono text-foreground">{branch}</code> was cut from{" "}
             <code className="font-mono text-foreground">{currentBase}</code> and already has commits
-            on it. Pointing it at{" "}
-            <code className="font-mono text-foreground">
-              {nextBase ?? "the project default branch"}
-            </code>{" "}
+            on it. Pointing it at <code className="font-mono text-foreground">{nextBase}</code>{" "}
             means the card is rebased onto that branch and force-pushed with{" "}
             <code className="font-mono text-foreground">--force-with-lease</code> during its next
             code review round, followed by one more review of the rebased diff.

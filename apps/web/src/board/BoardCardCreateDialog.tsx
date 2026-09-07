@@ -442,7 +442,7 @@ export function BoardCardCreateDialog({
                   baseBranch={baseBranch}
                   className="h-8 w-full"
                   environmentId={environmentId}
-                  onSelect={setBaseBranch}
+                  onSelect={(next) => setBaseBranch(next)}
                   workspaceRoot={workspaceRoot}
                 />
               </div>

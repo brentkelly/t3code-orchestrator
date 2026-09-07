@@ -1266,7 +1266,10 @@ function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProp
   const base = props.baseBranch;
   const onSet = props.onSetBaseBranch;
   const card = props.detail.card;
-  const [confirming, setConfirming] = useState<{ readonly next: string | null } | null>(null);
+  const [confirming, setConfirming] = useState<{
+    readonly next: string | null;
+    readonly localName: string;
+  } | null>(null);
   // The confirmation gate (D14). The trigger is a LIVE branch — the same ladder
   // the base resolver treats as live — because that is exactly when a retarget
   // costs a rebase and a force-push rather than nothing at all. A `failed`
@@ -1293,9 +1296,12 @@ function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProp
         baseBranch={card.baseBranch}
         className="h-5 px-1 text-[11.5px] text-foreground"
         environmentId={props.environmentId}
-        onSelect={(next) => {
-          if (cutFrom !== null && next !== cutFrom) {
-            setConfirming({ next });
+        onSelect={(next, localName) => {
+          // Compared against the branch the card was CUT from, not the pin it
+          // currently carries: putting a retargeted card back on its cut point
+          // needs no rebase, so it must not ask for one.
+          if (cutFrom !== null && localName !== cutFrom) {
+            setConfirming({ next, localName });
             return;
           }
           onSet(next);
@@ -1307,7 +1313,7 @@ function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProp
         branch={card.worktree?.branch ?? ""}
         cardKey={card.key}
         currentBase={cutFrom ?? ""}
-        nextBase={confirming?.next ?? null}
+        nextBase={confirming?.localName ?? ""}
         onConfirm={() => {
           if (confirming !== null) onSet(confirming.next);
           setConfirming(null);

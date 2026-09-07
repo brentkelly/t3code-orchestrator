@@ -57,9 +57,13 @@ export function BoardBaseBranchSelect({
   readonly workspaceRoot: string | null;
   /** The card's pin, or null to follow the project default. */
   readonly baseBranch: string | null;
-  /** What to store: the local branch name, or null when the user picked the
-      project's current default (D12). */
-  readonly onSelect: (baseBranch: string | null) => void;
+  /** What to store — the local branch name, or null when the user picked the
+      project's current default (D12) — and, separately, the branch that value
+      RESOLVES to. The card detail needs both: it stores the first and compares
+      the second against the branch the card was actually cut from, so putting
+      a retargeted card back on its cut point asks for no rebase it does not
+      need. */
+  readonly onSelect: (baseBranch: string | null, localName: string) => void;
   readonly disabled?: boolean;
   readonly className?: string;
   readonly size?: "xs" | "sm";
@@ -169,7 +173,7 @@ export function BoardBaseBranchSelect({
                 onClick={() => {
                   setOpen(false);
                   setQuery("");
-                  onSelect(boardBaseBranchSelectionValue(option));
+                  onSelect(boardBaseBranchSelectionValue(option), option.localName);
                 }}
                 value={option.localName}
               >

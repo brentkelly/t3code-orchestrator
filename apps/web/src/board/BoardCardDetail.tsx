@@ -465,6 +465,31 @@ export function BoardCardDetail({
   // request is durable on the step row, so asking again is harmless.
   const [forceStartPending, setForceStartPending] = useState(false);
 
+  // ── Base branch (T3O-5, D3/D13) ────────────────────────────────────────
+  // The container resolves the card's base because it is the only layer that
+  // can see the project's default branch — the effective base is one shared
+  // function (`resolveBoardCardEffectiveBase`), so the detail row, the picker's
+  // value, the divergence line and the reactor cannot disagree about it.
+  //
+  // The default is read from the project's ref list rather than guessed:
+  // `VcsRef.isDefault` is the same fact `resolveDefaultBranch` reads
+  // server-side. A card carrying a PIN never needs it, so the query is skipped
+  // there — and when it is not skipped it shares the picker's atom exactly,
+  // so opening a card costs one ref listing, not two.
+  const baseBranchProject =
+    snapshot?.projects.find((entry) => entry.id === card?.projectId) ?? null;
+  const baseBranchWorkspaceRoot = baseBranchProject?.workspaceRoot ?? null;
+  const projectRefs = usePaginatedBranches(
+    useMemo(
+      () => ({
+        environmentId,
+        cwd: card !== null && card.baseBranch === null ? baseBranchWorkspaceRoot : null,
+      }),
+      [baseBranchWorkspaceRoot, card, environmentId],
+    ),
+  );
+  const projectDefaultBranch = projectRefs.refs.find((ref) => ref.isDefault)?.name ?? null;
+
   if (detail === null || card === null) {
     // The shell already knows the stage, so the empty frame opens at the width
     // the detail will need — no jump from sheet to working surface.
@@ -486,24 +511,6 @@ export function BoardCardDetail({
       ? null
       : (snapshot?.threads.find((thread) => thread.id === activeThreadId)?.branch ?? null);
 
-  // ── Base branch (T3O-5, D3/D13) ────────────────────────────────────────
-  // The container resolves it because it is the only layer that can see the
-  // project's default branch and every sibling card at once — a child inherits
-  // its parent's integration branch, and the effective base is one shared
-  // function so the row, the picker's value and the reactor cannot disagree.
-  //
-  // The project's default is read from its ref list rather than guessed:
-  // `VcsRef.isDefault` is the same fact `resolveDefaultBranch` reads
-  // server-side, and a card with a pin never needs it at all.
-  const project = snapshot?.projects.find((entry) => entry.id === card.projectId) ?? null;
-  const workspaceRoot = project?.workspaceRoot ?? null;
-  const projectRefs = usePaginatedBranches(
-    useMemo(
-      () => ({ environmentId, cwd: card.baseBranch === null ? workspaceRoot : null }),
-      [card.baseBranch, environmentId, workspaceRoot],
-    ),
-  );
-  const projectDefaultBranch = projectRefs.refs.find((ref) => ref.isDefault)?.name ?? null;
   // A sub-board child reads its inherited base off its OWN recorded slice
   // rather than re-deriving the parent's: the bounded shell carries no worktree,
   // so the parent's live integration branch is simply not on the client — and
@@ -517,7 +524,7 @@ export function BoardCardDetail({
           effective: card.worktree?.baseRefName ?? null,
           retargeted: false,
           inheritedFrom: parentCard?.key ?? "its parent",
-          workspaceRoot,
+          workspaceRoot: baseBranchWorkspaceRoot,
         }
       : {
           effective: resolveBoardCardEffectiveBase({
@@ -531,7 +538,7 @@ export function BoardCardDetail({
             defaultBranch: projectDefaultBranch,
           }),
           inheritedFrom: null,
-          workspaceRoot,
+          workspaceRoot: baseBranchWorkspaceRoot,
         };
 
   // Per-card human-in-the-loop stance on the Build role (D6): shown only when
