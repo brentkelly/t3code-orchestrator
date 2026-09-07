@@ -19,6 +19,7 @@
  */
 import {
   boardReviewRoundsStarted,
+  boardStepPayloadDefect,
   BoardReviewPayload,
   composeBoardReviewPhasePrompt,
   composeBoardSyncPhasePrompt,
@@ -58,12 +59,21 @@ export type ParsedPayload<A> = { readonly ok: true; readonly value: A } | { read
 const decodeReview = Schema.decodeUnknownOption(BoardReviewPayload);
 
 // Only the `review` phase's payload gates the loop (convergence is decided by
-// review, D3), so the executor parses only that. The triage/adjudicate payloads
-// are opaque to the executor — it advances on their *presence* (a succeeded
-// completion), and the card-detail view is what decodes them for display.
+// review, D3), so the executor parses only that for its findings. The
+// triage/adjudicate/sync payloads still have to be READABLE — a broken success
+// on any phase is a record the board can neither trust nor re-run (T3O-14) —
+// but their contents are the card-detail view's to decode, not the executor's.
 export function parseReviewPayload(payload: string | null): ParsedPayload<BoardReviewPayload> {
   const decoded = decodeReview(parseBoardStepPayloadJson(payload));
   return Option.isSome(decoded) ? { ok: true, value: decoded.value } : { ok: false };
+}
+
+/** Whether a recorded phase's payload is one nothing can read — the executor's
+    half of the walk's identical check (T3O-14). */
+function unreadableStep(completion: BoardStepCompletion): boolean {
+  return (
+    boardStepPayloadDefect({ stepId: completion.stepId, payload: completion.payload }) !== null
+  );
 }
 
 /** A card's succeeded review-loop completions, keyed by their `<phase>@<round>`
@@ -274,13 +284,22 @@ export function reviewLoopDecision(input: {
     // nitpick-only round gives the author a chance to fix or decline them.
     // A genuinely clean round has nothing to triage and skips straight to the
     // loop check.
-    if (findings.length > 0 && done.get(reviewStepId("triage", round)) === undefined) {
-      return runPhase("triage", round);
+    const triageStep = done.get(reviewStepId("triage", round));
+    if (findings.length > 0) {
+      if (triageStep === undefined) return runPhase("triage", round);
+      // Same halt as a broken review, one phase over (T3O-14): a `succeeded`
+      // record whose payload nothing can read is pinned, so it can neither be
+      // re-run nor be trusted, and advancing past it would hand the next phase
+      // a round whose dispositions vanished. `blocked` keeps the card in Code
+      // review, where the pane offers the Reopen that repairs it.
+      if (unreadableStep(triageStep)) return { kind: "complete", outcome: "blocked" };
     }
     // Only blocking findings summon the adjudicator — there is no fix/reject
     // dispute to rule on when nothing blocked.
-    if (blocking && done.get(reviewStepId("adjudicate", round)) === undefined) {
-      return runPhase("adjudicate", round);
+    const adjudicateStep = done.get(reviewStepId("adjudicate", round));
+    if (blocking) {
+      if (adjudicateStep === undefined) return runPhase("adjudicate", round);
+      if (unreadableStep(adjudicateStep)) return { kind: "complete", outcome: "blocked" };
     }
 
     // The round's phases are done. The LOOP CHECK is the executor's, never the
@@ -300,7 +319,14 @@ export function reviewLoopDecision(input: {
       // branch was already rebased and force-pushed, and only the gate round
       // restores review coverage over it — so the walk continues past every
       // hold here.
-      if (done.get(reviewStepId("sync", round)) !== undefined) continue;
+      const syncStep = done.get(reviewStepId("sync", round));
+      if (syncStep !== undefined) {
+        // A sync whose `{ rebasedSha }` cannot be read leaves the gate round
+        // with no recorded tip to have been rebased onto, so it halts like any
+        // other broken record rather than gating on a fiction.
+        if (unreadableStep(syncStep)) return { kind: "complete", outcome: "blocked" };
+        continue;
+      }
       if (input.baseStale) {
         // A stop the user asked for outranks the sync step exactly as it
         // outranks rounds that merely remain (t3o-22, D5): an unattended

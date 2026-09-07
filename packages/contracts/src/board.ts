@@ -5600,7 +5600,7 @@ export const BOARD_REVIEW_PHASE_LABELS: Record<BoardReviewPhaseId, string> = {
   adjudicate: "Adjudicate",
 };
 
-const BOARD_REVIEW_STEP_PHASE_LABELS: Record<BoardReviewStepPhase, string> = {
+export const BOARD_REVIEW_STEP_PHASE_LABELS: Record<BoardReviewStepPhase, string> = {
   ...BOARD_REVIEW_PHASE_LABELS,
   sync: "Sync base",
 };
@@ -5767,6 +5767,11 @@ export interface BoardReviewLoopWalk {
   readonly status: BoardReviewLoopOutcome;
   /** The round the loop is in, or ended on. At least 1. */
   readonly currentRound: number;
+  /** The step that halted the walk `unreadable`, and null in every other
+      status. Carried out because the recovery the user is offered has to name
+      and reopen the ONE broken record, and "round N" alone does not say which
+      of the round's phases wrote it (T3O-14). */
+  readonly unreadableStepId: string | null;
 }
 
 /**
@@ -5784,9 +5789,9 @@ export interface BoardReviewLoopWalk {
  * can import both this and `reviewLoopDecision` — drives the same completions
  * through each and asserts they agree, so the copies cannot drift.
  *
- * The distinctions it exists to preserve: a malformed review payload is never
- * read as "no findings"; a loop that ran out of budget is never reported as one
- * that passed; and a loop the user stopped is neither.
+ * The distinctions it exists to preserve: a malformed payload is never read as
+ * "the phase said nothing"; a loop that ran out of budget is never reported as
+ * one that passed; and a loop the user stopped is neither.
  */
 export function boardReviewLoopWalk(input: {
   readonly completions: ReadonlyArray<BoardStepCompletion>;
@@ -5800,6 +5805,24 @@ export function boardReviewLoopWalk(input: {
     done.set(completion.stepId, completion);
   }
 
+  // A recorded phase whose payload nothing can read, or null when it reads.
+  //
+  // Every phase the walk consults gets this, not review alone (T3O-14): the
+  // completion handler refuses a defective payload on all four phases, so the
+  // only records that can reach here are ones written before that door existed,
+  // and a broken success is exactly what `unreadable` + Reopen are for. Letting
+  // a broken triage or sync record advance the loop would leave the one state
+  // the board cannot repair silently invisible — the deadlock this card fixes,
+  // one phase over.
+  const unreadableStep = (completion: BoardStepCompletion | undefined): string | null => {
+    if (completion === undefined) return null;
+    const defect = boardStepPayloadDefect({
+      stepId: completion.stepId,
+      payload: completion.payload,
+    });
+    return defect === null ? null : completion.stepId;
+  };
+
   for (let round = 1; ; round++) {
     // A round past the budget still walks when the PREVIOUS round recorded a
     // sync step (t3o-24, D3): the gate round on the rebased diff is owed
@@ -5807,23 +5830,62 @@ export function boardReviewLoopWalk(input: {
     // budget round is stopped by the cap.
     const gateRound = round > 1 && done.get(reviewStepId("sync", round - 1)) !== undefined;
     if (round > input.maxRounds && !gateRound) {
-      return { next: null, status: "round-cap", currentRound: Math.max(1, round - 1) };
+      return {
+        next: null,
+        status: "round-cap",
+        currentRound: Math.max(1, round - 1),
+        unreadableStepId: null,
+      };
     }
     const review = done.get(reviewStepId("review", round));
     if (review === undefined) {
-      return { next: { phase: "review", round }, status: "running", currentRound: round };
+      return {
+        next: { phase: "review", round },
+        status: "running",
+        currentRound: round,
+        unreadableStepId: null,
+      };
     }
     const payload = decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(review.payload));
     if (Option.isNone(payload)) {
-      return { next: null, status: "unreadable", currentRound: round };
+      return {
+        next: null,
+        status: "unreadable",
+        currentRound: round,
+        unreadableStepId: review.stepId,
+      };
     }
     const findings = payload.value.findings;
     const blocking = findings.some((finding) => isBoardReviewBlockingSeverity(finding.severity));
-    if (findings.length > 0 && done.get(reviewStepId("triage", round)) === undefined) {
-      return { next: { phase: "triage", round }, status: "running", currentRound: round };
+    const triage = done.get(reviewStepId("triage", round));
+    if (findings.length > 0) {
+      if (triage === undefined) {
+        return {
+          next: { phase: "triage", round },
+          status: "running",
+          currentRound: round,
+          unreadableStepId: null,
+        };
+      }
+      const broken = unreadableStep(triage);
+      if (broken !== null) {
+        return { next: null, status: "unreadable", currentRound: round, unreadableStepId: broken };
+      }
     }
-    if (blocking && done.get(reviewStepId("adjudicate", round)) === undefined) {
-      return { next: { phase: "adjudicate", round }, status: "running", currentRound: round };
+    const adjudicate = done.get(reviewStepId("adjudicate", round));
+    if (blocking) {
+      if (adjudicate === undefined) {
+        return {
+          next: { phase: "adjudicate", round },
+          status: "running",
+          currentRound: round,
+          unreadableStepId: null,
+        };
+      }
+      const broken = unreadableStep(adjudicate);
+      if (broken !== null) {
+        return { next: null, status: "unreadable", currentRound: round, unreadableStepId: broken };
+      }
     }
     // The loop check, the executor's alone: a round with nothing blocking is
     // the only exit that means the code passed — UNLESS a sync step was
@@ -5831,14 +5893,19 @@ export function boardReviewLoopWalk(input: {
     // diff, so the verdict belongs to the gate round that follows the rebase,
     // and the walk moves on to it.
     if (!blocking) {
-      if (done.get(reviewStepId("sync", round)) === undefined) {
-        return { next: null, status: "converged", currentRound: round };
+      const sync = done.get(reviewStepId("sync", round));
+      if (sync === undefined) {
+        return { next: null, status: "converged", currentRound: round, unreadableStepId: null };
+      }
+      const broken = unreadableStep(sync);
+      if (broken !== null) {
+        return { next: null, status: "unreadable", currentRound: round, unreadableStepId: broken };
       }
       continue;
     }
     // A stop the user asked for outranks budget that merely remains (D5).
     if (input.stopAfterRound === round) {
-      return { next: null, status: "stopped", currentRound: round };
+      return { next: null, status: "stopped", currentRound: round, unreadableStepId: null };
     }
   }
 }

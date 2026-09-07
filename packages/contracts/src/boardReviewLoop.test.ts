@@ -84,6 +84,7 @@ describe("boardReviewLoopWalk", () => {
       next: { phase: "review", round: 1 },
       status: "running",
       currentRound: 1,
+      unreadableStepId: null,
     });
     // Findings exist, so triage is due before anything else.
     assert.deepStrictEqual(walk([review(1, [finding("critical")])], 5).next, {
@@ -127,6 +128,75 @@ describe("boardReviewLoopWalk", () => {
     assert.strictEqual(walk([completion("review@1", null)], 5).status, "unreadable");
     // The distinction that matters: a VALID empty findings list converged.
     assert.strictEqual(walk([review(1, [])], 5).status, "converged");
+  });
+
+  // T3O-14 round 2: the walk used to read every phase but `review` on
+  // PRESENCE alone, so a `succeeded` triage/adjudicate/sync record whose
+  // payload nothing can read advanced the loop silently — while the completion
+  // handler refused to write one and the decider offered to repair one. Three
+  // parts of the board disagreed about what "usable" meant, and the one state
+  // the board cannot repair by itself was the invisible one.
+  it("halts on an unreadable payload from ANY phase, naming the step to reopen", () => {
+    const brokenTriage = walk(
+      [review(1, [finding("nitpick")]), completion("triage@1", "{oops")],
+      5,
+    );
+    assert.strictEqual(brokenTriage.status, "unreadable");
+    assert.strictEqual(brokenTriage.unreadableStepId, "triage@1");
+
+    const brokenAdjudicate = walk(
+      [
+        review(1, [finding("critical")]),
+        completion("triage@1", { fixedSha: "s", dispositions: [] }),
+        completion("adjudicate@1", null),
+      ],
+      5,
+    );
+    assert.strictEqual(brokenAdjudicate.status, "unreadable");
+    assert.strictEqual(brokenAdjudicate.unreadableStepId, "adjudicate@1");
+
+    const brokenSync = walk([review(1, []), completion("sync@1", { nope: 1 })], 5);
+    assert.strictEqual(brokenSync.status, "unreadable");
+    assert.strictEqual(brokenSync.unreadableStepId, "sync@1");
+
+    // The review case reports its own step, so the recovery always has one.
+    assert.strictEqual(walk([completion("review@1", null)], 5).unreadableStepId, "review@1");
+    // And nothing else in the vocabulary carries one.
+    assert.strictEqual(walk([review(1, [])], 5).unreadableStepId, null);
+    assert.strictEqual(walk(unconverged(1), 1).unreadableStepId, null);
+
+    // Repairing the broken triage moves the loop on exactly as repairing a
+    // broken review does: this round had only a nitpick, so it converges.
+    const repaired = walk(
+      [
+        review(1, [finding("nitpick")]),
+        completion("triage@1", { fixedSha: "s", dispositions: [] }),
+      ],
+      5,
+    );
+    assert.strictEqual(repaired.status, "converged");
+  });
+
+  it("only reads the phases a round actually summons", () => {
+    // A clean round never summoned triage, so a stray broken triage record is
+    // not a phase this loop is waiting on — reading it would halt a converged
+    // loop on work it never asked for.
+    assert.strictEqual(
+      walk([review(1, []), completion("triage@1", "{oops")], 5).status,
+      "converged",
+    );
+    // Nothing blocked, so adjudication was never summoned either.
+    assert.strictEqual(
+      walk(
+        [
+          review(1, [finding("nitpick")]),
+          completion("triage@1", { fixedSha: "s", dispositions: [] }),
+          completion("adjudicate@1", "{oops"),
+        ],
+        5,
+      ).status,
+      "converged",
+    );
   });
 
   // T3O-2: the round that made this test necessary. The reviewer ran to a
@@ -174,6 +244,7 @@ describe("boardReviewLoopWalk", () => {
       next: { phase: "review", round: 2 },
       status: "running",
       currentRound: 2,
+      unreadableStepId: null,
     });
     // A clean gate round with no further sync converges.
     assert.strictEqual(walk([...synced, review(2, [])], 1).status, "converged");

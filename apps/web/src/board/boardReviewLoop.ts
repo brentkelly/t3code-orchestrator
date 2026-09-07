@@ -10,7 +10,8 @@
  *   adjudication or another round;
  * - a round with blocking findings runs triage, then adjudication, then the
  *   next round's review;
- * - a malformed review payload halts the loop (never read as "no findings");
+ * - a malformed payload on any phase halts the loop (a review's is never read
+ *   as "no findings", and no phase's is read as "it said nothing");
  * - running out of rounds ends the loop like a converged one — the card moves
  *   on — with the open findings still recorded here.
  *
@@ -31,6 +32,7 @@ import {
   type BoardReviewFindingResolution,
   type BoardReviewLoopOutcome,
   type BoardReviewPhaseId,
+  type BoardReviewStepPhase,
   type BoardReviewTriageAction,
   type BoardReviewVerdict,
   type BoardStepCompletion,
@@ -75,13 +77,18 @@ export type BoardReviewRoundOutcome =
   | "clean"
   /** The round raised blocking findings and ran its full phase sequence. */
   | "changes-requested"
-  /** The round's review recorded a payload nothing can read. */
+  /** One of the round's phases recorded a payload nothing can read. */
   | "unreadable";
 
 export interface BoardReviewLoopRound {
   readonly round: number;
   readonly outcome: BoardReviewRoundOutcome;
   readonly reviewMalformed: boolean;
+  /** The round's phase whose payload the board cannot read, when the loop
+      halted on it — what the Reopen affordance names and repairs (T3O-14).
+      `reviewMalformed` stays beside it because a broken REVIEW is the one that
+      also leaves the round's later phases unsummoned. */
+  readonly unreadablePhase: BoardReviewStepPhase | null;
   readonly findings: ReadonlyArray<BoardReviewLoopFinding>;
   readonly severities: {
     readonly critical: number;
@@ -121,6 +128,9 @@ export interface BoardReviewLoop {
   /** The phase the loop runs next, while it still runs. */
   readonly next: { readonly phase: BoardReviewPhaseId; readonly round: number } | null;
   readonly status: BoardReviewLoopStatus;
+  /** The step id the loop halted `unreadable` on, null otherwise — the record
+      the pane's Reopen sends back (T3O-14). */
+  readonly unreadableStepId: string | null;
   readonly totals: {
     readonly raised: number;
     readonly fixed: number;
@@ -161,11 +171,12 @@ export function deriveBoardReviewLoop(
   // It is bounded by the EFFECTIVE cap exactly as the executor's is — a round
   // recorded beyond a since-lowered cap is history the executor will never
   // re-enter, so it is rendered below but never treated as "still running".
-  const { next, status, currentRound } = boardReviewLoopWalk({
+  const { next, status, currentRound, unreadableStepId } = boardReviewLoopWalk({
     completions,
     maxRounds,
     stopAfterRound,
   });
+  const unreadable = unreadableStepId === null ? null : parseReviewStepId(unreadableStepId);
 
   const roundModels: BoardReviewLoopRound[] = [];
   // Recorded rounds beyond the walk (a since-lowered cap) still render.
@@ -247,16 +258,20 @@ export function deriveBoardReviewLoop(
       .sort();
     const roundDone =
       review !== undefined && !reviewMalformed && (next === null || next.round !== round);
+    const unreadablePhase =
+      unreadable !== null && unreadable.round === round ? unreadable.phase : null;
     roundModels.push({
       round,
-      outcome: reviewMalformed
-        ? "unreadable"
-        : !roundDone
-          ? "in-progress"
-          : blocking > 0
-            ? "changes-requested"
-            : "clean",
+      outcome:
+        unreadablePhase !== null
+          ? "unreadable"
+          : !roundDone
+            ? "in-progress"
+            : blocking > 0
+              ? "changes-requested"
+              : "clean",
       reviewMalformed,
+      unreadablePhase,
       findings,
       severities: {
         critical: rawFindings.filter((f) => f.severity === "critical").length,
@@ -282,6 +297,7 @@ export function deriveBoardReviewLoop(
     currentRound,
     next,
     status,
+    unreadableStepId,
     totals: {
       raised: all.length,
       fixed: all.filter((f) => f.resolution === "fixed").length,

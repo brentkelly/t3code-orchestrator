@@ -32,7 +32,6 @@ import {
   type BoardState,
   type EnvironmentId,
   boardReviewRoundsStarted,
-  reviewStepId,
   effectiveBoardReviewRounds,
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   type BoardCardReviewOverrides,
@@ -861,16 +860,12 @@ export function BoardCardDetail({
       reviewRoundsStarted={reviewRoundsRecorded}
       reviewStepActive={cardShell?.stepRunning === true || cardShell?.queued === true}
       onSetReviewRounds={(rounds) => patchReviewOverrides({ rounds })}
-      // The way out of a round that recorded a payload nothing can read
-      // (T3O-14). The server refuses it on a readable record, so a stale pane
-      // cannot discard a round that actually landed.
-      onReopenReviewRound={(round) =>
-        runCommand(
-          reopenStep({
-            environmentId,
-            input: { cardId: card.id, stepId: reviewStepId("review", round) },
-          }),
-        )
+      // The way out of a phase that recorded a payload nothing can read
+      // (T3O-14). The pane hands back the halted step's own id — any of the
+      // four phases can be the broken one — and the server refuses a readable
+      // record, so a stale pane cannot discard work that actually landed.
+      onReopenReviewStep={(stepId) =>
+        runCommand(reopenStep({ environmentId, input: { cardId: card.id, stepId } }))
       }
       onResumeReview={(rounds) =>
         // "Run round N+1" is a resume, so it says both halves outright: at

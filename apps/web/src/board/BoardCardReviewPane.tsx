@@ -15,8 +15,10 @@ import {
   BOARD_REVIEW_PHASE_IDS,
   boardReviewRoundsStarted,
   isBoardReviewLoopHeld,
+  parseReviewStepId,
   type BoardCardReviewOverrides,
   type BoardReviewPhaseId,
+  type BoardReviewStepPhase,
   type BoardReviewRoundOverride,
   type RuntimeMode,
   type BoardStepCompletion,
@@ -52,6 +54,23 @@ const PHASE_NAMES: Record<BoardReviewPhaseId, string> = {
   triage: "Triage & respond",
   adjudicate: "Adjudication",
 };
+
+/** How the pane names a phase whose payload it cannot read. Short agent nouns
+    rather than `PHASE_NAMES`' step titles, because these read inside a
+    sentence: "the triager reported success but…" (T3O-14). */
+const UNREADABLE_PHASE_NAMES: Record<BoardReviewStepPhase, string> = {
+  review: "reviewer",
+  triage: "triager",
+  adjudicate: "adjudicator",
+  sync: "base sync",
+};
+
+/** The phase the loop halted `unreadable` on, or null when it halted for any
+    other reason. */
+function unreadablePhaseOf(loop: BoardReviewLoop): BoardReviewStepPhase | null {
+  if (loop.unreadableStepId === null) return null;
+  return parseReviewStepId(loop.unreadableStepId)?.phase ?? null;
+}
 
 const SEVERITY_STYLES: Record<BoardReviewLoopFinding["finding"]["severity"], string> = {
   critical: "bg-destructive/12 text-destructive-foreground",
@@ -236,7 +255,8 @@ function roundBadge(
 }
 
 function roundSummary(round: BoardReviewLoopRound): string {
-  if (round.reviewMalformed) return "reviewer payload unreadable";
+  if (round.unreadablePhase !== null)
+    return `${UNREADABLE_PHASE_NAMES[round.unreadablePhase]} payload unreadable`;
   if (round.findings.length === 0) return round.outcome === "in-progress" ? "" : "no findings";
   const parts = [`${round.counts.fixed} fixed`, `${round.counts.rejected} rejected`];
   if (round.counts.open > 0) parts.push(`${round.counts.open} open`);
@@ -404,12 +424,15 @@ function statusPill(
         spinning: false,
         className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
       };
-    case "unreadable":
+    case "unreadable": {
+      const phase = unreadablePhaseOf(loop);
+      const name = phase === null ? "phase" : UNREADABLE_PHASE_NAMES[phase];
       return {
-        label: "Reviewer payload unreadable",
+        label: `${name.charAt(0).toUpperCase()}${name.slice(1)} payload unreadable`,
         spinning: false,
         className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
       };
+    }
   }
 }
 
@@ -429,8 +452,10 @@ function footerNote(loop: BoardReviewLoop, offStage: boolean, started: boolean):
       return "Every round ran without a clean pass, so the loop stopped at its limit. Nothing was signed off, and the card stays here until you extend the loop or advance it yourself.";
     case "stopped":
       return "You asked the loop to hold after this round. Nothing was signed off, and the card stays here until you resume it or advance it yourself.";
-    case "unreadable":
-      return "A review phase recorded a payload nothing can read, so the loop halted here.";
+    case "unreadable": {
+      const phase = unreadablePhaseOf(loop);
+      return `The ${phase === null ? "phase" : UNREADABLE_PHASE_NAMES[phase]} recorded a payload nothing can read, so the loop halted here.`;
+    }
   }
 }
 
@@ -500,14 +525,19 @@ function NoConvergenceBlock({
 }
 
 /**
- * The way out of a round that recorded a payload nothing can read (T3O-14).
+ * The way out of a round whose phase recorded a payload nothing can read
+ * (T3O-14).
  *
  * The loop is right to halt here — an unreadable payload must never be read as
- * "no findings", so the reviewer cannot be trusted and the card must not
- * advance. What was missing is the other half: the completion was pinned, so
- * the round could be neither re-run nor repaired, and the pane said what had
+ * a phase that said nothing, so the record cannot be trusted and the card must
+ * not advance. What was missing is the other half: the completion was pinned,
+ * so the phase could be neither re-run nor repaired, and the pane said what had
  * happened without offering anything to do about it. Reopening supersedes the
- * broken record and the executor plans the round again.
+ * broken record and the executor plans that phase again.
+ *
+ * Any of the four phases can be the broken one, so the block names it: a broken
+ * review sends the whole round back (nothing after it ran), while a broken
+ * triage, adjudication or base sync sends only that phase back.
  *
  * Separate from `NoConvergenceBlock` because none of that block's numbers mean
  * anything here: an unreadable payload has no findings to count, so "3
@@ -516,11 +546,14 @@ function NoConvergenceBlock({
  */
 function UnreadableRoundBlock({
   round,
+  phase,
   onReopen,
 }: {
   readonly round: number;
+  readonly phase: BoardReviewStepPhase;
   readonly onReopen?: (() => void) | undefined;
 }) {
+  const name = UNREADABLE_PHASE_NAMES[phase];
   return (
     <div className="flex shrink-0 flex-col gap-[11px] rounded-xl border border-amber-500/45 bg-amber-500/7 px-3.5 py-3">
       <div className="flex items-center gap-2.5">
@@ -532,9 +565,10 @@ function UnreadableRoundBlock({
         </div>
       </div>
       <div className="text-pretty text-[11.5px]/[1.55] text-muted-foreground">
-        The reviewer reported success but its findings payload did not arrive in a shape the board
-        can read, so nothing was reviewed as far as the loop is concerned. It will not converge on
-        it and it will not hand the card on.
+        {phase === "review"
+          ? `The reviewer reported success but its findings payload did not arrive in a shape the board can read, so nothing was reviewed as far as the loop is concerned.`
+          : `The ${name} reported success but its payload did not arrive in a shape the board can read, so the round is missing the result it claimed.`}{" "}
+        The loop will not converge on it and it will not hand the card on.
       </div>
       {onReopen === undefined ? null : (
         <div className="flex items-center gap-2">
@@ -543,10 +577,12 @@ function UnreadableRoundBlock({
             onClick={onReopen}
             type="button"
           >
-            Reopen round {round}
+            {phase === "review" ? `Reopen round ${round}` : `Reopen ${name}`}
           </button>
           <span className="min-w-0 text-[11px] text-muted-foreground">
-            Sends the round back and runs its review again.
+            {phase === "review"
+              ? "Sends the round back and runs its review again."
+              : `Sends round ${round}'s ${name} back and runs it again.`}
           </span>
         </div>
       )}
@@ -643,7 +679,7 @@ export function BoardCardReviewPane({
   onSetRoundModel,
   phaseRuntimeMode,
   onAdvance,
-  onReopenRound,
+  onReopenStep,
   onBackToThread,
   onOpenThread,
 }: {
@@ -689,7 +725,7 @@ export function BoardCardReviewPane({
   readonly onAdvance?: (() => void) | undefined;
   /** Send a round's review back because its recorded payload cannot be read
       (T3O-14). Absent leaves the halt visible but unfixable from here. */
-  readonly onReopenRound?: ((round: number) => void) | undefined;
+  readonly onReopenStep?: ((stepId: string) => void) | undefined;
   readonly onBackToThread: () => void;
   /** Deep-link into a phase's thread; absent when the pane has no thread pane
       to hand off to. */
@@ -715,6 +751,9 @@ export function BoardCardReviewPane({
   // turns on: these carry a converged loop's round counts and the opposite
   // meaning, so the pane must never let them read as a pass.
   const held = isBoardReviewLoopHeld(loop.status);
+  // The one broken record the recovery block names and reopens (T3O-14).
+  const unreadableStepId = loop.unreadableStepId;
+  const unreadablePhase = unreadablePhaseOf(loop);
   // The floor the − button obeys (t3o-22, D3): a round that has STARTED can
   // never be removed. Strictly a CONTROL gate — never fed back into the budget,
   // which is the caller's and is floored on the ledger alone. While a step is
@@ -866,11 +905,10 @@ export function BoardCardReviewPane({
           )}
           <div className="text-[11.5px] text-muted-foreground">{counts}</div>
         </div>
-        {loop.status === "unreadable" ? (
+        {loop.status === "unreadable" && unreadableStepId !== null && unreadablePhase !== null ? (
           <UnreadableRoundBlock
-            onReopen={
-              onReopenRound === undefined ? undefined : () => onReopenRound(loop.currentRound)
-            }
+            onReopen={onReopenStep === undefined ? undefined : () => onReopenStep(unreadableStepId)}
+            phase={unreadablePhase}
             round={loop.currentRound}
           />
         ) : held ? (
