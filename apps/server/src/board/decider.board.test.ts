@@ -61,6 +61,7 @@ function makeCard(
     humanInLoop: null,
     reviewOverrides: null,
     modelOverrides: null,
+    splitRationale: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -1802,6 +1803,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           commandId: CommandId.make("cmd-propose"),
           cardId: BoardCardId.make("card-ready"),
           plans: [{ key: "p1", title: "Plan 1", summary: "First", dependsOn: [], body: "body" }],
+          splitRationale: null,
           createdAt: NOW,
         },
         "board.plan.write": {
@@ -2430,6 +2432,11 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       createdAt: NOW,
     }) as const;
 
+  /** A rationale that clears the decider's 40-character floor — the default for
+      every multi-plan proposal that is not itself testing the split gate. */
+  const SPLIT_WHY =
+    "These two halves ship and review independently, so a shared branch would stall both.";
+
   const proposePlans = (
     plans: ReadonlyArray<{
       readonly key: string;
@@ -2438,6 +2445,10 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       readonly dependsOn?: ReadonlyArray<string>;
       readonly body?: string;
     }>,
+    // Undefined means "whatever a well-behaved caller would send": a rationale
+    // on a split, none on a single plan. A test aiming AT the gate passes an
+    // explicit value (including null) instead.
+    splitRationale?: string | null,
   ): BoardCommand =>
     ({
       type: "board.plans.propose",
@@ -2450,6 +2461,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         dependsOn: plan.dependsOn ?? [],
         body: plan.body ?? "body",
       })),
+      splitRationale:
+        splitRationale === undefined ? (plans.length >= 2 ? SPLIT_WHY : null) : splitRationale,
       createdAt: NOW,
     }) as const;
 

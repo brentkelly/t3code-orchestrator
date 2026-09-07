@@ -225,6 +225,8 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("plan count", (it) => {
           { key: "one", title: "First", summary: "s", dependsOn: [], body: "# One" },
           { key: "two", title: "Second", summary: "s", dependsOn: ["one"], body: "# Two" },
         ],
+        splitRationale:
+          "Two independently shippable halves: the schema migration and the UI both want their own review.",
         createdAt,
       });
       assert.strictEqual((yield* shellCard)?.planCount, 2);
@@ -235,6 +237,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("plan count", (it) => {
         commandId: CommandId.make("cmd-repropose"),
         cardId,
         plans: [{ key: "one", title: "First", summary: "s", dependsOn: [], body: "# One" }],
+        splitRationale: null,
         createdAt,
       });
       assert.strictEqual((yield* shellCard)?.planCount, 1);
@@ -490,6 +493,8 @@ it.layer(makeTestLayer("t3o-card-meta-4-"))("sub-board parent, snapshot vs delta
           { key: "one", title: "First", summary: "s", dependsOn: [], body: "# One" },
           { key: "two", title: "Second", summary: "s", dependsOn: ["one"], body: "# Two" },
         ],
+        splitRationale:
+          "Two independently shippable halves: the schema migration and the UI both want their own review.",
         createdAt,
       });
       yield* engine.dispatch({

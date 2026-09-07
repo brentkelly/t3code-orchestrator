@@ -397,6 +397,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
         commandId: nextCommandId(),
         cardId,
         plans: [{ key: "a", title: "Plan A", summary: "s", dependsOn: [], body: "body" }],
+        splitRationale: null,
         createdAt: at(3),
       });
       // Excluded from the rail (D12): a reorder is not a milestone.
