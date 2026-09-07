@@ -1664,8 +1664,34 @@ export function boardRunLabel(
  * through recovery with no extra work, because `recoverStep` re-dispatches the
  * row's label. A re-entry conversation is selected with `stepLabel: null`
  * (t3o-19, D4) and so can never be mistaken for one.
+ *
+ * RESERVED: this string is the supervisor reactor's alone to stamp, and it is
+ * the whole identity of a conflict fix — `isBoardConflictFixLive` has nothing
+ * else to key on, because the `card-stalled` delta is projected from a single
+ * event and cannot reach board state to ask what role the step's stage plays.
+ * A stage executor that returned this label would therefore light the pill and
+ * disable Merge on a card whose merge is not held at all. `boardSelectedStepLabel`
+ * keeps that from being a matter of convention.
  */
 export const BOARD_CONFLICT_STEP_LABEL = "Conflicts";
+
+/**
+ * The label a `select-step` stamps on the step it starts: the reserved conflict
+ * label when the reactor armed this run as a merge conflict fix, and otherwise
+ * the executor's own — with the reserved label taken off it, since only the
+ * reactor knows a card is armed and only it may mint one.
+ *
+ * A stripped label falls back to the stage's own name through `boardRunLabel`,
+ * which is the honest reading of an executor that named its step something it
+ * does not own.
+ */
+export function boardSelectedStepLabel(
+  armedConflictFix: boolean,
+  planStepLabel: string | null,
+): string | null {
+  if (armedConflictFix) return BOARD_CONFLICT_STEP_LABEL;
+  return planStepLabel === BOARD_CONFLICT_STEP_LABEL ? null : planStepLabel;
+}
 
 /**
  * Whether a step row is a conflict fix that is still LIVE — the one definition

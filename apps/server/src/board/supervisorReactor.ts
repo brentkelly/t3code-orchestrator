@@ -17,7 +17,6 @@
  * server will restart mid-step.
  */
 import {
-  BOARD_CONFLICT_STEP_LABEL,
   boardCardChildren,
   boardBuildHumanInLoopDefault,
   boardCardPendingSplit,
@@ -29,6 +28,7 @@ import {
   boardCardUnfinishedChildren,
   boardCardStepState,
   boardRunLabel,
+  boardSelectedStepLabel,
   boardNextStageId,
   boardNonTerminalStepStates,
   boardSeedStageRole,
@@ -1702,7 +1702,12 @@ const make = Effect.gen(function* () {
       // executor is role-blind by design. `recoverStep` re-dispatches the row's
       // label, so a nudged fix keeps it, and the unarmed re-entry conversation
       // above selects with `stepLabel: null` and so is never one.
-      stepLabel: armedConflictFix ? BOARD_CONFLICT_STEP_LABEL : plan.stepLabel,
+      //
+      // Through `boardSelectedStepLabel` rather than a ternary, because the
+      // label IS the fix's identity downstream: it also takes the reserved
+      // label back off a plan that was not armed, so no future executor can
+      // light the conflict pill and disable Merge by naming a step `Conflicts`.
+      stepLabel: boardSelectedStepLabel(armedConflictFix, plan.stepLabel),
       stageLabel: stage.label,
       prompt,
       providerInstanceId: plan.model.instanceId,

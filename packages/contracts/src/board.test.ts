@@ -35,6 +35,9 @@ import {
   deriveBoardCardChildRunning,
   isBoardCardWorking,
   isBoardConflictFixLive,
+  boardSelectedStepLabel,
+  reviewStepLabel,
+  BOARD_REVIEW_PHASE_IDS,
   BOARD_CONFLICT_STEP_LABEL,
   BOARD_STEP_STATUSES,
   boardCardPendingSplit,
@@ -1485,5 +1488,38 @@ describe("a live merge conflict fix (isBoardConflictFixLive, T3O-9)", () => {
     // `stepRunning` inference called a conflict fix.
     expect(isBoardConflictFixLive(row({ stepLabel: null }))).toBe(false);
     expect(isBoardConflictFixLive(row({ stepLabel: "review@2" }))).toBe(false);
+  });
+});
+
+describe("stamping a selected step's label (boardSelectedStepLabel, T3O-9)", () => {
+  it("stamps the reserved label on the armed fix, and reads back as live", () => {
+    const stamped = boardSelectedStepLabel(true, null);
+    expect(stamped).toBe(BOARD_CONFLICT_STEP_LABEL);
+    expect(isBoardConflictFixLive({ stepLabel: stamped, status: "running" })).toBe(true);
+  });
+
+  it("passes an ordinary executor label through untouched", () => {
+    expect(boardSelectedStepLabel(false, reviewStepLabel("triage", 2))).toBe("Triage · round 2");
+    expect(boardSelectedStepLabel(false, null)).toBe(null);
+  });
+
+  it("takes the reserved label off a plan the reactor did not arm", () => {
+    // The label is the fix's whole identity downstream — the `card-stalled`
+    // delta is projected from one event and cannot reach board state to ask
+    // what role the step's stage plays — so an executor naming its step
+    // `Conflicts` would otherwise light the pill and disable Merge on a card
+    // whose merge is not held.
+    const stamped = boardSelectedStepLabel(false, BOARD_CONFLICT_STEP_LABEL);
+    expect(stamped).toBe(null);
+    expect(isBoardConflictFixLive({ stepLabel: stamped, status: "running" })).toBe(false);
+  });
+
+  it("is not a label today's review loop can mint", () => {
+    // Pins the only executor that names steps: every phase, first rounds.
+    for (const phase of [...BOARD_REVIEW_PHASE_IDS, "sync"] as const) {
+      for (let round = 1; round <= 5; round += 1) {
+        expect(reviewStepLabel(phase, round)).not.toBe(BOARD_CONFLICT_STEP_LABEL);
+      }
+    }
   });
 });
