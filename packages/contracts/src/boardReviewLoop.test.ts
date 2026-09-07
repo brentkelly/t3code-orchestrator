@@ -21,7 +21,10 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   BOARD_REVIEW_MAX_ROUNDS,
   boardReviewFindingResolution,
+  boardReviewHeldLabel,
   boardReviewLoopWalk,
+  boardStepPayloadDefect,
+  isBoardReviewLoopHeld,
   boardReviewRoundsStarted,
   deriveBoardCardReviewSummary,
   effectiveBoardReviewRounds,
@@ -493,5 +496,141 @@ describe("replay equals rehydration for a pre-t3o-22 log", () => {
     // decode to null overrides rather than an empty map — `{}` and `null` would
     // make a replayed card and a rehydrated one compare unequal.
     assert.strictEqual(decodeBoardCard(legacy).modelOverrides, null);
+  });
+});
+
+/**
+ * The payload contract a review-loop step must satisfy to have succeeded
+ * (T3O-14).
+ *
+ * The board used to check nothing at the door, so a `succeeded` completion
+ * carrying `null` was pinned by the idempotency rule into a record that could
+ * neither be read nor re-run — the loop halted `unreadable` with no way back.
+ * This is the single definition both the completion handler and the decider
+ * ask, so "usable" cannot mean two things.
+ */
+describe("boardStepPayloadDefect", () => {
+  it("rejects a review step that recorded no payload", () => {
+    const defect = boardStepPayloadDefect({ stepId: "review@10", payload: null });
+    assert.isNotNull(defect);
+    // Actionable, and specific about the mistake that causes it: the payload
+    // belongs in its own argument, not folded into the summary.
+    assert.include(defect ?? "", "review@10");
+    assert.include(defect ?? "", "reviewedSha");
+    assert.include(defect ?? "", "payload");
+  });
+
+  it("rejects a review payload of the wrong shape", () => {
+    assert.isNotNull(
+      boardStepPayloadDefect({ stepId: "review@1", payload: JSON.stringify({ notes: "lgtm" }) }),
+    );
+    // Findings without the SHA is still the wrong shape — the round has to say
+    // what it read, or a later round cannot tell whether the base moved.
+    assert.isNotNull(
+      boardStepPayloadDefect({ stepId: "review@1", payload: JSON.stringify({ findings: [] }) }),
+    );
+  });
+
+  it("accepts a review payload with a valid, empty findings list", () => {
+    // The distinction the whole loop turns on: an empty findings list is a
+    // CONVERGED round, and must not be confused with an unreadable one.
+    assert.isNull(
+      boardStepPayloadDefect({
+        stepId: "review@1",
+        payload: JSON.stringify({ reviewedSha: "abc123", findings: [] }),
+      }),
+    );
+  });
+
+  it("accepts an already-stringified payload, which is what agents send", () => {
+    // Storage unwraps one level (T3O-2), so the check has to read the same way
+    // or it would reject exactly the payloads that fix made readable.
+    assert.isNull(
+      boardStepPayloadDefect({
+        stepId: "review@1",
+        payload: JSON.stringify(JSON.stringify({ reviewedSha: "abc123", findings: [] })),
+      }),
+    );
+  });
+
+  it("holds every review-loop phase to its own declared shape", () => {
+    assert.isNull(
+      boardStepPayloadDefect({
+        stepId: "triage@2",
+        payload: JSON.stringify({ fixedSha: "def456", dispositions: [] }),
+      }),
+    );
+    assert.isNotNull(boardStepPayloadDefect({ stepId: "triage@2", payload: null }));
+    assert.isNull(
+      boardStepPayloadDefect({
+        stepId: "adjudicate@2",
+        payload: JSON.stringify({ verdicts: [] }),
+      }),
+    );
+    assert.isNotNull(boardStepPayloadDefect({ stepId: "adjudicate@2", payload: null }));
+    assert.isNull(
+      boardStepPayloadDefect({ stepId: "sync@2", payload: JSON.stringify({ rebasedSha: "aaa" }) }),
+    );
+    assert.isNotNull(boardStepPayloadDefect({ stepId: "sync@2", payload: null }));
+  });
+
+  it("asks nothing of a step outside the review loop", () => {
+    // Every other step's payload is opaque to the board (D8), so a building
+    // step that reports nothing structured is a perfectly ordinary success.
+    assert.isNull(boardStepPayloadDefect({ stepId: "building", payload: null }));
+    assert.isNull(boardStepPayloadDefect({ stepId: "planning", payload: '"done"' }));
+  });
+});
+
+describe("an unreadable loop is held (T3O-14)", () => {
+  it("counts as an ending that never passed", () => {
+    // It always ended the loop without a pass — the executor has refused to
+    // converge on an unreadable payload since t3o-16 — but it was missing from
+    // this list, so the one ending that needs a human MOST was the only one the
+    // column card never flagged.
+    assert.isTrue(isBoardReviewLoopHeld("unreadable"));
+    assert.isTrue(isBoardReviewLoopHeld("round-cap"));
+    assert.isTrue(isBoardReviewLoopHeld("stopped"));
+    assert.isFalse(isBoardReviewLoopHeld("converged"));
+    assert.isFalse(isBoardReviewLoopHeld("running"));
+  });
+
+  it("says which ending it was", () => {
+    assert.strictEqual(boardReviewHeldLabel("unreadable"), "Unreadable");
+    assert.strictEqual(boardReviewHeldLabel("stopped"), "Stopped");
+    assert.strictEqual(boardReviewHeldLabel("round-cap"), "No convergence");
+  });
+
+  it("reopens the round it halted on once the broken record is superseded", () => {
+    // The recovery, end to end at the walk: a `succeeded` review with an
+    // unreadable payload halts the loop; replacing that record with a `failed`
+    // one (what the pane's Reopen does) puts the round back in front of it.
+    const broken = boardReviewLoopWalk({
+      completions: [completion("review@1", undefined)],
+      maxRounds: 5,
+      stopAfterRound: null,
+    });
+    assert.strictEqual(broken.status, "unreadable");
+    assert.strictEqual(broken.currentRound, 1);
+
+    const reopened = boardReviewLoopWalk({
+      completions: [completion("review@1", undefined, "failed")],
+      maxRounds: 5,
+      stopAfterRound: null,
+    });
+    assert.strictEqual(reopened.status, "running");
+    assert.deepStrictEqual(reopened.next, { phase: "review", round: 1 });
+
+    // And repairing it in place — the auto-repair path — moves the loop on to
+    // the triage the deadlock was blocking.
+    const repaired = boardReviewLoopWalk({
+      completions: [
+        completion("review@1", { reviewedSha: "abc123", findings: [finding("improvement")] }),
+      ],
+      maxRounds: 5,
+      stopAfterRound: null,
+    });
+    assert.strictEqual(repaired.status, "running");
+    assert.deepStrictEqual(repaired.next, { phase: "triage", round: 1 });
   });
 });

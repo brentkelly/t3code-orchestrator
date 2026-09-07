@@ -224,9 +224,13 @@ function roundBadge(
         className: "border-destructive/40 bg-destructive/10 text-destructive-foreground",
       };
     case "unreadable":
+      // Amber, like every other held ending (docs/t3o/status-colours.md:
+      // blocked is amber). It was destructive red until T3O-14, which made
+      // `unreadable` a held outcome — so the column card started flagging it
+      // amber and the pane would otherwise have painted the same fact red.
       return {
         label: "Unreadable",
-        className: "border-destructive/40 bg-destructive/10 text-destructive-foreground",
+        className: "border-amber-500/45 bg-amber-500/14 text-amber-700 dark:text-amber-300",
       };
   }
 }
@@ -404,7 +408,7 @@ function statusPill(
       return {
         label: "Reviewer payload unreadable",
         spinning: false,
-        className: "bg-destructive/12 text-destructive-foreground",
+        className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
       };
   }
 }
@@ -491,6 +495,61 @@ function NoConvergenceBlock({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The way out of a round that recorded a payload nothing can read (T3O-14).
+ *
+ * The loop is right to halt here — an unreadable payload must never be read as
+ * "no findings", so the reviewer cannot be trusted and the card must not
+ * advance. What was missing is the other half: the completion was pinned, so
+ * the round could be neither re-run nor repaired, and the pane said what had
+ * happened without offering anything to do about it. Reopening supersedes the
+ * broken record and the executor plans the round again.
+ *
+ * Separate from `NoConvergenceBlock` because none of that block's numbers mean
+ * anything here: an unreadable payload has no findings to count, so "3
+ * unsettled this round" would be a fabrication, and "run the NEXT round" would
+ * paper over an unreviewed one rather than fix it.
+ */
+function UnreadableRoundBlock({
+  round,
+  onReopen,
+}: {
+  readonly round: number;
+  readonly onReopen?: (() => void) | undefined;
+}) {
+  return (
+    <div className="flex shrink-0 flex-col gap-[11px] rounded-xl border border-amber-500/45 bg-amber-500/7 px-3.5 py-3">
+      <div className="flex items-center gap-2.5">
+        <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-[7px] bg-amber-500/18 font-mono text-[12px] font-semibold text-amber-700 dark:text-amber-300">
+          !
+        </span>
+        <div className="text-[12.5px] font-semibold text-foreground">
+          Round {round} recorded an unreadable result
+        </div>
+      </div>
+      <div className="text-pretty text-[11.5px]/[1.55] text-muted-foreground">
+        The reviewer reported success but its findings payload did not arrive in a shape the board
+        can read, so nothing was reviewed as far as the loop is concerned. It will not converge on
+        it and it will not hand the card on.
+      </div>
+      {onReopen === undefined ? null : (
+        <div className="flex items-center gap-2">
+          <button
+            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+            onClick={onReopen}
+            type="button"
+          >
+            Reopen round {round}
+          </button>
+          <span className="min-w-0 text-[11px] text-muted-foreground">
+            Sends the round back and runs its review again.
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -584,6 +643,7 @@ export function BoardCardReviewPane({
   onSetRoundModel,
   phaseRuntimeMode,
   onAdvance,
+  onReopenRound,
   onBackToThread,
   onOpenThread,
 }: {
@@ -627,6 +687,9 @@ export function BoardCardReviewPane({
   readonly phaseRuntimeMode?: RuntimeMode | undefined;
   /** Move the card on despite a loop that never converged (D8). */
   readonly onAdvance?: (() => void) | undefined;
+  /** Send a round's review back because its recorded payload cannot be read
+      (T3O-14). Absent leaves the halt visible but unfixable from here. */
+  readonly onReopenRound?: ((round: number) => void) | undefined;
   readonly onBackToThread: () => void;
   /** Deep-link into a phase's thread; absent when the pane has no thread pane
       to hand off to. */
@@ -803,7 +866,14 @@ export function BoardCardReviewPane({
           )}
           <div className="text-[11.5px] text-muted-foreground">{counts}</div>
         </div>
-        {held ? (
+        {loop.status === "unreadable" ? (
+          <UnreadableRoundBlock
+            onReopen={
+              onReopenRound === undefined ? undefined : () => onReopenRound(loop.currentRound)
+            }
+            round={loop.currentRound}
+          />
+        ) : held ? (
           <NoConvergenceBlock
             loop={loop}
             onAdvance={onAdvance}

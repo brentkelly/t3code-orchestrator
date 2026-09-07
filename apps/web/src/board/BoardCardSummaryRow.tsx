@@ -16,7 +16,11 @@
  * loops peg the GPU on high-refresh displays). Either row renders nothing when
  * it has nothing to say, so a card with no data adds no height.
  */
-import { isBoardReviewLoopHeld, type BoardCardThreadShell } from "@t3tools/contracts";
+import {
+  boardReviewHeldLabel,
+  isBoardReviewLoopHeld,
+  type BoardCardThreadShell,
+} from "@t3tools/contracts";
 import {
   BOARD_THREAD_TODO_STATUS_DONE,
   BOARD_THREAD_TODO_STATUS_IN_PROGRESS,
@@ -153,7 +157,9 @@ export function BoardCardReviewBlock({
               converging" outranks "it is triaging" every time. */}
           {held ? (
             <span className="inline-flex shrink-0 items-center rounded bg-amber-500/18 px-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
-              {round?.outcome === "stopped" ? "Stopped" : "No convergence"}
+              {round?.outcome === undefined
+                ? "No convergence"
+                : boardReviewHeldLabel(round.outcome)}
             </span>
           ) : step === undefined ? null : (
             <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">

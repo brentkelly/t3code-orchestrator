@@ -312,6 +312,8 @@ export interface BoardCardDetailViewProps {
   /** Whether the executor is driving the card (running or queued for a slot). */
   readonly reviewStepActive?: boolean | undefined;
   readonly onResumeReview?: ((rounds: number) => void) | undefined;
+  /** Reopen a review round whose recorded payload cannot be read (T3O-14). */
+  readonly onReopenReviewRound?: ((round: number) => void) | undefined;
   readonly onSetReviewRounds?: ((rounds: number) => void) | undefined;
   readonly onSetReviewRoundModel?:
     | ((round: number, model: BoardReviewRoundOverride | null) => void)
@@ -1723,6 +1725,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onSetRoundModel={props.onSetReviewRoundModel}
                 phaseRuntimeMode={props.reviewPhaseRuntimeMode}
                 onResume={props.onResumeReview}
+                onReopenRound={props.onReopenReviewRound}
                 onSetRounds={props.onSetReviewRounds}
                 overrides={props.reviewOverrides}
                 roundsStarted={props.reviewRoundsStarted}

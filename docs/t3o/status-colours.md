@@ -13,7 +13,7 @@ the sidebar teaches the user nothing.
 
 Amber (`--warning-foreground`) is the fourth, and it is not a work state: it marks something
 **blocked or held** — an unmet dependency gate, a review loop that stopped without converging, a
-stale merge base. It predates this convention and keeps its own meaning.
+review round whose findings the board could not read, a stale merge base. It predates this convention and keeps its own meaning.
 
 The Tailwind utilities are `bg-*`, `text-*-foreground`, `border-*`, and they take opacity modifiers
 (`bg-info/12`, `border-attention/55`). All three are defined in `apps/web/src/index.css`; `--attention`
