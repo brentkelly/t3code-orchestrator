@@ -1663,6 +1663,69 @@ export function boardRunLabel(
   return state.stepLabel ?? state.stageLabel;
 }
 
+/**
+ * The step label a merge-stage conflict fix wears (T3O-9).
+ *
+ * "This card's merge is held by conflicts" used to be an inference the client
+ * drew from `stepRunning` at a merge-role stage, on the belief that nothing
+ * else runs there. Something else does — a human can open a clean merge-stage
+ * conversation, which runs a step of its own — so the inference labelled a
+ * conversation as a conflict fix, and the real arm was an in-memory set that
+ * did not survive a restart.
+ *
+ * Stamping the armed step's own `stepLabel` makes it a fact instead: persisted
+ * on `board_card_step_state`, replayed with the step events, and carried
+ * through recovery with no extra work, because `recoverStep` re-dispatches the
+ * row's label. A re-entry conversation is selected with `stepLabel: null`
+ * (t3o-19, D4) and so can never be mistaken for one.
+ *
+ * RESERVED: this string is the supervisor reactor's alone to stamp, and it is
+ * the whole identity of a conflict fix — `isBoardConflictFixLive` has nothing
+ * else to key on, because the `card-stalled` delta is projected from a single
+ * event and cannot reach board state to ask what role the step's stage plays.
+ * A stage executor that returned this label would therefore light the pill and
+ * disable Merge on a card whose merge is not held at all. `boardSelectedStepLabel`
+ * keeps that from being a matter of convention.
+ */
+export const BOARD_CONFLICT_STEP_LABEL = "Conflicts";
+
+/**
+ * The label a `select-step` stamps on the step it starts: the reserved conflict
+ * label when the reactor armed this run as a merge conflict fix, and otherwise
+ * the executor's own — with the reserved label taken off it, since only the
+ * reactor knows a card is armed and only it may mint one.
+ *
+ * A stripped label falls back to the stage's own name through `boardRunLabel`,
+ * which is the honest reading of an executor that named its step something it
+ * does not own.
+ */
+export function boardSelectedStepLabel(
+  armedConflictFix: boolean,
+  planStepLabel: string | null,
+): string | null {
+  if (armedConflictFix) return BOARD_CONFLICT_STEP_LABEL;
+  return planStepLabel === BOARD_CONFLICT_STEP_LABEL ? null : planStepLabel;
+}
+
+/**
+ * Whether a step row is a conflict fix that is still LIVE — the one definition
+ * the snapshot and the `card-stalled` delta both read, so the two producers of
+ * `BoardCardShell.stepConflictFix` cannot disagree about the same row.
+ *
+ * `stalled` is excluded deliberately, even though it is non-terminal: a stalled
+ * step already draws the louder "Stalled" chip that `boardCardAttention` ranks
+ * first, and two chips claiming the same card is exactly what that ranking
+ * exists to prevent. Every other non-terminal status is live — including
+ * `queued`, where the fix is waiting for an agent slot and the build-queue pill
+ * says only "queued for build" — never that a merge is being held.
+ */
+export function isBoardConflictFixLive(
+  state: Pick<BoardCardStepState, "stepLabel" | "status">,
+): boolean {
+  if (state.stepLabel !== BOARD_CONFLICT_STEP_LABEL) return false;
+  return !isBoardTerminalStepStatus(state.status) && state.status !== "stalled";
+}
+
 /** A card's live step state (t3o-10), or null when the card has no step
     running or settled. One record per card (D4: one step at a time). */
 export function boardCardStepState(
@@ -3980,6 +4043,23 @@ export const BoardCardShell = Schema.Struct({
       deltas rest it at null, and the client preserves the last known value
       (`applyBoardShellStreamEvent`). */
   stepAwaiting: Schema.NullOr(BoardCardStepAwaitingReason),
+  /** Whether the card's live step is a merge conflict fix (T3O-9) — the merge
+      the board tried is held until an agent rewrites the branch on top of its
+      base.
+   *
+      What the step IS, never how it is doing: `stepRunning`/`queued`/`stalled`
+      keep their own jobs and the renderer composes them. Derived from the
+      persisted step row through `isBoardConflictFixLive`, so it survives a
+      restart that the in-memory merge arm does not, and it is true across the
+      fix's whole live window — including while it waits for an agent slot,
+      where the build-queue pill says only "queued for build" and nothing about
+      a held merge.
+
+      Step-derived like `queued`/`stalled`/`held`/`stepAwaiting`, so it follows
+      the same rule: the snapshot and the `card-stalled` delta are
+      authoritative, card-carrying deltas rest it at false, and the client
+      preserves the last known value (`applyBoardShellStreamEvent`). */
+  stepConflictFix: Schema.Boolean,
   // Thread-derived — joined from `board_card_thread_links` (902) and the
   // linked thread's shell; no new plumbing (t3o-04).
   threadState: BoardCardThreadState,
@@ -4228,6 +4308,10 @@ export function makeBoardCardShell(input: {
       on the snapshot; rests null on card deltas, which the client preserves
       through exactly like `stalled`. */
   readonly stepAwaiting?: BoardCardStepAwaitingReason | null | undefined;
+  /** Whether the card's live step is a merge conflict fix (T3O-9). Real on the
+      snapshot and the `card-stalled` delta; rests false on card deltas, which
+      the client preserves through exactly like `stalled`. */
+  readonly stepConflictFix?: boolean | undefined;
   /** Whether the brief carries a picture. Omitted by producers that do not
       have the brief body in hand, which leaves the key absent so the client
       preserves its last known value. */
@@ -4282,6 +4366,7 @@ export function makeBoardCardShell(input: {
     held: input.held ?? false, // real on the snapshot, rests false on card deltas
     stepRunning: input.stepRunning ?? false, // durable "being worked" flag: real on the snapshot, rests false on card deltas
     stepAwaiting: input.stepAwaiting ?? null, // t3o-34 (D4): real on the snapshot, rests null on card deltas
+    stepConflictFix: input.stepConflictFix ?? false, // T3O-9: real on the snapshot, rests false on card deltas
     threadState,
     awaitingInput,
     activeThreadId: input.activeThreadId,
@@ -4469,6 +4554,14 @@ export const BoardCardStalledShellEvent = Schema.Struct({
       shell delta at all before t3o-34 — now emits this one rather than a fourth
       delta carrying a single field. */
   stepAwaiting: Schema.NullOr(BoardCardStepAwaitingReason),
+  /** And whether the step is a live merge conflict fix (T3O-9), which rides
+      here for the same reason as the flags above: the four events that emit
+      this delta — selected / settled / recovered / awaiting-input — are exactly
+      the events that raise it (the fix's own select-step) and lower it again
+      (its settle, or the escalation that stalls it). `card-queued` needs no
+      copy: admission does not change WHICH step is running, and selection
+      always precedes it, so the flag is never late. */
+  stepConflictFix: Schema.Boolean,
   /** And the QUEUE flag, carried for the same reason as the three above: every
       event that emits this delta (settled / selected / recovered /
       awaiting-input) carries the step's status, and none of those statuses is

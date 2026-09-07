@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
 import {
+  BOARD_CONFLICT_STEP_LABEL,
   BOARD_SEED_STAGE_IDS,
   EMPTY_BOARD_STATE,
   ProviderInstanceId,
@@ -412,6 +413,18 @@ describe("merging a card's pull request", () => {
             (command) => command.type === "board.card.start-stage-thread",
           );
           assert.equal(started.length, 1);
+          // …and the step it starts is STAMPED as a conflict fix (T3O-9), which
+          // is what makes "this card's merge is held" a persisted fact rather
+          // than a client-side guess at a running merge-stage step.
+          yield* h.pumpDomain(stageThreadRequested(cardInMerge(), 1));
+          const selected = (yield* h.commands).filter(
+            (command) => command.type === "board.card.select-step",
+          );
+          assert.equal(selected.length, 1, "a step should have been selected");
+          assert.strictEqual(
+            (selected[0] as { readonly stepLabel: string | null }).stepLabel,
+            BOARD_CONFLICT_STEP_LABEL,
+          );
           // Not merged, so the card does not move.
           assert.deepStrictEqual(movesTo(yield* h.commands), []);
         }),
@@ -622,7 +635,11 @@ describe("merging a card's pull request", () => {
               (command) => command.type === "board.card.select-step",
             );
             assert.equal(selected.length, 1, "a step should have been selected");
-            const step = selected[0] as { readonly prompt: string; readonly humanInLoop: boolean };
+            const step = selected[0] as {
+              readonly prompt: string;
+              readonly humanInLoop: boolean;
+              readonly stepLabel: string | null;
+            };
             assert.isAbove(
               step.prompt.trim().length,
               0,
@@ -633,6 +650,10 @@ describe("merging a card's pull request", () => {
               false,
               "the conflict fix runs unattended so its success can complete the merge",
             );
+            // A SECOND fix wears the label as well (T3O-9) — the stamp is per
+            // conflict, not per stage entry, so the pill and the modal banner
+            // come back for it exactly as they did the first time.
+            assert.strictEqual(step.stepLabel, BOARD_CONFLICT_STEP_LABEL);
           }),
       );
     }),
@@ -658,12 +679,21 @@ describe("merging a card's pull request", () => {
               (command) => command.type === "board.card.select-step",
             );
             assert.equal(selected.length, 1, "a step should have been selected");
-            const step = selected[0] as { readonly prompt: string; readonly humanInLoop: boolean };
+            const step = selected[0] as {
+              readonly prompt: string;
+              readonly humanInLoop: boolean;
+              readonly stepLabel: string | null;
+            };
             assert.strictEqual(
               step.humanInLoop,
               true,
               "a hand-started merge-stage thread must stay human-in-the-loop",
             );
+            // …and it carries NO step identity (t3o-19, D4), so nothing derives
+            // a live conflict fix from it (T3O-9). This is the case the old
+            // `stepRunning` inference called a conflict fix: a running step at
+            // the merge stage that is a conversation, not a fix.
+            assert.strictEqual(step.stepLabel, null);
           }),
       );
     }),

@@ -62,6 +62,7 @@ import {
   compareBoardLabels,
   compareBoardStages,
   EMPTY_BOARD_STATE,
+  isBoardConflictFixLive,
   isBoardEvent,
   type BoardCard,
   type BoardCardId,
@@ -867,6 +868,12 @@ export function boardShellStreamEvent(
         // "Needs a human" badge when a human answers, because `resume-step`
         // publishes through here.
         stepAwaiting: null,
+        // A recovered conflict fix keeps its identity — `recoverStep`
+        // re-dispatches the row's own `stepLabel`, so the nudged step is still
+        // the same fix. An ESCALATION lands it on `stalled`, which
+        // `isBoardConflictFixLive` excludes so the pill hands over to the
+        // louder "Stalled" chip rather than fighting it (T3O-9).
+        stepConflictFix: isBoardConflictFixLive(event.payload.state),
         // Recovery lands on `running` or `stalled`, so it is never queued.
         queued: false,
       });
@@ -889,6 +896,12 @@ export function boardShellStreamEvent(
         held: false,
         // A fresh run is not parked on anybody (t3o-34, D4).
         stepAwaiting: null,
+        // This is where the conflict pill is RAISED (T3O-9): the reactor stamps
+        // the armed fix's row with `BOARD_CONFLICT_STEP_LABEL`, so the flag is
+        // read off the same select-step that starts it. Every other selection
+        // — including the merge stage's unarmed re-entry conversation, which
+        // carries `stepLabel: null` — clears it.
+        stepConflictFix: isBoardConflictFixLive(event.payload.state),
         // A freshly-selected step is `pending`, not `queued` — it has not been
         // offered to the governor yet — so any badge from a previous run goes.
         queued: false,
@@ -917,6 +930,9 @@ export function boardShellStreamEvent(
         // A settled step is not waiting on an answer (t3o-34, D4) — `held` is
         // the settled form of "needs a human" and carries it from here.
         stepAwaiting: null,
+        // A settled step is terminal, so no fix is live any more (T3O-9) —
+        // whichever way it went, the pill and the modal banner clear here.
+        stepConflictFix: false,
         // And a settled step is not queued. This is the clear that was missing:
         // a step held for a slot can settle straight out of the queue (abandoned
         // when its card leaves the pipeline, failed before it ever ran) without
@@ -978,6 +994,9 @@ export function boardShellStreamEvent(
         // Non-terminal, so nothing is `held`.
         held: false,
         stepAwaiting: event.payload.state.awaitingReason,
+        // A conflict fix that asks a question is still the same live fix
+        // (T3O-9): the merge is still held, so the flag rides through unchanged.
+        stepConflictFix: isBoardConflictFixLive(event.payload.state),
         // A step parked on a human is admitted and holding its slot, not queued.
         queued: false,
       });

@@ -296,6 +296,69 @@ describe("BoardCardContent (D7)", () => {
     expect(awaiting).not.toContain("Stalled");
   });
 
+  it("wears an amber Conflicts pill while its merge is held, beside the blue dot (T3O-9)", () => {
+    const held = shell("merge", { stepConflictFix: true, stepRunning: true });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={held}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(held)}
+      />,
+    );
+    expect(html).toContain("Conflicts");
+    // Amber, the held vocabulary — the same colour as `Blocked`, whose slot it
+    // shares (`docs/t3o/status-colours.md`).
+    expect(html).toContain("text-warning-foreground");
+    // The tooltip carries the whole reason, including that nothing is expected
+    // of the user, so the board answers it without opening the card.
+    expect(html).toContain("nothing is needed from you");
+    // The pill ADDS a fact rather than replacing one: the card is being worked
+    // as well, so the existing blue dot stays lit beside it.
+    expect(html).toContain("Thread running");
+    expect(html).toContain("bg-info");
+    // And it is not an attention state — nothing is waiting on the human — so
+    // the left-hand ranked chip slot is untouched.
+    expect(html).not.toContain("Needs a human");
+  });
+
+  it("says Conflicts while the fix is still waiting for an agent (T3O-9)", () => {
+    // The card's build-queue pill covers the wait but not the reason: it
+    // says "queued for build" and nothing about a held merge, so on its own it
+    // left the dead Merge button unexplained.
+    const queued = shell("merge", { stepConflictFix: true, queued: true });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={queued}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(queued)}
+      />,
+    );
+    expect(html).toContain("Conflicts");
+    expect(html).toContain("picks it up when one frees up");
+  });
+
+  it("shows no Conflicts pill for a plain working card at the merge stage (T3O-9)", () => {
+    // The clean merge-stage conversation a human can start by hand: a running
+    // step at this stage that is NOT a conflict fix. The old inference labelled
+    // it as one.
+    const conversation = shell("merge", { stepRunning: true });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={conversation}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(conversation)}
+      />,
+    );
+    expect(html).toContain("Thread running");
+    expect(html).not.toContain("Conflicts");
+  });
+
   it("keeps the working dot lit while the executor step is running, even when no thread is mid-turn", () => {
     // A Code-review card mid-loop: the executor's step is admitted and running,
     // but between one phase's thread completing and the next spinning up, no

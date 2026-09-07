@@ -28,6 +28,7 @@ import {
   boardCardUnfinishedChildren,
   boardCardStepState,
   boardRunLabel,
+  boardSelectedStepLabel,
   boardNextStageId,
   boardNonTerminalStepStates,
   boardSeedStageRole,
@@ -1694,7 +1695,19 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId("select-step"),
       cardId: card.id,
       stepId: plan.stepId,
-      stepLabel: plan.stepLabel,
+      // The armed conflict fix is stamped with its own step label (T3O-9), which
+      // is what makes "this card's merge is held by conflicts" a persisted fact
+      // instead of a client-side guess at a running merge-stage step. Stamped
+      // HERE because this is the one place that knows the card is armed; the
+      // executor is role-blind by design. `recoverStep` re-dispatches the row's
+      // label, so a nudged fix keeps it, and the unarmed re-entry conversation
+      // above selects with `stepLabel: null` and so is never one.
+      //
+      // Through `boardSelectedStepLabel` rather than a ternary, because the
+      // label IS the fix's identity downstream: it also takes the reserved
+      // label back off a plan that was not armed, so no future executor can
+      // light the conflict pill and disable Merge by naming a step `Conflicts`.
+      stepLabel: boardSelectedStepLabel(armedConflictFix, plan.stepLabel),
       stageLabel: stage.label,
       prompt,
       providerInstanceId: plan.model.instanceId,

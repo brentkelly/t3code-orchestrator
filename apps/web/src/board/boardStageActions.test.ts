@@ -114,13 +114,13 @@ describe("boardStagePrimaryAction", () => {
     });
   });
 
-  it("disables Merge while a conflict-resolution step is running", () => {
-    // The step is rewriting the branch the PR is open on, so merging mid-flight
+  it("disables Merge while a merge conflict fix is live", () => {
+    // The fix is rewriting the branch the PR is open on, so merging mid-flight
     // would merge a half-resolved state. The button stays visible and says why.
     expect(
       boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.merge, {
         pullRequestState: "open",
-        conflictStepRunning: true,
+        conflictFixLive: true,
       }),
     ).toEqual({
       kind: "merge",
@@ -129,6 +129,20 @@ describe("boardStagePrimaryAction", () => {
       disabled: true,
       disabledReason: "Resolving conflicts…",
     });
+  });
+
+  it("leaves Merge live for a hand-opened merge-stage thread (T3O-9)", () => {
+    // The case the old `stepRunning` inference got wrong. A human can restart
+    // the merge stage's thread by hand and get a clean conversation — a running
+    // step at this stage that is NOT a conflict fix. Greying the button out for
+    // it claimed work that did not exist; the click now reaches the server,
+    // which refuses it with a true sentence naming the open thread.
+    expect(
+      boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.merge, {
+        pullRequestState: "open",
+        conflictFixLive: false,
+      }),
+    ).toMatchObject({ kind: "merge", disabled: false, disabledReason: null });
   });
 
   it("offers no Merge button outside the merge role, however open the PR is", () => {

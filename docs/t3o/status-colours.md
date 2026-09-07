@@ -36,6 +36,14 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   These were blue before, which read as "still working" — the opposite of what they mean.
 - **Blocked is amber, never blue.** It matches the card modal's blocked callout, which already used
   it.
+- **A held merge is amber, and the pill does not spin.** A card whose merge hit conflicts is blocked
+  and running at once — an agent is rewriting the branch — so the indicator has to pick a
+  vocabulary, and it picks the held one: the `Conflicts` pill's claim is that the MERGE is held,
+  which is the same fact that disables the Merge button. The running half is not lost; the card's
+  blue working dot stays lit beside it, each fact in its own colour. The board pill carries no
+  spinner, because a board shows thirty cards at once and one more continuously animating element
+  per card is a cost the fact does not justify; the card modal's banner, being one element in an
+  open modal, keeps its spinner.
 - **No colour without a claim.** A colour asserts something about work happening right now, so an
   indicator that cannot make that assertion stays neutral (`bg-muted text-muted-foreground`) and
   says why in words. The review pane is the case that forced the rule: its loop and round state are
