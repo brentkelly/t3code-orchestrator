@@ -38,6 +38,7 @@ import {
   BOARD_REVIEW_MAX_ROUNDS,
   boardCardDeletableThreadIds,
   boardCardStepCompletions,
+  boardStepPayloadDefect,
   boardCardStepState,
   boardReviewRoundsStarted,
   boardRunLabel,
@@ -66,6 +67,7 @@ import {
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
+  type BoardCardReviewSummary,
   type BoardCardReviewOverrides,
   type BoardPlanId,
   type BoardCardPullRequestTransition,
@@ -587,6 +589,41 @@ function validateCardLabels(input: {
     }
   }
   return Effect.succeed(deduped);
+}
+
+/**
+ * The card face's review summary AFTER a completion lands (t3o-22, D7).
+ *
+ * It has to ride the event. The summary is a fold over the whole
+ * step-completion ledger, and `boardShellStreamEvent` is a PURE function of one
+ * event — it can see this completion but not the ones before it, so the column
+ * card could not be updated live from the projector alone. The decider is the
+ * one place that holds both the ledger and the card's own round overrides.
+ *
+ * `undefined` for every non-review step, and for every event written before
+ * t3o-22 — the projection recomputes from the ledger in that case, which is
+ * what keeps a from-empty replay of an older log correct. Never null in
+ * practice (the ledger provably holds this very review step) but the fold is
+ * total over any ledger, so the null is coalesced rather than asserted away.
+ */
+function reviewSummaryAfter(input: {
+  readonly board: BoardState;
+  readonly card: BoardCard;
+  readonly completion: BoardStepCompletion;
+}): BoardCardReviewSummary | undefined {
+  if (parseReviewStepId(input.completion.stepId) === null) return undefined;
+  return (
+    deriveBoardCardReviewSummary({
+      completions: [
+        ...boardCardStepCompletions(input.board, input.card.id).filter(
+          (recorded) => recorded.stepId !== input.completion.stepId,
+        ),
+        input.completion,
+      ],
+      maxRounds: input.card.reviewOverrides?.rounds ?? null,
+      stopAfterRound: input.card.reviewOverrides?.stopAfterRound ?? null,
+    }) ?? undefined
+  );
 }
 
 export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
@@ -1785,8 +1822,26 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // the earlier failure (the projector upserts on (cardId, stepId)).
       // With no live step, the recorded outcome re-emits verbatim.
       const supersede = existing !== undefined && existing.outcome !== "succeeded" && liveMatch;
+      // Idempotency is conditional on VALIDITY, not just on outcome (T3O-14).
+      // A `succeeded` record whose payload nothing can read is not a completed
+      // step wearing a green tick — it is a step that claimed a result it never
+      // delivered, and pinning it is what turned one malformed call into a
+      // permanent deadlock: the review loop refuses to converge on it, the
+      // executor cannot re-run a pinned step, and every retry bounced off
+      // `alreadyCompleted`. So a defective record may be replaced, by a valid
+      // completion, whether or not the step is live again — there IS no live
+      // step once the loop has halted on it, which is precisely when the repair
+      // is needed. A `failed` replacement is how the Review pane's reopen
+      // action clears the round; the ledger then says what actually happened.
+      const repairsDefect =
+        existing !== undefined &&
+        existing.outcome === "succeeded" &&
+        boardStepPayloadDefect({ stepId: existing.stepId, payload: existing.payload }) !== null &&
+        (command.outcome !== "succeeded" ||
+          boardStepPayloadDefect({ stepId: command.stepId, payload: command.payload }) === null);
+      const replaces = supersede || repairsDefect;
       const completion: BoardStepCompletion =
-        existing !== undefined && !supersede
+        existing !== undefined && !replaces
           ? existing
           : {
               cardId: command.cardId,
@@ -1797,35 +1852,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
               threadId: command.threadId,
               completedAt: command.createdAt,
             };
-      // The card face's review summary rides the event (t3o-22, D7).
-      //
-      // It has to. The summary is a fold over the whole step-completion ledger,
-      // and `boardShellStreamEvent` is a PURE function of one event — it can
-      // see this completion but not the ones before it, so the column card
-      // could not be updated live from the projector alone. The decider is the
-      // one place that holds both the ledger and the card's own round
-      // overrides, so it folds the post-event ledger here and the delta rides
-      // out with the event.
-      //
-      // Absent for every non-review step, and for every event written before
-      // t3o-22 — the projection recomputes from the ledger in that case, which
-      // is what keeps a from-empty replay of an older log correct.
-      // Never null in practice — the ledger provably holds this very review
-      // step — but the fold is total over any ledger, so the null is coalesced
-      // rather than asserted away.
-      const reviewSummary =
-        parseReviewStepId(completion.stepId) === null
-          ? undefined
-          : (deriveBoardCardReviewSummary({
-              completions: [
-                ...boardCardStepCompletions(board, command.cardId).filter(
-                  (recorded) => recorded.stepId !== completion.stepId,
-                ),
-                completion,
-              ],
-              maxRounds: card.reviewOverrides?.rounds ?? null,
-              stopAfterRound: card.reviewOverrides?.stopAfterRound ?? null,
-            }) ?? undefined);
+      const reviewSummary = reviewSummaryAfter({ board, card, completion });
       return {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
@@ -1837,6 +1864,87 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           cardId: command.cardId,
           completion,
           ...(reviewSummary === undefined ? {} : { reviewSummary }),
+          // The reactor ignores a completion whose step already settled — right
+          // for an idempotent retry, wrong for a repair, because the record the
+          // stage executor reads just changed (T3O-14).
+          ...(repairsDefect ? { repaired: true } : {}),
+        },
+      };
+    }
+
+    case "board.card.reopen-step": {
+      // The human's way out of a broken completion (T3O-14).
+      //
+      // A `succeeded` step whose payload nothing can read is a step that
+      // claimed a result it never delivered: the review loop refuses to
+      // converge on it (correctly — an unreadable payload must never read as
+      // "no findings"), the executor cannot re-run a step already recorded, and
+      // every retry bounces off the idempotency rule. The card sits in Code
+      // review forever. This supersedes the record with the `failed` one the
+      // ledger should have held, and because the executor counts only
+      // `succeeded` completions, the round is planned again from scratch.
+      const card = yield* requireActiveBoardCard({ board, command });
+      const existing = boardCardStepCompletions(board, command.cardId).find(
+        (recorded) => recorded.stepId === command.stepId,
+      );
+      if (existing === undefined) {
+        return yield* invariant(
+          command,
+          `Step '${command.stepId}' has no recorded completion on card '${command.cardId}' to reopen.`,
+        );
+      }
+      // Reopening repairs ONE shape of record: a `succeeded` completion whose
+      // payload cannot be read. Everything else is refused, because reopening
+      // is never a way to re-run work that landed — that would let one click
+      // erase a round of review the loop is entitled to count — and never a way
+      // to rewrite a failure, which the recovery ladder already retries in
+      // place and whose summary says what actually went wrong. A defect is only
+      // ever reported for a step whose phase declares a payload shape, so this
+      // also confines the command to the review loop.
+      const defect = boardStepPayloadDefect({
+        stepId: existing.stepId,
+        payload: existing.payload,
+      });
+      if (existing.outcome !== "succeeded") {
+        return yield* invariant(
+          command,
+          `Step '${command.stepId}' recorded '${existing.outcome}', not a success, so there is nothing to repair; the recovery ladder re-runs a step that did not succeed.`,
+        );
+      }
+      if (defect === null) {
+        return yield* invariant(
+          command,
+          `Step '${command.stepId}' completed with a payload the board can read, so there is nothing to repair.`,
+        );
+      }
+      const completion: BoardStepCompletion = {
+        cardId: command.cardId,
+        stepId: command.stepId,
+        outcome: "failed",
+        // The recorded summary is the corrupted half of the same call, so it is
+        // replaced rather than kept: what matters to whoever reads the ledger
+        // next is that this step produced nothing usable and was sent back.
+        summary: "Reopened: the recorded payload could not be read, so this step runs again.",
+        payload: null,
+        // Keeps whose run it was. The step is re-planned, not re-assigned.
+        threadId: existing.threadId,
+        completedAt: command.createdAt,
+      };
+      const reviewSummary = reviewSummaryAfter({ board, card, completion });
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-completed",
+        payload: {
+          cardId: command.cardId,
+          completion,
+          ...(reviewSummary === undefined ? {} : { reviewSummary }),
+          // Same reason as a repaired completion: the settled step's record
+          // changed, so the reactor must re-ask the executor what runs next.
+          repaired: true,
         },
       };
     }

@@ -76,6 +76,7 @@ import {
   renameBoardStage,
   reorderBoardCard,
   forceStartBoardCardStep,
+  reopenBoardCardStep,
   reorderBoardStage,
   startBoardStageThread,
   submitBoardCardForMerge,
@@ -97,6 +98,7 @@ import {
   type RenameBoardStageInput,
   type ReorderBoardCardInput,
   type ForceStartBoardCardStepInput,
+  type ReopenBoardCardStepInput,
   type ReorderBoardStageInput,
   type StartBoardStageThreadInput,
   type UnarchiveBoardCardInput,
@@ -127,6 +129,7 @@ export type {
   RenameBoardStageInput,
   ReorderBoardCardInput,
   ForceStartBoardCardStepInput,
+  ReopenBoardCardStepInput,
   ReorderBoardStageInput,
   StartBoardStageThreadInput,
   UnarchiveBoardCardInput,
@@ -957,6 +960,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
     forceStartStep: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:force-start-step",
       execute: (input: ForceStartBoardCardStepInput) => forceStartBoardCardStep(input),
+    }),
+    /** Send a settled step back because its recorded payload cannot be read
+        (T3O-14) — the way out of a review round that halted `unreadable`. */
+    reopenStep: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:reopen-step",
+      execute: (input: ReopenBoardCardStepInput) => reopenBoardCardStep(input),
     }),
     updateCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:update-card",

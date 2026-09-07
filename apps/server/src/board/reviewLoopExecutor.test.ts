@@ -559,6 +559,32 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
         rounds: 5,
         stopAfterRound: null,
       },
+      // T3O-14 round 2: the same halt on the phases that are not `review`.
+      {
+        name: "unreadable triage payload",
+        completions: [
+          completion("review@1", reviewPayload([finding("nitpick")])),
+          completion("triage@1", "{oops"),
+        ],
+        rounds: 5,
+        stopAfterRound: null,
+      },
+      {
+        name: "unreadable adjudicate payload",
+        completions: [
+          completion("review@1", reviewPayload([finding("critical")])),
+          completion("triage@1", { fixedSha: "s", dispositions: [] }),
+          completion("adjudicate@1", "{oops"),
+        ],
+        rounds: 5,
+        stopAfterRound: null,
+      },
+      {
+        name: "unreadable sync payload",
+        completions: [completion("review@1", reviewPayload([])), completion("sync@1", { nope: 1 })],
+        rounds: 5,
+        stopAfterRound: null,
+      },
       // t3o-24: recorded sync steps walk the same gate rounds in both copies.
       {
         name: "gate round due after a sync, past the budget",
@@ -637,6 +663,43 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     // Never read as "no findings" (which would be complete/succeeded); the loop
     // terminates blocked so it neither passes unreviewed code nor wedges.
     expect(malformed).toEqual({ kind: "complete", outcome: "blocked" });
+  });
+
+  // T3O-14 round 2: the executor advanced past triage/adjudicate/sync on
+  // PRESENCE alone, so a `succeeded` record whose payload nothing can read
+  // converged the loop (or gated it on a rebase it could not read the tip of)
+  // while the completion handler refused to write such a record and the
+  // decider offered to repair one. Halting `blocked` keeps the card in Code
+  // review, where the pane's Reopen can send that phase back.
+  it("T3O-14: a malformed payload on any phase terminates blocked, not converged", () => {
+    expect(
+      plan([
+        completion("review@1", reviewPayload([finding("nitpick")])),
+        completion("triage@1", "{oops"),
+      ]),
+    ).toEqual({ kind: "complete", outcome: "blocked" });
+
+    expect(
+      plan([
+        completion("review@1", reviewPayload([finding("critical")])),
+        completion("triage@1", { fixedSha: "s", dispositions: [] }),
+        completion("adjudicate@1", null),
+      ]),
+    ).toEqual({ kind: "complete", outcome: "blocked" });
+
+    // A sync whose `{ rebasedSha }` cannot be read would otherwise owe a gate
+    // round measured against a tip nothing recorded.
+    expect(
+      plan([completion("review@1", reviewPayload([])), completion("sync@1", { nope: 1 })]),
+    ).toEqual({ kind: "complete", outcome: "blocked" });
+
+    // Repaired, the loop moves on exactly as before.
+    expect(
+      plan([
+        completion("review@1", reviewPayload([finding("nitpick")])),
+        completion("triage@1", { fixedSha: "s", dispositions: [] }),
+      ]),
+    ).toEqual({ kind: "complete", outcome: "succeeded" });
   });
 
   it("AC8: an absent review payload terminates blocked rather than converging", () => {

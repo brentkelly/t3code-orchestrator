@@ -48,6 +48,7 @@ export type MoveBoardCardInput = CommandInput<"board.card.move">;
 export type ReorderBoardCardInput = CommandInput<"board.card.reorder">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
 export type ForceStartBoardCardStepInput = CommandInput<"board.card.force-start-step">;
+export type ReopenBoardCardStepInput = CommandInput<"board.card.reopen-step">;
 export type LinkBoardCardThreadInput = CommandInput<"board.card.link-thread">;
 export type UnlinkBoardCardThreadInput = CommandInput<"board.card.unlink-thread">;
 export type ArchiveBoardCardInput = CommandInput<"board.card.archive">;
@@ -164,6 +165,20 @@ export const forceStartBoardCardStep: (input: ForceStartBoardCardStepInput) => C
       createdAt: metadata.createdAt,
     });
   });
+
+/** Repair a settled step whose recorded payload cannot be read (T3O-14), so
+    the review loop plans its round again. Refused on a readable record. */
+export const reopenBoardCardStep: (input: ReopenBoardCardStepInput) => CommandEffect = Effect.fn(
+  "BoardCommands.reopenBoardCardStep",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.reopen-step",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
 
 export const updateBoardCard: (input: UpdateBoardCardInput) => CommandEffect = Effect.fn(
   "BoardCommands.updateBoardCard",

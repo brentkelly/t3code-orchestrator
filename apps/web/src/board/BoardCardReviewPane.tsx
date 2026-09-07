@@ -15,8 +15,10 @@ import {
   BOARD_REVIEW_PHASE_IDS,
   boardReviewRoundsStarted,
   isBoardReviewLoopHeld,
+  parseReviewStepId,
   type BoardCardReviewOverrides,
   type BoardReviewPhaseId,
+  type BoardReviewStepPhase,
   type BoardReviewRoundOverride,
   type RuntimeMode,
   type BoardStepCompletion,
@@ -52,6 +54,23 @@ const PHASE_NAMES: Record<BoardReviewPhaseId, string> = {
   triage: "Triage & respond",
   adjudicate: "Adjudication",
 };
+
+/** How the pane names a phase whose payload it cannot read. Short agent nouns
+    rather than `PHASE_NAMES`' step titles, because these read inside a
+    sentence: "the triager reported success but…" (T3O-14). */
+const UNREADABLE_PHASE_NAMES: Record<BoardReviewStepPhase, string> = {
+  review: "reviewer",
+  triage: "triager",
+  adjudicate: "adjudicator",
+  sync: "base sync",
+};
+
+/** The phase the loop halted `unreadable` on, or null when it halted for any
+    other reason. */
+function unreadablePhaseOf(loop: BoardReviewLoop): BoardReviewStepPhase | null {
+  if (loop.unreadableStepId === null) return null;
+  return parseReviewStepId(loop.unreadableStepId)?.phase ?? null;
+}
 
 const SEVERITY_STYLES: Record<BoardReviewLoopFinding["finding"]["severity"], string> = {
   critical: "bg-destructive/12 text-destructive-foreground",
@@ -224,15 +243,20 @@ function roundBadge(
         className: "border-destructive/40 bg-destructive/10 text-destructive-foreground",
       };
     case "unreadable":
+      // Amber, like every other held ending (docs/t3o/status-colours.md:
+      // blocked is amber). It was destructive red until T3O-14, which made
+      // `unreadable` a held outcome — so the column card started flagging it
+      // amber and the pane would otherwise have painted the same fact red.
       return {
         label: "Unreadable",
-        className: "border-destructive/40 bg-destructive/10 text-destructive-foreground",
+        className: "border-amber-500/45 bg-amber-500/14 text-amber-700 dark:text-amber-300",
       };
   }
 }
 
 function roundSummary(round: BoardReviewLoopRound): string {
-  if (round.reviewMalformed) return "reviewer payload unreadable";
+  if (round.unreadablePhase !== null)
+    return `${UNREADABLE_PHASE_NAMES[round.unreadablePhase]} payload unreadable`;
   if (round.findings.length === 0) return round.outcome === "in-progress" ? "" : "no findings";
   const parts = [`${round.counts.fixed} fixed`, `${round.counts.rejected} rejected`];
   if (round.counts.open > 0) parts.push(`${round.counts.open} open`);
@@ -400,12 +424,15 @@ function statusPill(
         spinning: false,
         className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
       };
-    case "unreadable":
+    case "unreadable": {
+      const phase = unreadablePhaseOf(loop);
+      const name = phase === null ? "phase" : UNREADABLE_PHASE_NAMES[phase];
       return {
-        label: "Reviewer payload unreadable",
+        label: `${name.charAt(0).toUpperCase()}${name.slice(1)} payload unreadable`,
         spinning: false,
-        className: "bg-destructive/12 text-destructive-foreground",
+        className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
       };
+    }
   }
 }
 
@@ -425,8 +452,10 @@ function footerNote(loop: BoardReviewLoop, offStage: boolean, started: boolean):
       return "Every round ran without a clean pass, so the loop stopped at its limit. Nothing was signed off, and the card stays here until you extend the loop or advance it yourself.";
     case "stopped":
       return "You asked the loop to hold after this round. Nothing was signed off, and the card stays here until you resume it or advance it yourself.";
-    case "unreadable":
-      return "A review phase recorded a payload nothing can read, so the loop halted here.";
+    case "unreadable": {
+      const phase = unreadablePhaseOf(loop);
+      return `The ${phase === null ? "phase" : UNREADABLE_PHASE_NAMES[phase]} recorded a payload nothing can read, so the loop halted here.`;
+    }
   }
 }
 
@@ -491,6 +520,72 @@ function NoConvergenceBlock({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The way out of a round whose phase recorded a payload nothing can read
+ * (T3O-14).
+ *
+ * The loop is right to halt here — an unreadable payload must never be read as
+ * a phase that said nothing, so the record cannot be trusted and the card must
+ * not advance. What was missing is the other half: the completion was pinned,
+ * so the phase could be neither re-run nor repaired, and the pane said what had
+ * happened without offering anything to do about it. Reopening supersedes the
+ * broken record and the executor plans that phase again.
+ *
+ * Any of the four phases can be the broken one, so the block names it: a broken
+ * review sends the whole round back (nothing after it ran), while a broken
+ * triage, adjudication or base sync sends only that phase back.
+ *
+ * Separate from `NoConvergenceBlock` because none of that block's numbers mean
+ * anything here: an unreadable payload has no findings to count, so "3
+ * unsettled this round" would be a fabrication, and "run the NEXT round" would
+ * paper over an unreviewed one rather than fix it.
+ */
+function UnreadableRoundBlock({
+  round,
+  phase,
+  onReopen,
+}: {
+  readonly round: number;
+  readonly phase: BoardReviewStepPhase;
+  readonly onReopen?: (() => void) | undefined;
+}) {
+  const name = UNREADABLE_PHASE_NAMES[phase];
+  return (
+    <div className="flex shrink-0 flex-col gap-[11px] rounded-xl border border-amber-500/45 bg-amber-500/7 px-3.5 py-3">
+      <div className="flex items-center gap-2.5">
+        <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-[7px] bg-amber-500/18 font-mono text-[12px] font-semibold text-amber-700 dark:text-amber-300">
+          !
+        </span>
+        <div className="text-[12.5px] font-semibold text-foreground">
+          Round {round} recorded an unreadable result
+        </div>
+      </div>
+      <div className="text-pretty text-[11.5px]/[1.55] text-muted-foreground">
+        {phase === "review"
+          ? `The reviewer reported success but its findings payload did not arrive in a shape the board can read, so nothing was reviewed as far as the loop is concerned.`
+          : `The ${name} reported success but its payload did not arrive in a shape the board can read, so the round is missing the result it claimed.`}{" "}
+        The loop will not converge on it and it will not hand the card on.
+      </div>
+      {onReopen === undefined ? null : (
+        <div className="flex items-center gap-2">
+          <button
+            className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
+            onClick={onReopen}
+            type="button"
+          >
+            {phase === "review" ? `Reopen round ${round}` : `Reopen ${name}`}
+          </button>
+          <span className="min-w-0 text-[11px] text-muted-foreground">
+            {phase === "review"
+              ? "Sends the round back and runs its review again."
+              : `Sends round ${round}'s ${name} back and runs it again.`}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -584,6 +679,7 @@ export function BoardCardReviewPane({
   onSetRoundModel,
   phaseRuntimeMode,
   onAdvance,
+  onReopenStep,
   onBackToThread,
   onOpenThread,
 }: {
@@ -627,6 +723,9 @@ export function BoardCardReviewPane({
   readonly phaseRuntimeMode?: RuntimeMode | undefined;
   /** Move the card on despite a loop that never converged (D8). */
   readonly onAdvance?: (() => void) | undefined;
+  /** Send a round's review back because its recorded payload cannot be read
+      (T3O-14). Absent leaves the halt visible but unfixable from here. */
+  readonly onReopenStep?: ((stepId: string) => void) | undefined;
   readonly onBackToThread: () => void;
   /** Deep-link into a phase's thread; absent when the pane has no thread pane
       to hand off to. */
@@ -652,6 +751,9 @@ export function BoardCardReviewPane({
   // turns on: these carry a converged loop's round counts and the opposite
   // meaning, so the pane must never let them read as a pass.
   const held = isBoardReviewLoopHeld(loop.status);
+  // The one broken record the recovery block names and reopens (T3O-14).
+  const unreadableStepId = loop.unreadableStepId;
+  const unreadablePhase = unreadablePhaseOf(loop);
   // The floor the − button obeys (t3o-22, D3): a round that has STARTED can
   // never be removed. Strictly a CONTROL gate — never fed back into the budget,
   // which is the caller's and is floored on the ledger alone. While a step is
@@ -803,7 +905,13 @@ export function BoardCardReviewPane({
           )}
           <div className="text-[11.5px] text-muted-foreground">{counts}</div>
         </div>
-        {held ? (
+        {loop.status === "unreadable" && unreadableStepId !== null && unreadablePhase !== null ? (
+          <UnreadableRoundBlock
+            onReopen={onReopenStep === undefined ? undefined : () => onReopenStep(unreadableStepId)}
+            phase={unreadablePhase}
+            round={loop.currentRound}
+          />
+        ) : held ? (
           <NoConvergenceBlock
             loop={loop}
             onAdvance={onAdvance}
