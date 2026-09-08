@@ -2113,14 +2113,12 @@
                                         <span
                                           title="Thread running"
                                           style="
-                                            width: 11px;
-                                            height: 11px;
+                                            width: 8px;
+                                            height: 8px;
                                             flex: none;
                                             border-radius: 99px;
-                                            border: 1.8px solid
-                                              color-mix(in srgb, var(--info) 25%, transparent);
-                                            border-top-color: var(--info-fg);
-                                            animation: t3spin 0.8s linear infinite;
+                                            background: var(--info-fg);
+                                            animation: t3pulse 1.6s ease-in-out infinite;
                                           "
                                         ></span>
                                       </sc-if>
@@ -2155,6 +2153,36 @@
                                         </span>
                                       </sc-if>
                                       <span style="flex: 1"></span>
+                                      <sc-if
+                                        value="{{ c.sched }}"
+                                        hint-placeholder-val="{{ false }}"
+                                      >
+                                        <span
+                                          title="{{ c.schedTip }}"
+                                          style="
+                                            display: inline-flex;
+                                            align-items: center;
+                                            gap: 4px;
+                                            font: 500 10.5px var(--font-sans);
+                                            color: var(--muted-fg);
+                                          "
+                                        >
+                                          <svg
+                                            width="11"
+                                            height="11"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2.2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                          >
+                                            <circle cx="12" cy="12" r="9"></circle>
+                                            <path d="M12 7v5l3 2"></path>
+                                          </svg>
+                                          {{ c.schedLabel }}
+                                        </span>
+                                      </sc-if>
                                       <sc-if
                                         value="{{ c.queued }}"
                                         hint-placeholder-val="{{ false }}"
@@ -2229,9 +2257,8 @@
                                           style="
                                             display: inline-flex;
                                             align-items: center;
-                                            gap: 4px;
                                             height: 17px;
-                                            padding: 0 6px 0 5px;
+                                            padding: 0 6px;
                                             flex: none;
                                             border-radius: 5px;
                                             background: color-mix(
@@ -2244,21 +2271,8 @@
                                             letter-spacing: 0.03em;
                                             text-transform: uppercase;
                                           "
+                                          >Conflicts</span
                                         >
-                                          <span
-                                            style="
-                                              width: 9px;
-                                              height: 9px;
-                                              flex: none;
-                                              border-radius: 99px;
-                                              border: 1.6px solid
-                                                color-mix(in srgb, var(--warning) 30%, transparent);
-                                              border-top-color: currentColor;
-                                              animation: t3spin 0.8s linear infinite;
-                                            "
-                                          ></span>
-                                          Conflicts
-                                        </span>
                                       </sc-if>
                                     </div>
                                     <sc-if
@@ -2317,26 +2331,9 @@
                                             >{{ c.review.roundLabel }}</span
                                           >
                                           <span style="flex: 1"></span>
-                                          <span style="{{ c.review.stepStyle }}">
-                                            <sc-if
-                                              value="{{ c.review.spinning }}"
-                                              hint-placeholder-val="{{ false }}"
-                                            >
-                                              <span
-                                                style="
-                                                  width: 9px;
-                                                  height: 9px;
-                                                  flex: none;
-                                                  border-radius: 99px;
-                                                  border: 1.6px solid
-                                                    color-mix(in srgb, var(--fg) 20%, transparent);
-                                                  border-top-color: currentColor;
-                                                  animation: t3spin 0.8s linear infinite;
-                                                "
-                                              ></span>
-                                            </sc-if>
-                                            {{ c.review.stepLabel }}
-                                          </span>
+                                          <span style="{{ c.review.stepStyle }}"
+                                            >{{ c.review.stepLabel }}</span
+                                          >
                                         </div>
                                         <div style="display: flex; gap: 3px">
                                           <sc-for
@@ -3079,6 +3076,115 @@
                     </svg>
                     {{ cardModelsPill }}
                   </button>
+                </sc-if>
+                <sc-if value="{{ schedule.show }}" hint-placeholder-val="{{ false }}">
+                  <div style="position: relative; flex: none; display: flex">
+                    <button
+                      type="button"
+                      onClick="{{ schedule.toggle }}"
+                      title="{{ schedule.tip }}"
+                      style="{{ schedule.iconStyle }}"
+                    >
+                      <svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        style="flex: none"
+                      >
+                        <circle cx="12" cy="12" r="9"></circle>
+                        <path d="M12 7v5l3 2"></path>
+                      </svg>
+                      <sc-if value="{{ schedule.has }}" hint-placeholder-val="{{ false }}">
+                        <span style="font: 500 10.5px var(--font-sans); white-space: nowrap"
+                          >{{ schedule.pillLabel }}</span
+                        >
+                      </sc-if>
+                    </button>
+                    <sc-if value="{{ schedule.open }}" hint-placeholder-val="{{ false }}">
+                      <div
+                        onClick="{{ schedule.toggle }}"
+                        style="position: fixed; inset: 0; z-index: 55"
+                      ></div>
+                      <div
+                        style="
+                          position: absolute;
+                          left: 0;
+                          top: calc(100% + 6px);
+                          z-index: 60;
+                          width: 252px;
+                          padding: 9px;
+                          border: 1px solid var(--border);
+                          border-radius: 11px;
+                          background: var(--popover);
+                          box-shadow: var(--shadow-pop);
+                          display: flex;
+                          flex-direction: column;
+                          gap: 7px;
+                        "
+                      >
+                        <div
+                          style="
+                            font: 600 11px var(--font-sans);
+                            letter-spacing: 0.06em;
+                            text-transform: uppercase;
+                            color: var(--muted-fg);
+                          "
+                        >
+                          {{ schedule.title }}
+                        </div>
+                        <input
+                          type="datetime-local"
+                          value="{{ schedule.value }}"
+                          onInput="{{ schedule.onValue }}"
+                          style="
+                            height: 30px;
+                            padding: 0 8px;
+                            border: 1px solid var(--input);
+                            border-radius: 8px;
+                            background: var(--bg);
+                            color: var(--fg);
+                            font: 400 12.5px var(--font-sans);
+                            outline: none;
+                          "
+                        />
+                        <div style="display: flex; flex-wrap: wrap; gap: 5px">
+                          <sc-for list="{{ schedule.presets }}" as="p" hint-placeholder-count="3">
+                            <button type="button" onClick="{{ p.pick }}" style="{{ p.style }}">
+                              {{ p.label }}
+                            </button>
+                          </sc-for>
+                        </div>
+                        <div
+                          style="font:400 11px/1.45 var(--font-sans);color:{{ schedule.noteColor }};text-wrap:pretty"
+                        >
+                          {{ schedule.note }}
+                        </div>
+                        <sc-if value="{{ schedule.has }}" hint-placeholder-val="{{ false }}">
+                          <button
+                            type="button"
+                            onClick="{{ schedule.clear }}"
+                            style="
+                              height: 28px;
+                              border: 1px solid var(--input);
+                              border-radius: 8px;
+                              background: var(--popover);
+                              color: var(--muted-fg);
+                              font: 500 12px var(--font-sans);
+                              cursor: pointer;
+                            "
+                            style-hover="background:var(--accent);color:var(--fg)"
+                          >
+                            {{ schedule.clearLabel }}
+                          </button>
+                        </sc-if>
+                      </div>
+                    </sc-if>
+                  </div>
                 </sc-if>
                 <span style="flex: 1"></span>
                 <sc-if value="{{ hasBack }}" hint-placeholder-val="{{ false }}">
@@ -6377,6 +6483,62 @@
                               </sc-if>
                             </div>
                           </sc-for>
+                          <sc-if
+                            value="{{ activeCard.activityMoreVisible }}"
+                            hint-placeholder-val="{{ false }}"
+                          >
+                            <div
+                              onClick="{{ activeCard.toggleActivity }}"
+                              style="
+                                display: flex;
+                                gap: 9px;
+                                align-items: center;
+                                cursor: pointer;
+                                font: 500 12.5px/1.5 var(--font-sans);
+                                color: var(--muted-fg);
+                              "
+                              style-hover="color:var(--fg)"
+                            >
+                              <span
+                                style="
+                                  width: 6px;
+                                  height: 6px;
+                                  border-radius: 99px;
+                                  border: 1px solid var(--input);
+                                  flex: none;
+                                "
+                              ></span>
+                              {{ activeCard.activityMoreLabel }}
+                            </div>
+                          </sc-if>
+                          <sc-if
+                            value="{{ activeCard.activityLessVisible }}"
+                            hint-placeholder-val="{{ false }}"
+                          >
+                            <div
+                              onClick="{{ activeCard.toggleActivity }}"
+                              style="
+                                display: flex;
+                                gap: 9px;
+                                align-items: center;
+                                cursor: pointer;
+                                font: 500 12.5px/1.5 var(--font-sans);
+                                color: var(--muted-fg);
+                              "
+                              style-hover="color:var(--fg)"
+                            >
+                              <span
+                                style="
+                                  width: 6px;
+                                  height: 6px;
+                                  border-radius: 99px;
+                                  border: 1px solid var(--input);
+                                  flex: none;
+                                "
+                              ></span>
+                              Show less
+                            </div>
+                          </sc-if>
                         </div>
                       </div>
                     </div>
@@ -7571,6 +7733,7 @@
                     </sc-for>
                   </div>
                 </div>
+
                 <div>
                   <label
                     style="
@@ -8190,6 +8353,7 @@
               <div
                 style="
                   display: flex;
+                  align-items: center;
                   justify-content: flex-end;
                   gap: 8px;
                   padding: 14px 18px;
@@ -8197,6 +8361,105 @@
                   background: color-mix(in srgb, var(--muted) 72%, transparent);
                 "
               >
+                <div style="position: relative; margin-right: auto">
+                  <button
+                    type="button"
+                    onClick="{{ createStart.toggle }}"
+                    title="{{ createStart.tip }}"
+                    style="{{ createStart.iconStyle }}"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      style="flex: none"
+                    >
+                      <circle cx="12" cy="12" r="9"></circle>
+                      <path d="M12 7v5l3 2"></path>
+                    </svg>
+                    <sc-if value="{{ createStart.isAt }}" hint-placeholder-val="{{ false }}">
+                      <span style="font: 500 11.5px var(--font-sans)">{{ createStart.label }}</span>
+                    </sc-if>
+                  </button>
+                  <sc-if value="{{ createStart.open }}" hint-placeholder-val="{{ false }}">
+                    <div
+                      onClick="{{ createStart.toggle }}"
+                      style="position: fixed; inset: 0; z-index: 8"
+                    ></div>
+                    <div
+                      style="
+                        position: absolute;
+                        left: 0;
+                        bottom: calc(100% + 6px);
+                        z-index: 9;
+                        width: 246px;
+                        padding: 9px;
+                        border: 1px solid var(--border);
+                        border-radius: 11px;
+                        background: var(--popover);
+                        box-shadow: var(--shadow-pop);
+                        display: flex;
+                        flex-direction: column;
+                        gap: 7px;
+                      "
+                    >
+                      <div
+                        style="
+                          font: 600 11px var(--font-sans);
+                          letter-spacing: 0.06em;
+                          text-transform: uppercase;
+                          color: var(--muted-fg);
+                        "
+                      >
+                        Start the build at
+                      </div>
+                      <input
+                        type="datetime-local"
+                        value="{{ createStart.value }}"
+                        onInput="{{ createStart.onValue }}"
+                        style="
+                          height: 30px;
+                          padding: 0 8px;
+                          border: 1px solid var(--input);
+                          border-radius: 8px;
+                          background: var(--bg);
+                          color: var(--fg);
+                          font: 400 12.5px var(--font-sans);
+                          outline: none;
+                        "
+                      />
+                      <div style="display: flex; flex-wrap: wrap; gap: 5px">
+                        <sc-for list="{{ createStart.presets }}" as="p" hint-placeholder-count="3">
+                          <button type="button" onClick="{{ p.pick }}" style="{{ p.style }}">
+                            {{ p.label }}
+                          </button>
+                        </sc-for>
+                      </div>
+                      <div
+                        style="
+                          font: 400 11px/1.45 var(--font-sans);
+                          color: var(--muted-fg);
+                          text-wrap: pretty;
+                        "
+                      >
+                        No effect unless the card has reached Ready or Building by then — planning
+                        and approval still need you.
+                      </div>
+                      <button
+                        type="button"
+                        onClick="{{ createStart.clear }}"
+                        style="{{ createStart.clearStyle }}"
+                      >
+                        Clear — build when free
+                      </button>
+                    </div>
+                  </sc-if>
+                </div>
                 <button
                   type="button"
                   onClick="{{ closeCreate }}"
@@ -8291,9 +8554,9 @@
         { key: "T3-179", p: "advisor", type: "chore", status: "merge", title: "Pre-commit format and lint gate", brief: "Formatting drift keeps landing on main. Gate commits with the same checks CI runs.", t: "working", conflict: { files: 3, resolved: 1, base: "main", cur: "package.json", started: "4m ago" }, plan: PLAN("Pre-commit gate", ["Wire lefthook with a staged-file filter", "Run oxlint + prettier on staged files only", "Document the escape hatch in CONTRIBUTING"], ["lefthook.yml", "CONTRIBUTING.md"]), pr: { n: 284, title: "chore: pre-commit format and lint", add: 96, del: 12, files: ["lefthook.yml", "package.json", "CONTRIBUTING.md"], state: "Approved" } },
         { key: "T3-171", p: "advisor", type: "chore", status: "done", title: "Diff panel scroll fade", brief: "Rows now fade under the sticky header instead of cutting hard.", plan: PLAN("Diff panel scroll fade", ["Reuse the chat timeline mask", "Respect the scrollbar gutter"], ["apps/web/src/components/DiffPanel.tsx"]), pr: { n: 276, title: "fix(diff): scroll fade under header", add: 41, del: 9, files: ["apps/web/src/components/DiffPanel.tsx", "apps/web/src/index.css"], state: "Merged" } },
         { key: "T3-168", p: "advisor", type: "bug", status: "done", title: "Fix knowledge capture skill lookup", brief: "Skill ids were resolved case-sensitively, so captures silently no-oped.", plan: PLAN("Skill lookup fix", ["Normalize ids at the registry boundary", "Add a regression test"], ["packages/shared/src/skills.ts"]), pr: { n: 268, title: "fix: normalize skill ids", add: 28, del: 6, files: ["packages/shared/src/skills.ts"], state: "Merged" } },
-        { key: "MW-42", p: "web", type: "Feature", status: "backlog", title: "Marketing site: pricing comparison table", brief: "Three tiers, sticky header row on scroll." },
+        { key: "MW-42", p: "web", type: "Feature", status: "backlog", sched: "tonight", title: "Marketing site: pricing comparison table", brief: "Three tiers, sticky header row on scroll." },
         { key: "MW-39", p: "web", type: "Feature", status: "sprint", title: "Docs search with keyboard nav", brief: "Cmd-K over the docs index, arrow keys to move, enter to open." },
-        { key: "MW-33", p: "web", type: "bug", status: "building", t: "stopped", workflow: "fast-review", title: "Nav overlaps hero on iPad portrait", brief: "The sticky nav collides with the hero headline between 768 and 834px.", plan: PLAN("Nav overlap", ["Move the breakpoint to a container query", "Reserve nav height as a layout offset"], ["apps/marketing/src/components/Nav.tsx"]) },
+        { key: "MW-33", p: "web", type: "bug", status: "building", t: "stopped", limitHit: true, workflow: "fast-review", title: "Nav overlaps hero on iPad portrait", brief: "The sticky nav collides with the hero headline between 768 and 834px.", plan: PLAN("Nav overlap", ["Move the breakpoint to a container query", "Reserve nav height as a layout offset"], ["apps/marketing/src/components/Nav.tsx"]) },
         { key: "RL-18", p: "relay", type: "chore", status: "ready", workflow: "no-review", title: "Rotate relay signing keys without downtime", brief: "Support two active keys during a rollover window.", plan: PLAN("Key rotation", ["Accept N active keys in the verifier", "Publish both in the JWKS", "Retire the old key after the TTL"], ["infra/relay/src/keys.ts"]) },
         { key: "RL-14", p: "relay", type: "Feature", status: "review", t: "waiting", title: "Backpressure on session fan-out", brief: "Slow consumers currently stall the whole fan-out loop.", deps: ["RL-18"], plan: PLAN("Fan-out backpressure", ["Bounded queue per subscriber", "Drop-oldest with a metric"], ["infra/relay/src/fanout.ts"]), pr: { n: 88, title: "feat(relay): bounded fan-out queues", add: 214, del: 63, files: ["infra/relay/src/fanout.ts", "infra/relay/test/fanout.test.ts"], state: "In review" } },
       ];
@@ -8556,6 +8819,96 @@
       // How many build agents may run at once. Extra work waits in a global queue.
       const AGENT_CAP = 3;
 
+      // Scheduling: a card can hold a scheduled start (before it has ever run) or a
+      // scheduled resume (after a stop — usually a usage limit). Times round-trip as
+      // datetime-local strings, "YYYY-MM-DDTHH:mm" in the user's own timezone.
+      const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const WEEKDAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+      function pad2(n) {
+        return n < 10 ? "0" + n : "" + n;
+      }
+      function toLocalInput(d) {
+        return (
+          d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) +
+          "T" + pad2(d.getHours()) + ":" + pad2(d.getMinutes())
+        );
+      }
+      function fromLocalInput(v) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(v || "");
+        return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
+      }
+      function clockLabel(d) {
+        let h = d.getHours();
+        const ap = h < 12 ? "AM" : "PM";
+        h = h % 12 || 12;
+        return h + ":" + pad2(d.getMinutes()) + " " + ap;
+      }
+      function whenLabel(v) {
+        const d = fromLocalInput(v);
+        if (!d) return "";
+        const now = new Date();
+        const days = Math.round(
+          (new Date(d.getFullYear(), d.getMonth(), d.getDate()) -
+            new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000,
+        );
+        if (days === 0) return clockLabel(d);
+        if (days === 1) return "tomorrow " + clockLabel(d);
+        if (days > 1 && days < 7) return WEEKDAYS[d.getDay()] + " " + clockLabel(d);
+        return d.getDate() + " " + MONTHS[d.getMonth()] + ", " + clockLabel(d);
+      }
+      function untilLabel(v) {
+        const d = fromLocalInput(v);
+        if (!d) return "";
+        const mins = Math.round((d - new Date()) / 60000);
+        if (mins <= 0) return "due now";
+        if (mins < 60) return "in " + mins + "m";
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        if (h < 24) return "in " + h + "h" + (m ? " " + m + "m" : "");
+        const dd = Math.floor(h / 24);
+        return "in " + dd + "d" + (h % 24 ? " " + (h % 24) + "h" : "");
+      }
+      // The rolling usage window frees up at 1:00 AM local.
+      function nextLimitReset() {
+        const d = new Date();
+        d.setSeconds(0, 0);
+        if (d.getHours() >= 1) d.setDate(d.getDate() + 1);
+        d.setHours(1, 0);
+        return d;
+      }
+      function inMinutes(add) {
+        const d = new Date(Date.now() + add * 60000);
+        d.setSeconds(0, 0);
+        d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15);
+        return d;
+      }
+      function atNextHour(hour) {
+        const d = new Date();
+        d.setSeconds(0, 0);
+        d.setMinutes(0);
+        if (d.getHours() >= hour) d.setDate(d.getDate() + 1);
+        d.setHours(hour);
+        return d;
+      }
+      function segStyle(on) {
+        return (
+          "display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border:1px solid " +
+          (on ? "var(--primary)" : "var(--input)") +
+          ";border-radius:8px;cursor:pointer;font:500 12.5px var(--font-sans);background:" +
+          (on ? "color-mix(in srgb,var(--primary) 12%,var(--popover))" : "var(--popover)") +
+          ";color:" + (on ? "var(--fg)" : "var(--muted-fg)") + ";box-shadow:var(--shadow-xs)"
+        );
+      }
+      function presetStyle(on) {
+        return (
+          "display:inline-flex;align-items:center;height:26px;padding:0 9px;border:1px solid " +
+          (on ? "var(--primary)" : "var(--input)") +
+          ";border-radius:7px;cursor:pointer;font:500 11.5px var(--font-sans);background:" +
+          (on ? "color-mix(in srgb,var(--primary) 10%,var(--popover))" : "var(--popover)") +
+          ";color:var(--fg)"
+        );
+      }
+
       class Component extends DCLogic {
         constructor(props) {
           super(props);
@@ -8567,6 +8920,8 @@
             status: c.status,
             workflow: c.workflow || "full",
             tstate: c.t || "stopped",
+            sched: c.sched === "tonight" ? { kind: "start", at: toLocalInput(atNextHour(21)) } : null,
+            limitHit: !!c.limitHit,
             conflict: c.conflict || null,
             title: c.title,
             brief: "<p style=\"margin:0 0 8px\">" + c.brief + "</p>",
@@ -8643,6 +8998,10 @@
             createBranch: "main",
             createMenu: null,
             cardBranchMenu: false,
+            schedOpen: null,
+            schedDraft: "",
+            createStartMode: "now",
+            createStartAt: "",
             draftTitle: "",
             draftBrief: "",
             draftFiles: [],
@@ -9741,6 +10100,118 @@
           }));
         }
 
+        // Scheduling means "start" until the card has reached build; after that a
+        // scheduled time is a resume of the thread that stopped.
+        schedKindFor(card) {
+          if (card.sched && card.sched.kind) return card.sched.kind;
+          return this.stageIndex(card.status) >= this.stageIndex("building") ? "resume" : "start";
+        }
+        schedPresets(kind, cur, pick) {
+          const raw =
+            kind === "resume"
+              ? [
+                  { label: "When the limit resets", at: nextLimitReset() },
+                  { label: "In 1 hour", at: inMinutes(60) },
+                  { label: "Tomorrow 8:00 AM", at: atNextHour(8) },
+                ]
+              : [
+                  { label: "In 1 hour", at: inMinutes(60) },
+                  { label: "Tonight 9:00 PM", at: atNextHour(21) },
+                  { label: "Tomorrow 8:00 AM", at: atNextHour(8) },
+                ];
+          return raw.map((p) => {
+            const v = toLocalInput(p.at);
+            return { label: p.label, pick: () => pick(v), style: presetStyle(v === cur) };
+          });
+        }
+        scheduleVm(card) {
+          if (!card || card.status === "done") return { show: false, has: false, open: false, presets: [] };
+          const kind = this.schedKindFor(card);
+          const stageName = this.stage(card.status).name;
+          const has = !!(card.sched && card.sched.at);
+          const open = this.state.schedOpen === card.id;
+          const fallback = toLocalInput(kind === "resume" ? nextLimitReset() : inMinutes(60));
+          const draft = has ? card.sched.at : this.state.schedDraft || fallback;
+          const byLimit = !!card.limitHit && card.tstate === "stopped";
+          const what = kind === "resume" ? stageName.toLowerCase() : "the build";
+          const set = (v) => {
+            if (!fromLocalInput(v)) return;
+            this.patchCard(card.id, { sched: { kind, at: v } });
+          };
+          return {
+            show: true,
+            has,
+            open,
+            title: kind === "resume" ? "Resume " + stageName + " at" : "Start the build at",
+            pillLabel: has ? whenLabel(card.sched.at) : "",
+            tip: has
+              ? (kind === "resume" ? "Resumes " + stageName.toLowerCase() + " " : "Starts the build ") +
+                whenLabel(card.sched.at) + " · " + untilLabel(card.sched.at) + " — click to change"
+              : kind === "resume"
+                ? "Schedule a resume of " + stageName.toLowerCase()
+                : "Schedule the build to start",
+            // Before build, the schedule only fires if a human has walked the card
+            // through planning and approval by then.
+            note: byLimit
+              ? "Stopped on a usage limit — the window resets at " + clockLabel(nextLimitReset()) + "."
+              : kind === "resume"
+                ? "Picks " + what + " up where the thread stopped."
+                : "No effect unless the card has reached Ready or Building by then — planning and approval still need you.",
+            noteColor: byLimit ? "var(--warning-fg)" : "var(--muted-fg)",
+            value: draft,
+            onValue: (e) => {
+              this.setState({ schedDraft: e.target.value });
+              set(e.target.value);
+            },
+            presets: this.schedPresets(kind, has ? card.sched.at : "", (v) => {
+              set(v);
+              this.setState({ schedOpen: null, schedDraft: "" });
+            }),
+            toggle: () =>
+              this.setState((s) => ({
+                schedOpen: s.schedOpen === card.id ? null : card.id,
+                schedDraft: "",
+              })),
+            clearLabel: kind === "resume" ? "Clear — resume by hand" : "Clear — build when free",
+            clear: () => {
+              this.patchCard(card.id, { sched: null });
+              this.setState({ schedOpen: null, schedDraft: "" });
+            },
+          };
+        }
+        createStartVm() {
+          const st = this.state;
+          const at = st.createStartMode === "at";
+          const draft = st.createStartAt || toLocalInput(inMinutes(60));
+          return {
+            isAt: at,
+            open: !!st.createStartOpen,
+            toggle: () => this.setState((s) => ({ createStartOpen: !s.createStartOpen })),
+            label: at ? whenLabel(draft) : "",
+            tip: at
+              ? "Build scheduled to start " + whenLabel(draft) + " · " + untilLabel(draft)
+              : "Schedule when the build starts",
+            iconStyle:
+              "display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 " +
+              (at ? "10px" : "8px") +
+              ";border:1px solid " +
+              (at ? "color-mix(in srgb,var(--primary) 45%,transparent)" : "transparent") +
+              ";border-radius:8px;cursor:pointer;background:" +
+              (at ? "color-mix(in srgb,var(--primary) 10%,transparent)" : "transparent") +
+              ";color:" + (at ? "var(--fg)" : "var(--muted-fg)"),
+            value: draft,
+            onValue: (e) => this.setState({ createStartMode: "at", createStartAt: e.target.value }),
+            presets: this.schedPresets("start", at ? draft : "", (v) =>
+              this.setState({ createStartMode: "at", createStartAt: v, createStartOpen: false }),
+            ),
+            clear: () => this.setState({ createStartMode: "now", createStartAt: "", createStartOpen: false }),
+            clearStyle:
+              "height:28px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:" +
+              (at ? "var(--muted-fg)" : "var(--fg)") +
+              ";font:500 12px var(--font-sans);cursor:pointer",
+          };
+        }
+
         renderVals() {
           const st = this.state;
           const isBoard = st.mode === "board";
@@ -9918,11 +10389,18 @@
                 e.stopPropagation();
                 this.setState({ drill: c.id, activeId: null });
               },
-              working: working && !cf,
+              working,
               awaiting,
               queued: !!qi,
               queueLabel: qi ? qi.label : "",
               queueTip: qi ? qi.detail : "",
+              sched: !!(c.sched && c.sched.at),
+              schedLabel: c.sched && c.sched.at ? whenLabel(c.sched.at) : "",
+              schedTip:
+                c.sched && c.sched.at
+                  ? (c.sched.kind === "resume" ? "Resumes " : "Build starts ") +
+                    whenLabel(c.sched.at) + " · " + untilLabel(c.sched.at)
+                  : "",
               tip: awaiting ? "Awaiting input" : working ? "Thread running" : qi ? qi.detail : "",
               projectName: projName(c.project),
               keyStyle: showKeys ? this.keyPillStyle(projColor(c.project)) : "display:none",
@@ -10111,6 +10589,8 @@
                       createProject: isAll ? "advisor" : p.id,
                       createBranch: defaultBranchOf(isAll ? "advisor" : p.id),
                       createMenu: null,
+                      createStartMode: "now",
+                      createStartAt: "",
                       draftTitle: "",
                       draftBrief: "",
             draftFiles: [],
@@ -10341,14 +10821,27 @@
                   what: "moved to " + stage.name.toLowerCase(),
                   when: "40m ago",
                 });
-                return rows.map((r) => ({
+                const all = rows.map((r) => ({
                   ...r,
                   live: !!r.live,
                   dot: !r.live,
                   isLink: !!r.isLink,
                   plain: !r.isLink,
                 }));
+                this._actTotal = all.length;
+                this._actOpen = this.state.activityExpanded === active.id;
+                this._actHidden = this._actOpen ? 0 : Math.max(0, all.length - 5);
+                return this._actHidden ? all.slice(-5) : all;
               })(),
+              activityMoreVisible: !!this._actHidden,
+              activityMoreLabel: "Show " + this._actHidden + " earlier",
+              activityLessVisible: this._actOpen && this._actTotal > 5,
+              toggleActivity: (e) => {
+                if (e && e.preventDefault) e.preventDefault();
+                this.setState((s) => ({
+                  activityExpanded: s.activityExpanded === active.id ? null : active.id,
+                }));
+              },
               hasThread: !!activeThread,
               threadWorking: !!activeThread && activeThread.state === "working",
               threadWaiting: !!activeThread && activeThread.state === "waiting",
@@ -11480,6 +11973,8 @@
                 createProject: st.scope === "all" ? "advisor" : st.scope,
                 createBranch: defaultBranchOf(st.scope === "all" ? "advisor" : st.scope),
                 createMenu: null,
+                createStartMode: "now",
+                createStartAt: "",
                 draftTitle: "",
                 draftBrief: "",
             draftFiles: [],
@@ -11489,6 +11984,8 @@
             depOpen: false,
               }),
             closeCreate: () => this.setState({ createOpen: false }),
+            schedule: this.scheduleVm(active),
+            createStart: this.createStartVm(),
             draftTitle: st.draftTitle,
             onDraftTitle: (e) => this.setState({ draftTitle: e.target.value }),
             briefRef: (el) => {
@@ -11691,11 +12188,17 @@
                 plan: null,
                 pr: null,
                 created: "just now",
+                sched:
+                  this.state.createStartMode === "at" && fromLocalInput(this.state.createStartAt)
+                    ? { kind: "start", at: this.state.createStartAt }
+                    : null,
               };
               this.setState((s) => ({
                 cards: s.cards.concat(card),
                 createOpen: false,
                 mode: "board",
+                createStartMode: "now",
+                createStartAt: "",
                 draftTitle: "",
                 draftBrief: "",
             draftFiles: [],
