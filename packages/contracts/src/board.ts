@@ -2248,6 +2248,7 @@ export function boardCardAttention(input: {
     | "awaitingInput"
     | "stepAwaiting"
     | "stepRunning"
+    | "threadState"
     | "queued"
     | "archivedAt"
     // `| undefined` throughout, not bare optionals: under
@@ -2374,7 +2375,29 @@ export function boardCardAttention(input: {
   // a sibling thread holding a real question. Showing the stop there would hide
   // the question the human could actually answer behind a chip that says only
   // that something halted.
-  if (card.awaitingInput || card.stepAwaiting === "question") {
+  //
+  // …and a card that is being WORKED is not parked on anybody (T3O-18), so the
+  // step row's claim is dropped whenever the working dot is lit. Both labels
+  // this gates assert the same thing — nobody is working on this card
+  // (`docs/t3o/status-colours.md`) — which a blue dot beside them flatly
+  // contradicts, and the board shipped cards wearing both at once.
+  //
+  // The row can outlive the stop it describes because nothing on the resume
+  // path is guaranteed to reach it: `turn.started` is deliberately not a resume
+  // signal (t3o-34, D5), and a `turn.completed` that arrives late can park a
+  // step whose thread a human has ALREADY sent the next turn into — the resume
+  // fired first and found nothing parked, so no second one is coming. Evidence
+  // outranks the claim, the same ranking `isBoardCardWorking` applies in the
+  // other direction when a provably dead thread vetoes `stepRunning`.
+  //
+  // Only the step ROW's half is vetoed. `awaitingInput` is a live thread's real
+  // pending question, one click from being answered, and a card can hold one
+  // while a step runs — hiding that behind the dot would strand the answer.
+  // `held` is not vetoed either: it is a claim about the STAGE, not the agent.
+  // A settled step still needs a human to move the card on while somebody
+  // chats in its thread, and the modal's forward button reads it (t3o-06, D2).
+  const stepAwaiting = isBoardCardWorking(card) ? null : card.stepAwaiting;
+  if (card.awaitingInput || stepAwaiting === "question") {
     return {
       reason: "input",
       tone: ATTENTION_TONES.input,
@@ -2382,7 +2405,7 @@ export function boardCardAttention(input: {
       detail: "A thread on this card is waiting on your answer",
     };
   }
-  if (card.stepAwaiting === "stopped") {
+  if (stepAwaiting === "stopped") {
     return {
       reason: "stopped",
       tone: ATTENTION_TONES.stopped,

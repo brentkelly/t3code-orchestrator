@@ -28,6 +28,7 @@ const snapshotStub = {
   boardThreadTodo: () => Effect.succeed(null),
   boardLatestAssistantMessage: () => Effect.succeed(null),
   boardThreadLastSignalAt: () => Effect.succeed(null),
+  boardThreadPendingTurnStartAt: () => Effect.succeed(null),
   boardSweepThreadTodos: () => Effect.void,
 } as never;
 

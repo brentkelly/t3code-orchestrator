@@ -61,7 +61,15 @@ const turnStartRequested = (threadId: string, sequence: number): OrchestrationEv
     because asking IS the job there. `messages` is handed to the harness by
     reference so a test can write the agent's final message once the harness has
     spawned the thread and told it the id. */
-const planningBoard = (id: string, messages: Map<string, string>, stale?: ReadonlySet<string>) => ({
+const planningBoard = (
+  id: string,
+  messages: Map<string, string>,
+  stale?: ReadonlySet<string>,
+  /** Turns REQUESTED on a thread and not yet started (T3O-18). Handed over by
+      reference like `messages`, because the thread id only exists once the
+      harness has spawned it. */
+  pendingTurnStarts?: Map<string, string>,
+) => ({
   board: { cards: [planningCard(id)], nextCardNumberByProject: {} },
   settings: settingsWith({
     building: [codexStep],
@@ -71,6 +79,7 @@ const planningBoard = (id: string, messages: Map<string, string>, stale?: Readon
   }),
   threadMessages: messages,
   ...(stale === undefined ? {} : { staleThreadMessages: stale }),
+  ...(pendingTurnStarts === undefined ? {} : { threadPendingTurnStarts: pendingTurnStarts }),
 });
 
 /** Drive the card into a running, human-in-the-loop planning step and hand back
@@ -169,6 +178,96 @@ it.effect("leaves the step running while a DIFFERENT turn is live", () => {
 
         const still = boardCardStepState(yield* board, BoardCardId.make("nudged"));
         assert.strictEqual(still?.status, "running");
+      }),
+  );
+});
+
+// T3O-18: the production shape the identity guard above cannot see. A human
+// answered, then typed the next message while the previous turn was still
+// finishing — so `turn.completed` for the OLD turn arrived after the step had
+// already been resumed, and parked it. Nothing un-parks it: the resume signal
+// (`thread.turn-start-requested`) had already fired and found a running step,
+// and `turn.started` is deliberately not a second one. The card then pulsed its
+// blue working dot beside "Needs a human" for the rest of the run.
+it.effect("leaves the step running when the human's next turn is already queued", () => {
+  const messages = new Map<string, string>();
+  const pending = new Map<string, string>();
+  return withGovernor(
+    planningBoard("queued-turn", messages, undefined, pending),
+    ({ pumpDomain, pumpRuntime, board }) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning({ pumpDomain, board }, "queued-turn");
+        // Prose with nothing to answer: without the pending turn this parks as
+        // `stopped`, which is exactly the chip the card wore.
+        messages.set(String(threadId), "Wrote the plan. It covers the token exchange.");
+        // The human's message is in, and its turn has not started — the window
+        // where the turn has no id and the session still names the ended one.
+        pending.set(String(threadId), "2999-01-01T00:00:00.000Z");
+
+        yield* pumpRuntime(turnCompleted(threadId));
+
+        const still = boardCardStepState(yield* board, BoardCardId.make("queued-turn"));
+        assert.strictEqual(still?.status, "running");
+        // Not a recovery either: nothing died, so no attempt and no stall.
+        assert.strictEqual(still?.attempt, 1);
+        assert.strictEqual(still?.stallCount, 0);
+      }),
+  );
+});
+
+it.effect("parks the queued turn's OWN completion once it has run", () => {
+  // The other half, and what stops the guard wedging the step running for ever:
+  // the pending row is claimed the moment the provider starts the turn, so the
+  // completion that follows is nobody's leftover and parks normally.
+  const messages = new Map<string, string>();
+  const pending = new Map<string, string>();
+  return withGovernor(
+    planningBoard("ran-it", messages, undefined, pending),
+    ({ pumpDomain, pumpRuntime, board }) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning({ pumpDomain, board }, "ran-it");
+        messages.set(String(threadId), "Wrote the plan. It covers the token exchange.");
+        pending.set(String(threadId), "2999-01-01T00:00:00.000Z");
+        yield* pumpRuntime(turnCompleted(threadId));
+        assert.strictEqual(
+          boardCardStepState(yield* board, BoardCardId.make("ran-it"))?.status,
+          "running",
+        );
+
+        // The queued turn starts, which claims the pending row…
+        pending.delete(String(threadId));
+        yield* pumpRuntime(turnStarted(threadId));
+        // …and ends with nothing for a human to answer.
+        yield* pumpRuntime(turnCompleted(threadId));
+
+        const parked = boardCardStepState(yield* board, BoardCardId.make("ran-it"));
+        assert.strictEqual(parked?.status, "awaiting-input");
+        assert.strictEqual(parked?.awaitingReason, "stopped");
+      }),
+  );
+});
+
+it.effect("ignores a pending turn start older than the step's own work", () => {
+  // The freshness bound. A pending row that was never claimed — a turn asked
+  // for before this step was set working — must not suppress parking for the
+  // rest of the run, or one abandoned request would silence the card for good.
+  const messages = new Map<string, string>();
+  const pending = new Map<string, string>();
+  return withGovernor(
+    planningBoard("stale-pending", messages, undefined, pending),
+    ({ pumpDomain, pumpRuntime, board }) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning({ pumpDomain, board }, "stale-pending");
+        messages.set(String(threadId), "Wrote the plan. It covers the token exchange.");
+        // Pre-epoch, so it is unambiguously before the step's `startedAt` — the
+        // same trick `staleThreadMessages` uses.
+        pending.set(String(threadId), "1969-01-01T00:00:00.000Z");
+
+        yield* pumpRuntime(turnCompleted(threadId));
+
+        const parked = boardCardStepState(yield* board, BoardCardId.make("stale-pending"));
+        assert.strictEqual(parked?.status, "awaiting-input");
+        assert.strictEqual(parked?.awaitingReason, "stopped");
       }),
   );
 });

@@ -54,6 +54,13 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   it never wears the running dot. If it left a question behind it is violet ("Input needed"); if it
   did not, it is amber ("Needs a human"). Both are the same fact — nobody is working on this card —
   told at the volume the human's next move deserves.
+- **And the reverse: a working card never says it needs a human.** The dot and those two chips are
+  opposite claims, so a card can only ever wear one of them. They come from different sources — the
+  dot from thread liveness, the chips from the step row — and the step row can go stale, which is
+  how the board once shipped a card pulsing blue beside "Needs a human". Where they disagree the
+  evidence wins and the chip goes, the same ranking that darkens the dot when a step claims to be
+  running on threads that are provably dead. A live thread's own pending question is exempt: it is
+  answerable in one click, and hiding it behind the dot would strand the answer.
 
 ## Deliberately outside the convention
 

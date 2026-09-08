@@ -498,6 +498,11 @@ export function withGovernor(
         which is what every fixture written before this signal existed reads as,
         so none of them change behaviour. */
     readonly threadSignals?: ReadonlyMap<string, string>;
+    /** When a turn was REQUESTED on each thread and has not started yet
+        (T3O-18): the message a human sent while the previous turn was still
+        finishing. An absent thread answers null — "nothing outstanding" — which
+        is what every fixture written before this signal existed reads as. */
+    readonly threadPendingTurnStarts?: ReadonlyMap<string, string>;
     /** A `ServerConfig` layer (t3o-32): with one, a build/plan spawn stages
         the card's brief images from `<stateDir>/board/attachments`; without
         one the reactor stages nothing, as the other tests expect. */
@@ -660,6 +665,7 @@ export function withGovernor(
     const threadMessages = input.threadMessages ?? new Map<string, string>();
     const staleThreadMessages = input.staleThreadMessages ?? new Set<string>();
     const threadSignals = input.threadSignals ?? new Map<string, string>();
+    const threadPendingTurnStarts = input.threadPendingTurnStarts ?? new Map<string, string>();
     const snapshotStub = {
       // The thread rows carry the CURRENT shell session, so a fixture that moves
       // a thread from mid-turn to idle moves both the shell the decider guard
@@ -718,6 +724,8 @@ export function withGovernor(
       },
       boardThreadLastSignalAt: (threadId: ThreadId) =>
         Effect.succeed(threadSignals.get(String(threadId)) ?? null),
+      boardThreadPendingTurnStartAt: (threadId: ThreadId) =>
+        Effect.succeed(threadPendingTurnStarts.get(String(threadId)) ?? null),
       boardSweepThreadTodos: () => Effect.void,
     } as unknown as ProjectionSnapshotQuery["Service"];
 

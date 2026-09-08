@@ -635,6 +635,45 @@ const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
   });
 
+  /**
+   * Whether a turn has been REQUESTED on this step's thread since the board
+   * last set the step working, and has not begun (T3O-18).
+   *
+   * The completion the reactor is holding is then for a turn the human has
+   * already moved past: they sent the next message while the previous turn was
+   * still finishing, so the agent is not stopped and not dead — it is about to
+   * be handed more work. Parking on that completion is a lie the card wears for
+   * the rest of the run, because nothing re-resumes it: the resume signal
+   * (`thread.turn-start-requested`) fired FIRST, found a running step, and did
+   * nothing. `turn.started` is deliberately not a second resume signal (t3o-34,
+   * D5), and rightly so — adapters synthesise it for background output nobody
+   * asked for.
+   *
+   * `session.activeTurnId`, which the caller checks beside this, cannot see the
+   * window: the requested turn has no id until the provider starts it, so the
+   * session names the ended turn or nothing at all.
+   *
+   * Bounded by `lastNudgeAt ?? startedAt`, the same reference the timeout sweep
+   * measures from: only a request made since the board last put this step to
+   * work can supersede its completion, so a pending row left behind by a turn
+   * that never started cannot suppress parking for ever.
+   *
+   * Best-effort in the shape of `threadTodoState` beside it: a missing
+   * `boardQueries` or a read failure answers false, which is exactly the
+   * behaviour before this signal existed.
+   */
+  const supersededByPendingTurn = Effect.fn("board-supervisor-supersededByPendingTurn")(function* (
+    state: BoardCardStepState,
+  ) {
+    if (state.threadId === null || boardQueries === null) return false;
+    const floor = state.lastNudgeAt ?? state.startedAt;
+    if (floor === null) return false;
+    const requestedAt = yield* boardQueries
+      .boardThreadPendingTurnStartAt(state.threadId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    return requestedAt !== null && isAfter(requestedAt, floor);
+  });
+
   /** Resolve `progressedSinceLastNudge` for a step (t3o-17 D2 / t3o-18 D16): the
       step thread's todo list ADVANCED, or a new commit landed on the card's
       branch, both since the recorded `lastNudgeAt`. The first stall has no nudge
@@ -3553,12 +3592,25 @@ const make = Effect.gen(function* () {
     // escalate, never loop), whose failure mode is asking a human one turn
     // early, not a stuck or corrupted card.
     const liveTurnId = shell?.session?.activeTurnId ?? null;
+    const namedByAnotherTurn =
+      liveTurnId !== null && (completedTurnId === undefined || liveTurnId !== completedTurnId);
+    // The identity test above has one blind spot, and it is where this handler
+    // parked a card that was working perfectly well (T3O-18): a human can send
+    // the next message while the previous turn is still FINISHING, and until
+    // the provider starts that turn it has no id at all — so the session names
+    // the ended turn or nothing, and the completion reads as the agent
+    // stopping. `supersededByPendingTurn` reads the requested-but-unstarted
+    // turn upstream already records, which is that turn's only trace.
+    //
+    // Checked second so it costs a query only on the completions the identity
+    // test does not already settle, and independently of the shell: it is its
+    // own evidence, and a shell the projection has not caught up with is
+    // exactly the case that needs it.
     if (
-      shell !== undefined &&
-      liveTurnId !== null &&
-      (completedTurnId === undefined || liveTurnId !== completedTurnId)
+      (namedByAnotherTurn || (yield* supersededByPendingTurn(found.state))) &&
+      !(shell?.hasPendingUserInput ?? false)
     ) {
-      if (!shell.hasPendingUserInput) return;
+      return;
     }
     if (shell !== undefined && shell.hasPendingUserInput) {
       // A proper structured question — "Input needed", not a failure, no retry

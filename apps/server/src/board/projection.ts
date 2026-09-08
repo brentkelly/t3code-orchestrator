@@ -1807,6 +1807,38 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  /** When a turn was last REQUESTED on a thread but has not begun (T3O-18) —
+      the `requested_at` of upstream's pending turn-start row, or none.
+   *
+      A turn exists as a row from the moment it is asked for, and only claims
+      its id when the provider actually starts it, so between those two moments
+      it is invisible to every "is this thread busy" signal the board had:
+      `session.activeTurnId` is null, the session is not running, and the shell
+      names the turn that just ENDED as the latest one. That window is where the
+      supervisor parked a step whose human had already sent the next message.
+   *
+      Same predicate as upstream's own `getPendingTurnStartByThreadId`, reading
+      the same row — a scalar rather than the row, because the only question is
+      when it was asked for. Kept as a board query rather than a dependency on
+      the turn repository: the board reads upstream projection tables through
+      this file already (`findThreadLastSignalAt` beside it), and a read cannot
+      drift the way a write would. */
+  const findThreadPendingTurnStartAt = SqlSchema.findOneOption({
+    Request: ThreadId,
+    Result: Schema.Struct({ requestedAt: Schema.String }),
+    execute: (threadId) => sql`
+      SELECT requested_at AS "requestedAt"
+      FROM projection_turns
+      WHERE thread_id = ${threadId}
+        AND turn_id IS NULL
+        AND state = 'pending'
+        AND pending_message_id IS NOT NULL
+        AND checkpoint_turn_count IS NULL
+      ORDER BY requested_at DESC
+      LIMIT 1
+    `,
+  });
+
   /** ONE card's live-step stop reason (t3o-30, D2) — the card detail's failure
       banner and nothing else. A one-column read rather than a second use of
       `listBoardCardStepStateRows`: the banner needs the text, never the frozen
@@ -1988,6 +2020,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     findBoardCardStepErrorRow,
     findLatestAssistantMessage,
     findThreadLastSignalAt,
+    findThreadPendingTurnStartAt,
     deleteBoardPlansForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
@@ -3449,6 +3482,17 @@ export interface BoardSnapshotQueryMethods {
   readonly boardThreadLastSignalAt: (
     threadId: ThreadId,
   ) => Effect.Effect<string | null, ProjectionRepositoryError>;
+  /** When a turn was REQUESTED on this thread and has not started yet (T3O-18),
+      or null when none is outstanding.
+
+      The supervisor's "has the agent stopped?" test, which a `turn.completed`
+      alone cannot answer: a human can send the next message while the previous
+      turn is still finishing, and until the provider starts it that turn is a
+      pending row and nothing else. Reading it is what stops a late completion
+      parking a step the human has already moved on. */
+  readonly boardThreadPendingTurnStartAt: (
+    threadId: ThreadId,
+  ) => Effect.Effect<string | null, ProjectionRepositoryError>;
   /** Boot reconciliation sweep of orphaned todo rows (t3o-18, AC 20). */
   readonly boardSweepThreadTodos: () => Effect.Effect<void, ProjectionRepositoryError>;
 }
@@ -3480,6 +3524,7 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
     typeof candidate.boardThreadTodo === "function" &&
     typeof candidate.boardLatestAssistantMessage === "function" &&
     typeof candidate.boardThreadLastSignalAt === "function" &&
+    typeof candidate.boardThreadPendingTurnStartAt === "function" &&
     typeof candidate.boardSweepThreadTodos === "function"
     ? {
         boardCardDetail: candidate.boardCardDetail,
@@ -3490,6 +3535,7 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
         boardThreadTodo: candidate.boardThreadTodo,
         boardLatestAssistantMessage: candidate.boardLatestAssistantMessage,
         boardThreadLastSignalAt: candidate.boardThreadLastSignalAt,
+        boardThreadPendingTurnStartAt: candidate.boardThreadPendingTurnStartAt,
         boardSweepThreadTodos: candidate.boardSweepThreadTodos,
       }
     : null;
@@ -3620,6 +3666,15 @@ export function boardSnapshotQueryMethods(
         .pipe(
           Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.at })),
           Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadLastSignal:query")),
+        ),
+    boardThreadPendingTurnStartAt: (threadId) =>
+      queries
+        .findThreadPendingTurnStartAt(threadId)
+        .pipe(
+          Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.requestedAt })),
+          Effect.mapError(
+            toPersistenceSqlError("BoardCardsProjection.threadPendingTurnStart:query"),
+          ),
         ),
     boardSweepThreadTodos: () =>
       queries
