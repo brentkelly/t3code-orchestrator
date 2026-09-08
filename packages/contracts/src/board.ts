@@ -2560,6 +2560,60 @@ export function boardAppendOrderKey(existingOrderKeys: ReadonlyArray<string>): s
   return max === null ? LEGACY_BOARD_CARD_ORDER_KEY : `${max}m`;
 }
 
+/** Digits an order key is built from, low to high — the alphabet the client's
+    `pinOrderKeyBetween` uses, so keys from either side interleave. */
+const BOARD_ORDER_KEY_DIGITS = "abcdefghijklmnopqrstuvwxyz";
+
+/**
+ * A key that sorts strictly before `key`, or null when nothing can: an empty
+ * key, one carrying a character outside the alphabet, or one that is nothing
+ * but minimum digits. No generator on either side produces those, so a null
+ * here means a hand-edited row.
+ */
+function boardOrderKeyBelow(key: string): string | null {
+  // Leading minimum digits cannot be lowered; the new key keeps them and goes
+  // below whatever follows.
+  let prefix = 0;
+  while (key.charAt(prefix) === BOARD_ORDER_KEY_DIGITS[0]) prefix += 1;
+  if (prefix >= key.length) return null;
+  const digit = BOARD_ORDER_KEY_DIGITS.indexOf(key.charAt(prefix));
+  if (digit < 1) return null;
+  // Room in this digit: halve it. Otherwise the key either has further digits
+  // to truncate into, or borrows a digit and takes the midpoint of the open
+  // range below it — so prepending never runs out of room, it grows a digit.
+  if (digit > 1) return key.slice(0, prefix) + BOARD_ORDER_KEY_DIGITS.charAt(Math.round(digit / 2));
+  if (key.length > prefix + 1) return key.slice(0, prefix + 1);
+  return (
+    key.slice(0, prefix) +
+    BOARD_ORDER_KEY_DIGITS[0] +
+    BOARD_ORDER_KEY_DIGITS.charAt(BOARD_ORDER_KEY_DIGITS.length >> 1)
+  );
+}
+
+/**
+ * Order key for a card placed at the TOP of a stage column — the mirror of
+ * `boardAppendOrderKey`, and computed server-side for the same reason (T3O-15
+ * needs it in the decider, which cannot reach `client-runtime`). A card
+ * arriving in the done-role stage lands here, so Done reads newest-first.
+ *
+ * `existingOrderKeys` is the target column's keys, in any order. A key nothing
+ * can sort below is skipped rather than allowed to fail the placement: the
+ * card lands above every key that does sort, under the corrupt one. An empty
+ * column gets the same midpoint an appended card would.
+ */
+export function boardPrependOrderKey(existingOrderKeys: ReadonlyArray<string>): string {
+  let min: string | null = null;
+  let below: string | null = null;
+  for (const key of existingOrderKeys) {
+    if (min !== null && key >= min) continue;
+    const candidate = boardOrderKeyBelow(key);
+    if (candidate === null) continue;
+    min = key;
+    below = candidate;
+  }
+  return below ?? LEGACY_BOARD_CARD_ORDER_KEY;
+}
+
 // ── Commands ───────────────────────────────────────────────────────────
 // Card-shape fields on commands/payloads are named `cardType` (not `type`)
 // because `type` is the command/event discriminant.

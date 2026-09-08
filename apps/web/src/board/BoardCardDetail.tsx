@@ -869,13 +869,17 @@ export function BoardCardDetail({
       }}
       onMoveStage={(toStage) => {
         const targetColumn = (snapshot?.cards ?? []).filter((shell) => shell.stage === toStage);
+        // Every column but Done takes the card at the bottom. Done takes it at
+        // the top, and the server places it there (T3O-15) — this sends no key
+        // at all rather than a second implementation of the same rule.
+        const toDone = toStage === boardStageWithRole(stageState, "done")?.stageId;
         runCommand(
           moveCard({
             environmentId,
             input: {
               cardId: card.id,
               toStage,
-              orderKey: boardColumnAppendOrderKey(targetColumn),
+              ...(toDone ? {} : { orderKey: boardColumnAppendOrderKey(targetColumn) }),
               ...(areBoardStagesAdjacent(stageState, card.stage, toStage)
                 ? {}
                 : { override: true }),
