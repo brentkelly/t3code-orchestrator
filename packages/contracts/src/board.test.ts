@@ -30,6 +30,8 @@ import {
   BoardCardShell,
   BoardLabelId,
   BoardLabelName,
+  boardAppendOrderKey,
+  boardPrependOrderKey,
   boardBuildHumanInLoopDefault,
   boardCardAttention,
   boardCardChildAttentionLabel,
@@ -1705,5 +1707,49 @@ describe("stamping a selected step's label (boardSelectedStepLabel, T3O-9)", () 
         expect(reviewStepLabel(phase, round)).not.toBe(BOARD_CONFLICT_STEP_LABEL);
       }
     }
+  });
+});
+
+describe("top-of-column order keys (T3O-15)", () => {
+  const sorted = (keys: ReadonlyArray<string>) => [...keys].sort();
+
+  it("places a card above every key in the column", () => {
+    const column = ["m", "mm", "g", "zz"];
+    const key = boardPrependOrderKey(column);
+    expect(sorted([...column, key])[0]).toBe(key);
+  });
+
+  it("gives an empty column the same midpoint an appended card gets", () => {
+    expect(boardPrependOrderKey([])).toBe(boardAppendOrderKey([]));
+  });
+
+  it("keeps prepending forever, growing a digit rather than running out", () => {
+    // Done takes every finished card, so the top of that column is prepended
+    // to for the life of the board: 500 arrivals must still each sort first.
+    const column: string[] = ["m"];
+    for (let i = 0; i < 500; i += 1) {
+      const key = boardPrependOrderKey(column);
+      expect(sorted([...column, key])[0]).toBe(key);
+      column.push(key);
+    }
+    // Fractional keys, not one digit per arrival: the key grows only when the
+    // digit it halves runs out of room, so 500 arrivals cost a fraction of
+    // 500 digits — the same growth the client's pinned-thread prepend has.
+    expect(Math.max(...column.map((key) => key.length))).toBeLessThan(column.length / 4);
+  });
+
+  it("interleaves with keys a drag left behind", () => {
+    // The client bisects with `pinOrderKeyBetween` over the same alphabet, so
+    // a dragged card's key is just another key to sort above.
+    const key = boardPrependOrderKey(["an", "b", "mmm"]);
+    expect(sorted(["an", "b", "mmm", key])[0]).toBe(key);
+  });
+
+  it("sorts under a key nothing can precede rather than failing the placement", () => {
+    // Only a hand-edited row produces these; the card still lands above every
+    // key that does sort, which is where the eye expects it.
+    const column = ["aaa", "m", "mm"];
+    const key = boardPrependOrderKey(column);
+    expect(sorted([...column, key]).indexOf(key)).toBe(1);
   });
 });

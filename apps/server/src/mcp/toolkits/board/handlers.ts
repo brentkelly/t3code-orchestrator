@@ -16,6 +16,7 @@ import {
   boardCardStepCompletions,
   boardCardStepState,
   boardLabelCatalogue,
+  boardStageWithRole,
   boardStepPayloadDefect,
   isBoardTerminalStepStatus,
   boardPlanId,
@@ -754,9 +755,12 @@ export const boardHandlers = {
       // A bottom key in the target column, so a cross-stage move lands last.
       // When the card does not exist the move carries no order key and the
       // decider rejects it with an actionable "does not exist" message —
-      // never a key computed against a phantom project.
+      // never a key computed against a phantom project. A move into the
+      // done-role stage carries none either: arriving there means the top of
+      // the column, which the decider places (T3O-15).
+      const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
       const orderKey =
-        card === undefined
+        card === undefined || input.toStage === doneStageId
           ? undefined
           : boardAppendOrderKey(
               board.cards

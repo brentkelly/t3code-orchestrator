@@ -1143,6 +1143,36 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_move_card lands a card moved into Done at the TOP of that column", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // Done is the one column read newest-first (T3O-15), so the agent tool
+      // sends no key at all and the decider places the arrival.
+      const resident = yield* boardHandlers
+        .board_create_card({
+          projectId,
+          title: "Finished earlier",
+          stage: BoardStageId.make("done"),
+        })
+        .pipe(withScope(orphanThread));
+      const finishing = yield* boardHandlers
+        .board_create_card({ projectId, title: "Finishing now", stage: BoardStageId.make("merge") })
+        .pipe(withScope(orphanThread));
+      const moved = yield* boardHandlers
+        .board_move_card({ cardId: finishing.cardId, toStage: BoardStageId.make("done") })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual(moved.stage, "done");
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const model = yield* snapshotQuery.getCommandReadModel();
+      const cards = model.board?.cards ?? [];
+      const movedCard = cards.find((candidate) => candidate.id === finishing.cardId);
+      const residentCard = cards.find((candidate) => candidate.id === resident.cardId);
+      assert.isDefined(movedCard);
+      assert.isDefined(residentCard);
+      assert.isTrue(movedCard!.orderKey < residentCard!.orderKey);
+    }),
+  );
+
   it.effect("board_move_card on a missing card is rejected actionably, not given a key", () =>
     Effect.gen(function* () {
       yield* seed();

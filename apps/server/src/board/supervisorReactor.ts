@@ -3346,7 +3346,9 @@ const make = Effect.gen(function* () {
         commandId: yield* commandId("merge-advance"),
         cardId: merged.id,
         toStage: nextStage,
-        orderKey: merged.orderKey,
+        // No key: an advance names no position, so the card keeps its own —
+        // except into the done-role stage, where the decider lands it on top
+        // (T3O-15).
         createdAt: yield* nowIso,
       });
     }

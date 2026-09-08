@@ -25,6 +25,7 @@ import {
   BOARD_CARD_BRIEF_BODY_KIND,
   BOARD_CARD_LABELS_MAX,
   boardAppendOrderKey,
+  boardPrependOrderKey,
   boardCardChildren,
   boardCardPendingSplit,
   boardCardPlans,
@@ -1005,10 +1006,32 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       const retiredHistory = startsNewRound
         ? [...card.pullRequestHistory, card.pullRequest]
         : card.pullRequestHistory;
+      // A card ARRIVING in the done-role stage lands at the TOP of that
+      // column (T3O-15): Done is read newest-first, so what just finished is
+      // what you see. Only when the mover named no position — a drag names one
+      // and means it, and every other column still keeps the card's own key
+      // (inside Building that key is queue priority, D11).
+      const nextOrderKey =
+        command.orderKey ??
+        (doneStageId !== null && command.toStage === doneStageId
+          ? boardPrependOrderKey(
+              board.cards
+                .filter(
+                  (existing) =>
+                    existing.stage === doneStageId &&
+                    existing.archivedAt === null &&
+                    // The column the mover is looking at: a project's own
+                    // board, or one parent's sub-board.
+                    existing.projectId === card.projectId &&
+                    existing.parentCardId === card.parentCardId,
+                )
+                .map((existing) => existing.orderKey),
+            )
+          : card.orderKey);
       const nextCard: BoardCard = {
         ...card,
         stage: command.toStage,
-        orderKey: command.orderKey ?? card.orderKey,
+        orderKey: nextOrderKey,
         blocked: deriveBoardCardBlocked({
           board,
           stage: command.toStage,

@@ -370,6 +370,39 @@ describe("merging a card's pull request", () => {
     ),
   );
 
+  it.effect("lands the merged card at the TOP of Done, above what finished before it", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [
+            cardInMerge(),
+            makeBoardCard({
+              id: "card-finished-earlier",
+              stage: String(BOARD_SEED_STAGE_IDS.done),
+              orderKey: "m",
+            }),
+          ],
+        },
+        settings: settings(),
+        pullRequest: openPr,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          // The advance names no position, so the decider gives it the top of
+          // Done (T3O-15) — the card that just merged is the one you read
+          // first, not one buried under a month of finished work.
+          const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+          assert.equal(result.outcome, "merged");
+          const cards = (yield* h.board).cards;
+          const merged = cards.find((card) => card.id === cardInMerge().id);
+          const earlier = cards.find((card) => card.id === "card-finished-earlier");
+          assert.equal(merged?.stage, String(BOARD_SEED_STAGE_IDS.done));
+          assert.isTrue(merged!.orderKey < earlier!.orderKey);
+        }),
+    ),
+  );
+
   it.effect("reports a refusal, leaves the card put, and does NOT retry", () =>
     withGovernor(
       {

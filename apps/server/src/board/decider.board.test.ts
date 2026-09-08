@@ -244,6 +244,7 @@ const moveCommand = (input: {
   readonly cardId: string;
   readonly toStage: string;
   readonly override?: boolean;
+  readonly orderKey?: string;
 }) =>
   ({
     type: "board.card.move",
@@ -251,6 +252,7 @@ const moveCommand = (input: {
     cardId: BoardCardId.make(input.cardId),
     toStage: BoardStageId.make(input.toStage),
     ...(input.override === undefined ? {} : { override: input.override }),
+    ...(input.orderKey === undefined ? {} : { orderKey: input.orderKey }),
     createdAt: NOW,
   }) as const;
 
@@ -3090,6 +3092,169 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       if (event.type === "board.card-updated") {
         assert.strictEqual(event.payload.card.baseBranch, "develop");
       }
+    }),
+  );
+  // ── Arriving in Done (T3O-15) ────────────────────────────────────────
+  // Done is read newest-first, so a card that finishes lands on top of it.
+  // Every other column keeps taking the card's own key — inside Building that
+  // key is queue priority (D11), and an advance must not reshuffle the queue.
+
+  const movedOrderKey = (event: { readonly type: string; readonly payload: unknown }) => {
+    assert.strictEqual(event.type, "board.card-moved");
+    return (event.payload as { readonly card: { readonly orderKey: string } }).card.orderKey;
+  };
+
+  /** Keys in the order the column renders them (plain string comparison). */
+  const inColumnOrder = (keys: ReadonlyArray<string>) => [...keys].sort();
+
+  it.effect("lands a card advancing into Done above every card already there", () =>
+    Effect.gen(function* () {
+      const done = ["m", "mm", "g"].map((orderKey, index) =>
+        makeCard({ id: `card-done-${String(index)}`, stage: "done", orderKey }),
+      );
+      const event = yield* decide(
+        moveCommand({ cardId: "card-1", toStage: "done" }),
+        makeReadModel({
+          board: seededBoard([makeCard({ id: "card-1", stage: "merge", orderKey: "zz" }), ...done]),
+        }),
+      );
+      const orderKey = movedOrderKey(event);
+      assert.strictEqual(
+        inColumnOrder([orderKey, ...done.map((card) => card.orderKey)])[0],
+        orderKey,
+      );
+    }),
+  );
+
+  it.effect("keeps the card's own key when it advances into any other column", () =>
+    Effect.gen(function* () {
+      // Building position is queue priority: an advance names no position, so
+      // the card arrives with the one it already had.
+      const event = yield* decide(
+        moveCommand({ cardId: "card-1", toStage: "building" }),
+        makeReadModel({
+          board: seededBoard([
+            makeCard({ id: "card-1", stage: "ready", orderKey: "zz" }),
+            makeCard({ id: "card-other", stage: "building", orderKey: "m" }),
+          ]),
+        }),
+      );
+      assert.strictEqual(movedOrderKey(event), "zz");
+    }),
+  );
+
+  it.effect("takes the position a drag into Done named, rather than the top", () =>
+    Effect.gen(function* () {
+      // A drag names a slot and means it; the optimistic placement already
+      // drew the card there, and the server must not snap it somewhere else.
+      const event = yield* decide(
+        moveCommand({ cardId: "card-1", toStage: "done", orderKey: "t" }),
+        makeReadModel({
+          board: seededBoard([
+            makeCard({ id: "card-1", stage: "merge" }),
+            makeCard({ id: "card-done", stage: "done", orderKey: "m" }),
+          ]),
+        }),
+      );
+      assert.strictEqual(movedOrderKey(event), "t");
+    }),
+  );
+
+  it.effect("measures the top of Done against the column the card is really in", () =>
+    Effect.gen(function* () {
+      // The board renders one Done column per project, and one more per
+      // sub-board. A key computed against all of them would place the card
+      // above cards nobody is looking at, and burn key space doing it.
+      const event = yield* decide(
+        moveCommand({ cardId: "card-1", toStage: "done" }),
+        makeReadModel({
+          board: seededBoard([
+            makeCard({ id: "card-1", stage: "merge", orderKey: "zz" }),
+            makeCard({ id: "card-mine", stage: "done", orderKey: "m" }),
+            makeCard({
+              id: "card-other-project",
+              stage: "done",
+              orderKey: "b",
+              projectId: otherProjectId,
+            }),
+            makeCard({
+              id: "card-sub-board",
+              stage: "done",
+              orderKey: "b",
+              parentCardId: BoardCardId.make("card-parent"),
+            }),
+          ]),
+        }),
+      );
+      const orderKey = movedOrderKey(event);
+      assert.deepStrictEqual(inColumnOrder([orderKey, "b", "m"]), ["b", orderKey, "m"]);
+    }),
+  );
+
+  it.effect("lands a sub-board child above its siblings in Done, not above the board", () =>
+    Effect.gen(function* () {
+      const parentCardId = BoardCardId.make("card-parent");
+      const event = yield* decide(
+        moveCommand({ cardId: "card-child", toStage: "done" }),
+        makeReadModel({
+          board: seededBoard([
+            makeCard({ id: "card-parent", stage: "building" }),
+            makeCard({ id: "card-child", stage: "merge", orderKey: "zz", parentCardId }),
+            makeCard({ id: "card-sibling", stage: "done", orderKey: "m", parentCardId }),
+            makeCard({ id: "card-top-level", stage: "done", orderKey: "b" }),
+          ]),
+        }),
+      );
+      const orderKey = movedOrderKey(event);
+      assert.deepStrictEqual(inColumnOrder([orderKey, "b", "m"]), ["b", orderKey, "m"]);
+    }),
+  );
+
+  it.effect("ignores archived cards when it measures the top of Done", () =>
+    Effect.gen(function* () {
+      // An archived card is not in the column the user sees, so it must not
+      // push the arriving card's key any lower than the visible top.
+      const event = yield* decide(
+        moveCommand({ cardId: "card-1", toStage: "done" }),
+        makeReadModel({
+          board: seededBoard([
+            makeCard({ id: "card-1", stage: "merge", orderKey: "zz" }),
+            makeCard({ id: "card-live", stage: "done", orderKey: "m" }),
+            makeCard({ id: "card-archived", stage: "done", orderKey: "b", archivedAt: NOW }),
+          ]),
+        }),
+      );
+      const orderKey = movedOrderKey(event);
+      assert.deepStrictEqual(inColumnOrder([orderKey, "b", "m"]), ["b", orderKey, "m"]);
+    }),
+  );
+
+  it.effect("stacks successive arrivals newest-first", () =>
+    Effect.gen(function* () {
+      // The behaviour as a user meets it: finish three cards in a row and read
+      // Done top to bottom to see the order they finished in, reversed.
+      let cards = [
+        makeCard({ id: "card-1", stage: "merge" }),
+        makeCard({ id: "card-2", stage: "merge" }),
+        makeCard({ id: "card-3", stage: "merge" }),
+      ];
+      const arrived: Array<string> = [];
+      for (const id of ["card-1", "card-2", "card-3"]) {
+        const event = yield* decide(
+          moveCommand({ cardId: id, toStage: "done" }),
+          makeReadModel({ board: seededBoard(cards) }),
+        );
+        const orderKey = movedOrderKey(event);
+        arrived.push(id);
+        cards = cards.map((card) =>
+          card.id === id ? { ...card, stage: BoardStageId.make("done"), orderKey } : card,
+        );
+      }
+      const column = cards
+        .filter((card) => card.stage === "done")
+        .sort((left, right) => (left.orderKey < right.orderKey ? -1 : 1))
+        .map((card) => card.id as string);
+      assert.deepStrictEqual(column, arrived.toReversed());
     }),
   );
 });
