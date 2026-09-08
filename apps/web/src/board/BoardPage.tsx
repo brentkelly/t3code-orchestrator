@@ -56,23 +56,21 @@ import {
 } from "../components/ui/select";
 import { SidebarInset } from "../components/ui/sidebar";
 import { toastManager } from "../components/ui/toast";
-import { isElectron } from "../env";
 import { cn } from "../lib/utils";
 import { environmentShell } from "../state/shell";
 import { boardEnvironment } from "../state/board";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { BoardArchivedCardsSheet, refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
 import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
+import { countBoardColumnCards, filterBoardColumnsByQuery } from "./boardCardFilter";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { BoardCardDetail } from "./BoardCardDetail";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
 import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
 import { indexBoardLabels } from "./labelColour";
-import { BoardModeTabs } from "./BoardModeTabs";
 import {
   boardScopeCollapseKey,
   boardScopeStages,
@@ -84,6 +82,7 @@ import {
 } from "./boardScope";
 import { BoardSubBoardHeader } from "./BoardSubBoardHeader";
 import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
+import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
 import { projectAccent } from "./projectAccent";
 import type { BoardSearch } from "../routes/board";
@@ -163,19 +162,17 @@ export function BoardPage({
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
-        <header
-          className={cn(
-            "workspace-topbar shrink-0 gap-2 px-3 sm:px-5",
-            isElectron && "drag-region",
-            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-          )}
-        >
-          <BoardModeTabs mode="board" />
-        </header>
+        {/* With no environment the bar carries the brand and the mode tabs
+            alone: nothing to filter, nothing to create — but the way back to
+            threads still has to be on screen. The connected board renders its
+            own bar, with those controls in it. */}
         {environmentId === null ? (
-          <div className="flex flex-1 items-center justify-center">
-            <p className="text-sm text-muted-foreground">No connected environment.</p>
-          </div>
+          <>
+            <BoardTopBar />
+            <div className="flex flex-1 items-center justify-center">
+              <p className="text-sm text-muted-foreground">No connected environment.</p>
+            </div>
+          </>
         ) : (
           <EnvironmentBoard environmentId={environmentId} scope={scope} />
         )}
@@ -543,7 +540,7 @@ function EnvironmentBoard({
       ),
     [scopedColumns],
   );
-  const visibleColumns = useMemo(() => {
+  const stalledColumns = useMemo(() => {
     if (!showStalledOnly) return scopedColumns;
     return Object.fromEntries(
       Object.entries(scopedColumns).map(([stageId, cards]) => [
@@ -552,6 +549,20 @@ function EnvironmentBoard({
       ]),
     ) as typeof scopedColumns;
   }, [scopedColumns, showStalledOnly]);
+  // The top bar's filter box (T3O-16). Local state, not a search param: this is
+  // per-keystroke typing state, and routing every character would re-run route
+  // matching for a filter nobody wants to deep-link or land back on.
+  const [query, setQuery] = useState("");
+  const visibleColumns = useMemo(
+    () => filterBoardColumnsByQuery(stalledColumns, query),
+    [stalledColumns, query],
+  );
+  // Zero matches is a state the board has to SAY, or eight empty columns read
+  // as a board that lost its cards.
+  const noQueryMatches =
+    query.trim().length > 0 &&
+    countBoardColumnCards(visibleColumns) === 0 &&
+    countBoardColumnCards(stalledColumns) > 0;
 
   // ── Drag (native HTML5, the prototype's model) ──────────────────────
   // dnd-kit's sortable transforms were incompatible with the virtualised
@@ -971,8 +982,20 @@ function EnvironmentBoard({
     return inScope.map((project) => ({ id: project.id, title: project.title }));
   }, [projects, scope.kind, scopeProjectId, parentShell?.projectId]);
 
+  const canCreate = addProjects.length > 0 && firstStageId !== null;
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <BoardTopBar>
+        <BoardCardFilterField onQueryChange={setQuery} query={query} />
+        {canCreate ? (
+          <Button onClick={() => openCreate(firstStageId)} size="xs">
+            <PlusIcon />
+            {/* Same treatment as the mode tabs: on a phone the icon carries it. */}
+            <span className="max-sm:sr-only">New card</span>
+          </Button>
+        ) : null}
+      </BoardTopBar>
       <div className="flex shrink-0 items-center gap-3 px-3 py-2 sm:px-5">
         {scope.kind === "sub-board" ? (
           <>
@@ -1107,13 +1130,12 @@ function EnvironmentBoard({
             Archived
           </Button>
         ) : null}
-        {addProjects.length > 0 && firstStageId !== null ? (
-          <Button onClick={() => openCreate(firstStageId)} size="xs" variant="secondary">
-            <PlusIcon />
-            New card
-          </Button>
-        ) : null}
       </div>
+      {noQueryMatches ? (
+        <p className="shrink-0 px-3 pb-1 text-[12.5px] text-muted-foreground sm:px-5">
+          No cards match “{query.trim()}”.
+        </p>
+      ) : null}
       {/* The chart and the final-review footer sit between the header row and
           the columns (t3o-29), the order the prototype's drill-in uses. */}
       {scope.kind === "sub-board" ? (
