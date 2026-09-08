@@ -3500,6 +3500,11 @@ export type BoardCardResumeStepCommand = typeof BoardCardResumeStepCommand.Type;
  *
  * Distinct from `await-step-input`, which is the AGENT stopping and asking, and
  * from the escalation that lands a step `stalled`, which is recovery giving up.
+ * Accepted from a `stalled` step all the same: the interrupt and the interrupted
+ * turn's completion race, and when recovery has no budget left the completion
+ * escalates first. A human's Stop outranks an escalation that landed a beat
+ * earlier, so it takes the step from `stalled` to `paused`.
+ *
  * Internal — dispatched by the reactor when it sees `thread.turn-interrupt-requested`
  * for a step thread the board did not itself interrupt.
  */

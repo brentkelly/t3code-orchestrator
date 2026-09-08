@@ -701,9 +701,10 @@ it.effect("pause-step also parks a step the agent had already parked on a questi
 it.effect("pause-step refuses a step with no turn to stop (T3O-23)", () =>
   Effect.gen(function* () {
     const card = makeCard({ id: "card-1" });
-    // `queued` holds no slot and has nothing running; `stalled` and `paused`
-    // are parked already; a terminal step is over.
-    for (const status of ["queued", "stalled", "paused", "succeeded"] as const) {
+    // `queued` holds no slot and has nothing running; `paused` is already there;
+    // a terminal step is over. `stalled` is NOT here — a human's Stop outranks
+    // an escalation that won the ordering race by a beat, see below.
+    for (const status of ["queued", "paused", "succeeded"] as const) {
       const board = makeReadModel({
         cards: [card],
         stepStates: [stepState("card-1", status)],
@@ -720,6 +721,34 @@ it.effect("pause-step refuses a step with no turn to stop (T3O-23)", () =>
         board,
       );
       assert.include(String(failure), "nothing to pause");
+    }
+  }),
+);
+
+it.effect("pause-step overrides an escalation that won the ordering race (T3O-23)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "stalled", { slotHeld: false })],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.pause-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(event.type, "board.card-step-paused");
+    if (event.type === "board.card-step-paused") {
+      // The human asked for a stop, so they get the neutral `Paused`, not the
+      // loud "Needs a human" a recovery escalation left behind a beat earlier.
+      assert.strictEqual(event.payload.state.status, "paused");
+      assert.strictEqual(event.payload.state.slotHeld, false);
     }
   }),
 );

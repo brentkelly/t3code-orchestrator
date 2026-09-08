@@ -3090,18 +3090,29 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     }
 
     // A human stopped the step (T3O-23). Parks it: slot released, thread and
-    // worktree kept, driven by nothing until somebody resumes it. Only a step
-    // that HAS a turn to stop can be paused — `running`, or `awaiting-input`
-    // where the human stopped a turn the agent had already ended. `queued` and
-    // `pending` hold no slot and have nothing to interrupt, `stalled` is already
-    // parked, and a terminal step is over.
+    // worktree kept, driven by nothing until somebody resumes it. Accepted from
+    // a step that HAD a turn to stop — `running`, or `awaiting-input` where the
+    // human stopped a turn the agent had already ended — and from `stalled`,
+    // which is where the reverse interleaving lands: the interrupted turn's
+    // `turn.completed` overtook the interrupt, and with no recovery budget left
+    // it escalated. The human's Stop is authoritative over an escalation that
+    // landed a beat earlier, so it downgrades the loud "Needs a human" to the
+    // neutral `Paused` they actually asked for; both are parked, both release
+    // the slot, and both leave through the same resume. `queued` and `pending`
+    // hold no slot and have nothing to interrupt, `paused` is already there
+    // (which is what terminates the reactor's re-interrupt), and a terminal step
+    // is over.
     case "board.card.pause-step": {
       yield* requireActiveBoardCard({ board, command });
       const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
-      if (current.status !== "running" && current.status !== "awaiting-input") {
+      if (
+        current.status !== "running" &&
+        current.status !== "awaiting-input" &&
+        current.status !== "stalled"
+      ) {
         return yield* invariant(
           command,
-          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not running or awaiting input; nothing to pause.`,
+          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not running, awaiting input or stalled; nothing to pause.`,
         );
       }
       // `attempt`, `stallCount` and `stageEntryRecoveries` are all UNTOUCHED:

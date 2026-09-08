@@ -18,6 +18,7 @@ import {
   boardCardStepState,
   ProviderInstanceId,
   ThreadId,
+  type BoardCardStepState,
   type OrchestrationCommand,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
@@ -34,6 +35,8 @@ import {
   idleThreadShell,
   makeBoardCard,
   movedToBuilding,
+  NOW,
+  readyWorktree,
   settingsWith,
   stepCompleted,
   stepRequeued,
@@ -146,6 +149,85 @@ it.effect("pausing re-interrupts a turn the projection still shows as live", () 
       );
       assert.strictEqual(interrupts.length, 1);
     }),
+  ),
+);
+
+/** A running, unattended build step one stall short of `maxAttempts` — the end
+    of the recovery ladder, where the next unproductive stop escalates instead of
+    nudging. Seeded rather than driven, because reaching the ceiling through the
+    reactor takes `maxAttempts` full recovery cycles that have nothing to do with
+    what this asserts. */
+const atTheCeiling = (id: string): BoardCardStepState => ({
+  cardId: BoardCardId.make(id),
+  stepId: "building",
+  stepLabel: "Building",
+  stageLabel: "Building",
+  attempt: 1,
+  stallCount: 2,
+  stageEntryRecoveries: 0,
+  lastNudgeAt: null,
+  baseTipAtRoundStart: null,
+  lastError: null,
+  awaitingReason: "question",
+  prompt: "build it",
+  providerInstanceId: codex,
+  model: "gpt-5-codex",
+  mode: "build",
+  runtimeMode: "auto",
+  humanInLoop: false,
+  maxAttempts: 3,
+  timeoutMs: 60_000,
+  threadId: ThreadId.make(`thread-${id}`),
+  status: "running",
+  // The escalation gives the slot back itself; starting at false keeps this
+  // test's slot assertion about the PAUSE and nothing else.
+  slotHeld: false,
+  forceStart: false,
+  startedAt: NOW,
+  updatedAt: NOW,
+});
+
+it.effect("a human stop still parks the card when an escalation won the ordering race", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          makeBoardCard({
+            id: "lost-stop",
+            stage: "building",
+            orderKey: "m",
+            worktree: readyWorktree("lost-stop"),
+          }),
+        ],
+        stepStates: [atTheCeiling("lost-stop")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: new Map([["thread-lost-stop", idleThreadShell("thread-lost-stop")]]),
+    },
+    ({ pumpDomain, pumpRuntime, board, slots }) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-lost-stop");
+
+        // The reverse interleaving. Both streams merge into ONE serialised
+        // worker with no ordering guarantee, so the interrupted turn's
+        // `turn.completed` can be processed BEFORE the interrupt — and with no
+        // ladder budget left that routes through `recoverStep` to ESCALATE
+        // rather than to a nudge.
+        yield* pumpRuntime(turnCompleted(threadId));
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("lost-stop")), "stalled");
+
+        yield* pumpDomain(turnInterruptRequested(threadId, 2));
+
+        // The human's Stop is authoritative over an escalation that landed a
+        // beat earlier: they get the neutral `Paused` they asked for, not the
+        // loud "Needs a human" chip. Before this the pause guard refused a
+        // `stalled` step and the Stop was dropped on the floor.
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("lost-stop")), "paused");
+        // The escalation already released the slot; the pause must not release a
+        // second one — an undercount is as damaging as a leak.
+        assert.strictEqual(yield* slots.heldTotal, 0);
+      }),
   ),
 );
 

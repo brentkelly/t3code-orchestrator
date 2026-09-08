@@ -2645,9 +2645,17 @@ const make = Effect.gen(function* () {
    * processed FIRST, `recoverStep` has already sent a fresh nudge turn — leaving
    * a step that says `Paused` while an agent works. Interrupting again makes the
    * stop stick against that. The cost of that rare race is one wasted nudge and
-   * one `stageEntryRecoveries` increment; the end state is still correct, because
-   * pausing is allowed from `running`. The interrupt this dispatch emits
+   * one `stageEntryRecoveries` increment. The interrupt this dispatch emits
    * re-enters here, finds the step already `paused`, and stops.
+   *
+   * That same reverse interleaving has a second, sharper end. When the ladder
+   * has no budget left, `recoverStep` does not nudge — it ESCALATES, and the
+   * step is `stalled` by the time the interrupt is processed. So `stalled` is
+   * accepted here too, and the human's Stop wins: they get the neutral `Paused`
+   * they asked for rather than the loud "Needs a human" chip, and the resume
+   * that follows resets `stallCount`, so the escalation is not spent for
+   * nothing. Covered by "a human stop still parks the card when an escalation
+   * won the ordering race" in `pausedStep.test.ts`.
    */
   const pauseStepForHumanStop = Effect.fn("board-supervisor-pauseStepForHumanStop")(function* (
     threadId: ThreadId,
@@ -2658,10 +2666,17 @@ const make = Effect.gen(function* () {
     const found = stepThreadCard(board, threadId);
     if (found === null || found.card.archivedAt !== null) return;
     if (isBoardTerminalStepStatus(found.state.status)) return;
-    // Only a status with a turn to stop. `queued`/`pending` hold no slot and
-    // have nothing running; `stalled` and `paused` are already parked — and the
-    // `paused` case is what terminates the re-interrupt below.
-    if (found.state.status !== "running" && found.state.status !== "awaiting-input") return;
+    // A status with a turn to stop, or the `stalled` the reverse interleaving
+    // escalated to a beat before this arrived (see above). `queued`/`pending`
+    // hold no slot and have nothing running; `paused` is already there, which is
+    // what terminates the re-interrupt below.
+    if (
+      found.state.status !== "running" &&
+      found.state.status !== "awaiting-input" &&
+      found.state.status !== "stalled"
+    ) {
+      return;
+    }
     const landed = yield* dispatchOptional({
       type: "board.card.pause-step",
       commandId: yield* commandId("pause-step"),
