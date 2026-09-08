@@ -1,8 +1,9 @@
 /**
- * Timeout-sweep liveness clock (t3o-17): the sweep recovers a running
+ * Timeout-sweep liveness clock (t3o-17, T3O-12): the sweep recovers a running
  * unattended step only when EVERY life sign is older than its `timeoutMs` —
- * the last nudge/start, the thread's todo list advancing (`board_thread_todos`), and
- * (for a build-mode step, checked once already overdue) the latest commit on
+ * the last nudge/start, the thread's todo list advancing (`board_thread_todos`),
+ * the thread's last OUTPUT (an assistant message or an activity row, T3O-12 D1),
+ * and (for a build-mode step, checked once already overdue) the latest commit on
  * the card's worktree. Driven through the reactor's `sweep` test hook against
  * the shared harness. `it.effect` runs on the TestClock, whose "now" is the
  * epoch — so OVERDUE fixtures sit one day BEFORE the epoch and FRESH life
@@ -48,6 +49,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   stageLabel: "Building",
   attempt: 1,
   stallCount: 0,
+  stageEntryRecoveries: 0,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,
@@ -93,6 +95,10 @@ const boardWithStep = (step: BoardCardStepState): BoardState => ({
     that replaced the deleted `board_report_progress` watermark. */
 const todoAdvancedAt = (at: string) =>
   new Map([[String(threadId), { advancedAt: at, hasList: true }]]);
+
+/** The thread's last OUTPUT — its newest assistant message or activity row
+    (T3O-12, D1). The life sign the sweep never had. */
+const threadSignalAt = (at: string) => new Map([[String(threadId), at]]);
 
 const attemptOf = (board: BoardState): number => boardCardStepState(board, cardId)?.attempt ?? -1;
 
@@ -323,6 +329,149 @@ it.effect("a base-sync commit since the last nudge does NOT reset the stall coun
         yield* reactor.sweep;
         // No work of this card's own → the stall counter climbs toward the
         // ceiling, which is what eventually brings a human in.
+        assert.strictEqual(stallOf(yield* board), 2);
+      }),
+  ),
+);
+
+// ── The agent is emitting output right now (T3O-12, D1) ───────────────
+//
+// The card this suite's newest cases exist for: a Code review loop hit its
+// round cap, the user raised the budget, the loop resumed and ran correctly —
+// and the card went red with STALLED saying "Nothing is running" while the
+// round-6 review thread was visibly mid-turn.
+//
+// A `review` phase makes NO commits (it reads the diff and records findings)
+// and is not obliged to churn a todo list while it reads. Every life sign the
+// sweep had was therefore stale after 30 quiet-but-productive minutes, so it
+// judged a healthy 56-minute phase dead. "The agent is emitting output right
+// now" was not a life sign anywhere in the function — nothing ever asked.
+
+it.effect(
+  "T3O-12: a thread that signalled inside the window is alive, with no todo advance and no commit",
+  () =>
+    withGovernor(
+      {
+        // The reported shape exactly: overdue by start, todo list never advanced,
+        // nothing committed — a review phase reading files for an hour.
+        board: boardWithStep(runningStep()),
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        initialShells: aliveShells(),
+        threadSignals: threadSignalAt(FRESH),
+      },
+      ({ reactor, board }) =>
+        Effect.gen(function* () {
+          yield* reactor.sweep;
+          assert.strictEqual(attemptOf(yield* board), 1); // not recovered
+          assert.isNull(boardCardStepState(yield* board, cardId)?.lastNudgeAt);
+        }),
+    ),
+);
+
+it.effect("T3O-12: a STALE thread signal does not shield an overdue step", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+      threadSignals: threadSignalAt(OVERDUE),
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 2); // recovered
+      }),
+  ),
+);
+
+it.effect(
+  "T3O-12: a thread that has never signalled reads as no life sign, exactly as before",
+  () =>
+    withGovernor(
+      {
+        board: boardWithStep(runningStep()),
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        initialShells: aliveShells(),
+        // No fixture at all: the query answers null, the conservative direction.
+      },
+      ({ reactor, board }) =>
+        Effect.gen(function* () {
+          yield* reactor.sweep;
+          assert.strictEqual(attemptOf(yield* board), 2); // recovered
+        }),
+    ),
+);
+
+it.effect(
+  "T3O-12: the live thread is settled on the cheap indexed read, before any git subprocess",
+  () =>
+    withGovernor(
+      {
+        board: boardWithStep(runningStep()),
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        initialShells: aliveShells(),
+        threadSignals: threadSignalAt(FRESH),
+      },
+      ({ reactor, gitInvocations }) =>
+        Effect.gen(function* () {
+          yield* reactor.sweep;
+          // The commit check stays behind the already-overdue gate: this sweep
+          // runs every 30 seconds against every running step, and a live step
+          // must not cost a subprocess per tick.
+          const branchScopedLogs = (yield* gitInvocations).filter(
+            (args) => args[0] === "log" && args.includes("--not"),
+          );
+          assert.deepStrictEqual(branchScopedLogs, []);
+        }),
+    ),
+);
+
+it.effect("T3O-12: an overdue step DOES still reach the git commit check", () =>
+  withGovernor(
+    {
+      // The control for the case above: without a fresh signal the step is
+      // overdue, so the expensive read is reached — proving the assertion
+      // above is about ordering and not about the sweep never calling git.
+      board: boardWithStep(runningStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+    },
+    ({ reactor, gitInvocations }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep;
+        const branchScopedLogs = (yield* gitInvocations).filter(
+          (args) => args[0] === "log" && args.includes("--not"),
+        );
+        assert.isAbove(branchScopedLogs.length, 0);
+      }),
+  ),
+);
+
+// ── Liveness is NOT progress (T3O-12, D2) ─────────────────────────────
+//
+// The signal goes into the sweep and nowhere else. "Is it alive" and "is it
+// getting anywhere" are different questions, and the stall ladder gates on the
+// second on purpose: an agent thrashing in a tool loop is noisy and going
+// nowhere, and if chatter reset `stallCount` it would never escalate.
+
+it.effect("T3O-12: a chatty thread that is going nowhere still climbs the stall ladder", () =>
+  withGovernor(
+    {
+      // Nudged a day ago and signalling since — but the signal is stale enough
+      // not to shield it from the sweep, so a recovery happens and the only
+      // question is whether the streak was forgotten.
+      board: boardWithStep(nudgedStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+      threadSignals: threadSignalAt(SINCE_NUDGE),
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        assert.strictEqual(stallOf(yield* board), 1);
+        yield* reactor.sweep;
+        // Climbed to 2. Had the signal been read as progress, it would have
+        // reset to 1 here and on every stall after it — the step would never
+        // reach a human.
         assert.strictEqual(stallOf(yield* board), 2);
       }),
   ),

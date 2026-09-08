@@ -63,6 +63,7 @@ const settledReviewStep = (tip: string): BoardCardStepState => ({
   stageLabel: "Code review",
   attempt: 1,
   stallCount: 0,
+  stageEntryRecoveries: 0,
   lastNudgeAt: null,
   baseTipAtRoundStart: tip,
   lastError: null,

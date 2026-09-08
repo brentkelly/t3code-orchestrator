@@ -71,6 +71,7 @@ const runningMergeStep = (cardId: BoardCardId): BoardCardStepState => ({
   stageLabel: "Ready for merge",
   attempt: 1,
   stallCount: 0,
+  stageEntryRecoveries: 0,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,

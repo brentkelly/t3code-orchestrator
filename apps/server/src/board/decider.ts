@@ -2810,15 +2810,19 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         stepId: command.stepId,
         stepLabel: command.stepLabel,
         stageLabel: command.stageLabel,
-        // `attempt` carries the stage entry's cumulative invocation count (D1/
-        // D5): an intra-stage continuation (t3o-16's next review phase) passes
-        // `priorInvocations` so the per-stage-entry ceiling survives the row
-        // being replaced; a genuine stage entry omits it and resets to 1.
-        attempt: (command.priorInvocations ?? 0) + 1,
+        // A fresh step starts its own count (T3O-12, D5). `attempt` used to
+        // carry the stage entry's cumulative total so the ceiling could be read
+        // off it; the ceiling now counts recoveries, so this is once again just
+        // "invocations of THIS step" and comparable with `maxAttempts`.
+        attempt: 1,
         // A fresh step (t3o-17): no stalls yet and no nudge to measure progress
-        // against — consecutive stalls are per-step, unlike the carried
-        // invocation total above.
+        // against — consecutive stalls are per-step.
         stallCount: 0,
+        // The stage entry's recovery total IS carried across step replacement
+        // (T3O-12, D4): an intra-stage continuation (t3o-16's next review
+        // phase) passes `priorRecoveries` so the runaway ceiling survives the
+        // row being replaced; a genuine stage entry omits it and resets to 0.
+        stageEntryRecoveries: command.priorRecoveries ?? 0,
         // Resting value (t3o-34, D3): only read while the step is
         // `awaiting-input`, and a fresh step never is.
         awaitingReason: "question",
@@ -3000,9 +3004,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // of. Escalation (t3o-17, D3/D4) lands the step in the distinct `stalled`
       // status AND releases its slot (`slotHeld: false`; the reactor rides the
       // existing release machinery once); an ordinary retry returns it to
-      // running and keeps its slot. `attempt` counts every invocation (D1, for
-      // display and the D5 ceiling); `stallCount` counts CONSECUTIVE stalls and
-      // resets to zero when the reactor observed progress since the last nudge.
+      // running and keeps its slot. `attempt` counts this step's invocations
+      // (D1, for display); `stageEntryRecoveries` counts what the stage entry
+      // has spent on recovery, which is what the runaway ceiling reads (T3O-12,
+      // D4); `stallCount` counts CONSECUTIVE stalls and resets to zero when the
+      // reactor observed progress since the last nudge.
       // `lastError` (t3o-30, D2) is REPLACED, never merged: a command that
       // carries a reason records it, and one that does not clears whatever was
       // there. A nudge that puts the step back to `running` must not leave the
@@ -3011,6 +3017,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         ...current,
         attempt: current.attempt + 1,
         stallCount: (command.progressed ? 0 : current.stallCount) + 1,
+        // The runaway ceiling's counter (T3O-12, D4): a recovery — a nudge, an
+        // escalation, or a spawn failure — is the ONLY thing that spends it.
+        stageEntryRecoveries: current.stageEntryRecoveries + 1,
         status: command.escalateToHuman ? "stalled" : "running",
         slotHeld: command.escalateToHuman ? false : current.slotHeld,
         threadId: command.threadId,
@@ -3049,10 +3058,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // returns it to, which is why it rides the same event.
       //
       // What it deliberately does NOT do:
-      //  - `attempt` is untouched. It counts BOARD invocations (D1, and the D5
-      //    stage-entry ceiling); a human's own turn is not one, and charging the
-      //    ceiling for it would escalate the card again the moment their turn
-      //    ended.
+      //  - `attempt` and `stageEntryRecoveries` are both untouched (T3O-12,
+      //    D7). They count BOARD invocations and BOARD recoveries; a human's own
+      //    turn is neither, and charging the ceiling for it would escalate the
+      //    card again the moment their turn ended.
       //  - `stallCount` resets to zero rather than incrementing: the human
       //    intervening is progress, exactly as `progressed` is on a nudge, so
       //    the ladder starts its count over instead of re-escalating on the

@@ -493,6 +493,11 @@ export function withGovernor(
     /** Thread ids whose message should be dated BEFORE the step started, i.e.
         text the agent wrote in an earlier turn and has not added to since. */
     readonly staleThreadMessages?: ReadonlySet<string>;
+    /** When each thread last produced OUTPUT (T3O-12, D1): the timeout sweep's
+        liveness life sign. An absent thread answers null — "no life sign" —
+        which is what every fixture written before this signal existed reads as,
+        so none of them change behaviour. */
+    readonly threadSignals?: ReadonlyMap<string, string>;
     /** A `ServerConfig` layer (t3o-32): with one, a build/plan spawn stages
         the card's brief images from `<stateDir>/board/attachments`; without
         one the reactor stages nothing, as the other tests expect. */
@@ -654,6 +659,7 @@ export function withGovernor(
     const threadTodos = input.threadTodos ?? new Map();
     const threadMessages = input.threadMessages ?? new Map<string, string>();
     const staleThreadMessages = input.staleThreadMessages ?? new Set<string>();
+    const threadSignals = input.threadSignals ?? new Map<string, string>();
     const snapshotStub = {
       // The thread rows carry the CURRENT shell session, so a fixture that moves
       // a thread from mid-turn to idle moves both the shell the decider guard
@@ -678,7 +684,8 @@ export function withGovernor(
         ),
       // The board-owned method set (t3o-04/08/18): present so
       // `boardSnapshotQueryMethodsOf` resolves the stub and the reactor's todo
-      // signal + boot sweep have something to call. Only `boardThreadTodo` is
+      // signal + boot sweep have something to call. `boardThreadTodo`,
+      // `boardLatestAssistantMessage` and `boardThreadLastSignalAt` are
       // fixture-driven; the rest are inert.
       boardCardDetail: () => Effect.succeed(null),
       boardCardActivity: () => Effect.succeed([]),
@@ -709,6 +716,8 @@ export function withGovernor(
           : "2999-01-01T00:00:00.000Z";
         return Effect.succeed(text === undefined ? null : { text, createdAt });
       },
+      boardThreadLastSignalAt: (threadId: ThreadId) =>
+        Effect.succeed(threadSignals.get(String(threadId)) ?? null),
       boardSweepThreadTodos: () => Effect.void,
     } as unknown as ProjectionSnapshotQuery["Service"];
 
