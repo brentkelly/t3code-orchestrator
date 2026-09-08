@@ -45,6 +45,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   stageLabel: "Building",
   attempt: 1,
   stallCount: 0,
+  stageEntryRecoveries: 0,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,

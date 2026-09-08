@@ -33,7 +33,7 @@ import {
   boardNonTerminalStepStates,
   boardSeedStageRole,
   boardStageById,
-  boardStageEntryInvocationCount,
+  boardStageEntryRecoveryCount,
   boardStepErrorSummary,
   boardStageIndex,
   isBoardStageAtOrAfterBuild,
@@ -123,6 +123,7 @@ import {
 import {
   composeStepPrompt,
   orderBoardQueue,
+  outputSignalShieldsStep,
   reconcileStepDecision,
   recoveryDecision,
   resolveBoardConcurrencyLimit,
@@ -612,6 +613,25 @@ const make = Effect.gen(function* () {
     if (threadId === null || boardQueries === null) return null;
     return yield* boardQueries
       .boardThreadTodo(threadId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+  });
+
+  /** When the step thread last produced OUTPUT — an assistant message or an
+      activity row — or null (T3O-12, D1). Best-effort in the same shape as
+      `threadTodoState`: a missing `boardQueries` or a read failure answers
+      null, which reads as "no life sign" and is the conservative direction,
+      identical to the behaviour before this signal existed.
+
+      LIVENESS, not progress. Only the timeout sweep reads it; it is deliberately
+      kept out of `resolveProgressedSinceLastNudge` (D2), because chatter is not
+      progress and an agent thrashing in a tool loop must still climb the stall
+      ladder to a human. */
+  const threadLastSignalAt = Effect.fn("board-supervisor-threadLastSignalAt")(function* (
+    threadId: ThreadId | null,
+  ) {
+    if (threadId === null || boardQueries === null) return null;
+    return yield* boardQueries
+      .boardThreadLastSignalAt(threadId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
   });
 
@@ -2284,11 +2304,12 @@ const make = Effect.gen(function* () {
           maxAttempts: plan.maxAttempts,
           timeoutMs: plan.timeoutMs,
           // An intra-stage continuation carries the stage entry's running
-          // invocation total forward (t3o-17, D5): the projector keeps one
-          // step-state row per card, so without the carry each phase selection
-          // would reset the per-stage-entry ceiling and the review loop's real
-          // bound would become rounds × phases × ceiling.
-          priorInvocations: boardStageEntryInvocationCount(board, card.id),
+          // RECOVERY total forward (t3o-17 D5, re-pointed by T3O-12 D4): the
+          // projector keeps one step-state row per card, so without the carry
+          // each phase selection would reset the runaway ceiling and the real
+          // bound would become rounds × phases × ceiling. `attempt` is NOT
+          // carried any more — a new phase is a new step and counts its own.
+          priorRecoveries: boardStageEntryRecoveryCount(board, card.id),
           // Measured fresh when this plan starts a review round, carried
           // forward otherwise (t3o-24, D1).
           baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
@@ -2413,11 +2434,12 @@ const make = Effect.gen(function* () {
       humanInLoop: resolveHumanInLoop(board, settings, card, exec),
       maxAttempts: plan.maxAttempts,
       timeoutMs: plan.timeoutMs,
-      // Carried forward exactly as an intra-stage continuation does (t3o-17,
-      // D5). Resuming a held loop spends more of the SAME stage entry's budget,
-      // so the per-stage-entry ceiling still applies; a resume that stalls on it
-      // is the stall guard working, and it surfaces on the card.
-      priorInvocations: boardStageEntryInvocationCount(board, card.id),
+      // Carried forward exactly as an intra-stage continuation does (t3o-17
+      // D5, re-pointed by T3O-12 D4). Resuming a held loop spends more of the
+      // SAME stage entry's recovery budget, so the ceiling still applies; a
+      // resume that stalls on it is the stall guard working, and it surfaces on
+      // the card.
+      priorRecoveries: boardStageEntryRecoveryCount(board, card.id),
       // Measured fresh when this plan starts a review round, carried forward
       // otherwise (t3o-24, D1).
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
@@ -2462,7 +2484,7 @@ const make = Effect.gen(function* () {
     readonly state: BoardCardStepState;
   }) {
     // Resolve the two things the pure decision needs but must not read itself
-    // (D2/D5): the progress signal (git/activity) and the stage-entry invocation
+    // (D2/D5): the progress signal (git/activity) and the stage-entry recovery
     // total and its ceiling (settings). `recoveryDecision` stays pure.
     const board = yield* readBoard;
     const settings = yield* boardSettings;
@@ -2471,14 +2493,16 @@ const make = Effect.gen(function* () {
       input.state,
       input.card,
     );
-    const stageEntryInvocations = boardStageEntryInvocationCount(board, input.card.id);
+    const stageEntryRecoveries = boardStageEntryRecoveryCount(board, input.card.id);
     const todo = yield* threadTodoState(input.state.threadId);
     const decision = recoveryDecision({
       stepState: input.state,
       progressedSinceLastNudge,
       hasTodoList: todo?.hasList ?? false,
-      stageEntryInvocations,
-      maxInvocationsPerStageEntry: exec.maxInvocationsPerStageEntry,
+      stageEntryRecoveries,
+      // The settings key keeps its older name (T3O-12, D6); the pure function's
+      // parameter says what it actually bounds.
+      maxRecoveriesPerStageEntry: exec.maxInvocationsPerStageEntry,
       endedWithQuestion: yield* endedWithQuestion(input.state),
     });
 
@@ -4775,16 +4799,42 @@ const make = Effect.gen(function* () {
     for (const state of board.stepStates ?? []) {
       if (state.status !== "running" || state.humanInLoop) continue;
       if (state.timeoutMs <= 0) continue;
-      // The clock runs from the LATEST life sign, using the same two OR'd
-      // progress sources as recovery (t3o-17 D2, re-pointed by t3o-18 D16): the
-      // last nudge/start, the step thread's todo list ADVANCING (`advancedAt` on
-      // `board_thread_todos`), and — checked below, only once a step already
-      // looks overdue — a fresh commit on the card's branch. Without this, a
-      // healthy hours-long turn would be nudged mid-turn every timeoutMs and
-      // marched toward the stall ceiling.
+      // The clock runs from the LATEST life sign: the last nudge/start, the step
+      // thread's todo list ADVANCING (`advancedAt` on `board_thread_todos`), the
+      // thread's last OUTPUT (T3O-12, D1), and — checked below, only once a step
+      // already looks overdue — a fresh commit on the card's branch. Without
+      // this, a healthy hours-long turn would be nudged mid-turn every
+      // timeoutMs and marched toward the stall ceiling.
+      //
+      // The thread signal is what this sweep never had, and its absence is the
+      // whole of T3O-12's first defect: a review phase writes no commits and
+      // need not churn a todo list, so a phase that had been reading files
+      // productively for fifty minutes looked exactly like a dead one. It was
+      // escalated — the card went red saying "Nothing is running" — while the
+      // agent carried on and finished the round. "The agent is emitting output
+      // right now" was not a life sign anywhere in this function.
+      //
+      // It is a life sign HERE and nowhere else: `resolveProgressedSinceLastNudge`
+      // does not read it (D2), so a thrashing agent still climbs the ladder.
+      //
+      // And it is a life sign only for a while (D9). Output is satisfied by
+      // noise as readily as by work, so a tool-loop thrash would otherwise
+      // renew the shield every window forever and never be nudged, never climb
+      // the ladder, and never reach a human — the inverse of the bug this card
+      // fixed, and the worse direction for a supervisor. Past
+      // `outputSignalShieldsStep` the sweep falls back to exactly the life
+      // signs it had before T3O-12. The other two have no ceiling: a todo list
+      // that advances and a commit that lands are evidence of work.
       const todo = yield* threadTodoState(state.threadId);
+      const lastSignalAt = outputSignalShieldsStep({
+        nowMs,
+        startedAt: state.startedAt,
+        timeoutMs: state.timeoutMs,
+      })
+        ? yield* threadLastSignalAt(state.threadId)
+        : null;
       const referenceMs = Math.max(
-        ...[state.lastNudgeAt ?? state.startedAt, todo?.advancedAt ?? null]
+        ...[state.lastNudgeAt ?? state.startedAt, todo?.advancedAt ?? null, lastSignalAt]
           .filter((value): value is string => value != null)
           .map((value) => Date.parse(value))
           .filter((value) => Number.isFinite(value)),

@@ -439,6 +439,7 @@ const seededStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepState
   stageLabel: "Planning",
   attempt: 1,
   stallCount: 0,
+  stageEntryRecoveries: 0,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,

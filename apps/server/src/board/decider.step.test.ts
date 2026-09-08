@@ -90,6 +90,7 @@ const stepState = (
   stageLabel: "Building",
   attempt: 1,
   stallCount: 0,
+  stageEntryRecoveries: 0,
   awaitingReason: "question",
   lastNudgeAt: null,
   ...frozenConfig,
@@ -137,6 +138,9 @@ it.effect("select-step records a pending step, freezing the stage's config onto 
     if (event.type === "board.card-step-selected") {
       assert.strictEqual(event.payload.state.status, "pending");
       assert.strictEqual(event.payload.state.attempt, 1);
+      // Omitting `priorRecoveries` is a genuine stage entry: the stage's
+      // recovery spend starts over (T3O-12, D4).
+      assert.strictEqual(event.payload.state.stageEntryRecoveries, 0);
       assert.strictEqual(event.payload.state.slotHeld, false);
       // The frozen config (D12) is stamped verbatim onto the run row.
       assert.strictEqual(event.payload.state.prompt, "do it");
@@ -170,6 +174,42 @@ it.effect("select-step stamps the measured base tip onto the run row (t3o-24, D1
       assert.strictEqual(event.payload.state.baseTipAtRoundStart, "sha-round-start");
     }
   }),
+);
+
+it.effect(
+  "T3O-12: select-step carries the stage entry's RECOVERIES forward while `attempt` resets",
+  () =>
+    Effect.gen(function* () {
+      const card = makeCard({ id: "card-1" });
+      const event = yield* decide(
+        {
+          type: "board.card.select-step",
+          commandId: CommandId.make("c1"),
+          cardId: card.id,
+          stepId: "triage@6",
+          stepLabel: "Triage · round 6",
+          stageLabel: "Code review",
+          ...frozenConfig,
+          // The review loop crossing a phase boundary: the projector keeps one
+          // step-state row per card, so the ceiling's counter has to ride the
+          // command or it would reset on every phase.
+          priorRecoveries: 7,
+          createdAt: NOW,
+        },
+        makeReadModel({ cards: [card], nextCardNumberByProject: {} }),
+      );
+      assert.strictEqual(event.type, "board.card-step-selected");
+      if (event.type === "board.card-step-selected") {
+        assert.strictEqual(event.payload.state.stageEntryRecoveries, 7);
+        // `attempt` does NOT ride along any more. It used to carry the stage
+        // entry's cumulative total so the ceiling could be read off it, which
+        // is what displayed "attempt 45" beside "maxAttempts 5" on a long
+        // review loop. A new phase is a new step and counts its own (D5).
+        assert.strictEqual(event.payload.state.attempt, 1);
+        // And a fresh step's stall streak starts empty regardless.
+        assert.strictEqual(event.payload.state.stallCount, 0);
+      }
+    }),
 );
 
 it.effect(
@@ -352,7 +392,14 @@ it.effect(
       const card = makeCard({ id: "card-1" });
       const board = makeReadModel({
         cards: [card],
-        stepStates: [stepState("card-1", "running", { attempt: 3, stallCount: 4, slotHeld: true })],
+        stepStates: [
+          stepState("card-1", "running", {
+            attempt: 3,
+            stallCount: 4,
+            stageEntryRecoveries: 6,
+            slotHeld: true,
+          }),
+        ],
         nextCardNumberByProject: {},
       });
       const event = yield* decide(
@@ -369,9 +416,12 @@ it.effect(
         board,
       );
       if (event.type === "board.card-step-recovered") {
-        // attempt keeps counting (cumulative, D1); stallCount extends the streak.
+        // attempt counts this step's invocations (D1); stallCount extends the
+        // streak; the recovery total is what the runaway ceiling reads, and an
+        // escalation is itself a recovery (T3O-12, D4).
         assert.strictEqual(event.payload.state.attempt, 4);
         assert.strictEqual(event.payload.state.stallCount, 5);
+        assert.strictEqual(event.payload.state.stageEntryRecoveries, 7);
         // Giving up is the distinct `stalled` status, not `awaiting-input` (D3),
         // and releases the slot (D4).
         assert.strictEqual(event.payload.state.status, "stalled");
@@ -388,7 +438,14 @@ it.effect(
       const card = makeCard({ id: "card-1" });
       const board = makeReadModel({
         cards: [card],
-        stepStates: [stepState("card-1", "running", { attempt: 3, stallCount: 4, slotHeld: true })],
+        stepStates: [
+          stepState("card-1", "running", {
+            attempt: 3,
+            stallCount: 4,
+            stageEntryRecoveries: 6,
+            slotHeld: true,
+          }),
+        ],
         nextCardNumberByProject: {},
       });
       const event = yield* decide(
@@ -408,6 +465,10 @@ it.effect(
         assert.strictEqual(event.payload.state.attempt, 4);
         // Progress forgets the streak; this stall is #1 of a new one.
         assert.strictEqual(event.payload.state.stallCount, 1);
+        // A nudge is a recovery too, whether or not it progressed: the ceiling
+        // bounds recovery SPEND, and a step that keeps needing rescuing is
+        // exactly what it is there to stop (T3O-12, D4).
+        assert.strictEqual(event.payload.state.stageEntryRecoveries, 7);
         assert.strictEqual(event.payload.state.status, "running");
         assert.strictEqual(event.payload.state.slotHeld, true);
       }
@@ -425,6 +486,7 @@ it.effect(
           stepState("card-1", "stalled", {
             attempt: 3,
             stallCount: 3,
+            stageEntryRecoveries: 4,
             slotHeld: false,
             forceStart: false,
             lastError: "turn/setPermissionMode failed",
@@ -453,8 +515,11 @@ it.effect(
         // instead of re-escalating on their first quiet turn.
         assert.strictEqual(event.payload.state.stallCount, 0);
         // No board invocation happened, so neither the per-step ledger nor the
-        // stage-entry ceiling is charged for the human's own turn.
+        // stage-entry recovery ceiling is charged for the human's own turn
+        // (T3O-12, D7) — charging it would escalate the card again the moment
+        // their turn ended.
         assert.strictEqual(event.payload.state.attempt, 3);
+        assert.strictEqual(event.payload.state.stageEntryRecoveries, 4);
         // The slot stayed released at escalation and is not re-acquired.
         assert.strictEqual(event.payload.state.slotHeld, false);
         // The timeout sweep measures from the takeover, not from the stop.

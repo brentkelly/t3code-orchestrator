@@ -75,6 +75,7 @@ const stepState = (input: {
     stageLabel: null,
     attempt: 1,
     stallCount: 0,
+    stageEntryRecoveries: 0,
     lastNudgeAt: null,
     prompt: "",
     providerInstanceId: "codex",

@@ -402,6 +402,10 @@ const BoardCardStepStateDbRow = Schema.Struct({
   attempt: BoardCardStepState.fields.attempt,
   // Stall detection counters (t3o-17, D1/D2).
   stallCount: BoardCardStepState.fields.stallCount,
+  // The runaway ceiling's counter (T3O-12, D4). NOT NULL with a 0 default in
+  // the DB, so a row written before migration 037 reads 0 — the desired
+  // outcome, not a compromise (D8).
+  stageEntryRecoveries: BoardCardStepState.fields.stageEntryRecoveries,
   lastNudgeAt: BoardCardStepState.fields.lastNudgeAt,
   // Frozen execution config (D12).
   prompt: BoardCardStepState.fields.prompt,
@@ -1652,7 +1656,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: BoardCardStepStateDbRow,
     execute: (row) => sql`
       INSERT INTO board_card_step_state (
-        card_id, step_id, step_label, stage_label, attempt, stall_count, last_nudge_at, prompt,
+        card_id, step_id, step_label, stage_label, attempt, stall_count,
+        stage_entry_recoveries, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
         last_error, awaiting_reason,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
@@ -1660,7 +1665,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       )
       VALUES (
         ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.stageLabel}, ${row.attempt}, ${row.stallCount},
-        ${row.lastNudgeAt}, ${row.prompt},
+        ${row.stageEntryRecoveries}, ${row.lastNudgeAt}, ${row.prompt},
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
         ${row.lastError}, ${row.awaitingReason},
@@ -1675,6 +1680,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         stage_label = excluded.stage_label,
         attempt = excluded.attempt,
         stall_count = excluded.stall_count,
+        stage_entry_recoveries = excluded.stage_entry_recoveries,
         last_nudge_at = excluded.last_nudge_at,
         prompt = excluded.prompt,
         provider_instance_id = excluded.provider_instance_id,
@@ -1708,6 +1714,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         stage_label AS "stageLabel",
         attempt,
         stall_count AS "stallCount",
+        stage_entry_recoveries AS "stageEntryRecoveries",
         last_nudge_at AS "lastNudgeAt",
         prompt,
         provider_instance_id AS "providerInstanceId",
@@ -1760,6 +1767,43 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         AND role = 'assistant'
       ORDER BY created_at DESC, message_id DESC
       LIMIT 1
+    `,
+  });
+
+  /** When a thread last SIGNALLED — the newest `created_at` across its
+      assistant messages and its activity rows — or none for a thread that has
+      produced neither (T3O-12, D1).
+   *
+      This is the timeout sweep's "a turn is producing output right now" life
+      sign, the one the sweep never had. A review phase writes no commits and
+      need not churn its todo list, so a healthy fifty-minute phase looked
+      identical to a dead one and was escalated while the agent kept working.
+      Activity rows are the strong half: every tool call the agent runs writes
+      one, so a phase twenty minutes deep in reads is continuously, observably
+      alive without writing a word of prose. It is provider-agnostic — every
+      adapter feeds the same projection.
+   *
+      One round trip for one scalar, deliberately NOT a second call to
+      `findLatestAssistantMessage`: that drags a whole message body back on
+      every 30-second tick and still misses the tool-only case. Both arms are
+      index-served (`idx_projection_thread_messages_thread_created`,
+      `idx_projection_thread_activities_thread_created`).
+   *
+      `created_at` and not `MAX(updated_at)` (which would advance as a streaming
+      message grows): that column is unindexed, so it would scan the thread's
+      messages, and the next row's `created_at` arrives soon enough that the
+      extra fidelity buys nothing. */
+  const findThreadLastSignalAt = SqlSchema.findOneOption({
+    Request: ThreadId,
+    Result: Schema.Struct({ at: Schema.NullOr(Schema.String) }),
+    execute: (threadId) => sql`
+      SELECT MAX(at) AS "at" FROM (
+        SELECT MAX(created_at) AS at FROM projection_thread_messages
+         WHERE thread_id = ${threadId} AND role = 'assistant'
+        UNION ALL
+        SELECT MAX(created_at) AS at FROM projection_thread_activities
+         WHERE thread_id = ${threadId}
+      )
     `,
   });
 
@@ -1943,6 +1987,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardStepStateRows,
     findBoardCardStepErrorRow,
     findLatestAssistantMessage,
+    findThreadLastSignalAt,
     deleteBoardPlansForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
@@ -2221,6 +2266,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         stageLabel: state.stageLabel,
         attempt: state.attempt,
         stallCount: state.stallCount,
+        stageEntryRecoveries: state.stageEntryRecoveries,
         lastNudgeAt: state.lastNudgeAt,
         prompt: state.prompt,
         providerInstanceId: state.providerInstanceId,
@@ -2831,6 +2877,7 @@ export function loadBoardState(
               stageLabel: row.stageLabel,
               attempt: row.attempt,
               stallCount: row.stallCount,
+              stageEntryRecoveries: row.stageEntryRecoveries,
               lastNudgeAt: row.lastNudgeAt,
               prompt: row.prompt,
               providerInstanceId: row.providerInstanceId,
@@ -3389,6 +3436,19 @@ export interface BoardSnapshotQueryMethods {
     { readonly text: string; readonly createdAt: string } | null,
     ProjectionRepositoryError
   >;
+  /** When the thread last produced OUTPUT — its newest assistant message or
+      activity row — or null when it has produced neither (T3O-12, D1).
+
+      Answers LIVENESS and never progress. The timeout sweep reads it as a life
+      sign, so a review phase that is reading files for fifty minutes is not
+      judged dead; `resolveProgressedSinceLastNudge` deliberately does NOT
+      (D2). "Is it alive" and "is it getting anywhere" are different questions,
+      and the stall ladder gates on the second on purpose — an agent thrashing
+      in a tool loop is noisy and going nowhere, and if chatter reset
+      `stallCount` it would never escalate. */
+  readonly boardThreadLastSignalAt: (
+    threadId: ThreadId,
+  ) => Effect.Effect<string | null, ProjectionRepositoryError>;
   /** Boot reconciliation sweep of orphaned todo rows (t3o-18, AC 20). */
   readonly boardSweepThreadTodos: () => Effect.Effect<void, ProjectionRepositoryError>;
 }
@@ -3419,6 +3479,7 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
     typeof candidate.boardCardIdForThread === "function" &&
     typeof candidate.boardThreadTodo === "function" &&
     typeof candidate.boardLatestAssistantMessage === "function" &&
+    typeof candidate.boardThreadLastSignalAt === "function" &&
     typeof candidate.boardSweepThreadTodos === "function"
     ? {
         boardCardDetail: candidate.boardCardDetail,
@@ -3428,6 +3489,7 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
         boardCardIdForThread: candidate.boardCardIdForThread,
         boardThreadTodo: candidate.boardThreadTodo,
         boardLatestAssistantMessage: candidate.boardLatestAssistantMessage,
+        boardThreadLastSignalAt: candidate.boardThreadLastSignalAt,
         boardSweepThreadTodos: candidate.boardSweepThreadTodos,
       }
     : null;
@@ -3552,6 +3614,13 @@ export function boardSnapshotQueryMethods(
         ),
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.latestAssistantMessage:query")),
       ),
+    boardThreadLastSignalAt: (threadId) =>
+      queries
+        .findThreadLastSignalAt(threadId)
+        .pipe(
+          Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.at })),
+          Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadLastSignal:query")),
+        ),
     boardSweepThreadTodos: () =>
       queries
         .sweepOrphanBoardThreadTodoRows()

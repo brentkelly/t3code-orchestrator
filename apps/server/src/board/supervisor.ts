@@ -35,6 +35,48 @@ export {
   type ComposeStepPromptStep,
 } from "@t3tools/contracts";
 
+/** How many `timeoutMs` windows the thread-OUTPUT life sign may keep shielding
+    one step from the timeout sweep (T3O-12, D9) — 8, so four hours at the
+    default half-hour timeout.
+
+    The output signal answers "is the agent emitting anything", which is what
+    saves a healthy review phase that neither commits nor churns a todo list.
+    But it is satisfied by NOISE as readily as by work: an agent thrashing in a
+    tool loop emits activity rows continuously, and a signal with no ceiling
+    would keep it non-overdue every window forever. It would then never be
+    nudged, so `stallCount` would never climb and the recovery ceiling — only
+    ever spent by an actual recovery — would never be charged either. The step
+    would hold its slot for as long as it cared to thrash and no human would
+    ever be told. That is the opposite failure to the one T3O-12 fixed, and the
+    worse one: a supervisor that cries wolf is annoying, a supervisor that never
+    cries is not a supervisor.
+
+    So the shield expires. Past the ceiling the sweep reverts EXACTLY to its
+    pre-T3O-12 life signs — last nudge/start, todo advance, branch commit — and
+    the thrash climbs the ordinary ladder to a human. Genuine progress is
+    untouched: the two older signs have no ceiling, because a todo list that
+    advances and a commit that lands are evidence of work, not of noise, and a
+    long build that keeps committing must never be nudged for taking its time.
+
+    Deliberately a multiple of the step's own `timeoutMs` rather than a new
+    setting: a stage that has been given a longer timeout has said its work is
+    slower, and the ceiling should stretch with it. */
+export const BOARD_OUTPUT_SIGNAL_MAX_WINDOWS = 8;
+
+/** Whether the thread-output life sign still shields this step (T3O-12, D9).
+    A step whose `startedAt` is unreadable cannot have its age measured, so the
+    shield holds — the conservative direction, and the same reading the sweep
+    gives every other missing timestamp. */
+export function outputSignalShieldsStep(input: {
+  readonly nowMs: number;
+  readonly startedAt: string | null;
+  readonly timeoutMs: number;
+}): boolean {
+  const startedMs = input.startedAt === null ? Number.NaN : Date.parse(input.startedAt);
+  if (!Number.isFinite(startedMs)) return true;
+  return input.nowMs - startedMs <= input.timeoutMs * BOARD_OUTPUT_SIGNAL_MAX_WINDOWS;
+}
+
 export type BoardRecoveryDecision =
   | {
       readonly kind: "resume";
@@ -70,11 +112,17 @@ function stalledSubject(stepState: Pick<BoardCardStepState, "stepLabel" | "stage
  *   nudged; only `maxAttempts` unproductive stops in a row does. Within budget →
  *   resume with a nudge that grows an outstanding-work reminder on the third and
  *   later consecutive stall;
- * - **per-stage-entry invocations** (`stageEntryInvocations`, D5): the runaway
- *   detector above the per-step ladder — once a stage entry's total invocations
- *   cross `maxInvocationsPerStageEntry`, the stage stalls whatever the per-step
- *   ladder says, so t3o-16's rounds × phases × attempts compound is bounded and
- *   observable.
+ * - **per-stage-entry recoveries** (`stageEntryRecoveries`, D5 as re-pointed by
+ *   T3O-12 D4): the runaway detector above the per-step ladder — once a stage
+ *   entry's total RECOVERIES cross `maxRecoveriesPerStageEntry`, the stage
+ *   stalls whatever the per-step ladder says. It catches the stage the per-step
+ *   ladder cannot see: one where every step inches forward (resetting
+ *   `stallCount`) and the whole never finishes.
+ *
+ *   Recoveries, not invocations. Counting invocations counted the review loop's
+ *   PLANNED steps, so a loop given extra rounds blew a ceiling that was never
+ *   meant to bound successful work, and from then on its first stall of any
+ *   kind escalated instantly with no ladder at all.
  *
  * Either ceiling crossed → escalate (the reactor lands the step in `stalled` and
  * releases its slot); it never loops. Prevention lives in the envelope (the
@@ -105,11 +153,14 @@ export function recoveryDecision(input: {
       absence of a list and a frozen list are both "no progress", which is the
       right reading of each. */
   readonly hasTodoList: boolean;
-  /** The stage entry's total step invocations so far (D5), summed across its
-      steps by the reactor. This recovery is one more, so the ceiling is checked
-      against `stageEntryInvocations + 1`. */
-  readonly stageEntryInvocations: number;
-  readonly maxInvocationsPerStageEntry: number;
+  /** The stage entry's total RECOVERIES so far (D5, re-pointed by T3O-12 D4),
+      summed across its steps by the reactor. This recovery is one more, so the
+      ceiling is checked against `stageEntryRecoveries + 1`. */
+  readonly stageEntryRecoveries: number;
+  /** The ceiling `stageEntryRecoveries` is checked against. Named for what it
+      bounds; the settings key it is resolved from keeps the older, now
+      imprecise name `maxInvocationsPerStageEntry` (T3O-12, D6). */
+  readonly maxRecoveriesPerStageEntry: number;
   /** Whether the stopped turn ended with something the agent wanted a human to
       answer (t3o-34, D6), resolved by the reactor from the step thread's last
       assistant message — the same "reactor resolves, this function stays pure"
@@ -126,19 +177,23 @@ export function recoveryDecision(input: {
   // the first of a new one (crit 1: two stalls with a progress note between them
   // leave `stallCount` at 1, not 2). No progress just extends the streak.
   const nextStallCount = (input.progressedSinceLastNudge ? 0 : input.stepState.stallCount) + 1;
-  const nextStageInvocations = input.stageEntryInvocations + 1;
+  const nextStageRecoveries = input.stageEntryRecoveries + 1;
   const escalateManually = `How should I proceed: retry it again, switch to a different provider, or do you want to take it over manually?`;
 
-  // D5 ceiling first: a stage whose steps have, in total, been invoked past the
-  // ceiling is a runaway regardless of the per-step ladder — the backstop that
-  // makes the compound bound observable even when no single step wedged.
-  if (nextStageInvocations > input.maxInvocationsPerStageEntry) {
+  // D5 ceiling first: a stage that has spent more than the ceiling on RECOVERY
+  // is a runaway regardless of the per-step ladder — the backstop that stays
+  // observable even when no single step wedged. Planned steps never reach here,
+  // which is the whole of T3O-12's D4.
+  if (nextStageRecoveries > input.maxRecoveriesPerStageEntry) {
     return {
       kind: "escalate",
       attempt: nextAttempt,
       stallCount: nextStallCount,
       question: [
-        `This stage has now run ${nextStageInvocations} agent invocations this entry without completing, past the ${input.maxInvocationsPerStageEntry} allowed for one stage entry.`,
+        // Says RECOVERIES, not invocations: this text is what the human it
+        // escalates to reads, and the old wording described a number that no
+        // longer exists.
+        `This stage has now needed ${nextStageRecoveries} recoveries this entry without completing, past the ${input.maxRecoveriesPerStageEntry} allowed for one stage entry.`,
         escalateManually,
       ].join(" "),
     };

@@ -84,7 +84,7 @@ describe("composeStepPrompt (D5 envelope)", () => {
 
 describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", () => {
   // crit 5: recoveryDecision is pure — driven only by scalars (the stall
-  // counters, a progressedSinceLastNudge boolean, the invocation total and the
+  // counters, a progressedSinceLastNudge boolean, the recovery total and the
   // ceiling), never git or a database. Every case here is a plain function call.
   const decide = (input: {
     readonly attempt?: number;
@@ -92,8 +92,8 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     readonly maxAttempts?: number;
     readonly progressedSinceLastNudge?: boolean;
     readonly hasTodoList?: boolean;
-    readonly stageEntryInvocations?: number;
-    readonly maxInvocationsPerStageEntry?: number;
+    readonly stageEntryRecoveries?: number;
+    readonly maxRecoveriesPerStageEntry?: number;
     readonly endedWithQuestion?: boolean;
   }) =>
     recoveryDecision({
@@ -114,8 +114,8 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       // t3o-18 D16: default to "the thread keeps a list", so the todo-specific
       // assertions below are the only ones that see the extra nudge line.
       hasTodoList: input.hasTodoList ?? true,
-      stageEntryInvocations: input.stageEntryInvocations ?? 0,
-      maxInvocationsPerStageEntry: input.maxInvocationsPerStageEntry ?? 20,
+      stageEntryRecoveries: input.stageEntryRecoveries ?? 0,
+      maxRecoveriesPerStageEntry: input.maxRecoveriesPerStageEntry ?? 20,
     });
 
   it("resumes with a nudge within budget, adding an outstanding summary on the third consecutive stall", () => {
@@ -207,8 +207,8 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       stepState: { attempt: 5, stallCount: 4, maxAttempts: 5, stepLabel: null, stageLabel: null },
       progressedSinceLastNudge: false,
       hasTodoList: true,
-      stageEntryInvocations: 0,
-      maxInvocationsPerStageEntry: 20,
+      stageEntryRecoveries: 0,
+      maxRecoveriesPerStageEntry: 20,
       endedWithQuestion: false,
     });
     assert.strictEqual(unnamed.kind, "escalate");
@@ -226,8 +226,8 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       },
       progressedSinceLastNudge: false,
       hasTodoList: true,
-      stageEntryInvocations: 0,
-      maxInvocationsPerStageEntry: 20,
+      stageEntryRecoveries: 0,
+      maxRecoveriesPerStageEntry: 20,
       endedWithQuestion: false,
     });
     assert.strictEqual(stepped.kind, "escalate");
@@ -318,31 +318,56 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     assert.strictEqual(decision.kind === "resume" ? decision.attempt : -1, 9);
   });
 
-  it("crit 11/13: crossing the per-stage-entry invocation ceiling stalls the stage even when no single step exhausted maxAttempts", () => {
+  it("crit 11/13: crossing the per-stage-entry RECOVERY ceiling stalls the stage even when no single step exhausted maxAttempts", () => {
     // stallCount is nowhere near maxAttempts, but the stage entry's total
-    // invocations cross the ceiling — the runaway backstop escalates regardless.
-    // Generic over any stage's invocation count, so a t3o-16 review loop cannot
-    // exceed the ceiling silently.
+    // recoveries cross the ceiling — the runaway backstop escalates regardless.
+    // Generic over any stage's recovery count, so a stage whose steps each inch
+    // forward (resetting stallCount) and never finish cannot run forever.
     const capped = decide({
       stallCount: 0,
       maxAttempts: 5,
-      stageEntryInvocations: 20,
-      maxInvocationsPerStageEntry: 20,
+      stageEntryRecoveries: 20,
+      maxRecoveriesPerStageEntry: 20,
     });
     assert.strictEqual(capped.kind, "escalate");
     if (capped.kind === "escalate") {
-      assert.include(capped.question, "21 agent invocations");
+      // The human being escalated to reads this: it must name recoveries, not
+      // the invocation total that no longer exists (T3O-12, D4).
+      assert.include(capped.question, "21 recoveries");
       assert.include(capped.question, "20 allowed");
+      assert.notInclude(capped.question, "invocations");
     }
     // One below the ceiling still resumes.
     assert.strictEqual(
       decide({
         stallCount: 0,
-        stageEntryInvocations: 18,
-        maxInvocationsPerStageEntry: 20,
+        stageEntryRecoveries: 18,
+        maxRecoveriesPerStageEntry: 20,
       }).kind,
       "resume",
     );
+  });
+
+  it("T3O-12: planned work never reaches the ceiling — a long review loop with no recoveries takes the ladder", () => {
+    // The regression this card exists for. Ten review rounds is 30 PLANNED
+    // steps; the old ceiling summed `attempt`, so past ~round 7 it was
+    // permanently blown and the first stall of any kind escalated instantly
+    // with no nudge and no ladder. Raising the round budget is what pushed a
+    // healthy loop over it — literally "extra rounds gives error".
+    //
+    // With the ceiling counting recoveries, a loop that has needed none is
+    // nowhere near it however long it has legitimately run, so an ordinary
+    // stall gets the ordinary nudge.
+    const nudged = decide({ stallCount: 0, stageEntryRecoveries: 0, attempt: 1 });
+    assert.strictEqual(nudged.kind, "resume");
+
+    // And the ladder is still what escalates a genuinely wedged step: the
+    // ceiling is not doing that job for it.
+    const laddered = decide({ stallCount: 4, maxAttempts: 5, stageEntryRecoveries: 0 });
+    assert.strictEqual(laddered.kind, "escalate");
+    if (laddered.kind === "escalate") {
+      assert.include(laddered.question, "stalled 5 times in a row");
+    }
   });
 });
 

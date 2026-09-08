@@ -1310,14 +1310,32 @@ export const BoardCardStepState = Schema.Struct({
   stageLabel: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  /** Cumulative invocation count of this step this stage entry, 1-based;
-      recovery increments it and it never resets within the entry (t3o-17, D1).
-      Kept for display ("attempt 7") and for the per-stage-entry invocation
-      ceiling (D5) — the runaway detector that stops a stage whose steps have,
-      in total, been invoked more than `maxInvocationsPerStageEntry` times, even
-      when no single step exhausted `maxAttempts`. Resets to 1 on stage entry
-      (a fresh `select-step` row). */
+  /** Invocation count of THIS step, 1-based; recovery increments it (t3o-17,
+      D1). Purely for display ("attempt 7"). Resets to 1 on every fresh
+      `select-step` row — including the review loop's next phase, which is a
+      different step and starts its own count (T3O-12, D5).
+
+      It used to carry the stage entry's CUMULATIVE total forward so the
+      per-stage-entry ceiling could be read off it. That ceiling now counts
+      recoveries (`stageEntryRecoveries`), so the carry is gone and this number
+      is comparable with `maxAttempts` again instead of reading as the
+      nonsense "attempt 45 of 5" a long review loop used to display. */
   attempt: PositiveInt,
+  /** Recoveries the board has spent on this stage entry (T3O-12, D4): what the
+      runaway ceiling `maxInvocationsPerStageEntry` is checked against.
+
+      ONLY `board.card.recover-step` increments it — a nudge, an escalation, or
+      a spawn failure. Planned work does not: a review round's three phases are
+      the plan, not a runaway, and counting them is what made a loop given extra
+      rounds escalate its first stall instantly with no ladder. It survives the
+      step-state row being replaced (an intra-stage continuation carries it on
+      `priorRecoveries`) and resets on a genuine stage entry.
+
+      A DECODING DEFAULT, not a plain required field: this struct is the payload
+      of `board.card-step-selected` / `board.card-step-recovered`, and the event
+      log is replayed through `Schema.decodeUnknownEffect` — an event written
+      before T3O-12 has no such key. */
+  stageEntryRecoveries: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /** CONSECUTIVE stalls with no progress between them (t3o-17, D1). Distinct
       from `attempt`: this is what recovery gates on — it is compared against
       `maxAttempts`, and it RESETS to zero whenever progress is observed since
@@ -1786,24 +1804,31 @@ export function boardNonTerminalStepStates(board: BoardState): ReadonlyArray<Boa
 }
 
 /**
- * A card's total step invocations this stage entry (t3o-17, D5): the number the
- * reactor feeds the per-stage-entry ceiling in `recoveryDecision`. Computed as
- * the sum of `attempt` across the card's step-state rows.
+ * A card's total RECOVERIES this stage entry (t3o-17 D5, re-pointed by T3O-12
+ * D4): the number the reactor feeds the per-stage-entry ceiling in
+ * `recoveryDecision`. Computed as the sum of `stageEntryRecoveries` across the
+ * card's step-state rows.
+ *
+ * It counts recoveries and not invocations on purpose. Counting invocations
+ * counted the review loop's PLANNED steps — five rounds of three phases is 15
+ * of the default 20 before anything has gone wrong — so a loop given extra
+ * rounds blew a ceiling that was never meant to bound successful work, and the
+ * first stall of any kind escalated instantly with no ladder.
  *
  * Today the read model keeps exactly ONE step-state row per card (D4: one step
  * at a time), and the review loop advances that row step to step — so the
- * running total is carried on `attempt` itself: an intra-stage `select-step`
- * passes `priorInvocations` (this count at selection time) and the decider
- * stamps `attempt = priorInvocations + 1`, while a genuine stage entry omits it
- * and resets (D1). It is still written as a sum, not a single-row read, so it
- * stays correct if a future model tracks more than one step-state row per card
- * at once. Either way the ceiling is enforced by `recoveryDecision` on whatever
+ * running total is carried on the row itself: an intra-stage `select-step`
+ * passes `priorRecoveries` (this count at selection time) and the decider
+ * stamps it onto the fresh row, while a genuine stage entry omits it and
+ * resets. It is still written as a sum, not a single-row read, so it stays
+ * correct if a future model tracks more than one step-state row per card at
+ * once. Either way the ceiling is enforced by `recoveryDecision` on whatever
  * total it is handed, which is the generic, unit-tested guarantee.
  */
-export function boardStageEntryInvocationCount(board: BoardState, cardId: BoardCardId): number {
+export function boardStageEntryRecoveryCount(board: BoardState, cardId: BoardCardId): number {
   return (board.stepStates ?? [])
     .filter((state) => state.cardId === cardId)
-    .reduce((total, state) => total + state.attempt, 0);
+    .reduce((total, state) => total + state.stageEntryRecoveries, 0);
 }
 
 /** Every card whose live step has given up (t3o-17, D3): the `stalled` set the
@@ -3207,12 +3232,13 @@ export const BoardCardSelectStepCommand = Schema.Struct({
   humanInLoop: Schema.Boolean,
   maxAttempts: PositiveInt,
   timeoutMs: PositiveInt,
-  /** The stage entry's step invocations BEFORE this selection (t3o-17, D5).
-      An intra-stage continuation (t3o-16's next review phase) carries the
-      running total forward so the per-stage-entry ceiling survives step
-      replacement; a genuine stage entry omits it (resets, D1). The decider
-      stamps `attempt = priorInvocations + 1` onto the fresh run row. */
-  priorInvocations: Schema.optional(NonNegativeInt),
+  /** The stage entry's RECOVERIES before this selection (t3o-17 D5, re-pointed
+      by T3O-12 D4). An intra-stage continuation (t3o-16's next review phase)
+      carries the running total forward so the per-stage-entry ceiling survives
+      step replacement; a genuine stage entry omits it (resets). The decider
+      stamps it onto the fresh run row as `stageEntryRecoveries`, while
+      `attempt` — which used to carry this — resets to 1. */
+  priorRecoveries: Schema.optional(NonNegativeInt),
   /** The base-branch tip for the run row (t3o-24, D1): freshly measured when
       the plan starts a review round, carried forward from the replaced row
       otherwise. Decoding-defaulted for replay of pre-t3o-24 events. */
@@ -5653,12 +5679,19 @@ export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
     in a row is a stuck agent, where five cumulative nudges was often a long
     healthy job. */
 export const DEFAULT_BOARD_STEP_MAX_ATTEMPTS = 5;
-/** Per-stage-entry invocation ceiling (t3o-17, D5): the runaway detector above
-    the per-step ladder. When a stage entry's total `attempt` across all its
-    steps crosses this, the stage stalls and escalates regardless of the
-    per-step ladder — the backstop that makes t3o-16's rounds × phases ×
-    attempts compound bound observable. Deliberately generous: a runaway
-    detector, not a budget. */
+/** Per-stage-entry RECOVERY ceiling (t3o-17 D5, re-pointed by T3O-12 D4): the
+    runaway detector above the per-step ladder. When a stage entry's total
+    `stageEntryRecoveries` across all its steps crosses this, the stage stalls
+    and escalates regardless of the per-step ladder — the backstop for a stage
+    whose steps each inch forward (resetting `stallCount`) while the whole never
+    finishes, which the per-step ladder cannot see.
+
+    Twenty FAILED RECOVERIES in one stage entry, not twenty invocations: a
+    review loop's planned rounds × phases are the plan and never approach it,
+    however long the loop legitimately runs. The name is kept for back-compat
+    (it is a settings.json key with no UI, set on every existing install);
+    `recoveryDecision` names its own parameter honestly. Deliberately generous:
+    a runaway detector and a cost bound, not a budget. */
 export const DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY = 20;
 
 /**
@@ -6442,9 +6475,10 @@ export const BoardStageExecutionSimple = Schema.Struct({
   maxAttempts: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
   ),
-  /** Per-stage-entry invocation ceiling (t3o-17, D5), enforced only on an
-      unattended run: when the stage entry's total `attempt` across its steps
-      crosses it, the stage stalls regardless of the per-step ladder. */
+  /** Per-stage-entry RECOVERY ceiling (t3o-17 D5, re-pointed by T3O-12 D4),
+      enforced only on an unattended run: when the stage entry's total
+      `stageEntryRecoveries` across its steps crosses it, the stage stalls
+      regardless of the per-step ladder. Planned steps are not counted. */
   maxInvocationsPerStageEntry: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
   ),
@@ -6495,10 +6529,13 @@ export const BoardStageExecutionReview = Schema.Struct({
   maxAttempts: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
   ),
-  /** Per-stage-entry invocation ceiling (t3o-17, D5), enforced only on an
-      unattended run: when the stage entry's total `attempt` across its steps
-      crosses it, the stage stalls regardless of the per-step ladder. Carried
-      identically to the simple member so the reactor reads it uniformly. */
+  /** Per-stage-entry RECOVERY ceiling (t3o-17 D5, re-pointed by T3O-12 D4),
+      enforced only on an unattended run: when the stage entry's total
+      `stageEntryRecoveries` across its steps crosses it, the stage stalls
+      regardless of the per-step ladder. Carried identically to the simple
+      member so the reactor reads it uniformly. This member is the reason the
+      ceiling had to stop counting planned work: a loop's rounds × phases used
+      to blow it before a single thing had gone wrong. */
   maxInvocationsPerStageEntry: PositiveInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
   ),

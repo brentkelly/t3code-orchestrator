@@ -312,6 +312,7 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
     stageLabel: "Code review",
     attempt: 1,
     stallCount: 0,
+    stageEntryRecoveries: 0,
     lastNudgeAt: null,
     baseTipAtRoundStart: "main",
     lastError: null,
