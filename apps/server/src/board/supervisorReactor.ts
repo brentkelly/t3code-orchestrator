@@ -1699,43 +1699,58 @@ const make = Effect.gen(function* () {
     // could only watch. Its review-stage entry, which only happens after the
     // last child finished, kicks off normally.
     if (boardCardUnfinishedChildren(board, card.id).length > 0) return;
-    // One step at a time (D4): do not start a run while one is live. The one
-    // exception is `stalled` (t3o-17): supervision has given up and nothing is
-    // running, so an EXPLICIT on-demand start is the human's retry affordance
-    // — it supersedes the stalled step (settled abandoned; its slot was
-    // already released at escalation) instead of no-opping, which would leave
-    // a stalled card with a dead thread no exit but archive → unarchive. The
-    // supersede runs BEFORE the live-stage-thread guard: the stalled step's
-    // own thread link (role = step id = stage id on a simple stage, never
-    // tombstoned at escalation) would otherwise trip that guard first, and it
-    // is unlinked here for the same reason.
+    // One step at a time (D4): the AUTOMATIC kickoff does not start a run while
+    // one is live, and never tramples a thread already on the stage.
+    //
+    // An ON-DEMAND request is the opposite case (T3O-21). It is a human
+    // clicking "New thread — restart <stage>", so it SUPERSEDES whatever the
+    // card is resting on rather than no-opping: settle the old step abandoned,
+    // stop and unlink its thread, then spawn a fresh one. Only `stalled` used
+    // to be superseded, and both guards below then swallowed the click for
+    // every other resting state — a step parked on a question, and (because a
+    // step thread's link role IS the stage id on a simple stage) any stage the
+    // card had ever run. The menu row was enabled, the command was accepted,
+    // and nothing happened.
+    //
+    // Superseding is safe because the step being replaced is settled here and
+    // its thread is interrupted, so no two threads ever believe they own the
+    // same step. It is not reckless either: the client disables the row while a
+    // run is genuinely in flight, so this path is reached at rest.
     const existing = boardCardStepState(board, card.id);
-    const supersedeStalled = onDemand && existing !== null && existing.status === "stalled";
-    if (supersedeStalled) {
-      yield* settleStep({ card, state: existing, outcome: "abandoned" });
-      if (existing.threadId !== null) {
+    if (onDemand) {
+      if (existing !== null && !isBoardTerminalStepStatus(existing.status)) {
+        yield* settleStep({ card, state: existing, outcome: "abandoned" });
+        // A stalled step already gave up and drives nothing (t3o-17), so it is
+        // left alone; anything else may still have a turn running against the
+        // card's worktree, and a second writer is the one thing a restart must
+        // not create. Best-effort, like every other orphan interrupt.
+        if (existing.status !== "stalled" && existing.threadId !== null) {
+          yield* interruptOrphan(existing.threadId);
+          // Unlinked below while alive, so no card derives it any more (t3o-13)
+          // — name it, or the release sweep can never settle it.
+          abandonedThreads.add(String(existing.threadId));
+        }
+      }
+      // Clear the stage's own threads off the card: the superseded step's, plus
+      // any left by an earlier run of this stage (their link role is the stage
+      // id). Both would otherwise trip the live-stage-thread guard on the very
+      // next kickoff and wedge the card exactly as before. A thread a human
+      // ADOPTED is untouched — adoption links with role `linked`, never the
+      // stage — so the restart never takes a conversation off the card that the
+      // board did not put there.
+      for (const link of card.threadLinks) {
+        if (link.tombstonedAt !== null) continue;
+        if (link.role !== card.stage && link.threadId !== existing?.threadId) continue;
         yield* dispatch({
           type: "board.card.unlink-thread",
-          commandId: yield* commandId("unlink-stalled"),
+          commandId: yield* commandId("unlink-superseded"),
           cardId: card.id,
-          threadId: existing.threadId,
+          threadId: link.threadId,
           createdAt: yield* nowIso,
         });
       }
-      // The adopted-thread guard still applies (D7): superseding clears the
-      // stalled step's OWN link, but a live stage thread beyond it — one a
-      // human adopted — must not be trampled by a fresh spawn. The stalled
-      // step is settled either way, so that adopted conversation is now the
-      // stage's thread.
-      const adopted = card.threadLinks.some(
-        (link) =>
-          link.role === card.stage &&
-          link.tombstonedAt === null &&
-          link.threadId !== existing.threadId,
-      );
-      if (adopted) return;
     } else {
-      // Never trample a manually adopted thread for this stage (D7).
+      // Never trample a thread already running this stage (D7).
       if (hasLiveStageThread(card, card.stage)) return;
       if (existing !== null && !isBoardTerminalStepStatus(existing.status)) return;
     }
