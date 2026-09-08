@@ -527,6 +527,33 @@ describe("cards that need a human (attention)", () => {
     expect(html).not.toContain("Needs a human");
   });
 
+  it("never wears the working dot and a Needs a human chip at once (T3O-18)", () => {
+    // The board shipped exactly this card: a planning step parked as `stopped`
+    // while its thread carried on working for another four minutes, so the face
+    // pulsed blue and said "Needs a human" in the same row. The two claims are
+    // opposites — the chip's whole meaning is that nobody is working on this
+    // card (`docs/t3o/status-colours.md`).
+    const working = shell("planning", { stepAwaiting: "stopped", threadState: "working" });
+    expect(attentionOf(working)).toBeNull();
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={working}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(working)}
+      />,
+    );
+    // The dot stays: the thread really is mid-turn, and that is the evidence
+    // the stale step row is being weighed against.
+    expect(html).toContain("Thread running");
+    expect(html).toContain("bg-info");
+    expect(html).not.toContain("Needs a human");
+    // …and the card loses the amber treatment with the chip, rather than
+    // sitting tinted with nothing on it saying why.
+    expect(html).not.toContain("border-amber-500/60");
+  });
+
   it("ranks the loudest reason when a card qualifies for several", () => {
     // A stalled step whose thread also has a pending question: one chip, and it
     // is the stalled one.

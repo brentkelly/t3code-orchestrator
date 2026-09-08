@@ -1298,6 +1298,40 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(attention({ stage: BOARD_SEED_STAGE_IDS.done, stepAwaiting: "stopped" })).toBeNull();
   });
 
+  // T3O-18: the card face showed the blue working dot and an amber "Needs a
+  // human" at once, on a planning card whose agent was demonstrably mid-turn.
+  it("never says a card needs a human while a thread on it is working", () => {
+    // The step row parked ("the agent stopped without asking anything") and the
+    // thread went back to work without the board hearing a resume signal —
+    // `turn.started` is deliberately not one (t3o-34, D5), and a
+    // `turn.completed` for the PREVIOUS turn can park a step a human has
+    // already resumed. The row keeps saying `stopped` for the rest of the run.
+    expect(attention({ stepAwaiting: "stopped", threadState: "working" })).toBeNull();
+    // Same lie in the other reason: a prose question the agent has since moved
+    // past is not something to answer.
+    expect(attention({ stepAwaiting: "question", threadState: "working" })).toBeNull();
+    // The durable half of the dot vetoes it too — whatever lights the dot.
+    expect(attention({ stepAwaiting: "stopped", stepRunning: true })).toBeNull();
+  });
+
+  it("still parks a step whose threads are stopped or provably dead", () => {
+    // The veto is EVIDENCE of work, not the absence of it: a failed thread is
+    // not working (it vetoes the dot too), so the parked step still flags.
+    expect(attention({ stepAwaiting: "stopped", threadState: "failed" })?.reason).toBe("stopped");
+    expect(attention({ stepAwaiting: "stopped", threadState: "stopped" })?.reason).toBe("stopped");
+    expect(attention({ stepAwaiting: "stopped", threadState: "none" })?.reason).toBe("stopped");
+  });
+
+  it("never hides an answerable question behind the working dot", () => {
+    // `awaitingInput` is a REAL pending question on a live thread, one click
+    // from being answered — and a card can hold one while its step runs (a
+    // review loop's next phase, a sibling thread). Only the step ROW's claim is
+    // vetoed, never the thread's.
+    expect(
+      attention({ awaitingInput: true, stepRunning: true, threadState: "waiting" })?.reason,
+    ).toBe("input");
+  });
+
   it("reads a review loop that ran out of rounds as needing a human", () => {
     const heldLoop = attention({
       stage: BOARD_SEED_STAGE_IDS.review,
