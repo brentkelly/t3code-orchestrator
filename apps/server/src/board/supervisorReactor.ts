@@ -123,6 +123,7 @@ import {
 import {
   composeStepPrompt,
   orderBoardQueue,
+  outputSignalShieldsStep,
   reconcileStepDecision,
   recoveryDecision,
   resolveBoardConcurrencyLimit,
@@ -4815,8 +4816,23 @@ const make = Effect.gen(function* () {
       //
       // It is a life sign HERE and nowhere else: `resolveProgressedSinceLastNudge`
       // does not read it (D2), so a thrashing agent still climbs the ladder.
+      //
+      // And it is a life sign only for a while (D9). Output is satisfied by
+      // noise as readily as by work, so a tool-loop thrash would otherwise
+      // renew the shield every window forever and never be nudged, never climb
+      // the ladder, and never reach a human — the inverse of the bug this card
+      // fixed, and the worse direction for a supervisor. Past
+      // `outputSignalShieldsStep` the sweep falls back to exactly the life
+      // signs it had before T3O-12. The other two have no ceiling: a todo list
+      // that advances and a commit that lands are evidence of work.
       const todo = yield* threadTodoState(state.threadId);
-      const lastSignalAt = yield* threadLastSignalAt(state.threadId);
+      const lastSignalAt = outputSignalShieldsStep({
+        nowMs,
+        startedAt: state.startedAt,
+        timeoutMs: state.timeoutMs,
+      })
+        ? yield* threadLastSignalAt(state.threadId)
+        : null;
       const referenceMs = Math.max(
         ...[state.lastNudgeAt ?? state.startedAt, todo?.advancedAt ?? null, lastSignalAt]
           .filter((value): value is string => value != null)

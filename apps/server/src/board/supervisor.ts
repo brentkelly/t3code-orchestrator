@@ -35,6 +35,48 @@ export {
   type ComposeStepPromptStep,
 } from "@t3tools/contracts";
 
+/** How many `timeoutMs` windows the thread-OUTPUT life sign may keep shielding
+    one step from the timeout sweep (T3O-12, D9) — 8, so four hours at the
+    default half-hour timeout.
+
+    The output signal answers "is the agent emitting anything", which is what
+    saves a healthy review phase that neither commits nor churns a todo list.
+    But it is satisfied by NOISE as readily as by work: an agent thrashing in a
+    tool loop emits activity rows continuously, and a signal with no ceiling
+    would keep it non-overdue every window forever. It would then never be
+    nudged, so `stallCount` would never climb and the recovery ceiling — only
+    ever spent by an actual recovery — would never be charged either. The step
+    would hold its slot for as long as it cared to thrash and no human would
+    ever be told. That is the opposite failure to the one T3O-12 fixed, and the
+    worse one: a supervisor that cries wolf is annoying, a supervisor that never
+    cries is not a supervisor.
+
+    So the shield expires. Past the ceiling the sweep reverts EXACTLY to its
+    pre-T3O-12 life signs — last nudge/start, todo advance, branch commit — and
+    the thrash climbs the ordinary ladder to a human. Genuine progress is
+    untouched: the two older signs have no ceiling, because a todo list that
+    advances and a commit that lands are evidence of work, not of noise, and a
+    long build that keeps committing must never be nudged for taking its time.
+
+    Deliberately a multiple of the step's own `timeoutMs` rather than a new
+    setting: a stage that has been given a longer timeout has said its work is
+    slower, and the ceiling should stretch with it. */
+export const BOARD_OUTPUT_SIGNAL_MAX_WINDOWS = 8;
+
+/** Whether the thread-output life sign still shields this step (T3O-12, D9).
+    A step whose `startedAt` is unreadable cannot have its age measured, so the
+    shield holds — the conservative direction, and the same reading the sweep
+    gives every other missing timestamp. */
+export function outputSignalShieldsStep(input: {
+  readonly nowMs: number;
+  readonly startedAt: string | null;
+  readonly timeoutMs: number;
+}): boolean {
+  const startedMs = input.startedAt === null ? Number.NaN : Date.parse(input.startedAt);
+  if (!Number.isFinite(startedMs)) return true;
+  return input.nowMs - startedMs <= input.timeoutMs * BOARD_OUTPUT_SIGNAL_MAX_WINDOWS;
+}
+
 export type BoardRecoveryDecision =
   | {
       readonly kind: "resume";
