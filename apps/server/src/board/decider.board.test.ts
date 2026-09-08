@@ -1640,6 +1640,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       const admitCard = makeCard({ id: "card-admit", stage: "building" });
       const forceStartCard = makeCard({ id: "card-force-start", stage: "building" });
       const awaitCard = makeCard({ id: "card-await", stage: "building" });
+      const pauseCard = makeCard({ id: "card-pause", stage: "building" });
+      const requeueCard = makeCard({ id: "card-requeue", stage: "building" });
       const recoverCard = makeCard({ id: "card-recover", stage: "building" });
       const resumeCard = makeCard({ id: "card-resume", stage: "building" });
       const settleCard = makeCard({ id: "card-settle", stage: "building" });
@@ -1674,6 +1676,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             admitCard,
             forceStartCard,
             awaitCard,
+            pauseCard,
+            requeueCard,
             recoverCard,
             resumeCard,
             settleCard,
@@ -1688,6 +1692,10 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             // force-start-step only accepts a step actually queued for a slot.
             makeStepState("card-force-start", "queued"),
             makeStepState("card-await", "running"),
+            // pause-step only accepts a step with a turn to stop (T3O-23).
+            makeStepState("card-pause", "running"),
+            // requeue-step only accepts a PARKED step (T3O-23).
+            makeStepState("card-requeue", "paused"),
             makeStepState("card-recover", "running"),
             // resume-step only accepts a stalled step (t3o-17, D3).
             makeStepState("card-resume", "stalled"),
@@ -1958,6 +1966,19 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           cardId: BoardCardId.make("card-await"),
           stepId: "s1",
           reason: "question",
+          createdAt: NOW,
+        },
+        "board.card.pause-step": {
+          type: "board.card.pause-step",
+          commandId: CommandId.make("cmd-pause"),
+          cardId: BoardCardId.make("card-pause"),
+          stepId: "s1",
+          createdAt: NOW,
+        },
+        "board.card.requeue-step": {
+          type: "board.card.requeue-step",
+          commandId: CommandId.make("cmd-requeue"),
+          cardId: BoardCardId.make("card-requeue"),
           createdAt: NOW,
         },
         "board.card.recover-step": {

@@ -52,8 +52,13 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   neutral and read "Not started" / "Not running" rather than spinning at a card sitting in Building.
 - **A stopped agent is never blue.** A step whose turn ended without completing is not working, so
   it never wears the running dot. If it left a question behind it is violet ("Input needed"); if it
-  did not, it is amber ("Needs a human"). Both are the same fact — nobody is working on this card —
-  told at the volume the human's next move deserves.
+  did not, it is amber ("Needs a human"). And if a HUMAN stopped it, it is neutral
+  (`bg-muted text-muted-foreground`) and reads "Paused" — the human already knows why it stopped and
+  the board has nothing to ask them, so there is no claim to colour. That is the "no colour without
+  a claim" rule applied to a work state rather than to a derived one: amber would say the card is
+  blocked and violet would say something is waiting on an answer, and neither is true of a card its
+  own user parked. All three are the same fact — nobody is working on this card — told at the volume
+  the human's next move deserves, and the volume for "you did this on purpose" is zero.
 - **And the reverse: a working card never says it needs a human.** The dot and those two chips are
   opposite claims, so a card can only ever wear one of them. They come from different sources — the
   dot from thread liveness, the chips from the step row — and the step row can go stale, which is

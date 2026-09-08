@@ -44,6 +44,8 @@ import {
   boardStagesAreSeedOnly,
   BoardStepCompletion,
   BoardCardStepState,
+  BoardCardStepParkedReason,
+  boardStepParkedReason,
   BoardStageMode,
   compareBoardLabels,
   compareBoardStages,
@@ -2698,6 +2700,10 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
 
       case "board.card-step-selected":
       case "board.card-step-admitted":
+      // A human pausing a step (T3O-23) stays off the rail for the same reason:
+      // the card face says `Paused` and the Resume button is right there, so a
+      // row per stop-and-start would only crowd out the nine curated kinds.
+      case "board.card-step-paused":
       case "board.card-step-recovered":
       case "board.card-step-settled":
       case "board.card-step-retuned":
@@ -3030,7 +3036,7 @@ export function withBoardShellCards(
       const stalledByCard = new Set<BoardCardId>();
       const runningByCard = new Set<BoardCardId>();
       const heldByCard = new Set<BoardCardId>();
-      const awaitingByCard = new Map<BoardCardId, BoardCardStepAwaitingReason>();
+      const awaitingByCard = new Map<BoardCardId, BoardCardStepParkedReason>();
       const conflictFixByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
@@ -3053,9 +3059,15 @@ export function withBoardShellCards(
         // pending question, so a step parked for a prose question — or for a
         // human-in-the-loop turn that ended with nothing to answer — left the
         // card pulsing blue as if it were working.
-        if (row.status === "awaiting-input") {
-          awaitingByCard.set(row.cardId, row.awaitingReason ?? "question");
-        }
+        // …and T3O-23 adds the third: a step a HUMAN stopped, which is `paused`
+        // on the status rather than a reason on the column. Derived through the
+        // one definition the projector's deltas also use, so the snapshot and
+        // the live stream can never disagree about the same row.
+        const parked = boardStepParkedReason({
+          status: row.status,
+          awaitingReason: row.awaitingReason ?? "question",
+        });
+        if (parked !== null) awaitingByCard.set(row.cardId, parked);
         // Whether the live step is a merge conflict fix (T3O-9). Read off the
         // PERSISTED step label through the same predicate the delta uses, so a
         // reconnect mid-fix renders identically to the live stream — and so a

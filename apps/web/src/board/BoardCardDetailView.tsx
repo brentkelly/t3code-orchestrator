@@ -122,6 +122,7 @@ import {
 } from "./BoardCardFields";
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
 import { BoardCardStepFailure } from "./BoardCardStepFailure";
+import { BoardCardStepPaused } from "./BoardCardStepPaused";
 import { type BoardConflictFixInfo } from "./boardConflictFix";
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
@@ -348,6 +349,15 @@ export interface BoardCardDetailViewProps {
       only layer that can see both the card shell's `stalled` flag and the
       detail's `stepError` text. */
   readonly stepFailure: { readonly stageLabel: string; readonly error: string | null } | null;
+  /** The paused-step banner (T3O-23), or null when the card's step is not
+      paused. Separate from `stepFailure` because the two are opposite claims —
+      one says recovery gave up, the other says the human chose to stop — and a
+      card can only ever be in one of them. */
+  readonly stepPaused: { readonly stageLabel: string } | null;
+  /** Resume a paused step, sending it back to the build queue. Absent when the
+      card cannot be resumed from here. */
+  readonly onResumeStep?: (() => void) | undefined;
+  readonly resumeStepPending?: boolean | undefined;
   /** Dispatch `board.card.start-stage-thread` for the card's current stage. */
   readonly onRestartStage: () => void;
   /** Create a blank server thread, link it, and resolve to its id (or `null` on
@@ -1988,6 +1998,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onRestart={props.stageRestart?.disabledReason == null ? props.onRestartStage : null}
               />
             ) : null}
+            {props.stepPaused !== null ? (
+              <BoardCardStepPaused
+                className="mx-3.5 mb-3.5"
+                stageLabel={props.stepPaused.stageLabel}
+                onResume={props.onResumeStep ?? null}
+                resuming={props.resumeStepPending === true}
+              />
+            ) : null}
             {props.feedback !== null ? (
               <p className="mx-3.5 mb-3.5 rounded-md bg-destructive/10 px-2 py-1.5 text-[12px] text-destructive-foreground">
                 {props.feedback}
@@ -2031,6 +2049,13 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   onRestart={
                     props.stageRestart?.disabledReason == null ? props.onRestartStage : null
                   }
+                />
+              ) : null}
+              {props.stepPaused !== null ? (
+                <BoardCardStepPaused
+                  stageLabel={props.stepPaused.stageLabel}
+                  onResume={props.onResumeStep ?? null}
+                  resuming={props.resumeStepPending === true}
                 />
               ) : null}
               {props.feedback !== null ? (

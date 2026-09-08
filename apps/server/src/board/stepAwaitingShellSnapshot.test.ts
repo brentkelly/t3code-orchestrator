@@ -88,8 +88,10 @@ const frozenConfig = {
   baseTipAtRoundStart: null,
 } as const;
 
-/** Drive a card all the way to a parked step, through the real decider. */
-const seedParkedStep = (reason: "question" | "stopped") =>
+/** Drive a card all the way to a parked step, through the real decider.
+    `null` stops one step short of parking, at a running admitted step — what a
+    pause needs, since a human stop is not the agent asking anything. */
+const seedParkedStep = (reason: "question" | "stopped" | null) =>
   Effect.gen(function* () {
     const engine = yield* OrchestrationEngineService;
     yield* engine.dispatch({
@@ -133,14 +135,16 @@ const seedParkedStep = (reason: "question" | "stopped") =>
       threadId: ThreadId.make("thread-await"),
       createdAt,
     });
-    yield* engine.dispatch({
-      type: "board.card.await-step-input",
-      commandId: CommandId.make("cmd-await"),
-      cardId,
-      stepId,
-      reason,
-      createdAt,
-    });
+    if (reason !== null) {
+      yield* engine.dispatch({
+        type: "board.card.await-step-input",
+        commandId: CommandId.make("cmd-await"),
+        cardId,
+        stepId,
+        reason,
+        createdAt,
+      });
+    }
     return engine;
   });
 
@@ -192,6 +196,40 @@ describe("stepAwaiting on the shell SNAPSHOT (t3o-34, D4)", () => {
         yield* sql`UPDATE board_card_step_state SET awaiting_reason = NULL WHERE card_id = ${cardId}`;
 
         assert.strictEqual((yield* shellCard)?.stepAwaiting, "question");
+      }),
+    );
+  });
+
+  it.layer(makeTestLayer("t3o-await-snap-5-"))("a step a human paused (T3O-23)", (it) => {
+    it.effect("comes back from SQL as `paused`, off the STATUS and not the column", () =>
+      Effect.gen(function* () {
+        const engine = yield* seedParkedStep(null);
+        yield* engine.dispatch({
+          type: "board.card.pause-step",
+          commandId: CommandId.make("cmd-pause"),
+          cardId,
+          stepId,
+          createdAt,
+        });
+
+        const card = yield* shellCard;
+        assert.strictEqual(card?.stepAwaiting, "paused");
+        // The flags that share this slice: a paused step is not running, has
+        // not stalled, has not settled, and is not waiting in the queue.
+        assert.strictEqual(card?.stepRunning, false);
+        assert.strictEqual(card?.stalled, false);
+        assert.strictEqual(card?.held, false);
+        assert.strictEqual(card?.queued, false);
+
+        // `paused` is derived from the status and is NEVER written to the
+        // row's own `awaiting_reason` — that column keeps meaning "why is this
+        // step awaiting-input", so every guard branching on the status stays
+        // able to branch on one thing.
+        const sql = yield* SqlClient.SqlClient;
+        const rows = yield* sql<{
+          readonly awaiting_reason: string | null;
+        }>`SELECT awaiting_reason FROM board_card_step_state WHERE card_id = ${cardId}`;
+        assert.notStrictEqual(rows[0]?.awaiting_reason, "paused");
       }),
     );
   });

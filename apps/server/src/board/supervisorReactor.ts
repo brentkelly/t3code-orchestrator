@@ -54,6 +54,7 @@ import {
   isBoardCardPullRequestTerminal,
   isBoardBuildStageExecution,
   isBoardMergeStageExecution,
+  isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
   MessageId,
   effectiveBoardRuntimeMode,
@@ -69,6 +70,7 @@ import {
   type BoardCard,
   type BoardCardId,
   type BoardCardPullRequest,
+  type BoardCardStepAwaitingReason,
   type BoardCardStepState,
   type BoardSettings,
   type BoardStageExecution,
@@ -121,6 +123,7 @@ import {
   runBoardCardWorktreeSetup,
 } from "./worktree.ts";
 import {
+  BOARD_STEP_RESUME_NUDGE,
   composeStepPrompt,
   orderBoardQueue,
   outputSignalShieldsStep,
@@ -1308,6 +1311,46 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * Admit a step that already owns a LIVE thread, by nudging that thread
+   * (T3O-23) — a step the human paused and the board is now resuming.
+   *
+   * Not a spawn: the agent's context, its todo list and its half-finished work
+   * are all in the thread it already has, and re-sending the whole step prompt
+   * into a second one would throw that away and put two writers on the same
+   * worktree. A thread that is GONE answers `no-thread`, and the caller falls
+   * through to its ordinary spawn, which is the right recovery.
+   *
+   * Admits BEFORE nudging, the opposite order to a spawn, and for a reason a
+   * spawn does not have: there is no thread to orphan here. A refused admit
+   * after the nudge would leave an agent working on a step the board still
+   * records as queued, holding a slot nothing releases; a nudge that fails after
+   * a landed admit leaves a `running` step with no turn, which the timeout sweep
+   * already recovers.
+   */
+  const resumeExistingStepThread = Effect.fn("board-supervisor-resumeExistingStepThread")(
+    function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
+      const { card, state } = input;
+      if (state.threadId === null || (yield* threadGone(state.threadId))) return "no-thread";
+      const admitted = yield* dispatchOptional({
+        type: "board.card.admit-step",
+        commandId: yield* commandId("admit-step"),
+        cardId: card.id,
+        stepId: state.stepId,
+        admitted: true,
+        threadId: state.threadId,
+        createdAt: yield* nowIso,
+      });
+      if (!admitted) return "refused";
+      yield* sendTurn({
+        threadId: state.threadId,
+        text: BOARD_STEP_RESUME_NUDGE,
+        runtimeMode: state.runtimeMode,
+      });
+      return "admitted";
+    },
+  );
+
   // Offer one build-mode step to the governor: acquire a slot under the resolved
   // caps and spawn its thread on the card's worktree, or leave it queued (D11).
   // Enforces the one-writer-per-worktree invariant (t3o-09) BEFORE acquiring, so
@@ -1329,12 +1372,17 @@ const make = Effect.gen(function* () {
     // it — admitting would be rejected AFTER the slot was acquired.
     const fresh = board.cards.find((candidate) => candidate.id === card.id);
     if (fresh === undefined || fresh.archivedAt !== null) return;
+    // A step being RE-admitted already owns its thread (T3O-23: a paused step
+    // resumed through the queue keeps the conversation it had), so counting it
+    // alongside the `board-admit:` sentinel below would be counting the same
+    // writer twice and the re-admission would refuse itself every time.
     const liveWriters = (board.stepStates ?? [])
       .filter(
         (candidate) =>
           candidate.cardId === card.id &&
           !isBoardTerminalStepStatus(candidate.status) &&
-          candidate.threadId !== null,
+          candidate.threadId !== null &&
+          !(candidate.stepId === state.stepId && candidate.threadId === state.threadId),
       )
       .map((candidate) => String(candidate.threadId));
     const wouldConflict = yield* assertSingleBoardWorktreeWriter({
@@ -1377,6 +1425,16 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    // A step that already owns a live thread is being RESUMED, not started
+    // (T3O-23): it was paused, a human pressed Resume, and the governor has just
+    // admitted it. A refused resume must give the slot straight back, or the
+    // acquire above leaks capacity nothing will ever release.
+    const resumed = yield* resumeExistingStepThread({ card, state });
+    if (resumed === "refused") {
+      yield* slots.release(state.providerInstanceId);
+      return;
+    }
+    if (resumed === "admitted") return;
     const spawnAttachments = yield* stageSpawnAttachments(card);
     const threadId = yield* spawnStepThread({
       card,
@@ -1461,6 +1519,13 @@ const make = Effect.gen(function* () {
     readonly state: BoardCardStepState;
   }) {
     const { card, state } = input;
+    // A plan-mode step can be paused and resumed too (T3O-23), and a planning
+    // conversation is precisely the thing worth continuing rather than
+    // restarting — so it takes the same existing-thread branch a build step
+    // does. It holds no slot, so a refusal here leaks nothing and simply leaves
+    // the step queued for the next pass.
+    const resumed = yield* resumeExistingStepThread({ card, state });
+    if (resumed !== "no-thread") return;
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
     if (cwd === null) {
@@ -1531,9 +1596,11 @@ const make = Effect.gen(function* () {
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined || card.archivedAt !== null) continue;
       if (state.mode === "plan") {
-        // Plan-mode holds no slot: spawn a freshly selected step now. (Plan
-        // steps are never `queued` — nothing withholds them.)
-        if (state.status === "pending") yield* admitPlanStep({ card, state });
+        // Plan-mode holds no slot: spawn a freshly selected step now. Nothing
+        // withholds a plan step, so `queued` used to be unreachable here — but a
+        // paused planning step sent back through Resume (T3O-23) arrives exactly
+        // that way, and skipping it would wedge the card in the queue forever.
+        yield* admitPlanStep({ card, state });
         continue;
       }
       // A build-mode step needs a ready worktree to spawn into. Anything that
@@ -1569,7 +1636,14 @@ const make = Effect.gen(function* () {
         stepId: state.stepId,
         providerInstanceId: state.providerInstanceId,
         stageOrder: boardStageIndex(board, card.stage),
-        started: boardCardStepCompletions(board, card.id).some((c) => c.stepId === state.stepId),
+        // …or the step already owns a thread (T3O-23): a paused step sent back
+        // through the queue is genuinely mid-stage and has no recorded
+        // completion to prove it, so without this it would rank as fresh work
+        // and could be starved behind the very cards this rule exists to
+        // outrank.
+        started:
+          state.threadId !== null ||
+          boardCardStepCompletions(board, card.id).some((c) => c.stepId === state.stepId),
         orderKey: card.orderKey,
       });
     }
@@ -1759,11 +1833,17 @@ const make = Effect.gen(function* () {
     if (onDemand) {
       if (existing !== null && !isBoardTerminalStepStatus(existing.status)) {
         yield* settleStep({ card, state: existing, outcome: "abandoned" });
-        // A stalled step already gave up and drives nothing (t3o-17), so it is
-        // left alone; anything else may still have a turn running against the
-        // card's worktree, and a second writer is the one thing a restart must
-        // not create. Best-effort, like every other orphan interrupt.
-        if (existing.status !== "stalled" && existing.threadId !== null) {
+        // A stalled step already gave up and drives nothing (t3o-17), and a
+        // paused one had its turn stopped when the human stopped it (T3O-23), so
+        // both are left alone; anything else may still have a turn running
+        // against the card's worktree, and a second writer is the one thing a
+        // restart must not create. Best-effort, like every other orphan
+        // interrupt.
+        if (
+          existing.status !== "stalled" &&
+          existing.status !== "paused" &&
+          existing.threadId !== null
+        ) {
           yield* interruptOrphan(existing.threadId);
           // Unlinked below while alive, so no card derives it any more (t3o-13)
           // — name it, or the release sweep can never settle it.
@@ -2507,6 +2587,104 @@ const make = Effect.gen(function* () {
   // never held one (D5). The provider is read off the frozen run row (D12).
   const releaseSlot = (state: BoardCardStepState) =>
     state.slotHeld ? slots.release(state.providerInstanceId) : Effect.void;
+
+  /**
+   * Park a step on the human gate (t3o-34, D3) and give its slot back (T3O-23).
+   *
+   * The ONE way a step reaches `awaiting-input`, so the release cannot be
+   * forgotten at a sixth call site: five dispatch it today (two on a completed
+   * turn, one on an `blocked` completion, one on a structured question, one at
+   * boot reconcile) and every one of them left the card holding a worker while
+   * nothing ran. The rationale is the escalation path's, word for word: no
+   * thread is running, so a parked card must not hold capacity for a weekend —
+   * and an unanswered question parks a card for exactly as long as a stall does.
+   *
+   * The dispatch is OBSERVED rather than fire-and-forget: a refused park (the
+   * step moved on under us) must not release a slot the step still holds and
+   * will still release at settle.
+   */
+  const parkStepForInput = Effect.fn("board-supervisor-parkStepForInput")(function* (input: {
+    readonly card: BoardCard;
+    readonly state: BoardCardStepState;
+    readonly reason: BoardCardStepAwaitingReason;
+  }) {
+    const landed = yield* dispatchOptional({
+      type: "board.card.await-step-input",
+      commandId: yield* commandId("await-input"),
+      cardId: input.card.id,
+      stepId: input.state.stepId,
+      reason: input.reason,
+      createdAt: yield* nowIso,
+    });
+    if (!landed) return;
+    // Gated on the PRE-park `slotHeld`, exactly as escalation is: the decider
+    // has already set the persisted flag false, so a re-run releases nothing.
+    yield* releaseSlot(input.state);
+    // Let the freed slot flow to the queue within a beat rather than at the next
+    // step boundary — the whole point of releasing it.
+    yield* schedule();
+  });
+
+  /**
+   * A HUMAN stopped a board-run step (T3O-23) — the way into `paused`.
+   *
+   * Driven by `thread.turn-interrupt-requested` on the domain stream, acted on
+   * immediately rather than waiting for the trailing `turn.completed`. Acting on
+   * the interrupt is what makes the card say `Paused` the moment the human
+   * presses Stop; it also means the `turn.completed` that follows finds a
+   * `paused` step and returns at `handleTurnCompleted`'s existing status guard,
+   * so the stop is not undone by a recovery nudge a beat later — which is the
+   * bug this exists to fix.
+   *
+   * The board interrupts threads of its own, and those must NOT read as a human
+   * stop: an orphan whose admit was rejected, and a thread abandoned mid-flight.
+   * Both are already tracked in their own sets, so the guard is free.
+   *
+   * The re-interrupt at the end is not redundant. Both streams funnel into the
+   * one serialised worker, and in the interleaving where `turn.completed` is
+   * processed FIRST, `recoverStep` has already sent a fresh nudge turn — leaving
+   * a step that says `Paused` while an agent works. Interrupting again makes the
+   * stop stick against that. The cost of that rare race is one wasted nudge and
+   * one `stageEntryRecoveries` increment; the end state is still correct, because
+   * pausing is allowed from `running`. The interrupt this dispatch emits
+   * re-enters here, finds the step already `paused`, and stops.
+   */
+  const pauseStepForHumanStop = Effect.fn("board-supervisor-pauseStepForHumanStop")(function* (
+    threadId: ThreadId,
+  ) {
+    // The board's own interrupts (see `interruptOrphan` / `abandonedThreads`).
+    if (orphanedThreads.has(String(threadId)) || abandonedThreads.has(String(threadId))) return;
+    const board = yield* readBoard;
+    const found = stepThreadCard(board, threadId);
+    if (found === null || found.card.archivedAt !== null) return;
+    if (isBoardTerminalStepStatus(found.state.status)) return;
+    // Only a status with a turn to stop. `queued`/`pending` hold no slot and
+    // have nothing running; `stalled` and `paused` are already parked — and the
+    // `paused` case is what terminates the re-interrupt below.
+    if (found.state.status !== "running" && found.state.status !== "awaiting-input") return;
+    const landed = yield* dispatchOptional({
+      type: "board.card.pause-step",
+      commandId: yield* commandId("pause-step"),
+      cardId: found.card.id,
+      stepId: found.state.stepId,
+      createdAt: yield* nowIso,
+    });
+    if (!landed) return;
+    // Gated on the pre-pause `slotHeld`, exactly as escalation is.
+    yield* releaseSlot(found.state);
+    const shell = yield* snapshotQuery
+      .getThreadShellById(threadId)
+      .pipe(Effect.map(Option.getOrUndefined));
+    if (shell?.session?.activeTurnId != null) {
+      yield* dispatch({
+        type: "thread.turn.interrupt",
+        commandId: yield* commandId("interrupt-paused"),
+        threadId,
+        createdAt: yield* nowIso,
+      });
+    }
+    yield* schedule();
+  });
 
   const settleStep = Effect.fn("board-supervisor-settleStep")(function* (input: {
     readonly card: BoardCard;
@@ -3617,14 +3795,7 @@ const make = Effect.gen(function* () {
       // consumed (D13). Move (or keep) the step on the human gate. A no-op when
       // it is already awaiting-input.
       if (found.state.status === "running") {
-        yield* dispatch({
-          type: "board.card.await-step-input",
-          commandId: yield* commandId("await-input"),
-          cardId: found.card.id,
-          stepId: found.state.stepId,
-          reason: "question",
-          createdAt: yield* nowIso,
-        });
+        yield* parkStepForInput({ card: found.card, state: found.state, reason: "question" });
       }
       return;
     }
@@ -3645,13 +3816,10 @@ const make = Effect.gen(function* () {
       // Already parked and still parked: re-deciding the reason would churn a
       // delta per turn.completed for no change.
       if (found.state.status === "awaiting-input") return;
-      yield* dispatch({
-        type: "board.card.await-step-input",
-        commandId: yield* commandId("await-input"),
-        cardId: found.card.id,
-        stepId: found.state.stepId,
+      yield* parkStepForInput({
+        card: found.card,
+        state: found.state,
         reason: (yield* endedWithQuestion(found.state)) ? "question" : "stopped",
-        createdAt: yield* nowIso,
       });
       return;
     }
@@ -3851,16 +4019,9 @@ const make = Effect.gen(function* () {
         yield* recoverStep({ card, state });
         return;
       case "blocked":
-        // The agent needs a human (D13): park the step on the gate.
-        yield* dispatch({
-          type: "board.card.await-step-input",
-          commandId: yield* commandId("await-input"),
-          cardId: card.id,
-          stepId: state.stepId,
-          // An agent that reported `blocked` asked for a human by name.
-          reason: "question",
-          createdAt: yield* nowIso,
-        });
+        // The agent needs a human (D13): park the step on the gate. An agent
+        // that reported `blocked` asked for a human by name.
+        yield* parkStepForInput({ card, state, reason: "question" });
         return;
     }
   });
@@ -3885,14 +4046,7 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const watched = stepThreadCard(board, threadId);
     if (watched === null || watched.state.status !== "running") return;
-    yield* dispatch({
-      type: "board.card.await-step-input",
-      commandId: yield* commandId("await-input"),
-      cardId: watched.card.id,
-      stepId: watched.state.stepId,
-      reason: "question",
-      createdAt: yield* nowIso,
-    });
+    yield* parkStepForInput({ card: watched.card, state: watched.state, reason: "question" });
   });
 
   // Mid-run human-in-the-loop toggle (D5/D6): when the per-card Build toggle is
@@ -4503,8 +4657,10 @@ const make = Effect.gen(function* () {
     if (state === undefined || isBoardTerminalStepStatus(state.status)) return;
     // Already stalled for this same reason: the provider reactor can append the
     // activity more than once for one dead session, and re-landing would inflate
-    // `attempt` and double-release the slot.
-    if (state.status === "stalled") return;
+    // `attempt` and double-release the slot. A step a human PAUSED is parked for
+    // their reason, not a failure — driving it here would undo the stop and
+    // charge a recovery for a turn nobody wanted started (T3O-23).
+    if (state.status === "stalled" || state.status === "paused") return;
     const card = board.cards.find((candidate) => candidate.id === state.cardId);
     if (card === undefined || card.archivedAt !== null) return;
 
@@ -4595,6 +4751,12 @@ const make = Effect.gen(function* () {
    *
    * Both funnel through here, so whichever arrives second finds the step already
    * `running` and does nothing.
+   *
+   * T3O-23 adds `paused` to the statuses this un-parks, on exactly the same
+   * terms: a human typing in the thread of a step they stopped has restarted it
+   * themselves. It also makes the resume TAKE a slot, because every parked
+   * status now releases one — see the decider's `resume-step`, and the
+   * `slots.restore` below that keeps the in-memory count matching the row.
    */
   const resumeParkedStep = Effect.fn("board-supervisor-resumeParkedStep")(function* (
     threadId: ThreadId,
@@ -4602,15 +4764,25 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
     if (found === null) return;
-    if (found.state.status !== "stalled" && found.state.status !== "awaiting-input") return;
+    if (!isBoardParkedStepStatus(found.state.status)) return;
     if (found.card.archivedAt !== null) return;
-    yield* dispatch({
+    // OBSERVED, not fire-and-forget: a refused resume must never restore a slot
+    // that nothing will release — the same discipline `admitBuildCandidate`
+    // applies around `admit-step`.
+    const landed = yield* dispatchOptional({
       type: "board.card.resume-step",
       commandId: yield* commandId("resume-step"),
       cardId: found.card.id,
       stepId: found.state.stepId,
       createdAt: yield* nowIso,
     });
+    if (!landed) return;
+    // The decider wrote `slotHeld: true` for a build step, so the in-memory
+    // count has to match it. `restore` rather than `acquire`: the human already
+    // sent the turn and the agent is already working, so this is a take, not a
+    // request — the `forceStart` and boot-reconcile precedent. The count may sit
+    // over the ceiling until the step settles and releases exactly once.
+    if (found.state.mode === "build") yield* slots.restore(found.state.providerInstanceId);
   });
 
   const handleTurnStartRequested = Effect.fn("board-supervisor-handleTurnStartRequested")(
@@ -4704,16 +4876,14 @@ const make = Effect.gen(function* () {
           // The boot-time twin of `handleTurnCompleted`'s human-in-the-loop arm
           // (t3o-34): say WHICH kind of stop it was, off the same last-message
           // read, so the card shows "Input needed" or "Needs a human" rather
-          // than claiming the agent is working. The slot was restored above and
-          // stays held — a parked step is admitted, not queued — and the human's
-          // next turn on the thread un-parks it through `resumeParkedStep`.
-          yield* dispatch({
-            type: "board.card.await-step-input",
-            commandId: yield* commandId("await-input"),
-            cardId: card.id,
-            stepId: state.stepId,
+          // than claiming the agent is working. The slot restored above is given
+          // straight back (T3O-23) — net zero, and correct: a parked step holds
+          // no capacity. The human's next turn on the thread un-parks it through
+          // `resumeParkedStep`, which re-takes the slot.
+          yield* parkStepForInput({
+            card,
+            state,
             reason: (yield* endedWithQuestion(state)) ? "question" : "stopped",
-            createdAt: yield* nowIso,
           });
           break;
         case "reschedule":
@@ -4828,6 +4998,16 @@ const make = Effect.gen(function* () {
         // makes the click start the card: without it the override would sit on
         // the row until some unrelated step boundary happened to run a pass.
         return schedule();
+      case "board.card-step-recovered":
+        // The board's way out of a parked step (T3O-23): `requeue-step` lands
+        // it `queued`, holding no slot, and this is what offers it back to the
+        // governor on the click rather than at some unrelated step boundary.
+        // The event is also emitted by every recovery nudge and by an in-thread
+        // resume, neither of which is queued — hence the status test, not a
+        // blanket pass. `requeue-step` is the ONE seam: the card's Resume button
+        // dispatches it directly, and T3O-19's scheduled resume will too, so
+        // neither needs a private path into the governor.
+        return event.payload.state.status === "queued" ? schedule() : Effect.void;
       case "board.card-archived":
         return handleArchived(event);
       case "board.card-deleted":
@@ -4839,6 +5019,11 @@ const make = Effect.gen(function* () {
         // A human restarting a stalled step by hand (t3o-17, D3) — the board's own
         // turns land here too and no-op, since only a `stalled` step resumes.
         return handleTurnStartRequested(event);
+      case "thread.turn-interrupt-requested":
+        // A human pressing Stop on a board-run step (T3O-23). The board's own
+        // interrupts land here too and are filtered inside, off the sets that
+        // already track them.
+        return pauseStepForHumanStop(event.payload.threadId);
       case "thread.activity-appended":
         // The other non-board event the supervisor listens to (t3o-30, D2): a
         // step's turn failing to start at all. Everything else about a thread
@@ -5009,6 +5194,9 @@ const make = Effect.gen(function* () {
         }
         if (
           event.type !== "thread.turn-start-requested" &&
+          // A human stopping a board-run step (T3O-23). One event per Stop
+          // press, machine-wide — negligible beside what already crosses here.
+          event.type !== "thread.turn-interrupt-requested" &&
           event.type !== "board.card-moved" &&
           event.type !== "board.card-created" &&
           event.type !== "board.card-stage-thread-requested" &&
@@ -5018,6 +5206,11 @@ const make = Effect.gen(function* () {
           // that it takes effect on the click rather than at the next step
           // boundary, so it has to cross this filter.
           event.type !== "board.card-step-force-start-requested" &&
+          // A step going back to the build queue (T3O-23). Emitted by every
+          // recovery too, which is a handful of events an hour at most — far
+          // below the volume that made `thread.activity-appended` need its own
+          // pre-filter above.
+          event.type !== "board.card-step-recovered" &&
           event.type !== "board.card-archived" &&
           event.type !== "board.card-deleted" &&
           event.type !== "board.plans-approved"

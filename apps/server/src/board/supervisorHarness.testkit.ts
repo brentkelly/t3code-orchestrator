@@ -926,7 +926,15 @@ export function withGovernor(
             // the projection, and `schedule` reads it from there. Pumping the
             // event without folding it in would test a row that never carried
             // the flag.
-            event.type === "board.card-step-force-start-requested")
+            event.type === "board.card-step-force-start-requested" ||
+            // And again for a requeue (T3O-23): `board.card.requeue-step` is a
+            // CLIENT command, so its event reaches a running board from
+            // outside the reactor, and the governor reads the `queued` row it
+            // writes. Recovery emits the same event type from inside the
+            // reactor, where the double has already folded it in — the
+            // projection is an idempotent upsert of the whole state, so folding
+            // it twice is the same as folding it once.
+            event.type === "board.card-step-recovered")
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),
@@ -1024,6 +1032,37 @@ export const forceStartRequested = (
     type: "board.card-step-force-start-requested",
     sequence,
     payload: { cardId: state.cardId, state: { ...state, forceStart: true } },
+  }) as unknown as OrchestrationEvent;
+
+/** A turn being INTERRUPTED on a thread (T3O-23) — what the Stop button emits,
+    and the signal that parks a board-run step. The board's own interrupts emit
+    exactly the same event, which is why the reactor filters them by thread. */
+export const turnInterruptRequested = (threadId: ThreadId, sequence: number): OrchestrationEvent =>
+  ({
+    type: "thread.turn-interrupt-requested",
+    sequence,
+    payload: { threadId, createdAt: NOW },
+  }) as unknown as OrchestrationEvent;
+
+/** A parked step sent back to the build queue (T3O-23) — the shape
+    `board.card.requeue-step` decides, as it reaches the reactor's domain
+    stream. Mirrors `forceStartRequested`: the client's own command is covered
+    at the decider, and this is how its EVENT reaches a live reactor. */
+export const stepRequeued = (state: BoardCardStepState, sequence: number): OrchestrationEvent =>
+  ({
+    type: "board.card-step-recovered",
+    sequence,
+    payload: {
+      cardId: state.cardId,
+      state: {
+        ...state,
+        status: "queued",
+        stallCount: 0,
+        lastError: null,
+        slotHeld: false,
+        startedAt: null,
+      },
+    },
   }) as unknown as OrchestrationEvent;
 
 export const cardArchived = (card: BoardCard, sequence: number): OrchestrationEvent =>

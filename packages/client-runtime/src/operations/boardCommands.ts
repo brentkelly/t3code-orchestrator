@@ -48,6 +48,7 @@ export type MoveBoardCardInput = CommandInput<"board.card.move">;
 export type ReorderBoardCardInput = CommandInput<"board.card.reorder">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
 export type ForceStartBoardCardStepInput = CommandInput<"board.card.force-start-step">;
+export type RequeueBoardCardStepInput = CommandInput<"board.card.requeue-step">;
 export type ReopenBoardCardStepInput = CommandInput<"board.card.reopen-step">;
 export type LinkBoardCardThreadInput = CommandInput<"board.card.link-thread">;
 export type UnlinkBoardCardThreadInput = CommandInput<"board.card.unlink-thread">;
@@ -165,6 +166,21 @@ export const forceStartBoardCardStep: (input: ForceStartBoardCardStepInput) => C
       createdAt: metadata.createdAt,
     });
   });
+
+/** Send a card's parked step back to the build queue (T3O-23) — the Resume
+    button on a paused card. Names no step: the server resolves the card's live
+    one, and the governor admits it when a slot frees. */
+export const requeueBoardCardStep: (input: RequeueBoardCardStepInput) => CommandEffect = Effect.fn(
+  "BoardCommands.requeueBoardCardStep",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.requeue-step",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
 
 /** Repair a settled step whose recorded payload cannot be read (T3O-14), so
     the review loop plans its round again. Refused on a readable record. */

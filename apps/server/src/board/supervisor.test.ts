@@ -417,6 +417,21 @@ describe("reconcileStepDecision (boot reconciliation)", () => {
     assert.deepStrictEqual(decide({ status: "running", humanInLoop: true }), { kind: "recover" });
   });
 
+  it("leaves a paused step exactly where the human put it (T3O-23)", () => {
+    // The same shape `stalled` has: non-terminal, so boot reconciliation keeps
+    // re-reading it, but supervision does not drive it. Recovering it would be
+    // the board undoing a human's stop across a restart — and unlike a stall,
+    // this one is the user's own instruction, so a live thread makes no
+    // difference either way.
+    assert.deepStrictEqual(decide({ status: "paused" }), { kind: "resume-watch" });
+    assert.deepStrictEqual(decide({ status: "paused", threadAlive: true }), {
+      kind: "resume-watch",
+    });
+    assert.deepStrictEqual(decide({ status: "paused", humanInLoop: true }), {
+      kind: "resume-watch",
+    });
+  });
+
   it("keeps waiting on an awaiting-input step whose question thread survives", () => {
     assert.deepStrictEqual(decide({ status: "awaiting-input", threadAlive: true }), {
       kind: "resume-watch",
