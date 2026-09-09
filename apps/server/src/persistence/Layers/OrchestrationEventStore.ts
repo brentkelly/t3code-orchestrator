@@ -4,6 +4,8 @@ import {
   BoardLabelId,
   BoardStageId,
   CommandId,
+  // T3o: shared command-id origin rule (T3O-17, D2).
+  commandIdOrigin,
   EventId,
   IsoDateTime,
   NonNegativeInt,
@@ -122,11 +124,12 @@ const READ_PAGE_SIZE = 500;
 function inferActorKind(
   event: Omit<OrchestrationEvent, "sequence">,
 ): Schema.Schema.Type<typeof OrchestrationActorKind> {
-  if (event.commandId !== null && event.commandId.startsWith("provider:")) {
-    return "provider";
-  }
-  if (event.commandId !== null && event.commandId.startsWith("server:")) {
-    return "server";
+  // T3o: the `provider:` / `server:` prefix rule now has ONE home
+  // (`commandOrigin.ts`), because the board reads the same ids to tell its own
+  // nudge from a human's message (T3O-17, D2). Same answers, one definition.
+  const declared = commandIdOrigin(event.commandId);
+  if (declared !== null) {
+    return declared;
   }
   if (
     event.metadata.providerTurnId !== undefined ||

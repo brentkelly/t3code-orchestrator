@@ -181,6 +181,7 @@ const leftoverStep = (stepId: string): BoardCardStepState => ({
   attempt: 5,
   stallCount: 5,
   stageEntryRecoveries: 0,
+  humanTurnAt: null,
   lastNudgeAt: NOW,
   baseTipAtRoundStart: null,
   lastError: null,

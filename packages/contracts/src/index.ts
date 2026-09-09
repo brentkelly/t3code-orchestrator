@@ -24,6 +24,7 @@ export * from "./orchestration.ts";
 export * from "./board.ts";
 export * from "./boardEnvelope.ts";
 export * from "./boardStopSignal.ts";
+export * from "./commandOrigin.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";

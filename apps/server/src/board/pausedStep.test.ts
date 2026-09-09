@@ -165,6 +165,7 @@ const atTheCeiling = (id: string): BoardCardStepState => ({
   attempt: 1,
   stallCount: 2,
   stageEntryRecoveries: 0,
+  humanTurnAt: null,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,
