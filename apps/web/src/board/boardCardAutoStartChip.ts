@@ -25,18 +25,12 @@ export function boardCardAutoStartChip(input: {
       right-hand cluster, and a schedule names a concrete moment, so it is the
       more specific claim and wins (D8: schedule > auto-start > queue). */
   readonly scheduled: boolean;
-  /** The keys of the dependencies still outstanding, for the tooltip. Empty
-      when the card face cannot see them — the shell carries a dependency COUNT,
-      not the edges — which is the ordinary case on a column card. */
-  readonly blockerKeys?: ReadonlyArray<string> | undefined;
 }): BoardCardAutoStartChip | null {
   if (!input.autoStart || input.done || input.scheduled) return null;
-  const blockers = input.blockerKeys ?? [];
-  return {
-    label: "Auto-start",
-    tooltip:
-      blockers.length === 0
-        ? "Starts automatically when its dependencies are done"
-        : `Starts automatically when ${blockers.join(", ")} ${blockers.length === 1 ? "is" : "are"} done`,
-  };
+  // The tooltip does not NAME the blockers. The card shell carries a dependency
+  // COUNT, not the edges (D7's byte budget), so a column card cannot resolve a
+  // key without new payload on every card — and the general sentence is true of
+  // every armed card. Open the card to see who it is waiting for; the blocked
+  // callout there names them.
+  return { label: "Auto-start", tooltip: "Starts automatically when its dependencies are done" };
 }
