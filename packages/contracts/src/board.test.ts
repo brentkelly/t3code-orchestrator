@@ -41,6 +41,7 @@ import {
   BoardStageId,
   LEGACY_BOARD_CARD_ORDER_KEY,
   boardBuildHumanInLoopDefault,
+  BOARD_ATTENTION_SETTLE_MS,
   boardCardAttention,
   boardCardChildAttentionLabel,
   boardCardChildRunningLabel,
@@ -1222,14 +1223,22 @@ describe("cards that need a human (boardCardAttention)", () => {
   /** The base fixture is fully populated, review summary included — strip it
       unless the case under test is about the loop, or every card would read as
       a held review. */
-  const attention = (overrides: Partial<BoardCardShell>) => {
+  const attention = (
+    overrides: Partial<BoardCardShell>,
+    /** The settle-grace inputs the board page joins client-side (T3O-29).
+        Omitted by every other case, which is what the production callers that
+        hold no thread shells do — and means "no grace". */
+    settle?: { readonly threadIdleSince?: string | null; readonly now?: number },
+  ) => {
     const { reviewOutcome, reviewHeldOutcome, reviewRoundComplete, ...rest } = card(overrides);
+    const shell =
+      overrides.reviewOutcome === undefined
+        ? rest
+        : { ...rest, reviewOutcome, reviewHeldOutcome, reviewRoundComplete };
     return boardCardAttention({
-      card:
-        overrides.reviewOutcome === undefined
-          ? rest
-          : { ...rest, reviewOutcome, reviewHeldOutcome, reviewRoundComplete },
+      card: { ...shell, threadIdleSince: settle?.threadIdleSince },
       stages: BOARD_SEED_STAGES,
+      now: settle?.now,
     });
   };
 
@@ -1403,6 +1412,28 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(attention({ stepAwaiting: "stopped", stepRunning: true })).toBeNull();
   });
 
+  // T3O-29: the same lie, one branch further up. `held` was deliberately exempt
+  // from the working veto — it is a claim about the STAGE, not the agent — but
+  // it wears the same three words, so a build that settled and was then chatted
+  // with sat there in amber beside a pulsing blue dot.
+  it("never says a card needs a human while a thread on it is working, held included", () => {
+    expect(attention({ held: true, threadState: "working" })).toBeNull();
+    // Both halves of the dot, and both stages the chip can appear in.
+    expect(attention({ held: true, stepRunning: true })).toBeNull();
+    expect(
+      attention({ stage: BOARD_SEED_STAGE_IDS.merge, held: true, threadState: "working" }),
+    ).toBeNull();
+    // A held card whose thread is merely idle still flags — the veto is
+    // EVIDENCE of work, never the absence of it.
+    expect(attention({ held: true, threadState: "stopped" })?.reason).toBe("held");
+    expect(attention({ held: true, threadState: "failed" })?.reason).toBe("held");
+    // …and the answerable question the working card was hiding is now what it
+    // shows, rather than nothing at all.
+    expect(attention({ held: true, threadState: "working", awaitingInput: true })?.reason).toBe(
+      "input",
+    );
+  });
+
   it("still parks a step whose threads are stopped or provably dead", () => {
     // The veto is EVIDENCE of work, not the absence of it: a failed thread is
     // not working (it vetoes the dot too), so the parked step still flags.
@@ -1419,6 +1450,77 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(
       attention({ awaitingInput: true, stepRunning: true, threadState: "waiting" })?.reason,
     ).toBe("input");
+  });
+
+  // T3O-29: the second half of the same complaint — a card that stopped a beat
+  // ago is not yet a card that needs a human. The turn ends, the step row parks
+  // and the supervisor decides whether to resume, over several round trips that
+  // do not land together, and the chip flashed amber through all of it.
+  describe("the settle grace", () => {
+    const idleAt = "2026-09-09T12:00:00.000Z";
+    const idle = Date.parse(idleAt);
+    const settle = (offsetMs: number) => ({ threadIdleSince: idleAt, now: idle + offsetMs });
+
+    it("withholds both Needs-a-human chips until the thread has been quiet 5s", () => {
+      expect(BOARD_ATTENTION_SETTLE_MS).toBe(5_000);
+      for (const parked of [{ held: true }, { stepAwaiting: "stopped" as const }]) {
+        expect(attention(parked, settle(0))).toBeNull();
+        expect(attention(parked, settle(BOARD_ATTENTION_SETTLE_MS - 1))).toBeNull();
+        // The grace is over the instant it elapses, not a tick later.
+        expect(attention(parked, settle(BOARD_ATTENTION_SETTLE_MS))).not.toBeNull();
+        expect(attention(parked, settle(60_000))).not.toBeNull();
+      }
+      expect(attention({ held: true }, settle(BOARD_ATTENTION_SETTLE_MS))?.reason).toBe("held");
+      expect(
+        attention({ stepAwaiting: "stopped" }, settle(BOARD_ATTENTION_SETTLE_MS))?.reason,
+      ).toBe("stopped");
+    });
+
+    it("never delays a chip that is not claiming the card went quiet", () => {
+      // A pending question is answerable the moment it is asked, a stall has
+      // already exhausted recovery, and a pause is the human's own instruction.
+      // None of them is guessing about a beat that has not finished.
+      expect(attention({ awaitingInput: true }, settle(0))?.reason).toBe("input");
+      expect(attention({ stepAwaiting: "question" }, settle(0))?.reason).toBe("input");
+      expect(attention({ stalled: true }, settle(0))?.reason).toBe("stalled");
+      expect(attention({ stepAwaiting: "paused" }, settle(0))?.reason).toBe("paused");
+      // …and a graced `held` does not swallow the answerable question ranked
+      // below it: the card says the thing the human can act on.
+      expect(attention({ held: true, awaitingInput: true }, settle(0))?.reason).toBe("input");
+    });
+
+    it("fails open when it has no evidence the stop is fresh", () => {
+      // Both halves or neither. A caller with no clock (the detail modal), a
+      // card whose thread has never finished a turn, and a timestamp nothing
+      // can parse all behave exactly as they did before the grace existed.
+      expect(attention({ held: true })?.reason).toBe("held");
+      expect(attention({ held: true }, { threadIdleSince: idleAt })?.reason).toBe("held");
+      expect(attention({ held: true }, { now: idle })?.reason).toBe("held");
+      expect(attention({ held: true }, { threadIdleSince: null, now: idle })?.reason).toBe("held");
+      expect(attention({ held: true }, { threadIdleSince: "not a date", now: idle })?.reason).toBe(
+        "held",
+      );
+    });
+
+    it("applies to a parent's roll-up of its children too", () => {
+      // One chip is not allowed to appear five seconds before the one it is
+      // summarising.
+      const parent = card({ cardId: BoardCardId.make("card-parent"), held: false });
+      const child = {
+        ...card({ stepAwaiting: "stopped" }),
+        cardId: BoardCardId.make("c1"),
+        parentCardId: parent.cardId,
+        threadIdleSince: idleAt,
+      };
+      const rollUp = (now: number) =>
+        deriveBoardCardChildAttention({
+          cards: [parent, child],
+          stages: BOARD_SEED_STAGES,
+          now,
+        }).get(parent.cardId);
+      expect(rollUp(idle + 1_000)).toBeUndefined();
+      expect(rollUp(idle + BOARD_ATTENTION_SETTLE_MS)?.reason).toBe("stopped");
+    });
   });
 
   it("reads a review loop that ran out of rounds as needing a human", () => {

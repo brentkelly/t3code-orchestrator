@@ -64,8 +64,18 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   dot from thread liveness, the chips from the step row — and the step row can go stale, which is
   how the board once shipped a card pulsing blue beside "Needs a human". Where they disagree the
   evidence wins and the chip goes, the same ranking that darkens the dot when a step claims to be
-  running on threads that are provably dead. A live thread's own pending question is exempt: it is
-  answerable in one click, and hiding it behind the dot would strand the answer.
+  running on threads that are provably dead. This covers "Needs a human" in both its spellings: the
+  stopped step's, and the settled step's that only a human moves on. A live thread's own pending
+  question is exempt: it is answerable in one click, and hiding it behind the dot would strand the
+  answer.
+- **…and it waits five seconds before it says it.** The dot going dark is not the end of the story:
+  the turn ends, the step row parks and the supervisor decides whether to resume, over several round
+  trips that do not land together. Through that beat the card is neither working nor genuinely
+  parked on anybody, and flashing amber through it trains people to ignore the one chip that means
+  "this one is yours now". So both "Needs a human" chips wait `BOARD_ATTENTION_SETTLE_MS` after the
+  card's thread last finished a turn. Only those two: a pending question is answerable the moment it
+  is asked, a stall has already exhausted recovery, and a pause is the human's own instruction —
+  none of them is guessing about a beat that has not finished.
 
 ## Deliberately outside the convention
 

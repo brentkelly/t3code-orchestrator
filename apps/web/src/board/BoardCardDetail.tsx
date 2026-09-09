@@ -267,7 +267,12 @@ export function BoardCardDetail({
       guards with it: a running or queued step is not held, a card dragged back
       before the build role is not held, a parent building through its children
       is not held, and a `stalled` step outranks `held` so Restart keeps owning
-      that case (D3). */
+      that case (D3). Since T3O-29 a card whose THREAD is mid-turn is not held
+      either — moving it on under a working agent is a race, and the button is
+      back the moment the turn ends. No `now` is passed, so the chip's five-second
+      settle grace does not apply here: the grace exists to stop a chip flashing
+      for attention, and an affordance that made you wait for it would only be
+      the same lie told slowly. */
   const stepHeld = useMemo(() => {
     const shell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
     return shell !== undefined && boardCardAttention({ card: shell, stages })?.reason === "held";

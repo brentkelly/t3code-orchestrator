@@ -67,6 +67,7 @@ import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
 import { countBoardColumnCards, filterBoardColumnsByQuery } from "./boardCardFilter";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { BoardCardDetail } from "./BoardCardDetail";
+import { useBoardAttentionSettle } from "./boardAttentionSettle";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
 import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
@@ -376,12 +377,44 @@ function EnvironmentBoard({
     (cardId: string) => (scope.kind === "root" ? parentKeyById.get(cardId) : undefined),
     [parentKeyById, scope],
   );
+  // The thread shells, joined here from the snapshot the client already holds.
+  // Read by the card todo strips below and by the attention settle grace next.
+  const threadShellsById = useMemo(() => {
+    const shells = Option.getOrNull(shellState.snapshot)?.threads ?? [];
+    return new Map(shells.map((thread) => [thread.id, thread]));
+  }, [shellState.snapshot]);
+  const threadShellOf = useCallback(
+    (threadId: ThreadId) => threadShellsById.get(threadId),
+    [threadShellsById],
+  );
+  // Every live shell, flat — the attention derivations below fold over it, and
+  // the sub-board's plan strip resolves this parent's children out of it
+  // (t3o-29, D1). The FULL columns, not the scoped ones: a child is filtered
+  // out of what renders, never out of what the client knows.
+  const allCards = useMemo(() => Object.values(columns).flat(), [columns]);
+  // …and when each card's thread last went quiet, plus the clock that ticks once
+  // when a grace expires (T3O-29). Both feed `boardCardAttention` below, which
+  // withholds the "Needs a human" chips until the card has been still for
+  // `BOARD_ATTENTION_SETTLE_MS`.
+  const { threadIdleSinceByCard, now: attentionNow } = useBoardAttentionSettle({
+    cards: allCards,
+    threadOf: threadShellOf,
+  });
   // "Needs a human", derived client-side from the shell + stage list with no
   // extra payload (t3o-27's split approval is one of its reasons). The card
   // face turns this into a border, a fill tint and one chip.
   const attentionFor = useCallback(
-    (card: BoardCardShell) => boardCardAttention({ card, stages: orderedStages }),
-    [orderedStages],
+    (card: BoardCardShell) => {
+      // Spread only where there is a timestamp to carry — a card whose thread
+      // has never finished a turn is passed through as the shell it already is.
+      const threadIdleSince = threadIdleSinceByCard.get(String(card.cardId));
+      return boardCardAttention({
+        card: threadIdleSince === undefined ? card : { ...card, threadIdleSince },
+        stages: orderedStages,
+        now: attentionNow,
+      });
+    },
+    [orderedStages, threadIdleSinceByCard, attentionNow],
   );
   // …and the same question asked of each parent's CHILDREN, folded once for the
   // whole board rather than per card: a split parent builds through its
@@ -391,10 +424,17 @@ function EnvironmentBoard({
   const childAttentionByParent = useMemo(
     () =>
       deriveBoardCardChildAttention({
-        cards: Object.values(columns).flat(),
+        // Only a sub-board CHILD can roll up, so only a child pays for the
+        // settle-grace join — on the ordinary board that is every card skipped.
+        cards: allCards.map((card) => {
+          if (card.parentCardId === undefined) return card;
+          const threadIdleSince = threadIdleSinceByCard.get(String(card.cardId));
+          return threadIdleSince === undefined ? card : { ...card, threadIdleSince };
+        }),
         stages: orderedStages,
+        now: attentionNow,
       }),
-    [columns, orderedStages],
+    [allCards, orderedStages, threadIdleSinceByCard, attentionNow],
   );
   const childAttentionFor = useCallback(
     (card: BoardCardShell) => childAttentionByParent.get(card.cardId),
@@ -406,8 +446,8 @@ function EnvironmentBoard({
   // thing is queued — the one thing the dot is there to tell apart. Folded once
   // for the board, like the roll-up above it, and just as free.
   const childRunningByParent = useMemo(
-    () => deriveBoardCardChildRunning({ cards: Object.values(columns).flat() }),
-    [columns],
+    () => deriveBoardCardChildRunning({ cards: allCards }),
+    [allCards],
   );
   const childRunningFor = useCallback(
     (card: BoardCardShell) => childRunningByParent.get(card.cardId),
@@ -424,12 +464,6 @@ function EnvironmentBoard({
         : null,
     [columns, scope],
   );
-
-  // Every live shell, flat — the sub-board's plan strip resolves this
-  // parent's children out of it (t3o-29, D1). The FULL columns, not the
-  // scoped ones: a child is filtered out of what renders, never out of what
-  // the client knows.
-  const allCards = useMemo(() => Object.values(columns).flat(), [columns]);
 
   // The sub-board's dependency chart (t3o-29, D6). Ephemeral: the page
   // remounts per navigation, and persisted board UI state has already caused
@@ -469,10 +503,6 @@ function EnvironmentBoard({
   // client already holds. Nothing is duplicated onto the wire, and no card opens
   // a subscription.
   const cardThreadsByCard = useAtomValue(boardEnvironment.cardThreadsByCardAtom(environmentId));
-  const threadShellsById = useMemo(() => {
-    const shells = Option.getOrNull(shellState.snapshot)?.threads ?? [];
-    return new Map(shells.map((thread) => [thread.id, thread]));
-  }, [shellState.snapshot]);
   // Which cards have their extra threads revealed. In-memory and session-scoped
   // (D9): a collapse preference has near-zero value across reloads, and persisted
   // board UI state has already caused a navigation bug in this codebase.
