@@ -40,7 +40,7 @@ does not depend on the file still being on the machine you attached it from.
 Two things to know. A file that was still uploading when the page reloaded is not kept — only
 finished uploads are, and closing the dialog on its own loses nothing either way. And a file
 restored after a reload has no retry: if it will not attach, remove it and attach it again.
-Attachments are held for a day from your last edit, after which the draft comes back without them
-and says so.
+Each attachment is held for a day from when it finished uploading — carrying on typing does not
+extend it — after which the draft comes back without that file and says so.
 
 See also [Board card attachments](./board-attachments.md).

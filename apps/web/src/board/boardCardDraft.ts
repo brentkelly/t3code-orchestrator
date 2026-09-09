@@ -25,7 +25,6 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type { BoardPendingUpload } from "./boardAttachmentUpload";
 import type { BoardStagedAttachment } from "./BoardBriefAttachments";
 
 /**
@@ -35,14 +34,20 @@ import type { BoardStagedAttachment } from "./BoardBriefAttachments";
  */
 export const BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** One staged file, by reference. Structurally `BoardPendingUpload`. */
+/** One staged file, by reference: a `BoardPendingUpload` plus the moment it
+    landed, which is the clock the server's sweep runs on. */
 export const BoardCardDraftAttachmentSchema = Schema.Struct({
   pendingAttachmentId: Schema.String,
   name: Schema.String,
   type: Schema.Literals(["image", "file"]),
   mimeType: Schema.String,
   sizeBytes: Schema.Number,
+  /** Epoch millis the upload landed — the same instant the server stamps the
+      pending file's mtime, which is what `PENDING_ATTACHMENT_MAX_AGE_MS`
+      sweeps against. Editing the draft afterwards must not extend it. */
+  uploadedAt: Schema.Number,
 });
+export type BoardCardDraftAttachment = typeof BoardCardDraftAttachmentSchema.Type;
 
 export const BoardCardDraftSchema = Schema.Struct({
   title: Schema.String,
@@ -54,7 +59,7 @@ export const BoardCardDraftSchema = Schema.Struct({
   dependsOn: Schema.Array(BoardCardId),
   scheduledStartAt: Schema.NullOr(Schema.String),
   attachments: Schema.Array(BoardCardDraftAttachmentSchema),
-  /** Epoch millis of the last save — the clock the attachment TTL reads. */
+  /** Epoch millis of the last save. */
   updatedAt: Schema.Number,
 });
 export type BoardCardDraft = typeof BoardCardDraftSchema.Type;
@@ -193,10 +198,14 @@ export function restoreBoardCardDraft(input: {
       draft.labelIds.indexOf(labelId) === index && liveLabelIds.has(labelId as string),
   );
 
-  const expired = input.now - draft.updatedAt > BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS;
-  const attachments = expired
-    ? []
-    : draft.attachments.slice(0, input.maxAttachments ?? BOARD_CARD_ATTACHMENTS_MAX);
+  // Each reference ages on its OWN upload time, never on the draft's save
+  // clock: an hour of typing after attaching a file must not pretend the
+  // pending upload is an hour younger than the server thinks it is.
+  const attachments = draft.attachments
+    .filter(
+      (attachment) => input.now - attachment.uploadedAt <= BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS,
+    )
+    .slice(0, input.maxAttachments ?? BOARD_CARD_ATTACHMENTS_MAX);
 
   return {
     fields: {
@@ -223,9 +232,12 @@ export function restoreBoardCardDraft(input: {
  * retry — there is nothing left to retry with. Remove and attach again.
  */
 export function stagedRowsFromUploads(
-  uploads: ReadonlyArray<BoardPendingUpload>,
+  attachments: ReadonlyArray<BoardCardDraftAttachment>,
 ): ReadonlyArray<BoardStagedAttachment> {
-  return uploads.map((upload) => ({
+  // The row keeps the upload time beside the reference, not inside it:
+  // `upload` is spread straight into `board.attachCardFile`, so it holds the
+  // server's own fields and nothing else.
+  return attachments.map(({ uploadedAt, ...upload }) => ({
     id: upload.pendingAttachmentId,
     name: upload.name,
     type: upload.type,
@@ -237,5 +249,6 @@ export function stagedRowsFromUploads(
     progress: 1,
     error: null,
     upload,
+    uploadedAt,
   }));
 }

@@ -65,11 +65,12 @@ import {
   boardBriefDropClass,
   useBoardBriefAttachments,
 } from "./BoardBriefAttachments";
-import { boardAttachmentLimits, type BoardPendingUpload } from "./boardAttachmentUpload";
+import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import {
   boardCardDraftHasContent,
   boardCardDraftKey,
   restoreBoardCardDraft,
+  type BoardCardDraftAttachment,
   type BoardCardDraftFields,
 } from "./boardCardDraft";
 import {
@@ -259,10 +260,12 @@ export function BoardCardCreateDialog({
   /** The staged rows that are safe to persist: an upload that has landed is a
       server-side pending attachment the next session can claim. Rows still in
       flight are this session's only. */
-  const attachmentRefs = useMemo<ReadonlyArray<BoardPendingUpload>>(
+  const attachmentRefs = useMemo<ReadonlyArray<BoardCardDraftAttachment>>(
     () =>
       briefAttachments.staged.flatMap((row) =>
-        row.status === "uploaded" && row.upload !== null ? [row.upload] : [],
+        row.status === "uploaded" && row.upload !== null && row.uploadedAt !== null
+          ? [{ ...row.upload, uploadedAt: row.uploadedAt }]
+          : [],
       ),
     [briefAttachments.staged],
   );
@@ -473,7 +476,9 @@ export function BoardCardCreateDialog({
       // The card exists; claim each staged upload onto it (K6). A claim that
       // fails leaves a card without that file — say so rather than pretend.
       const failures: string[] = [];
-      for (const upload of uploads) {
+      // `uploadedAt` is the draft's own bookkeeping: the claim takes the
+      // server's fields and nothing else.
+      for (const { uploadedAt: _uploadedAt, ...upload } of uploads) {
         const attached = await attachCardFile({ environmentId, input: { cardId, ...upload } });
         if (attached._tag === "Failure") failures.push(upload.name);
       }

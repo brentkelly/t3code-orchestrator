@@ -30,12 +30,13 @@ const projectTwo = ProjectId.make("project-two");
 const parent = BoardCardId.make("parent");
 const NOW = 1_700_000_000_000;
 
-const attachment = (id: string) => ({
+const attachment = (id: string, uploadedAt: number = NOW) => ({
   pendingAttachmentId: id,
   name: `${id}.png`,
   type: "image" as const,
   mimeType: "image/png",
   sizeBytes: 1024,
+  uploadedAt,
 });
 
 const draftOf = (patch: Partial<BoardCardDraft> = {}): BoardCardDraft => ({
@@ -256,7 +257,10 @@ describe("restoreBoardCardDraft — attachments", () => {
   it("offers references back while the pending uploads can still be claimed", () => {
     const restored = restore(
       draftOf({
-        attachments: [attachment("a"), attachment("b")],
+        attachments: [
+          attachment("a", NOW - BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS + 1_000),
+          attachment("b"),
+        ],
         updatedAt: NOW - BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS + 1_000,
       }),
     );
@@ -268,11 +272,29 @@ describe("restoreBoardCardDraft — attachments", () => {
     const restored = restore(
       draftOf({
         title: "Ship it",
-        attachments: [attachment("a")],
+        attachments: [attachment("a", NOW - BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS - 1)],
         updatedAt: NOW - BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS - 1,
       }),
     );
     expect(restored.fields.attachments).toEqual([]);
+    expect(restored.droppedAttachments).toBe(true);
+  });
+
+  // The server sweeps a pending upload on the file's own mtime, so an hour of
+  // typing after attaching must not make the reference look an hour younger.
+  it("ages each reference on its upload time, not on the draft's last save", () => {
+    const restored = restore(
+      draftOf({
+        title: "Ship it",
+        attachments: [
+          attachment("stale", NOW - BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS - 1),
+          attachment("fresh", NOW - 1_000),
+        ],
+        // Still being edited a moment ago, long after the first file landed.
+        updatedAt: NOW,
+      }),
+    );
+    expect(restored.fields.attachments.map((row) => row.pendingAttachmentId)).toEqual(["fresh"]);
     expect(restored.droppedAttachments).toBe(true);
   });
 
@@ -288,7 +310,7 @@ describe("restoreBoardCardDraft — attachments", () => {
 
 describe("stagedRowsFromUploads", () => {
   it("produces uploaded rows with no local bytes, so nothing offers a retry", () => {
-    const rows = stagedRowsFromUploads([attachment("a")]);
+    const rows = stagedRowsFromUploads([attachment("a", NOW - 5_000)]);
     expect(rows).toEqual([
       {
         id: "a",
@@ -301,7 +323,16 @@ describe("stagedRowsFromUploads", () => {
         status: "uploaded",
         progress: 1,
         error: null,
-        upload: attachment("a"),
+        // The claim input the server understands: the upload time rides on the
+        // row, never inside the reference it spreads.
+        upload: {
+          pendingAttachmentId: "a",
+          name: "a.png",
+          type: "image",
+          mimeType: "image/png",
+          sizeBytes: 1024,
+        },
+        uploadedAt: NOW - 5_000,
       },
     ]);
   });

@@ -32,7 +32,7 @@ import { useAssetUrl } from "../assets/assetUrls";
 import { cn, randomUUID } from "../lib/utils";
 import { usePreparedConnection } from "../state/session";
 import { BoardHint } from "./BoardHint";
-import { stagedRowsFromUploads } from "./boardCardDraft";
+import { stagedRowsFromUploads, type BoardCardDraftAttachment } from "./boardCardDraft";
 import {
   formatBoardAttachmentSize,
   pastedImageFiles,
@@ -60,6 +60,9 @@ export interface BoardStagedAttachment {
   readonly progress: number;
   readonly error: string | null;
   readonly upload: BoardPendingUpload | null;
+  /** Epoch millis the upload landed, null until it has (T3O-26). The draft
+      ages each reference against this, not against its own save clock. */
+  readonly uploadedAt: number | null;
 }
 
 export type BoardDropZone = "brief" | "row" | null;
@@ -130,7 +133,12 @@ export function useBoardBriefAttachments(input: {
         update(id, { status: "failed", error: outcome.reason });
         return;
       }
-      update(id, { status: "attaching", progress: 1, upload: outcome.upload });
+      update(id, {
+        status: "attaching",
+        progress: 1,
+        upload: outcome.upload,
+        uploadedAt: Date.now(),
+      });
       const verdict = await onUploaded(outcome.upload);
       if (runtime.cancelled) return;
       if (verdict === "consumed") {
@@ -181,6 +189,7 @@ export function useBoardBriefAttachments(input: {
             progress: 0,
             error: null,
             upload: null,
+            uploadedAt: null,
           },
         ]);
         void prepareBoardAttachmentFile(file, limits).then((prepared) => {
@@ -309,9 +318,9 @@ export function useBoardBriefAttachments(input: {
   /** Seed rows from a restored draft's references (T3O-26). A no-op when
       rows are already staged: those are this session's, and still hold their
       real bytes, live previews and in-flight uploads. */
-  const hydrate = useCallback((uploads: ReadonlyArray<BoardPendingUpload>) => {
-    if (uploads.length === 0) return;
-    setStaged((rows) => (rows.length > 0 ? rows : stagedRowsFromUploads(uploads)));
+  const hydrate = useCallback((attachments: ReadonlyArray<BoardCardDraftAttachment>) => {
+    if (attachments.length === 0) return;
+    setStaged((rows) => (rows.length > 0 ? rows : stagedRowsFromUploads(attachments)));
   }, []);
 
   /** True while any row is still moving: the dialog blocks Create on it. */
@@ -458,13 +467,13 @@ function StagedImageThumb(props: {
     again. A URL that never resolves degrades to the empty tile. */
 function HydratedImageThumb(props: {
   readonly environmentId: EnvironmentId;
-  readonly row: BoardStagedAttachment;
+  readonly row: BoardHydratedAttachment;
   readonly onRemove: (id: string) => void;
 }) {
   const { row } = props;
   const url = useAssetUrl(props.environmentId, {
     _tag: "attachment",
-    attachmentId: row.upload?.pendingAttachmentId ?? "",
+    attachmentId: row.upload.pendingAttachmentId,
     fileName: row.name,
     mimeType: row.mimeType,
   });
@@ -481,8 +490,11 @@ function HydratedImageThumb(props: {
   );
 }
 
-/** Whether a staged row lost its local bytes to a reload (T3O-26). */
-function isHydratedRow(row: BoardStagedAttachment): boolean {
+/** A staged row that lost its local bytes to a reload (T3O-26): all it has
+    left is the pending upload the thumbnail renders from. */
+type BoardHydratedAttachment = BoardStagedAttachment & { readonly upload: BoardPendingUpload };
+
+function isHydratedRow(row: BoardStagedAttachment): row is BoardHydratedAttachment {
   return row.file === null && row.previewUrl === null && row.upload !== null;
 }
 

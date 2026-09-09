@@ -95,7 +95,10 @@ export const useBoardCardDraftStore = create<BoardCardDraftStore>()(
     }),
     {
       name: BOARD_CARD_DRAFT_STORAGE_KEY,
-      version: 1,
+      // v2 added each attachment reference's own `uploadedAt`. A v1 record
+      // has no upload time to age its references against, so it is dropped
+      // rather than guessed at — the sanitisers below do that for free.
+      version: 2,
       storage: createJSONStorage(() => boardCardDraftStorage),
       migrate: sanitisePersistedBoardCardDrafts,
       merge: (persistedState, currentState) => ({
