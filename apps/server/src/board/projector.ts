@@ -222,6 +222,10 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // and every materialised sub-board child (which inherits its parent's
     // integration branch, D4) — is null.
     baseBranch: payload.baseBranch ?? null,
+    // The card's scheduled start (T3O-19, D1) rides the flat created payload
+    // the same way: absent — every legacy event and every card created without
+    // a time — is null, which is "start as soon as the pipeline reaches it".
+    scheduledStartAt: payload.scheduledStartAt ?? null,
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
     worktree: null,
