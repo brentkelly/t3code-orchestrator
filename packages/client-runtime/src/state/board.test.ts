@@ -448,6 +448,58 @@ describe("board shell reducer", () => {
     expect(settled.cards?.[0]?.stepConflictFix).toBe(false);
   });
 
+  it("carries the usage-limit stall slice through a drag, and the resume clears it (T3O-22)", () => {
+    const parked = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
+      {
+        kind: "card-stalled",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        stalled: true,
+        stepRunning: false,
+        held: false,
+        stepAwaiting: null,
+        stepConflictFix: false,
+        queued: false,
+        stalledReason: "usage-limit",
+        retryAt: "2026-01-01T02:50:00.000Z",
+        limitedByInstanceId: ProviderInstanceId.make("claudeAgent"),
+      },
+    );
+    expect(parked.cards?.[0]?.stalledReason).toBe("usage-limit");
+    // A parked card sits for HOURS, so a drag or a rename inside that window is
+    // likely. The `stalled` flag is preserved above; without the three keys
+    // riding with it the face's words revert to the gave-up phrasing and the
+    // detail modal paints its red "stopped" banner over a card that is calmly
+    // counting down to its own resume.
+    const reordered = applyShellStreamEvent(parked, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
+    });
+    expect(reordered.cards?.[0]?.stalled).toBe(true);
+    expect(reordered.cards?.[0]?.stalledReason).toBe("usage-limit");
+    expect(reordered.cards?.[0]?.retryAt).toBe("2026-01-01T02:50:00.000Z");
+    expect(reordered.cards?.[0]?.limitedByInstanceId).toBe("claudeAgent");
+    // …and the window reopening still clears the whole slice, because
+    // `card-stalled` deletes the keys rather than spreading over what is held.
+    const resumed = applyShellStreamEvent(reordered, {
+      kind: "card-stalled",
+      sequence: 4,
+      cardId: BoardCardId.make("card-1"),
+      stalled: false,
+      stepRunning: false,
+      held: false,
+      stepAwaiting: null,
+      stepConflictFix: false,
+      queued: true,
+    });
+    expect(resumed.cards?.[0]?.stalledReason).toBeUndefined();
+    expect(resumed.cards?.[0]?.retryAt).toBeUndefined();
+    expect(resumed.cards?.[0]?.limitedByInstanceId).toBeUndefined();
+    expect(resumed.cards?.[0]?.queued).toBe(true);
+  });
+
   it("card-plans updates the footer's plan count and no-ops on an unheld card", () => {
     const held = snapshot({ cards: [cardShell("card-1")] });
     const proposed = applyShellStreamEvent(held, {

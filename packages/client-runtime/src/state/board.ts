@@ -235,8 +235,9 @@ const STALL_SHELL_FIELDS = [
 /**
  * Carry forward the key-optional shell fields a card-carrying delta cannot
  * know: `briefHasImage` (the brief BODY lives in `board_card_bodies`, D8),
- * `planCount` (the plan set is its own slice), and the review slice (a fold
- * over the step-completion ledger, which no card-carrying event can see).
+ * `planCount` (the plan set is its own slice), the review slice (a fold
+ * over the step-completion ledger, which no card-carrying event can see) and
+ * the stall slice (step state, which the card aggregate does not carry).
  * Their resting value is the ABSENT key, not `false`/`0`, so "the producer
  * could not see it" and "the producer saw nothing there" stay
  * distinguishable — a brief whose image was deleted sends
@@ -248,6 +249,14 @@ const STALL_SHELL_FIELDS = [
  * `NO CONVERGENCE` flag until the next reconnect — and the "Run round N+1"
  * click is itself one of the triggers, so the feature would blank itself at
  * the exact moment it is used.
+ *
+ * The stall keys are here for the same reason and cost more when missing: a
+ * card parked on a usage limit sits for HOURS, so a drag, a rename or a
+ * PR-link refresh in that window is likely. The preserved `stalled` flag
+ * would survive it while the three keys did not, and the card face's words
+ * would fall back from "waiting to resume 2:50am" to the gave-up phrasing
+ * while the detail modal recomputed `boardStallIsWaiting` to false and
+ * painted its red "stopped" banner over a card calmly counting down.
  *
  * Returns the same reference when there is nothing to carry, so memoized
  * consumers keep their identity.
@@ -262,21 +271,39 @@ function preserveAbsentShellFields(
   // The review slice rides or rests as a whole: `reviewOutcome` present means
   // the producer saw the ledger, so every key it holds is authoritative.
   const carryReview = next.reviewOutcome === undefined && existing.reviewOutcome !== undefined;
-  if (briefHasImage === next.briefHasImage && planCount === next.planCount && !carryReview) {
+  // The stall slice rides or rests as a whole too, and only under a card that
+  // is still stalled: `next.stalled` is the flag the caller already preserved,
+  // and `card-stalled` is what deletes the three keys when the stop ends. So
+  // "still stalled, but this delta asserts no reason" is the one shape that
+  // means "the producer could not see step state" — carry.
+  const carryStall =
+    next.stalled && next.stalledReason === undefined && existing.stalledReason !== undefined;
+  if (
+    briefHasImage === next.briefHasImage &&
+    planCount === next.planCount &&
+    !carryReview &&
+    !carryStall
+  ) {
     return next;
   }
-  const review: Partial<BoardCardShell> = {};
+  const carried: Partial<BoardCardShell> = {};
   if (carryReview) {
     for (const field of REVIEW_SHELL_FIELDS) {
       const value = existing[field];
-      if (value !== undefined) Object.assign(review, { [field]: value });
+      if (value !== undefined) Object.assign(carried, { [field]: value });
+    }
+  }
+  if (carryStall) {
+    for (const field of STALL_SHELL_FIELDS) {
+      const value = existing[field];
+      if (value !== undefined) Object.assign(carried, { [field]: value });
     }
   }
   return {
     ...next,
     ...(briefHasImage === undefined ? {} : { briefHasImage }),
     ...(planCount === undefined ? {} : { planCount }),
-    ...review,
+    ...carried,
   };
 }
 
