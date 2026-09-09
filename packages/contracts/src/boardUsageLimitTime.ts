@@ -30,6 +30,10 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+/** How far behind `nowMs` a bare clock time may sit and still be read as the
+    reading it plainly is, rather than as tomorrow's — see `nextClockInstant`. */
+const JUST_PASSED_GRACE = 5 * MINUTE;
+
 /** Month names as providers write them, long and abbreviated. */
 const MONTHS = [
   "january",
@@ -232,6 +236,13 @@ function absoluteInstant(text: string, timeZone: string): number | null {
  * Rolling the DAY forward and re-resolving, rather than adding 24 hours to the
  * instant, so a day that is 23 or 25 hours long still lands on the stated clock
  * time.
+ *
+ * A time that has only just gone is NOT rolled forward. Providers write these
+ * to the minute, so "resets 2:50am" composed at 2:49:59 is read a heartbeat
+ * later at 2:50:00 — and rounding that to tomorrow parks the account for a
+ * whole day on a window that had already reopened. Handing the past reading
+ * back instead lets the caller's own past-time rule turn it into the blind
+ * half-hourly poll, which costs one probe and is right either way.
  */
 function nextClockInstant(hour: number, minute: number, nowMs: number, timeZone: string): number {
   const on = (utcMs: number) => {
@@ -242,7 +253,7 @@ function nextClockInstant(hour: number, minute: number, nowMs: number, timeZone:
     );
   };
   const today = on(nowMs);
-  return today > nowMs ? today : on(nowMs + DAY);
+  return today > nowMs - JUST_PASSED_GRACE ? today : on(nowMs + DAY);
 }
 
 function bareClockInstant(text: string, nowMs: number, timeZone: string): number | null {

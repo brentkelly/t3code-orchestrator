@@ -94,6 +94,29 @@ describe("boardUsageLimitResumeAtMs", () => {
     expect(resumeAt("resets 09:00")).toBe(Date.parse("2026-07-20T09:00:00.000Z"));
   });
 
+  it("does not roll a clock time that has only just gone to tomorrow", () => {
+    // The provider writes these to the minute, so "resets 12:00" composed at
+    // 11:59:59 is read a heartbeat later at 12:00:00.5. Rolling it forward
+    // would park the account for 24 hours on a window that had just reopened;
+    // handing the past reading back lets the classifier degrade it to the blind
+    // half-hourly poll instead.
+    expect(
+      boardUsageLimitResumeAtMs({ text: "resets 12:00", nowMs: NOW + 500, timeZone: "UTC" }),
+    ).toBe(Date.parse("2026-07-19T12:00:00.000Z"));
+    // Five minutes past is still the reading it plainly is…
+    expect(
+      boardUsageLimitResumeAtMs({ text: "resets 12:00", nowMs: NOW + 4 * MINUTE, timeZone: "UTC" }),
+    ).toBe(Date.parse("2026-07-19T12:00:00.000Z"));
+    // …and beyond the grace it is tomorrow's, as before.
+    expect(
+      boardUsageLimitResumeAtMs({
+        text: "resets 12:00",
+        nowMs: NOW + 10 * MINUTE,
+        timeZone: "UTC",
+      }),
+    ).toBe(Date.parse("2026-07-20T12:00:00.000Z"));
+  });
+
   it("resolves a bare clock across a DST boundary in the named zone", () => {
     // 2026-03-29 is the European spring-forward. 06:00 Europe/London the
     // morning after is BST, i.e. 05:00Z — the naive "add an offset" reading
