@@ -708,3 +708,58 @@ it.effect("boot leaves a step whose stance already agrees with its card alone", 
       }),
   ),
 );
+
+it.effect("the stance override reaches a step outside the build stage (T3O-17)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [makeBoardCard({ id: "interview", stage: "planning", orderKey: "m" })],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({
+        building: [codexStep],
+        planning: codexStep,
+        // The real planning interview runs with a human in the loop (t3o-34),
+        // which is what makes an override at this stage meaningful at all.
+        planningHumanInLoop: true,
+        globalMaxConcurrent: 3,
+      }),
+    },
+    ({ pumpDomain, board, commands }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(
+          cardMoved(
+            makeBoardCard({ id: "interview", stage: "planning", orderKey: "m" }),
+            "sprint",
+            "planning",
+            1,
+          ),
+        );
+        const running = boardCardStepState(yield* board, BoardCardId.make("interview"));
+        assert.strictEqual(running?.status, "running");
+        assert.strictEqual(running?.humanInLoop, true);
+        const turnsBefore = commandTypes(yield* commands).filter(
+          (type) => type === "thread.turn.start",
+        ).length;
+
+        // The human takes their hands off the planning interview from the card
+        // detail's toggle. `handleCardUpdated` used to read the override only
+        // on a BUILD card, so at planning, review or merge `desired` collapsed
+        // to the stance the step froze at entry and this did nothing at all —
+        // the same half-applied state a Stop on a review step would leave.
+        const card = (yield* board).cards.find(
+          (candidate) => candidate.id === BoardCardId.make("interview"),
+        );
+        yield* pumpDomain(cardHumanInLoopUpdated(card!, false, 2));
+
+        const turns = (yield* commands).filter((command) => command.type === "thread.turn.start");
+        assert.strictEqual(turns.length, turnsBefore + 1);
+        assert.strictEqual(turns.at(-1)!.threadId, running!.threadId!);
+        assert.include(turns.at(-1)!.message.text, "Switching to unattended");
+        assert.strictEqual(
+          boardCardStepState(yield* board, BoardCardId.make("interview"))?.humanInLoop,
+          false,
+        );
+      }),
+  ),
+);
