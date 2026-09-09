@@ -7,6 +7,9 @@
  * in-memory router (no DOM), so a regression back to `router.history.push`
  * fails loudly. The first test pins that failing behaviour as the proof.
  */
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+
 import {
   createMemoryHistory,
   createRootRoute,
@@ -133,5 +136,33 @@ describe("navigateToMode", () => {
 
     expect(navigateCalls).toBe(0);
     expect(router.state.location.pathname).toBe("/board");
+  });
+});
+
+/**
+ * Composition guards for the control itself (T3O-34), asserted from source the
+ * way `BoardTopBar.test.ts` pins the board header's composition. Rendering the
+ * component to markup to read back its children would test React, not us.
+ */
+describe("BoardModeTabs composition", () => {
+  const source = NodeFS.readFileSync(new URL("./BoardModeTabs.tsx", import.meta.url), "utf8");
+
+  it("puts Board before Threads — the board is the primary mode", () => {
+    const boardTab = source.indexOf('label="Board"');
+    const threadsTab = source.indexOf('label="Threads"');
+    expect(boardTab).toBeGreaterThan(-1);
+    expect(threadsTab).toBeGreaterThan(-1);
+    expect(boardTab).toBeLessThan(threadsTab);
+  });
+
+  it("runs the last-location effect before the sidebar-hosting early return", () => {
+    // If the early return moves above the effect, there is a window in which
+    // nobody records the last threads location and switching back to threads
+    // lands on the root instead of the thread you were reading.
+    const effect = source.indexOf("recordModeLocation(mode, locationHref)");
+    const earlyReturn = source.indexOf("sidebarHostsModeTabs) {");
+    expect(effect).toBeGreaterThan(-1);
+    expect(earlyReturn).toBeGreaterThan(-1);
+    expect(effect).toBeLessThan(earlyReturn);
   });
 });

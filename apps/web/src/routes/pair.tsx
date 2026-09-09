@@ -1,5 +1,8 @@
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 
+// T3o: pairing lets go of the user on the board (T3O-34, D2).
+import { resolvePairExitTarget } from "../board/boardHomeRedirect";
+
 import {
   HostedPairingRouteSurface,
   PairingPendingSurface,
@@ -16,7 +19,8 @@ export const Route = createFileRoute("/pair")({
     }
 
     if (authGateState.status === "authenticated" || authGateState.status === "hosted-static") {
-      throw redirect({ to: "/", replace: true });
+      // T3o: an already-paired client lands on the board, not threads home.
+      throw redirect({ to: resolvePairExitTarget(authGateState.status), replace: true });
     }
     return {
       authGateState,
@@ -42,7 +46,8 @@ function PairRouteView() {
     <PairingRouteSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
-        void navigate({ to: "/", replace: true });
+        // T3o: a completed pairing lands on the board.
+        void navigate({ to: resolvePairExitTarget(authGateState.status), replace: true });
       }}
       {...(authGateState.errorMessage ? { initialErrorMessage: authGateState.errorMessage } : {})}
     />

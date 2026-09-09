@@ -66,11 +66,21 @@ interface BoardUiState {
       `isBoardColumnCollapsed`'s default (the root board's first column
       collapsed). */
   collapsedByStage: Partial<Record<string, boolean>>;
+  /** The board's floating corner menu, collapsed to a single chevron
+      (T3O-34, D6). Persisted: a user who quieted that corner expects it to
+      stay quiet across reloads. */
+  utilityMenuCollapsed: boolean;
 }
 
 interface BoardUiStore extends BoardUiState {
+  /** Whether the thread sidebar's header is currently holding the mode tabs
+      (T3O-34, D8). Transient — it is a measurement of this client's live
+      layout, not a preference, so it is deliberately outside `partialize`. */
+  sidebarHostsModeTabs: boolean;
   recordModeLocation: (mode: WorkspaceMode, href: string) => void;
   setColumnCollapsed: (stageKey: string, collapsed: boolean) => void;
+  setUtilityMenuCollapsed: (collapsed: boolean) => void;
+  setSidebarHostsModeTabs: (hosting: boolean) => void;
 }
 
 /** The first column starts collapsed to a rail (D13): it is the one column that
@@ -87,7 +97,12 @@ export function isBoardColumnCollapsed(
 }
 
 export function migratePersistedBoardUiState(persistedState: unknown): BoardUiState {
-  const fallback: BoardUiState = { mode: "threads", lastLocationByMode: {}, collapsedByStage: {} };
+  const fallback: BoardUiState = {
+    mode: "threads",
+    lastLocationByMode: {},
+    collapsedByStage: {},
+    utilityMenuCollapsed: false,
+  };
   if (!persistedState || typeof persistedState !== "object") {
     return fallback;
   }
@@ -117,6 +132,8 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
     mode: candidate.mode === "board" ? "board" : "threads",
     lastLocationByMode,
     collapsedByStage,
+    // A blob persisted before T3O-34 has no such field; the menu opens.
+    utilityMenuCollapsed: candidate.utilityMenuCollapsed === true,
   };
 }
 
@@ -126,6 +143,8 @@ export const useBoardUiStore = create<BoardUiStore>()(
       mode: "threads",
       lastLocationByMode: {},
       collapsedByStage: {},
+      utilityMenuCollapsed: false,
+      sidebarHostsModeTabs: false,
       recordModeLocation: (mode, href) =>
         set((state) => {
           // The mounting surface fixes `mode`, but the router location updates
@@ -151,6 +170,14 @@ export const useBoardUiStore = create<BoardUiStore>()(
             ? state
             : { collapsedByStage: { ...state.collapsedByStage, [stageKey]: collapsed } },
         ),
+      setUtilityMenuCollapsed: (collapsed) =>
+        set((state) =>
+          state.utilityMenuCollapsed === collapsed ? state : { utilityMenuCollapsed: collapsed },
+        ),
+      setSidebarHostsModeTabs: (hosting) =>
+        set((state) =>
+          state.sidebarHostsModeTabs === hosting ? state : { sidebarHostsModeTabs: hosting },
+        ),
     }),
     {
       name: BOARD_UI_STATE_STORAGE_KEY,
@@ -170,6 +197,7 @@ export const useBoardUiStore = create<BoardUiStore>()(
         mode: state.mode,
         lastLocationByMode: state.lastLocationByMode,
         collapsedByStage: state.collapsedByStage,
+        utilityMenuCollapsed: state.utilityMenuCollapsed,
       }),
     },
   ),

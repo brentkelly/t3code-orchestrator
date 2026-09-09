@@ -8,6 +8,8 @@ import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
+// T3o: the mode tabs move into this header when it is wide enough (T3O-34).
+import { BoardModeTabsSidebarSlot } from "../../board/BoardModeTabsSidebarSlot";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
@@ -75,6 +77,10 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           {pillLabel}
         </Badge>
       ) : null}
+      {/* T3o: Threads/Board mode tabs, when this header has room for them
+          (T3O-34). Measures its own slot; renders nothing when it does not
+          fit, and the workspace top bar keeps them. */}
+      <BoardModeTabsSidebarSlot />
     </SidebarHeader>
   );
 });

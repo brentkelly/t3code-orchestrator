@@ -14,7 +14,13 @@ import {
 
 /** Reset only the data fields; the action closures are preserved (merge). */
 function resetStore() {
-  useBoardUiStore.setState({ mode: "threads", lastLocationByMode: {}, collapsedByStage: {} });
+  useBoardUiStore.setState({
+    mode: "threads",
+    lastLocationByMode: {},
+    collapsedByStage: {},
+    utilityMenuCollapsed: false,
+    sidebarHostsModeTabs: false,
+  });
 }
 
 describe("isBoardColumnCollapsed", () => {
@@ -40,11 +46,13 @@ describe("migratePersistedBoardUiState", () => {
       mode: "threads",
       lastLocationByMode: {},
       collapsedByStage: {},
+      utilityMenuCollapsed: false,
     });
     expect(migratePersistedBoardUiState("nope")).toEqual({
       mode: "threads",
       lastLocationByMode: {},
       collapsedByStage: {},
+      utilityMenuCollapsed: false,
     });
   });
 
@@ -145,5 +153,51 @@ describe("recordModeLocation", () => {
     // so the still-mounted threads tab sees "/settings/general".
     useBoardUiStore.getState().recordModeLocation("threads", "/settings/general");
     expect(useBoardUiStore.getState().lastLocationByMode.threads).toBe("/env-1/thread-1");
+  });
+});
+
+describe("utilityMenuCollapsed", () => {
+  it("starts expanded", () => {
+    resetStore();
+    expect(useBoardUiStore.getState().utilityMenuCollapsed).toBe(false);
+  });
+
+  it("collapses and expands again — the corner menu is not a one-way door", () => {
+    resetStore();
+    useBoardUiStore.getState().setUtilityMenuCollapsed(true);
+    expect(useBoardUiStore.getState().utilityMenuCollapsed).toBe(true);
+    useBoardUiStore.getState().setUtilityMenuCollapsed(false);
+    expect(useBoardUiStore.getState().utilityMenuCollapsed).toBe(false);
+  });
+
+  it("rehydrates a blob persisted before T3O-34 as expanded, not undefined", () => {
+    const migrated = migratePersistedBoardUiState({
+      mode: "board",
+      lastLocationByMode: { board: "/board" },
+      collapsedByStage: {},
+    });
+    expect(migrated.utilityMenuCollapsed).toBe(false);
+  });
+
+  it("survives a rehydrate, and ignores a non-boolean", () => {
+    expect(migratePersistedBoardUiState({ utilityMenuCollapsed: true }).utilityMenuCollapsed).toBe(
+      true,
+    );
+    expect(migratePersistedBoardUiState({ utilityMenuCollapsed: "yes" }).utilityMenuCollapsed).toBe(
+      false,
+    );
+  });
+});
+
+describe("sidebarHostsModeTabs", () => {
+  it("is transient: measured layout, never persisted", () => {
+    resetStore();
+    useBoardUiStore.getState().setSidebarHostsModeTabs(true);
+    expect(useBoardUiStore.getState().sidebarHostsModeTabs).toBe(true);
+    // A rehydrate carrying the field must not resurrect a stale measurement:
+    // the migration does not read it at all.
+    expect(
+      "sidebarHostsModeTabs" in migratePersistedBoardUiState({ sidebarHostsModeTabs: true }),
+    ).toBe(false);
   });
 });

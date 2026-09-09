@@ -85,6 +85,7 @@ import {
   type BoardScope,
 } from "./boardScope";
 import { BoardSubBoardHeader } from "./BoardSubBoardHeader";
+import { BOARD_UTILITY_MENU_RESERVED_SPACE, BoardUtilityMenu } from "./BoardUtilityMenu";
 import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
 import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
 import { BoardProviderUsagePill } from "./BoardProviderUsagePill";
@@ -166,6 +167,10 @@ export function BoardPage({
   const environmentId = usePrimaryEnvironmentId();
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+      {/* The corner menu is chrome, not board content: it belongs to every
+          branch of this surface, connected or not, root board or sub-board
+          (T3O-34). */}
+      <BoardUtilityMenu />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         {/* With no environment the bar carries the brand and the mode tabs
             alone: nothing to filter, nothing to create — but the way back to
@@ -1224,7 +1229,15 @@ function EnvironmentBoard({
         {/* `items-start` lets each column size to its cards; a collapsed rail
             opts back into full height with `self-stretch`. The row scrolls in
             both axes, so a column taller than the viewport is reachable. */}
-        <div className="flex min-h-0 flex-1 items-start gap-2.5 overflow-auto px-3 pb-3 sm:px-5">
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 items-start gap-2.5 overflow-auto px-3 sm:px-5",
+            // Reserved unconditionally (T3O-34, D5): no card comes to rest
+            // under the corner menu, and collapsing it does not reflow the
+            // columns under the user's cursor.
+            BOARD_UTILITY_MENU_RESERVED_SPACE,
+          )}
+        >
           {renderedStages.map((stage, index) => (
             <BoardColumn
               accentNameFor={accentNameFor}
