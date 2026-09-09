@@ -80,6 +80,10 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 
 export const NOW = "2026-01-01T00:00:00.000Z";
 export const projectId = ProjectId.make("project-1");
+/** A SECOND project on the same server (T3O-33): a card changing project needs
+    somewhere to go, and the reactor spawns the restarted thread against the
+    card's new `projectId`. Inert for every other suite. */
+export const otherProjectId = ProjectId.make("project-2");
 
 /** The single build step a stage runs, in the t3o-15 stage-owned model: the
     provider instance the frozen run row spawns on, and the prompt the stage
@@ -272,6 +276,16 @@ export const readModel = (board: BoardState): OrchestrationReadModel => ({
       id: projectId,
       title: "Project 1",
       workspaceRoot: "/tmp/project-1",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: NOW,
+      updatedAt: NOW,
+      deletedAt: null,
+    },
+    {
+      id: otherProjectId,
+      title: "Project 2",
+      workspaceRoot: "/tmp/project-2",
       defaultModelSelection: null,
       scripts: [],
       createdAt: NOW,

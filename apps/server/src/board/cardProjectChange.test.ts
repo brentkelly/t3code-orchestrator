@@ -94,6 +94,7 @@ function makeReadModel(board: BoardState): OrchestrationReadModel {
     ],
     threads: [],
     board,
+    updatedAt: NOW,
   };
 }
 
@@ -271,14 +272,11 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
                 stage: "ready",
                 pullRequestHistory: [
                   {
-                    provider: "github",
                     number: 12,
                     url: "https://example.test/pr/12",
                     state: "merged",
-                    title: "P1-4",
-                    branch: "board/p1-4",
-                    baseBranch: "main",
-                    isDraft: false,
+                    headBranch: "board/p1-4",
+                    baseRef: "main",
                     checkedAt: NOW,
                   },
                 ],
@@ -342,7 +340,7 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
                 ...movable,
                 dependsOn: [BoardCardId.make("dep")],
                 briefRef: "brief",
-                externalRef: "TICKET-9",
+                externalRef: { system: "linear", id: "TICKET-9", url: null },
               },
             ],
             nextCardNumberByProject: {},
@@ -355,7 +353,7 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
         // gate handles it. Nothing to rewrite.
         assert.deepStrictEqual([...event.payload.card.dependsOn], ["dep"]);
         assert.strictEqual(event.payload.card.briefRef, "brief");
-        assert.strictEqual(event.payload.card.externalRef, "TICKET-9");
+        assert.strictEqual(event.payload.card.externalRef?.id, "TICKET-9");
       }),
     );
 
