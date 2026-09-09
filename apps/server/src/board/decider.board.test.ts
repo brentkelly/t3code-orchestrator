@@ -3585,6 +3585,27 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       }),
     );
 
+    it.effect("a reorder WITHIN Ready keeps the arm — the card moved nowhere", () =>
+      Effect.gen(function* () {
+        // The other edge of D4, and the one a refactor is most likely to erase:
+        // dragging a card up its own column is not leaving the stage, so it must
+        // not spend the arm the way every `board.card.move` route does.
+        const event = yield* decide(
+          {
+            type: "board.card.reorder",
+            commandId: CommandId.make("cmd-reorder"),
+            cardId: BoardCardId.make("card-1"),
+            orderKey: "t",
+            createdAt: NOW,
+          },
+          boardWith(waiting({ autoStart: true })),
+        );
+        assert.strictEqual(event.type, "board.card-reordered");
+        if (event.type !== "board.card-reordered") return;
+        assert.isTrue(event.payload.card.autoStart);
+      }),
+    );
+
     it.effect("the dependency gate still refuses the move it would have made", () =>
       Effect.gen(function* () {
         // The decider stays the single authority (D3): the reactor pre-checks
