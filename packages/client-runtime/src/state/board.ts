@@ -45,6 +45,7 @@ import {
   type BoardStageDefinition,
   type BoardStageId,
   type BoardStageRemovedShellEvent,
+  isBoardCardScheduleDue,
   type BoardStageUpsertedShellEvent,
   type EnvironmentId,
   type OrchestrationShellSnapshot,
@@ -720,12 +721,25 @@ export interface BoardQueueSlot {
  *
  * Derived strictly from the `queued` flag on the shells, so a board with
  * nothing queued yields an empty map and costs a single pass.
+ *
+ * A card holding a FUTURE scheduled start is excluded (T3O-19, D9), and that is
+ * load-bearing rather than cosmetic. A card already `queued` when its schedule
+ * is set keeps that step status — nothing transitions it back to `pending` —
+ * while the server's gate has stopped offering it a slot. Left in, it would go
+ * on counting against cards genuinely waiting for an agent, and every other
+ * card's position number would be wrong.
  */
 export function boardBuildQueue(
   cards: ReadonlyArray<BoardCardShell>,
   stages: ReadonlyArray<BoardStageDefinition>,
+  /** Compared against each card's schedule. Required rather than defaulted:
+      this package has no ambient clock, and a caller that forgot it would
+      silently number a scheduled card into the queue. */
+  nowMs: number,
 ): ReadonlyMap<string, BoardQueueSlot> {
-  const queued = cards.filter((card) => card.queued);
+  const queued = cards.filter(
+    (card) => card.queued && isBoardCardScheduleDue(card.scheduledStartAt, nowMs),
+  );
   if (queued.length === 0) return EMPTY_QUEUE;
   const stageOrder = new Map(stages.map((stage, index) => [stage.stageId, index]));
   // An unknown stage sorts last rather than ahead of everything: a card on a
@@ -775,8 +789,11 @@ export function planBoardQueueMoveToFront(input: {
   readonly cards: ReadonlyArray<BoardCardShell>;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly cardId: string;
+  /** Passed straight through to `boardBuildQueue`, so the projected position is
+      measured against exactly the queue the user is looking at. */
+  readonly nowMs: number;
 }): { readonly orderKey: string } | null {
-  const current = boardBuildQueue(input.cards, input.stages).get(input.cardId);
+  const current = boardBuildQueue(input.cards, input.stages, input.nowMs).get(input.cardId);
   if (current === undefined || current.position === 1) return null;
   let frontKey: string | null = null;
   for (const card of input.cards) {
@@ -788,6 +805,7 @@ export function planBoardQueueMoveToFront(input: {
   const projected = boardBuildQueue(
     input.cards.map((card) => (card.cardId === input.cardId ? { ...card, orderKey } : card)),
     input.stages,
+    input.nowMs,
   ).get(input.cardId);
   return projected !== undefined && projected.position < current.position ? { orderKey } : null;
 }

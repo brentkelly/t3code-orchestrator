@@ -30,7 +30,14 @@ import type {
   BoardLabelId,
   ThreadId,
 } from "@t3tools/contracts";
-import { GitMergeIcon, LayersIcon, LockIcon, PauseIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  ClockIcon,
+  GitMergeIcon,
+  LayersIcon,
+  LockIcon,
+  PauseIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import type { DragEvent, ReactNode } from "react";
 
 import { cn } from "../lib/utils";
@@ -41,6 +48,7 @@ import {
   type BoardTodoThreadState,
 } from "./boardCardProgressBlock";
 import { boardConflictFix } from "./boardConflictFix";
+import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
@@ -270,6 +278,14 @@ export function BoardCardContent({
   const conflictFix = summary.muted
     ? null
     : boardConflictFix({ live: card.stepConflictFix, queued: card.queued });
+  // The card's scheduled start (T3O-19, D9/D14). Null on a done card and on
+  // one whose time has already passed — the server clears the field within a
+  // tick, and a pill for a moment that has gone is a stale label.
+  const scheduleLabel = boardCardScheduleLabel({
+    scheduledStartAt: card.scheduledStartAt ?? null,
+    done: summary.muted,
+    nowMs: Date.now(),
+  });
   return (
     <article
       className={cn(
@@ -380,7 +396,33 @@ export function BoardCardContent({
           </BoardHint>
         )}
         <span className="flex-1" />
-        {queueSlot !== undefined ? (
+        {scheduleLabel === null ? null : (
+          // The schedule pill (T3O-19, D9), taking the right-hand cluster slot
+          // in preference to the queue pill below: a scheduled card is never
+          // meaningfully both, and `boardBuildQueue` excludes it for exactly
+          // that reason.
+          //
+          // Neutral, never coloured (D10). Not blue — it is not running; not
+          // green — it is not done; not violet — nothing is waiting on the
+          // human. The close call is amber, which docs/t3o/status-colours.md
+          // gives to "blocked or held", and a scheduled card IS held — but
+          // amber's job is to say "this will never move until someone acts",
+          // and a scheduled card moves on its own. Same argument t3o-33 used
+          // for `queued`.
+          //
+          // The LABEL is absolute and the TOOLTIP is relative (D11), so
+          // thirty of these repaint only when their card does.
+          <BoardHint label={scheduleLabel.tooltip}>
+            <span
+              aria-label={scheduleLabel.tooltip}
+              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+            >
+              <ClockIcon className="size-2.5" />
+              {scheduleLabel.label}
+            </span>
+          </BoardHint>
+        )}
+        {scheduleLabel === null && queueSlot !== undefined ? (
           // The tooltip carries the WHOLE reason (t3o-33), so why a card is
           // waiting — and that it will start on its own — is readable without
           // opening it.

@@ -36,6 +36,9 @@ import {
 import { applyShellStreamEvent } from "./shellReducer.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
+/** A fixed clock for the queue derivation (T3O-19): the schedule filter needs
+    a "now", and a test that read the wall clock would be a test that drifts. */
+const NOW_MS = Date.parse(NOW);
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 
@@ -62,6 +65,8 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   reviewOverrides: null,
   modelOverrides: null,
   splitRationale: null,
+  baseBranch: null,
+  scheduledStartAt: null,
   worktree: null,
   blocked: false,
   archivedAt: null,
@@ -914,7 +919,7 @@ describe("boardBuildQueue", () => {
 
   it("is empty while nothing carries the queued flag", () => {
     const cards = [cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.building })];
-    expect(boardBuildQueue(cards, BOARD_SEED_STAGES).size).toBe(0);
+    expect(boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS).size).toBe(0);
   });
 
   it("numbers queued cards by drag order and marks the head as starting next", () => {
@@ -923,7 +928,7 @@ describe("boardBuildQueue", () => {
       queuedCard("card-b", BOARD_SEED_STAGE_IDS.building, "m"),
       queuedCard("card-c", BOARD_SEED_STAGE_IDS.building, "t"),
     ];
-    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES);
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS);
     expect(queue.get("card-b")).toEqual({ position: 1, total: 2, ahead: 0, startsNext: true });
     expect(queue.get("card-c")).toEqual({ position: 2, total: 2, ahead: 1, startsNext: false });
     expect(queue.has("card-a")).toBe(false);
@@ -937,7 +942,7 @@ describe("boardBuildQueue", () => {
       queuedCard("card-building", BOARD_SEED_STAGE_IDS.building, "a"),
       queuedCard("card-review", BOARD_SEED_STAGE_IDS.review, "z"),
     ];
-    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES);
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS);
     expect(queue.get("card-review")?.position).toBe(1);
     expect(queue.get("card-building")?.position).toBe(2);
   });
@@ -947,7 +952,7 @@ describe("boardBuildQueue", () => {
       queuedCard("card-z", BOARD_SEED_STAGE_IDS.building, "m"),
       queuedCard("card-a", BOARD_SEED_STAGE_IDS.building, "m"),
     ];
-    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES);
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS);
     expect(queue.get("card-a")?.position).toBe(1);
     expect(queue.get("card-z")?.position).toBe(2);
   });
@@ -957,9 +962,47 @@ describe("boardBuildQueue", () => {
       queuedCard("card-known", BOARD_SEED_STAGE_IDS.building, "z"),
       queuedCard("card-unknown", "stage-from-the-future" as BoardStageId, "a"),
     ];
-    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES);
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS);
     expect(queue.get("card-known")?.position).toBe(1);
     expect(queue.get("card-unknown")?.position).toBe(2);
+  });
+
+  // T3O-19 (D9). A card already `queued` when a schedule is set keeps that step
+  // status — nothing transitions it back to `pending` — while the server has
+  // stopped offering it a slot. Left in the derivation it would go on counting
+  // against cards genuinely waiting for an agent, and every position after it
+  // would be off by one.
+  it("excludes a card held by a future scheduled start, and renumbers the rest", () => {
+    const cards = [
+      {
+        ...queuedCard("card-scheduled", BOARD_SEED_STAGE_IDS.building, "a"),
+        scheduledStartAt: "2026-01-01T01:00:00.000Z",
+      },
+      queuedCard("card-waiting", BOARD_SEED_STAGE_IDS.building, "m"),
+      queuedCard("card-behind", BOARD_SEED_STAGE_IDS.building, "t"),
+    ];
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS);
+    expect(queue.has("card-scheduled")).toBe(false);
+    expect(queue.get("card-waiting")).toEqual({
+      position: 1,
+      total: 2,
+      ahead: 0,
+      startsNext: true,
+    });
+    expect(queue.get("card-behind")?.position).toBe(2);
+  });
+
+  it("counts a card whose scheduled start has already passed", () => {
+    // Its time has come and the server clears the field within a tick; until
+    // then it is an ordinary queued card, and hiding it would be the queue
+    // lying in the other direction.
+    const cards = [
+      {
+        ...queuedCard("card-due", BOARD_SEED_STAGE_IDS.building, "m"),
+        scheduledStartAt: "2025-12-31T23:00:00.000Z",
+      },
+    ];
+    expect(boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS).get("card-due")?.position).toBe(1);
   });
 });
 
@@ -990,12 +1033,13 @@ describe("planBoardQueueMoveToFront", () => {
       cards,
       stages: BOARD_SEED_STAGES,
       cardId: "card-b",
+      nowMs: NOW_MS,
     });
     expect(plan).not.toBeNull();
     const moved = cards.map((card) =>
       card.cardId === "card-b" ? { ...card, orderKey: plan!.orderKey } : card,
     );
-    expect(boardBuildQueue(moved, BOARD_SEED_STAGES).get("card-b")?.position).toBe(1);
+    expect(boardBuildQueue(moved, BOARD_SEED_STAGES, NOW_MS).get("card-b")?.position).toBe(1);
   });
 
   it("returns null for the card already at the front", () => {
@@ -1004,7 +1048,12 @@ describe("planBoardQueueMoveToFront", () => {
       queuedCard("card-b", BOARD_SEED_STAGE_IDS.building, "m"),
     ];
     expect(
-      planBoardQueueMoveToFront({ cards, stages: BOARD_SEED_STAGES, cardId: "card-a" }),
+      planBoardQueueMoveToFront({
+        cards,
+        stages: BOARD_SEED_STAGES,
+        cardId: "card-a",
+        nowMs: NOW_MS,
+      }),
     ).toBeNull();
   });
 
@@ -1016,14 +1065,24 @@ describe("planBoardQueueMoveToFront", () => {
       queuedCard("card-building", BOARD_SEED_STAGE_IDS.building, "m"),
     ];
     expect(
-      planBoardQueueMoveToFront({ cards, stages: BOARD_SEED_STAGES, cardId: "card-building" }),
+      planBoardQueueMoveToFront({
+        cards,
+        stages: BOARD_SEED_STAGES,
+        cardId: "card-building",
+        nowMs: NOW_MS,
+      }),
     ).toBeNull();
   });
 
   it("returns null for a card that is not queued at all", () => {
     const cards = [cardShell("card-a", { stage: BOARD_SEED_STAGE_IDS.building })];
     expect(
-      planBoardQueueMoveToFront({ cards, stages: BOARD_SEED_STAGES, cardId: "card-a" }),
+      planBoardQueueMoveToFront({
+        cards,
+        stages: BOARD_SEED_STAGES,
+        cardId: "card-a",
+        nowMs: NOW_MS,
+      }),
     ).toBeNull();
   });
 });

@@ -136,6 +136,8 @@ import {
   isBoardStageManuallySelectable,
   type BoardStageSecondaryAction,
 } from "./boardStageActions";
+import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
+import type { BoardScheduleKind } from "./boardSchedule";
 import { BoardHint } from "./BoardHint";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
@@ -428,6 +430,13 @@ export interface BoardCardDetailViewProps {
   readonly boardSettings: BoardSettings;
   /** Write this card's per-stage model overrides; null clears them. */
   readonly onSetModelOverrides: (next: BoardCardModelOverrides | null) => void;
+  /** What the card's schedule control is offering (T3O-19, D13), derived by the
+      container from the card's live step — the copy has to be honest about
+      whether setting a time will STOP an agent that is working right now. */
+  readonly scheduleKind: BoardScheduleKind;
+  /** Set or clear the card's scheduled start; null clears the hold, which
+      starts or resumes the card immediately. */
+  readonly onSetScheduledStartAt: (next: string | null) => void;
   /** Resolve an override's model slug to its display name for the header pill
       and tooltip (t3o-29, D7). Passed from the container, which holds the
       provider list; absent, the pill falls back to the raw slug. */
@@ -1732,6 +1741,18 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </span>
           </BoardHint>
         ) : null}
+        {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
+            is set, then the clock plus its label. Hidden on a done-role card
+            and on an archived one — neither is going to move again on a timer.
+            Beside the stage chip, because what it holds is the stage. */}
+        {archived || boardCardIsDone(props.stages, card.stage) ? null : (
+          <BoardCardSchedulePopover
+            kind={props.scheduleKind}
+            onChange={props.onSetScheduledStartAt}
+            scheduledStartAt={card.scheduledStartAt}
+            stageLabel={boardStageLabel(props.stages, card.stage)}
+          />
+        )}
         {/* Shown only once this card actually overrides something (t3o-29, D7).
             An override changes what the card spends and what authority it runs
             under; that should not be invisible from the card. It costs nothing
