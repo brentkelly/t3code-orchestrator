@@ -13,6 +13,9 @@ Images can be up to 10 MB. On servers that support file uploads, other files can
 limit the server advertises, capped at 50 MB. A card holds up to 20 attachments. The column card
 shows a paperclip with the count.
 
+Files attached to a card you have not created yet are kept with the rest of the draft — see
+[Drafts on the New card dialog](./board-card-drafts.md).
+
 Attachments belong to the card, not to a branch: they are stored with T3 Code's own data, so they
 survive a worktree being cleaned up or a project being cloned again. Deleting a card deletes its
 files.
