@@ -33,8 +33,18 @@ describe("createColdStartHomeRedirect", () => {
     const redirect = createColdStartHomeRedirect({ bootPathname: "/" });
     expect(redirect.shouldRedirectHome("/env-1/thread-1", "authenticated")).toBe(false);
     expect(redirect.shouldRedirectHome("/settings/general", "authenticated")).toBe(false);
-    // …and doing so did not spend the one-shot flag.
-    expect(redirect.shouldRedirectHome("/", "authenticated")).toBe(true);
+  });
+
+  it("hands the flag to the first authenticated resolution, wherever it lands", () => {
+    // The first-run flow: boot at `/` before the environment is paired, detour
+    // through `/pair`, and let pairing land the user on the board by its own
+    // rule (D2). That landing is the cold start — so "go home" afterwards has
+    // to mean threads, the invariant docs/user/board-navigation.md promises.
+    const redirect = createColdStartHomeRedirect({ bootPathname: "/" });
+    expect(redirect.shouldRedirectHome("/", "requires-auth")).toBe(false);
+    expect(redirect.shouldRedirectHome("/pair", "requires-auth")).toBe(false);
+    expect(redirect.shouldRedirectHome("/board", "authenticated")).toBe(false);
+    expect(redirect.shouldRedirectHome("/", "authenticated")).toBe(false);
   });
 
   it("never redirects a session that booted at a deep link", () => {

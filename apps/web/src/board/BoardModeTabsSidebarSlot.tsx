@@ -14,7 +14,7 @@
  * does **not** depend on whether the tabs are inside it — no feedback loop, so
  * no flapping mid-drag.
  */
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useLocation } from "@tanstack/react-router";
 
 import { useSidebarVisibility, useSidebar } from "../components/ui/sidebar";
@@ -30,7 +30,10 @@ export function BoardModeTabsSidebarSlot() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const setSidebarHostsModeTabs = useBoardUiStore((state) => state.setSidebarHostsModeTabs);
 
-  useEffect(() => {
+  // Layout phase for the same reason as the write below: seeding the width
+  // after paint would show one frame of the tabs in the top bar on every mount
+  // of a sidebar wide enough to hold them.
+  useLayoutEffect(() => {
     const wrapper = wrapperRef.current;
     if (wrapper === null) return;
     // `contentRect` rather than a layout read, so the measurement rides the
@@ -51,7 +54,11 @@ export function BoardModeTabsSidebarSlot() {
     pathname,
   });
 
-  useEffect(() => {
+  // Layout, not passive: this slot adds and removes its copy of the tabs during
+  // render, while the top bar's copy waits on this store write. A passive
+  // effect would land after paint, so crossing the width threshold would show
+  // one frame with the tabs doubled (going wider) or missing (going narrower).
+  useLayoutEffect(() => {
     setSidebarHostsModeTabs(hosting);
     // On unmount the sidebar is gone (settings, the board, a route without
     // one): the top bar has to take the tabs back.

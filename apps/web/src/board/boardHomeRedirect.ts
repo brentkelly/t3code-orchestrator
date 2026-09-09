@@ -6,9 +6,9 @@
  * thread was deleted, a draft was discarded, settings closed, the sidebar
  * brand was clicked. Making `/` mean the board would drag the user onto the
  * board every one of those times, or force a new `/threads` route and an edit
- * to every one of those files. So only the *first* resolution of `/` in a
- * session that actually booted at `/` is redirected; every later `/` is
- * threads home, exactly as before.
+ * to every one of those files. So only the session's *first authenticated*
+ * resolution is redirected, and only in a session that actually booted at `/`;
+ * every later `/` is threads home, exactly as before.
  *
  * Pairing carries the same rule in its own source (D2) rather than inheriting
  * it from here, so a reader of `pair.tsx` can see where pairing goes.
@@ -29,9 +29,9 @@ export function resolvePairExitTarget(authStatus: string): "/" | "/board" {
 
 export interface ColdStartHomeRedirect {
   /**
-   * True exactly once, for the first resolution of `/` in a session that booted
-   * there while authenticated. Spends its own flag, so callers can ask on every
-   * route resolution.
+   * True at most once per session: for the first *authenticated* resolution in
+   * a session that booted at `/`, and only when that resolution is still at
+   * `/`. Spends its own flag, so callers can ask on every route resolution.
    */
   readonly shouldRedirectHome: (pathname: string, authStatus: string) => boolean;
 }
@@ -52,13 +52,17 @@ export function createColdStartHomeRedirect({
   return {
     shouldRedirectHome: (pathname, authStatus) => {
       if (spent) return false;
-      if (pathname !== THREADS_HOME_PATH) return false;
-      // Not authenticated yet (and `hosted-static`, which is never
-      // "authenticated") keeps the flag unspent: the pairing flow lands on the
-      // board itself, and the hosted app is exempt by D3.
+      // Nothing before authentication is a cold start yet, so the flag stays
+      // unspent through the whole unauthenticated phase. `hosted-static` is
+      // never "authenticated", which is also how D3 stays exempt forever.
       if (authStatus !== "authenticated") return false;
+      // The first authenticated resolution *is* the cold start, wherever it
+      // lands — so it is spent here rather than only at `/`. Pairing boots at
+      // `/`, detours through `/pair` and lands on `/board` by its own rule
+      // (D2); leaving the flag armed through that would hand the board the
+      // user's next "go home" as well.
       spent = true;
-      return true;
+      return pathname === THREADS_HOME_PATH;
     },
   };
 }
