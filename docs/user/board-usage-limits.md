@@ -41,7 +41,8 @@ Open it for the whole picture:
 - **Resume now**, if you think the provider is back early.
 
 An account that is out of credits shows no countdown and no **Resume now**, because there is nothing
-to wait for.
+to wait for. Top the account up and the row clears itself the next time anything on that account
+gets an answer — you do not have to dismiss it.
 
 ### When the provider gives no time
 
@@ -50,7 +51,12 @@ on its own — every half hour at first, then less often as the wait grows, givi
 and handing the cards to you.
 
 If you know better than the board — the provider's own dashboard usually says — the popover offers
-**Set resume time**. A time you set is never overwritten by anything the board reads later.
+**Set resume time**, on any limited provider, whether the board has a time of its own or not. Your
+time stands: nothing the board merely reads in passing will argue with it. It stops being the last
+word only once the board has actually tried it — a card is sent at the moment you named, and
+whatever the provider says then is the truth from there on — or if the provider names a reset time
+of its own. When the board is holding a time, the same control offers **Check periodically** to hand
+the schedule back to it.
 
 ## One card wakes first, not all of them
 

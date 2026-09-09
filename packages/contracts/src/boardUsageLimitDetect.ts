@@ -136,10 +136,13 @@ function ruleMatches(rule: BoardUsageLimitRule, text: string): boolean {
  * an upsell AND a reset time, and **a parseable reset time beats upsell
  * language**. The same upsell with no time is an escalation.
  *
- * "Believable" excludes three things, all of which read as "it said nothing":
- * a time in the past, a time more than seven days out (a misread year, a
- * provider quoting a support SLA), and a retry shorter than five minutes — the
- * last because that is a throttle, and rule 3 is where it belongs.
+ * "Believable" excludes a time in the past and a time more than seven days out
+ * (a misread year, a provider quoting a support SLA) — both read as "it said
+ * nothing". A retry shorter than five minutes is excluded too, but only when no
+ * windowed-limit phrase matched: on its own a short interval is a throttle and
+ * rule 3 is where it belongs, while alongside "you've hit your usage limit" it
+ * is simply a window that reopens soon, and the board should wake then rather
+ * than poll blind for thirty minutes.
  */
 export function detectBoardUsageLimit(input: {
   readonly text: string;
@@ -166,13 +169,22 @@ export function detectBoardUsageLimit(input: {
   });
   const aheadMs = parsedMs === null ? null : parsedMs - input.nowMs;
   const shortRetry = aheadMs !== null && aheadMs > 0 && aheadMs < BOARD_USAGE_LIMIT_SHORT_RETRY_MS;
+  const has = (kind: BoardUsageLimitClass) => matched.some((rule) => rule.kind === kind);
+  // The short-retry floor is a test of what the interval MEANS, and once a
+  // windowed-limit phrase has matched there is nothing left for it to decide:
+  // "try again a 4:03AM" read at 4:01 is a window that reopens in two minutes,
+  // not a per-second throttle, and disbelieving it threw away the one useful
+  // fact in the sentence — the card then polled blind for half an hour to
+  // rediscover a wall that had already come down, under a pill reading "no
+  // reset time given". The floor still decides rule 3, where the wording alone
+  // cannot tell a window from a throttle.
   const believable =
     aheadMs !== null &&
-    aheadMs >= BOARD_USAGE_LIMIT_SHORT_RETRY_MS &&
+    (aheadMs >= BOARD_USAGE_LIMIT_SHORT_RETRY_MS || has("wait")) &&
+    aheadMs > 0 &&
     aheadMs <= BOARD_USAGE_LIMIT_MAX_HORIZON_MS;
   const resumeAtMs = believable ? (parsedMs as number) + BOARD_USAGE_LIMIT_RESUME_MARGIN_MS : null;
 
-  const has = (kind: BoardUsageLimitClass) => matched.some((rule) => rule.kind === kind);
   const kind: BoardUsageLimitClass =
     has("exhausted") && resumeAtMs === null
       ? "exhausted"

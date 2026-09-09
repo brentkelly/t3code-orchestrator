@@ -101,6 +101,37 @@ function stalledSubject(stepState: Pick<BoardCardStepState, "stepLabel" | "stage
   return stepState.stageLabel === null ? "This stage" : `Stage "${stepState.stageLabel}"`;
 }
 
+/** Which of recovery's two ceilings a stop crosses, or null while both hold. */
+export type BoardRecoveryCeiling = "stage-entry" | "stall-streak";
+
+/**
+ * Ask the two ceilings on their own (T3O-22), given the totals a stop WOULD
+ * reach — one definition, so nothing enforces half of them.
+ *
+ * `recoveryDecision` below is the usual caller, but it is not the only stop
+ * that spends the retry budget: a lone LOOSE usage-limit match parks its card
+ * itself (D6) and never reaches recovery at all, so without asking here it
+ * would back the same card off every rung for ever, charging a budget nobody
+ * reads. Ceilings are what turn "try again later" into "and eventually tell a
+ * human", and every path that charges the budget owes the card that.
+ */
+export function recoveryCeilingCrossed(input: {
+  /** The consecutive-stall count this stop would reach, this stop included. */
+  readonly stallCount: number;
+  readonly maxAttempts: number;
+  /** The stage entry's recovery total this stop would reach, this one included. */
+  readonly stageEntryRecoveries: number;
+  readonly maxRecoveriesPerStageEntry: number;
+}): BoardRecoveryCeiling | null {
+  // D5 first: a stage that has spent more than the ceiling on RECOVERY is a
+  // runaway regardless of the per-step ladder — the backstop that stays
+  // observable even when no single step wedged.
+  if (input.stageEntryRecoveries > input.maxRecoveriesPerStageEntry) return "stage-entry";
+  // D1 per-step ladder: `maxAttempts` consecutive unproductive stalls.
+  if (input.stallCount >= input.maxAttempts) return "stall-streak";
+  return null;
+}
+
 /**
  * How a stalled or dead step recovers (t3o-17, D1/D5) — escalating and bounded,
  * and PURE (crit 5): git and SQL stay in the reactor, which resolves the
@@ -180,11 +211,14 @@ export function recoveryDecision(input: {
   const nextStageRecoveries = input.stageEntryRecoveries + 1;
   const escalateManually = `How should I proceed: retry it again, switch to a different provider, or do you want to take it over manually?`;
 
-  // D5 ceiling first: a stage that has spent more than the ceiling on RECOVERY
-  // is a runaway regardless of the per-step ladder — the backstop that stays
-  // observable even when no single step wedged. Planned steps never reach here,
-  // which is the whole of T3O-12's D4.
-  if (nextStageRecoveries > input.maxRecoveriesPerStageEntry) {
+  // Planned steps never reach here, which is the whole of T3O-12's D4.
+  const ceiling = recoveryCeilingCrossed({
+    stallCount: nextStallCount,
+    maxAttempts: input.stepState.maxAttempts,
+    stageEntryRecoveries: nextStageRecoveries,
+    maxRecoveriesPerStageEntry: input.maxRecoveriesPerStageEntry,
+  });
+  if (ceiling === "stage-entry") {
     return {
       kind: "escalate",
       attempt: nextAttempt,
@@ -198,8 +232,7 @@ export function recoveryDecision(input: {
       ].join(" "),
     };
   }
-  // D1 per-step ladder: `maxAttempts` consecutive unproductive stalls.
-  if (nextStallCount >= input.stepState.maxAttempts) {
+  if (ceiling === "stall-streak") {
     return {
       kind: "escalate",
       attempt: nextAttempt,

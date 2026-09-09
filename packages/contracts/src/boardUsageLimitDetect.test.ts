@@ -225,6 +225,24 @@ describe("detectBoardUsageLimit — against an injected catalogue", () => {
     expect(run("ease off")?.kind).toBe("slow-down");
   });
 
+  it("believes a sub-five-minute time once a WINDOW phrase has matched", () => {
+    // The floor is a test of what a bare interval MEANS, and a windowed-limit
+    // phrase has already answered that. Disbelieving the time here threw away
+    // the one useful fact in the sentence: the card polled blind for half an
+    // hour, under a pill reading "no reset time given", to rediscover a wall
+    // that had come down in three.
+    const match = run("window is spent, try again in 2 minutes");
+    expect(match?.kind).toBe("wait");
+    expect(match?.resumeAt).toBe(DateTime.formatIso(DateTime.makeUnsafe(NOW + 120_000 + 60_000)));
+  });
+
+  it("still refuses a sub-five-minute time to an exhausted marker alone", () => {
+    // Precedence 1's second clause is about a RESET time, and two minutes with
+    // nothing but a billing marker beside it is not one. Nothing has said this
+    // is a window, so the floor still decides.
+    expect(run("wallet is empty, try again in 2 minutes")?.kind).toBe("exhausted");
+  });
+
   it("matches on a provider error code as readily as on wording", () => {
     expect(run("Request failed with status 402")?.kind).toBe("exhausted");
     // …and not on a number that merely contains it.

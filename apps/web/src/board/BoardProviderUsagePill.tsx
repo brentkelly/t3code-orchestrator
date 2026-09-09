@@ -165,10 +165,14 @@ function UsageRow({
           </button>
         </div>
       ) : null}
-      {/* Offered only when the provider named no time (D14): a human reading
-          the provider's own dashboard knows something the blind poll does not,
-          and their time is never overwritten by a later loose match. */}
-      {row.limited && !row.knownTime ? <SetResumeTime onSet={onSetResumeAt} /> : null}
+      {/* Offered on EVERY live cooldown (D14): a human reading the provider's own
+          dashboard knows something the board does not, and that is as true when
+          the board holds a time as when it does not — a probe that was refused
+          leaves `until` pointing at our own next rung, and hiding the control
+          behind `knownTime` left the one person who could correct it with no way
+          to. Their time survives any later loose match; only the provider naming
+          a time of its own replaces it. */}
+      {row.limited ? <SetResumeTime knownTime={row.knownTime} onSet={onSetResumeAt} /> : null}
       {row.tasks.map((task) => (
         <button
           className="flex h-[26px] w-full items-center gap-2 rounded-md px-1.5 text-left hover:bg-accent"
@@ -189,15 +193,24 @@ function UsageRow({
  * schedule control uses (T3O-19, D12). There is no date picker anywhere else in
  * this app and this is a rarely-used control, so it borrows that one's input,
  * its presets and its ISO round-trip rather than inventing a second.
+ *
+ * The way OUT is here too, and only while there is a time to withdraw: a
+ * cooldown already polling blind has nothing to hand back.
  */
-function SetResumeTime({ onSet }: { readonly onSet: (resumeAt: string | null) => void }) {
+function SetResumeTime({
+  knownTime,
+  onSet,
+}: {
+  readonly knownTime: boolean;
+  readonly onSet: (resumeAt: string | null) => void;
+}) {
   const [nowMs] = useState(() => Date.now());
   const [draft, setDraft] = useState("");
   const presets = schedulePresets(nowMs);
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-        Set resume time
+        {knownTime ? "Change resume time" : "Set resume time"}
       </span>
       <input
         aria-label="Set resume time"
@@ -221,6 +234,15 @@ function SetResumeTime({ onSet }: { readonly onSet: (resumeAt: string | null) =>
             {preset.label}
           </button>
         ))}
+        {knownTime ? (
+          <button
+            className="h-[26px] rounded-md border border-input px-2 text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={() => onSet(null)}
+            type="button"
+          >
+            Check periodically
+          </button>
+        ) : null}
       </div>
     </div>
   );

@@ -144,6 +144,7 @@ import {
   orderBoardQueue,
   outputSignalShieldsStep,
   reconcileStepDecision,
+  recoveryCeilingCrossed,
   recoveryDecision,
   resolveBoardConcurrencyLimit,
   type BoardQueueCandidate,
@@ -2992,9 +2993,12 @@ const make = Effect.gen(function* () {
    * Turn a classified `wait` into a cooldown on the provider instance (D1/D5/D8).
    *
    * `until` is the provider's own reset time when it gave one, and the next
-   * blind-poll rung when it did not. A human-set time is never overwritten by a
-   * later match (D14): the human looked at the provider and typed what they
-   * saw, and a loose regex must not argue with them.
+   * blind-poll rung when it did not. A human-set time survives a later LOOSE
+   * match (D14): the human looked at the provider and typed what they saw, and
+   * a regex must not argue with them. A strict match carrying the provider's
+   * own named time is not a regex arguing — it is the account answering — so it
+   * wins, and `fireDueProbes` retires the flag once the human's time has had
+   * its probe.
    */
   const recordUsageLimit = Effect.fn("board-supervisor-recordUsageLimit")(function* (input: {
     readonly providerInstanceId: ProviderInstanceId;
@@ -3003,8 +3007,21 @@ const make = Effect.gen(function* () {
     readonly nowMs: number;
   }) {
     const board = yield* readBoard;
-    const existing = boardProviderLimit(board, input.providerInstanceId);
-    if (existing !== null && existing.setByHuman) return existing;
+    const row = boardProviderLimit(board, input.providerInstanceId);
+    // Only a `wait` row is a cooldown this one CONTINUES. An `exhausted` row is
+    // a different fact about a different problem, and inheriting its clocks
+    // would date this cooldown from the billing wall: a genuine session limit a
+    // week after an untouched exhausted row would be born already past the
+    // seven-day ceiling and already "probed", and the next sweep would give up
+    // on a window that reopens in hours.
+    const existing = row !== null && row.kind === "wait" ? row : null;
+    // A human-set time is honoured (D14) — but the provider naming a time of its
+    // own in a STRICT match is not a regex arguing with them, it is the account
+    // itself answering, and that wins. Anything less (a loose match, or a wait
+    // with no time at all) leaves what they typed exactly where it is.
+    const providerNamedItsOwnTime =
+      input.match.confidence === "strict" && input.match.resumeAt !== null;
+    if (existing !== null && existing.setByHuman && !providerNamedItsOwnTime) return existing;
     const nowIsoValue = DateTime.formatIso(DateTime.makeUnsafe(input.nowMs));
     // Blind polling is measured from when it STARTED, never from the last
     // probe: measuring per-probe would let a restart quietly reset the ladder to
@@ -3148,6 +3165,42 @@ const make = Effect.gen(function* () {
         match.confidence === "strict" ||
         noteLooseMatch(String(state.providerInstanceId), String(card.id)) >= LOOSE_USAGE_PROMOTION;
       if (!promoted) {
+        // This park CHARGES the budget and then returns, so `recoverStep` — the
+        // only place the recovery ceilings are ever asked about — is never
+        // reached. Ask them here, or a provider that keeps producing exactly one
+        // loose match backs the same card off every rung for ever:
+        // `noteLooseMatch` counts DIFFERENT cards, so a lone repeater never
+        // promotes to a cooldown, and nothing downstream reads the attempts it
+        // is spending. Crossing a ceiling ends it the same way recovery ends:
+        // `gave-up`, no retry time, a human.
+        const board = yield* readBoard;
+        const settings = yield* boardSettings;
+        const exec = resolveBoardStageExecution(settings, card.stage);
+        const ceiling = recoveryCeilingCrossed({
+          // The park records no progress, so the streak always extends by one —
+          // the same arithmetic `recoveryDecision` does for a stop like this.
+          stallCount: state.stallCount + 1,
+          maxAttempts: state.maxAttempts,
+          stageEntryRecoveries: boardStageEntryRecoveryCount(board, card.id) + 1,
+          maxRecoveriesPerStageEntry: exec.maxInvocationsPerStageEntry,
+        });
+        if (ceiling !== null) {
+          yield* Effect.logWarning("board supervisor: loose usage-limit backoff gave up", {
+            cardId: card.id,
+            stepId: state.stepId,
+            ceiling,
+          });
+          yield* parkStepForRetry({
+            card,
+            state,
+            reason: "gave-up",
+            retryAt: null,
+            chargeBudget: true,
+            progressed: false,
+            lastError: match.reason,
+          });
+          return true;
+        }
         // It still skips the 2-minute rung: whatever this is, it is not something
         // another poke in two minutes will fix.
         const delay = yield* jittered(boardUsageLimitPollDelayMs(0) as number);
@@ -4363,6 +4416,15 @@ const make = Effect.gen(function* () {
    * that would lift the gate on the strength of the very evidence that it should
    * hold — so the turn is re-classified here and only a turn the catalogue says
    * nothing about counts.
+   *
+   * It lifts an `exhausted` row too, and that is the ONLY way out of one: an
+   * exhausted row gates nothing, so it is never probed, and D16 deliberately
+   * gives it no expiry — which left the pill reading "out of credits" for ever
+   * after the human topped up, across restarts, and made every turn on the
+   * machine pay a thread-shell read to discover a row nothing could clear. The
+   * proof is the same one D9 rests on: a turn that completed against this
+   * account is the account answering. Its cards are NOT resumed with it — they
+   * were handed to a human as `quota-exhausted`, and a human hands them back.
    */
   const clearLimitOnCleanTurn = Effect.fn("board-supervisor-clearLimitOnCleanTurn")(
     function* (input: {
@@ -4377,7 +4439,7 @@ const make = Effect.gen(function* () {
       const providerInstanceId = shell?.modelSelection?.instanceId;
       if (providerInstanceId === undefined) return;
       const limit = boardProviderLimit(input.board, providerInstanceId);
-      if (limit === null || limit.kind !== "wait") return;
+      if (limit === null) return;
       const match = yield* usageLimits.classifyTurn({
         threadId: input.threadId,
         turnErrorMessage: input.turnErrorMessage,
@@ -4950,6 +5012,15 @@ const make = Effect.gen(function* () {
         until: nextUntil,
         lastCheckedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
         probeCardId: prober.cardId,
+        // A human-set time has now been HONOURED: a card is on its way to the
+        // provider at the moment they named, which is everything D14 promised
+        // them. From here `until` is our own next rung, not their time, so
+        // leaving the flag set would keep the board pretending their clock is
+        // still live — the popover would count down to a probe as though the
+        // provider had named it, and the control that could correct it stays
+        // hidden behind `knownTime`. Retiring it here hands the schedule back to
+        // whatever the provider says next.
+        setByHuman: false,
       });
       yield* startOrResumeCard(prober.cardId, { preserveBudget: true });
     }
@@ -4992,6 +5063,12 @@ const make = Effect.gen(function* () {
    * so a human's click and the clock reaching the reset time go through exactly
    * the same code — one prober, chosen the same way, rescheduling the same way
    * if it is refused again.
+   *
+   * `probeCardId` is deliberately left ALONE: `fireDueProbes` picks the prober
+   * fresh anyway, and erasing it first would blind its "is the one we have still
+   * mid-turn?" guard, so a click landing while the incumbent is still answering
+   * would put a second card against a provider that has not answered the first.
+   * The human asked for the probe to happen now, not for two of them.
    */
   const probeProviderLimitNow = Effect.fn("board-supervisor-probeProviderLimitNow")(function* (
     providerInstanceId: ProviderInstanceId,
@@ -5000,7 +5077,7 @@ const make = Effect.gen(function* () {
     const limit = boardProviderLimit(board, providerInstanceId);
     if (limit === null || limit.kind !== "wait") return;
     const nowIsoValue = yield* nowIso;
-    yield* recordProviderLimit({ ...limit, until: nowIsoValue, probeCardId: null });
+    yield* recordProviderLimit({ ...limit, until: nowIsoValue });
     yield* fireDueProbes();
   });
 

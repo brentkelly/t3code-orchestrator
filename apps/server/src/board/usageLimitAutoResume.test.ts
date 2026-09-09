@@ -423,6 +423,42 @@ it.effect("the same card repeating a loose match never promotes on its own", () 
   ),
 );
 
+it.effect("a lone loose match reaches a human too: its backoff has the same ceilings", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("a", "a")], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        // The card-local park CHARGES the retry budget and then returns, so
+        // ordinary recovery — the only place the ceilings were ever asked about
+        // — is never reached. One agent that keeps quoting quota errors at
+        // itself therefore never promotes (that needs two cards) and never
+        // escalates either: it just backs off every rung, for ever, spending a
+        // budget nobody reads.
+        const thread = yield* stopCard(harness, "a", "a", 1, looseWait());
+        assert.strictEqual((yield* stepOf(harness, "a"))?.stalledReason, "waiting-retry");
+
+        // `maxAttempts` is 5, and this stop was the first.
+        for (let stop = 2; stop <= 5; stop += 1) {
+          yield* TestClock.adjust(Duration.minutes(32));
+          yield* harness.reactor.fireRetries;
+          yield* harness.reactor.drain;
+          yield* harness.pumpRuntime(turnCompleted(thread));
+        }
+
+        const escalated = yield* stepOf(harness, "a");
+        assert.strictEqual(escalated?.stalledReason, "gave-up", "it reaches a human");
+        assert.strictEqual(escalated?.retryAt, null, "with no time it will try again");
+        assert.strictEqual(escalated?.lastError, looseWait().reason, "and says why");
+        // Still card-local throughout: one card's confusion never froze the
+        // provider, which is the whole of D6.
+        assert.strictEqual(yield* limitOf(harness, codex), null);
+      }),
+  ),
+);
+
 // ── One prober wakes, never the fleet (D9) ────────────────────────────────
 
 it.effect("at the reset time exactly one card wakes, and a clean turn frees the rest", () =>
@@ -1113,6 +1149,192 @@ it.effect("a prober still mid-turn is not replaced, so only one card ever probes
         const sibling = yield* stepOf(harness, "b");
         assert.strictEqual(sibling?.status, "stalled", "the sibling never woke");
         assert.strictEqual(sibling?.stalledReason, "usage-limit");
+      }),
+  ),
+);
+
+it.effect("resume now keeps the prober it has rather than electing a second", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a"), buildingCard("b", "b")],
+        // The same restart-shaped state as the sweep's own guard: `a` elected
+        // and still answering, `b` waiting behind it. A human clicking "Resume
+        // now" while that is true asked for the probe to happen NOW, not for a
+        // second one — so the click must go through the same election the clock
+        // does, guard and all.
+        stepStates: [probingStep("a"), parkedByLimit("b")],
+        providerLimits: [
+          {
+            providerInstanceId: codex,
+            kind: "wait",
+            until: RESETS_AT,
+            detectedAt: "1969-12-31T23:00:00.000Z",
+            lastCheckedAt: "1969-12-31T23:30:00.000Z",
+            reason: waitAt().reason,
+            ruleId: "codex.usage-limit",
+            sourceCardId: BoardCardId.make("a"),
+            knownTime: true,
+            blindSince: null,
+            probeCardId: BoardCardId.make("a"),
+            setByHuman: false,
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        yield* harness.reactor.probeProviderLimit(codex);
+        yield* harness.reactor.drain;
+
+        const limit = yield* limitOf(harness, codex);
+        assert.strictEqual(String(limit?.probeCardId), "a", "the prober we have is kept");
+        const sibling = yield* stepOf(harness, "b");
+        assert.strictEqual(sibling?.status, "stalled", "the sibling never woke");
+        assert.strictEqual(sibling?.stalledReason, "usage-limit");
+      }),
+  ),
+);
+
+// ── The ways OUT of a row nothing else clears ─────────────────────────────
+
+it.effect("an exhausted row does not survive a clean turn on the account", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a")],
+        // Out of credits since yesterday. Nothing probes an exhausted row and
+        // D16 gives it no expiry, so before the lift below it outlived the
+        // top-up that fixed it: the top bar read "out of credits" for ever, and
+        // every turn end on the machine paid a thread-shell read to find a row
+        // nothing could clear.
+        providerLimits: [
+          {
+            providerInstanceId: codex,
+            kind: "exhausted",
+            until: "1969-12-31T00:00:00.000Z",
+            detectedAt: "1969-12-31T00:00:00.000Z",
+            lastCheckedAt: "1969-12-31T00:00:00.000Z",
+            reason: exhausted().reason,
+            ruleId: "openai.insufficient-quota",
+            sourceCardId: BoardCardId.make("a"),
+            knownTime: false,
+            blindSince: null,
+            probeCardId: null,
+            setByHuman: false,
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        // The human topped the account up, and a turn on it completed without a
+        // refusal — the same proof D9 lifts a `wait` on. The account answered.
+        yield* stopCard(harness, "a", "a", 1, null);
+        assert.strictEqual(yield* limitOf(harness, codex), null);
+      }),
+  ),
+);
+
+it.effect("a genuine limit after an old exhausted row is not born already expired", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a")],
+        // An exhausted row from eight days ago. A `wait` landing now is a
+        // different fact about a different problem, and inheriting that row's
+        // clocks would date the new cooldown from the billing wall: it would be
+        // born past the seven-day ceiling AND already counted as probed, so the
+        // very next sweep would give up on a window that reopens in an hour.
+        providerLimits: [
+          {
+            providerInstanceId: codex,
+            kind: "exhausted",
+            until: "1969-12-24T00:00:00.000Z",
+            detectedAt: "1969-12-24T00:00:00.000Z",
+            lastCheckedAt: "1969-12-25T00:00:00.000Z",
+            reason: exhausted().reason,
+            ruleId: "openai.insufficient-quota",
+            sourceCardId: BoardCardId.make("a"),
+            knownTime: false,
+            blindSince: null,
+            probeCardId: null,
+            setByHuman: false,
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        yield* stopCard(harness, "a", "a", 1, waitAt());
+
+        const limit = yield* limitOf(harness, codex);
+        assert.strictEqual(limit?.kind, "wait");
+        assert.strictEqual(limit?.detectedAt, "1970-01-01T00:00:00.000Z", "dated from NOW");
+        assert.strictEqual(limit?.lastCheckedAt, limit?.detectedAt, "and owed its first probe");
+
+        // Which is the behaviour that matters: the sweep waits for the window
+        // rather than escalating a card that is due back within the hour.
+        yield* harness.reactor.fireProbes;
+        yield* harness.reactor.drain;
+        assert.strictEqual((yield* limitOf(harness, codex))?.kind, "wait");
+        assert.strictEqual((yield* stepOf(harness, "a"))?.stalledReason, "usage-limit");
+      }),
+  ),
+);
+
+it.effect("a human-set time stops being authoritative once its probe has gone", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a"), buildingCard("b", "b")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        const threadA = yield* startCard(harness, "a", "a", 1);
+        const threadB = yield* startCard(harness, "b", "b", 2);
+        yield* endTurn(harness, threadA, waitAt());
+        yield* endTurn(harness, threadB, waitAt());
+
+        // A human read the provider's own dashboard and typed a time of their
+        // own. The board owes them that time and nothing else: once a card is on
+        // its way at the moment they named, D14 has been kept in full. Leaving
+        // the flag set made their guess PERMANENT — the provider's later, better
+        // answer was discarded for ever, `until` became our own next probe rung
+        // while the popover went on presenting it as their reset clock, and the
+        // control that could have corrected it was hidden behind `knownTime`.
+        yield* harness.reactor.setProviderLimitResumeAt({
+          providerInstanceId: codex,
+          resumeAt: "1970-01-01T00:30:00.000Z",
+        });
+        assert.isTrue((yield* limitOf(harness, codex))?.setByHuman);
+
+        yield* TestClock.adjust(Duration.minutes(31));
+        yield* harness.reactor.fireProbes;
+        yield* harness.reactor.drain;
+        const probing = yield* limitOf(harness, codex);
+        assert.isNotNull(probing?.probeCardId, "their time elected a prober");
+        assert.isFalse(probing?.setByHuman, "and retired the flag when it did");
+
+        // The probe comes back refused, naming no time of its own. Now that the
+        // flag is gone the provider's answer LANDS: the cooldown goes back to
+        // polling blind and says so, instead of counting down to a probe rung
+        // under a clock the human never typed.
+        const prober = probing?.probeCardId === BoardCardId.make("a") ? threadA : threadB;
+        yield* endTurn(harness, prober, waitAt(null));
+        const refused = yield* limitOf(harness, codex);
+        assert.strictEqual(refused?.kind, "wait");
+        assert.isFalse(refused?.knownTime, "no reset time is claimed any more");
+        assert.isNotNull(refused?.blindSince, "the blind ladder is running instead");
       }),
   ),
 );
