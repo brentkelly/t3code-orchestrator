@@ -29,6 +29,19 @@ describe("detectBoardUsageLimit — the shipped catalogue", () => {
     },
   );
 
+  // Classifying the sample is not enough: a rule whose sample states a time the
+  // parser cannot read still ships, and the card blind-polls to a moment the
+  // provider had already named. These are the catalogue's timed samples.
+  it.each([
+    ["claude-code.session-limit", "2026-07-19T14:51:00.000Z"],
+    ["claude-code.usage-limit-reached", "2026-07-19T15:01:00.000Z"],
+    ["codex.usage-limit", "2026-07-20T21:49:00.000Z"],
+  ])("reads the time %s's own sample states", (id, resumeAt) => {
+    const rule = BOARD_USAGE_LIMIT_RULES.find((candidate) => candidate.id === id);
+    expect(rule).toBeDefined();
+    expect(detect(rule?.sample ?? "")?.resumeAt).toBe(resumeAt);
+  });
+
   it("gives every rule a unique id", () => {
     const ids = BOARD_USAGE_LIMIT_RULES.map((rule) => rule.id);
     expect(new Set(ids).size).toBe(ids.length);

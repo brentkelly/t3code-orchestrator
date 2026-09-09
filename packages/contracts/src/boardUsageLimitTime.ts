@@ -13,6 +13,7 @@
  * | absolute              | `try again at Jul 20th, 2026 9:48PM`      |
  * | bare clock + zone     | `resets 2:50am (Pacific/Auckland)`        |
  * | bare clock            | `try again a 4:03AM` (the provider's typo)|
+ * | bare hour             | `please try again after 3pm`              |
  *
  * Time tokens are scanned for DIRECTLY rather than behind a `resets` / `try
  * again at` lead-in. That is what makes the last row parse: the message really
@@ -62,6 +63,11 @@ const ABSOLUTE_DATE =
 
 /** `2:50am`, `4:03 PM`, `21:48` — a bare clock with no date around it. */
 const BARE_CLOCK = /\b(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?\b/i;
+
+/** `3pm`, `11 AM` — an hour with no minutes, as Claude's own "try again after
+    3pm" writes it. Anchored on the meridiem, without which a bare number in
+    prose ("5-hour limit", "Plus") would read as a time. */
+const BARE_HOUR = /\b(\d{1,2})\s*(am|pm)\b/i;
 
 /** An IANA zone in parentheses, as Claude Code writes it: `(Pacific/Auckland)`. */
 const ZONE_IN_PARENS = /\(\s*([A-Za-z]+(?:[_-][A-Za-z]+)*\/[A-Za-z]+(?:[_-][A-Za-z]+)*)\s*\)/;
@@ -248,6 +254,16 @@ function bareClockInstant(text: string, nowMs: number, timeZone: string): number
   return nextClockInstant(hour, minute, nowMs, timeZone);
 }
 
+/** The hour-only twin of the above, on the top of that hour. Tried last, so a
+    message carrying a real `h:mm` is never read as its hour alone. */
+function bareHourInstant(text: string, nowMs: number, timeZone: string): number | null {
+  const match = BARE_HOUR.exec(text);
+  if (match === null) return null;
+  const hour = to24Hour(Number(match[1]), match[2]);
+  if (hour === null) return null;
+  return nextClockInstant(hour, 0, nowMs, timeZone);
+}
+
 /**
  * When the provider says we may try again, as epoch millis — or null when the
  * message says nothing readable.
@@ -270,5 +286,7 @@ export function boardUsageLimitResumeAtMs(input: {
   if (duration !== null) return input.nowMs + duration;
   const absolute = absoluteInstant(input.text, timeZone);
   if (absolute !== null) return absolute;
-  return bareClockInstant(input.text, input.nowMs, timeZone);
+  const bare = bareClockInstant(input.text, input.nowMs, timeZone);
+  if (bare !== null) return bare;
+  return bareHourInstant(input.text, input.nowMs, timeZone);
 }

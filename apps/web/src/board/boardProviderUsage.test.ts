@@ -10,7 +10,8 @@ import {
 
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claudeAgent");
-const NOW = Date.parse("2026-09-10T23:22:00.000Z");
+const NOW_ISO = "2026-09-10T23:22:00.000Z";
+const NOW = Date.parse(NOW_ISO);
 
 const limit = (over: Partial<BoardProviderLimit> = {}): BoardProviderLimit => ({
   providerInstanceId: codex,
@@ -149,6 +150,28 @@ describe("boardProviderUsageBar", () => {
     expect(bar.rows[0]?.resumeWhen).toBe("");
     expect(bar.rows[0]?.knownTime).toBe(false);
     expect(bar.tip).toContain("no reset time given");
+    // The pill is always on screen while the popover is not, so a clock here
+    // would be the board promising a reset its own popover says it cannot name.
+    expect(bar.rows[0]?.resumeAt).toBe(null);
+    expect(bar.resume).toBe("");
+  });
+
+  it("ignores a blind cooldown when picking the pill's clock", () => {
+    // The blind row's `until` is the next probe and sorts first; the clock must
+    // still be the only reset a provider actually named.
+    const bar = boardProviderUsageBar({
+      limits: [
+        limit({ knownTime: false, until: "2026-09-10T23:30:00.000Z", blindSince: NOW_ISO }),
+        limit({ providerInstanceId: claude, until: "2026-09-11T01:00:00.000Z" }),
+      ],
+      cards: [],
+      nowMs: NOW,
+    });
+    expect(bar.resume).toBe(
+      new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(
+        Date.parse("2026-09-11T01:00:00.000Z"),
+      ),
+    );
   });
 
   it("takes the SOONEST reset across providers for the pill's clock", () => {

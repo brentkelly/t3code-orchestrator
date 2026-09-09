@@ -112,7 +112,23 @@ describe("boardUsageLimitResumeAtMs", () => {
     expect(resumeAt("resets 23:00 (Middle/Earth)")).toBe(Date.parse("2026-07-19T23:00:00.000Z"));
   });
 
+  it("reads a bare hour written with no minutes", () => {
+    // Claude's documented refusal states the hour alone. Without this the card
+    // would blind-poll every half hour to a time the provider had already given.
+    expect(resumeAt("Claude AI usage limit reached, please try again after 3pm")).toBe(
+      Date.parse("2026-07-19T15:00:00.000Z"),
+    );
+    expect(resumeAt("try again after 11 AM")).toBe(Date.parse("2026-07-20T11:00:00.000Z"));
+  });
+
+  it("prefers a full clock over the hour inside it", () => {
+    // `4:03AM` must not be read as `03 AM`: the bare-hour form is a fallback.
+    expect(resumeAt("try again a 4:03AM")).toBe(Date.parse("2026-07-20T04:03:00.000Z"));
+  });
+
   it("reads nothing from a message with no time", () => {
     expect(resumeAt("You hit your weekly limit")).toBeNull();
+    // A number in prose is not a time without a meridiem beside it.
+    expect(resumeAt("You've reached your 5-hour message limit")).toBeNull();
   });
 });

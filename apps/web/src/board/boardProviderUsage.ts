@@ -35,6 +35,9 @@ export type BoardProviderUsageRow = {
   /** Whether the provider named a time. When it did not, the popover offers
       "Set resume time" instead of a countdown. */
   readonly knownTime: boolean;
+  /** The reset instant the PROVIDER named, or null. Null while polling blind:
+      the limit's `until` is then only the next probe, and handing that to a
+      caller is how a blind cooldown ends up wearing a reset clock. */
   readonly resumeAt: string | null;
   readonly tasks: ReadonlyArray<BoardProviderUsageTask>;
   readonly taskCount: string;
@@ -154,7 +157,7 @@ export function boardProviderUsageBar(input: {
       resumeWhen: limited && limit.knownTime ? boardUsageWhenLabel(limit.until, input.nowMs) : "",
       resumeIn: limited && limit.knownTime ? boardUsageUntilLabel(limit.until, input.nowMs) : "",
       knownTime: limit.knownTime,
-      resumeAt: limited ? limit.until : null,
+      resumeAt: limited && limit.knownTime ? limit.until : null,
       tasks,
       taskCount: tasks.length === 1 ? "1 task waiting" : `${tasks.length} tasks waiting`,
     };
@@ -181,8 +184,10 @@ export function boardProviderUsageBar(input: {
           ? `${rows[0]?.name ?? ""} — out of credits`
           : `${rows[0]?.name ?? ""} limit`
         : `${rows.length} provider limits`,
-    // An exhausted account gets no clock: there is nothing to count down to,
-    // and a time beside it would read as a promise the board cannot keep.
+    // No clock unless a provider named one: an exhausted account has nothing to
+    // count down to, and a blind cooldown's `until` is our own next probe. Either
+    // way a time here would read as a promise the board cannot keep — and the
+    // popover beside it would be saying "no reset time given" at the same moment.
     resume: soonest === undefined ? "" : clock(Date.parse(soonest)),
     tip: rows
       .map((row) =>
