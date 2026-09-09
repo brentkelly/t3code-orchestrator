@@ -1143,6 +1143,23 @@ export const BoardCard = Schema.Struct({
   scheduledStartAt: Schema.NullOr(IsoDateTime).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Whether this card starts itself the moment its last dependency lands
+      (T3O-24, D1). False on every card that has never been armed, and on every
+      card whose arm has already been SPENT — the decider clears it inside the
+      move that carries the card out of the pre-build stage, by any route (D4),
+      so firing and clearing are one atomic event.
+
+      Armable only where it can act: a live, top-level card sitting in the stage
+      immediately before the build role with at least one unmet dependency
+      (`boardCardCanArmAutoStart`, D2). A sub-board child is refused outright —
+      children already cascade off their siblings (`cascadeUnblockedChildren`,
+      t3o-28 D3) and a second mechanism doing the same thing would be two
+      answers to one question.
+
+      Decoding default `false`, matching migration 039's
+      `auto_start INTEGER NOT NULL DEFAULT 0`, so a from-empty replay of a log
+      written before this spec equals a table rehydration. */
+  autoStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -2085,11 +2102,99 @@ export function isBoardStageAtOrAfterBuild(board: BoardState, stageId: BoardStag
  * stage that would auto-start it.
  */
 export function boardSubBoardFloorStage(board: BoardState): BoardStageDefinition | null {
+  return boardStageBeforeBuild(board);
+}
+
+/**
+ * The stage immediately preceding the build-role stage — "Ready" on the seed
+ * pipeline, whatever a board has renamed or reordered it to. Null when the
+ * build-role stage is the board's first (or the board has no build role), so
+ * there is no stage to hold at.
+ *
+ * The same stage `boardSubBoardFloorStage` names, under the name the rest of
+ * the board uses for it. Two names for one stage is honest: they coincide by
+ * construction, and calling it "the sub-board floor" inside a top-level-card
+ * feature (T3O-24) would read as a lie.
+ */
+export function boardStageBeforeBuild(board: BoardState): BoardStageDefinition | null {
   const build = boardStageWithRole(board, "build");
   if (build === null) return null;
   const ordered = boardStagesInOrder(board);
   const buildIndex = ordered.findIndex((stage) => stage.stageId === build.stageId);
   return buildIndex > 0 ? ordered[buildIndex - 1]! : null;
+}
+
+/**
+ * Everything auto-start's two predicates agree on (T3O-24, D2): a LIVE,
+ * TOP-LEVEL card, waiting in the stage immediately before the build role.
+ *
+ * Top-level because a sub-board child already starts itself off its siblings
+ * (`cascadeUnblockedChildren`, t3o-28 D3) and must not gain a second, rival
+ * mechanism. Pre-build because that is the one gate this feature crosses: a
+ * card already at or past build has nothing left to arm, and a card in an
+ * ideation stage would either sit armed doing nothing visible for days or skip
+ * the plan gate on its way through.
+ */
+function isBoardCardAtAutoStartGate(input: {
+  readonly board: BoardState;
+  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt">;
+}): boolean {
+  if (input.card.archivedAt !== null || input.card.parentCardId !== null) return false;
+  const before = boardStageBeforeBuild(input.board);
+  return before !== null && input.card.stage === before.stageId;
+}
+
+/**
+ * Whether the auto-start toggle may be OFFERED on this card, and whether the
+ * decider may accept `autoStart: true` for it (T3O-24, D2).
+ *
+ * ONE predicate, shared by the decider's update arm, the reactor and the web
+ * detail, for the same reason `unmetBoardCardDependencies` is shared: a flag
+ * and the message refusing it must never disagree about the same card.
+ *
+ * Requires at least one UNMET dependency. Arming a card with nothing left to
+ * wait for is a control with no reverse state to reach — it would fire on the
+ * next tick and be spent before the user let go of it — and the card's own
+ * forward button is live at that point anyway.
+ */
+export function boardCardCanArmAutoStart(input: {
+  readonly board: BoardState;
+  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt" | "dependsOn">;
+}): boolean {
+  if (!isBoardCardAtAutoStartGate(input)) return false;
+  return (
+    unmetBoardCardDependencies({
+      board: input.board,
+      dependsOn: input.card.dependsOn,
+      cards: input.board.cards,
+    }).length > 0
+  );
+}
+
+/**
+ * Whether an armed card should be started NOW (T3O-24, D3): the same gate as
+ * `boardCardCanArmAutoStart`, with the dependency test inverted — nothing left
+ * unmet — and the arm actually set.
+ *
+ * The reactor's targeted paths and its sweep both go through this, so a
+ * dependency landing and a server that was down while it landed reach the same
+ * conclusion about the same card. An ARCHIVED dependency counts as met
+ * (t3o-13, D1), so archiving the blocker fires the card exactly as finishing it
+ * would.
+ */
+export function boardCardAutoStartDue(input: {
+  readonly board: BoardState;
+  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt" | "dependsOn" | "autoStart">;
+}): boolean {
+  if (!input.card.autoStart) return false;
+  if (!isBoardCardAtAutoStartGate(input)) return false;
+  return (
+    unmetBoardCardDependencies({
+      board: input.board,
+      dependsOn: input.card.dependsOn,
+      cards: input.board.cards,
+    }).length === 0
+  );
 }
 
 /** A sub-board plan card may occupy the materialisation floor or anything
@@ -2889,6 +2994,12 @@ export const BoardCardUpdateCommand = Schema.Struct({
       an instant sets it, which PAUSES a step that is running right now. A past
       instant is accepted and means "now". */
   scheduledStartAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** Arm or disarm the card's auto-start (T3O-24, D1). Absent leaves it
+      unchanged. `true` is REFUSED unless `boardCardCanArmAutoStart` holds —
+      arming a sub-board child, a card past the pre-build stage, or one with
+      nothing left to wait for would store a flag no path can ever act on.
+      `false` is always accepted: a reverse state must never be refused. */
+  autoStart: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -3763,6 +3874,14 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       (D6), so without it a title edit on a card parked for any other reason
       would resume it too. */
   scheduledStartAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** Whether this edit armed or disarmed auto-start (T3O-24, D6), mirroring
+      `scheduledStartAt` above: absent means the edit did not touch it.
+
+      The card rides this payload whole, so the VALUE is already there — this
+      key exists to say the edit TOUCHED it, which is what lets the supervisor
+      check an armed card for a dependency that landed between render and click
+      without re-scanning the board on every unrelated title edit. */
+  autoStart: Schema.optional(Schema.Boolean),
   /** The card face's review summary AFTER this edit (t3o-22, D7), folded by
       the decider when the edit could change it (a round budget or a stop). It
       rides the `card-upserted` shell delta this event produces, so a pure
@@ -4556,6 +4675,15 @@ export const BoardCardShell = Schema.Struct({
       preserve rule on the client. Absent really does mean unscheduled, and
       clearing a schedule really does clear the pill. */
   scheduledStartAt: Schema.optionalKey(IsoDateTime),
+  /** Whether the card starts itself when its last dependency lands (T3O-24,
+      D8), absent when it does not — which is nearly every card, and why this is
+      KEY-optional rather than a plain boolean: the shell is under a fixed
+      per-card byte budget asserted in `board.test.ts`, so an unarmed card must
+      cost exactly what it costs today.
+
+      On the card aggregate like `scheduledStartAt`, so it rides every
+      card-carrying delta for free and absent really does mean unarmed. */
+  autoStart: Schema.optionalKey(Schema.Boolean),
   /** The card's linked pull request number, absent when it has none. Sourced
       from `BoardCard.pullRequest`, so — unlike `briefHasImage` / `planCount` —
       it is on the aggregate and every card-carrying delta asserts it; there is
@@ -4784,6 +4912,10 @@ export function makeBoardCardShell(input: {
       the key is omitted for an unscheduled card to keep its shell
       byte-identical to a pre-schedule payload. */
   readonly scheduledStartAt?: IsoDateTime | null | undefined;
+  /** Whether the card is armed to auto-start (T3O-24). Rides the card
+      aggregate like `scheduledStartAt`; the key is omitted for an unarmed card
+      to keep its shell byte-identical to a pre-auto-start payload. */
+  readonly autoStart?: boolean | null | undefined;
   /** The card's review-loop summary (t3o-22, D7), or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -4840,6 +4972,9 @@ export function makeBoardCardShell(input: {
     // omitted when there is none, which keeps an unscheduled card's shell
     // exactly the size it was before this field existed.
     ...(input.scheduledStartAt == null ? {} : { scheduledStartAt: input.scheduledStartAt }),
+    // The arm (T3O-24, D8): omitted when unarmed — `false` and absent mean the
+    // same thing, and only one of them is free.
+    ...(input.autoStart === true ? { autoStart: true } : {}),
     // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -4911,6 +5046,7 @@ export function boardCardShellFromCard(
     prNumber: boardCardDisplayPullRequest(card)?.number ?? null,
     parentCardId: card.parentCardId,
     scheduledStartAt: card.scheduledStartAt,
+    autoStart: card.autoStart,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined
