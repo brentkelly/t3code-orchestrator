@@ -353,6 +353,22 @@ on mobile: `threadPresentation.ts` 1, `thread-list-v2-items.tsx` 1, `widgets/Age
 and `scripts/generate-uniwind-themes.mts` 1. Every one is a colour-class or token swap — no logic
 moved, so all 12 are frozen one-line edits rather than growable seams.
 
+**Forgejo support** (`t3o-28`) added 26 markers across 13 upstream-owned files, all of them a kind
+literal, a registration, an icon or a label. Server: `contracts/sourceControl.ts` 1 (the
+`"forgejo"` kind), `shared/sourceControl.ts` 5 (icon union, presentation, `resolveChange…` case,
+host heuristic, detection branch), `sourceControl/SourceControlProviderRegistry.ts` 3 (import +
+`make` + registration), `sourceControl/SourceControlProvider.ts` 1 (the merge-is-GitHub-only note
+now names Forgejo), `vcs/VcsProcess.ts` +2 (5; `fgj`'s two error phrasings),
+`server.ts` +2 (6) and `ws.ts` +2 (8), each an import and a layer in the registry's
+`Layer.mergeAll`. Clients: `web/components/Icons.tsx` 1, `web/sourceControlPresentation.ts` 2,
+`web/components/settings/SourceControlSettings.tsx` 2,
+`web/components/pullRequest/pullRequestLinkContextMenu.ts` 1, `web/lib/openPullRequestLink.ts` 1
+and `mobile/components/SourceControlIcon.tsx` 3. Four test files carry a further 12
+(`SourceControlDiscovery.test.ts` 2, `SourceControlProviderRegistry.test.ts` 3,
+`shared/sourceControl.test.ts` 5, `web/lib/openPullRequestLink.test.ts` 2). Everything else — the
+CLI, the provider, the decoders and the parsers — is in new T3o-owned files under
+`apps/server/src/sourceControl/forgejo*`.
+
 ---
 
 ## Seam inventory
@@ -462,6 +478,32 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Import the supervisor reactor tag                                                         | one-line append (import)                                                 |
 | `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Resolve the supervisor reactor in the startup effect                                      | one-line append (`yield*` the tag)                                       |
 | `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Start the supervisor reactor in the `reactors.start` phase                                | one-line append (start call)                                             |
+| `packages/contracts/src/sourceControl.ts`                              | `t3o-28`     | `"forgejo"` in `SourceControlProviderKind`                                                | one-line union member (frozen)                                           |
+| `packages/shared/src/sourceControl.ts`                                 | `t3o-28`     | `"forgejo"` in the presentation `icon` union                                              | one-line union member (frozen)                                           |
+| `packages/shared/src/sourceControl.ts`                                 | `t3o-28`     | `FORGEJO_CHANGE_REQUEST_PRESENTATION` (no checkout example — `fgj` has none)              | one-line append (record literal, frozen)                                 |
+| `packages/shared/src/sourceControl.ts`                                 | `t3o-28`     | `case "forgejo"` in `resolveChangeRequestPresentation`                                    | one-line switch case (frozen)                                            |
+| `packages/shared/src/sourceControl.ts`                                 | `t3o-28`     | `isForgejoHost` (codeberg.org, `forgejo`/`gitea` DNS labels)                              | one-line predicate (frozen)                                              |
+| `packages/shared/src/sourceControl.ts`                                 | `t3o-28`     | Forgejo branch in `detectSourceControlProviderFromRemoteUrl`                              | predicate delegation, before the `unknown` fallback                      |
+| `apps/server/src/sourceControl/SourceControlProvider.ts`               | `t3o-28`     | Merge-is-GitHub-only note now names Forgejo as the second implementation                  | doc-comment paragraph (frozen)                                           |
+| `apps/server/src/sourceControl/SourceControlProviderRegistry.ts`       | `t3o-28`     | Import `ForgejoSourceControlProvider`                                                     | one-line append (import)                                                 |
+| `apps/server/src/sourceControl/SourceControlProviderRegistry.ts`       | `t3o-28`     | Build the Forgejo provider in `make`                                                      | one-line append (`yield*` a board-owned factory)                         |
+| `apps/server/src/sourceControl/SourceControlProviderRegistry.ts`       | `t3o-28`     | Forgejo joins `makeWithProviders`                                                         | registry entry (kind + provider + discovery)                             |
+| `apps/server/src/vcs/VcsProcess.ts`                                    | `t3o-28`     | `fgj`'s "no configuration found for host" is an authentication failure                    | one-line predicate in `classifyNonZeroExit` (frozen)                     |
+| `apps/server/src/vcs/VcsProcess.ts`                                    | `t3o-28`     | `fgj`'s "The target couldn't be found." is a not-found failure                            | one-line predicate in `classifyNonZeroExit` (frozen)                     |
+| `apps/server/src/server.ts`                                            | `t3o-28`     | Import `ForgejoCli`                                                                       | one-line append (import)                                                 |
+| `apps/server/src/server.ts`                                            | `t3o-28`     | `ForgejoCli.layer` joins the source-control registry's `Layer.mergeAll`                   | one-line append (layer)                                                  |
+| `apps/server/src/ws.ts`                                                | `t3o-28`     | Import `ForgejoCli`                                                                       | one-line append (import)                                                 |
+| `apps/server/src/ws.ts`                                                | `t3o-28`     | `ForgejoCli.layer` joins the source-control registry's `Layer.mergeAll`                   | one-line append (layer)                                                  |
+| `apps/web/src/components/Icons.tsx`                                    | `t3o-28`     | `ForgejoIcon`, the official mark (Caesar Schinas, CC BY-SA 4.0)                           | one-line append (component, frozen)                                      |
+| `apps/web/src/sourceControlPresentation.ts`                            | `t3o-28`     | Import `ForgejoIcon`                                                                      | one-line append (import)                                                 |
+| `apps/web/src/sourceControlPresentation.ts`                            | `t3o-28`     | `case "forgejo"` in `getSourceControlPresentation`                                        | one-line switch case (frozen)                                            |
+| `apps/web/src/components/settings/SourceControlSettings.tsx`           | `t3o-28`     | Import `ForgejoIcon`                                                                      | one-line append (import)                                                 |
+| `apps/web/src/components/settings/SourceControlSettings.tsx`           | `t3o-28`     | `forgejo` in the provider icon map                                                        | one-line record entry (frozen)                                           |
+| `apps/web/src/components/pullRequest/pullRequestLinkContextMenu.ts`    | `t3o-28`     | "Open on Forgejo" in `OPEN_ON_HOST_LABELS`                                                | one-line record entry (frozen)                                           |
+| `apps/web/src/lib/openPullRequestLink.ts`                              | `t3o-28`     | `/{owner}/{repo}/pulls/{n}`, guarded by a Forgejo-ish hostname                            | one-line predicate + claim (frozen)                                      |
+| `apps/mobile/src/components/SourceControlIcon.tsx`                     | `t3o-28`     | `Circle` and `G` imports for the Forgejo mark                                             | one-line edit (import, frozen)                                           |
+| `apps/mobile/src/components/SourceControlIcon.tsx`                     | `t3o-28`     | `"forgejo"` in `SourceControlIconKind`                                                    | one-line union member (frozen)                                           |
+| `apps/mobile/src/components/SourceControlIcon.tsx`                     | `t3o-28`     | `case "forgejo"`, the official mark (Caesar Schinas, CC BY-SA 4.0)                        | one-line switch case (frozen)                                            |
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
 (5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the

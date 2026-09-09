@@ -1,9 +1,11 @@
-import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
+// T3o: Circle and G for the Forgejo mark (t3o-28).
+import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
 const ThemedSvg = withUniwind(Svg);
 
-export type SourceControlIconKind = "github" | "gitlab" | "bitbucket" | "azure-devops";
+// T3o: "forgejo" (t3o-28).
+export type SourceControlIconKind = "github" | "gitlab" | "bitbucket" | "azure-devops" | "forgejo";
 
 export function SourceControlIcon(props: {
   readonly kind: SourceControlIconKind;
@@ -78,6 +80,30 @@ export function SourceControlIcon(props: {
             fill="url(#azure-b)"
             d="M66.6 9.36a4.14 4.14 0 0 0-3.93-2.82H33.65a4.15 4.15 0 0 1 3.93 2.82l25.18 74.62a4.15 4.15 0 0 1-3.93 5.48h29.02a4.15 4.15 0 0 0 3.93-5.48z"
           />
+        </Svg>
+      );
+    // T3o: the official Forgejo mark, by Caesar Schinas, licensed CC BY-SA 4.0 (t3o-28).
+    // Source: https://codeberg.org/forgejo/meta/src/branch/readme/branding
+    case "forgejo":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 212 212" fill="none">
+          <G transform="translate(6,6)" fill="none">
+            <Path
+              d="M58 168 v-98 a50 50 0 0 1 50-50 h20"
+              stroke="#ff6600"
+              strokeWidth={25}
+              fill="none"
+            />
+            <Path
+              d="M58 168 v-30 a50 50 0 0 1 50-50 h20"
+              stroke="#d40000"
+              strokeWidth={25}
+              fill="none"
+            />
+            <Circle cx="142" cy="20" r="18" stroke="#ff6600" strokeWidth={15} fill="none" />
+            <Circle cx="142" cy="88" r="18" stroke="#d40000" strokeWidth={15} fill="none" />
+            <Circle cx="58" cy="180" r="18" stroke="#d40000" strokeWidth={15} fill="none" />
+          </G>
         </Svg>
       );
     case "bitbucket":

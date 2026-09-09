@@ -192,6 +192,23 @@ export const BitbucketIcon: Icon = (props) => {
   );
 };
 
+// T3o: the official Forgejo mark, by Caesar Schinas, licensed CC BY-SA 4.0 (t3o-28).
+// Source: https://codeberg.org/forgejo/meta/src/branch/readme/branding
+// The upstream file styles its shapes from a `<style>` block whose selectors are bare element
+// names; those rules are inlined as attributes here so the mark cannot restyle any other svg on
+// the page.
+export const ForgejoIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 212 212" fill="none">
+    <g transform="translate(6,6)" fill="none">
+      <path d="M58 168 v-98 a50 50 0 0 1 50-50 h20" stroke="#ff6600" strokeWidth={25} />
+      <path d="M58 168 v-30 a50 50 0 0 1 50-50 h20" stroke="#d40000" strokeWidth={25} />
+      <circle cx="142" cy="20" r="18" stroke="#ff6600" strokeWidth={15} />
+      <circle cx="142" cy="88" r="18" stroke="#d40000" strokeWidth={15} />
+      <circle cx="58" cy="180" r="18" stroke="#d40000" strokeWidth={15} />
+    </g>
+  </svg>
+);
+
 export const CursorIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}

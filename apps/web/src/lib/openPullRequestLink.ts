@@ -151,6 +151,13 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     const match = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
   }
+  // T3o: Forgejo, Codeberg included: /{owner}/{repo}/pulls/{n}. `/pulls/` is one letter from
+  // GitHub's `/pull/`, so it is only believed from a host that says it is Forgejo — a
+  // self-hosted install named after its team is not recognisable from its URL alone (t3o-28).
+  if (isHostOf(host, "codeberg.org", "forgejo") || host.startsWith("gitea.")) {
+    const match = /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
+    return claim(host, match);
+  }
   // Azure DevOps, both the current host and the per-organisation one it replaced. `_git` is part
   // of the repository path there, as it is in the remote URL the identity is read from.
   if (isHostOf(host, "dev.azure.com") || host.endsWith(".visualstudio.com")) {
