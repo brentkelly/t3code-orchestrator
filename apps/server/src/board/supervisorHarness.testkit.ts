@@ -1204,13 +1204,18 @@ export const turnCompleted = (
   turnId?: string,
   /** A failed turn's own error text, for the Grok-shaped refusal path. */
   errorMessage?: string,
+  /** How the turn ended. Defaults to the pair that always travels together — an
+      error text means `failed`, its absence means `completed` — and is passed
+      explicitly only to build the odd shapes: an interrupted turn (a human
+      pressed Stop) or a failure that named nothing. */
+  state?: "completed" | "failed" | "interrupted" | "cancelled",
 ): ProviderRuntimeEvent =>
   ({
     type: "turn.completed",
     threadId,
     ...(turnId === undefined ? {} : { turnId }),
     payload: {
-      state: errorMessage === undefined ? "completed" : "failed",
+      state: state ?? (errorMessage === undefined ? "completed" : "failed"),
       ...(errorMessage === undefined ? {} : { errorMessage }),
     },
   }) as unknown as ProviderRuntimeEvent;

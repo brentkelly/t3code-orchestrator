@@ -776,6 +776,52 @@ it.effect("any clean turn on the instance lifts the cooldown, board thread or no
   ),
 );
 
+it.effect("a turn that failed or was interrupted is not the account answering", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a"), buildingCard("b", "b")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: new Map([["thread-human", idleThreadShell("thread-human", codex)]]),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        const threadA = yield* startCard(harness, "a", "a", 1);
+        const threadB = yield* startCard(harness, "b", "b", 2);
+        yield* endTurn(harness, threadA, waitAt());
+        yield* endTurn(harness, threadB, waitAt());
+        assert.strictEqual((yield* limitOf(harness, codex))?.kind, "wait");
+
+        // The provider's CLI dies with a generic failure that says nothing about
+        // quota — the shape every adapter produces ("Claude turn failed.",
+        // "Grok prompt request failed."). The catalogue matches nothing, but a
+        // turn that FAILED is not proof the wall came down.
+        harness.setUsageVerdict("thread-human", null);
+        yield* harness.pumpRuntime(
+          turnCompleted(ThreadId.make("thread-human"), undefined, "Grok prompt request failed."),
+        );
+        assert.strictEqual((yield* limitOf(harness, codex))?.kind, "wait");
+
+        // Nor is a turn a human stopped mid-flight.
+        yield* harness.pumpRuntime(
+          turnCompleted(ThreadId.make("thread-human"), undefined, undefined, "interrupted"),
+        );
+        assert.strictEqual((yield* limitOf(harness, codex))?.kind, "wait");
+        for (const id of ["a", "b"]) {
+          const parked = yield* stepOf(harness, id);
+          assert.strictEqual(parked?.stalledReason, "usage-limit", `${id} still waits`);
+          assert.strictEqual(parked?.retryAt, RESETS_AT, `${id} keeps its reset time`);
+        }
+
+        // The same thread completing IS.
+        yield* harness.pumpRuntime(turnCompleted(ThreadId.make("thread-human")));
+        assert.strictEqual(yield* limitOf(harness, codex), null);
+      }),
+  ),
+);
+
 // ── Only this feature's own parks are ever resumed (D9) ───────────────────
 
 it.effect("a card parked on an unanswered question is never resumed by a lifting cooldown", () =>

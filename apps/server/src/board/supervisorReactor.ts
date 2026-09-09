@@ -56,6 +56,7 @@ import {
   type BoardCardStepStalledReason,
   type ProviderInstanceId,
   type BoardUsageLimitMatch,
+  type RuntimeTurnState,
   BOARD_SUBMIT_STEP_ID,
   BOARD_SUBMIT_STEP_LABEL,
   DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
@@ -4420,6 +4421,10 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     completedTurnId: TurnId | undefined,
     turnErrorMessage: string | null = null,
+    /** How the turn ended (T3O-22, D9). Read by the cooldown lift alone: the
+        DETECTION path must stay state-blind, because Grok's refusal arrives on
+        a `failed` turn. */
+    turnState: RuntimeTurnState | undefined = undefined,
   ) {
     const board = yield* readBoard;
     yield* handleTurnCompleted(board, threadId, completedTurnId, turnErrorMessage);
@@ -4431,7 +4436,7 @@ const make = Effect.gen(function* () {
     //
     // Gated on the slice being non-empty, so an ordinary board pays exactly one
     // array check per turn end and no query at all.
-    yield* clearLimitOnCleanTurn({ board, threadId, turnErrorMessage });
+    yield* clearLimitOnCleanTurn({ board, threadId, turnErrorMessage, turnState });
     const owned =
       resolveBoardCardForThread(board, threadId) !== null || abandonedThreads.has(String(threadId));
     if (!owned) return;
@@ -4441,11 +4446,18 @@ const make = Effect.gen(function* () {
   /**
    * The any-clean-turn cooldown lift (D9).
    *
-   * "Clean" means the turn did not itself carry a refusal. A probe that comes
-   * back with the same limit must NOT clear the cooldown it was sent to test —
-   * that would lift the gate on the strength of the very evidence that it should
-   * hold — so the turn is re-classified here and only a turn the catalogue says
-   * nothing about counts.
+   * "Clean" means the turn COMPLETED and did not itself carry a refusal. A probe
+   * that comes back with the same limit must NOT clear the cooldown it was sent
+   * to test — that would lift the gate on the strength of the very evidence that
+   * it should hold — so the turn is re-classified here and only a turn the
+   * catalogue says nothing about counts.
+   *
+   * And a turn that FAILED, was interrupted or was cancelled is not the account
+   * answering at all: the prober's CLI dying on "Claude turn failed." or a human
+   * pressing Stop says nothing about the wall, and reading it as proof would
+   * wake the whole fleet into it — the many-cards-at-once wake this decision
+   * exists to prevent. The state gates only THIS question; detection stays
+   * state-blind, because Grok's refusal only ever arrives on a `failed` turn.
    *
    * It lifts an `exhausted` row too, and that is the ONLY way out of one: an
    * exhausted row gates nothing, so it is never probed, and D16 deliberately
@@ -4461,8 +4473,13 @@ const make = Effect.gen(function* () {
       readonly board: BoardState;
       readonly threadId: ThreadId;
       readonly turnErrorMessage: string | null;
+      readonly turnState: RuntimeTurnState | undefined;
     }) {
       if ((input.board.providerLimits ?? []).length === 0) return;
+      // Absent is read as completed, exactly as the ingestion layer normalises
+      // it (`normalizeRuntimeTurnState`), so an adapter that stamps no state
+      // keeps the behaviour it had.
+      if (input.turnState !== undefined && input.turnState !== "completed") return;
       const shell = yield* snapshotQuery
         .getThreadShellById(input.threadId)
         .pipe(Effect.map(Option.getOrUndefined));
@@ -6325,6 +6342,9 @@ const make = Effect.gen(function* () {
             input.event.turnId,
             // Grok's quota refusal rides here and nowhere else (T3O-22, D4).
             input.event.payload.errorMessage ?? null,
+            // How the turn ENDED, which is what tells a turn that answered from
+            // one that merely stopped (T3O-22, D9).
+            input.event.payload.state,
           );
         }
         // An ordinary agent question (t3o-18, D13): re-sourced from the runtime
