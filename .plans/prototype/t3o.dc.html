@@ -905,6 +905,7 @@
                   gap: 8px;
                   min-width: 0;
                   flex: 1;
+                  overflow: hidden;
                   color: var(--muted-fg);
                 "
               >
@@ -942,6 +943,241 @@
             </sc-if>
             <sc-if value="{{ isBoard }}" hint-placeholder-val="{{ true }}">
               <div style="flex: 1; min-width: 0"></div>
+            </sc-if>
+            <sc-if value="{{ limitBar.show }}" hint-placeholder-val="{{ false }}">
+              <div style="position: relative; flex: none">
+                <button
+                  type="button"
+                  onClick="{{ limitBar.toggle }}"
+                  title="{{ limitBar.tip }}"
+                  style="
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    height: 24px;
+                    padding: 0 8px;
+                    border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+                    border-radius: 8px;
+                    background: color-mix(in srgb, var(--warning) 12%, transparent);
+                    color: var(--warning-fg);
+                    font: 500 12px var(--font-sans);
+                    cursor: pointer;
+                    box-shadow: var(--shadow-xs);
+                  "
+                  style-hover="background:color-mix(in srgb,var(--warning) 20%,transparent)"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    style="flex: none"
+                  >
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <path d="M12 7v5l3 2"></path>
+                  </svg>
+                  {{ limitBar.label }}
+                  <span
+                    style="
+                      width: 1px;
+                      height: 11px;
+                      background: color-mix(in srgb, var(--warning) 45%, transparent);
+                    "
+                  ></span>
+                  <span style="font-weight: 400">{{ limitBar.resume }}</span>
+                </button>
+                <sc-if value="{{ limitBar.open }}" hint-placeholder-val="{{ false }}">
+                  <div
+                    onClick="{{ limitBar.close }}"
+                    style="position: fixed; inset: 0; z-index: 55"
+                  ></div>
+                  <div
+                    style="
+                      position: absolute;
+                      top: 30px;
+                      right: 0;
+                      z-index: 60;
+                      width: 318px;
+                      padding: 11px 12px 12px;
+                      border: 1px solid var(--border);
+                      border-radius: 12px;
+                      background: var(--popover);
+                      box-shadow: var(--shadow-pop);
+                      display: flex;
+                      flex-direction: column;
+                      gap: 9px;
+                    "
+                  >
+                    <div style="display: flex; align-items: baseline; gap: 7px">
+                      <span style="font: 600 12.5px var(--font-sans); color: var(--fg)"
+                        >Provider usage</span
+                      >
+                      <span style="flex: 1"></span>
+                      <span style="font: 400 10.5px var(--font-mono); color: var(--muted-fg)"
+                        >{{ limitBar.checked }}</span
+                      >
+                    </div>
+                    <sc-for list="{{ limitBar.rows }}" as="row" hint-placeholder-count="2">
+                      <div
+                        style="
+                          display: flex;
+                          flex-direction: column;
+                          gap: 6px;
+                          padding-top: 9px;
+                          border-top: 1px solid var(--border);
+                        "
+                      >
+                        <div style="display: flex; align-items: center; gap: 7px">
+                          <span style="font: 500 12.5px var(--font-sans); color: var(--fg)"
+                            >{{ row.name }}</span
+                          >
+                          <span style="flex: 1"></span>
+                          <sc-if value="{{ row.limited }}" hint-placeholder-val="{{ true }}">
+                            <span
+                              style="
+                                display: inline-flex;
+                                align-items: center;
+                                height: 17px;
+                                padding: 0 6px;
+                                flex: none;
+                                border-radius: 5px;
+                                background: color-mix(in srgb, var(--warning) 18%, transparent);
+                                color: var(--warning-fg);
+                                font: 500 10px var(--font-sans);
+                                letter-spacing: 0.04em;
+                                text-transform: uppercase;
+                              "
+                              >Limit hit</span
+                            >
+                          </sc-if>
+                          <sc-if value="{{ row.ok }}" hint-placeholder-val="{{ false }}">
+                            <span
+                              style="
+                                display: inline-flex;
+                                align-items: center;
+                                gap: 5px;
+                                flex: none;
+                                font: 500 11px var(--font-sans);
+                                color: var(--muted-fg);
+                              "
+                              ><span
+                                style="
+                                  width: 6px;
+                                  height: 6px;
+                                  border-radius: 99px;
+                                  background: var(--success);
+                                "
+                              ></span
+                              >Available</span
+                            >
+                          </sc-if>
+                        </div>
+                        <div
+                          style="
+                            font: 400 11.5px/1.5 var(--font-sans);
+                            color: var(--muted-fg);
+                            text-wrap: pretty;
+                          "
+                        >
+                          {{ row.detail }}
+                        </div>
+                        <sc-if value="{{ row.limited }}" hint-placeholder-val="{{ true }}">
+                          <div
+                            style="
+                              display: flex;
+                              align-items: center;
+                              gap: 9px;
+                              padding: 8px 9px;
+                              border-radius: 9px;
+                              background: color-mix(in srgb, var(--warning) 9%, transparent);
+                            "
+                          >
+                            <div
+                              style="
+                                flex: 1;
+                                min-width: 0;
+                                display: flex;
+                                flex-direction: column;
+                                gap: 2px;
+                              "
+                            >
+                              <span style="font: 500 11.5px var(--font-sans); color: var(--fg)"
+                                >Resume {{ row.resumeWhen }}</span
+                              >
+                              <span
+                                style="font: 400 10.5px var(--font-mono); color: var(--muted-fg)"
+                                >{{ row.resumeIn }} · {{ row.taskCount }}</span
+                              >
+                            </div>
+                            <button
+                              type="button"
+                              onClick="{{ row.resumeNow }}"
+                              style="
+                                flex: none;
+                                height: 22px;
+                                padding: 0 8px;
+                                border: 1px solid var(--input);
+                                border-radius: 7px;
+                                background: var(--card);
+                                color: var(--fg);
+                                font: 500 11px var(--font-sans);
+                                cursor: pointer;
+                              "
+                              style-hover="background:var(--accent)"
+                            >
+                              Resume now
+                            </button>
+                          </div>
+                          <sc-for list="{{ row.tasks }}" as="t" hint-placeholder-count="1">
+                            <button
+                              type="button"
+                              onClick="{{ t.open }}"
+                              style="
+                                display: flex;
+                                align-items: center;
+                                gap: 8px;
+                                width: 100%;
+                                height: 26px;
+                                padding: 0 7px;
+                                border: none;
+                                border-radius: 7px;
+                                background: transparent;
+                                cursor: pointer;
+                                text-align: left;
+                              "
+                              style-hover="background:var(--accent)"
+                            >
+                              <span
+                                style="
+                                  flex: none;
+                                  font: 500 11px var(--font-mono);
+                                  color: var(--muted-fg);
+                                "
+                                >{{ t.key }}</span
+                              >
+                              <span
+                                style="
+                                  min-width: 0;
+                                  font: 400 11.5px var(--font-sans);
+                                  color: var(--fg);
+                                  overflow: hidden;
+                                  text-overflow: ellipsis;
+                                  white-space: nowrap;
+                                "
+                                >{{ t.title }}</span
+                              >
+                            </button>
+                          </sc-for>
+                        </sc-if>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
             </sc-if>
             <sc-if value="{{ isBoard }}" hint-placeholder-val="{{ true }}">
               <div style="display: flex; align-items: center; gap: 6px; flex: none">
@@ -2214,7 +2450,37 @@
                                         </span>
                                       </sc-if>
                                       <sc-if
-                                        value="{{ c.blocked }}"
+                                        value="{{ c.armed }}"
+                                        hint-placeholder-val="{{ false }}"
+                                      >
+                                        <span
+                                          title="Blocked — will start automatically when dependencies are done"
+                                          style="
+                                            display: inline-flex;
+                                            align-items: center;
+                                            gap: 3px;
+                                            font: 500 10.5px var(--font-sans);
+                                            color: var(--muted-fg);
+                                          "
+                                        >
+                                          <svg
+                                            width="11"
+                                            height="11"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                          >
+                                            <circle cx="12" cy="12" r="9"></circle>
+                                            <path d="M12 7v5l3 2"></path>
+                                          </svg>
+                                          Auto-start
+                                        </span>
+                                      </sc-if>
+                                      <sc-if
+                                        value="{{ c.blockedOnly }}"
                                         hint-placeholder-val="{{ false }}"
                                       >
                                         <span
@@ -6839,6 +7105,71 @@
                           <span>{{ activeCard.blockedBy }}</span>
                         </div>
                       </sc-if>
+                      <sc-if
+                        value="{{ activeCard.autoImplicit }}"
+                        hint-placeholder-val="{{ false }}"
+                      >
+                        <div
+                          style="
+                            display: flex;
+                            align-items: flex-start;
+                            gap: 8px;
+                            padding: 9px 10px;
+                            border: 1px solid var(--border);
+                            border-radius: 8px;
+                            background: var(--muted);
+                            font: 400 11.5px/1.45 var(--font-sans);
+                            color: var(--muted-fg);
+                            text-wrap: pretty;
+                          "
+                        >
+                          <svg
+                            width="13"
+                            height="13"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            style="flex: none; margin-top: 1px"
+                          >
+                            <circle cx="12" cy="12" r="9"></circle>
+                            <path d="M12 7v5l3 2"></path>
+                          </svg>
+                          <span>Starts building automatically once its dependencies are done.</span>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ activeCard.autoGate }}" hint-placeholder-val="{{ false }}">
+                        <div
+                          onClick="{{ activeCard.toggleAuto }}"
+                          style="{{ activeCard.autoRowStyle }}"
+                        >
+                          <span style="{{ activeCard.autoSwitchStyle }}"
+                            ><span style="{{ activeCard.autoKnobStyle }}"></span
+                          ></span>
+                          <span style="min-width: 0">
+                            <span
+                              style="
+                                display: block;
+                                font: 500 12.5px var(--font-sans);
+                                color: var(--fg);
+                              "
+                              >{{ activeCard.autoLabel }}</span
+                            >
+                            <span
+                              style="
+                                display: block;
+                                margin-top: 2px;
+                                font: 400 11.5px/1.45 var(--font-sans);
+                                color: var(--muted-fg);
+                                text-wrap: pretty;
+                              "
+                              >{{ activeCard.autoNote }}</span
+                            >
+                          </span>
+                        </div>
+                      </sc-if>
                       <sc-if value="{{ activeCard.hasPr }}" hint-placeholder-val="{{ false }}">
                         <button
                           type="button"
@@ -6957,9 +7288,26 @@
                               >
                                 <div>
                                   <div onMouseDown="{{ o.pick }}" style="{{ o.style }}">
-                                    <span
-                                      style="width:10px;height:10px;flex:none;border-radius:3px;background:{{ o.color }}"
-                                    ></span>
+                                    <span style="{{ o.boxStyle }}">
+                                      <sc-if
+                                        value="{{ o.current }}"
+                                        hint-placeholder-val="{{ false }}"
+                                      >
+                                        <svg
+                                          width="11"
+                                          height="11"
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          stroke-width="3.2"
+                                          stroke-linecap="round"
+                                          stroke-linejoin="round"
+                                          style="flex: none"
+                                        >
+                                          <path d="M20 6 9 17l-5-5"></path>
+                                        </svg>
+                                      </sc-if>
+                                    </span>
                                     <span
                                       style="
                                         flex: 1;
@@ -6971,24 +7319,6 @@
                                       "
                                       >{{ o.name }}</span
                                     >
-                                    <sc-if
-                                      value="{{ o.current }}"
-                                      hint-placeholder-val="{{ false }}"
-                                    >
-                                      <svg
-                                        width="13"
-                                        height="13"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2.2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        style="flex: none; color: var(--muted-fg)"
-                                      >
-                                        <path d="M20 6 9 17l-5-5"></path>
-                                      </svg>
-                                    </sc-if>
                                     <span
                                       onMouseDown="{{ o.toggleEdit }}"
                                       title="Change colour"
@@ -7200,9 +7530,177 @@
                       <div
                         style="font:400 11.5px/1.7 var(--font-sans);color:var(--muted-fg);{{ sideInfoStyle }}"
                       >
-                        <div>
-                          Project ·
-                          <span style="color: var(--fg)">{{ activeCard.projectName }}</span>
+                        <div
+                          style="display: flex; align-items: center; gap: 5px; position: relative"
+                        >
+                          <span>Project ·</span>
+                          <sc-if
+                            value="{{ activeCard.projectLocked }}"
+                            hint-placeholder-val="{{ false }}"
+                          >
+                            <span
+                              title="{{ activeCard.projectNote }}"
+                              style="
+                                display: inline-flex;
+                                align-items: center;
+                                gap: 5px;
+                                color: var(--fg);
+                                font-weight: 500;
+                              "
+                            >
+                              <span
+                                style="width:7px;height:7px;border-radius:99px;flex:none;background:{{ activeCard.projectDot }}"
+                              ></span>
+                              <span>{{ activeCard.projectName }}</span>
+                              <svg
+                                width="11"
+                                height="11"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="var(--muted-fg)"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                style="flex: none"
+                              >
+                                <rect width="18" height="11" x="3" y="11" rx="2"></rect>
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                              </svg>
+                            </span>
+                          </sc-if>
+                          <sc-if
+                            value="{{ activeCard.projectEditable }}"
+                            hint-placeholder-val="{{ true }}"
+                          >
+                            <button
+                              type="button"
+                              onClick="{{ activeCard.toggleProjectMenu }}"
+                              title="{{ activeCard.projectNote }}"
+                              style="
+                                display: inline-flex;
+                                align-items: center;
+                                gap: 5px;
+                                height: 20px;
+                                padding: 0 5px;
+                                margin-left: -3px;
+                                border: none;
+                                border-radius: 6px;
+                                background: transparent;
+                                color: var(--fg);
+                                cursor: pointer;
+                                font: 500 11.5px var(--font-sans);
+                              "
+                              style-hover="background:var(--accent)"
+                            >
+                              <span
+                                style="width:7px;height:7px;border-radius:99px;flex:none;background:{{ activeCard.projectDot }}"
+                              ></span>
+                              <span>{{ activeCard.projectName }}</span>
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="var(--muted-fg)"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                style="flex: none"
+                              >
+                                <path d="m6 9 6 6 6-6"></path>
+                              </svg>
+                            </button>
+                            <sc-if
+                              value="{{ activeCard.projectMenuOpen }}"
+                              hint-placeholder-val="{{ false }}"
+                            >
+                              <div
+                                onClick="{{ activeCard.toggleProjectMenu }}"
+                                style="position: fixed; inset: 0; z-index: 8"
+                              ></div>
+                              <div
+                                style="
+                                  position: absolute;
+                                  left: 0;
+                                  bottom: calc(100% + 3px);
+                                  z-index: 9;
+                                  width: 200px;
+                                  padding: 4px;
+                                  border: 1px solid var(--border);
+                                  border-radius: 10px;
+                                  background: var(--popover);
+                                  box-shadow: var(--shadow-pop);
+                                  display: flex;
+                                  flex-direction: column;
+                                  gap: 1px;
+                                "
+                              >
+                                <div
+                                  style="
+                                    padding: 6px 7px 5px;
+                                    font: 400 11px/1.4 var(--font-sans);
+                                    color: var(--muted-fg);
+                                    text-wrap: pretty;
+                                  "
+                                >
+                                  Moving reissues the task ID and resets the base branch and
+                                  dependencies.
+                                </div>
+                                <sc-for
+                                  list="{{ activeCard.projectOptions }}"
+                                  as="o"
+                                  hint-placeholder-count="3"
+                                >
+                                  <button
+                                    type="button"
+                                    onClick="{{ o.select }}"
+                                    style="{{ o.style }}"
+                                  >
+                                    <span
+                                      style="width:7px;height:7px;border-radius:99px;flex:none;background:{{ o.dot }}"
+                                    ></span>
+                                    <span
+                                      style="
+                                        flex: 1;
+                                        min-width: 0;
+                                        overflow: hidden;
+                                        text-overflow: ellipsis;
+                                        white-space: nowrap;
+                                        text-align: left;
+                                      "
+                                      >{{ o.name }}</span
+                                    >
+                                    <span
+                                      style="
+                                        flex: none;
+                                        font: 500 10.5px var(--font-mono);
+                                        color: var(--muted-fg);
+                                      "
+                                      >{{ o.hint }}</span
+                                    >
+                                    <sc-if
+                                      value="{{ o.current }}"
+                                      hint-placeholder-val="{{ false }}"
+                                    >
+                                      <svg
+                                        width="13"
+                                        height="13"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2.2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        style="flex: none; color: var(--muted-fg)"
+                                      >
+                                        <path d="M20 6 9 17l-5-5"></path>
+                                      </svg>
+                                    </sc-if>
+                                  </button>
+                                </sc-for>
+                              </div>
+                            </sc-if>
+                          </sc-if>
                         </div>
                         <div
                           style="display: flex; align-items: center; gap: 5px; position: relative"
@@ -7360,6 +7858,7 @@
           >
             <div
               onClick="{{ stop }}"
+              onKeyDown="{{ createKey }}"
               style="
                 width: 600px;
                 max-width: 100%;
@@ -7433,6 +7932,62 @@
                   gap: 14px;
                 "
               >
+                <sc-if value="{{ draftRestored }}" hint-placeholder-val="{{ false }}">
+                  <div
+                    style="
+                      display: flex;
+                      align-items: center;
+                      gap: 9px;
+                      padding: 8px 9px 8px 11px;
+                      border: 1px solid color-mix(in srgb, var(--info) 40%, transparent);
+                      border-radius: 10px;
+                      background: color-mix(in srgb, var(--info) 8%, transparent);
+                    "
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="var(--info-fg)"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      style="flex: none"
+                    >
+                      <path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.4 2.7L3 8"></path>
+                      <path d="M3 3v5h5"></path>
+                    </svg>
+                    <span
+                      style="
+                        flex: 1;
+                        min-width: 0;
+                        font: 400 12px/1.45 var(--font-sans);
+                        color: var(--fg);
+                        text-wrap: pretty;
+                      "
+                      >Unsaved draft restored. Attachments aren't kept.</span
+                    >
+                    <button
+                      type="button"
+                      onClick="{{ startFresh }}"
+                      style="
+                        flex: none;
+                        height: 24px;
+                        padding: 0 9px;
+                        border: 1px solid var(--input);
+                        border-radius: 7px;
+                        background: var(--popover);
+                        color: var(--fg);
+                        font: 500 11.5px var(--font-sans);
+                        cursor: pointer;
+                      "
+                      style-hover="background:var(--accent)"
+                    >
+                      Start fresh
+                    </button>
+                  </div>
+                </sc-if>
                 <div style="display: flex; gap: 10px">
                   <div style="flex: 1.15; min-width: 0">
                     <label
@@ -7708,258 +8263,331 @@
                     </div>
                   </div>
                 </div>
-                <div>
-                  <label
-                    style="
-                      display: flex;
-                      align-items: baseline;
-                      gap: 8px;
-                      font: 500 12px var(--font-sans);
-                      color: var(--fg);
-                      margin-bottom: 6px;
-                    "
-                    >Workflow<span
-                      style="font-weight: 400; font-size: 11.5px; color: var(--muted-fg)"
-                      >{{ createWorkflowNote }}</span
-                    ></label
-                  >
-                  <div style="display: flex; flex-wrap: wrap; gap: 6px">
-                    <sc-for list="{{ createWorkflows }}" as="w" hint-placeholder-count="3">
-                      <button type="button" onClick="{{ w.select }}" style="{{ w.style }}">
-                        <span style="font-family: var(--font-sans); font-size: 12px"
-                          >{{ w.name }}</span
-                        >
-                      </button>
-                    </sc-for>
-                  </div>
-                </div>
-
-                <div>
-                  <label
-                    style="
-                      display: block;
-                      font: 500 12px var(--font-sans);
-                      color: var(--fg);
-                      margin-bottom: 6px;
-                    "
-                    >Label</label
-                  >
-                  <sc-if
-                    value="{{ createLabelPicker.hasSelected }}"
-                    hint-placeholder-val="{{ false }}"
-                  >
-                    <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px">
-                      <sc-for
-                        list="{{ createLabelPicker.pills }}"
-                        as="t"
-                        hint-placeholder-count="2"
-                      >
-                        <span style="{{ t.style }}">{{ t.name }}</span>
-                      </sc-for>
-                    </div>
-                  </sc-if>
-                  <div style="position: relative">
+                <div style="display: flex; gap: 10px; align-items: flex-start">
+                  <div style="flex: 1.5; min-width: 0">
+                    <label
+                      style="
+                        display: block;
+                        font: 500 12px var(--font-sans);
+                        color: var(--fg);
+                        margin-bottom: 6px;
+                      "
+                      >Title</label
+                    >
                     <input
                       type="text"
-                      value="{{ createLabelPicker.query }}"
-                      onInput="{{ createLabelPicker.onQuery }}"
-                      onFocus="{{ createLabelPicker.onFocus }}"
-                      onBlur="{{ createLabelPicker.onBlur }}"
-                      onKeyDown="{{ createLabelPicker.onKey }}"
-                      placeholder="{{ createLabelPicker.placeholder }}"
+                      value="{{ draftTitle }}"
+                      onInput="{{ onDraftTitle }}"
+                      placeholder="What needs building?"
                       style="
                         width: 100%;
-                        height: 34px;
-                        padding: 0 10px;
+                        height: 36px;
+                        padding: 0 11px;
                         border: 1px solid var(--input);
-                        border-radius: 8px;
+                        border-radius: 10px;
                         background: var(--bg);
                         color: var(--fg);
-                        font: 400 12.5px var(--font-sans);
+                        font: 400 14px var(--font-sans);
                         outline: none;
+                        box-shadow: var(--shadow-xs);
                         box-sizing: border-box;
                       "
                     />
-                    <sc-if value="{{ createLabelPicker.open }}" hint-placeholder-val="{{ false }}">
-                      <div
+                  </div>
+                  <div style="flex: 1; min-width: 0">
+                    <label
+                      style="
+                        display: block;
+                        font: 500 12px var(--font-sans);
+                        color: var(--fg);
+                        margin-bottom: 6px;
+                      "
+                      >Label</label
+                    >
+                    <div style="position: relative">
+                      <button
+                        type="button"
+                        onClick="{{ createLabelPicker.toggleOpen }}"
                         style="
-                          position: absolute;
-                          left: 0;
-                          right: 0;
-                          top: calc(100% + 4px);
-                          z-index: 8;
-                          max-height: 230px;
-                          overflow-y: auto;
-                          border: 1px solid var(--border);
+                          display: flex;
+                          align-items: center;
+                          gap: 6px;
+                          width: 100%;
+                          height: 36px;
+                          padding: 0 8px 0 10px;
+                          border: 1px solid var(--input);
                           border-radius: 10px;
                           background: var(--popover);
-                          box-shadow: var(--shadow-pop);
-                          padding: 4px;
-                          display: flex;
-                          flex-direction: column;
-                          gap: 1px;
+                          color: var(--fg);
+                          cursor: pointer;
+                          box-shadow: var(--shadow-xs);
+                          overflow: hidden;
+                          box-sizing: border-box;
                         "
+                        style-hover="background:var(--accent)"
                       >
-                        <sc-for
-                          list="{{ createLabelPicker.matches }}"
-                          as="o"
-                          hint-placeholder-count="3"
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="var(--muted-fg)"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          style="flex: none"
                         >
-                          <div>
-                            <div onMouseDown="{{ o.pick }}" style="{{ o.style }}">
-                              <span
-                                style="width:10px;height:10px;flex:none;border-radius:3px;background:{{ o.color }}"
-                              ></span>
-                              <span
+                          <path
+                            d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"
+                          ></path>
+                          <circle cx="7.5" cy="7.5" r=".5"></circle>
+                        </svg>
+                        <sc-if
+                          value="{{ createLabelPicker.hasSelected }}"
+                          hint-placeholder-val="{{ false }}"
+                        >
+                          <span
+                            style="
+                              display: flex;
+                              align-items: center;
+                              gap: 4px;
+                              flex: 1;
+                              min-width: 0;
+                              overflow: hidden;
+                            "
+                          >
+                            <sc-for
+                              list="{{ createLabelPicker.pills }}"
+                              as="t"
+                              hint-placeholder-count="1"
+                            >
+                              <span style="{{ t.style }}">{{ t.name }}</span>
+                            </sc-for>
+                          </span>
+                        </sc-if>
+                        <sc-if
+                          value="{{ createLabelPicker.none }}"
+                          hint-placeholder-val="{{ true }}"
+                        >
+                          <span
+                            style="
+                              flex: 1;
+                              min-width: 0;
+                              text-align: left;
+                              font: 400 12.5px var(--font-sans);
+                              color: var(--muted-fg);
+                            "
+                            >Add labels</span
+                          >
+                        </sc-if>
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="var(--muted-fg)"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          style="flex: none"
+                        >
+                          <path d="m6 9 6 6 6-6"></path>
+                        </svg>
+                      </button>
+                      <sc-if
+                        value="{{ createLabelPicker.open }}"
+                        hint-placeholder-val="{{ false }}"
+                      >
+                        <div
+                          onClick="{{ createLabelPicker.close }}"
+                          style="position: fixed; inset: 0; z-index: 8"
+                        ></div>
+                        <div
+                          style="
+                            position: absolute;
+                            right: 0;
+                            top: calc(100% + 4px);
+                            z-index: 9;
+                            width: 280px;
+                            max-width: calc(100vw - 80px);
+                            border: 1px solid var(--border);
+                            border-radius: 10px;
+                            background: var(--popover);
+                            box-shadow: var(--shadow-pop);
+                            padding: 6px;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 5px;
+                          "
+                        >
+                          <input
+                            type="text"
+                            value="{{ createLabelPicker.query }}"
+                            ref="{{ createLabelPicker.inputRef }}"
+                            onInput="{{ createLabelPicker.onQuery }}"
+                            onKeyDown="{{ createLabelPicker.onKey }}"
+                            placeholder="{{ createLabelPicker.placeholder }}"
+                            style="
+                              width: 100%;
+                              height: 30px;
+                              padding: 0 9px;
+                              border: 1px solid var(--input);
+                              border-radius: 8px;
+                              background: var(--bg);
+                              color: var(--fg);
+                              font: 400 12.5px var(--font-sans);
+                              outline: none;
+                              box-sizing: border-box;
+                            "
+                          />
+                          <div
+                            style="
+                              max-height: 220px;
+                              overflow-y: auto;
+                              display: flex;
+                              flex-direction: column;
+                              gap: 1px;
+                            "
+                          >
+                            <sc-for
+                              list="{{ createLabelPicker.matches }}"
+                              as="o"
+                              hint-placeholder-count="3"
+                            >
+                              <div>
+                                <div onMouseDown="{{ o.pick }}" style="{{ o.style }}">
+                                  <span style="{{ o.boxStyle }}">
+                                    <sc-if
+                                      value="{{ o.current }}"
+                                      hint-placeholder-val="{{ false }}"
+                                    >
+                                      <svg
+                                        width="11"
+                                        height="11"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="3.2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        style="flex: none"
+                                      >
+                                        <path d="M20 6 9 17l-5-5"></path>
+                                      </svg>
+                                    </sc-if>
+                                  </span>
+                                  <span
+                                    style="
+                                      flex: 1;
+                                      min-width: 0;
+                                      overflow: hidden;
+                                      text-overflow: ellipsis;
+                                      white-space: nowrap;
+                                      text-align: left;
+                                    "
+                                    >{{ o.name }}</span
+                                  >
+                                  <span
+                                    onMouseDown="{{ o.toggleEdit }}"
+                                    title="Change colour"
+                                    style="
+                                      display: inline-flex;
+                                      align-items: center;
+                                      justify-content: center;
+                                      width: 20px;
+                                      height: 20px;
+                                      flex: none;
+                                      border-radius: 5px;
+                                      color: var(--muted-fg);
+                                    "
+                                    style-hover="background:var(--accent);color:var(--fg)"
+                                  >
+                                    <svg
+                                      width="12"
+                                      height="12"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      stroke-width="2"
+                                      stroke-linecap="round"
+                                      stroke-linejoin="round"
+                                    >
+                                      <path d="M12 20h9"></path>
+                                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+                                    </svg>
+                                  </span>
+                                </div>
+                                <sc-if value="{{ o.editing }}" hint-placeholder-val="{{ false }}">
+                                  <div
+                                    style="
+                                      display: flex;
+                                      flex-wrap: wrap;
+                                      gap: 5px;
+                                      padding: 6px 6px 8px 24px;
+                                    "
+                                  >
+                                    <sc-for
+                                      list="{{ o.swatches }}"
+                                      as="w"
+                                      hint-placeholder-count="8"
+                                    >
+                                      <div onMouseDown="{{ w.select }}" style="{{ w.style }}"></div>
+                                    </sc-for>
+                                  </div>
+                                </sc-if>
+                              </div>
+                            </sc-for>
+                            <sc-if
+                              value="{{ createLabelPicker.canCreate }}"
+                              hint-placeholder-val="{{ false }}"
+                            >
+                              <div
+                                onMouseDown="{{ createLabelPicker.create }}"
                                 style="
-                                  flex: 1;
-                                  min-width: 0;
-                                  overflow: hidden;
-                                  text-overflow: ellipsis;
-                                  white-space: nowrap;
-                                  text-align: left;
-                                "
-                                >{{ o.name }}</span
-                              >
-                              <sc-if value="{{ o.current }}" hint-placeholder-val="{{ false }}">
-                                <svg
-                                  width="13"
-                                  height="13"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  stroke-width="2.2"
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                  style="flex: none; color: var(--muted-fg)"
-                                >
-                                  <path d="M20 6 9 17l-5-5"></path>
-                                </svg>
-                              </sc-if>
-                              <span
-                                onMouseDown="{{ o.toggleEdit }}"
-                                title="Change colour"
-                                style="
-                                  display: inline-flex;
+                                  display: flex;
                                   align-items: center;
-                                  justify-content: center;
-                                  width: 20px;
-                                  height: 20px;
-                                  flex: none;
-                                  border-radius: 5px;
-                                  color: var(--muted-fg);
+                                  gap: 8px;
+                                  height: 28px;
+                                  padding: 0 6px;
+                                  border-radius: 7px;
+                                  cursor: pointer;
+                                  font: 500 12.5px var(--font-sans);
+                                  color: var(--fg);
                                 "
-                                style-hover="background:var(--accent);color:var(--fg)"
+                                style-hover="background:var(--accent)"
                               >
                                 <svg
                                   width="12"
                                   height="12"
                                   viewBox="0 0 24 24"
                                   fill="none"
-                                  stroke="currentColor"
+                                  stroke="var(--muted-fg)"
                                   stroke-width="2"
                                   stroke-linecap="round"
                                   stroke-linejoin="round"
+                                  style="flex: none"
                                 >
-                                  <path d="M12 20h9"></path>
-                                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+                                  <path d="M5 12h14"></path>
+                                  <path d="M12 5v14"></path>
                                 </svg>
-                              </span>
-                            </div>
-                            <sc-if value="{{ o.editing }}" hint-placeholder-val="{{ false }}">
-                              <div
-                                style="
-                                  display: flex;
-                                  flex-wrap: wrap;
-                                  gap: 5px;
-                                  padding: 6px 6px 8px 24px;
-                                "
-                              >
-                                <sc-for list="{{ o.swatches }}" as="w" hint-placeholder-count="8">
-                                  <div onMouseDown="{{ w.select }}" style="{{ w.style }}"></div>
-                                </sc-for>
+                                <span
+                                  style="
+                                    flex: 1;
+                                    min-width: 0;
+                                    overflow: hidden;
+                                    text-overflow: ellipsis;
+                                    white-space: nowrap;
+                                    text-align: left;
+                                  "
+                                  >Create "{{ createLabelPicker.createName }}"</span
+                                >
                               </div>
                             </sc-if>
                           </div>
-                        </sc-for>
-                        <sc-if
-                          value="{{ createLabelPicker.canCreate }}"
-                          hint-placeholder-val="{{ false }}"
-                        >
-                          <div
-                            onMouseDown="{{ createLabelPicker.create }}"
-                            style="
-                              display: flex;
-                              align-items: center;
-                              gap: 8px;
-                              height: 28px;
-                              padding: 0 6px;
-                              border-radius: 7px;
-                              cursor: pointer;
-                              font: 500 12.5px var(--font-sans);
-                              color: var(--fg);
-                            "
-                            style-hover="background:var(--accent)"
-                          >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="var(--muted-fg)"
-                              stroke-width="2"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              style="flex: none"
-                            >
-                              <path d="M5 12h14"></path>
-                              <path d="M12 5v14"></path>
-                            </svg>
-                            <span
-                              style="
-                                flex: 1;
-                                min-width: 0;
-                                overflow: hidden;
-                                text-overflow: ellipsis;
-                                white-space: nowrap;
-                                text-align: left;
-                              "
-                              >Create "{{ createLabelPicker.createName }}"</span
-                            >
-                          </div>
-                        </sc-if>
-                      </div>
-                    </sc-if>
+                        </div>
+                      </sc-if>
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <label
-                    style="
-                      display: block;
-                      font: 500 12px var(--font-sans);
-                      color: var(--fg);
-                      margin-bottom: 6px;
-                    "
-                    >Title</label
-                  >
-                  <input
-                    type="text"
-                    value="{{ draftTitle }}"
-                    onInput="{{ onDraftTitle }}"
-                    placeholder="What needs building?"
-                    style="
-                      width: 100%;
-                      height: 34px;
-                      padding: 0 11px;
-                      border: 1px solid var(--input);
-                      border-radius: 10px;
-                      background: var(--bg);
-                      color: var(--fg);
-                      font: 400 13.5px var(--font-sans);
-                      outline: none;
-                      box-shadow: var(--shadow-xs);
-                    "
-                  />
                 </div>
                 <div>
                   <label
@@ -8183,6 +8811,31 @@
                       onChange="{{ onDraftFileInput }}"
                       style="display: none"
                     />
+                  </div>
+                </div>
+                <div>
+                  <label
+                    style="
+                      display: flex;
+                      align-items: baseline;
+                      gap: 8px;
+                      font: 500 12px var(--font-sans);
+                      color: var(--fg);
+                      margin-bottom: 6px;
+                    "
+                    >Workflow<span
+                      style="font-weight: 400; font-size: 11.5px; color: var(--muted-fg)"
+                      >{{ createWorkflowNote }}</span
+                    ></label
+                  >
+                  <div style="display: flex; flex-wrap: wrap; gap: 6px">
+                    <sc-for list="{{ createWorkflows }}" as="w" hint-placeholder-count="3">
+                      <button type="button" onClick="{{ w.select }}" style="{{ w.style }}">
+                        <span style="font-family: var(--font-sans); font-size: 12px"
+                          >{{ w.name }}</span
+                        >
+                      </button>
+                    </sc-for>
                   </div>
                 </div>
                 <div>
@@ -8460,9 +9113,20 @@
                     </div>
                   </sc-if>
                 </div>
+                <sc-if value="{{ draftDirty }}" hint-placeholder-val="{{ false }}">
+                  <span
+                    style="
+                      margin-right: 2px;
+                      font: 400 11.5px var(--font-sans);
+                      color: var(--muted-fg);
+                    "
+                    >Closing keeps this draft</span
+                  >
+                </sc-if>
                 <button
                   type="button"
-                  onClick="{{ closeCreate }}"
+                  onClick="{{ discardDraft }}"
+                  title="{{ discardTip }}"
                   style="
                     height: 32px;
                     padding: 0 12px;
@@ -8474,12 +9138,30 @@
                     cursor: pointer;
                     box-shadow: var(--shadow-xs);
                   "
-                  style-hover="background:var(--accent)"
+                  style-hover="background:color-mix(in srgb,var(--destructive) 10%,transparent);border-color:color-mix(in srgb,var(--destructive) 45%,transparent);color:var(--destructive-fg)"
                 >
-                  Cancel
+                  {{ discardLabel }}
                 </button>
-                <button type="button" onClick="{{ submitCard }}" style="{{ submitStyle }}">
-                  Create task
+                <button
+                  type="button"
+                  onClick="{{ submitCard }}"
+                  title="Create task — ⌘↵ / Ctrl+↵"
+                  style="{{ submitStyle }}"
+                >
+                  <span>Create task</span>
+                  <span
+                    style="
+                      display: inline-flex;
+                      align-items: center;
+                      gap: 1px;
+                      padding: 1px 5px;
+                      border-radius: 5px;
+                      background: color-mix(in srgb, var(--primary-fg) 20%, transparent);
+                      font: 500 11px var(--font-mono);
+                      letter-spacing: 0.02em;
+                    "
+                    >⌘↵</span
+                  >
                 </button>
               </div>
             </div>
@@ -8503,6 +9185,16 @@
         { id: "done", name: "Done", dot: "#a1a1aa", action: null },
       ];
       const PRIMARY_ACTIONS = { backlog: true, sprint: true, ready: true, merge: true };
+      // A card's project can only move while it is still ahead of the build. From
+      // Building onward a worktree and branch exist, so the task is pinned.
+      const PROJECT_LOCK_FROM = "building";
+      const DRAFT_KEY = "t3-kanban-new-card-draft";
+      function keyPrefix(pid) {
+        return pid === "advisor" ? "T3-" : pid === "web" ? "MW-" : "RL-";
+      }
+      function stripTags(html) {
+        return String(html || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").trim();
+      }
       // Hard-coded workflow presets. A card picks one any time before it reaches code
       // review; from review onward the choice is locked. `rounds` caps the review loop's
       // round budget, `skip` drops stages out of the card's path.
@@ -8557,6 +9249,7 @@
         { key: "MW-42", p: "web", type: "Feature", status: "backlog", sched: "tonight", title: "Marketing site: pricing comparison table", brief: "Three tiers, sticky header row on scroll." },
         { key: "MW-39", p: "web", type: "Feature", status: "sprint", title: "Docs search with keyboard nav", brief: "Cmd-K over the docs index, arrow keys to move, enter to open." },
         { key: "MW-33", p: "web", type: "bug", status: "building", t: "stopped", limitHit: true, workflow: "fast-review", title: "Nav overlaps hero on iPad portrait", brief: "The sticky nav collides with the hero headline between 768 and 834px.", plan: PLAN("Nav overlap", ["Move the breakpoint to a container query", "Reserve nav height as a layout offset"], ["apps/marketing/src/components/Nav.tsx"]) },
+        { key: "T3-190", p: "advisor", type: "Feature", status: "ready", title: "Board filters in the workspace shell", brief: "Filter the board by assignee, type and worktree. Needs the grouped worktree picker to land first.", deps: ["T3-193"], plan: PLAN("Board filters", ["Filter bar in the board header", "Persist the filter per project", "Reuse the grouped worktree picker"], ["apps/web/src/components/BoardFilters.tsx"]) },
         { key: "RL-18", p: "relay", type: "chore", status: "ready", workflow: "no-review", title: "Rotate relay signing keys without downtime", brief: "Support two active keys during a rollover window.", plan: PLAN("Key rotation", ["Accept N active keys in the verifier", "Publish both in the JWKS", "Retire the old key after the TTL"], ["infra/relay/src/keys.ts"]) },
         { key: "RL-14", p: "relay", type: "Feature", status: "review", t: "waiting", title: "Backpressure on session fan-out", brief: "Slow consumers currently stall the whole fan-out loop.", deps: ["RL-18"], plan: PLAN("Fan-out backpressure", ["Bounded queue per subscriber", "Drop-oldest with a metric"], ["infra/relay/src/fanout.ts"]), pr: { n: 88, title: "feat(relay): bounded fan-out queues", add: 214, del: 63, files: ["infra/relay/src/fanout.ts", "infra/relay/test/fanout.test.ts"], state: "In review" } },
       ];
@@ -8922,6 +9615,7 @@
             tstate: c.t || "stopped",
             sched: c.sched === "tonight" ? { kind: "start", at: toLocalInput(atNextHour(21)) } : null,
             limitHit: !!c.limitHit,
+            limitProvider: c.limitProvider || "anthropic",
             conflict: c.conflict || null,
             title: c.title,
             brief: "<p style=\"margin:0 0 8px\">" + c.brief + "</p>",
@@ -8981,7 +9675,9 @@
             cardModelsOpen: false,
             cardModels: {},
             rvLimit: {},
+            limitOpen: false,
             rvStop: {},
+            autoStart: {},
             rvPlan: null,
             mode: props.defaultMode === "board" ? "board" : "threads",
             scope: props.defaultScope || "advisor",
@@ -9158,6 +9854,49 @@
           }, 1100);
         }
 
+        createDraftState(status, project) {
+          const pid = project || (this.state.scope === "all" ? "advisor" : this.state.scope);
+          const base = {
+            createOpen: true,
+            createWorkflow: "full",
+            createStatus: status,
+            createTags: ["Feature"],
+            createProject: pid,
+            createBranch: defaultBranchOf(pid),
+            createMenu: null,
+            createStartMode: "now",
+            createStartAt: "",
+            draftTitle: "",
+            draftBrief: "",
+            draftFiles: [],
+            draftDeps: [],
+            depQuery: "",
+            depIndex: 0,
+            depOpen: false,
+            draftRestored: false,
+          };
+          const d = this.loadDraft();
+          if (d) {
+            const dp = d.project || pid;
+            Object.assign(base, {
+              createStatus: d.status || status,
+              createProject: dp,
+              createBranch: d.branch || defaultBranchOf(dp),
+              createWorkflow: d.workflow || "full",
+              createTags: (d.tags || []).length ? d.tags : ["Feature"],
+              draftTitle: d.title || "",
+              draftBrief: d.brief || "",
+              draftDeps: d.deps || [],
+              createStartMode: d.startMode || "now",
+              createStartAt: d.startAt || "",
+              draftRestored: true,
+            });
+          }
+          this.pendingBrief = base.draftBrief || "";
+          this.startDraftWatch();
+          return base;
+        }
+
         patchCard(id, patch) {
           this.setState((s) => ({
             cards: s.cards.map((c) => (c.id === id ? Object.assign({}, c, patch) : c)),
@@ -9178,6 +9917,63 @@
           if ((this.props.theme || "light") === "dark") {
             document.documentElement.setAttribute("data-t3-theme", "dark");
           }
+        }
+
+        // ---- New-task draft persistence -------------------------------------
+        // Everything typed into the create modal survives a close, a reload and a
+        // crash. Files are deliberately left out — the blobs can't be serialised.
+        nextKeyFor(pid) {
+          const prefix = keyPrefix(pid);
+          const nums = this.state.cards
+            .filter((c) => c.key.indexOf(prefix) === 0)
+            .map((c) => parseInt(c.key.slice(prefix.length), 10))
+            .filter((n) => !isNaN(n));
+          return prefix + ((nums.length ? Math.max.apply(null, nums) : 100) + 1);
+        }
+        draftSnapshot() {
+          const s = this.state;
+          return {
+            title: s.draftTitle || "",
+            brief: this.briefEl ? this.briefEl.innerHTML : s.draftBrief || "",
+            project: s.createProject,
+            branch: s.createBranch,
+            status: s.createStatus,
+            workflow: s.createWorkflow,
+            tags: (s.createTags || []).slice(),
+            deps: (s.draftDeps || []).slice(),
+            startMode: s.createStartMode,
+            startAt: s.createStartAt || "",
+          };
+        }
+        draftHasContent(d) {
+          return !!(d.title.trim() || stripTags(d.brief) || d.deps.length);
+        }
+        persistDraft() {
+          if (!this.state.createOpen) return;
+          const d = this.draftSnapshot();
+          try {
+            if (this.draftHasContent(d)) localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+            else localStorage.removeItem(DRAFT_KEY);
+          } catch (e) {}
+        }
+        loadDraft() {
+          try {
+            const d = JSON.parse(localStorage.getItem(DRAFT_KEY));
+            return d && this.draftHasContent(d) ? d : null;
+          } catch (e) {
+            return null;
+          }
+        }
+        clearStoredDraft() {
+          try {
+            localStorage.removeItem(DRAFT_KEY);
+          } catch (e) {}
+        }
+        // persistDraft() no-ops unless the modal is open, so one guarded ticker
+        // covers every field — title, project, branch, workflow, labels, deps.
+        startDraftWatch() {
+          if (this._draftWatch) return;
+          this._draftWatch = setInterval(() => this.persistDraft(), 700);
         }
 
         loadColCollapsed() {
@@ -9919,12 +10715,27 @@
               : "border:1px solid var(--input);background:var(--popover);color:var(--muted-fg)");
           return {
             hasSelected: selected.length > 0,
+            none: selected.length === 0,
+            count: selected.length,
             pills: selected.map((name) => ({
               name,
               style: this.typeStyle(name).replace("height:16px", "height:18px"),
             })),
             query: raw,
             open,
+            close,
+            toggleOpen: () =>
+              this.setState((s2) =>
+                s2.lp && s2.lp.open && s2.lp.target === target
+                  ? { lp: { open: false, target: null, query: "", edit: null } }
+                  : { lp: { open: true, target, query: "", edit: null } },
+              ),
+            inputRef: (el) => {
+              if (el && !el.__lpFocus) {
+                el.__lpFocus = true;
+                setTimeout(() => { try { el.focus(); } catch (err) {} }, 0);
+              }
+            },
             placeholder: "Search or create a label",
             onQuery: (e) =>
               this.setState({ lp: { open: true, target, query: e.target.value, edit: null } }),
@@ -9934,7 +10745,7 @@
               })),
             onBlur: () => setTimeout(close, 140),
             onKey: (e) => {
-              if (e.key === "Escape") close();
+              if (e.key === "Escape") { e.stopPropagation(); close(); }
               if (e.key === "Enter") {
                 e.preventDefault();
                 const hit = (st.labels || []).filter(
@@ -9972,11 +10783,18 @@
                     "width:20px;height:20px;flex:none;border-radius:5px;cursor:pointer;background:" + c +
                     ";border:2px solid " + (l.color === c ? "var(--fg)" : "transparent"),
                 })),
+                boxStyle:
+                  "display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;flex:none;border-radius:4px;box-sizing:border-box;color:#fff;" +
+                  (selected.includes(l.name)
+                    ? "background:" + l.color + ";border:1px solid " + l.color
+                    : "background:var(--bg);border:1px solid var(--input)"),
                 style:
-                  "display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 6px;border:none;border-radius:7px;cursor:pointer;font:" +
-                  (selected.includes(l.name) ? "500" : "400") +
-                  " 12.5px var(--font-sans);color:var(--fg);background:" +
-                  (selected.includes(l.name) ? "var(--accent)" : "transparent"),
+                  "display:flex;align-items:center;gap:8px;width:100%;height:30px;padding:0 8px;border:none;border-radius:7px;cursor:pointer;box-sizing:border-box;font:" +
+                  (selected.includes(l.name) ? "600" : "400") +
+                  " 12.5px var(--font-sans);color:var(--fg);" +
+                  (selected.includes(l.name)
+                    ? "background:color-mix(in srgb," + l.color + " 16%,var(--popover));box-shadow:inset 0 0 0 1px color-mix(in srgb," + l.color + " 50%,transparent), inset 3px 0 0 " + l.color
+                    : "background:transparent"),
               })),
             canCreate: !!q && !(st.labels || []).some((l) => l.name.toLowerCase() === q),
             createName: raw.trim(),
@@ -10091,12 +10909,32 @@
             }
             if (pos < 0) pos = rest.length;
             rest.splice(pos, 0, moved);
-            return { cards: rest, dragId: null, overCol: null, overIndex: null };
+            return {
+              cards: this.sweepAutoStart(rest, s.autoStart),
+              dragId: null,
+              overCol: null,
+              overIndex: null,
+            };
           });
+        }
+        // Sub-board cards always start themselves once unblocked; top-level cards
+        // do so only when the user armed them.
+        // Run after every status write, whatever path made it.
+        sweepAutoStart(cards, autoStart) {
+          const done = {};
+          cards.forEach((c) => { done[c.key] = c.status === "done"; });
+          return cards.map((c) =>
+            (c.parentKey || autoStart[c.id]) && c.status === "ready" && c.depKeys.every((k) => done[k])
+              ? { ...c, status: "building" }
+              : c
+          );
         }
         setStatus(id, status) {
           this.setState((s) => ({
-            cards: s.cards.map((c) => (c.id === id ? { ...c, status } : c)),
+            cards: this.sweepAutoStart(
+              s.cards.map((c) => (c.id === id ? { ...c, status } : c)),
+              s.autoStart
+            ),
           }));
         }
 
@@ -10212,6 +11050,68 @@
           };
         }
 
+        // Provider-level usage limits. A stop attributed to a provider's limit is
+        // rolled up here so the shell can show it without opening the card, and the
+        // resume time is whatever the affected cards are scheduled for.
+        providerLimitVals() {
+          const PROVIDERS = [
+            { id: "anthropic", name: "Anthropic", detail: "Claude Max 20× · 5-hour rolling window" },
+            { id: "openai", name: "OpenAI Codex", detail: "Codex Pro · weekly quota" },
+          ];
+          const stopped = this.state.cards.filter(
+            (c) => c.limitHit && c.tstate === "stopped" && !c.archived,
+          );
+          const rows = PROVIDERS.map((p) => {
+            const hit = stopped.filter((c) => (c.limitProvider || "anthropic") === p.id);
+            const at = hit.reduce((min, c) => {
+              const d = (c.sched && c.sched.at && fromLocalInput(c.sched.at)) || nextLimitReset();
+              return !min || d < min ? d : min;
+            }, null);
+            const v = at ? toLocalInput(at) : "";
+            return {
+              name: p.name,
+              detail: p.detail,
+              limited: hit.length > 0,
+              ok: hit.length === 0,
+              at: v,
+              resumeWhen: v ? whenLabel(v) : "",
+              resumeIn: v ? untilLabel(v) : "",
+              taskCount: hit.length === 1 ? "1 task waiting" : hit.length + " tasks waiting",
+              tasks: hit.map((c) => ({
+                key: c.key,
+                title: c.title,
+                open: () =>
+                  this.setState({ activeId: c.id, mode: "board", artifact: null, limitOpen: false }),
+              })),
+              resumeNow: () =>
+                this.setState((s) => ({
+                  limitOpen: false,
+                  cards: s.cards.map((c) =>
+                    hit.some((h) => h.id === c.id)
+                      ? { ...c, limitHit: false, tstate: "working", sched: null }
+                      : c,
+                  ),
+                })),
+            };
+          });
+          const limited = rows.filter((r) => r.limited);
+          return {
+            limitBar: {
+              show: limited.length > 0,
+              open: !!this.state.limitOpen && limited.length > 0,
+              toggle: () => this.setState((s) => ({ limitOpen: !s.limitOpen })),
+              close: () => this.setState({ limitOpen: false }),
+              label: limited.length === 1 ? limited[0].name + " limit" : limited.length + " provider limits",
+              resume: limited.length ? clockLabel(fromLocalInput(limited[0].at)) : "",
+              checked: "checked just now",
+              tip: limited
+                .map((r) => r.name + " usage limit — resume scheduled " + r.resumeWhen + " (" + r.resumeIn + ")")
+                .join("\n"),
+              rows,
+            },
+          };
+        }
+
         renderVals() {
           const st = this.state;
           const isBoard = st.mode === "board";
@@ -10292,8 +11192,11 @@
                     (rs.disputed ? " · " + rs.disputed + " disputed" : ""),
                 }
               : null;
+            const armed = blocked && (!!c.parentKey || !!this.state.autoStart[c.id]);
             return {
               review,
+              armed,
+              blockedOnly: blocked && !armed,
               conflict: cf
                 ? {
                     tip:
@@ -10581,24 +11484,7 @@
                     (isOver ? "var(--column-bg-over)" : "var(--column-bg)") +
                     ";padding:10px;min-height:104px;transition:background-color 120ms ease",
                   add: () =>
-                    this.setState({
-                      createOpen: true,
-                      createWorkflow: "full",
-                      createStatus: stage.id,
-                      createTags: ["Feature"],
-                      createProject: isAll ? "advisor" : p.id,
-                      createBranch: defaultBranchOf(isAll ? "advisor" : p.id),
-                      createMenu: null,
-                      createStartMode: "now",
-                      createStartAt: "",
-                      draftTitle: "",
-                      draftBrief: "",
-            draftFiles: [],
-                      draftDeps: [],
-            depQuery: "",
-            depIndex: 0,
-            depOpen: false,
-                    }),
+                    this.setState(this.createDraftState(stage.id, isAll ? "advisor" : p.id)),
                   onDragOver: (e) => {
                     if (!this.state.dragId) return;
                     e.preventDefault();
@@ -10702,8 +11588,31 @@
                     return d && d.status !== "done";
                   })
                   .join(", "),
-              canProgress: !!(stage.action && next),
+              canProgress: !!(stage.action && next) && !(blocked && active.status === "ready"),
+              autoImplicit: blocked && active.status === "ready" && !!active.parentKey,
               progressLabel: this.progressAction(active) || "",
+              autoGate: !!(stage.action && next) && blocked && active.status === "ready" && !active.parentKey,
+              autoArmed: !!st.autoStart[active.id],
+              autoLabel: st.autoStart[active.id]
+                ? "Will start automatically"
+                : "Start automatically when unblocked",
+              autoNote: st.autoStart[active.id]
+                ? "Moves to Building the moment the last dependency is done."
+                : "Otherwise this card waits here until you come back and start it.",
+              autoRowStyle:
+                "display:flex;align-items:flex-start;gap:9px;width:100%;padding:9px 10px;border-radius:8px;text-align:left;cursor:pointer;box-shadow:var(--shadow-xs);border:1px solid " +
+                (st.autoStart[active.id]
+                  ? "color-mix(in srgb,var(--primary) 55%,transparent);background:color-mix(in srgb,var(--primary) 9%,transparent)"
+                  : "var(--input);background:var(--popover)"),
+              autoSwitchStyle:
+                "position:relative;flex:none;width:28px;height:16px;margin-top:1px;border-radius:99px;transition:background .12s;background:" +
+                (st.autoStart[active.id] ? "var(--primary)" : "color-mix(in srgb,var(--fg) 16%,transparent)"),
+              autoKnobStyle:
+                "position:absolute;top:2px;left:" +
+                (st.autoStart[active.id] ? "14px" : "2px") +
+                ";width:12px;height:12px;border-radius:99px;background:var(--popover);transition:left .12s;box-shadow:var(--shadow-xs)",
+              toggleAuto: () =>
+                this.setState((s) => ({ autoStart: { ...s.autoStart, [active.id]: !s.autoStart[active.id] } })),
               workflowName: wf.name,
               workflowNote: wf.note,
               workflowIsCustom: wf.id !== "full",
@@ -10758,6 +11667,52 @@
               hasPr: !!active.pr,
               prLabel: active.pr ? "#" + active.pr.n : "",
               projectName: (PROJECTS.find((p) => p.id === active.project) || {}).name,
+              projectDot: projectOf(active.project).dot,
+              projectLocked:
+                STAGES.findIndex((s) => s.id === active.status) >=
+                STAGES.findIndex((s) => s.id === PROJECT_LOCK_FROM),
+              projectEditable:
+                STAGES.findIndex((s) => s.id === active.status) <
+                STAGES.findIndex((s) => s.id === PROJECT_LOCK_FROM),
+              projectNote:
+                STAGES.findIndex((s) => s.id === active.status) >=
+                STAGES.findIndex((s) => s.id === PROJECT_LOCK_FROM)
+                  ? "Pinned — the build has a worktree on this project"
+                  : "Move this task to another project",
+              projectMenuOpen: !!st.cardProjectMenu,
+              toggleProjectMenu: () =>
+                this.setState((s) => ({ cardProjectMenu: !s.cardProjectMenu })),
+              projectOptions: PROJECTS.map((p) => ({
+                name: p.name,
+                dot: p.dot,
+                current: p.id === active.project,
+                hint: p.id === active.project ? "" : this.nextKeyFor(p.id),
+                select: () => {
+                  if (p.id === active.project) {
+                    this.setState({ cardProjectMenu: false });
+                    return;
+                  }
+                  const newKey = this.nextKeyFor(p.id);
+                  const oldKey = active.key;
+                  this.setState((s) => ({
+                    cardProjectMenu: false,
+                    cards: s.cards.map((c) => {
+                      if (c.id === active.id) {
+                        return {
+                          ...c,
+                          project: p.id,
+                          key: newKey,
+                          baseBranch: defaultBranchOf(p.id),
+                          depKeys: [],
+                        };
+                      }
+                      const deps = (c.depKeys || []).filter((k) => k !== oldKey);
+                      return deps.length !== (c.depKeys || []).length ? { ...c, depKeys: deps } : c;
+                    }),
+                  }));
+                },
+                style: this.menuRowStyle(p.id === active.project),
+              })),
               branch: active.baseBranch || defaultBranchOf(active.project),
               branchMenuOpen: !!st.cardBranchMenu,
               toggleBranchMenu: () => this.setState((s) => ({ cardBranchMenu: !s.cardBranchMenu })),
@@ -11898,6 +12853,7 @@
                 });
               }
             },
+            ...this.providerLimitVals(),
             cardMenuOpen: !!st.cardMenuOpen,
             toggleCardMenu: () => this.setState((s) => ({ cardMenuOpen: !s.cardMenuOpen, cardModelsOpen: false })),
             closeCardMenu: () => this.setState({ cardMenuOpen: false }),
@@ -11964,35 +12920,72 @@
             closeArtifact: () => this.setState({ artifact: null }),
             createOpen: st.createOpen,
             createStatusName: this.stage(st.createStatus).name,
-            openCreate: () =>
+            openCreate: () => this.setState(this.createDraftState("backlog")),
+            closeCreate: () => {
+              this.persistDraft();
+              this.setState({ createOpen: false, draftRestored: false });
+            },
+            draftRestored: !!st.draftRestored,
+            draftDirty: this.draftHasContent(this.draftSnapshot()),
+            discardLabel: this.draftHasContent(this.draftSnapshot()) ? "Discard draft" : "Cancel",
+            discardTip: this.draftHasContent(this.draftSnapshot())
+              ? "Throw this draft away and close"
+              : "Close",
+            discardDraft: () => {
+              this.clearStoredDraft();
+              this.pendingBrief = "";
+              if (this.briefEl) this.briefEl.innerHTML = "";
               this.setState({
-                createOpen: true,
-                createWorkflow: "full",
-                createStatus: "backlog",
-                createTags: ["Feature"],
-                createProject: st.scope === "all" ? "advisor" : st.scope,
-                createBranch: defaultBranchOf(st.scope === "all" ? "advisor" : st.scope),
-                createMenu: null,
-                createStartMode: "now",
-                createStartAt: "",
+                createOpen: false,
+                draftRestored: false,
                 draftTitle: "",
                 draftBrief: "",
-            draftFiles: [],
+                draftFiles: [],
                 draftDeps: [],
-            depQuery: "",
-            depIndex: 0,
-            depOpen: false,
-              }),
-            closeCreate: () => this.setState({ createOpen: false }),
+                depQuery: "",
+                depIndex: 0,
+                depOpen: false,
+                createStartMode: "now",
+                createStartAt: "",
+              });
+            },
+            startFresh: () => {
+              this.clearStoredDraft();
+              this.pendingBrief = "";
+              if (this.briefEl) this.briefEl.innerHTML = "";
+              this.setState({
+                draftRestored: false,
+                draftTitle: "",
+                draftBrief: "",
+                draftFiles: [],
+                draftDeps: [],
+                depQuery: "",
+                depIndex: 0,
+                depOpen: false,
+                createStartMode: "now",
+                createStartAt: "",
+              });
+            },
             schedule: this.scheduleVm(active),
             createStart: this.createStartVm(),
             draftTitle: st.draftTitle,
-            onDraftTitle: (e) => this.setState({ draftTitle: e.target.value }),
+            onDraftTitle: (e) => {
+              this.setState({ draftTitle: e.target.value });
+              clearTimeout(this._titleSave);
+              this._titleSave = setTimeout(() => this.persistDraft(), 300);
+            },
             briefRef: (el) => {
               this.briefEl = el;
+              if (el && this.pendingBrief) {
+                el.innerHTML = this.pendingBrief;
+                this.pendingBrief = "";
+              }
             },
             onBriefInput: () => {
-              if (this.briefEl) this.state.draftBrief = this.briefEl.innerHTML;
+              if (!this.briefEl) return;
+              this.state.draftBrief = this.briefEl.innerHTML;
+              clearTimeout(this._briefSave);
+              this._briefSave = setTimeout(() => this.persistDraft(), 400);
             },
             onBriefPaste: (e) => {
               const items = Array.from((e.clipboardData || {}).items || []);
@@ -12162,20 +13155,15 @@
                 (i === Math.min(st.depIndex, depMatches.length - 1) ? "var(--accent)" : "transparent"),
             })),
             submitStyle:
-              "height:32px;padding:0 13px;border:1px solid var(--primary);border-radius:8px;background:var(--primary);color:var(--primary-fg);font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);opacity:" +
+              "display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 9px 0 13px;border:1px solid var(--primary);border-radius:8px;background:var(--primary);color:var(--primary-fg);font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);opacity:" +
               (st.draftTitle.trim() ? "1" : "0.5"),
-            submitCard: () => {
+            submitCard: (this.submitDraft = () => {
               const title = this.state.draftTitle.trim();
               if (!title) return;
               const html = this.briefEl ? this.briefEl.innerHTML : "";
-              const prefix = this.state.createProject === "advisor" ? "T3-" : this.state.createProject === "web" ? "MW-" : "RL-";
-              const nums = this.state.cards
-                .filter((c) => c.key.indexOf(prefix) === 0)
-                .map((c) => parseInt(c.key.slice(prefix.length), 10));
-              const nextNum = (nums.length ? Math.max.apply(null, nums) : 100) + 1;
               const card = {
                 id: "c" + Date.now(),
-                key: prefix + nextNum,
+                key: this.nextKeyFor(this.state.createProject),
                 project: this.state.createProject,
               baseBranch: this.state.createBranch || defaultBranchOf(this.state.createProject),
                 tags: (this.state.createTags || []).slice(),
@@ -12193,9 +13181,12 @@
                     ? { kind: "start", at: this.state.createStartAt }
                     : null,
               };
+              this.clearStoredDraft();
+              this.pendingBrief = "";
               this.setState((s) => ({
                 cards: s.cards.concat(card),
                 createOpen: false,
+                draftRestored: false,
                 mode: "board",
                 createStartMode: "now",
                 createStartAt: "",
@@ -12207,6 +13198,13 @@
             depIndex: 0,
             depOpen: false,
               }));
+            }),
+            createKey: (e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (this.submitDraft) this.submitDraft();
+              }
             },
           };
         }
