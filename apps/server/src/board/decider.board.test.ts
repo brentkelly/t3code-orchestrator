@@ -3386,4 +3386,215 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       }),
     );
   });
+
+  // ── Auto-start (T3O-24) ───────────────────────────────────────────────────
+
+  describe("auto-start (T3O-24, D1/D2/D4)", () => {
+    const OPEN = "card-blocker-open";
+    const DONE = "card-blocker-done";
+
+    /** The blockers every fixture below draws from. */
+    const blockers = [
+      makeCard({ id: OPEN, stage: "building" }),
+      makeCard({ id: DONE, stage: "done" }),
+    ];
+
+    /** A card waiting at Ready on the blockers named. */
+    const waiting = (
+      overrides: Partial<BoardCard> = {},
+      dependsOn: ReadonlyArray<string> = [OPEN],
+    ) =>
+      makeCard({
+        id: "card-1",
+        stage: "ready",
+        dependsOn: dependsOn.map((id) => BoardCardId.make(id)),
+        ...overrides,
+      });
+
+    const boardWith = (card: BoardCard) =>
+      makeReadModel({ board: seededBoard([card, ...blockers]) });
+
+    const arm = (autoStart: boolean) =>
+      ({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-arm"),
+        cardId: BoardCardId.make("card-1"),
+        autoStart,
+        createdAt: NOW,
+      }) satisfies BoardCommand;
+
+    it.effect("records the arm and says the edit touched it", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(arm(true), boardWith(waiting()));
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        assert.isTrue(event.payload.card.autoStart);
+        // The marker the supervisor reads to know an armed card is worth
+        // re-checking; without it a title edit and an arm look the same.
+        assert.strictEqual(event.payload.autoStart, true);
+      }),
+    );
+
+    it.effect("an arm on its own is a real change, not an empty update", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(arm(true), boardWith(waiting()));
+        assert.strictEqual(event.type, "board.card-updated");
+      }),
+    );
+
+    it.effect("disarming is always accepted — a reverse state cannot be refused", () =>
+      Effect.gen(function* () {
+        // Even where ARMING would be refused: a card dragged into Building
+        // while armed must still be able to say no.
+        const event = yield* decide(
+          arm(false),
+          boardWith(waiting({ autoStart: true, stage: BoardStageId.make("building") })),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        assert.isFalse(event.payload.card.autoStart);
+        assert.strictEqual(event.payload.autoStart, false);
+      }),
+    );
+
+    it.effect("refuses to arm a sub-board child, which already cascades", () =>
+      Effect.gen(function* () {
+        const error = yield* decideFail(
+          arm(true),
+          boardWith(waiting({ parentCardId: BoardCardId.make("card-parent") })),
+        );
+        assert.include(String(error), "sub-board child");
+      }),
+    );
+
+    it.effect("refuses to arm a card that is not waiting in the stage before build", () =>
+      Effect.gen(function* () {
+        const error = yield* decideFail(
+          arm(true),
+          boardWith(waiting({ stage: BoardStageId.make("building") })),
+        );
+        assert.include(String(error), "not waiting in 'Ready'");
+      }),
+    );
+
+    it.effect("refuses to arm a card with nothing left to wait for", () =>
+      Effect.gen(function* () {
+        const error = yield* decideFail(arm(true), boardWith(waiting({}, [DONE])));
+        assert.include(String(error), "no unmet dependencies");
+      }),
+    );
+
+    it.effect("validates the arm against the dependencies the SAME edit leaves behind", () =>
+      Effect.gen(function* () {
+        // One edit dropping the last blocking edge AND arming the card would
+        // otherwise arm a card with nothing to wait for — spent on the next
+        // tick, and never visibly on.
+        const error = yield* decideFail(
+          {
+            type: "board.card.update",
+            commandId: CommandId.make("cmd-arm-and-drop"),
+            cardId: BoardCardId.make("card-1"),
+            autoStart: true,
+            dependsOn: [],
+            createdAt: NOW,
+          },
+          boardWith(waiting()),
+        );
+        assert.include(String(error), "no unmet dependencies");
+      }),
+    );
+
+    it.effect("an unrelated edit leaves the arm alone and does not claim to touch it", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          {
+            type: "board.card.update",
+            commandId: CommandId.make("cmd-title"),
+            cardId: BoardCardId.make("card-1"),
+            title: "Renamed",
+            createdAt: NOW,
+          },
+          boardWith(waiting({ autoStart: true })),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        assert.isTrue(event.payload.card.autoStart);
+        assert.isFalse("autoStart" in event.payload);
+      }),
+    );
+
+    it.effect("a created card is never born armed", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          createCommand({ cardId: "card-new" }),
+          makeReadModel({ board: seededBoard() }),
+        );
+        assert.strictEqual(event.type, "board.card-created");
+        if (event.type !== "board.card-created") return;
+        assert.isFalse("autoStart" in event.payload);
+      }),
+    );
+
+    // ── D4: the arm is spent when the card leaves Ready, by any route ──────
+
+    it.effect("the forward move into Building clears the arm in the same event", () =>
+      Effect.gen(function* () {
+        // Fire-and-clear is ONE event, so there is no cleared-but-unstarted
+        // window and no second command that can be lost.
+        const event = yield* decide(
+          moveCommand({ cardId: "card-1", toStage: "building" }),
+          boardWith(waiting({ autoStart: true }, [DONE])),
+        );
+        assert.strictEqual(event.type, "board.card-moved");
+        if (event.type !== "board.card-moved") return;
+        assert.isFalse(event.payload.card.autoStart);
+      }),
+    );
+
+    it.effect("a BACKWARD drag out of Ready clears it too — a parked card stays parked", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          moveCommand({ cardId: "card-1", toStage: "planning" }),
+          boardWith(waiting({ autoStart: true })),
+        );
+        assert.strictEqual(event.type, "board.card-moved");
+        if (event.type !== "board.card-moved") return;
+        assert.isFalse(event.payload.card.autoStart);
+      }),
+    );
+
+    it.effect("a card dragged back INTO Ready from Building arrives disarmed", () =>
+      Effect.gen(function* () {
+        // The deliberate consequence of D4: a build that went wrong and got
+        // pulled back must never relaunch itself under the person parking it.
+        // Driven as the round trip a human really makes, because an armed card
+        // sitting in Building is not a state the decider lets anyone reach.
+        const started = yield* decide(
+          moveCommand({ cardId: "card-1", toStage: "building" }),
+          boardWith(waiting({ autoStart: true }, [DONE])),
+        );
+        assert.strictEqual(started.type, "board.card-moved");
+        if (started.type !== "board.card-moved") return;
+        const back = yield* decide(
+          moveCommand({ cardId: "card-1", toStage: "ready" }),
+          boardWith(started.payload.card),
+        );
+        assert.strictEqual(back.type, "board.card-moved");
+        if (back.type !== "board.card-moved") return;
+        assert.isFalse(back.payload.card.autoStart);
+      }),
+    );
+
+    it.effect("the dependency gate still refuses the move it would have made", () =>
+      Effect.gen(function* () {
+        // The decider stays the single authority (D3): the reactor pre-checks
+        // this so it never teaches the rule by refusal, but the rule lives here.
+        const error = yield* decideFail(
+          moveCommand({ cardId: "card-1", toStage: "building" }),
+          boardWith(waiting({ autoStart: true })),
+        );
+        assert.include(String(error), "until its dependency is done");
+      }),
+    );
+  });
 });

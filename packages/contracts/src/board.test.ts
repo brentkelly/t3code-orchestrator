@@ -18,6 +18,9 @@ import {
   BOARD_CARD_SHELL_TITLE_MAX_BYTES,
   BOARD_LABEL_NAME_MAX_LENGTH,
   BOARD_SEED_STAGE_IDS,
+  boardCardAutoStartDue,
+  boardCardCanArmAutoStart,
+  boardStageBeforeBuild,
   boardModelSelectionOfOverride,
   isBoardCardBaseBranchShape,
   isBoardCardBaseRetargeted,
@@ -1869,5 +1872,171 @@ describe("top-of-column order keys (T3O-15)", () => {
     const column = ["aaa", "m", "mm"];
     const key = boardPrependOrderKey(column);
     expect(sorted([...column, key]).indexOf(key)).toBe(1);
+  });
+});
+
+describe("auto-start (T3O-24)", () => {
+  const NOW = "2026-01-01T00:00:00.000Z";
+  const blocker = (id: string, stage: BoardCard["stage"], archivedAt: string | null = null) => ({
+    ...typicalCard(9),
+    id: BoardCardId.make(id),
+    stage,
+    archivedAt,
+  });
+  /** The card under test: at Ready, top-level, waiting on whatever is passed. */
+  const waiting = (overrides: Partial<BoardCard> = {}): BoardCard => ({
+    ...typicalCard(1),
+    id: BoardCardId.make("card-waiting"),
+    stage: BOARD_SEED_STAGE_IDS.ready,
+    ...overrides,
+  });
+  const boardWith = (cards: ReadonlyArray<BoardCard>) => ({ ...EMPTY_BOARD_STATE, cards });
+  const on = (card: BoardCard, ...blockers: ReadonlyArray<BoardCard>) => ({
+    board: boardWith([card, ...blockers]),
+    card,
+  });
+
+  describe("boardStageBeforeBuild", () => {
+    it("names the stage immediately before the build role", () => {
+      expect(boardStageBeforeBuild(EMPTY_BOARD_STATE)?.stageId).toBe(BOARD_SEED_STAGE_IDS.ready);
+    });
+
+    it("follows a REORDERED pipeline rather than a stage called Ready", () => {
+      // Ready pushed behind Planning: the arm belongs wherever "the stage
+      // before the build stage" ended up, not on the label.
+      const reordered = {
+        ...EMPTY_BOARD_STATE,
+        stages: BOARD_SEED_STAGES.map((stage) =>
+          stage.stageId === BOARD_SEED_STAGE_IDS.ready
+            ? { ...stage, orderKey: "e" }
+            : stage.stageId === BOARD_SEED_STAGE_IDS.planning
+              ? { ...stage, orderKey: "h" }
+              : stage,
+        ),
+      };
+      expect(boardStageBeforeBuild(reordered)?.stageId).toBe(BOARD_SEED_STAGE_IDS.planning);
+    });
+
+    it("is null when the build role is the board's first stage, or absent", () => {
+      const buildFirst = {
+        ...EMPTY_BOARD_STATE,
+        stages: BOARD_SEED_STAGES.filter(
+          (stage) => stage.role === "build" || stage.role === "done",
+        ),
+      };
+      expect(boardStageBeforeBuild(buildFirst)).toBe(null);
+      const noBuild = {
+        ...EMPTY_BOARD_STATE,
+        stages: BOARD_SEED_STAGES.filter((stage) => stage.role !== "build"),
+      };
+      expect(boardStageBeforeBuild(noBuild)).toBe(null);
+    });
+
+    it("is the same stage the sub-board floor names", () => {
+      // They coincide by construction; two names exist so neither reads as a
+      // lie in the other's feature.
+      expect(boardStageBeforeBuild(EMPTY_BOARD_STATE)?.stageId).toBe(
+        boardSubBoardFloorStage(EMPTY_BOARD_STATE)?.stageId,
+      );
+    });
+  });
+
+  describe("boardCardCanArmAutoStart", () => {
+    const open = blocker("blocker-open", BOARD_SEED_STAGE_IDS.building);
+    const done = blocker("blocker-done", BOARD_SEED_STAGE_IDS.done);
+
+    it("arms a live top-level card at Ready with an unmet dependency", () => {
+      expect(boardCardCanArmAutoStart(on(waiting({ dependsOn: [open.id] }), open))).toBe(true);
+    });
+
+    it("refuses a card with nothing left to wait for", () => {
+      // A control with no reverse state to reach: it would fire on the next
+      // tick and be spent before the user let go of it.
+      expect(boardCardCanArmAutoStart(on(waiting({ dependsOn: [done.id] }), done))).toBe(false);
+      expect(boardCardCanArmAutoStart(on(waiting({ dependsOn: [] })))).toBe(false);
+    });
+
+    it("refuses a sub-board child, which already cascades", () => {
+      const child = waiting({
+        dependsOn: [open.id],
+        parentCardId: BoardCardId.make("card-parent"),
+      });
+      expect(boardCardCanArmAutoStart(on(child, open))).toBe(false);
+    });
+
+    it("refuses a card at or past the build role, and one still in ideation", () => {
+      for (const stage of [
+        BOARD_SEED_STAGE_IDS.backlog,
+        BOARD_SEED_STAGE_IDS.planning,
+        BOARD_SEED_STAGE_IDS.building,
+        BOARD_SEED_STAGE_IDS.review,
+        BOARD_SEED_STAGE_IDS.done,
+      ]) {
+        expect(boardCardCanArmAutoStart(on(waiting({ dependsOn: [open.id], stage }), open))).toBe(
+          false,
+        );
+      }
+    });
+
+    it("refuses an archived card", () => {
+      expect(
+        boardCardCanArmAutoStart(on(waiting({ dependsOn: [open.id], archivedAt: NOW }), open)),
+      ).toBe(false);
+    });
+  });
+
+  describe("boardCardAutoStartDue", () => {
+    const open = blocker("blocker-open", BOARD_SEED_STAGE_IDS.building);
+    const done = blocker("blocker-done", BOARD_SEED_STAGE_IDS.done);
+    const archived = blocker("blocker-archived", BOARD_SEED_STAGE_IDS.building, NOW);
+
+    it("is due once every dependency is done", () => {
+      expect(
+        boardCardAutoStartDue(on(waiting({ autoStart: true, dependsOn: [done.id] }), done)),
+      ).toBe(true);
+    });
+
+    it("is not due while one is still outstanding", () => {
+      expect(
+        boardCardAutoStartDue(
+          on(waiting({ autoStart: true, dependsOn: [done.id, open.id] }), done, open),
+        ),
+      ).toBe(false);
+    });
+
+    it("is due on an ARCHIVED dependency: archiving means the work is not happening", () => {
+      // t3o-13 D1 — a gate waiting on archived work is a deadlock, not a gate,
+      // so archiving the blocker fires the card exactly as finishing it would.
+      expect(
+        boardCardAutoStartDue(on(waiting({ autoStart: true, dependsOn: [archived.id] }), archived)),
+      ).toBe(true);
+    });
+
+    it("is never due on an id with no card at all — nothing can prove it finished", () => {
+      expect(
+        boardCardAutoStartDue(
+          on(waiting({ autoStart: true, dependsOn: [BoardCardId.make("card-gone")] })),
+        ),
+      ).toBe(false);
+    });
+
+    it("is never due unarmed, however met its dependencies are", () => {
+      expect(boardCardAutoStartDue(on(waiting({ dependsOn: [done.id] }), done))).toBe(false);
+    });
+
+    it("is never due for a sub-board child, an archived card, or one past Ready", () => {
+      const armed = { autoStart: true, dependsOn: [done.id] } as const;
+      expect(
+        boardCardAutoStartDue(
+          on(waiting({ ...armed, parentCardId: BoardCardId.make("card-parent") }), done),
+        ),
+      ).toBe(false);
+      expect(boardCardAutoStartDue(on(waiting({ ...armed, archivedAt: NOW }), done))).toBe(false);
+      expect(
+        boardCardAutoStartDue(
+          on(waiting({ ...armed, stage: BOARD_SEED_STAGE_IDS.building }), done),
+        ),
+      ).toBe(false);
+    });
   });
 });

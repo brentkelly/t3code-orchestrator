@@ -1042,19 +1042,22 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         ...card,
         stage: command.toStage,
         orderKey: nextOrderKey,
-        // The auto-start arm is SPENT when the card leaves the pre-build stage,
-        // by any route (T3O-24, D4). Clearing it here — inside the move rather
-        // than in a second command afterwards — is what makes fire-and-clear one
-        // atomic event, with none of the cleared-but-unstarted window T3O-19's
-        // clear-then-act ordering has to reason about.
+        // ANY move spends the auto-start arm (T3O-24, D4). Clearing it here —
+        // inside the move rather than in a second command afterwards — is what
+        // makes fire-and-clear one atomic event, with none of the
+        // cleared-but-unstarted window T3O-19's clear-then-act ordering has to
+        // reason about.
         //
-        // "By any route" includes BACKWARDS: a build that went wrong and got
-        // dragged back to Ready arrives DISARMED and waits for a human. A card
-        // must never re-launch itself under the person parking it.
-        autoStart:
-          card.autoStart && boardStageBeforeBuild(board)?.stageId === command.toStage
-            ? card.autoStart
-            : false,
+        // Every route, not just the one that fires: pressing Begin build by
+        // hand spends it, and so does a backward drag. Which is also why a card
+        // ARRIVING back at the pre-build stage arrives disarmed — a build that
+        // went wrong and got pulled back must never relaunch itself under the
+        // person parking it.
+        //
+        // A card reordered WITHIN the stage keeps its arm: that is
+        // `board.card.reorder`, a different command, and it moves the card
+        // nowhere.
+        autoStart: false,
         blocked: deriveBoardCardBlocked({
           board,
           stage: command.toStage,
