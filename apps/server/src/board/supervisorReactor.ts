@@ -56,6 +56,8 @@ import {
   isBoardBuildStageExecution,
   isBoardMergeStageExecution,
   isBoardCardScheduleDue,
+  // T3o: tells the board's own nudge from a human's message (T3O-17, D2).
+  isBoardMintedCommandId,
   isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
   MessageId,
@@ -2759,6 +2761,34 @@ const make = Effect.gen(function* () {
       return;
     }
     yield* pauseStepNow({ card: found.card, state: found.state });
+    // Then say so on the CARD (T3O-17, brief item 1). Stopping an unattended
+    // agent is a human taking the wheel; leaving the card unattended means the
+    // next stage entry runs autonomously again and a resumed step is supervised
+    // as if nobody had intervened.
+    //
+    // The pause goes FIRST on purpose: the agent stopping is what the human
+    // asked for, and it must not be contingent on the flip landing. A process
+    // killed between the two leaves a correctly paused card that simply did not
+    // get flagged — which is the card the human is already looking at.
+    //
+    // Only when it is NECESSARY, as the brief puts it: a step already
+    // human-in-the-loop was never running unattended, and a card whose override
+    // is already `true` has nothing to change. The way back out already exists
+    // — the card detail's own human-in-the-loop toggle — so this is not a
+    // one-way door.
+    //
+    // The resulting `board.card-updated` re-enters this reactor at
+    // `handleCardUpdated`, which carries the stance onto the live step row. Its
+    // `paused` guard is what stops that from sending a turn into the thread we
+    // just stopped; see the note there.
+    if (found.state.humanInLoop || found.card.humanInLoop === true) return;
+    yield* dispatchOptional({
+      type: "board.card.update",
+      commandId: yield* commandId("stop-human-in-loop"),
+      cardId: found.card.id,
+      humanInLoop: true,
+      createdAt: yield* nowIso,
+    });
   });
 
   const settleStep = Effect.fn("board-supervisor-settleStep")(function* (input: {
@@ -3874,6 +3904,30 @@ const make = Effect.gen(function* () {
       }
       return;
     }
+    // The free turn-ending a human's own turn bought (T3O-17, D3). Either this
+    // IS that turn completing, or it is the turn the human's message
+    // superseded arriving late — neither is a stall, and neither should draw a
+    // nudge in on top of what the human just said.
+    //
+    // Spent here and only here (D6). `recoverStep` is also reached from the
+    // timeout sweep, which never sees a `turn.completed`, so a guard down there
+    // would mean the free ending is never consumed and a genuinely hung agent
+    // is never caught. The sweep must keep crying.
+    //
+    // ONE ending, then the supervisor is back on duty. An open-ended "a human
+    // is involved, stop nudging" wedges it for good, because the only thing
+    // that would ever clear the suppression is the nudge being suppressed.
+    if (found.state.humanTurnAt !== null) {
+      yield* dispatchOptional({
+        type: "board.card.note-human-turn",
+        commandId: yield* commandId("consume-human-turn"),
+        cardId: found.card.id,
+        stepId: found.state.stepId,
+        at: null,
+        createdAt: yield* nowIso,
+      });
+      return;
+    }
     // A human-in-the-loop run that ends a turn without completing is WAITING on
     // the human, not dead (D5): no drop monitoring, no recovery, no attempt
     // consumed, no slot released. But it is NOT running either, and until t3o-34
@@ -4420,11 +4474,29 @@ const make = Effect.gen(function* () {
       if (state.status !== "succeeded") return;
       return yield* replanSettledStage(card);
     }
-    const stage = boardStageById(board, card.stage);
-    const desired =
-      stage?.role === "build" ? (card.humanInLoop ?? state.humanInLoop) : state.humanInLoop;
+    // The card's explicit override wins at EVERY stage, not just a build one
+    // (T3O-17). Only an explicit override can differ from the stance the step
+    // froze at entry, so no other behaviour moves — but without this, a human
+    // pressing Stop on a review or planning step flips the card and the step
+    // carries on being supervised as unattended, which is the half-applied
+    // state the whole card is about.
+    const desired = card.humanInLoop ?? state.humanInLoop;
     if (desired === state.humanInLoop) return;
-    if (state.threadId !== null) {
+    // A `paused` step is NOT told about the switch. This is load-bearing, not
+    // cosmetic: the `humanInLoop: true` update that `pauseStepForHumanStop`
+    // dispatches re-enters this handler, and a turn sent into the step we just
+    // paused would raise `thread.turn-start-requested`, hit `resumeParkedStep`
+    // and un-pause the card — putting the agent straight back to work against
+    // the human's Stop. The stance still lands on the row through the retune
+    // below, so the step reads correctly when a human does resume it.
+    //
+    // ONLY `paused`, deliberately. The other two parked statuses are told, and
+    // the turn resuming them through `resumeParkedStep` is the point: flipping
+    // the stance on a step waiting on a question (`awaiting-input`) or one
+    // recovery gave up on (`stalled`) is a human saying how the work should
+    // carry on, and it has always put the step back to work. Only `paused`
+    // carries an explicit "stop" this must not overturn.
+    if (state.threadId !== null && state.status !== "paused") {
       const text = desired
         ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`
         : `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;
@@ -5132,11 +5204,83 @@ const make = Effect.gen(function* () {
     if (found.state.mode === "build") yield* slots.restore(found.state.providerInstanceId);
   });
 
+  /**
+   * A HUMAN started a turn on a running unattended step's thread (T3O-17).
+   *
+   * Typing into a working agent is STEERING (D1) — a correction to fold into
+   * the autonomous run, not an instruction to end its autonomy. So the card
+   * stays unattended and the board keeps supervising; all this does is make
+   * sure the supervisor does not talk over the human. It records the instant on
+   * the step row, which buys the human's turn exactly one free ending (D3) and
+   * restarts the recovery ladder.
+   *
+   * Without it, the resume nudge lands right behind the human's message — the
+   * two-bubble order in this card's attachment. `handleTurnCompleted`'s
+   * existing guards only cover the window where the human's turn is still
+   * QUEUED: `namedByAnotherTurn` loses to projection lag, and
+   * `supersededByPendingTurn` stops matching the moment the provider claims the
+   * turn id. This is the signal that survives both, because it is written when
+   * the turn is REQUESTED and read whenever the completion arrives.
+   *
+   * Only for a step that is `running` and unattended:
+   *
+   *  - A step still parked when this runs was not resumed by this turn — it
+   *    belongs to another thread's card, or the resume was refused — so there
+   *    is no live turn whose ending could be nudged over.
+   *  - A human-in-the-loop step never recovers on a turn end (that arm parks),
+   *    so there is nothing to suppress and recording would be noise per turn.
+   */
+  const noteHumanTurn = Effect.fn("board-supervisor-noteHumanTurn")(function* (
+    event: Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>,
+  ) {
+    // The board mints `server:board-…`; a client mints a bare UUID (D2). A
+    // nudge of our own must not buy itself a free ending, or the escalation
+    // ceiling would never be reached.
+    if (isBoardMintedCommandId(event.commandId)) return;
+    const board = yield* readBoard;
+    const found = stepThreadCard(board, event.payload.threadId);
+    if (found === null || found.card.archivedAt !== null) return;
+    if (found.state.status !== "running" || found.state.humanInLoop) return;
+    yield* dispatchOptional({
+      type: "board.card.note-human-turn",
+      commandId: yield* commandId("note-human-turn"),
+      cardId: found.card.id,
+      stepId: found.state.stepId,
+      at: event.payload.createdAt,
+      createdAt: yield* nowIso,
+    });
+  });
+
   const handleTurnStartRequested = Effect.fn("board-supervisor-handleTurnStartRequested")(
     function* (event: Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>) {
       yield* resumeParkedStep(event.payload.threadId);
+      // AFTER the resume, deliberately: a human typing into a PAUSED step both
+      // resumes it and steers it, and reading the step second is what lets the
+      // one event do both. The `running` test in `noteHumanTurn` then passes
+      // for a step this line has just put back to work, which is right — the
+      // turn the human just sent is no more a stall than any other.
+      yield* noteHumanTurn(event);
     },
   );
+
+  /** Carry a card's explicit human-in-the-loop override onto its live step row
+      when the two have diverged (T3O-17) — the crash-recovery half of
+      `handleCardUpdated`'s stance arm. A no-op when they agree, which is every
+      card on an ordinary boot. */
+  const reconcileStanceOverride = Effect.fn("board-supervisor-reconcileStanceOverride")(function* (
+    card: BoardCard,
+    state: BoardCardStepState,
+  ) {
+    if (card.humanInLoop === null || card.humanInLoop === state.humanInLoop) return;
+    yield* dispatchOptional({
+      type: "board.card.retune-step",
+      commandId: yield* commandId("reconcile-stance"),
+      cardId: card.id,
+      stepId: state.stepId,
+      humanInLoop: card.humanInLoop,
+      createdAt: yield* nowIso,
+    });
+  });
 
   const reconcile = Effect.gen(function* () {
     // Read the world only once the server is ACTIVATED (t3o-10, D3). This item
@@ -5178,6 +5322,24 @@ const make = Effect.gen(function* () {
     for (const state of boardNonTerminalStepStates(board)) {
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined) continue;
+      // Re-settle the stance a lost `board.card-updated` never carried onto the
+      // row (T3O-17). `streamDomainEvents` is a LIVE PubSub, not a durable
+      // replay from a watermark, so an edit committed to the log in the instant
+      // before a kill is never re-delivered: the card's override says one thing
+      // and the frozen run row says another, for as long as the step lives.
+      //
+      // Reachable from the ordinary human-in-the-loop toggle, and made common
+      // by the Stop button, which now dispatches exactly that edit — and there
+      // the divergence is the whole defect surviving a crash: a card that says
+      // a human took the wheel, resuming an agent that runs unattended.
+      //
+      // Cheap enough to be unconditional: a field comparison per non-terminal
+      // step, no I/O, and a dispatch only when they actually disagree, which is
+      // never in the ordinary case because the live handler already did it.
+      // Idempotent, so a restart loop re-runs it harmlessly. No turn is sent —
+      // boot is not the moment to message an agent, and `handleCardUpdated`
+      // would not have sent one into a parked step either.
+      yield* reconcileStanceOverride(card, state);
       const hasSucceeded = boardCardStepCompletions(board, card.id).some(
         (entry) => entry.stepId === state.stepId && entry.outcome === "succeeded",
       );
@@ -5469,6 +5631,18 @@ const make = Effect.gen(function* () {
         const committedMs = committedAt === null ? Number.NaN : Date.parse(committedAt);
         if (Number.isFinite(committedMs) && nowMs - committedMs <= state.timeoutMs) continue;
       }
+      // A turn has been REQUESTED on this thread and the provider has not
+      // started it yet (T3O-17). Until it does the turn has no id, emits no
+      // output and advances no todo list, so every life sign above is blind to
+      // it — and this sweep, unlike `handleTurnCompleted`, had no guard for it
+      // at all. Nudging here would put the board's message behind a human's
+      // that is already on its way in.
+      //
+      // Last, and only for a step that already looks overdue, so the common
+      // case pays nothing extra. This is a delay, not a shield: the pending row
+      // is bounded by `lastNudgeAt ?? startedAt`, so a request that never starts
+      // stops suppressing at the next nudge, and the step is swept then.
+      if (yield* supersededByPendingTurn(state)) continue;
       yield* recoverStep({ card, state });
     }
   }).pipe(
