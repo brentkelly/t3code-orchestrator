@@ -4373,12 +4373,20 @@ const make = Effect.gen(function* () {
     if (event.payload.scheduledStartAt !== undefined) {
       yield* applyScheduleEdit(event.payload.cardId);
     }
-    // An edit that ARMED the card (T3O-24, D6) may already be due: the last
-    // dependency can have finished between the modal rendering and the click,
-    // and dropping the last blocking edge is itself an edit that arrives here.
-    // Only an edit that NAMED the field asks — the payload key says so — so an
-    // unrelated title edit never pays for the check.
-    if (event.payload.autoStart === true) {
+    // Any edit that leaves the card ARMED may have made it due (T3O-24, D6),
+    // so the check keys on the card's state rather than on the payload's
+    // `autoStart` marker — that marker says the edit touched the arm, and two
+    // of the three ways a card becomes due here did not:
+    //
+    //  - the arm itself, where the last dependency finished between the modal
+    //    rendering and the click, so no done-arrival event is coming;
+    //  - an edit that DROPS the last blocking edge;
+    //  - a dependency being DELETED, which the decider answers by rewriting the
+    //    edge out of every dependent — as one `card-updated` each.
+    //
+    // Unarmed cards are the overwhelming majority, so an ordinary title edit
+    // still pays nothing.
+    if (event.payload.card.autoStart) {
       yield* startArmedCards((candidate) => candidate.id === event.payload.cardId);
     }
     const board = yield* readBoard;

@@ -362,6 +362,25 @@ it.effect("an edit that arms an already-unblocked card fires it immediately", ()
   ),
 );
 
+it.effect("an edit that drops the last blocking edge fires the card", () =>
+  withGovernor(setup([armedCard({ dependsOn: ["dep"] }), blocker("dep", BUILDING)]), (h) =>
+    Effect.gen(function* () {
+      const { board } = h;
+      // Removing the edge by hand is a way to unblock a card, and it arrives
+      // as a `card-updated` naming no dependency — the same shape the decider
+      // emits for every dependent when a blocking card is DELETED.
+      const freed = armedCard({ dependsOn: [] });
+      yield* deliver(h, {
+        type: "board.card-updated",
+        sequence: 1,
+        payload: { cardId: freed.id, card: freed },
+      } as never);
+
+      assert.strictEqual(stageOf(yield* board, "waiter"), BUILDING);
+    }),
+  ),
+);
+
 it.effect("an unrelated edit on an armed, still-blocked card does nothing", () =>
   withGovernor(setup([armedCard({ dependsOn: ["dep"] }), blocker("dep", BUILDING)]), (h) =>
     Effect.gen(function* () {
