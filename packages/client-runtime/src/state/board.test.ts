@@ -276,7 +276,7 @@ describe("board shell reducer", () => {
     // A step held for a slot can be settled straight out of the queue —
     // abandoned when its card leaves the pipeline, failed before it ever ran —
     // without passing through the admission the badge used to wait on. Left
-    // standing, a card sitting in Done reads `Queued for build — starts next`.
+    // standing, a card sitting in Done reads `Queued — starts next`.
     const queued = applyShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
       {

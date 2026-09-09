@@ -29,6 +29,7 @@ import {
   boardColumnOrderKeys,
   boardCardChildren,
   boardCardPendingSplit,
+  boardCardProjectLock,
   boardCardPlans,
   boardCardUnfinishedChildren,
   BoardCardId,
@@ -890,6 +891,83 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           orderKey,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    // T3O-33: move a card to another project before it has ever been built.
+    // The key is REISSUED against the target project's prefix and counter —
+    // the card id never changes, so the open modal, its attachments (keyed by
+    // card id), its labels, its brief and its dependencies all survive.
+    case "board.card.set-project": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      yield* requireProject({ readModel, command, projectId: command.projectId });
+      // Refused rather than treated as a no-op: an accepted no-op would still
+      // emit an event, and that event would reissue the key for nothing.
+      if (command.projectId === card.projectId) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' is already in project '${command.projectId}'.`,
+        );
+      }
+      const lock = boardCardProjectLock({
+        board,
+        card,
+        childCount: boardCardChildren(board, card.id).length,
+      });
+      switch (lock?.kind) {
+        case "child":
+          return yield* invariant(
+            command,
+            `Card '${card.key}' is a sub-board child of '${lock.parentCardId}' and lives in that card's project; it cannot be moved on its own.`,
+          );
+        case "parent":
+          return yield* invariant(
+            command,
+            `Card '${card.key}' was split into ${lock.childCount} sub-board card${
+              lock.childCount === 1 ? "" : "s"
+            }; moving it would reissue every child's key too.`,
+          );
+        case "built":
+          return yield* invariant(
+            command,
+            `Card '${card.key}' has already been built — it has a worktree, a pull request, or has reached the build stage — so its project is pinned.`,
+          );
+        case undefined:
+          break;
+      }
+      // Allocated exactly as `board.card.create` does, from the TARGET
+      // project's counter, so a moved card and a newly created one draw from
+      // one namespace.
+      const cardNumber = board.nextCardNumberByProject[command.projectId] ?? 1;
+      const keyPrefix = command.keyPrefix ?? DEFAULT_BOARD_KEY_PREFIX;
+      const nextCard: BoardCard = {
+        ...card,
+        projectId: command.projectId,
+        key: `${keyPrefix}-${cardNumber}`,
+        cardNumber,
+        // The pin does NOT survive (D5). `release/2.0` almost certainly does
+        // not exist in the new repository and would fail at
+        // `ensureLocalBaseBranch` hours later at provisioning; `null` means
+        // "follow this project's default", resolved live.
+        baseBranch: null,
+        updatedAt: command.createdAt,
+      };
+      // `orderKey` is untouched: the board merges every project into shared
+      // stage columns, so the card keeps its place in the column it is in.
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-project-changed",
+        payload: {
+          cardId: command.cardId,
+          previousProjectId: card.projectId,
+          previousKey: card.key,
+          previousCardNumber: card.cardNumber,
+          card: nextCard,
         },
       };
     }
@@ -2997,6 +3075,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         stalledReason: "gave-up",
         retryAt: null,
         lastNudgeAt: null,
+        // No human has typed into a fresh step, so no free turn-ending is owed
+        // (T3O-17, D3).
+        humanTurnAt: null,
         prompt: command.prompt,
         providerInstanceId: command.providerInstanceId,
         model: command.model,
@@ -3495,6 +3576,41 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           commandId: command.commandId,
         })),
         type: "board.card-step-retuned",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
+    case "board.card.note-human-turn": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
+      // A human's own turn is neither a board invocation nor a board recovery,
+      // so `attempt` and `stageEntryRecoveries` do not move — the argument
+      // `board.card.resume-step` already makes. Slot, worktree, thread and
+      // status are untouched: this records who is driving, not what is running.
+      const state: BoardCardStepState =
+        command.at === null
+          ? // The free ending has been spent (T3O-17, D3). Nothing else moves:
+            // the ladder was already reset when the turn was recorded.
+            { ...current, humanTurnAt: null, updatedAt: command.createdAt }
+          : {
+              ...current,
+              humanTurnAt: command.at,
+              // The human steered, so the recovery ladder starts over (D1):
+              // consecutive-stall count back to zero, and the "since the last
+              // nudge" boundary every progress and timeout test measures from
+              // moved to the human's turn. Without the second, a step steered
+              // long after its last nudge would be swept as overdue on arrival.
+              stallCount: 0,
+              lastNudgeAt: command.at,
+              updatedAt: command.createdAt,
+            };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-steered",
         payload: { cardId: command.cardId, state },
       };
     }

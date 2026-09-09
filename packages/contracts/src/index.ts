@@ -28,6 +28,7 @@ export * from "./boardUsageLimitCatalogue.ts";
 export * from "./boardUsageLimitDetect.ts";
 export * from "./boardUsageLimitSchedule.ts";
 export * from "./boardUsageLimitTime.ts";
+export * from "./commandOrigin.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";

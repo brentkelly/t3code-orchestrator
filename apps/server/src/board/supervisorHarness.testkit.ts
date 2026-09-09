@@ -82,6 +82,10 @@ import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDe
 
 export const NOW = "2026-01-01T00:00:00.000Z";
 export const projectId = ProjectId.make("project-1");
+/** A SECOND project on the same server (T3O-33): a card changing project needs
+    somewhere to go, and the reactor spawns the restarted thread against the
+    card's new `projectId`. Inert for every other suite. */
+export const otherProjectId = ProjectId.make("project-2");
 
 /** The single build step a stage runs, in the t3o-15 stage-owned model: the
     provider instance the frozen run row spawns on, and the prompt the stage
@@ -192,6 +196,9 @@ export const makeBoardCard = (input: {
   /** The sub-board parent this card is a child of (t3o-23). Absent is
       top-level, which every fixture written before sub-boards reads as. */
   readonly parentCardId?: string | null;
+  /** The card's human-in-the-loop OVERRIDE (t3o-15, D5). Absent is `null` — no
+      override, so the step takes its stage's stance. */
+  readonly humanInLoop?: boolean | null;
 }): BoardCard => ({
   id: BoardCardId.make(input.id),
   key: input.id.toUpperCase(),
@@ -208,7 +215,7 @@ export const makeBoardCard = (input: {
   threadLinks: [],
   attachments: [],
   externalRef: null,
-  humanInLoop: null,
+  humanInLoop: input.humanInLoop ?? null,
   reviewOverrides: null,
   modelOverrides: null,
   splitRationale: null,
@@ -228,8 +235,12 @@ export const makeBoardCard = (input: {
 /** A card sitting in Building with a ready worktree and no step yet — the state
     right after "Begin build" provisioned the worktree; the reactor selects and
     admits the step. */
-export const buildingCard = (id: string, orderKey: string): BoardCard =>
-  makeBoardCard({ id, stage: "building", orderKey, worktree: readyWorktree(id) });
+export const buildingCard = (
+  id: string,
+  orderKey: string,
+  humanInLoop: boolean | null = null,
+): BoardCard =>
+  makeBoardCard({ id, stage: "building", orderKey, worktree: readyWorktree(id), humanInLoop });
 
 /** The read-model row a `thread.create` produces — only the fields the board
     decider reads (existence, `deletedAt`) carry meaning; the rest is inert
@@ -290,6 +301,16 @@ export const readModel = (board: BoardState): OrchestrationReadModel => ({
       id: projectId,
       title: "Project 1",
       workspaceRoot: "/tmp/project-1",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: NOW,
+      updatedAt: NOW,
+      deletedAt: null,
+    },
+    {
+      id: otherProjectId,
+      title: "Project 2",
+      workspaceRoot: "/tmp/project-2",
       defaultModelSelection: null,
       scripts: [],
       createdAt: NOW,
@@ -1146,6 +1167,55 @@ export const cardScheduleUpdated = (
       card: { ...card, scheduledStartAt },
       scheduledStartAt,
     },
+  }) as unknown as OrchestrationEvent;
+
+/** A human flipping the card's human-in-the-loop toggle (t3o-15, D5/D6), and
+    the shape the reactor's own Stop flip re-enters as (T3O-17). The engine
+    double applies a decided event to the read model but does not feed it back
+    onto the domain stream, so a test that wants the retune leg pumps this. */
+export const cardHumanInLoopUpdated = (
+  card: BoardCard,
+  humanInLoop: boolean | null,
+  sequence: number,
+): OrchestrationEvent =>
+  ({
+    type: "board.card-updated",
+    sequence,
+    payload: {
+      cardId: card.id,
+      card: { ...card, humanInLoop },
+      humanInLoop,
+    },
+  }) as unknown as OrchestrationEvent;
+
+/** A HUMAN starting a turn on a thread — typing into the composer (T3O-17).
+    The bare-UUID `commandId` is the whole point: it is how every client mints
+    one, and it is what tells this apart from the board's own nudge. */
+export const humanTurnStartRequested = (
+  threadId: ThreadId,
+  sequence: number,
+  at: string = NOW,
+): OrchestrationEvent =>
+  ({
+    type: "thread.turn-start-requested",
+    sequence,
+    commandId: "8c7f0f0e-6d2b-4a5e-9a1d-0f2b3c4d5e6f",
+    payload: { threadId, createdAt: at },
+  }) as unknown as OrchestrationEvent;
+
+/** The BOARD's own nudge starting a turn (T3O-17, D2): `server:board-…`, the
+    prefix `supervisorReactor`'s `commandId` helper mints. It must NOT read as a
+    human steering, or the recovery ladder could never reach its ceiling. */
+export const boardTurnStartRequested = (
+  threadId: ThreadId,
+  sequence: number,
+  at: string = NOW,
+): OrchestrationEvent =>
+  ({
+    type: "thread.turn-start-requested",
+    sequence,
+    commandId: "server:board-recover-step:8c7f0f0e-6d2b-4a5e-9a1d-0f2b3c4d5e6f",
+    payload: { threadId, createdAt: at },
   }) as unknown as OrchestrationEvent;
 
 /** An edit that leaves the schedule alone — a title change. The absent

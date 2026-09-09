@@ -104,6 +104,7 @@ const runningState: BoardCardStepState = {
   attempt: 1,
   stallCount: 0,
   stageEntryRecoveries: 0,
+  humanTurnAt: null,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,
@@ -482,6 +483,7 @@ it.effect(
         maxAttempts: 3,
         stallCount: 3,
         stageEntryRecoveries: 0,
+        humanTurnAt: null,
       };
       const types = yield* reconcileCommands({
         board: { cards: [card], stepStates: [exhausted], nextCardNumberByProject: {} },

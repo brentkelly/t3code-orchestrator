@@ -48,6 +48,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   attempt: 1,
   stallCount: 0,
   stageEntryRecoveries: 0,
+  humanTurnAt: null,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,

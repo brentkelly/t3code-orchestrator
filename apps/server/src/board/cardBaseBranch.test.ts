@@ -313,6 +313,7 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
     attempt: 1,
     stallCount: 0,
     stageEntryRecoveries: 0,
+    humanTurnAt: null,
     lastNudgeAt: null,
     baseTipAtRoundStart: "main",
     lastError: null,

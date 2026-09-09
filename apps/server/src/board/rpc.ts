@@ -494,7 +494,9 @@ export function boardActorStamp(deps: {
         .boardCardDetail(cardId)
         .pipe(Effect.catchCause(() => Effect.succeed(null)));
       if (detail === null) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
-      // A card never changes project, so this mapping is cacheable forever.
+      // Cacheable until the card MOVES project (T3O-33), which the stamp
+      // below invalidates — it is the same call path, so the eviction cannot
+      // be missed.
       projectId = detail.card.projectId;
       projectByCard.set(String(cardId), projectId);
     }
@@ -520,6 +522,13 @@ export function boardActorStamp(deps: {
       const cardId = (command as { readonly cardId?: BoardCardId }).cardId;
       if (cardId === undefined) return;
       stampBoardActivityActor(command.commandId, boardHumanActor(yield* resolveName(cardId)));
+      // A card changing project (T3O-33) invalidates the card->project mapping
+      // above, which is otherwise held for the life of the process. Evicted
+      // AFTER the stamp on purpose: the command has not been decided yet, so
+      // re-reading now would only re-cache the project the card is leaving.
+      // This row keeps the old project's identity — the human acted there — and
+      // the next command on the card resolves against the new one.
+      if (command.type === "board.card.set-project") projectByCard.delete(String(cardId));
     }).pipe(Effect.catchCause(() => Effect.void));
 }
 

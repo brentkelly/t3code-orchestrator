@@ -515,6 +515,7 @@ it.effect("boot reconcile settles the threads finished while nothing was asking"
             attempt: 1,
             stallCount: 0,
             stageEntryRecoveries: 0,
+            humanTurnAt: null,
             lastNudgeAt: null,
             prompt: "",
             providerInstanceId: codexStep.providerInstanceId,

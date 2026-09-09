@@ -73,6 +73,7 @@ const planningStep = (input: {
   attempt: 1,
   stallCount: 0,
   stageEntryRecoveries: 0,
+  humanTurnAt: null,
   lastNudgeAt: NOW,
   baseTipAtRoundStart: null,
   lastError: null,

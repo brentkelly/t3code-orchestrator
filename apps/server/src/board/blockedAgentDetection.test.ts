@@ -30,6 +30,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Ref from "effect/Ref";
 
 import {
+  humanTurnStartRequested,
   aliveThreadShell,
   cardMoved,
   codexStep,
@@ -49,15 +50,6 @@ const planningCard = (id: string) => makeBoardCard({ id, stage: "planning", orde
 
 const movedToPlanning = (id: string, sequence: number): OrchestrationEvent =>
   cardMoved(planningCard(id), "sprint", "planning", sequence);
-
-/** A human turn arriving on a thread — the event `handleTurnStartRequested`
-    watches, and the signal that a parked step is being worked again. */
-const turnStartRequested = (threadId: string, sequence: number): OrchestrationEvent =>
-  ({
-    type: "thread.turn-start-requested",
-    sequence,
-    payload: { threadId },
-  }) as unknown as OrchestrationEvent;
 
 /** The planning stage as it really runs: auto-executing and human-in-the-loop,
     because asking IS the job there. `messages` is handed to the harness by
@@ -348,7 +340,7 @@ it.effect("a human turn on the parked thread puts the step back to running", () 
 
       // The human answers. Without this the card would keep asking for an
       // answer it already has.
-      yield* pumpDomain(turnStartRequested(String(threadId), 2));
+      yield* pumpDomain(humanTurnStartRequested(threadId, 2));
 
       const resumed = boardCardStepState(yield* board, BoardCardId.make("resume"));
       assert.strictEqual(resumed?.status, "running");
@@ -392,7 +384,7 @@ it.effect("a second resume signal on an already-running step is a no-op", () => 
       messages.set(String(threadId), "Which one?");
       yield* pumpRuntime(turnCompleted(threadId));
 
-      yield* pumpDomain(turnStartRequested(String(threadId), 2));
+      yield* pumpDomain(humanTurnStartRequested(threadId, 2));
       const once = boardCardStepState(yield* board, BoardCardId.make("both"));
       // Both signals can land for one resumption. The second finds the step
       // already running and does nothing — no second resume, no rejected
@@ -541,6 +533,7 @@ const seededStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepState
   attempt: 1,
   stallCount: 0,
   stageEntryRecoveries: 0,
+  humanTurnAt: null,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,

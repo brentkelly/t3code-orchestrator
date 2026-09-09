@@ -49,6 +49,7 @@ export type CreateBoardCardInput = CommandInput<"board.card.create">;
 export type MoveBoardCardInput = CommandInput<"board.card.move">;
 export type ReorderBoardCardInput = CommandInput<"board.card.reorder">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
+export type SetBoardCardProjectInput = CommandInput<"board.card.set-project">;
 export type ForceStartBoardCardStepInput = CommandInput<"board.card.force-start-step">;
 export type RequeueBoardCardStepInput = CommandInput<"board.card.requeue-step">;
 export type ReopenBoardCardStepInput = CommandInput<"board.card.reopen-step">;
@@ -216,6 +217,22 @@ export const updateBoardCard: (input: UpdateBoardCardInput) => CommandEffect = E
   return yield* dispatch({
     ...input,
     type: "board.card.update",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** Move a card to another project (T3O-33), reissuing its key against that
+    project's prefix and counter and clearing its base-branch pin. Refused by
+    the decider once the card has ever been built. `keyPrefix` is resolved
+    client-side, exactly as `createBoardCard` resolves it. */
+export const setBoardCardProject: (input: SetBoardCardProjectInput) => CommandEffect = Effect.fn(
+  "BoardCommands.setBoardCardProject",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.set-project",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

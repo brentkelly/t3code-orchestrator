@@ -16,7 +16,7 @@ describe("boardQueueInfo", () => {
 
   it("names the position and what is ahead of it", () => {
     const info = boardQueueInfo({ slot: slot(2, 3), running: 3, cap: 3 })!;
-    expect(info.headline).toBe("Queued #2 for build");
+    expect(info.headline).toBe("Queued #2");
     expect(info.label).toBe("Queued #2");
     expect(info.detail).toBe(
       "3 of 3 agents busy · 1 task ahead. It starts on its own when an agent frees up.",
@@ -26,7 +26,7 @@ describe("boardQueueInfo", () => {
   it("drops the tasks-ahead clause at the front of the queue", () => {
     const info = boardQueueInfo({ slot: slot(1, 2), running: 3, cap: 3 })!;
     expect(info.label).toBe("Next");
-    expect(info.headline).toBe("Queued for build — starts next");
+    expect(info.headline).toBe("Queued — starts next");
     expect(info.detail).toBe("3 of 3 agents busy. It starts on its own when an agent frees up.");
   });
 
@@ -53,5 +53,17 @@ describe("boardQueueInfo", () => {
     expect(boardQueueInfo({ slot: slot(2, 2), running: 4, cap: 3 })!.detail).toContain(
       "4 agents running (limit 3)",
     );
+  });
+
+  // T3O-32: the queue is one board-wide line for every stage's step, so a card
+  // waiting for a review or planning slot showed "Queued for build" and named
+  // work it was not about to do. No string here may name a stage.
+  it("never names a stage, at any position in the queue", () => {
+    for (const position of [1, 2, 7]) {
+      const info = boardQueueInfo({ slot: slot(position, 9), running: 3, cap: 3 })!;
+      for (const copy of [info.headline, info.label, info.detail]) {
+        expect(copy.toLowerCase()).not.toContain("build");
+      }
+    }
   });
 });

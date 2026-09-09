@@ -19,8 +19,8 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCardStepState,
+  type BoardState,
   type OrchestrationCommand,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -30,8 +30,10 @@ import { BOARD_STEP_RESUME_NUDGE } from "./supervisor.ts";
 import {
   aliveThreadShell,
   buildingCard,
+  cardHumanInLoopUpdated,
   cardMoved,
   codexStep,
+  humanTurnStartRequested,
   idleThreadShell,
   makeBoardCard,
   movedToBuilding,
@@ -49,15 +51,6 @@ import {
 } from "./supervisorHarness.testkit.ts";
 
 const codex = ProviderInstanceId.make("codex");
-
-/** A human turn arriving on a thread — the signal that a parked step is being
-    worked again (t3o-17 D3; t3o-34 D5; T3O-23). */
-const turnStartRequested = (threadId: ThreadId, sequence: number): OrchestrationEvent =>
-  ({
-    type: "thread.turn-start-requested",
-    sequence,
-    payload: { threadId },
-  }) as unknown as OrchestrationEvent;
 
 /** One unattended build card, the shape every stop test starts from. */
 const oneBuildCard = (id: string, globalMaxConcurrent = 3) => ({
@@ -157,7 +150,10 @@ it.effect("pausing re-interrupts a turn the projection still shows as live", () 
     nudging. Seeded rather than driven, because reaching the ceiling through the
     reactor takes `maxAttempts` full recovery cycles that have nothing to do with
     what this asserts. */
-const atTheCeiling = (id: string): BoardCardStepState => ({
+const atTheCeiling = (
+  id: string,
+  status: BoardCardStepState["status"] = "running",
+): BoardCardStepState => ({
   cardId: BoardCardId.make(id),
   stepId: "building",
   stepLabel: "Building",
@@ -165,6 +161,7 @@ const atTheCeiling = (id: string): BoardCardStepState => ({
   attempt: 1,
   stallCount: 2,
   stageEntryRecoveries: 0,
+  humanTurnAt: null,
   lastNudgeAt: null,
   baseTipAtRoundStart: null,
   lastError: null,
@@ -180,7 +177,7 @@ const atTheCeiling = (id: string): BoardCardStepState => ({
   maxAttempts: 3,
   timeoutMs: 60_000,
   threadId: ThreadId.make(`thread-${id}`),
-  status: "running",
+  status,
   // The escalation gives the slot back itself; starting at false keeps this
   // test's slot assertion about the PAUSE and nothing else.
   slotHeld: false,
@@ -301,7 +298,7 @@ it.effect("a human turn in the paused step's thread resumes it and re-takes the 
       // The human typed in the thread themselves, so the agent is ALREADY
       // working: rendering `Queued` here would be a lying label, and the step
       // takes its slot rather than asking for one.
-      yield* pumpDomain(turnStartRequested(threadId, 3));
+      yield* pumpDomain(humanTurnStartRequested(threadId, 3));
 
       const resumed = boardCardStepState(yield* board, BoardCardId.make("typed"));
       assert.strictEqual(resumed?.status, "running");
@@ -488,7 +485,7 @@ it.effect("slot accounting returns to zero across park → resume → settle", (
       assert.strictEqual(yield* slots.heldTotal, 0);
 
       // The human answers, so the step is running again and takes a slot back.
-      yield* pumpDomain(turnStartRequested(threadId, 2));
+      yield* pumpDomain(humanTurnStartRequested(threadId, 2));
       assert.strictEqual(yield* slots.heldTotal, 1);
 
       // …and releases it exactly once at the terminal outcome. A second release
@@ -504,5 +501,267 @@ it.effect("slot accounting returns to zero across park → resume → settle", (
       assert.strictEqual(yield* slots.heldTotal, 0);
       assert.strictEqual(yield* slots.heldFor(codex), 0);
     }),
+  ),
+);
+
+// ── T3O-17: a stop hands the card to the human ────────────────────────────
+
+/** The card override on the live read model, which is what the next stage
+    entry and every resumed step read. */
+const cardHumanInLoop = (board: BoardState, id: string) =>
+  board.cards.find((candidate) => candidate.id === BoardCardId.make(id))?.humanInLoop ?? null;
+
+it.effect("stopping an unattended step hands the card to the human (T3O-17)", () =>
+  withGovernor(oneBuildCard("handover"), ({ pumpDomain, board, commands }) =>
+    Effect.gen(function* () {
+      const threadId = yield* startBuild({ pumpDomain, board }, "handover");
+      assert.isNull(cardHumanInLoop(yield* board, "handover"));
+
+      yield* pumpDomain(turnInterruptRequested(threadId, 2));
+
+      // Brief item 1. Without this the stop parks the step and nothing else:
+      // the card stays unattended, so the next stage entry runs autonomously
+      // again and a resumed step is supervised as if nobody had intervened.
+      const stopped = yield* board;
+      assert.strictEqual(stepStatus(stopped, BoardCardId.make("handover")), "paused");
+      assert.strictEqual(cardHumanInLoop(stopped, "handover"), true);
+      // The pause is dispatched BEFORE the flip, so the agent stops even if the
+      // flip never lands.
+      const dispatched = commandTypes(yield* commands);
+      assert.isBelow(
+        dispatched.indexOf("board.card.pause-step"),
+        dispatched.indexOf("board.card.update"),
+      );
+    }),
+  ),
+);
+
+it.effect("stopping a human-in-the-loop step leaves the card override alone", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("already", "m", true)], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board, commands }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(buildingCard("already", "m", true), 1));
+        const running = boardCardStepState(yield* board, BoardCardId.make("already"));
+        assert.strictEqual(running?.humanInLoop, true);
+
+        yield* pumpDomain(turnInterruptRequested(running!.threadId!, 2));
+
+        // Only when it is NECESSARY: this step was never running unattended, so
+        // there is nothing to hand over and no edit to make.
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("already")), "paused");
+        assert.notInclude(commandTypes(yield* commands), "board.card.update");
+      }),
+  ),
+);
+
+it.effect("the handover's card update does not put the paused agent back to work", () =>
+  withGovernor(oneBuildCard("no-restart"), ({ pumpDomain, board, commands }) =>
+    Effect.gen(function* () {
+      const threadId = yield* startBuild({ pumpDomain, board }, "no-restart");
+      yield* pumpDomain(turnInterruptRequested(threadId, 2));
+      const turnsBefore = commandTypes(yield* commands).filter(
+        (type) => type === "thread.turn.start",
+      ).length;
+
+      // The engine double applies a decided event to the read model without
+      // feeding it back onto the domain stream, so the `board.card-updated`
+      // the flip raises is replayed here — which is where the bug would be.
+      // Before `handleCardUpdated` guarded its stance turn on `running`, this
+      // sent "switching to human-in-the-loop" into the thread we had just
+      // stopped; that raised `thread.turn-start-requested`, which resumed the
+      // step and put the agent straight back to work against the human's Stop.
+      const card = (yield* board).cards.find(
+        (candidate) => candidate.id === BoardCardId.make("no-restart"),
+      );
+      yield* pumpDomain(cardHumanInLoopUpdated(card!, true, 3));
+
+      const after = yield* board;
+      assert.strictEqual(stepStatus(after, BoardCardId.make("no-restart")), "paused");
+      assert.strictEqual(
+        commandTypes(yield* commands).filter((type) => type === "thread.turn.start").length,
+        turnsBefore,
+      );
+      // The stance still lands on the row, so the step reads correctly whenever
+      // a human does resume it.
+      assert.strictEqual(
+        boardCardStepState(after, BoardCardId.make("no-restart"))?.humanInLoop,
+        true,
+      );
+      assert.include(commandTypes(yield* commands), "board.card.retune-step");
+    }),
+  ),
+);
+
+it.effect("switching the stance of a step parked on a question still puts it back to work", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("question", "m", true)], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, pumpRuntime, board, commands }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(buildingCard("question", "m", true), 1));
+        const running = boardCardStepState(yield* board, BoardCardId.make("question"));
+        assert.strictEqual(running?.humanInLoop, true);
+
+        // The agent asks a question, so the step parks and gives its slot back.
+        yield* pumpRuntime(userInputRequested(running!.threadId!));
+        assert.strictEqual(
+          stepStatus(yield* board, BoardCardId.make("question")),
+          "awaiting-input",
+        );
+
+        // The human answers by taking their hands off instead: the card detail's
+        // human-in-the-loop toggle, switched to unattended.
+        const card = (yield* board).cards.find(
+          (candidate) => candidate.id === BoardCardId.make("question"),
+        );
+        const turnsBefore = (yield* commands).filter(
+          (command) => command.type === "thread.turn.start",
+        ).length;
+        yield* pumpDomain(cardHumanInLoopUpdated(card!, false, 2));
+
+        // The stance turn is what carries that answer into the thread, and in
+        // production `resumeParkedStep` reads its `thread.turn-start-requested`
+        // and puts the step back to running. Guarding the turn on `running`
+        // rather than on `paused` would leave this step parked on its question
+        // for good — the sweep does not recover an `awaiting-input` step.
+        const turns = (yield* commands).filter((command) => command.type === "thread.turn.start");
+        assert.strictEqual(turns.length, turnsBefore + 1);
+        const stance = turns.at(-1)!;
+        assert.strictEqual(stance.threadId, running!.threadId!);
+        assert.include(stance.message.text, "Switching to unattended");
+        assert.strictEqual(
+          boardCardStepState(yield* board, BoardCardId.make("question"))?.humanInLoop,
+          false,
+        );
+      }),
+  ),
+);
+
+it.effect("boot carries a stance the crash lost onto the live step row (T3O-17)", () =>
+  withGovernor(
+    {
+      // Exactly the state a kill between the Stop's card update and its retune
+      // leaves behind: the card override says a human took the wheel, the
+      // paused run row still says unattended. `board.card-updated` rides a LIVE
+      // PubSub, not a durable replay, so nothing re-delivers the edit.
+      board: {
+        cards: [
+          makeBoardCard({
+            id: "crashed",
+            stage: "building",
+            orderKey: "m",
+            worktree: readyWorktree("crashed"),
+            humanInLoop: true,
+          }),
+        ],
+        stepStates: [atTheCeiling("crashed", "paused")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: new Map([["thread-crashed", idleThreadShell("thread-crashed")]]),
+    },
+    ({ board, commands, reactor }) =>
+      Effect.gen(function* () {
+        yield* reactor.reconcile;
+
+        const state = boardCardStepState(yield* board, BoardCardId.make("crashed"));
+        assert.strictEqual(state?.humanInLoop, true);
+        assert.include(commandTypes(yield* commands), "board.card.retune-step");
+      }),
+  ),
+);
+
+it.effect("boot leaves a step whose stance already agrees with its card alone", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          makeBoardCard({
+            id: "agreed",
+            stage: "building",
+            orderKey: "m",
+            worktree: readyWorktree("agreed"),
+            humanInLoop: false,
+          }),
+        ],
+        stepStates: [atTheCeiling("agreed", "paused")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: new Map([["thread-agreed", idleThreadShell("thread-agreed")]]),
+    },
+    ({ board, commands, reactor }) =>
+      Effect.gen(function* () {
+        yield* reactor.reconcile;
+
+        // No edit on an ordinary boot: the live handler already carried every
+        // stance that landed, so this pass costs a field comparison and stops.
+        assert.strictEqual(
+          boardCardStepState(yield* board, BoardCardId.make("agreed"))?.humanInLoop,
+          false,
+        );
+        assert.notInclude(commandTypes(yield* commands), "board.card.retune-step");
+      }),
+  ),
+);
+
+it.effect("the stance override reaches a step outside the build stage (T3O-17)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [makeBoardCard({ id: "interview", stage: "planning", orderKey: "m" })],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({
+        building: [codexStep],
+        planning: codexStep,
+        // The real planning interview runs with a human in the loop (t3o-34),
+        // which is what makes an override at this stage meaningful at all.
+        planningHumanInLoop: true,
+        globalMaxConcurrent: 3,
+      }),
+    },
+    ({ pumpDomain, board, commands }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(
+          cardMoved(
+            makeBoardCard({ id: "interview", stage: "planning", orderKey: "m" }),
+            "sprint",
+            "planning",
+            1,
+          ),
+        );
+        const running = boardCardStepState(yield* board, BoardCardId.make("interview"));
+        assert.strictEqual(running?.status, "running");
+        assert.strictEqual(running?.humanInLoop, true);
+        const turnsBefore = commandTypes(yield* commands).filter(
+          (type) => type === "thread.turn.start",
+        ).length;
+
+        // The human takes their hands off the planning interview from the card
+        // detail's toggle. `handleCardUpdated` used to read the override only
+        // on a BUILD card, so at planning, review or merge `desired` collapsed
+        // to the stance the step froze at entry and this did nothing at all —
+        // the same half-applied state a Stop on a review step would leave.
+        const card = (yield* board).cards.find(
+          (candidate) => candidate.id === BoardCardId.make("interview"),
+        );
+        yield* pumpDomain(cardHumanInLoopUpdated(card!, false, 2));
+
+        const turns = (yield* commands).filter((command) => command.type === "thread.turn.start");
+        assert.strictEqual(turns.length, turnsBefore + 1);
+        assert.strictEqual(turns.at(-1)!.threadId, running!.threadId!);
+        assert.include(turns.at(-1)!.message.text, "Switching to unattended");
+        assert.strictEqual(
+          boardCardStepState(yield* board, BoardCardId.make("interview"))?.humanInLoop,
+          false,
+        );
+      }),
   ),
 );

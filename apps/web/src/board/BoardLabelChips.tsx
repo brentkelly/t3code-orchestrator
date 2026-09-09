@@ -9,7 +9,7 @@
 import type { BoardLabel, BoardLabelId } from "@t3tools/contracts";
 
 import { cn } from "../lib/utils";
-import { boardLabelChipStyle, resolveBoardLabels } from "./labelColour";
+import { boardLabelChipRows, boardLabelChipStyle } from "./labelColour";
 import { BoardHint } from "./BoardHint";
 
 const VISIBLE_CHIPS = 2;
@@ -26,9 +26,11 @@ export function BoardLabelChips({
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
 }) {
   if (labelIds.length === 0) return null;
-  const resolved = resolveBoardLabels(labelIds, labelsById);
-  const visible = resolved.slice(0, VISIBLE_CHIPS);
-  const overflow = resolved.length - visible.length;
+  const { visible, overflow, overflowNames } = boardLabelChipRows(
+    labelIds,
+    labelsById,
+    VISIBLE_CHIPS,
+  );
   return (
     <>
       {visible.map((label) =>
@@ -61,12 +63,7 @@ export function BoardLabelChips({
         ),
       )}
       {overflow > 0 ? (
-        <BoardHint
-          label={resolved
-            .slice(VISIBLE_CHIPS)
-            .map((label) => label.name)
-            .join(", ")}
-        >
+        <BoardHint label={overflowNames.join(", ")}>
           <span className={cn(CHIP_CLASS, "bg-muted text-muted-foreground")}>+{overflow}</span>
         </BoardHint>
       ) : null}

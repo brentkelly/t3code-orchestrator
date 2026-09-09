@@ -93,6 +93,7 @@ import {
   undeleteBoardLabel,
   unlinkBoardCardThread,
   updateBoardCard,
+  setBoardCardProject,
   updateBoardLabel,
   type ApproveBoardPlansInput,
   type ArchiveBoardCardInput,
@@ -115,6 +116,7 @@ import {
   type UndeleteBoardLabelInput,
   type UnlinkBoardCardThreadInput,
   type UpdateBoardCardInput,
+  type SetBoardCardProjectInput,
   type UpdateBoardLabelInput,
 } from "../operations/boardCommands.ts";
 import type { EnvironmentShellState } from "./shell.ts";
@@ -147,6 +149,7 @@ export type {
   UndeleteBoardLabelInput,
   UnlinkBoardCardThreadInput,
   UpdateBoardCardInput,
+  SetBoardCardProjectInput,
   UpdateBoardLabelInput,
 };
 
@@ -1131,6 +1134,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
     updateCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:update-card",
       execute: (input: UpdateBoardCardInput) => updateBoardCard(input),
+    }),
+    /** Move a card to another project (T3O-33) — human-only, and refused by the
+        decider once the card has ever been built. */
+    setCardProject: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-card-project",
+      execute: (input: SetBoardCardProjectInput) => setBoardCardProject(input),
     }),
     linkThread: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:link-thread",

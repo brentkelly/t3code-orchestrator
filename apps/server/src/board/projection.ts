@@ -444,6 +444,9 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // structured-question path — which is `question` (t3o-34, D3).
   awaitingReason: Schema.NullOr(BoardCardStepAwaitingReason),
   // NULLABLE in the DB: rows written before migration 040 have no value, and a
+  // null already MEANS "no human turn is owed a free ending" (T3O-17, D4).
+  humanTurnAt: BoardCardStepState.fields.humanTurnAt,
+  // NULLABLE in the DB: rows written before migration 041 have no value, and a
   // stalled row written before T3O-22 was recovery giving up — which is
   // `gave-up` (T3O-22, D10).
   stalledReason: Schema.NullOr(BoardCardStepStalledReason),
@@ -1745,7 +1748,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id, step_id, step_label, stage_label, attempt, stall_count,
         stage_entry_recoveries, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
-        last_error, awaiting_reason, stalled_reason, retry_at,
+        last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         started_at, updated_at
       )
@@ -1754,7 +1757,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.stageEntryRecoveries}, ${row.lastNudgeAt}, ${row.prompt},
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
-        ${row.lastError}, ${row.awaitingReason}, ${row.stalledReason}, ${row.retryAt},
+        ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt}, ${row.stalledReason}, ${row.retryAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.startedAt}, ${row.updatedAt}
@@ -1777,6 +1780,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_tip_at_round_start = excluded.base_tip_at_round_start,
         last_error = excluded.last_error,
         awaiting_reason = excluded.awaiting_reason,
+        human_turn_at = excluded.human_turn_at,
         stalled_reason = excluded.stalled_reason,
         retry_at = excluded.retry_at,
         human_in_loop = excluded.human_in_loop,
@@ -1813,6 +1817,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_tip_at_round_start AS "baseTipAtRoundStart",
         last_error AS "lastError",
         awaiting_reason AS "awaitingReason",
+        human_turn_at AS "humanTurnAt",
         stalled_reason AS "stalledReason",
         retry_at AS "retryAt",
         human_in_loop AS "humanInLoop",
@@ -2462,6 +2467,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         baseTipAtRoundStart: state.baseTipAtRoundStart,
         lastError: state.lastError,
         awaitingReason: state.awaitingReason,
+        humanTurnAt: state.humanTurnAt,
         stalledReason: state.stalledReason,
         retryAt: state.retryAt,
         humanInLoop: state.humanInLoop ? 1 : 0,
@@ -2633,6 +2639,39 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
           cardId: event.payload.cardId,
           kind: "card-moved",
           payload: { fromStage: event.payload.fromStage, toStage: event.payload.toStage },
+          threadId: null,
+        });
+        return;
+
+      // T3O-33: the card moved to another project. `upsertCard` already writes
+      // `project_id`, `key` and `card_number` from the post-state aggregate, so
+      // the row needs no special handling — but the OLD project's counter does.
+      //
+      // `nextCardNumberByProject` is rebuilt on rehydration as MAX(card_number)
+      // over `board_cards` UNION `board_card_number_floor`. The card takes its
+      // row to the new project, so if it held the old project's highest number
+      // that counter REGRESSES across a restart and the next card created there
+      // is handed a key that already exists elsewhere on the board. Raising the
+      // floor is the same monotonic record a delete leaves behind, for the same
+      // reason: the number was issued once and must never be issued again.
+      case "board.card-project-changed":
+        yield* queries
+          .raiseBoardCardNumberFloor({
+            projectId: event.payload.previousProjectId,
+            cardNumber: event.payload.previousCardNumber,
+          })
+          .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.numberFloor:query")));
+        yield* upsertCard(event.payload.card);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-project-changed",
+          payload: {
+            fromProjectId: event.payload.previousProjectId,
+            toProjectId: event.payload.card.projectId,
+            fromKey: event.payload.previousKey,
+            toKey: event.payload.card.key,
+          },
           threadId: null,
         });
         return;
@@ -2884,6 +2923,10 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       case "board.card-step-recovered":
       case "board.card-step-settled":
       case "board.card-step-retuned":
+      // A human steering a running step (T3O-17) stays off the rail too: it is
+      // the supervisor's own nudge bookkeeping, and the human is looking at the
+      // thread they just typed into.
+      case "board.card-step-steered":
         // Live step state (t3o-10): every payload carries the whole computed
         // `BoardCardStepState`, so the persisted projection is one idempotent
         // upsert on card_id — replay and rehydration cannot diverge. None of
@@ -3120,7 +3163,8 @@ export function loadBoardState(
               // A NULL column reads as `question` (t3o-34, D3): pre-034 rows
               // could only have parked through the structured-question path.
               awaitingReason: row.awaitingReason ?? "question",
-              // A NULL column reads as `gave-up` (T3O-22, D10): pre-040 rows
+              humanTurnAt: row.humanTurnAt,
+              // A NULL column reads as `gave-up` (T3O-22, D10): pre-041 rows
               // could only have stalled through recovery giving up.
               stalledReason: row.stalledReason ?? "gave-up",
               retryAt: row.retryAt,

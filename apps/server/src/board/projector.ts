@@ -22,6 +22,7 @@ import {
   BoardCardCreatedPayload,
   BoardCardDeletedPayload,
   BoardCardMovedPayload,
+  BoardCardProjectChangedPayload,
   BoardCardReorderedPayload,
   BoardCardStepCompletedPayload,
   BoardCardThreadLinkedPayload,
@@ -42,6 +43,7 @@ import {
   BoardCardStepRecoveredPayload,
   BoardCardStepSettledPayload,
   BoardCardStepRetunedPayload,
+  BoardCardStepSteeredPayload,
   BoardProviderLimitRecordedPayload,
   BoardProviderLimitClearedPayload,
   BoardCardStageThreadRequestedPayload,
@@ -80,6 +82,7 @@ import {
   type BoardStepCompletion,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type ProjectId,
   type OrchestrationShellStreamEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -98,6 +101,9 @@ export { isBoardEvent };
 
 const decodeBoardCardCreatedPayload = Schema.decodeUnknownEffect(BoardCardCreatedPayload);
 const decodeBoardCardMovedPayload = Schema.decodeUnknownEffect(BoardCardMovedPayload);
+const decodeBoardCardProjectChangedPayload = Schema.decodeUnknownEffect(
+  BoardCardProjectChangedPayload,
+);
 const decodeBoardCardReorderedPayload = Schema.decodeUnknownEffect(BoardCardReorderedPayload);
 const decodeBoardCardUpdatedPayload = Schema.decodeUnknownEffect(BoardCardUpdatedPayload);
 const decodeBoardCardThreadLinkedPayload = Schema.decodeUnknownEffect(BoardCardThreadLinkedPayload);
@@ -161,6 +167,7 @@ const decodeBoardCardStepRecoveredPayload = Schema.decodeUnknownEffect(
 );
 const decodeBoardCardStepSettledPayload = Schema.decodeUnknownEffect(BoardCardStepSettledPayload);
 const decodeBoardCardStepRetunedPayload = Schema.decodeUnknownEffect(BoardCardStepRetunedPayload);
+const decodeBoardCardStepSteeredPayload = Schema.decodeUnknownEffect(BoardCardStepSteeredPayload);
 const decodeBoardProviderLimitRecordedPayload = Schema.decodeUnknownEffect(
   BoardProviderLimitRecordedPayload,
 );
@@ -352,22 +359,27 @@ function removeStage(
   return { ...model, board: { ...board, stages } };
 }
 
-/** Counter bump on create: monotonic max, so replaying a legacy event
-    (cardNumber 0) still lands the counter at 1, matching the
-    `MAX(card_number) + 1` rehydration. */
+/** Counter bump: monotonic max, so replaying a legacy event (cardNumber 0)
+    still lands the counter at 1, matching the `MAX(card_number) + 1`
+    rehydration.
+
+    Two events reach here. `board.card-created` allocates a number, and so does
+    `board.card-project-changed` (T3O-33) — a card moving into a project draws
+    from that project's counter exactly as a create does, so the two must not
+    be able to hand out the same key. */
 function bumpNextCardNumber(
   model: OrchestrationReadModel,
-  payload: BoardCardCreatedPayload,
+  allocation: { readonly projectId: ProjectId; readonly cardNumber: number },
 ): OrchestrationReadModel {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  const current = board.nextCardNumberByProject[payload.projectId] ?? 1;
+  const current = board.nextCardNumberByProject[allocation.projectId] ?? 1;
   return {
     ...model,
     board: {
       ...board,
       nextCardNumberByProject: {
         ...board.nextCardNumberByProject,
-        [payload.projectId]: Math.max(current, payload.cardNumber + 1),
+        [allocation.projectId]: Math.max(current, allocation.cardNumber + 1),
       },
     },
   };
@@ -579,6 +591,21 @@ export function projectBoardEvent(
       return decodeBoardCardMovedPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-project-changed":
+      // The OLD project's counter is deliberately left where it is: it is
+      // monotonic, and the card's number leaving that project is recorded by
+      // the SQL projection's card-number floor instead — the in-memory model
+      // is rebuilt from that floor on the next rehydration.
+      return decodeBoardCardProjectChangedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) =>
+          bumpNextCardNumber(upsertCard(model, payload.card), {
+            projectId: payload.card.projectId,
+            cardNumber: payload.card.cardNumber,
+          }),
+        ),
       );
 
     case "board.card-reordered":
@@ -831,6 +858,12 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
+    case "board.card-step-steered":
+      return decodeBoardCardStepSteeredPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
     // T3o (T3O-22): the provider-cooldown slice. Keyed on the provider
     // instance, so — unlike every case above — it touches no card at all.
     case "board.provider-limit-recorded":
@@ -899,6 +932,9 @@ export function boardShellStreamEvent(
       });
 
     case "board.card-moved":
+    // T3O-33: the card's `projectId` and `key` are both on the shell, so the
+    // board relabels and recolours it live.
+    case "board.card-project-changed":
     case "board.card-reordered":
     case "board.card-thread-linked":
     case "board.card-thread-unlinked":
@@ -1095,7 +1131,7 @@ export function boardShellStreamEvent(
         // when its card leaves the pipeline, failed before it ever ran) without
         // passing through the admission that used to be the only way to lower
         // the flag — which is how a card in Done kept reading
-        // `Queued for build — starts next` until a reconnect.
+        // `Queued — starts next` until a reconnect.
         queued: false,
       });
 
@@ -1218,6 +1254,10 @@ export function boardShellStreamEvent(
     // would clear the queued pill before anything actually started.
     case "board.card-step-force-start-requested":
     case "board.card-step-retuned":
+    // A human steering a running step (T3O-17) changes no column-card field
+    // either: the step is still running and still owned by the same thread.
+    // Only the supervisor's private nudge bookkeeping moved.
+    case "board.card-step-steered":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":

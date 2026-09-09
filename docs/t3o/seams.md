@@ -325,6 +325,12 @@ table below (rows added on this sync are listed here, not yet expanded into the 
 `orphanedProviderSessionStartup.integration.test.ts` 2 (supervisor reactor mocks),
 `OrchestrationEventStore.test.ts` 1.
 
+T3O-17 added 2 markers, both in `OrchestrationEventStore.ts` (7 → 9): the import of the shared
+command-id origin rule and the `inferActorKind` call that replaced its two inline prefix tests.
+`contracts/commandOrigin.ts` is a new T3o-owned file exported under `contracts/index.ts`'s existing
+board-schema marker. The board-side halves — the steer signal, the Stop handover and the sweep's
+pending-turn guard — are all in board-owned files.
+
 Brief attachments (`t3o-32`) added 6 markers: `contracts/assets.ts` 1, `AssetAccess.ts` 4 (import,
 claims member, mint case, resolve branch) and `ws.ts` +1 (6). The upload, storage, claim and
 manifest all live in board-owned files (`board/attachments.ts`, migration `032`).
@@ -391,6 +397,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `T3O-22`     | Widen append-request `streamId` union with `ProviderInstanceId`                           | one-line edit (frozen, D9-class)                                         |
 | `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`     | Widen persisted-row `aggregateId` union                                                   | one-line edit (frozen, D9)                                               |
 | `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-06a`    | Widen persisted-row `aggregateId` union with `BoardLabelId`                               | one-line edit (frozen, D9-class)                                         |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `T3O-17`     | `inferActorKind` reads the shared command-id origin rule (`commandOrigin.ts`)             | import + one delegating call replacing two prefix tests                  |
 | `apps/server/src/persistence/Layers/Sqlite.ts`                         | ledger split | Legacy board-ledger reconcile before upstream migrations (`reconcileLegacyBoardLedger()`) | one-line append (delegating call)                                        |
 | `apps/server/src/persistence/Layers/Sqlite.ts`                         | ledger split | Board migration lineage runs after upstream's (`runBoardMigrations()`)                    | one-line append (delegating call)                                        |
 | `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02`     | `BoardCardId` import                                                                      | one-line append, import (frozen, D9)                                     |

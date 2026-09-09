@@ -30,6 +30,10 @@ are both kept, so it resumes where it left off rather than starting over.
 
 There is no confirmation step, because clearing the time undoes it completely.
 
+It is the same stop [pressing **Stop** performs](board-stopping-an-agent.md), with one difference:
+a schedule picks the card up again by itself, so the card stays unattended rather than being handed
+back to you.
+
 ## Clearing, which is also "start now"
 
 **Clear** is the way back out of every state:

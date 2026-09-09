@@ -36,6 +36,7 @@ import {
   GitPullRequestIcon,
   LayersIcon,
   ListTreeIcon,
+  FolderSyncIcon,
   MoveRightIcon,
   PlusCircleIcon,
   ScissorsIcon,
@@ -91,6 +92,8 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <PlusCircleIcon className={className} />;
     case "card-moved":
       return <MoveRightIcon className={className} />;
+    case "card-project-changed":
+      return <FolderSyncIcon className={className} />;
     case "plans-proposed":
       return <ListTreeIcon className={className} />;
     case "plan-written":
@@ -154,6 +157,10 @@ function StepOutcomeIcon({ outcome }: { readonly outcome: BoardStepOutcome }) {
 function activitySentence(
   entry: BoardCardActivityEntry,
   stages: ReadonlyArray<BoardStageDefinition>,
+  /** Project titles by id, for the T3O-33 row. A project the client cannot name
+      (deleted, or another environment's) falls back to the reissued key alone,
+      which is still a true sentence. */
+  projectNames: ReadonlyMap<string, string> | undefined,
 ): ReactNode {
   const payload = entry.payload;
   switch (entry.kind) {
@@ -169,6 +176,32 @@ function activitySentence(
       ) : (
         <>moved to {boardStageLabel(stages, payload.toStage)}</>
       );
+    // The retired key is what this row is really about — it is printed on
+    // branches, PR titles and everything anyone wrote down — so it is named
+    // even when the project cannot be.
+    case "card-project-changed": {
+      const target =
+        payload.toProjectId === undefined ? undefined : projectNames?.get(payload.toProjectId);
+      const reissued =
+        payload.toKey === undefined ? null : (
+          <>
+            {" "}
+            as <span className="font-mono">{payload.toKey}</span>
+          </>
+        );
+      return (
+        <>
+          moved the card{target === undefined ? null : <> to {target}</>}
+          {reissued}
+          {payload.fromKey === undefined ? null : (
+            <>
+              {" "}
+              (was <span className="font-mono">{payload.fromKey}</span>)
+            </>
+          )}
+        </>
+      );
+    }
     case "plans-proposed":
       return payload.planCount === undefined ? (
         <>proposed plans</>
@@ -275,10 +308,13 @@ export function BoardCardActivityRail({
   entries,
   stages,
   agents,
+  projectNames,
 }: {
   readonly entries: ReadonlyArray<BoardCardActivityEntry>;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly agents?: BoardActivityAgentLookup | undefined;
+  /** Project titles by id (T3O-33), for the one row that names a project. */
+  readonly projectNames?: ReadonlyMap<string, string> | undefined;
 }) {
   if (entries.length === 0) return null;
   return (
@@ -292,7 +328,8 @@ export function BoardCardActivityRail({
             <ActivityIcon kind={entry.kind} />
           </span>
           <span className="min-w-0 flex-1 text-pretty">
-            <ActorName agents={agents} entry={entry} /> {activitySentence(entry, stages)}
+            <ActorName agents={agents} entry={entry} />{" "}
+            {activitySentence(entry, stages, projectNames)}
           </span>
           <BoardHint label={entry.createdAt}>
             <span className="mt-[1px] shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70">
