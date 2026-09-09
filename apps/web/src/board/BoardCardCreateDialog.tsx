@@ -456,43 +456,50 @@ export function BoardCardCreateDialog({
             ) : null}
           </div>
 
-          {/* Labels — pills for what is chosen, one autocomplete to change it. */}
-          <div className="min-w-0">
-            <BoardSectionHeading className="mb-[7px]">Label</BoardSectionHeading>
-            <BoardLabelField
-              catalogue={catalogue}
-              onCreate={(name) => {
-                const labelId = BoardLabelId.make(randomUUID());
-                void createLabel({ environmentId, input: { labelId, name } });
-                setLabelIds((prev) => [...prev, labelId]);
-              }}
-              onDelete={(labelId) => void deleteLabel({ environmentId, input: { labelId } })}
-              onRecolour={(labelId, colour) =>
-                void updateLabel({ environmentId, input: { labelId, colour } })
-              }
-              onToggle={(labelId) =>
-                setLabelIds((prev) =>
-                  prev.includes(labelId) ? prev.filter((id) => id !== labelId) : [...prev, labelId],
-                )
-              }
-              onUndelete={(labelId) => void undeleteLabel({ environmentId, input: { labelId } })}
-              selectedLabelIds={labelIds}
-            />
-          </div>
+          {/* Title and Label share a row (T3O-31). Title comes FIRST and holds
+              autofocus: the label control used to be the dialog's first text
+              box, so a typed title landed in a label search that matched
+              nothing and threw the text away. */}
+          <div className="flex min-w-0 items-start gap-2.5">
+            <div className="min-w-0 flex-[1.5]">
+              <BoardSectionHeading className="mb-[7px]">Title</BoardSectionHeading>
+              <Input
+                autoFocus
+                className="text-[13.5px]"
+                onChange={(event) => setTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmit)
+                    submit();
+                }}
+                placeholder="What needs building?"
+                value={title}
+              />
+            </div>
 
-          <div className="min-w-0">
-            <BoardSectionHeading className="mb-[7px]">Title</BoardSectionHeading>
-            <Input
-              autoFocus
-              className="text-[13.5px]"
-              onChange={(event) => setTitle(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmit)
-                  submit();
-              }}
-              placeholder="What needs building?"
-              value={title}
-            />
+            <div className="min-w-0 flex-1">
+              <BoardSectionHeading className="mb-[7px]">Label</BoardSectionHeading>
+              <BoardLabelField
+                catalogue={catalogue}
+                onCreate={(name) => {
+                  const labelId = BoardLabelId.make(randomUUID());
+                  void createLabel({ environmentId, input: { labelId, name } });
+                  setLabelIds((prev) => [...prev, labelId]);
+                }}
+                onDelete={(labelId) => void deleteLabel({ environmentId, input: { labelId } })}
+                onRecolour={(labelId, colour) =>
+                  void updateLabel({ environmentId, input: { labelId, colour } })
+                }
+                onToggle={(labelId) =>
+                  setLabelIds((prev) =>
+                    prev.includes(labelId)
+                      ? prev.filter((id) => id !== labelId)
+                      : [...prev, labelId],
+                  )
+                }
+                onUndelete={(labelId) => void undeleteLabel({ environmentId, input: { labelId } })}
+                selectedLabelIds={labelIds}
+              />
+            </div>
           </div>
 
           <div className="min-w-0">
