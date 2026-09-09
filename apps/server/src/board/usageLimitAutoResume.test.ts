@@ -93,6 +93,12 @@ const exhausted = (): BoardUsageLimitMatch => ({
   ruleId: "openai.insufficient-quota",
 });
 
+/** "Out of credits", but quoted inside an agent's own long message rather than
+    arriving on the turn-error channel — the shape an agent writing about the
+    402 branch of a payment webhook produces. Real enough to stop the card that
+    said it, nowhere near enough to declare the account unpayable (D6). */
+const looseExhausted = (): BoardUsageLimitMatch => ({ ...exhausted(), confidence: "loose" });
+
 const slowDown = (): BoardUsageLimitMatch => ({
   kind: "slow-down",
   confidence: "strict",
@@ -665,6 +671,59 @@ it.effect("a probe that turns out to be a billing wall escalates every card it h
         assert.strictEqual(sibling?.stalledReason, "quota-exhausted");
         assert.strictEqual(sibling?.retryAt, null);
         assert.strictEqual(sibling?.lastError, exhausted().reason);
+      }),
+  ),
+);
+
+it.effect("a lone loose exhausted stops its own card and leaves the cooldown standing", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          buildingCard("a", "a"),
+          buildingCard("b", "b"),
+          buildingCard("c", "c"),
+          buildingCard("d", "d"),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 4 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        // All four are already RUNNING when the wall falls, so each gets to end
+        // a turn of its own — the only way a parked card ever speaks again.
+        const threadA = yield* startCard(harness, "a", "a", 1);
+        const threadB = yield* startCard(harness, "b", "b", 2);
+        const threadC = yield* startCard(harness, "c", "c", 3);
+        const threadD = yield* startCard(harness, "d", "d", 4);
+        yield* endTurn(harness, threadA, waitAt());
+        yield* endTurn(harness, threadB, waitAt());
+
+        // C's own long message mentions being out of credits. It is one card's
+        // word: it stops C, and the cooldown A and B are waiting behind — with
+        // the reset time the provider actually named — must survive it.
+        yield* endTurn(harness, threadC, looseExhausted());
+        const held = yield* limitOf(harness, codex);
+        assert.strictEqual(held?.kind, "wait");
+        assert.strictEqual(held?.until, RESETS_AT);
+        assert.strictEqual((yield* stepOf(harness, "c"))?.stalledReason, "quota-exhausted");
+        for (const id of ["a", "b"]) {
+          const sibling = yield* stepOf(harness, id);
+          assert.strictEqual(sibling?.stalledReason, "usage-limit", `${id} still waits`);
+          assert.strictEqual(sibling?.retryAt, RESETS_AT, `${id} keeps its reset time`);
+        }
+
+        // A SECOND card saying it is the account answering (D6), and then it is
+        // everyone's problem: the cooldown gives way to the billing wall and
+        // every card it was holding goes to a human.
+        yield* endTurn(harness, threadD, looseExhausted());
+        assert.strictEqual((yield* limitOf(harness, codex))?.kind, "exhausted");
+        for (const id of ["a", "b"]) {
+          const sibling = yield* stepOf(harness, id);
+          assert.strictEqual(sibling?.stalledReason, "quota-exhausted", `${id} reaches a human`);
+          assert.strictEqual(sibling?.retryAt, null);
+        }
       }),
   ),
 );

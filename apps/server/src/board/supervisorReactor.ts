@@ -2919,10 +2919,10 @@ const make = Effect.gen(function* () {
   /**
    * Loose-match corroboration (D6), in memory and deliberately not persisted.
    *
-   * A lone LOOSE `wait` match is card-local: it backs the one card right off and
-   * touches nothing else on the provider. Two loose matches from two DIFFERENT
-   * cards on one instance, with no successful turn between them, promote to a
-   * full cooldown.
+   * A lone LOOSE match is card-local: it stops the one card and touches nothing
+   * else on the provider. Two loose matches OF THE SAME KIND from two DIFFERENT
+   * cards on one instance, with no successful turn between them, promote to the
+   * provider-wide fact — a cooldown for `wait`, a billing wall for `exhausted`.
    *
    * Different cards, not repeats, because one confused agent writing repeatedly
    * about quota errors must not be able to freeze a provider by itself — which
@@ -2935,17 +2935,30 @@ const make = Effect.gen(function* () {
    * cooldown is what must survive a restart, and it does — it is persisted.
    */
   const looseUsageMatches = new Map<string, Set<string>>();
-  const noteLooseMatch = (providerInstanceId: string, cardId: string): number => {
-    const seen = looseUsageMatches.get(providerInstanceId) ?? new Set<string>();
+  // Keyed by KIND as well as instance: a loose `wait` and a loose `exhausted`
+  // are different claims with wildly different consequences, and one of each
+  // must not add up to the two that promote — otherwise a card muttering about
+  // a session limit helps a second card retire the whole provider as unpayable.
+  const looseKey = (providerInstanceId: string, kind: BoardUsageLimitMatch["kind"]) =>
+    `${kind}\u0000${providerInstanceId}`;
+  const noteLooseMatch = (
+    providerInstanceId: string,
+    cardId: string,
+    kind: BoardUsageLimitMatch["kind"],
+  ): number => {
+    const key = looseKey(providerInstanceId, kind);
+    const seen = looseUsageMatches.get(key) ?? new Set<string>();
     seen.add(cardId);
-    looseUsageMatches.set(providerInstanceId, seen);
+    looseUsageMatches.set(key, seen);
     return seen.size;
   };
   const clearLooseMatches = (providerInstanceId: string): void => {
-    looseUsageMatches.delete(providerInstanceId);
+    for (const kind of ["wait", "exhausted"] as const) {
+      looseUsageMatches.delete(looseKey(providerInstanceId, kind));
+    }
   };
 
-  /** How many DIFFERENT cards must report a loose `wait` before it promotes. */
+  /** How many DIFFERENT cards must report the same loose kind before it promotes. */
   const LOOSE_USAGE_PROMOTION = 2;
 
   /** Record (or replace) a provider cooldown. One command for detection, a
@@ -3141,12 +3154,28 @@ const make = Effect.gen(function* () {
         // Straight to a human, with the provider's own sentence on the card so it
         // says WHY rather than "needs a human". No cooldown, no polling, and no
         // retry budget spent — the card is not failing, the account is.
-        yield* recordExhausted({
-          providerInstanceId: state.providerInstanceId,
-          cardId: card.id,
-          match,
-          nowMs: input.nowMs,
-        });
+        //
+        // The PROVIDER-WIDE half needs the same corroboration a `wait` does
+        // (D6), and for a stronger reason: `recordExhausted` replaces a live
+        // cooldown — killing its probe schedule — and re-parks every sibling as
+        // `quota-exhausted`, a reason nothing ever auto-resumes. D6's rationale
+        // for exempting it ("exhausted never sleeps anything") stopped holding
+        // the moment this path started touching siblings. So a lone LOOSE
+        // exhausted — an agent's own long message mentioning a 402 or the
+        // payment code it just wrote — stops the card that said it and nothing
+        // else, and a second card saying it makes it the account's fact.
+        const corroborated =
+          match.confidence === "strict" ||
+          noteLooseMatch(String(state.providerInstanceId), String(card.id), "exhausted") >=
+            LOOSE_USAGE_PROMOTION;
+        if (corroborated) {
+          yield* recordExhausted({
+            providerInstanceId: state.providerInstanceId,
+            cardId: card.id,
+            match,
+            nowMs: input.nowMs,
+          });
+        }
         yield* parkStepForRetry({
           card,
           state,
@@ -3163,7 +3192,8 @@ const make = Effect.gen(function* () {
       // pokes. Two different cards saying it promotes to a full cooldown.
       const promoted =
         match.confidence === "strict" ||
-        noteLooseMatch(String(state.providerInstanceId), String(card.id)) >= LOOSE_USAGE_PROMOTION;
+        noteLooseMatch(String(state.providerInstanceId), String(card.id), "wait") >=
+          LOOSE_USAGE_PROMOTION;
       if (!promoted) {
         // This park CHARGES the budget and then returns, so `recoverStep` — the
         // only place the recovery ceilings are ever asked about — is never
