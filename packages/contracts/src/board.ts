@@ -1459,6 +1459,26 @@ export const BoardCardStepState = Schema.Struct({
       progress signal against — a progress note or commit after this instant
       resets `stallCount`. */
   lastNudgeAt: Schema.NullOr(IsoDateTime),
+  /** When a HUMAN last started a turn on this step's thread (T3O-17), or null.
+      Non-null means the board owes that turn exactly one free ending: the next
+      `turn.completed` it sees is either the human's own turn or the turn their
+      message superseded, and neither is a stall to nudge.
+
+      Consumed back to null by that free ending (T3O-17, D3). The suppression is
+      bounded on purpose — an open-ended "a human is involved, stop nudging"
+      wedges the supervisor for good, because the only thing that would clear it
+      is the nudge being suppressed.
+
+      A human's message is STEERING, not a takeover (D1): the card stays
+      unattended and the board keeps supervising afterwards. Setting this also
+      resets `stallCount` and moves `lastNudgeAt`, so a correction typed into a
+      working agent restarts the recovery ladder rather than counting against it.
+
+      A DECODING DEFAULT, not a plain nullable: this struct is the payload of
+      replayed events, and one written before T3O-17 has no such KEY — which a
+      required-but-nullable field rejects. The same trap `stageLabel` and
+      `stageEntryRecoveries` document above. */
+  humanTurnAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   // ── Frozen execution config (D12) ────────────────────────────────────
   // Resolved from the stage's settings ONCE at stage entry and stamped here,
   // so editing settings mid-flight cannot corrupt a running card. The reactor
@@ -3963,6 +3983,32 @@ export const BoardCardRetuneStepCommand = Schema.Struct({
 });
 export type BoardCardRetuneStepCommand = typeof BoardCardRetuneStepCommand.Type;
 
+/**
+ * Record, or consume, the one free turn-ending a human's own turn buys (T3O-17).
+ *
+ * `at` non-null: a human started a turn on the step's thread at that instant.
+ * Sets `humanTurnAt`, moves `lastNudgeAt` to it and resets `stallCount` — the
+ * human steered, so the recovery ladder starts over (D1).
+ *
+ * `at` null: the free ending has been spent. Clears `humanTurnAt` and nothing
+ * else. One command with a nullable field rather than two, following
+ * `scheduledStartAt`'s precedent.
+ *
+ * `attempt` and `stageEntryRecoveries` are untouched at both ends: they count
+ * board INVOCATIONS and board RECOVERIES, and a human's own turn is neither —
+ * the same argument `board.card.resume-step` already makes. Slot, worktree,
+ * thread and status are untouched too. Internal — dispatched by the reactor.
+ */
+export const BoardCardNoteHumanTurnCommand = Schema.Struct({
+  type: Schema.Literal("board.card.note-human-turn"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  at: Schema.NullOr(IsoDateTime),
+  createdAt: IsoDateTime,
+});
+export type BoardCardNoteHumanTurnCommand = typeof BoardCardNoteHumanTurnCommand.Type;
+
 // ── Event payloads ─────────────────────────────────────────────────────
 
 /**
@@ -4515,6 +4561,12 @@ export const BoardCardStepRetunedPayload = Schema.Struct({
   state: BoardCardStepState,
 });
 export type BoardCardStepRetunedPayload = typeof BoardCardStepRetunedPayload.Type;
+
+export const BoardCardStepSteeredPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardCardStepSteeredPayload = typeof BoardCardStepSteeredPayload.Type;
 
 // ── Thread todo lists (t3o-18, D1/D3/D4) ───────────────────────────────
 
@@ -5623,6 +5675,8 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardResumeStepCommand,
   BoardCardSettleStepCommand,
   BoardCardRetuneStepCommand,
+  // T3O-17: a human's own turn on a step thread, and the free ending it buys.
+  BoardCardNoteHumanTurnCommand,
   BoardCardAttachCommand,
   BoardCardDetachCommand,
 ] as const;
@@ -5669,6 +5723,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-step-recovered",
   "board.card-step-settled",
   "board.card-step-retuned",
+  // T3O-17: a human steered a running unattended step by typing into it.
+  "board.card-step-steered",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
@@ -5897,6 +5953,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-step-retuned"),
       payload: BoardCardStepRetunedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-steered"),
+      payload: BoardCardStepSteeredPayload,
     }),
   ] as const;
 }

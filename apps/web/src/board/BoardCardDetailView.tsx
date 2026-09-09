@@ -990,7 +990,8 @@ function StageLadder({
   );
 }
 
-/** The card's labels as pills over one autocomplete — `BoardLabelField`. */
+/** The card's labels as chips on a trigger, the catalogue behind it —
+    `BoardLabelField`, the same control the create dialog uses. */
 function LabelSection({
   selected,
   catalogue,

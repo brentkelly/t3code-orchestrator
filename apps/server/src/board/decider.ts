@@ -3021,6 +3021,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // `awaiting-input`, and a fresh step never is.
         awaitingReason: "question",
         lastNudgeAt: null,
+        // No human has typed into a fresh step, so no free turn-ending is owed
+        // (T3O-17, D3).
+        humanTurnAt: null,
         prompt: command.prompt,
         providerInstanceId: command.providerInstanceId,
         model: command.model,
@@ -3463,6 +3466,41 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           commandId: command.commandId,
         })),
         type: "board.card-step-retuned",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
+    case "board.card.note-human-turn": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
+      // A human's own turn is neither a board invocation nor a board recovery,
+      // so `attempt` and `stageEntryRecoveries` do not move — the argument
+      // `board.card.resume-step` already makes. Slot, worktree, thread and
+      // status are untouched: this records who is driving, not what is running.
+      const state: BoardCardStepState =
+        command.at === null
+          ? // The free ending has been spent (T3O-17, D3). Nothing else moves:
+            // the ladder was already reset when the turn was recorded.
+            { ...current, humanTurnAt: null, updatedAt: command.createdAt }
+          : {
+              ...current,
+              humanTurnAt: command.at,
+              // The human steered, so the recovery ladder starts over (D1):
+              // consecutive-stall count back to zero, and the "since the last
+              // nudge" boundary every progress and timeout test measures from
+              // moved to the human's turn. Without the second, a step steered
+              // long after its last nudge would be swept as overdue on arrival.
+              stallCount: 0,
+              lastNudgeAt: command.at,
+              updatedAt: command.createdAt,
+            };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-steered",
         payload: { cardId: command.cardId, state },
       };
     }

@@ -440,6 +440,9 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // every step that reached `awaiting-input` before t3o-34 did so through the
   // structured-question path — which is `question` (t3o-34, D3).
   awaitingReason: Schema.NullOr(BoardCardStepAwaitingReason),
+  // NULLABLE in the DB: rows written before migration 040 have no value, and a
+  // null already MEANS "no human turn is owed a free ending" (T3O-17, D4).
+  humanTurnAt: BoardCardStepState.fields.humanTurnAt,
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -1697,7 +1700,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id, step_id, step_label, stage_label, attempt, stall_count,
         stage_entry_recoveries, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
-        last_error, awaiting_reason,
+        last_error, awaiting_reason, human_turn_at,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         started_at, updated_at
       )
@@ -1706,7 +1709,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.stageEntryRecoveries}, ${row.lastNudgeAt}, ${row.prompt},
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
-        ${row.lastError}, ${row.awaitingReason},
+        ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.startedAt}, ${row.updatedAt}
@@ -1729,6 +1732,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_tip_at_round_start = excluded.base_tip_at_round_start,
         last_error = excluded.last_error,
         awaiting_reason = excluded.awaiting_reason,
+        human_turn_at = excluded.human_turn_at,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -1763,6 +1767,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_tip_at_round_start AS "baseTipAtRoundStart",
         last_error AS "lastError",
         awaiting_reason AS "awaitingReason",
+        human_turn_at AS "humanTurnAt",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -2348,6 +2353,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         baseTipAtRoundStart: state.baseTipAtRoundStart,
         lastError: state.lastError,
         awaitingReason: state.awaitingReason,
+        humanTurnAt: state.humanTurnAt,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -2776,6 +2782,10 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       case "board.card-step-recovered":
       case "board.card-step-settled":
       case "board.card-step-retuned":
+      // A human steering a running step (T3O-17) stays off the rail too: it is
+      // the supervisor's own nudge bookkeeping, and the human is looking at the
+      // thread they just typed into.
+      case "board.card-step-steered":
         // Live step state (t3o-10): every payload carries the whole computed
         // `BoardCardStepState`, so the persisted projection is one idempotent
         // upsert on card_id — replay and rehydration cannot diverge. None of
@@ -2998,6 +3008,7 @@ export function loadBoardState(
               // A NULL column reads as `question` (t3o-34, D3): pre-034 rows
               // could only have parked through the structured-question path.
               awaitingReason: row.awaitingReason ?? "question",
+              humanTurnAt: row.humanTurnAt,
               humanInLoop: row.humanInLoop !== 0,
               maxAttempts: row.maxAttempts,
               timeoutMs: row.timeoutMs,

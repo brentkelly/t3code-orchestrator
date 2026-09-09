@@ -90,6 +90,7 @@ function makeStepStateFor(cardId: string): BoardCardStepState {
     attempt: 1,
     stallCount: 0,
     stageEntryRecoveries: 0,
+    humanTurnAt: null,
     lastNudgeAt: null,
     baseTipAtRoundStart: null,
     lastError: null,
@@ -590,6 +591,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
                   attempt: 1,
                   stallCount: 0,
                   stageEntryRecoveries: 0,
+                  humanTurnAt: null,
                   lastNudgeAt: null,
                   baseTipAtRoundStart: null,
                   lastError: null,
@@ -1637,6 +1639,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         attempt: 1,
         stallCount: 0,
         stageEntryRecoveries: 0,
+        humanTurnAt: null,
         awaitingReason: "question",
         lastNudgeAt: null,
         ...frozenConfig,
@@ -2036,6 +2039,16 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           cardId: BoardCardId.make("card-settle"),
           stepId: "s1",
           humanInLoop: true,
+          createdAt: NOW,
+        },
+        // A human's own turn on a live step (T3O-17): records the free
+        // turn-ending it buys, emits board.card-step-steered — never a move.
+        "board.card.note-human-turn": {
+          type: "board.card.note-human-turn",
+          commandId: CommandId.make("cmd-note-human-turn"),
+          cardId: BoardCardId.make("card-settle"),
+          stepId: "s1",
+          at: NOW,
           createdAt: NOW,
         },
         // On-demand kickoff (D7): emits board.card-stage-thread-requested for
@@ -2739,6 +2752,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       attempt: 1,
       stallCount: 0,
       stageEntryRecoveries: 0,
+      humanTurnAt: null,
       lastNudgeAt: null,
       baseTipAtRoundStart: null,
       lastError: null,

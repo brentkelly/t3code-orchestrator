@@ -88,3 +88,49 @@ export function resolveBoardLabels(
     };
   });
 }
+
+/** What the chip row renders for one card (or one picker trigger): the first
+    `cap` labels, plus a count of the rest and their names for the `+N`
+    tooltip. Shared by `BoardLabelChips` and the label picker's trigger so the
+    two cannot drift on how many chips fit before the row grows. */
+export interface BoardLabelChipRows {
+  readonly visible: ReadonlyArray<ResolvedBoardLabel>;
+  readonly overflow: number;
+  readonly overflowNames: ReadonlyArray<string>;
+}
+
+export function boardLabelChipRows(
+  labelIds: ReadonlyArray<BoardLabelId>,
+  index: ReadonlyMap<BoardLabelId, BoardLabel>,
+  cap: number,
+): BoardLabelChipRows {
+  const resolved = resolveBoardLabels(labelIds, index);
+  const visible = resolved.slice(0, cap);
+  const hidden = resolved.slice(visible.length);
+  return {
+    visible,
+    overflow: hidden.length,
+    overflowNames: hidden.map((label) => label.name),
+  };
+}
+
+/**
+ * A picker row's selected state, as inline style. Selection has to be
+ * UNMISSABLE — the list stays open across several picks, so a click that only
+ * nudges a font weight reads as a no-op. A selected row gets a 16% tint of its
+ * own colour, a colour-matched hairline ring and a 3px left bar; unselected
+ * rows carry no style at all and fall back to the Tailwind hover.
+ *
+ * The left bar rides in the box-shadow rather than a `border-left` so that
+ * selecting a row cannot shift its label sideways by 3px.
+ */
+export function boardLabelRowStyle(
+  colour: string | null,
+  selected: boolean,
+): { background: string; boxShadow: string } | undefined {
+  if (!selected || colour === null) return undefined;
+  return {
+    background: `color-mix(in srgb, ${colour} 16%, var(--popover))`,
+    boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${colour} 50%, transparent), inset 3px 0 0 ${colour}`,
+  };
+}

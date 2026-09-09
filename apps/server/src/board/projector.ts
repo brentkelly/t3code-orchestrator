@@ -43,6 +43,7 @@ import {
   BoardCardStepRecoveredPayload,
   BoardCardStepSettledPayload,
   BoardCardStepRetunedPayload,
+  BoardCardStepSteeredPayload,
   BoardCardStageThreadRequestedPayload,
   BoardCardUpdatedPayload,
   boardBriefHasImage,
@@ -162,6 +163,7 @@ const decodeBoardCardStepRecoveredPayload = Schema.decodeUnknownEffect(
 );
 const decodeBoardCardStepSettledPayload = Schema.decodeUnknownEffect(BoardCardStepSettledPayload);
 const decodeBoardCardStepRetunedPayload = Schema.decodeUnknownEffect(BoardCardStepRetunedPayload);
+const decodeBoardCardStepSteeredPayload = Schema.decodeUnknownEffect(BoardCardStepSteeredPayload);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -780,6 +782,12 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
+    case "board.card-step-steered":
+      return decodeBoardCardStepSteeredPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
     default: {
       event satisfies never;
       // Runtime backstop for an undecoded event: leave the model unchanged.
@@ -1135,6 +1143,10 @@ export function boardShellStreamEvent(
     // would clear the queued pill before anything actually started.
     case "board.card-step-force-start-requested":
     case "board.card-step-retuned":
+    // A human steering a running step (T3O-17) changes no column-card field
+    // either: the step is still running and still owned by the same thread.
+    // Only the supervisor's private nudge bookkeeping moved.
+    case "board.card-step-steered":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":

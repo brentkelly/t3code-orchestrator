@@ -27,6 +27,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
+  humanTurnStartRequested,
   buildingCard,
   cardMoved,
   codexStep,
@@ -181,6 +182,7 @@ const leftoverStep = (stepId: string): BoardCardStepState => ({
   attempt: 5,
   stallCount: 5,
   stageEntryRecoveries: 0,
+  humanTurnAt: null,
   lastNudgeAt: NOW,
   baseTipAtRoundStart: null,
   lastError: null,
@@ -467,21 +469,6 @@ it.effect("a turn-start failure on a thread the board does not own changes nothi
   ),
 );
 
-/** The domain event a turn request raises — the composer's Send, the thread's
-    Continue, or the board's own nudge. The reactor reads only the thread. */
-const turnStartRequested = (threadId: ThreadId, sequence: number) =>
-  ({
-    type: "thread.turn-start-requested",
-    sequence,
-    payload: {
-      threadId,
-      messageId: `message-${sequence}`,
-      runtimeMode: "auto",
-      interactionMode: "default",
-      createdAt: NOW,
-    },
-  }) as unknown as OrchestrationEvent;
-
 it.effect(
   "a human's turn on a stalled step's thread resumes it and clears the reason (t3o-17, D3)",
   () =>
@@ -505,7 +492,7 @@ it.effect(
 
           // The human opens the step's thread and sends a turn — the one act
           // `stalled` is waiting for.
-          yield* pumpDomain(turnStartRequested(threadId!, 3));
+          yield* pumpDomain(humanTurnStartRequested(threadId!, 3));
 
           const resumed = boardCardStepState(yield* board, cardId);
           assert.strictEqual(resumed?.status, "running");
@@ -536,8 +523,8 @@ it.effect("a turn on a thread whose step is not stalled leaves the step alone (t
 
         // The board's own kickoff and nudge turns arrive on this event too, as
         // does any turn on a thread the board does not own.
-        yield* pumpDomain(turnStartRequested(running!.threadId!, 2));
-        yield* pumpDomain(turnStartRequested(ThreadId.make("thread-a-human-opened"), 3));
+        yield* pumpDomain(humanTurnStartRequested(running!.threadId!, 2));
+        yield* pumpDomain(humanTurnStartRequested(ThreadId.make("thread-a-human-opened"), 3));
 
         const after = boardCardStepState(yield* board, cardId);
         assert.strictEqual(after?.status, "running");

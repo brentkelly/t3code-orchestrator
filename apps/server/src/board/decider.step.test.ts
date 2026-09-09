@@ -93,6 +93,7 @@ const stepState = (
   attempt: 1,
   stallCount: 0,
   stageEntryRecoveries: 0,
+  humanTurnAt: null,
   awaitingReason: "question",
   lastNudgeAt: null,
   ...frozenConfig,
@@ -399,6 +400,7 @@ it.effect(
             attempt: 3,
             stallCount: 4,
             stageEntryRecoveries: 6,
+            humanTurnAt: null,
             slotHeld: true,
           }),
         ],
@@ -445,6 +447,7 @@ it.effect(
             attempt: 3,
             stallCount: 4,
             stageEntryRecoveries: 6,
+            humanTurnAt: null,
             slotHeld: true,
           }),
         ],
@@ -489,6 +492,7 @@ it.effect(
             attempt: 3,
             stallCount: 3,
             stageEntryRecoveries: 4,
+            humanTurnAt: null,
             slotHeld: false,
             forceStart: false,
             lastError: "turn/setPermissionMode failed",
@@ -642,6 +646,7 @@ it.effect("pause-step parks a running step and gives its slot back (T3O-23)", ()
           attempt: 3,
           stallCount: 2,
           stageEntryRecoveries: 4,
+          humanTurnAt: null,
           slotHeld: true,
           lastError: "turn/setPermissionMode failed",
         }),
@@ -768,6 +773,7 @@ it.effect("requeue-step sends a parked step back to the queue, keeping its threa
             attempt: 2,
             stallCount: 3,
             stageEntryRecoveries: 4,
+            humanTurnAt: null,
             slotHeld: false,
             lastError: "something broke",
           }),
@@ -967,5 +973,114 @@ it.effect("admit-step refreshes lastNudgeAt so a requeued step is not instantly 
       assert.strictEqual(event.payload.state.lastNudgeAt, NOW);
       assert.strictEqual(event.payload.state.startedAt, NOW);
     }
+  }),
+);
+
+// ── T3O-17: the steer signal on the row ───────────────────────────────────
+
+const STEERED_AT = "2026-01-01T00:05:00.000Z";
+
+it.effect("note-human-turn records the steer and resets the ladder (T3O-17)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [
+        stepState("card-1", "running", {
+          attempt: 3,
+          stallCount: 2,
+          stageEntryRecoveries: 4,
+          lastNudgeAt: NOW,
+          slotHeld: true,
+        }),
+      ],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.note-human-turn",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        at: STEERED_AT,
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(event.type, "board.card-step-steered");
+    if (event.type === "board.card-step-steered") {
+      assert.strictEqual(event.payload.state.humanTurnAt, STEERED_AT);
+      // The human steered, so consecutive stalls start over and the "since the
+      // last nudge" boundary moves to when they typed.
+      assert.strictEqual(event.payload.state.stallCount, 0);
+      assert.strictEqual(event.payload.state.lastNudgeAt, STEERED_AT);
+      // Neither counter moves: they count board INVOCATIONS and board
+      // RECOVERIES, and a human's own turn is neither.
+      assert.strictEqual(event.payload.state.attempt, 3);
+      assert.strictEqual(event.payload.state.stageEntryRecoveries, 4);
+      // Nothing about what is RUNNING changes.
+      assert.strictEqual(event.payload.state.status, "running");
+      assert.strictEqual(event.payload.state.slotHeld, true);
+      assert.strictEqual(event.payload.state.threadId, ThreadId.make("thread-1"));
+    }
+  }),
+);
+
+it.effect("note-human-turn with a null instant spends the free ending and nothing else", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [
+        stepState("card-1", "running", {
+          attempt: 3,
+          stallCount: 0,
+          stageEntryRecoveries: 4,
+          humanTurnAt: STEERED_AT,
+          lastNudgeAt: STEERED_AT,
+        }),
+      ],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.note-human-turn",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        at: null,
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(event.type, "board.card-step-steered");
+    if (event.type === "board.card-step-steered") {
+      assert.strictEqual(event.payload.state.humanTurnAt, null);
+      // The ladder was already reset when the steer was recorded; spending the
+      // free ending must not reset it a second time or move anything else.
+      assert.strictEqual(event.payload.state.stallCount, 0);
+      assert.strictEqual(event.payload.state.lastNudgeAt, STEERED_AT);
+      assert.strictEqual(event.payload.state.attempt, 3);
+      assert.strictEqual(event.payload.state.stageEntryRecoveries, 4);
+    }
+  }),
+);
+
+it.effect("note-human-turn refuses a card with no live step (T3O-17)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({ cards: [card], nextCardNumberByProject: {} });
+    const error = yield* decideFail(
+      {
+        type: "board.card.note-human-turn",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        at: STEERED_AT,
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(error._tag, "OrchestrationCommandInvariantError");
   }),
 );
