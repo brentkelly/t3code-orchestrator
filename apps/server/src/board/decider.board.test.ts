@@ -199,6 +199,11 @@ const createCommand = (input: {
   readonly labels?: ReadonlyArray<string>;
   readonly brief?: string;
   readonly dependsOn?: ReadonlyArray<string>;
+  /** An explicit position, as a caller that means one sends. Absent — the
+      shape every real caller now sends — leaves the placement to the decider
+      (T3O-27), so the default test path is the production path. */
+  readonly orderKey?: string;
+  readonly parentCardId?: string;
   readonly scheduledStartAt?: string;
 }) =>
   ({
@@ -207,7 +212,10 @@ const createCommand = (input: {
     cardId: BoardCardId.make(input.cardId),
     projectId: input.projectId ?? projectId,
     title: `Card ${input.cardId}`,
-    orderKey: "m",
+    ...(input.orderKey === undefined ? {} : { orderKey: input.orderKey }),
+    ...(input.parentCardId === undefined
+      ? {}
+      : { parentCardId: BoardCardId.make(input.parentCardId) }),
     ...(input.keyPrefix === undefined ? {} : { keyPrefix: input.keyPrefix }),
     ...(input.stage === undefined ? {} : { stage: BoardStageId.make(input.stage) }),
     ...(input.labels === undefined
@@ -3186,9 +3194,11 @@ it.layer(NodeServices.layer)("board decider", (it) => {
 
   it.effect("measures the top of Done against the column the card is really in", () =>
     Effect.gen(function* () {
-      // The board renders one Done column per project, and one more per
-      // sub-board. A key computed against all of them would place the card
-      // above cards nobody is looking at, and burn key space doing it.
+      // The root board's default scope merges every project into ONE Done
+      // column, so the top of Done is the top across projects (T3O-27) — a
+      // per-project key put a finished card under cards it finished after. A
+      // sub-board is still its own column: its children render nowhere else,
+      // so their keys neither move nor constrain this card's.
       const event = yield* decide(
         moveCommand({ cardId: "card-1", toStage: "done" }),
         makeReadModel({
@@ -3204,14 +3214,17 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             makeCard({
               id: "card-sub-board",
               stage: "done",
-              orderKey: "b",
+              orderKey: "a",
               parentCardId: BoardCardId.make("card-parent"),
             }),
           ]),
         }),
       );
       const orderKey = movedOrderKey(event);
-      assert.deepStrictEqual(inColumnOrder([orderKey, "b", "m"]), ["b", orderKey, "m"]);
+      // Above the other project's card, not merely above its own project's…
+      assert.deepStrictEqual(inColumnOrder([orderKey, "b", "m"]), [orderKey, "b", "m"]);
+      // …and unbothered by the sub-board child that sorts below everything.
+      assert.deepStrictEqual(inColumnOrder([orderKey, "a"]), ["a", orderKey]);
     }),
   );
 
@@ -3282,6 +3295,177 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  // ── Where a NEW card lands (T3O-27) ──────────────────────────────────
+  // Creation used to take whatever key the caller chose, and every caller
+  // computed one against the slice of the board its own view was scoped to.
+  // A card created into a project whose column happened to be empty took the
+  // column minimum and landed on top of older work. The decider sees the
+  // whole board, so it places the card.
+
+  const createdOrderKey = (event: { readonly type: string; readonly payload: unknown }) => {
+    assert.strictEqual(event.type, "board.card-created");
+    return (event.payload as { readonly orderKey: string }).orderKey;
+  };
+
+  it.effect("lands a new card below every card already in the stage", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        createCommand({ cardId: "card-new", stage: "backlog" }),
+        makeReadModel({
+          board: seededBoard([
+            makeCard({ id: "card-1", stage: "backlog", orderKey: "m" }),
+            makeCard({ id: "card-2", stage: "backlog", orderKey: "u" }),
+          ]),
+        }),
+      );
+      const orderKey = createdOrderKey(event);
+      assert.deepStrictEqual(inColumnOrder([orderKey, "m", "u"]), ["m", "u", orderKey]);
+    }),
+  );
+
+  it.effect("lands below another project's cards too, because the board merges them", () =>
+    Effect.gen(function* () {
+      // The reported defect, exactly: a card created into ITS project's empty
+      // Building column sat above a 48-minute-older card of another project,
+      // because the two projects had separate key spaces and the board's
+      // default scope renders them as one column.
+      const event = yield* decide(
+        createCommand({ cardId: "card-new", stage: "backlog" }),
+        makeReadModel({
+          board: seededBoard([
+            makeCard({
+              id: "card-older",
+              stage: "backlog",
+              orderKey: "n",
+              projectId: otherProjectId,
+            }),
+          ]),
+        }),
+      );
+      assert.deepStrictEqual(inColumnOrder([createdOrderKey(event), "n"]), [
+        "n",
+        createdOrderKey(event),
+      ]);
+    }),
+  );
+
+  it.effect("ignores cards in other stages when placing", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        createCommand({ cardId: "card-new", stage: "backlog" }),
+        makeReadModel({
+          board: seededBoard([makeCard({ id: "card-1", stage: "sprint", orderKey: "zzzz" })]),
+        }),
+      );
+      assert.strictEqual(createdOrderKey(event), "m");
+    }),
+  );
+
+  it.effect("ignores archived cards, which have left the board", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        createCommand({ cardId: "card-new", stage: "backlog" }),
+        makeReadModel({
+          board: seededBoard([
+            makeCard({
+              id: "card-archived",
+              stage: "backlog",
+              orderKey: "zzzz",
+              archivedAt: NOW,
+            }),
+          ]),
+        }),
+      );
+      assert.strictEqual(createdOrderKey(event), "m");
+    }),
+  );
+
+  it.effect("places a sub-board child in its parent's column, not the root board's", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        createCommand({ cardId: "card-new", stage: "building", parentCardId: "card-parent" }),
+        makeReadModel({
+          board: seededBoard([
+            makeCard({ id: "card-parent", stage: "building", orderKey: "m" }),
+            makeCard({ id: "card-root", stage: "building", orderKey: "zzzz" }),
+            makeCard({
+              id: "card-sibling",
+              stage: "building",
+              orderKey: "u",
+              parentCardId: BoardCardId.make("card-parent"),
+            }),
+          ]),
+        }),
+      );
+      const orderKey = createdOrderKey(event);
+      // Below its one sibling, and unconstrained by the root board's column.
+      assert.deepStrictEqual(inColumnOrder([orderKey, "u"]), ["u", orderKey]);
+      assert.deepStrictEqual(inColumnOrder([orderKey, "zzzz"]), [orderKey, "zzzz"]);
+    }),
+  );
+
+  it.effect("lands a card created straight into Done at the TOP, like one moved there", () =>
+    Effect.gen(function* () {
+      const board = seededBoard([makeCard({ id: "card-1", stage: "done", orderKey: "d" })]);
+      const created = createdOrderKey(
+        yield* decide(
+          createCommand({ cardId: "card-new", stage: "done" }),
+          makeReadModel({ board }),
+        ),
+      );
+      assert.deepStrictEqual(inColumnOrder([created, "d"]), [created, "d"]);
+      // Same rule as the move, so two cards reaching Done by different routes
+      // cannot be ordered by different rules.
+      const moved = movedOrderKey(
+        yield* decide(
+          moveCommand({ cardId: "card-2", toStage: "done" }),
+          makeReadModel({
+            board: seededBoard([
+              makeCard({ id: "card-1", stage: "done", orderKey: "d" }),
+              makeCard({ id: "card-2", stage: "merge", orderKey: "zz" }),
+            ]),
+          }),
+        ),
+      );
+      assert.strictEqual(created, moved);
+    }),
+  );
+
+  it.effect("still honours a position the caller named", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        createCommand({ cardId: "card-new", stage: "backlog", orderKey: "b" }),
+        makeReadModel({
+          board: seededBoard([makeCard({ id: "card-1", stage: "backlog", orderKey: "m" })]),
+        }),
+      );
+      assert.strictEqual(createdOrderKey(event), "b");
+    }),
+  );
+
+  it.effect("keeps successive creations in creation order", () =>
+    Effect.gen(function* () {
+      // The behaviour as a user meets it: make three cards in a row and read
+      // the column top to bottom to see the order they were made in.
+      const cards: Array<BoardCard> = [];
+      const made: Array<string> = [];
+      for (const id of ["card-1", "card-2", "card-3"]) {
+        const event = yield* decide(
+          createCommand({ cardId: id, stage: "backlog" }),
+          makeReadModel({ board: seededBoard(cards) }),
+        );
+        made.push(id);
+        cards.push(makeCard({ id, stage: "backlog", orderKey: createdOrderKey(event) }));
+      }
+      const keys = cards.map((card) => card.orderKey);
+      assert.strictEqual(new Set(keys).size, keys.length);
+      assert.deepStrictEqual(inColumnOrder(keys), keys);
+      const column = [...cards]
+        .sort((left, right) => (left.orderKey < right.orderKey ? -1 : 1))
+        .map((card) => card.id as string);
+      assert.deepStrictEqual(column, made);
+    }),
+  );
   // ── Scheduled starts (T3O-19) ─────────────────────────────────────────────
 
   describe("scheduled starts (T3O-19, D1)", () => {
