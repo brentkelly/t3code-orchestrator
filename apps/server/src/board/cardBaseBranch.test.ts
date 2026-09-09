@@ -317,6 +317,8 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
     baseTipAtRoundStart: "main",
     lastError: null,
     awaitingReason: "question" as const,
+    stalledReason: "gave-up" as const,
+    retryAt: null,
     prompt: "review it",
     providerInstanceId: ProviderInstanceId.make("codex"),
     model: "gpt-5-codex",

@@ -77,6 +77,8 @@ const planningStep = (input: {
   baseTipAtRoundStart: null,
   lastError: null,
   awaitingReason: "question" as const,
+  stalledReason: "gave-up" as const,
+  retryAt: null,
   prompt: "old planning run",
   providerInstanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-opus-5",

@@ -46,6 +46,8 @@ import {
   boardCardStepCompletions,
   boardStepPayloadDefect,
   boardCardStepState,
+  boardProviderLimit,
+  type ProviderInstanceId,
   boardReviewRoundsStarted,
   boardRunLabel,
   deriveBoardCardReviewSummary,
@@ -114,9 +116,21 @@ function isBoardStageCommand(command: BoardCommand): command is BoardStageComman
   return command.type.startsWith("board.stage.");
 }
 
-/** Card-aggregate commands — every board command except the label and stage
-    ones; the only commands that carry a `cardId`. */
-type BoardCardCommand = Exclude<BoardCommand, BoardLabelCommand | BoardStageCommand>;
+/** Provider-cooldown commands (T3O-22) aggregate on the provider INSTANCE —
+    they carry `providerInstanceId` and no card at all, because a usage limit
+    belongs to an account and the cards it holds come and go underneath it.
+    Keyed on the `board.provider-limit.` prefix. */
+type BoardProviderLimitCommand = Extract<BoardCommand, { type: `board.provider-limit.${string}` }>;
+function isBoardProviderLimitCommand(command: BoardCommand): command is BoardProviderLimitCommand {
+  return command.type.startsWith("board.provider-limit.");
+}
+
+/** Card-aggregate commands — every board command except the label, stage and
+    provider-limit ones; the only commands that carry a `cardId`. */
+type BoardCardCommand = Exclude<
+  BoardCommand,
+  BoardLabelCommand | BoardStageCommand | BoardProviderLimitCommand
+>;
 
 // Re-exported so upstream seams import predicate + delegate on one line.
 export { isBoardCommand };
@@ -151,14 +165,25 @@ export function boardDecidedEvents(
  * behind the `isBoardCommand` predicate.
  */
 export function boardCommandAggregateRef(command: BoardCommand): {
-  readonly aggregateKind: "card" | "label" | "stage";
-  readonly aggregateId: BoardCardId | BoardLabelId | BoardStageId;
+  readonly aggregateKind: "card" | "label" | "stage" | "provider-limit";
+  readonly aggregateId: BoardCardId | BoardLabelId | BoardStageId | ProviderInstanceId;
 } {
   if (isBoardLabelCommand(command)) {
     return { aggregateKind: "label", aggregateId: command.labelId };
   }
   if (isBoardStageCommand(command)) {
     return { aggregateKind: "stage", aggregateId: command.stageId };
+  }
+  if (isBoardProviderLimitCommand(command)) {
+    return {
+      aggregateKind: "provider-limit",
+      // The record command carries the whole limit; the clear command carries
+      // the id alone. Both name the same instance.
+      aggregateId:
+        command.type === "board.provider-limit.record"
+          ? command.limit.providerInstanceId
+          : command.providerInstanceId,
+    };
   }
   return { aggregateKind: "card", aggregateId: command.cardId };
 }
@@ -546,6 +571,29 @@ const makeBoardLabelEventBase = Effect.fn("makeBoardLabelEventBase")(function* (
     metadata: {},
   };
 });
+
+/** Event base for provider-cooldown events (T3O-22): aggregates on the
+    provider INSTANCE, which is the unit a usage limit actually belongs to. */
+const makeBoardProviderLimitEventBase = Effect.fn("makeBoardProviderLimitEventBase")(
+  function* (input: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly occurredAt: string;
+    readonly commandId: BoardCommand["commandId"];
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const eventId = yield* crypto.randomUUIDv4;
+    return {
+      eventId: EventId.make(eventId),
+      aggregateKind: "provider-limit" as const,
+      aggregateId: input.providerInstanceId,
+      occurredAt: input.occurredAt,
+      commandId: input.commandId,
+      causationEventId: null,
+      correlationId: input.commandId,
+      metadata: {},
+    };
+  },
+);
 
 /** Event base for stage events (t3o-15): aggregates on the stage. */
 const makeBoardStageEventBase = Effect.fn("makeBoardStageEventBase")(function* (input: {
@@ -2942,6 +2990,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // Resting value (t3o-34, D3): only read while the step is
         // `awaiting-input`, and a fresh step never is.
         awaitingReason: "question",
+        // …and the same for the loud half (T3O-22, D10): a fresh step has not
+        // stalled, so it carries no reason and no retry time. Setting them here
+        // rather than letting them ride is what stops a re-entered stage
+        // inheriting the previous entry's "resuming 2:50am".
+        stalledReason: "gave-up",
+        retryAt: null,
         lastNudgeAt: null,
         prompt: command.prompt,
         providerInstanceId: command.providerInstanceId,
@@ -3386,6 +3440,46 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         })),
         type: "board.card-step-retuned",
         payload: { cardId: command.cardId, state },
+      };
+    }
+
+    // ── Provider cooldowns (T3O-22) ──────────────────────────────────
+    // A different aggregate from every case above: keyed on a provider
+    // INSTANCE, because a usage limit belongs to an ACCOUNT and the cards it
+    // holds come and go underneath it. So no `requireActiveBoardCard`, no card
+    // event base, and no card id on the event.
+    case "board.provider-limit.record": {
+      // No refusals at all, deliberately. Every field is the reactor's own
+      // computation of a fact it has just observed, the row is keyed on the
+      // provider instance so a re-record is an idempotent replace, and the one
+      // thing a refusal would protect — recording a cooldown for a provider
+      // nothing is using — is harmless and self-clearing.
+      return {
+        ...(yield* makeBoardProviderLimitEventBase({
+          providerInstanceId: command.limit.providerInstanceId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.provider-limit-recorded",
+        payload: { limit: command.limit },
+      };
+    }
+
+    case "board.provider-limit.clear": {
+      // Idempotent by design, NOT a refusal: every trigger that lifts a
+      // cooldown can fire twice — a probe's clean turn and the ordinary
+      // any-clean-turn sweep will routinely both land — and a refusal would
+      // turn the second into a logged invariant error for a state that is
+      // already correct.
+      if (boardProviderLimit(board, command.providerInstanceId) === null) return [];
+      return {
+        ...(yield* makeBoardProviderLimitEventBase({
+          providerInstanceId: command.providerInstanceId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.provider-limit-cleared",
+        payload: { providerInstanceId: command.providerInstanceId },
       };
     }
 

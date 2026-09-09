@@ -94,6 +94,8 @@ const stepState = (
   stallCount: 0,
   stageEntryRecoveries: 0,
   awaitingReason: "question",
+  stalledReason: "gave-up",
+  retryAt: null,
   lastNudgeAt: null,
   ...frozenConfig,
   threadId: ThreadId.make("thread-1"),

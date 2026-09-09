@@ -529,6 +529,8 @@ it.effect("boot reconcile settles the threads finished while nothing was asking"
             lastError: null,
             status: "stalled",
             awaitingReason: "question",
+            stalledReason: "gave-up",
+            retryAt: null,
             slotHeld: false,
             forceStart: false,
             startedAt: NOW,

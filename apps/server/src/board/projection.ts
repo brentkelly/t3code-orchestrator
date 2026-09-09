@@ -20,6 +20,8 @@
  */
 import {
   BoardCardStepAwaitingReason,
+  BoardCardStepStalledReason,
+  BoardProviderLimit,
   activeBoardCardThreadId,
   BOARD_CARD_BRIEF_BODY_KIND,
   BoardCard,
@@ -92,6 +94,7 @@ import {
   compareBoardCards,
   compareBoardPlans,
   compareBoardStepCompletions,
+  compareBoardProviderLimits,
   compareBoardStepStates,
 } from "./projector.ts";
 
@@ -440,6 +443,13 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // every step that reached `awaiting-input` before t3o-34 did so through the
   // structured-question path — which is `question` (t3o-34, D3).
   awaitingReason: Schema.NullOr(BoardCardStepAwaitingReason),
+  // NULLABLE in the DB: rows written before migration 040 have no value, and a
+  // stalled row written before T3O-22 was recovery giving up — which is
+  // `gave-up` (T3O-22, D10).
+  stalledReason: Schema.NullOr(BoardCardStepStalledReason),
+  // NULLABLE in the DB, and a null already MEANS "nothing scheduled": before
+  // T3O-22 the next nudge went instantly, so no row had a time to record.
+  retryAt: BoardCardStepState.fields.retryAt,
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -453,6 +463,24 @@ const BoardCardStepStateDbRow = Schema.Struct({
   updatedAt: BoardCardStepState.fields.updatedAt,
 });
 type BoardCardStepStateDbRow = typeof BoardCardStepStateDbRow.Type;
+
+/** The `board_provider_limits` row (T3O-22). Booleans are 0/1 integers, the
+    same convention `slotHeld`/`forceStart` follow above. */
+const BoardProviderLimitDbRow = Schema.Struct({
+  providerInstanceId: BoardProviderLimit.fields.providerInstanceId,
+  kind: BoardProviderLimit.fields.kind,
+  until: BoardProviderLimit.fields.until,
+  detectedAt: BoardProviderLimit.fields.detectedAt,
+  lastCheckedAt: BoardProviderLimit.fields.lastCheckedAt,
+  reason: BoardProviderLimit.fields.reason,
+  ruleId: BoardProviderLimit.fields.ruleId,
+  sourceCardId: BoardProviderLimit.fields.sourceCardId,
+  knownTime: Schema.Int,
+  blindSince: BoardProviderLimit.fields.blindSince,
+  probeCardId: BoardProviderLimit.fields.probeCardId,
+  setByHuman: Schema.Int,
+});
+type BoardProviderLimitDbRow = typeof BoardProviderLimitDbRow.Type;
 
 // `dependsOn` JSON-encodes; `locked` travels as 0/1 (SQLite has no boolean).
 const BoardPlanDbRow = Schema.Struct({
@@ -1697,7 +1725,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id, step_id, step_label, stage_label, attempt, stall_count,
         stage_entry_recoveries, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
-        last_error, awaiting_reason,
+        last_error, awaiting_reason, stalled_reason, retry_at,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         started_at, updated_at
       )
@@ -1706,7 +1734,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.stageEntryRecoveries}, ${row.lastNudgeAt}, ${row.prompt},
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
-        ${row.lastError}, ${row.awaitingReason},
+        ${row.lastError}, ${row.awaitingReason}, ${row.stalledReason}, ${row.retryAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.startedAt}, ${row.updatedAt}
@@ -1729,6 +1757,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_tip_at_round_start = excluded.base_tip_at_round_start,
         last_error = excluded.last_error,
         awaiting_reason = excluded.awaiting_reason,
+        stalled_reason = excluded.stalled_reason,
+        retry_at = excluded.retry_at,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -1763,6 +1793,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_tip_at_round_start AS "baseTipAtRoundStart",
         last_error AS "lastError",
         awaiting_reason AS "awaitingReason",
+        stalled_reason AS "stalledReason",
+        retry_at AS "retryAt",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -1773,6 +1805,65 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         started_at AS "startedAt",
         updated_at AS "updatedAt"
       FROM board_card_step_state
+    `,
+  });
+
+  // One row per provider INSTANCE (T3O-22): the board's cooldowns. Upsert on
+  // the instance id so a re-detection, a reschedule and a probe hand-off all
+  // replace the same row.
+  const upsertBoardProviderLimitRow = SqlSchema.void({
+    Request: BoardProviderLimitDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_provider_limits (
+        provider_instance_id, kind, until, detected_at, last_checked_at,
+        reason, rule_id, source_card_id, known_time, blind_since, probe_card_id, set_by_human
+      )
+      VALUES (
+        ${row.providerInstanceId}, ${row.kind}, ${row.until}, ${row.detectedAt}, ${row.lastCheckedAt},
+        ${row.reason}, ${row.ruleId}, ${row.sourceCardId}, ${row.knownTime}, ${row.blindSince},
+        ${row.probeCardId}, ${row.setByHuman}
+      )
+      ON CONFLICT (provider_instance_id)
+      DO UPDATE SET
+        kind = excluded.kind,
+        until = excluded.until,
+        detected_at = excluded.detected_at,
+        last_checked_at = excluded.last_checked_at,
+        reason = excluded.reason,
+        rule_id = excluded.rule_id,
+        source_card_id = excluded.source_card_id,
+        known_time = excluded.known_time,
+        blind_since = excluded.blind_since,
+        probe_card_id = excluded.probe_card_id,
+        set_by_human = excluded.set_by_human
+    `,
+  });
+
+  const deleteBoardProviderLimitRow = SqlSchema.void({
+    Request: ProviderInstanceId,
+    execute: (providerInstanceId) => sql`
+      DELETE FROM board_provider_limits WHERE provider_instance_id = ${providerInstanceId}
+    `,
+  });
+
+  const listBoardProviderLimitRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardProviderLimitDbRow,
+    execute: () => sql`
+      SELECT
+        provider_instance_id AS "providerInstanceId",
+        kind,
+        until,
+        detected_at AS "detectedAt",
+        last_checked_at AS "lastCheckedAt",
+        reason,
+        rule_id AS "ruleId",
+        source_card_id AS "sourceCardId",
+        known_time AS "knownTime",
+        blind_since AS "blindSince",
+        probe_card_id AS "probeCardId",
+        set_by_human AS "setByHuman"
+      FROM board_provider_limits
     `,
   });
 
@@ -2055,6 +2146,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardStepRows,
     upsertBoardCardStepStateRow,
     listBoardCardStepStateRows,
+    upsertBoardProviderLimitRow,
+    deleteBoardProviderLimitRow,
+    listBoardProviderLimitRows,
     findBoardCardStepErrorRow,
     findLatestAssistantMessage,
     findThreadLastSignalAt,
@@ -2348,6 +2442,8 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         baseTipAtRoundStart: state.baseTipAtRoundStart,
         lastError: state.lastError,
         awaitingReason: state.awaitingReason,
+        stalledReason: state.stalledReason,
+        retryAt: state.retryAt,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -2359,6 +2455,31 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         updatedAt: state.updatedAt,
       })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.stepState:query")));
+
+  const upsertProviderLimit = (limit: BoardProviderLimit) =>
+    queries
+      .upsertBoardProviderLimitRow({
+        providerInstanceId: limit.providerInstanceId,
+        kind: limit.kind,
+        until: limit.until,
+        detectedAt: limit.detectedAt,
+        lastCheckedAt: limit.lastCheckedAt,
+        reason: limit.reason,
+        ruleId: limit.ruleId,
+        sourceCardId: limit.sourceCardId,
+        knownTime: limit.knownTime ? 1 : 0,
+        blindSince: limit.blindSince,
+        probeCardId: limit.probeCardId,
+        setByHuman: limit.setByHuman ? 1 : 0,
+      })
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.providerLimit:query")));
+
+  const deleteProviderLimit = (providerInstanceId: ProviderInstanceId) =>
+    queries
+      .deleteBoardProviderLimitRow(providerInstanceId)
+      .pipe(
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.providerLimitDelete:query")),
+      );
 
   const upsertStage = (stage: BoardStageDefinition) =>
     queries
@@ -2819,6 +2940,18 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         });
         return;
 
+      // T3o (T3O-22): the provider-cooldown table. Not a card event at all —
+      // no `upsertCard`, and deliberately no activity row: a cooldown is a
+      // provider fact, and writing it onto the rail of whichever card happened
+      // to discover it would claim the card did something.
+      case "board.provider-limit-recorded":
+        yield* upsertProviderLimit(event.payload.limit);
+        return;
+
+      case "board.provider-limit-cleared":
+        yield* deleteProviderLimit(event.payload.providerInstanceId);
+        return;
+
       default: {
         event satisfies never;
         return;
@@ -2858,6 +2991,7 @@ export function loadBoardState(
     queries.listBoardCardStepRows(),
     queries.listBoardCardStepStateRows(),
     queries.listBoardPlanRows(),
+    queries.listBoardProviderLimitRows(),
   ]).pipe(
     Effect.map(
       ([
@@ -2871,6 +3005,7 @@ export function loadBoardState(
         stepRows,
         stepStateRows,
         planRows,
+        providerLimitRows,
       ]) => {
         // Canonical ordering comes from the shared JS comparators — the same
         // ones the replay path uses — never from SQL collation.
@@ -2965,6 +3100,10 @@ export function loadBoardState(
               // A NULL column reads as `question` (t3o-34, D3): pre-034 rows
               // could only have parked through the structured-question path.
               awaitingReason: row.awaitingReason ?? "question",
+              // A NULL column reads as `gave-up` (T3O-22, D10): pre-040 rows
+              // could only have stalled through recovery giving up.
+              stalledReason: row.stalledReason ?? "gave-up",
+              retryAt: row.retryAt,
               humanInLoop: row.humanInLoop !== 0,
               maxAttempts: row.maxAttempts,
               timeoutMs: row.timeoutMs,
@@ -2978,6 +3117,27 @@ export function loadBoardState(
           )
           .sort(compareBoardStepStates);
         const plans = planRows.map(rowToBoardPlan).sort(compareBoardPlans);
+        // Provider cooldowns (T3O-22). Omitted, not empty, when nothing is
+        // limited — the same absent-vs-empty rule every slice above follows, so
+        // an ordinary board rehydrates exactly as a from-empty replay.
+        const providerLimits = providerLimitRows
+          .map(
+            (row): BoardProviderLimit => ({
+              providerInstanceId: row.providerInstanceId,
+              kind: row.kind,
+              until: row.until,
+              detectedAt: row.detectedAt,
+              lastCheckedAt: row.lastCheckedAt,
+              reason: row.reason,
+              ruleId: row.ruleId,
+              sourceCardId: row.sourceCardId,
+              knownTime: row.knownTime !== 0,
+              blindSince: row.blindSince,
+              probeCardId: row.probeCardId,
+              setByHuman: row.setByHuman !== 0,
+            }),
+          )
+          .sort(compareBoardProviderLimits);
         return {
           cards: cardRows
             .map((row) =>
@@ -2994,6 +3154,7 @@ export function loadBoardState(
           ...(stepCompletions.length > 0 ? { stepCompletions } : {}),
           ...(stepStates.length > 0 ? { stepStates } : {}),
           ...(plans.length > 0 ? { plans } : {}),
+          ...(providerLimits.length > 0 ? { providerLimits } : {}),
           nextCardNumberByProject: Object.fromEntries(
             counterRows.map((row) => [row.projectId, row.maxCardNumber + 1]),
           ),

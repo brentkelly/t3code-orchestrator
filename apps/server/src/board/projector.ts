@@ -42,6 +42,8 @@ import {
   BoardCardStepRecoveredPayload,
   BoardCardStepSettledPayload,
   BoardCardStepRetunedPayload,
+  BoardProviderLimitRecordedPayload,
+  BoardProviderLimitClearedPayload,
   BoardCardStageThreadRequestedPayload,
   BoardCardUpdatedPayload,
   boardBriefHasImage,
@@ -70,6 +72,8 @@ import {
   type BoardCard,
   type BoardCardId,
   type BoardCardStepState,
+  type BoardProviderLimit,
+  type ProviderInstanceId,
   type BoardLabel,
   type BoardPlan,
   type BoardStageDefinition,
@@ -157,6 +161,12 @@ const decodeBoardCardStepRecoveredPayload = Schema.decodeUnknownEffect(
 );
 const decodeBoardCardStepSettledPayload = Schema.decodeUnknownEffect(BoardCardStepSettledPayload);
 const decodeBoardCardStepRetunedPayload = Schema.decodeUnknownEffect(BoardCardStepRetunedPayload);
+const decodeBoardProviderLimitRecordedPayload = Schema.decodeUnknownEffect(
+  BoardProviderLimitRecordedPayload,
+);
+const decodeBoardProviderLimitClearedPayload = Schema.decodeUnknownEffect(
+  BoardProviderLimitClearedPayload,
+);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -423,9 +433,59 @@ export function compareBoardStepStates(
   return compareStrings(left.cardId, right.cardId);
 }
 
+/** Canonical provider-cooldown order (T3O-22): by provider instance id, one
+    record per instance. Applied on both sides of replay-equals-rehydration,
+    like every other board slice. */
+export function compareBoardProviderLimits(
+  left: BoardProviderLimit,
+  right: BoardProviderLimit,
+): number {
+  return compareStrings(left.providerInstanceId, right.providerInstanceId);
+}
+
 /** Upsert a card's live step state by cardId (t3o-10). One record per card,
     so a new state for a card replaces its prior one — selecting the next step
     of a multi-step recipe overwrites the previous step's terminal record. */
+/** Replace (or add) one provider cooldown (T3O-22). Keyed on the provider
+    instance, kept in a stable order so a from-empty replay and a table
+    rehydration produce the same array. */
+function upsertProviderLimit(
+  model: OrchestrationReadModel,
+  limit: BoardProviderLimit,
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const current = board.providerLimits ?? [];
+  const exists = current.some(
+    (existing) => existing.providerInstanceId === limit.providerInstanceId,
+  );
+  const providerLimits = (
+    exists
+      ? current.map((existing) =>
+          existing.providerInstanceId === limit.providerInstanceId ? limit : existing,
+        )
+      : [...current, limit]
+  ).toSorted(compareBoardProviderLimits);
+  return { ...model, board: { ...board, providerLimits } };
+}
+
+/** Lift one provider cooldown. The slice is dropped entirely when the last one
+    goes, so a board that has recovered decodes exactly as one that never hit a
+    limit — the same absent-vs-empty rule every other board slice follows. */
+function clearProviderLimit(
+  model: OrchestrationReadModel,
+  providerInstanceId: ProviderInstanceId,
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const remaining = (board.providerLimits ?? []).filter(
+    (existing) => existing.providerInstanceId !== providerInstanceId,
+  );
+  const { providerLimits: _dropped, ...rest } = board;
+  return {
+    ...model,
+    board: remaining.length === 0 ? rest : { ...board, providerLimits: remaining },
+  };
+}
+
 function upsertStepState(
   model: OrchestrationReadModel,
   state: BoardCardStepState,
@@ -755,6 +815,20 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
+    // T3o (T3O-22): the provider-cooldown slice. Keyed on the provider
+    // instance, so — unlike every case above — it touches no card at all.
+    case "board.provider-limit-recorded":
+      return decodeBoardProviderLimitRecordedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertProviderLimit(model, payload.limit)),
+      );
+
+    case "board.provider-limit-cleared":
+      return decodeBoardProviderLimitClearedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => clearProviderLimit(model, payload.providerInstanceId)),
+      );
+
     default: {
       event satisfies never;
       // Runtime backstop for an undecoded event: leave the model unchanged.
@@ -1037,6 +1111,24 @@ export function boardShellStreamEvent(
         });
       }
       return Option.none();
+
+    // T3o (T3O-22, D14): the provider cooldown rides its own delta, following
+    // the label catalogue's precedent — ONE fact per provider account, never
+    // denormalised onto every card that shares it, so the top bar can say
+    // "Anthropic limit · 1:00 AM" with no card on screen.
+    case "board.provider-limit-recorded":
+      return Option.some({
+        kind: "card-provider-limit-upserted",
+        sequence: event.sequence,
+        limit: event.payload.limit,
+      });
+
+    case "board.provider-limit-cleared":
+      return Option.some({
+        kind: "card-provider-limit-cleared",
+        sequence: event.sequence,
+        providerInstanceId: event.payload.providerInstanceId,
+      });
 
     case "board.card-step-paused":
       // A human stopped the step (T3O-23) — the fourth step transition that is

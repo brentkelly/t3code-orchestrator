@@ -546,6 +546,8 @@ const seededStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepState
   // it), so a leftover value sits here — which is also what keeps the park
   // assertions honest: they read a reason this run DERIVED, not this one.
   awaitingReason: "stopped" as const,
+  stalledReason: "gave-up" as const,
+  retryAt: null,
   prompt: "interview the human",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",

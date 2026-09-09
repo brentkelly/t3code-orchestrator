@@ -7,7 +7,8 @@
  * @module OrchestrationCommandReceiptRepository
  */
 import {
-  // T3o: card + label + stage aggregate ids (D9 / t3o-06a / t3o-15).
+  // T3o: card + label + stage aggregate ids (D9 / t3o-06a / t3o-15), and the
+  // provider-cooldown aggregate's own id (T3O-22).
   BoardCardId,
   BoardLabelId,
   BoardStageId,
@@ -17,6 +18,7 @@ import {
   OrchestrationAggregateKind,
   OrchestrationCommandReceiptStatus,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -31,8 +33,16 @@ export const OrchestrationCommandReceipt = Schema.Struct({
   aggregateKind: OrchestrationAggregateKind,
   // T3o: BoardCardId appended for card-aggregate receipts (D9); BoardLabelId
   // for the label aggregate (t3o-06a); BoardStageId for the stage aggregate
-  // (t3o-15). Frozen widening.
-  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId, BoardStageId]),
+  // (t3o-15); ProviderInstanceId for the provider-cooldown aggregate (T3O-22).
+  // Frozen widening.
+  aggregateId: Schema.Union([
+    ProjectId,
+    ThreadId,
+    BoardCardId,
+    BoardLabelId,
+    BoardStageId,
+    ProviderInstanceId,
+  ]),
   acceptedAt: IsoDateTime,
   resultSequence: NonNegativeInt,
   status: OrchestrationCommandReceiptStatus,

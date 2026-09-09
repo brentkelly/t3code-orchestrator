@@ -13,6 +13,7 @@ import {
   OrchestrationEventMetadata,
   OrchestrationEventType,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -61,8 +62,16 @@ const AppendEventRequestSchema = Schema.Struct({
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
   // T3o: BoardCardId appended for card-aggregate event streams (D9);
-  // BoardLabelId for the label aggregate (t3o-06a). Frozen widening.
-  streamId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId, BoardStageId]),
+  // BoardLabelId for the label aggregate (t3o-06a); ProviderInstanceId for the
+  // provider-cooldown aggregate (T3O-22). Frozen widening.
+  streamId: Schema.Union([
+    ProjectId,
+    ThreadId,
+    BoardCardId,
+    BoardLabelId,
+    BoardStageId,
+    ProviderInstanceId,
+  ]),
   type: OrchestrationEventType,
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),

@@ -58,6 +58,8 @@ const forcedQueuedStep = (id: string): BoardCardStepState => ({
   baseTipAtRoundStart: null,
   lastError: null,
   awaitingReason: "question",
+  stalledReason: "gave-up",
+  retryAt: null,
   prompt: "build it",
   providerInstanceId: codex,
   model: "gpt-5-codex",
