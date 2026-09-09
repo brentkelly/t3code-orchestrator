@@ -4279,6 +4279,10 @@ const make = Effect.gen(function* () {
         entirely before this. It is also the unambiguous channel: nobody quotes a
         sentence into a failed turn's error field. */
     turnErrorMessage: string | null = null,
+    /** How the turn ended (T3O-22, D9). Read by the loose-match tally clear
+        alone — DETECTION below stays state-blind, because Grok's refusal
+        arrives on a `failed` turn. */
+    turnState: RuntimeTurnState | undefined = undefined,
   ) {
     const found = stepThreadCard(board, threadId);
     if (found === null) return;
@@ -4413,13 +4417,19 @@ const make = Effect.gen(function* () {
         nowMs: yield* detectorNowMs,
       });
       if (handled) return;
-    } else {
+    } else if (turnState === undefined || turnState === "completed") {
       // A turn the catalogue says nothing about is proof the provider is
       // answering, so the loose-match tally zeroes (D6). Done HERE rather than
       // in the any-clean-turn sweep because the step row already names the
       // provider instance: no shell read, no query, no cost on a board that has
       // never seen a loose match. It is also what keeps the tally honest before
       // any cooldown exists — the sweep is gated on one already being there.
+      //
+      // Gated on the turn having COMPLETED, for the same reason the cooldown
+      // lift is (`clearLimitOnCleanTurn`): a sibling whose CLI died on a generic
+      // error ("Grok prompt request failed.") produces a null match on a FAILED
+      // turn, and that is not the account answering. Absent reads as completed,
+      // exactly as the ingestion layer normalises it.
       clearLooseMatches(String(found.state.providerInstanceId));
     }
     // Unattended, running with no question → died mid-work. Awaiting-input with
@@ -4452,13 +4462,14 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     completedTurnId: TurnId | undefined,
     turnErrorMessage: string | null = null,
-    /** How the turn ended (T3O-22, D9). Read by the cooldown lift alone: the
+    /** How the turn ended (T3O-22, D9). Read by the two "the provider answered"
+        questions alone — the cooldown lift and the loose-match tally clear. The
         DETECTION path must stay state-blind, because Grok's refusal arrives on
         a `failed` turn. */
     turnState: RuntimeTurnState | undefined = undefined,
   ) {
     const board = yield* readBoard;
-    yield* handleTurnCompleted(board, threadId, completedTurnId, turnErrorMessage);
+    yield* handleTurnCompleted(board, threadId, completedTurnId, turnErrorMessage, turnState);
     // ANY clean turn on a limited instance lifts its cooldown (T3O-22, D9) —
     // including one from a human's own non-board thread. If the provider is
     // demonstrably answering, there is nothing left to wait for, and making the

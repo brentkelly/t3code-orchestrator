@@ -408,6 +408,35 @@ it.effect("a clean turn on the provider zeroes the loose-match tally", () =>
   ),
 );
 
+it.effect("a sibling's CLI dying on a generic error does not zero the loose-match tally", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a"), buildingCard("b", "b"), buildingCard("c", "c")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        // One loose match from card `a`…
+        yield* stopCard(harness, "a", "a", 1, looseWait());
+        // …then a sibling whose CLI dies with a generic, non-quota error. The
+        // catalogue says nothing about it, but a FAILED turn is not the provider
+        // answering — the same reason a failed turn cannot lift a cooldown — so
+        // the corroboration tally must survive it.
+        const threadB = yield* startCard(harness, "b", "b", 2);
+        harness.setUsageVerdict(String(threadB), null);
+        yield* harness.pumpRuntime(
+          turnCompleted(threadB, undefined, "Grok prompt request failed."),
+        );
+        // So the third card's loose match is still the SECOND of the pair.
+        yield* stopCard(harness, "c", "c", 3, looseWait());
+        assert.strictEqual((yield* limitOf(harness, codex))?.kind, "wait");
+      }),
+  ),
+);
+
 it.effect("the same card repeating a loose match never promotes on its own", () =>
   withGovernor(
     {
