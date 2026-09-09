@@ -33,3 +33,9 @@ the count reads honestly as over the limit until the extra card finishes.
 
 A card can be queued and blocked at the same time. Blocked means an unmet dependency and is shown
 separately — clearing the queue will not start a card that is still waiting on another one.
+
+## Scheduled cards
+
+A card holding a [scheduled start](board-scheduled-starts.md) is not in the queue at all — it takes
+no place in the numbering and no agent slot until its time arrives. It joins the queue then, like
+any other card.

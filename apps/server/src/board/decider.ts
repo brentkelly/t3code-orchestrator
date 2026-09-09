@@ -813,6 +813,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           // Key-optional like `brief`: absent IS "follow the project default",
           // which is what every pre-spec event decodes to (T3O-5, D1).
           ...(baseBranch === null ? {} : { baseBranch }),
+          // The scheduled start (T3O-19, D1), key-optional for the same reason:
+          // absent IS "start as soon as the pipeline reaches it". No validation
+          // beyond the schema's instant — a PAST time is legal and means "now"
+          // (D6), so there is nothing here to reject.
+          ...(command.scheduledStartAt === undefined
+            ? {}
+            : { scheduledStartAt: command.scheduledStartAt }),
           dependsOn,
           stage,
           orderKey: command.orderKey,
@@ -1116,7 +1123,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.humanInLoop === undefined &&
         command.reviewOverrides === undefined &&
         command.modelOverrides === undefined &&
-        command.baseBranch === undefined
+        command.baseBranch === undefined &&
+        command.scheduledStartAt === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -1218,6 +1226,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         reviewOverrides,
         modelOverrides,
         baseBranch,
+        // The scheduled start (T3O-19, D1). Absent leaves it, `null` clears the
+        // hold, an instant sets it. Nothing to validate: a past time is legal
+        // and means "now", and the supervisor owns what setting one DOES to a
+        // running step — the decider only records the intent.
+        scheduledStartAt:
+          command.scheduledStartAt === undefined ? card.scheduledStartAt : command.scheduledStartAt,
         updatedAt: command.createdAt,
       };
       return {
@@ -1231,6 +1245,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           cardId: command.cardId,
           ...(command.brief === undefined ? {} : { brief: command.brief }),
           card: nextCard,
+          // Says the edit TOUCHED the schedule, not what it is — the card
+          // already carries the value (T3O-19, D3). The supervisor acts only on
+          // an edit that named the field, so an unrelated edit to a parked card
+          // never resumes it.
+          ...(command.scheduledStartAt === undefined
+            ? {}
+            : { scheduledStartAt: command.scheduledStartAt }),
           // Fold the review summary onto the event when the edit could change
           // it (t3o-22, D7), so a pure override edit updates the card face live
           // — the same reason the step-completion path folds it. Only when the

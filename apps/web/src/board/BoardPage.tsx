@@ -450,7 +450,7 @@ function EnvironmentBoard({
   // board — positions are a view over the queue, so they are recomputed
   // together or not at all — and it costs a single pass when nothing is queued.
   const queueSlots = useMemo(() => {
-    const queue = boardBuildQueue(everyCard, orderedStages);
+    const queue = boardBuildQueue(everyCard, orderedStages, Date.now());
     if (queue.size === 0) return EMPTY_QUEUE_INFO;
     const running = boardRunningStepCount(everyCard);
     const cap = boardSettings.concurrency.globalMaxConcurrent;
@@ -683,6 +683,7 @@ function EnvironmentBoard({
                 : existing,
             ),
             orderedStages,
+            Date.now(),
           ).get(cardId);
           if (slot !== undefined) {
             toastManager.add({

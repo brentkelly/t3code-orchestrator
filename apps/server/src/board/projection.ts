@@ -185,6 +185,11 @@ const BoardCardDbRow = Schema.Struct({
       follows its project's default branch — indistinguishable on purpose, which
       is what makes replay equal rehydration (T3O-5, D1). */
   baseBranch: BoardCard.fields.baseBranch,
+  /** NULL for every row written before migration 038, for every card that has
+      never been scheduled, and for every card whose schedule has already fired
+      (the supervisor clears it in the pass that acts on it) — indistinguishable
+      on purpose, which is what makes replay equal rehydration (T3O-19, D1). */
+  scheduledStartAt: BoardCard.fields.scheduledStartAt,
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -516,6 +521,10 @@ const BoardCardShellDbRow = Schema.Struct({
       snapshot is its SECOND producer — the delta path derives it in JS. Both
       must carry it or a reload flattens every sub-board onto the root board. */
   parentCardId: BoardCard.fields.parentCardId,
+  /** The card's scheduled start (T3O-19), NULL when it is not scheduled. On
+      the aggregate like `parentCardId`, so this snapshot and the JS delta path
+      both carry it — or a scheduled card's pill would vanish on reconnect. */
+  scheduledStartAt: BoardCard.fields.scheduledStartAt,
   /** The review-summary CACHE (t3o-22, D7); NULL for a card with no review
       history. Its `outcome` is provisional — `resolveBoardCardReviewOutcome`
       settles it against the card's live step at assembly. */
@@ -572,6 +581,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
       : card.modelOverrides,
     splitRationale: card.splitRationale,
     baseBranch: card.baseBranch,
+    scheduledStartAt: card.scheduledStartAt,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -619,6 +629,7 @@ function rowToBoardCard(
     modelOverrides: row.modelOverrides,
     splitRationale: row.splitRationale,
     baseBranch: row.baseBranch,
+    scheduledStartAt: row.scheduledStartAt,
     blocked: row.blocked !== 0,
     threadLinks,
     attachments,
@@ -678,6 +689,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides,
         split_rationale,
         base_branch,
+        scheduled_start_at,
         blocked,
         archived_at,
         created_at,
@@ -705,6 +717,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.modelOverrides},
         ${row.splitRationale},
         ${row.baseBranch},
+        ${row.scheduledStartAt},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -732,6 +745,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides = excluded.model_overrides,
         split_rationale = excluded.split_rationale,
         base_branch = excluded.base_branch,
+        scheduled_start_at = excluded.scheduled_start_at,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -769,6 +783,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
         base_branch AS "baseBranch",
+        scheduled_start_at AS "scheduledStartAt",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -858,6 +873,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           json_extract(pull_request_history, '$[#-1].number')
         ) AS "prNumber",
         parent_card_id AS "parentCardId",
+        scheduled_start_at AS "scheduledStartAt",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -901,6 +917,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           json_extract(pull_request_history, '$[#-1].number')
         ) AS "prNumber",
         parent_card_id AS "parentCardId",
+        scheduled_start_at AS "scheduledStartAt",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -992,6 +1009,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
         base_branch AS "baseBranch",
+        scheduled_start_at AS "scheduledStartAt",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -3107,6 +3125,7 @@ export function withBoardShellCards(
           // top-level after a reconnect — on the root board, and no longer
           // counted against its parent.
           parentCardId: row.parentCardId,
+          scheduledStartAt: row.scheduledStartAt,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
           // it here as well would give the snapshot and the `card-review`
@@ -3196,6 +3215,7 @@ export function withBoardArchivedShellCards(
             attachmentCount: row.attachmentCount,
             prNumber: row.prNumber,
             parentCardId: row.parentCardId,
+            scheduledStartAt: row.scheduledStartAt,
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),

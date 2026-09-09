@@ -544,3 +544,61 @@ it.layer(makeTestLayer("t3o-card-meta-4-"))("sub-board parent, snapshot vs delta
     }),
   );
 });
+
+it.layer(makeTestLayer("t3o-card-schedule-"))("scheduled start, column to shell (T3O-19)", (it) => {
+  const AT = "2026-03-04T09:00:00.000Z";
+  const LATER = "2026-03-05T21:00:00.000Z";
+
+  it.effect("survives the create → column → shell round trip and clears back to absent", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-create-scheduled"),
+        cardId,
+        projectId,
+        title: "A card that waits",
+        orderKey: "m",
+        scheduledStartAt: AT,
+        createdAt,
+      });
+
+      // Written to `board_cards.scheduled_start_at` by the SQL projector and
+      // read back by the shell query — the pair that keeps a scheduled card's
+      // pill from vanishing on reconnect.
+      assert.strictEqual((yield* shellCard)?.scheduledStartAt, AT);
+
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-reschedule"),
+        cardId,
+        scheduledStartAt: LATER,
+        createdAt,
+      });
+      assert.strictEqual((yield* shellCard)?.scheduledStartAt, LATER);
+
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-unschedule"),
+        cardId,
+        scheduledStartAt: null,
+        createdAt,
+      });
+      // Absent, not null (D8): an unscheduled card's shell is byte-for-byte
+      // what it was before this field existed, which is what keeps the
+      // per-card budget and the linear snapshot growth unchanged.
+      const cleared = yield* shellCard;
+      assert.isFalse(cleared !== undefined && "scheduledStartAt" in cleared);
+    }),
+  );
+});
+
+it.layer(makeTestLayer("t3o-card-unscheduled-"))("no scheduled start (T3O-19)", (it) => {
+  it.effect("leaves an unscheduled card's shell without the key at all", () =>
+    Effect.gen(function* () {
+      const card = yield* seedCard().pipe(Effect.andThen(shellCard));
+      assert.isFalse(card !== undefined && "scheduledStartAt" in card);
+    }),
+  );
+});

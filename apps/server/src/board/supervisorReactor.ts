@@ -54,6 +54,7 @@ import {
   isBoardCardPullRequestTerminal,
   isBoardBuildStageExecution,
   isBoardMergeStageExecution,
+  isBoardCardScheduleDue,
   isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
   MessageId,
@@ -179,6 +180,11 @@ export interface SupervisorReactorShape {
       production the worker runs it on a timer; exposed so tests can drive the
       liveness clock deterministically. */
   readonly sweep: Effect.Effect<void>;
+  /** One scheduled-start pass: clear every card whose time has arrived, which
+      is what makes it act (T3O-19, D3/D4). Rides the same 30s timer as the
+      sweep in production; exposed for the same reason, so a test can fire a due
+      card without wall-clock time. */
+  readonly fireSchedules: Effect.Effect<void>;
   /** One release pass: settle every thread the board is finished with (t3o-13).
       Runs on the same timer as the sweep and at every step boundary; exposed so
       tests can drive the retry that lands after an agent's turn ends. */
@@ -1581,6 +1587,10 @@ const make = Effect.gen(function* () {
   const schedule = Effect.fn("board-supervisor-schedule")(function* () {
     const board = yield* readBoard;
     const settings = yield* boardSettings;
+    // Read once for the whole pass: every candidate is gated against the same
+    // instant, so a long pass cannot admit one card and withhold its neighbour
+    // over a boundary that moved underneath them.
+    const nowMs = Date.parse(yield* nowIso);
     const entries = new Map<
       string,
       {
@@ -1601,6 +1611,24 @@ const make = Effect.gen(function* () {
         // paused planning step sent back through Resume (T3O-23) arrives exactly
         // that way, and skipping it would wedge the card in the queue forever.
         yield* admitPlanStep({ card, state });
+        continue;
+      }
+      // The scheduled-start gate (T3O-19, D2). FIRST, before the worktree is
+      // provisioned and long before a slot is offered, so a card scheduled for
+      // tomorrow morning holds no slot, takes no queue position ahead of cards
+      // genuinely waiting on an agent, and cuts no branch overnight from a base
+      // that will have moved by the time it runs. The cost is that provisioning
+      // happens at the due moment, so the start is seconds late rather than
+      // instant; worth it.
+      //
+      // Deliberately AFTER the plan-mode branch above: a plan step is never
+      // withheld, which is what makes the create dialog's promise true — "no
+      // effect unless the card has reached Ready or Building by then, planning
+      // and approval still need you".
+      //
+      // `forceStart` wins, as it does over the concurrency cap: a human pressing
+      // "start it anyway" has overtaken a time they set earlier.
+      if (!state.forceStart && !isBoardCardScheduleDue(card.scheduledStartAt, nowMs)) {
         continue;
       }
       // A build-mode step needs a ready worktree to spawn into. Anything that
@@ -2626,6 +2654,53 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * Park a live step as `paused`: stop its turn, give back its slot, keep its
+   * thread and worktree. The shared body of the two ways a step is paused — a
+   * human pressing Stop (`pauseStepForHumanStop`), and a scheduled time set on
+   * a card that is working right now (T3O-19, D13). One implementation, so the
+   * two cannot drift on the thing that matters most: the slot going back.
+   *
+   * Callers own the status guard, because they do not agree on it. A human Stop
+   * accepts `awaiting-input` and `stalled` too — they asked for the neutral
+   * `Paused` and should get it. A schedule accepts only `running`: every other
+   * parked status is already parked, and converting one would throw away the
+   * reason the card is showing (an unanswered question, an escalation) to say
+   * nothing new.
+   */
+  const pauseStepNow = Effect.fn("board-supervisor-pauseStepNow")(function* (input: {
+    readonly card: BoardCard;
+    readonly state: BoardCardStepState;
+  }) {
+    const landed = yield* dispatchOptional({
+      type: "board.card.pause-step",
+      commandId: yield* commandId("pause-step"),
+      cardId: input.card.id,
+      stepId: input.state.stepId,
+      createdAt: yield* nowIso,
+    });
+    if (!landed) return;
+    // Gated on the pre-pause `slotHeld`, exactly as escalation is.
+    yield* releaseSlot(input.state);
+    const threadId = input.state.threadId;
+    if (threadId !== null) {
+      const shell = yield* snapshotQuery
+        .getThreadShellById(threadId)
+        .pipe(Effect.map(Option.getOrUndefined));
+      if (shell?.session?.activeTurnId != null) {
+        yield* dispatch({
+          type: "thread.turn.interrupt",
+          commandId: yield* commandId("interrupt-paused"),
+          threadId,
+          createdAt: yield* nowIso,
+        });
+      }
+    }
+    // Let the freed slot flow to the queue within a beat rather than at the next
+    // step boundary — the whole point of releasing it.
+    yield* schedule();
+  });
+
+  /**
    * A HUMAN stopped a board-run step (T3O-23) — the way into `paused`.
    *
    * Driven by `thread.turn-interrupt-requested` on the domain stream, acted on
@@ -2677,28 +2752,7 @@ const make = Effect.gen(function* () {
     ) {
       return;
     }
-    const landed = yield* dispatchOptional({
-      type: "board.card.pause-step",
-      commandId: yield* commandId("pause-step"),
-      cardId: found.card.id,
-      stepId: found.state.stepId,
-      createdAt: yield* nowIso,
-    });
-    if (!landed) return;
-    // Gated on the pre-pause `slotHeld`, exactly as escalation is.
-    yield* releaseSlot(found.state);
-    const shell = yield* snapshotQuery
-      .getThreadShellById(threadId)
-      .pipe(Effect.map(Option.getOrUndefined));
-    if (shell?.session?.activeTurnId != null) {
-      yield* dispatch({
-        type: "thread.turn.interrupt",
-        commandId: yield* commandId("interrupt-paused"),
-        threadId,
-        createdAt: yield* nowIso,
-      });
-    }
-    yield* schedule();
+    yield* pauseStepNow({ card: found.card, state: found.state });
   });
 
   const settleStep = Effect.fn("board-supervisor-settleStep")(function* (input: {
@@ -4064,6 +4118,167 @@ const make = Effect.gen(function* () {
     yield* parkStepForInput({ card: watched.card, state: watched.state, reason: "question" });
   });
 
+  /**
+   * Clear a card's scheduled start (T3O-19, D4).
+   *
+   * Through the ordinary `board.card.update` command — no new event, no new
+   * projector path, and no card field mutating out of a step event, which would
+   * force the card aggregate to react to `board.card-step-admitted` in both
+   * projectors.
+   *
+   * The resulting `board.card-updated` is what ACTS on the schedule: it re-enters
+   * this reactor through the same serialised worker and reaches
+   * `applyScheduleEdit` below. That is what makes clear-before-act structural
+   * rather than a convention — a crash between the two leaves a
+   * cleared-but-unstarted card, which the next scheduling pass (or boot's
+   * reconcile) starts. The other order would leave a stale time that re-gates
+   * the NEXT stage, which is the failure this ordering exists to prevent.
+   */
+  const clearCardSchedule = Effect.fn("board-supervisor-clearCardSchedule")(function* (
+    card: BoardCard,
+  ) {
+    if (card.scheduledStartAt === null) return true;
+    // OBSERVED, not fire-and-forget: a refused clear must not be followed by
+    // the act. The only way this is refused is the card being archived or gone,
+    // and neither should start — while acting anyway would leave the stale time
+    // that D4's ordering exists to prevent.
+    return yield* dispatchOptional({
+      type: "board.card.update",
+      commandId: yield* commandId("clear-schedule"),
+      cardId: card.id,
+      scheduledStartAt: null,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /** `clearCardSchedule` from a card id, for the event paths that carry one
+      (a step recovery). A no-op on an unscheduled card, so it costs a board
+      read and nothing else on the overwhelming majority of recoveries. */
+  const clearScheduleForCard = Effect.fn("board-supervisor-clearScheduleForCard")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined) return;
+    yield* clearCardSchedule(card);
+  });
+
+  /**
+   * Make the move the supervisor would otherwise make now (T3O-19, D3) — the
+   * one action a schedule reaching its moment, or being cleared, performs.
+   *
+   * A PARKED step goes back through the ordinary governor queue (T3O-23's
+   * `requeue-step`), which keeps its thread, so admission nudges the
+   * conversation the agent already has rather than starting a fresh one; the
+   * `board.card-step-recovered` handler runs the scheduling pass for it, and a
+   * full board simply leaves it `Queued`, which is the honest answer. Anything
+   * else is a step the gate was withholding, and one pass admits it.
+   */
+  const startOrResumeCard = Effect.fn("board-supervisor-startOrResumeCard")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || card.archivedAt !== null) return;
+    const state = boardCardStepState(board, cardId);
+    if (state !== null && isBoardParkedStepStatus(state.status)) {
+      yield* dispatchOptional({
+        type: "board.card.requeue-step",
+        commandId: yield* commandId("schedule-requeue"),
+        cardId,
+        createdAt: yield* nowIso,
+      });
+    }
+    // Unconditional, and deliberately not left to the `board.card-step-recovered`
+    // handler: the requeue is dispatched from INSIDE this reactor, and a card
+    // whose only route back to the governor was its own event coming round again
+    // would be one stream hop from sitting `queued` forever. The handler stays —
+    // it is the seam for the client's Resume button — and a second pass finds
+    // the step already admitted and does nothing.
+    yield* schedule();
+  });
+
+  /**
+   * Fire ONE card's scheduled start: clear the field, then act (T3O-19, D4).
+   *
+   * The order is the whole content of this function. A crash between the two
+   * leaves a cleared-but-unstarted card, which the next scheduling pass — or
+   * boot's reconcile, which ends in one — starts. Acting first would leave a
+   * stale time behind on a crash, and that time would re-gate the NEXT stage
+   * from a decision the user made about something else. Benign in one
+   * direction, silently wrong in the other.
+   */
+  const fireCardSchedule = Effect.fn("board-supervisor-fireCardSchedule")(function* (
+    card: BoardCard,
+  ) {
+    if (!(yield* clearCardSchedule(card))) return;
+    yield* startOrResumeCard(card.id);
+  });
+
+  /**
+   * React to an edit that TOUCHED the card's scheduled start (T3O-19, D3/D6).
+   *
+   * One rule, in both directions: if the time has arrived (or was cleared),
+   * make the move the supervisor would otherwise make now; if it has not, hold
+   * the card still, stopping a step that is running right now.
+   */
+  const applyScheduleEdit = Effect.fn("board-supervisor-applyScheduleEdit")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || card.archivedAt !== null) return;
+    if (!isBoardCardScheduleDue(card.scheduledStartAt, Date.parse(yield* nowIso))) {
+      // Held for later. A step that is RUNNING is stopped now and picked up
+      // then — the popover says so before the click, and clearing the time
+      // resumes it, which is what makes a confirm dialog unnecessary (D13).
+      //
+      // Only `running`. Every other parked status (`awaiting-input`, `stalled`,
+      // `paused`) is already parked and holds no slot, and re-parking one would
+      // throw away the reason the card is showing to say nothing new; the time
+      // simply schedules its exit. A `pending`/`queued` step needs nothing at
+      // all — the gate in `schedule()` withholds it.
+      const state = boardCardStepState(board, cardId);
+      if (state !== null && state.status === "running") {
+        yield* pauseStepNow({ card, state });
+      }
+      return;
+    }
+    // A time set in the PAST means "now" (D6), so it fires here rather than
+    // waiting up to 30s for the tick — and the card never wears a pill for a
+    // moment that has already gone.
+    if (card.scheduledStartAt !== null) return yield* fireCardSchedule(card);
+    yield* startOrResumeCard(cardId);
+  });
+
+  /**
+   * Fire every card whose scheduled start has arrived (T3O-19, D3).
+   *
+   * Rides the existing 30s sweep tick rather than a timer of its own: ±30s
+   * granularity on a control whose finest input is one minute, and no new
+   * fiber, no polling loop.
+   */
+  const fireDueSchedules = Effect.fn("board-supervisor-fireDueSchedules")(function* () {
+    const board = yield* readBoard;
+    const nowMs = Date.parse(yield* nowIso);
+    for (const card of board.cards) {
+      if (card.scheduledStartAt === null || card.archivedAt !== null) continue;
+      if (!isBoardCardScheduleDue(card.scheduledStartAt, nowMs)) continue;
+      yield* fireCardSchedule(card);
+    }
+  });
+
+  /** The scheduled-start pass as the tick and the test hook consume it: TOTAL,
+      like the timeout sweep beside it. A read-model hiccup must cost one 30s
+      window, never take the sweep fiber down. */
+  const sweepSchedules = fireDueSchedules().pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: scheduled-start sweep failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
+
   // Mid-run human-in-the-loop toggle (D5/D6): when the per-card Build toggle is
   // flipped on a card with a non-terminal step, retune the run row so
   // drop-monitoring and auto-advance honour the new stance, and — if the step
@@ -4077,6 +4292,14 @@ const make = Effect.gen(function* () {
   const handleCardUpdated = Effect.fn("board-supervisor-handleCardUpdated")(function* (
     event: Extract<OrchestrationEvent, { type: "board.card-updated" }>,
   ) {
+    // A schedule edit acts FIRST and on its own terms (T3O-19, D3): it is the
+    // one edit that must reach a card with no live step row at all, and the one
+    // that acts on a step this handler's other arms would have returned past.
+    // Only an edit that NAMED the field reacts — the payload key says so — so
+    // an unrelated edit never resumes a card parked for another reason.
+    if (event.payload.scheduledStartAt !== undefined) {
+      yield* applyScheduleEdit(event.payload.cardId);
+    }
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     const state = boardCardStepState(board, event.payload.cardId);
@@ -4792,6 +5015,11 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (!landed) return;
+    // A human put this step back to work themselves, so a schedule that would
+    // stop it again later has been overtaken (T3O-19, D6). Cleared here rather
+    // than only on the `board.card-step-recovered` this dispatch produces,
+    // because that event is raised from inside this reactor.
+    yield* clearScheduleForCard(found.card.id);
     // The decider wrote `slotHeld: true` for a build step, so the in-memory
     // count has to match it. `restore` rather than `acquire`: the human already
     // sent the turn and the agent is already working, so this is a take, not a
@@ -5014,15 +5242,29 @@ const make = Effect.gen(function* () {
         // the row until some unrelated step boundary happened to run a pass.
         return schedule();
       case "board.card-step-recovered":
-        // The board's way out of a parked step (T3O-23): `requeue-step` lands
-        // it `queued`, holding no slot, and this is what offers it back to the
-        // governor on the click rather than at some unrelated step boundary.
-        // The event is also emitted by every recovery nudge and by an in-thread
-        // resume, neither of which is queued — hence the status test, not a
-        // blanket pass. `requeue-step` is the ONE seam: the card's Resume button
-        // dispatches it directly, and T3O-19's scheduled resume will too, so
-        // neither needs a private path into the governor.
-        return event.payload.state.status === "queued" ? schedule() : Effect.void;
+        // A resume overtakes a schedule (T3O-19, D6): a card a human put back to
+        // work at 3pm must not be re-paused at 9pm by a decision they have
+        // already overtaken. Every way out of a parked step publishes this
+        // event — the Resume button, a turn typed into the thread, an answered
+        // question — so one clear here covers them all. The board's OWN timed
+        // resume arrives with the field already null and clears nothing.
+        //
+        // Safe against a recovery nudge, which publishes this event too: a card
+        // holding a future schedule never has a running step to nudge, because
+        // setting the time paused it and the gate withholds everything else.
+        return clearScheduleForCard(event.payload.cardId).pipe(
+          Effect.andThen(
+            // The board's way out of a parked step (T3O-23): `requeue-step` lands
+            // it `queued`, holding no slot, and this is what offers it back to the
+            // governor on the click rather than at some unrelated step boundary.
+            // The event is also emitted by every recovery nudge and by an in-thread
+            // resume, neither of which is queued — hence the status test, not a
+            // blanket pass. `requeue-step` is the ONE seam: the card's Resume button
+            // dispatches it directly, and T3O-19's scheduled resume will too, so
+            // neither needs a private path into the governor.
+            event.payload.state.status === "queued" ? schedule() : Effect.void,
+          ),
+        );
       case "board.card-archived":
         return handleArchived(event);
       case "board.card-deleted":
@@ -5169,7 +5411,14 @@ const make = Effect.gen(function* () {
         // path that retries a release nothing else will ask about again — a
         // thread whose turn.completed was dropped, or a card the server
         // restarted underneath.
-        return sweepTimeouts.pipe(Effect.andThen(releaseFinishedThreads));
+        // And the scheduled-start sweep (T3O-19, D3): the same argument again —
+        // a board read and an in-memory pass, serialised against the handlers
+        // for the same reason, on the cadence the board already has for
+        // "check on things nothing told us about".
+        return sweepTimeouts.pipe(
+          Effect.andThen(releaseFinishedThreads),
+          Effect.andThen(sweepSchedules),
+        );
     }
   };
 
@@ -5275,6 +5524,7 @@ const make = Effect.gen(function* () {
     start,
     reconcile,
     sweep: sweepTimeouts,
+    fireSchedules: sweepSchedules,
     releaseThreads: releaseFinishedThreads,
     drain: worker.drain,
     // Both run OUTSIDE the serialised worker: they are request-scoped, the
