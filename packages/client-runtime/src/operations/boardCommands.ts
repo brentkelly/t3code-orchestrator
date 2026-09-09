@@ -19,6 +19,8 @@ import {
   type BoardAttachCardFileInput,
   type BoardCardId,
   type BoardDetachCardFileInput,
+  type BoardProviderLimitActionInput,
+  type BoardProviderLimitResumeAtInput,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -118,6 +120,17 @@ export const attachBoardCardFile = (input: BoardAttachCardFileInput) =>
 
 export const detachBoardCardFile = (input: BoardDetachCardFileInput) =>
   request(BOARD_WS_METHODS.detachCardFile, input);
+
+/** Probe a limited provider now (T3O-22) — the popover's "Resume now". One
+    prober, exactly as the timed probe picks one: waking the whole fleet at a
+    moment the human chose is the same mistake as waking it at the reset time. */
+export const probeBoardProviderLimit = (input: BoardProviderLimitActionInput) =>
+  request(BOARD_WS_METHODS.probeProviderLimit, input);
+
+/** Set (or clear, with null) a limited provider's resume time by hand (T3O-22).
+    A human-set time is never overwritten by a later loose match. */
+export const setBoardProviderLimitResumeAt = (input: BoardProviderLimitResumeAtInput) =>
+  request(BOARD_WS_METHODS.setProviderLimitResumeAt, input);
 
 export const createBoardCard: (input: CreateBoardCardInput) => CommandEffect = Effect.fn(
   "BoardCommands.createBoardCard",

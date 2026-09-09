@@ -256,6 +256,8 @@ const overdueStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   baseTipAtRoundStart: null,
   lastError: null,
   awaitingReason: "question" as const,
+  stalledReason: "gave-up" as const,
+  retryAt: null,
   prompt: "build it",
   providerInstanceId: codex,
   model: "gpt-5-codex",

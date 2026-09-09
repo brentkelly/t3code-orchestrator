@@ -39,3 +39,10 @@ separately — clearing the queue will not start a card that is still waiting on
 A card holding a [scheduled start](board-scheduled-starts.md) is not in the queue at all — it takes
 no place in the numbering and no agent slot until its time arrives. It joins the queue then, like
 any other card.
+
+## Cards held by a usage limit
+
+A card parked because its provider ran out of usage is not in the queue either, and holds no agent
+slot while it waits — see [usage limits](board-usage-limits.md). The same is true of a card between
+retries: it hands its slot back rather than holding one idle, and rejoins the queue when its turn
+comes round, ahead of work that has not started.

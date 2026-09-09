@@ -21,7 +21,9 @@ import {
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   aliveThreadShell,
@@ -51,6 +53,8 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   baseTipAtRoundStart: null,
   lastError: null,
   awaitingReason: "question" as const,
+  stalledReason: "gave-up" as const,
+  retryAt: null,
   prompt: "build it",
   providerInstanceId: codex,
   model: "gpt-5-codex",
@@ -58,7 +62,11 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   runtimeMode: "auto",
   humanInLoop: false,
   maxAttempts: 3,
-  timeoutMs: 60_000,
+  // Well past any backoff rung this fixture waits out (T3O-22, D7): with a
+  // one-minute timeout the 30s tick's timeout sweep would fire while the step
+  // sat waiting for its rung and re-park it, testing the sweep rather than the
+  // restart recovery this is about.
+  timeoutMs: 30 * 60_000,
   threadId,
   status: "running",
   slotHeld: true,
@@ -113,12 +121,27 @@ it.effect("boot: a STALE activeTurnId does not keep an errored session alive", (
     ({ board, slots, reactor }) =>
       Effect.gen(function* () {
         yield* reactor.drain;
-        const state = boardCardStepState(yield* board, cardId);
-        assert.strictEqual(state?.attempt, 2);
-        assert.strictEqual(state?.status, "running");
-        // An ordinary retry keeps its place in the queue (t3o-17, D13), so the
-        // slot the restart orphaned is restored and still held.
-        assert.isTrue(state?.slotHeld);
+        const parked = boardCardStepState(yield* board, cardId);
+        // Recovery happened — the attempt was charged — but since T3O-22 (D7) it
+        // WAITS its first backoff rung rather than nudging the corpse on the
+        // spot, and gives the restored slot straight back while it waits. That
+        // supersedes t3o-17's "a retry keeps its place" for the waiting window:
+        // holding a worker idle for two minutes on a three-slot board is the
+        // worse trade, and `orderBoardQueue` ranks a started, later-stage card
+        // ahead of fresh work when its rung arrives.
+        assert.strictEqual(parked?.attempt, 2);
+        assert.strictEqual(parked?.status, "stalled");
+        assert.strictEqual(parked?.stalledReason, "waiting-retry");
+        assert.isFalse(parked?.slotHeld);
+        assert.strictEqual(yield* slots.heldFor(codex), 0);
+
+        // …and the rung arriving is what puts it back to work, slot and all.
+        yield* TestClock.adjust(Duration.minutes(5));
+        yield* reactor.fireRetries;
+        yield* reactor.drain;
+        const resumed = boardCardStepState(yield* board, cardId);
+        assert.strictEqual(resumed?.status, "running");
+        assert.isTrue(resumed?.slotHeld);
         assert.strictEqual(yield* slots.heldFor(codex), 1);
       }),
   ),

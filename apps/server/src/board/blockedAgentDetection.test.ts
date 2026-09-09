@@ -24,7 +24,9 @@ import {
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as Ref from "effect/Ref";
 
 import {
@@ -539,6 +541,8 @@ const seededStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepState
   // it), so a leftover value sits here — which is also what keeps the park
   // assertions honest: they read a reason this run DERIVED, not this one.
   awaitingReason: "stopped" as const,
+  stalledReason: "gave-up" as const,
+  retryAt: null,
   prompt: "interview the human",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
@@ -546,7 +550,11 @@ const seededStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepState
   runtimeMode: "auto",
   humanInLoop: true,
   maxAttempts: 3,
-  timeoutMs: 60_000,
+  // Well past any backoff rung this fixture waits out (T3O-22, D7): with a
+  // one-minute timeout the 30s tick's timeout sweep would fire while the step
+  // sat waiting for its rung and re-park it, testing the sweep rather than the
+  // restart recovery this is about.
+  timeoutMs: 30 * 60_000,
   threadId: RESTART_THREAD,
   status: "running",
   slotHeld: true,
@@ -632,9 +640,21 @@ it.effect(
       ({ board, reactor }) =>
         Effect.gen(function* () {
           yield* reactor.drain;
+          // Recovery, not a park on the human: the attempt is charged and the
+          // step is waiting to retry rather than waiting on a person. Since
+          // T3O-22 (D7) the nudge itself goes out when the backoff rung arrives.
           const recovered = boardCardStepState(yield* board, BoardCardId.make("restart"));
-          assert.strictEqual(recovered?.status, "running");
+          assert.strictEqual(recovered?.status, "stalled");
+          assert.strictEqual(recovered?.stalledReason, "waiting-retry");
           assert.strictEqual(recovered?.attempt, 2);
+
+          yield* TestClock.adjust(Duration.minutes(5));
+          yield* reactor.fireRetries;
+          yield* reactor.drain;
+          assert.strictEqual(
+            boardCardStepState(yield* board, BoardCardId.make("restart"))?.status,
+            "running",
+          );
         }),
     );
   },

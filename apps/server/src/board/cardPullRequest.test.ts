@@ -77,6 +77,8 @@ const runningMergeStep = (cardId: BoardCardId): BoardCardStepState => ({
   baseTipAtRoundStart: null,
   lastError: null,
   awaitingReason: "question" as const,
+  stalledReason: "gave-up" as const,
+  retryAt: null,
   prompt: "resolve the conflicts",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",

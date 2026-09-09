@@ -33,6 +33,7 @@ import {
   BoardCardId,
   BoardCardShell,
   BoardCardThreadShell,
+  BoardProviderLimit,
   BoardLabel,
   BoardLabelId,
   BoardStageDefinition,
@@ -600,6 +601,12 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   // are key-optional, so threads without a list cost almost nothing. Optional for
   // interop.
   boardCardThreads: Schema.optional(Schema.Array(BoardCardThreadShell)),
+  // T3o: provider cooldowns ride the shell ONCE (T3O-22, D14), following the
+  // `boardLabels` precedent — one fact per provider ACCOUNT, never denormalised
+  // onto the cards that share it, so the top bar can say "Anthropic limit ·
+  // 1:00 AM" with no card on screen. Absent on every board that has never hit a
+  // limit, which is the overwhelming majority. Optional for interop.
+  boardProviderLimits: Schema.optional(Schema.Array(BoardProviderLimit)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
@@ -1211,12 +1218,16 @@ export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 // T3o: cards are a new aggregate (D9) — "card" appended to the literals;
 // "label" appended for the second board aggregate (t3o-06a); "stage" appended
 // for the user-defined stage aggregate (t3o-15). Frozen widening.
+// …and "provider-limit" for the provider-cooldown aggregate (T3O-22), which is
+// keyed on a provider INSTANCE rather than on any card: a usage limit belongs to
+// an account, and the cards it holds come and go underneath it.
 export const OrchestrationAggregateKind = Schema.Literals([
   "project",
   "thread",
   "card",
   "label",
   "stage",
+  "provider-limit",
 ]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
@@ -1479,7 +1490,15 @@ const EventBaseFields = {
   // the label aggregate (t3o-06a); BoardStageId for the stage aggregate
   // (t3o-15). Frozen widening — the aggregateId union tracks
   // `OrchestrationAggregateKind` member-for-member.
-  aggregateId: Schema.Union([ProjectId, ThreadId, BoardCardId, BoardLabelId, BoardStageId]),
+  // …and ProviderInstanceId for the provider-cooldown aggregate (T3O-22).
+  aggregateId: Schema.Union([
+    ProjectId,
+    ThreadId,
+    BoardCardId,
+    BoardLabelId,
+    BoardStageId,
+    ProviderInstanceId,
+  ]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),

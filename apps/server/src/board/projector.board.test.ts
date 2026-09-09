@@ -96,6 +96,8 @@ function makeStepState(id: string): BoardCardStepState {
     baseTipAtRoundStart: null,
     lastError: null,
     awaitingReason: "question" as const,
+    stalledReason: "gave-up" as const,
+    retryAt: null,
     prompt: "",
     providerInstanceId: ProviderInstanceId.make("codex"),
     model: "gpt-5-codex",
@@ -616,6 +618,8 @@ describe("board projector", () => {
         baseTipAtRoundStart: null,
         lastError: null,
         awaitingReason: "question" as const,
+        stalledReason: "gave-up" as const,
+        retryAt: null,
         // Frozen execution config on the run row (D12).
         prompt: "do it",
         providerInstanceId: ProviderInstanceId.make("codex"),
@@ -782,6 +786,8 @@ describe("board projector", () => {
         baseTipAtRoundStart: null,
         lastError: null,
         awaitingReason: "question" as const,
+        stalledReason: "gave-up" as const,
+        retryAt: null,
         prompt: "do it",
         providerInstanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
@@ -828,6 +834,8 @@ describe("board projector", () => {
         baseTipAtRoundStart: null,
         lastError: null,
         awaitingReason: "question" as const,
+        stalledReason: "gave-up" as const,
+        retryAt: null,
         prompt: "do it",
         providerInstanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
@@ -856,10 +864,15 @@ describe("board projector", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: null,
+        // Why it stalled rides the same delta (T3O-22, D10). No `retryAt` here:
+        // recovery giving up promises no retry, and a time on it would be a
+        // promise nothing keeps.
+        stalledReason: "gave-up",
         stepConflictFix: false,
         queued: false,
       });
-      // An ordinary retry (status running) clears the badge.
+      // An ordinary retry (status running) clears the badge — and, by their
+      // absence from the delta, the stall reason and retry time with it.
       const retryRecover: BoardEvent = {
         ...eventBase,
         type: "board.card-step-recovered",
@@ -917,6 +930,8 @@ describe("board projector", () => {
         baseTipAtRoundStart: null,
         lastError: null,
         awaitingReason: "question" as const,
+        stalledReason: "gave-up" as const,
+        retryAt: null,
         prompt: "resolve the conflicts",
         providerInstanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",

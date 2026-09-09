@@ -20,6 +20,8 @@
  */
 import {
   BoardCardStepAwaitingReason,
+  BoardCardStepStalledReason,
+  BoardProviderLimit,
   activeBoardCardThreadId,
   BOARD_CARD_BRIEF_BODY_KIND,
   BoardCard,
@@ -92,6 +94,7 @@ import {
   compareBoardCards,
   compareBoardPlans,
   compareBoardStepCompletions,
+  compareBoardProviderLimits,
   compareBoardStepStates,
 } from "./projector.ts";
 
@@ -443,6 +446,13 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULLABLE in the DB: rows written before migration 040 have no value, and a
   // null already MEANS "no human turn is owed a free ending" (T3O-17, D4).
   humanTurnAt: BoardCardStepState.fields.humanTurnAt,
+  // NULLABLE in the DB: rows written before migration 041 have no value, and a
+  // stalled row written before T3O-22 was recovery giving up — which is
+  // `gave-up` (T3O-22, D10).
+  stalledReason: Schema.NullOr(BoardCardStepStalledReason),
+  // NULLABLE in the DB, and a null already MEANS "nothing scheduled": before
+  // T3O-22 the next nudge went instantly, so no row had a time to record.
+  retryAt: BoardCardStepState.fields.retryAt,
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -456,6 +466,24 @@ const BoardCardStepStateDbRow = Schema.Struct({
   updatedAt: BoardCardStepState.fields.updatedAt,
 });
 type BoardCardStepStateDbRow = typeof BoardCardStepStateDbRow.Type;
+
+/** The `board_provider_limits` row (T3O-22). Booleans are 0/1 integers, the
+    same convention `slotHeld`/`forceStart` follow above. */
+const BoardProviderLimitDbRow = Schema.Struct({
+  providerInstanceId: BoardProviderLimit.fields.providerInstanceId,
+  kind: BoardProviderLimit.fields.kind,
+  until: BoardProviderLimit.fields.until,
+  detectedAt: BoardProviderLimit.fields.detectedAt,
+  lastCheckedAt: BoardProviderLimit.fields.lastCheckedAt,
+  reason: BoardProviderLimit.fields.reason,
+  ruleId: BoardProviderLimit.fields.ruleId,
+  sourceCardId: BoardProviderLimit.fields.sourceCardId,
+  knownTime: Schema.Int,
+  blindSince: BoardProviderLimit.fields.blindSince,
+  probeCardId: BoardProviderLimit.fields.probeCardId,
+  setByHuman: Schema.Int,
+});
+type BoardProviderLimitDbRow = typeof BoardProviderLimitDbRow.Type;
 
 // `dependsOn` JSON-encodes; `locked` travels as 0/1 (SQLite has no boolean).
 const BoardPlanDbRow = Schema.Struct({
@@ -491,6 +519,26 @@ function rowToBoardPlan(row: BoardPlanDbRow): BoardPlan {
 
 function rowToBoardPlanWithBody(row: BoardPlanDbRow): BoardPlanWithBody {
   return { ...rowToBoardPlan(row), body: row.body };
+}
+
+// Row → cooldown mapping, spelled once (T3O-22): the read-model rehydrator and
+// the shell-snapshot enricher both need it, and the two must agree about the
+// 0/1 coercions or a reload would disagree with a replay.
+function rowToBoardProviderLimit(row: BoardProviderLimitDbRow): BoardProviderLimit {
+  return {
+    providerInstanceId: row.providerInstanceId,
+    kind: row.kind,
+    until: row.until,
+    detectedAt: row.detectedAt,
+    lastCheckedAt: row.lastCheckedAt,
+    reason: row.reason,
+    ruleId: row.ruleId,
+    sourceCardId: row.sourceCardId,
+    knownTime: row.knownTime !== 0,
+    blindSince: row.blindSince,
+    probeCardId: row.probeCardId,
+    setByHuman: row.setByHuman !== 0,
+  };
 }
 
 /**
@@ -1700,7 +1748,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id, step_id, step_label, stage_label, attempt, stall_count,
         stage_entry_recoveries, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
-        last_error, awaiting_reason, human_turn_at,
+        last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         started_at, updated_at
       )
@@ -1709,7 +1757,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.stageEntryRecoveries}, ${row.lastNudgeAt}, ${row.prompt},
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
-        ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt},
+        ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt}, ${row.stalledReason}, ${row.retryAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.startedAt}, ${row.updatedAt}
@@ -1733,6 +1781,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         last_error = excluded.last_error,
         awaiting_reason = excluded.awaiting_reason,
         human_turn_at = excluded.human_turn_at,
+        stalled_reason = excluded.stalled_reason,
+        retry_at = excluded.retry_at,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -1768,6 +1818,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         last_error AS "lastError",
         awaiting_reason AS "awaitingReason",
         human_turn_at AS "humanTurnAt",
+        stalled_reason AS "stalledReason",
+        retry_at AS "retryAt",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -1778,6 +1830,65 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         started_at AS "startedAt",
         updated_at AS "updatedAt"
       FROM board_card_step_state
+    `,
+  });
+
+  // One row per provider INSTANCE (T3O-22): the board's cooldowns. Upsert on
+  // the instance id so a re-detection, a reschedule and a probe hand-off all
+  // replace the same row.
+  const upsertBoardProviderLimitRow = SqlSchema.void({
+    Request: BoardProviderLimitDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_provider_limits (
+        provider_instance_id, kind, until, detected_at, last_checked_at,
+        reason, rule_id, source_card_id, known_time, blind_since, probe_card_id, set_by_human
+      )
+      VALUES (
+        ${row.providerInstanceId}, ${row.kind}, ${row.until}, ${row.detectedAt}, ${row.lastCheckedAt},
+        ${row.reason}, ${row.ruleId}, ${row.sourceCardId}, ${row.knownTime}, ${row.blindSince},
+        ${row.probeCardId}, ${row.setByHuman}
+      )
+      ON CONFLICT (provider_instance_id)
+      DO UPDATE SET
+        kind = excluded.kind,
+        until = excluded.until,
+        detected_at = excluded.detected_at,
+        last_checked_at = excluded.last_checked_at,
+        reason = excluded.reason,
+        rule_id = excluded.rule_id,
+        source_card_id = excluded.source_card_id,
+        known_time = excluded.known_time,
+        blind_since = excluded.blind_since,
+        probe_card_id = excluded.probe_card_id,
+        set_by_human = excluded.set_by_human
+    `,
+  });
+
+  const deleteBoardProviderLimitRow = SqlSchema.void({
+    Request: ProviderInstanceId,
+    execute: (providerInstanceId) => sql`
+      DELETE FROM board_provider_limits WHERE provider_instance_id = ${providerInstanceId}
+    `,
+  });
+
+  const listBoardProviderLimitRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardProviderLimitDbRow,
+    execute: () => sql`
+      SELECT
+        provider_instance_id AS "providerInstanceId",
+        kind,
+        until,
+        detected_at AS "detectedAt",
+        last_checked_at AS "lastCheckedAt",
+        reason,
+        rule_id AS "ruleId",
+        source_card_id AS "sourceCardId",
+        known_time AS "knownTime",
+        blind_since AS "blindSince",
+        probe_card_id AS "probeCardId",
+        set_by_human AS "setByHuman"
+      FROM board_provider_limits
     `,
   });
 
@@ -2060,6 +2171,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardStepRows,
     upsertBoardCardStepStateRow,
     listBoardCardStepStateRows,
+    upsertBoardProviderLimitRow,
+    deleteBoardProviderLimitRow,
+    listBoardProviderLimitRows,
     findBoardCardStepErrorRow,
     findLatestAssistantMessage,
     findThreadLastSignalAt,
@@ -2354,6 +2468,8 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         lastError: state.lastError,
         awaitingReason: state.awaitingReason,
         humanTurnAt: state.humanTurnAt,
+        stalledReason: state.stalledReason,
+        retryAt: state.retryAt,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -2365,6 +2481,31 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         updatedAt: state.updatedAt,
       })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.stepState:query")));
+
+  const upsertProviderLimit = (limit: BoardProviderLimit) =>
+    queries
+      .upsertBoardProviderLimitRow({
+        providerInstanceId: limit.providerInstanceId,
+        kind: limit.kind,
+        until: limit.until,
+        detectedAt: limit.detectedAt,
+        lastCheckedAt: limit.lastCheckedAt,
+        reason: limit.reason,
+        ruleId: limit.ruleId,
+        sourceCardId: limit.sourceCardId,
+        knownTime: limit.knownTime ? 1 : 0,
+        blindSince: limit.blindSince,
+        probeCardId: limit.probeCardId,
+        setByHuman: limit.setByHuman ? 1 : 0,
+      })
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.providerLimit:query")));
+
+  const deleteProviderLimit = (providerInstanceId: ProviderInstanceId) =>
+    queries
+      .deleteBoardProviderLimitRow(providerInstanceId)
+      .pipe(
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.providerLimitDelete:query")),
+      );
 
   const upsertStage = (stage: BoardStageDefinition) =>
     queries
@@ -2862,6 +3003,18 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         });
         return;
 
+      // T3o (T3O-22): the provider-cooldown table. Not a card event at all —
+      // no `upsertCard`, and deliberately no activity row: a cooldown is a
+      // provider fact, and writing it onto the rail of whichever card happened
+      // to discover it would claim the card did something.
+      case "board.provider-limit-recorded":
+        yield* upsertProviderLimit(event.payload.limit);
+        return;
+
+      case "board.provider-limit-cleared":
+        yield* deleteProviderLimit(event.payload.providerInstanceId);
+        return;
+
       default: {
         event satisfies never;
         return;
@@ -2901,6 +3054,7 @@ export function loadBoardState(
     queries.listBoardCardStepRows(),
     queries.listBoardCardStepStateRows(),
     queries.listBoardPlanRows(),
+    queries.listBoardProviderLimitRows(),
   ]).pipe(
     Effect.map(
       ([
@@ -2914,6 +3068,7 @@ export function loadBoardState(
         stepRows,
         stepStateRows,
         planRows,
+        providerLimitRows,
       ]) => {
         // Canonical ordering comes from the shared JS comparators — the same
         // ones the replay path uses — never from SQL collation.
@@ -3009,6 +3164,10 @@ export function loadBoardState(
               // could only have parked through the structured-question path.
               awaitingReason: row.awaitingReason ?? "question",
               humanTurnAt: row.humanTurnAt,
+              // A NULL column reads as `gave-up` (T3O-22, D10): pre-041 rows
+              // could only have stalled through recovery giving up.
+              stalledReason: row.stalledReason ?? "gave-up",
+              retryAt: row.retryAt,
               humanInLoop: row.humanInLoop !== 0,
               maxAttempts: row.maxAttempts,
               timeoutMs: row.timeoutMs,
@@ -3022,6 +3181,12 @@ export function loadBoardState(
           )
           .sort(compareBoardStepStates);
         const plans = planRows.map(rowToBoardPlan).sort(compareBoardPlans);
+        // Provider cooldowns (T3O-22). Omitted, not empty, when nothing is
+        // limited — the same absent-vs-empty rule every slice above follows, so
+        // an ordinary board rehydrates exactly as a from-empty replay.
+        const providerLimits = providerLimitRows
+          .map(rowToBoardProviderLimit)
+          .sort(compareBoardProviderLimits);
         return {
           cards: cardRows
             .map((row) =>
@@ -3038,6 +3203,7 @@ export function loadBoardState(
           ...(stepCompletions.length > 0 ? { stepCompletions } : {}),
           ...(stepStates.length > 0 ? { stepStates } : {}),
           ...(plans.length > 0 ? { plans } : {}),
+          ...(providerLimits.length > 0 ? { providerLimits } : {}),
           nextCardNumberByProject: Object.fromEntries(
             counterRows.map((row) => [row.projectId, row.maxCardNumber + 1]),
           ),
@@ -3117,6 +3283,14 @@ export function withBoardShellCards(
       const runningByCard = new Set<BoardCardId>();
       const heldByCard = new Set<BoardCardId>();
       const awaitingByCard = new Map<BoardCardId, BoardCardStepParkedReason>();
+      const stallByCard = new Map<
+        BoardCardId,
+        {
+          readonly stalledReason: BoardCardStepStalledReason;
+          readonly retryAt: string | null;
+          readonly limitedByInstanceId: ProviderInstanceId | null;
+        }
+      >();
       const conflictFixByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
@@ -3148,6 +3322,19 @@ export function withBoardShellCards(
           awaitingReason: row.awaitingReason ?? "question",
         });
         if (parked !== null) awaitingByCard.set(row.cardId, parked);
+        // Why the step stalled, when it next tries, and which provider account
+        // is holding it (T3O-22, D10/D14). Read off the persisted row through
+        // the same rule the delta uses, so a reconnect renders identically to
+        // the live stream — which matters most here, because a cooldown outlives
+        // any one connection.
+        if (row.status === "stalled") {
+          stallByCard.set(row.cardId, {
+            stalledReason: row.stalledReason ?? "gave-up",
+            retryAt: row.retryAt,
+            limitedByInstanceId:
+              (row.stalledReason ?? "gave-up") === "usage-limit" ? row.providerInstanceId : null,
+          });
+        }
         // Whether the live step is a merge conflict fix (T3O-9). Read off the
         // PERSISTED step label through the same predicate the delta uses, so a
         // reconnect mid-fix renders identically to the live stream — and so a
@@ -3201,6 +3388,7 @@ export function withBoardShellCards(
           stepRunning: runningByCard.has(row.cardId),
           held: heldByCard.has(row.cardId),
           stepAwaiting: awaitingByCard.get(row.cardId) ?? null,
+          ...(stallByCard.get(row.cardId) ?? {}),
           stepConflictFix: conflictFixByCard.has(row.cardId),
           thread: liveThreads,
         });
@@ -3318,6 +3506,38 @@ export function withBoardShellLabels(
         }))
         .sort(compareBoardLabels);
       return { ...shell, boardLabels };
+    }),
+  );
+}
+
+/**
+ * Provider cooldowns ride the shell snapshot ONCE (T3O-22, D14), on the
+ * `boardLabels` precedent — one fact per provider ACCOUNT, never denormalised
+ * onto the cards that share it.
+ *
+ * The snapshot is the ONLY producer a reconnecting client has: the
+ * `card-provider-limit-upserted` delta keeps a live client honest, but a
+ * cooldown is a multi-hour fact and the client that reloads in the middle of one
+ * replays no delta at all. Without this the pill, the popover, the waiting list
+ * and both of its buttons would be invisible for essentially the whole life of
+ * every limit. Attached only when something is limited, which on the
+ * overwhelming majority of boards is never — absent, not `[]`, like every other
+ * conditional slice here.
+ */
+export function withBoardShellProviderLimits(
+  queries: BoardCardQueries,
+  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
+): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
+  const limitRows = queries
+    .listBoardProviderLimitRows()
+    .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellProviderLimits:query")));
+  return Effect.all([snapshot, limitRows]).pipe(
+    Effect.map(([shell, rows]) => {
+      if (rows.length === 0) return shell;
+      const boardProviderLimits = rows
+        .map(rowToBoardProviderLimit)
+        .sort(compareBoardProviderLimits);
+      return { ...shell, boardProviderLimits };
     }),
   );
 }
@@ -3693,7 +3913,16 @@ export function boardSnapshotQueryMethods(
           queries,
           withBoardShellStages(
             queries,
-            withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+            withBoardShellLabels(
+              queries,
+              // T3O-22: the cooldown slice, so a client reconnecting mid-limit
+              // sees the pill it would otherwise only learn about from a delta
+              // it was not connected for.
+              withBoardShellProviderLimits(
+                queries,
+                withBoardShellCards(queries, base.getShellSnapshot()),
+              ),
+            ),
           ),
         ),
         base.getShellSnapshot(),

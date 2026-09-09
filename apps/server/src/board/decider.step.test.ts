@@ -95,6 +95,8 @@ const stepState = (
   stageEntryRecoveries: 0,
   humanTurnAt: null,
   awaitingReason: "question",
+  stalledReason: "gave-up",
+  retryAt: null,
   lastNudgeAt: null,
   ...frozenConfig,
   threadId: ThreadId.make("thread-1"),
@@ -467,7 +469,13 @@ it.effect(
         board,
       );
       if (event.type === "board.card-step-recovered") {
-        assert.strictEqual(event.payload.state.attempt, 4);
+        // Progress resets the whole retry budget, not just the streak (T3O-22,
+        // D12): the step demonstrably did real work since the last nudge, so it
+        // starts its ladder over rather than inheriting a count from the stall
+        // before it. `attempt` used to climb here regardless, which meant a card
+        // that resumed, worked for a day and stalled again arrived at the
+        // ceiling on its first quiet turn.
+        assert.strictEqual(event.payload.state.attempt, 1);
         // Progress forgets the streak; this stall is #1 of a new one.
         assert.strictEqual(event.payload.state.stallCount, 1);
         // A nudge is a recovery too, whether or not it progressed: the ceiling
@@ -535,6 +543,45 @@ it.effect(
         assert.strictEqual(event.payload.state.lastNudgeAt, NOW);
       }
     }),
+);
+
+it.effect("resume-step drops the park's reason and its scheduled retry (T3O-22)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    // A card parked behind a provider cooldown, resumed by a human who is not
+    // waiting for the window: the row is about to be RUNNING, so a `usage-limit`
+    // reason and a future `retryAt` on it are simply untrue. Every reader of
+    // both happens to gate on `status === "stalled"` today, which is what keeps
+    // this quiet rather than correct.
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [
+        stepState("card-1", "stalled", {
+          stalledReason: "usage-limit",
+          retryAt: "2026-01-01T05:00:00.000Z",
+        }),
+      ],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.resume-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(event.type, "board.card-step-recovered");
+    if (event.type === "board.card-step-recovered") {
+      assert.strictEqual(event.payload.state.status, "running");
+      // `gave-up` is the column's neutral value — the same clear `admit-step`
+      // writes when a requeued step is admitted.
+      assert.strictEqual(event.payload.state.stalledReason, "gave-up");
+      assert.strictEqual(event.payload.state.retryAt, null);
+    }
+  }),
 );
 
 it.effect("resume-step refuses a step that is not parked (t3o-17, D3; T3O-23)", () =>

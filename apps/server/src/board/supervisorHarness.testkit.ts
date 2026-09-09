@@ -48,6 +48,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
+  type BoardUsageLimitMatch,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Data from "effect/Data";
@@ -77,6 +78,7 @@ import {
 import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
+import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDetector.ts";
 
 export const NOW = "2026-01-01T00:00:00.000Z";
 export const projectId = ProjectId.make("project-1");
@@ -99,6 +101,13 @@ export const codexStep: TestBuildStep = {
   prompt: DEFAULT_BOARD_BUILD_PROMPT,
 };
 
+/** Every thread shell names the provider instance it runs on: the board reads
+    it off the shell to decide which provider a turn belongs to (T3O-22, D9). */
+const defaultShellModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5-codex",
+};
+
 /** A ready worktree — the state right after "Begin build" provisioned it. */
 export const readyWorktree = (id: string): BoardCardWorktree => ({
   branch: `board/${id}`,
@@ -116,6 +125,7 @@ export const readyWorktree = (id: string): BoardCardWorktree => ({
 export const aliveThreadShell = (threadId: string): OrchestrationThreadShell =>
   ({
     id: threadId,
+    modelSelection: defaultShellModelSelection,
     hasPendingUserInput: false,
     hasPendingApprovals: false,
     archivedAt: null,
@@ -133,6 +143,7 @@ export const failedThreadShell = (
 ): OrchestrationThreadShell =>
   ({
     id: threadId,
+    modelSelection: defaultShellModelSelection,
     hasPendingUserInput: false,
     hasPendingApprovals: false,
     archivedAt: null,
@@ -147,9 +158,16 @@ export const failedThreadShell = (
 /** A thread shell between turns: the agent has stopped, nothing is pending.
     What a board thread looks like the moment its turn ends — and therefore the
     moment a release the decider refused mid-turn can finally land (t3o-13). */
-export const idleThreadShell = (threadId: string): OrchestrationThreadShell =>
+export const idleThreadShell = (
+  threadId: string,
+  /** Which provider instance the thread runs on (T3O-22). The cooldown paths
+      read it off the shell — that is how a clean turn on ANY thread, including
+      a human's own non-board one, lifts a limit. */
+  instanceId: ProviderInstanceId = codexStep.providerInstanceId,
+): OrchestrationThreadShell =>
   ({
     id: threadId,
+    modelSelection: { instanceId, model: "gpt-5-codex" },
     hasPendingUserInput: false,
     hasPendingApprovals: false,
     archivedAt: null,
@@ -444,6 +462,16 @@ export type Harness = {
       remote-only base was MATERIALISED (T3O-5, D7) has nowhere else to read it:
       `git branch develop origin/develop` leaves no trace on the card. */
   readonly gitInvocations: Effect.Effect<ReadonlyArray<ReadonlyArray<string>>>;
+  /** What the STUBBED usage-limit detector answers for a thread from now on
+      (T3O-22, criterion 25).
+   *
+      The behavioural suite drives `wait` / `exhausted` / `slow-down` / null
+      through this rather than by crafting provider prose and hoping the
+      classifier agrees — those tests are about the SUPERVISOR, and the
+      classifier has three suites of its own. A thread with no verdict set
+      answers null, which is every fixture written before T3O-22 and leaves them
+      behaving exactly as they did. */
+  readonly setUsageVerdict: (threadId: string, verdict: BoardUsageLimitMatch | null) => void;
 };
 
 /**
@@ -540,6 +568,10 @@ export function withGovernor(
         the card's brief images from `<stateDir>/board/attachments`; without
         one the reactor stages nothing, as the other tests expect. */
     readonly serverConfig?: Layer.Layer<ServerConfig.ServerConfig>;
+    /** The stubbed usage-limit verdict per thread id (T3O-22). Absent threads
+        answer null — "the catalogue says nothing" — so every fixture written
+        before this behaves identically. See `setUsageVerdict`. */
+    readonly usageVerdicts?: ReadonlyMap<string, BoardUsageLimitMatch | null>;
   },
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
@@ -918,6 +950,15 @@ export function withGovernor(
         ),
     });
 
+    // The usage-limit detector, STUBBED (T3O-22, criterion 25). Mutable so a
+    // test can change a thread's verdict mid-run — which is exactly the probe
+    // story: the same thread refuses once, then answers cleanly.
+    const usageVerdicts = new Map<string, BoardUsageLimitMatch | null>(input.usageVerdicts ?? []);
+    const usageLimitStub: UsageLimitDetectorShape = {
+      classifyTurn: (classifyInput) =>
+        Effect.succeed(usageVerdicts.get(String(classifyInput.threadId)) ?? null),
+    };
+
     const deps = Layer.mergeAll(
       Layer.succeed(OrchestrationEngineService, engineStub),
       Layer.succeed(ProjectionSnapshotQuery, snapshotStub),
@@ -926,6 +967,7 @@ export function withGovernor(
       Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub),
       Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
       Layer.succeed(BoardPullRequestGateway, pullRequestStub),
+      Layer.succeed(UsageLimitDetector, usageLimitStub),
       BoardStepSlotsLive,
       input.serverConfig ?? Layer.empty,
     );
@@ -1005,6 +1047,7 @@ export function withGovernor(
           settledThreads: Ref.get(settled),
           setBaseTip: (ref, tip) => void baseTips.set(ref, tip),
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),
+          setUsageVerdict: (threadId, verdict) => void usageVerdicts.set(threadId, verdict),
         });
       }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
     );
@@ -1217,11 +1260,34 @@ export const cardDeleted = (
 /** A turn ending. `turnId` names the turn that ENDED — pass it whenever the
     fixture also gives the thread a shell, because that is the pair the turn-end
     handler compares to tell a lagging projection from a live second turn. */
-export const turnCompleted = (threadId: ThreadId, turnId?: string): ProviderRuntimeEvent =>
+/**
+ * A turn ending on a thread.
+ *
+ * The `payload` is not optional and never was: every adapter stamps one, and the
+ * board reads `errorMessage` out of it (T3O-22, D4) — Grok's quota refusal
+ * arrives ONLY that way, on a `failed` turn with no assistant message anywhere.
+ * This fixture used to omit it entirely, which no test noticed until something
+ * read it.
+ */
+export const turnCompleted = (
+  threadId: ThreadId,
+  turnId?: string,
+  /** A failed turn's own error text, for the Grok-shaped refusal path. */
+  errorMessage?: string,
+  /** How the turn ended. Defaults to the pair that always travels together — an
+      error text means `failed`, its absence means `completed` — and is passed
+      explicitly only to build the odd shapes: an interrupted turn (a human
+      pressed Stop) or a failure that named nothing. */
+  state?: "completed" | "failed" | "interrupted" | "cancelled",
+): ProviderRuntimeEvent =>
   ({
     type: "turn.completed",
     threadId,
     ...(turnId === undefined ? {} : { turnId }),
+    payload: {
+      state: state ?? (errorMessage === undefined ? "completed" : "failed"),
+      ...(errorMessage === undefined ? {} : { errorMessage }),
+    },
   }) as unknown as ProviderRuntimeEvent;
 
 /** A turn actually beginning on a thread (t3o-34, D5). */

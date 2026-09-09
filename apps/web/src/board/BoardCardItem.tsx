@@ -103,15 +103,12 @@ const EMPTY_TODO_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
  * order, so a card must carry exactly one border / fill / shadow class.
  */
 const TONE_BORDER: Record<BoardCardAttentionTone, string> = {
-  danger: "border-destructive/60",
   warning: "border-amber-500/60",
   attention: "border-attention/55",
   neutral: "border-border",
 };
 
 const TONE_TINT: Record<BoardCardAttentionTone, string> = {
-  danger:
-    "bg-[color-mix(in_srgb,var(--destructive)_9%,var(--card))] dark:bg-[color-mix(in_srgb,var(--destructive)_12%,#1c1c20)]",
   warning:
     "bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]",
   attention:
@@ -120,8 +117,6 @@ const TONE_TINT: Record<BoardCardAttentionTone, string> = {
 };
 
 const TONE_RING: Record<BoardCardAttentionTone, string> = {
-  danger:
-    "shadow-[0_0_0_1px_color-mix(in_srgb,var(--destructive)_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--destructive)_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
   warning:
     "shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
   attention:
@@ -149,7 +144,6 @@ const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
 /** The chip's own colours, which are text-weight rather than surface-weight —
     the card fill is already carrying the tone. */
 const TONE_CHIP: Record<BoardCardAttentionTone, string> = {
-  danger: "text-destructive-foreground",
   warning: "text-amber-700 dark:text-amber-300",
   attention: "text-attention-foreground",
   neutral: "text-muted-foreground",

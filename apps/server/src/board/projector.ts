@@ -44,6 +44,8 @@ import {
   BoardCardStepSettledPayload,
   BoardCardStepRetunedPayload,
   BoardCardStepSteeredPayload,
+  BoardProviderLimitRecordedPayload,
+  BoardProviderLimitClearedPayload,
   BoardCardStageThreadRequestedPayload,
   BoardCardUpdatedPayload,
   boardBriefHasImage,
@@ -72,6 +74,8 @@ import {
   type BoardCard,
   type BoardCardId,
   type BoardCardStepState,
+  type BoardProviderLimit,
+  type ProviderInstanceId,
   type BoardLabel,
   type BoardPlan,
   type BoardStageDefinition,
@@ -164,6 +168,12 @@ const decodeBoardCardStepRecoveredPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardStepSettledPayload = Schema.decodeUnknownEffect(BoardCardStepSettledPayload);
 const decodeBoardCardStepRetunedPayload = Schema.decodeUnknownEffect(BoardCardStepRetunedPayload);
 const decodeBoardCardStepSteeredPayload = Schema.decodeUnknownEffect(BoardCardStepSteeredPayload);
+const decodeBoardProviderLimitRecordedPayload = Schema.decodeUnknownEffect(
+  BoardProviderLimitRecordedPayload,
+);
+const decodeBoardProviderLimitClearedPayload = Schema.decodeUnknownEffect(
+  BoardProviderLimitClearedPayload,
+);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -435,9 +445,75 @@ export function compareBoardStepStates(
   return compareStrings(left.cardId, right.cardId);
 }
 
+/** The three step-derived stall fields the `card-stalled` delta carries
+    (T3O-22, D10/D14), spread whole or not at all: a step that is not stalled
+    omits every one of them, and their ABSENCE on this delta is what clears the
+    card's chip. `limitedByInstanceId` rides only beside a `usage-limit` reason,
+    so an ordinary stall costs no extra bytes. */
+function stallShellFields(state: BoardCardStepState) {
+  if (state.status !== "stalled") return {};
+  return {
+    stalledReason: state.stalledReason,
+    ...(state.retryAt === null ? {} : { retryAt: state.retryAt }),
+    ...(state.stalledReason === "usage-limit"
+      ? { limitedByInstanceId: state.providerInstanceId }
+      : {}),
+  };
+}
+
+/** Canonical provider-cooldown order (T3O-22): by provider instance id, one
+    record per instance. Applied on both sides of replay-equals-rehydration,
+    like every other board slice. */
+export function compareBoardProviderLimits(
+  left: BoardProviderLimit,
+  right: BoardProviderLimit,
+): number {
+  return compareStrings(left.providerInstanceId, right.providerInstanceId);
+}
+
 /** Upsert a card's live step state by cardId (t3o-10). One record per card,
     so a new state for a card replaces its prior one — selecting the next step
     of a multi-step recipe overwrites the previous step's terminal record. */
+/** Replace (or add) one provider cooldown (T3O-22). Keyed on the provider
+    instance, kept in a stable order so a from-empty replay and a table
+    rehydration produce the same array. */
+function upsertProviderLimit(
+  model: OrchestrationReadModel,
+  limit: BoardProviderLimit,
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const current = board.providerLimits ?? [];
+  const exists = current.some(
+    (existing) => existing.providerInstanceId === limit.providerInstanceId,
+  );
+  const providerLimits = (
+    exists
+      ? current.map((existing) =>
+          existing.providerInstanceId === limit.providerInstanceId ? limit : existing,
+        )
+      : [...current, limit]
+  ).toSorted(compareBoardProviderLimits);
+  return { ...model, board: { ...board, providerLimits } };
+}
+
+/** Lift one provider cooldown. The slice is dropped entirely when the last one
+    goes, so a board that has recovered decodes exactly as one that never hit a
+    limit — the same absent-vs-empty rule every other board slice follows. */
+function clearProviderLimit(
+  model: OrchestrationReadModel,
+  providerInstanceId: ProviderInstanceId,
+): OrchestrationReadModel {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const remaining = (board.providerLimits ?? []).filter(
+    (existing) => existing.providerInstanceId !== providerInstanceId,
+  );
+  const { providerLimits: _dropped, ...rest } = board;
+  return {
+    ...model,
+    board: remaining.length === 0 ? rest : { ...board, providerLimits: remaining },
+  };
+}
+
 function upsertStepState(
   model: OrchestrationReadModel,
   state: BoardCardStepState,
@@ -788,6 +864,20 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
+    // T3o (T3O-22): the provider-cooldown slice. Keyed on the provider
+    // instance, so — unlike every case above — it touches no card at all.
+    case "board.provider-limit-recorded":
+      return decodeBoardProviderLimitRecordedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertProviderLimit(model, payload.limit)),
+      );
+
+    case "board.provider-limit-cleared":
+      return decodeBoardProviderLimitClearedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => clearProviderLimit(model, payload.providerInstanceId)),
+      );
+
     default: {
       event satisfies never;
       // Runtime backstop for an undecoded event: leave the model unchanged.
@@ -968,6 +1058,7 @@ export function boardShellStreamEvent(
         // here. Derived rather than hardcoded so the one definition
         // (`boardStepParkedReason`) answers for every producer.
         stepAwaiting: boardStepParkedReason(event.payload.state),
+        ...stallShellFields(event.payload.state),
         // A recovered conflict fix keeps its identity — `recoverStep`
         // re-dispatches the row's own `stepLabel`, so the nudged step is still
         // the same fix. An ESCALATION lands it on `stalled`, which
@@ -1074,6 +1165,24 @@ export function boardShellStreamEvent(
       }
       return Option.none();
 
+    // T3o (T3O-22, D14): the provider cooldown rides its own delta, following
+    // the label catalogue's precedent — ONE fact per provider account, never
+    // denormalised onto every card that shares it, so the top bar can say
+    // "Anthropic limit · 1:00 AM" with no card on screen.
+    case "board.provider-limit-recorded":
+      return Option.some({
+        kind: "card-provider-limit-upserted",
+        sequence: event.sequence,
+        limit: event.payload.limit,
+      });
+
+    case "board.provider-limit-cleared":
+      return Option.some({
+        kind: "card-provider-limit-cleared",
+        sequence: event.sequence,
+        providerInstanceId: event.payload.providerInstanceId,
+      });
+
     case "board.card-step-paused":
       // A human stopped the step (T3O-23) — the fourth step transition that is
       // a column-card field, and the mirror of the awaiting-input arm below. It
@@ -1093,6 +1202,7 @@ export function boardShellStreamEvent(
         // Non-terminal, so the stage has not finished with the card.
         held: false,
         stepAwaiting: boardStepParkedReason(event.payload.state),
+        ...stallShellFields(event.payload.state),
         // A paused conflict fix hands the card face to the louder Paused chip
         // (`isBoardConflictFixLive` excludes it), so this always clears.
         stepConflictFix: isBoardConflictFixLive(event.payload.state),
@@ -1123,6 +1233,7 @@ export function boardShellStreamEvent(
         // Non-terminal, so nothing is `held`.
         held: false,
         stepAwaiting: boardStepParkedReason(event.payload.state),
+        ...stallShellFields(event.payload.state),
         // A conflict fix that asks a question is still the same live fix
         // (T3O-9): the merge is still held, so the flag rides through unchanged.
         stepConflictFix: isBoardConflictFixLive(event.payload.state),

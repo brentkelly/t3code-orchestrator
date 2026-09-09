@@ -47,6 +47,8 @@ import {
   boardCardStepCompletions,
   boardStepPayloadDefect,
   boardCardStepState,
+  boardProviderLimit,
+  type ProviderInstanceId,
   boardReviewRoundsStarted,
   boardRunLabel,
   deriveBoardCardReviewSummary,
@@ -115,9 +117,21 @@ function isBoardStageCommand(command: BoardCommand): command is BoardStageComman
   return command.type.startsWith("board.stage.");
 }
 
-/** Card-aggregate commands — every board command except the label and stage
-    ones; the only commands that carry a `cardId`. */
-type BoardCardCommand = Exclude<BoardCommand, BoardLabelCommand | BoardStageCommand>;
+/** Provider-cooldown commands (T3O-22) aggregate on the provider INSTANCE —
+    they carry `providerInstanceId` and no card at all, because a usage limit
+    belongs to an account and the cards it holds come and go underneath it.
+    Keyed on the `board.provider-limit.` prefix. */
+type BoardProviderLimitCommand = Extract<BoardCommand, { type: `board.provider-limit.${string}` }>;
+function isBoardProviderLimitCommand(command: BoardCommand): command is BoardProviderLimitCommand {
+  return command.type.startsWith("board.provider-limit.");
+}
+
+/** Card-aggregate commands — every board command except the label, stage and
+    provider-limit ones; the only commands that carry a `cardId`. */
+type BoardCardCommand = Exclude<
+  BoardCommand,
+  BoardLabelCommand | BoardStageCommand | BoardProviderLimitCommand
+>;
 
 // Re-exported so upstream seams import predicate + delegate on one line.
 export { isBoardCommand };
@@ -152,14 +166,25 @@ export function boardDecidedEvents(
  * behind the `isBoardCommand` predicate.
  */
 export function boardCommandAggregateRef(command: BoardCommand): {
-  readonly aggregateKind: "card" | "label" | "stage";
-  readonly aggregateId: BoardCardId | BoardLabelId | BoardStageId;
+  readonly aggregateKind: "card" | "label" | "stage" | "provider-limit";
+  readonly aggregateId: BoardCardId | BoardLabelId | BoardStageId | ProviderInstanceId;
 } {
   if (isBoardLabelCommand(command)) {
     return { aggregateKind: "label", aggregateId: command.labelId };
   }
   if (isBoardStageCommand(command)) {
     return { aggregateKind: "stage", aggregateId: command.stageId };
+  }
+  if (isBoardProviderLimitCommand(command)) {
+    return {
+      aggregateKind: "provider-limit",
+      // The record command carries the whole limit; the clear command carries
+      // the id alone. Both name the same instance.
+      aggregateId:
+        command.type === "board.provider-limit.record"
+          ? command.limit.providerInstanceId
+          : command.providerInstanceId,
+    };
   }
   return { aggregateKind: "card", aggregateId: command.cardId };
 }
@@ -547,6 +572,29 @@ const makeBoardLabelEventBase = Effect.fn("makeBoardLabelEventBase")(function* (
     metadata: {},
   };
 });
+
+/** Event base for provider-cooldown events (T3O-22): aggregates on the
+    provider INSTANCE, which is the unit a usage limit actually belongs to. */
+const makeBoardProviderLimitEventBase = Effect.fn("makeBoardProviderLimitEventBase")(
+  function* (input: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly occurredAt: string;
+    readonly commandId: BoardCommand["commandId"];
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const eventId = yield* crypto.randomUUIDv4;
+    return {
+      eventId: EventId.make(eventId),
+      aggregateKind: "provider-limit" as const,
+      aggregateId: input.providerInstanceId,
+      occurredAt: input.occurredAt,
+      commandId: input.commandId,
+      causationEventId: null,
+      correlationId: input.commandId,
+      metadata: {},
+    };
+  },
+);
 
 /** Event base for stage events (t3o-15): aggregates on the stage. */
 const makeBoardStageEventBase = Effect.fn("makeBoardStageEventBase")(function* (input: {
@@ -3020,6 +3068,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // Resting value (t3o-34, D3): only read while the step is
         // `awaiting-input`, and a fresh step never is.
         awaitingReason: "question",
+        // …and the same for the loud half (T3O-22, D10): a fresh step has not
+        // stalled, so it carries no reason and no retry time. Setting them here
+        // rather than letting them ride is what stops a re-entered stage
+        // inheriting the previous entry's "resuming 2:50am".
+        stalledReason: "gave-up",
+        retryAt: null,
         lastNudgeAt: null,
         // No human has typed into a fresh step, so no free turn-ending is owed
         // (T3O-17, D3).
@@ -3108,6 +3162,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             // `queued` for three hours after a requeue would be instantly
             // overdue the moment it was admitted.
             lastNudgeAt: command.createdAt,
+            // The step is working again, so the stall it was wearing is over
+            // (T3O-22). `requeue-step` carries the reason this far ON PURPOSE —
+            // it is what the resume nudge is chosen from — and this is where it
+            // stops, so a later pause or stall cannot inherit a reason from the
+            // resume before it.
+            stalledReason: "gave-up",
+            retryAt: null,
             startedAt: command.createdAt,
             updatedAt: command.createdAt,
           }
@@ -3237,18 +3298,41 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // carries a reason records it, and one that does not clears whatever was
       // there. A nudge that puts the step back to `running` must not leave the
       // card showing the error from the stop before it.
+      // A quota park spends NOTHING (T3O-22, D12): the card is not failing, the
+      // provider is, and a card that hit a limit at midnight would otherwise
+      // poll its way to death by 2:30am — twenty minutes before the window
+      // reopened. `lastNudgeAt` is left alone with the rest, so the progress
+      // boundary the next recovery measures against still describes the last
+      // time the board actually put this step to work.
+      const charge = command.chargeBudget ?? true;
+      // …and the budget RESETS when the woken turn did real work (T3O-22, D12),
+      // which is exactly what `progressed` already means. It used to reset
+      // `stallCount` alone; extending it to `attempt` is what makes a card that
+      // resumes, works, and stalls again days later start its ladder over
+      // instead of inheriting a count from the stall before the resume.
+      // `stageEntryRecoveries` is deliberately NOT reset: it is the only thing
+      // that catches a card looping productively-looking for ever, and an
+      // automatic resume clearing it would leave the card unbounded.
       const state: BoardCardStepState = {
         ...current,
-        attempt: current.attempt + 1,
-        stallCount: (command.progressed ? 0 : current.stallCount) + 1,
+        attempt: charge ? (command.progressed ? 1 : current.attempt + 1) : current.attempt,
+        stallCount: charge ? (command.progressed ? 0 : current.stallCount) + 1 : current.stallCount,
         // The runaway ceiling's counter (T3O-12, D4): a recovery — a nudge, an
         // escalation, or a spawn failure — is the ONLY thing that spends it.
-        stageEntryRecoveries: current.stageEntryRecoveries + 1,
+        stageEntryRecoveries: charge
+          ? current.stageEntryRecoveries + 1
+          : current.stageEntryRecoveries,
         status: command.escalateToHuman ? "stalled" : "running",
         slotHeld: command.escalateToHuman ? false : current.slotHeld,
         threadId: command.threadId,
         lastError: command.lastError ?? null,
-        lastNudgeAt: command.createdAt,
+        // Why it stalled and when it next tries (T3O-22, D10). Both are
+        // REPLACED, never merged, for the same reason `lastError` is: a nudge
+        // that puts the step back to running must not leave the card promising a
+        // retry that has already happened.
+        stalledReason: command.escalateToHuman ? (command.stalledReason ?? "gave-up") : "gave-up",
+        retryAt: command.retryAt ?? null,
+        lastNudgeAt: charge ? command.createdAt : current.lastNudgeAt,
         updatedAt: command.createdAt,
       };
       return {
@@ -3333,11 +3417,30 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // The same "a human intervening is progress" reset `resume-step` applies,
       // and for the same reason: the ladder starts its count over rather than
       // re-escalating on the first quiet turn after the resume.
+      //
+      // …unless the BOARD resumed it on a timer (T3O-22, D12). A backoff rung
+      // reaching its moment, or a quota cooldown lifting, proves nothing — the
+      // clock advanced, that is all — and resetting there would let a genuinely
+      // dead card be nudged for ever and never reach a human.
+      const preserve = command.preserveBudget ?? false;
       const state: BoardCardStepState = {
         ...current,
         status: "queued",
-        stallCount: 0,
+        stallCount: preserve ? current.stallCount : 0,
         lastError: null,
+        // The retry TIME is over — the rung has arrived, or a human resumed
+        // ahead of it — but the REASON survives the requeue, because it is the
+        // only thing that tells admission what to say when it nudges the thread
+        // (T3O-22, D7/D9). A quota park resumes as "the window reopened" and a
+        // backoff rung as the recovery reminder it would have carried had it
+        // gone out immediately; clearing the reason here made both branches
+        // unreachable and sent every board-driven resume the generic paused
+        // text. It is carried only off a `stalled` park — the resting value on
+        // a `paused` or `awaiting-input` row means nothing — and `admit-step`
+        // clears it when the step actually goes back to running, so it cannot
+        // outlive the resume it was for.
+        stalledReason: current.status === "stalled" ? current.stalledReason : "gave-up",
+        retryAt: null,
         slotHeld: false,
         startedAt: null,
         updatedAt: command.createdAt,
@@ -3401,6 +3504,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         stallCount: 0,
         lastError: null,
         slotHeld: current.mode === "build",
+        // The step is working again, so the park it was wearing is over
+        // (T3O-22) — the same clear `admit-step` does, for the same reason. A
+        // human resuming a card that stalled on a usage limit before its window
+        // reopened would otherwise leave a RUNNING row still claiming
+        // `usage-limit` and still carrying a future `retryAt`.
+        stalledReason: "gave-up",
+        retryAt: null,
         lastNudgeAt: command.createdAt,
         updatedAt: command.createdAt,
       };
@@ -3502,6 +3612,48 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         })),
         type: "board.card-step-steered",
         payload: { cardId: command.cardId, state },
+      };
+    }
+
+    // ── Provider cooldowns (T3O-22) ──────────────────────────────────
+    // A different aggregate from every case above: keyed on a provider
+    // INSTANCE, because a usage limit belongs to an ACCOUNT and the cards it
+    // holds come and go underneath it. So no `requireActiveBoardCard`, no card
+    // event base, and no card id on the event.
+    case "board.provider-limit.record": {
+      // No refusals at all, deliberately. Every field is the reactor's own
+      // computation of a fact it has just observed, the row is keyed on the
+      // provider instance so a re-record is an idempotent replace, and the one
+      // thing a refusal would protect — recording a cooldown for a provider
+      // nothing is using — is harmless and self-clearing.
+      return {
+        ...(yield* makeBoardProviderLimitEventBase({
+          providerInstanceId: command.limit.providerInstanceId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.provider-limit-recorded",
+        payload: { limit: command.limit },
+      };
+    }
+
+    case "board.provider-limit.clear": {
+      // Idempotent by design: every trigger that lifts a cooldown can fire
+      // twice — a probe's clean turn and the ordinary any-clean-turn sweep will
+      // routinely both land — so the second must be a no-op rather than an
+      // error anyone reads. (An empty decision is refused by the engine exactly
+      // as an explicit `invariant` would be, and the reactor's `dispatchOptional`
+      // demotes both to a debug line; `[]` is chosen because it says "there was
+      // nothing to do" rather than "you were wrong to ask".)
+      if (boardProviderLimit(board, command.providerInstanceId) === null) return [];
+      return {
+        ...(yield* makeBoardProviderLimitEventBase({
+          providerInstanceId: command.providerInstanceId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.provider-limit-cleared",
+        payload: { providerInstanceId: command.providerInstanceId },
       };
     }
 

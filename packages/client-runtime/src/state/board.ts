@@ -26,6 +26,8 @@ import {
   BOARD_WS_METHODS,
   type BoardAttachCardFileInput,
   type BoardDetachCardFileInput,
+  type BoardProviderLimitActionInput,
+  type BoardProviderLimitResumeAtInput,
   compareBoardStages,
   deriveBoardCardThreadState,
   isBoardShellStreamEvent,
@@ -42,11 +44,14 @@ import {
   type BoardCardUpsertedShellEvent,
   type BoardLabel,
   type BoardLabelUpsertedShellEvent,
+  type BoardProviderLimit,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardStageRemovedShellEvent,
   isBoardCardScheduleDue,
   type BoardStageUpsertedShellEvent,
+  type BoardProviderLimitUpsertedShellEvent,
+  type BoardProviderLimitClearedShellEvent,
   type EnvironmentId,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
@@ -71,6 +76,8 @@ import {
   linkBoardCardThread,
   attachBoardCardFile,
   detachBoardCardFile,
+  probeBoardProviderLimit,
+  setBoardProviderLimitResumeAt,
   mergeBoardCardPullRequest,
   moveBoardCard,
   refreshBoardCardPullRequest,
@@ -156,7 +163,9 @@ export type BoardShellStreamEvent =
   | BoardCardThreadsShellEvent
   | BoardLabelUpsertedShellEvent
   | BoardStageUpsertedShellEvent
-  | BoardStageRemovedShellEvent;
+  | BoardStageRemovedShellEvent
+  | BoardProviderLimitUpsertedShellEvent
+  | BoardProviderLimitClearedShellEvent;
 
 // Re-exported so the upstream reducer imports predicate + delegate on one line.
 export { isBoardShellStreamEvent };
@@ -216,11 +225,22 @@ const REVIEW_SHELL_FIELDS = [
   "issuesDisputed",
 ] as const satisfies ReadonlyArray<keyof BoardCardShell>;
 
+/** The stall slice (T3O-22, D10/D14) — carried as a group for the same reason
+    the review slice is: the reason, the retry time and the provider holding the
+    card describe ONE stop, and half of them left behind would put a stale
+    "resuming 2:50am" under a card that is running again. */
+const STALL_SHELL_FIELDS = [
+  "stalledReason",
+  "retryAt",
+  "limitedByInstanceId",
+] as const satisfies ReadonlyArray<keyof BoardCardShell>;
+
 /**
  * Carry forward the key-optional shell fields a card-carrying delta cannot
  * know: `briefHasImage` (the brief BODY lives in `board_card_bodies`, D8),
- * `planCount` (the plan set is its own slice), and the review slice (a fold
- * over the step-completion ledger, which no card-carrying event can see).
+ * `planCount` (the plan set is its own slice), the review slice (a fold
+ * over the step-completion ledger, which no card-carrying event can see) and
+ * the stall slice (step state, which the card aggregate does not carry).
  * Their resting value is the ABSENT key, not `false`/`0`, so "the producer
  * could not see it" and "the producer saw nothing there" stay
  * distinguishable — a brief whose image was deleted sends
@@ -232,6 +252,14 @@ const REVIEW_SHELL_FIELDS = [
  * `NO CONVERGENCE` flag until the next reconnect — and the "Run round N+1"
  * click is itself one of the triggers, so the feature would blank itself at
  * the exact moment it is used.
+ *
+ * The stall keys are here for the same reason and cost more when missing: a
+ * card parked on a usage limit sits for HOURS, so a drag, a rename or a
+ * PR-link refresh in that window is likely. The preserved `stalled` flag
+ * would survive it while the three keys did not, and the card face's words
+ * would fall back from "waiting to resume 2:50am" to the gave-up phrasing
+ * while the detail modal recomputed `boardStallIsWaiting` to false and
+ * painted its red "stopped" banner over a card calmly counting down.
  *
  * Returns the same reference when there is nothing to carry, so memoized
  * consumers keep their identity.
@@ -246,21 +274,39 @@ function preserveAbsentShellFields(
   // The review slice rides or rests as a whole: `reviewOutcome` present means
   // the producer saw the ledger, so every key it holds is authoritative.
   const carryReview = next.reviewOutcome === undefined && existing.reviewOutcome !== undefined;
-  if (briefHasImage === next.briefHasImage && planCount === next.planCount && !carryReview) {
+  // The stall slice rides or rests as a whole too, and only under a card that
+  // is still stalled: `next.stalled` is the flag the caller already preserved,
+  // and `card-stalled` is what deletes the three keys when the stop ends. So
+  // "still stalled, but this delta asserts no reason" is the one shape that
+  // means "the producer could not see step state" — carry.
+  const carryStall =
+    next.stalled && next.stalledReason === undefined && existing.stalledReason !== undefined;
+  if (
+    briefHasImage === next.briefHasImage &&
+    planCount === next.planCount &&
+    !carryReview &&
+    !carryStall
+  ) {
     return next;
   }
-  const review: Partial<BoardCardShell> = {};
+  const carried: Partial<BoardCardShell> = {};
   if (carryReview) {
     for (const field of REVIEW_SHELL_FIELDS) {
       const value = existing[field];
-      if (value !== undefined) Object.assign(review, { [field]: value });
+      if (value !== undefined) Object.assign(carried, { [field]: value });
+    }
+  }
+  if (carryStall) {
+    for (const field of STALL_SHELL_FIELDS) {
+      const value = existing[field];
+      if (value !== undefined) Object.assign(carried, { [field]: value });
     }
   }
   return {
     ...next,
     ...(briefHasImage === undefined ? {} : { briefHasImage }),
     ...(planCount === undefined ? {} : { planCount }),
-    ...review,
+    ...carried,
   };
 }
 
@@ -386,22 +432,45 @@ export function applyBoardShellStreamEvent(
       // server arm that a restart would drop.
       const nextCards = Arr.map(cards, (card) => {
         if (card.cardId !== event.cardId) return card;
-        return card.stalled === event.stalled &&
+        // …and WHY it stalled, plus when it next tries (T3O-22, D10). Both are
+        // key-optional and cleared by their absence HERE: this delta describes
+        // the whole step-derived slice, so an absent key on it is a real "no
+        // longer stalled", where an absent key on a card-carrying delta means
+        // "preserve", as it does for every other step-derived field.
+        const nextStalledReason = event.stalledReason;
+        const nextRetryAt = event.retryAt;
+        const nextLimitedBy = event.limitedByInstanceId;
+        if (
+          card.stalled === event.stalled &&
           card.queued === event.queued &&
           card.stepRunning === event.stepRunning &&
           card.held === event.held &&
           card.stepAwaiting === event.stepAwaiting &&
-          card.stepConflictFix === event.stepConflictFix
-          ? card
-          : {
-              ...card,
-              stalled: event.stalled,
-              queued: event.queued,
-              stepRunning: event.stepRunning,
-              held: event.held,
-              stepAwaiting: event.stepAwaiting,
-              stepConflictFix: event.stepConflictFix,
-            };
+          card.stepConflictFix === event.stepConflictFix &&
+          card.stalledReason === nextStalledReason &&
+          card.retryAt === nextRetryAt &&
+          card.limitedByInstanceId === nextLimitedBy
+        ) {
+          return card;
+        }
+        // The three stall keys are DELETED first, then re-applied from the
+        // delta. Spreading them conditionally over `...card` would preserve a
+        // stale reason on the delta that says the step is no longer stalled —
+        // and this delta is the only thing that ever clears the chip.
+        const stripped = { ...card };
+        for (const field of STALL_SHELL_FIELDS) delete stripped[field];
+        return {
+          ...stripped,
+          stalled: event.stalled,
+          queued: event.queued,
+          stepRunning: event.stepRunning,
+          held: event.held,
+          stepAwaiting: event.stepAwaiting,
+          stepConflictFix: event.stepConflictFix,
+          ...(nextStalledReason === undefined ? {} : { stalledReason: nextStalledReason }),
+          ...(nextRetryAt === undefined ? {} : { retryAt: nextRetryAt }),
+          ...(nextLimitedBy === undefined ? {} : { limitedByInstanceId: nextLimitedBy }),
+        };
       });
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
     }
@@ -498,6 +567,30 @@ export function applyBoardShellStreamEvent(
       ).toSorted(compareBoardStages);
       return { ...snapshot, boardStages: nextStages, snapshotSequence: event.sequence };
     }
+    case "card-provider-limit-upserted": {
+      // The provider-cooldown slice (T3O-22, D14): one fact per provider
+      // ACCOUNT, riding once like the label catalogue rather than denormalised
+      // onto every card that shares it — which is also what lets the top bar
+      // say "Anthropic limit · 1:00 AM" with no card on screen.
+      const limits = snapshot.boardProviderLimits ?? [];
+      const nextLimits = limits.some(
+        (existing) => existing.providerInstanceId === event.limit.providerInstanceId,
+      )
+        ? Arr.map(limits, (existing) =>
+            existing.providerInstanceId === event.limit.providerInstanceId ? event.limit : existing,
+          )
+        : Arr.append(limits, event.limit);
+      return { ...snapshot, boardProviderLimits: nextLimits, snapshotSequence: event.sequence };
+    }
+    case "card-provider-limit-cleared":
+      return {
+        ...snapshot,
+        boardProviderLimits: Arr.filter(
+          snapshot.boardProviderLimits ?? [],
+          (existing) => existing.providerInstanceId !== event.providerInstanceId,
+        ),
+        snapshotSequence: event.sequence,
+      };
     case "stage-removed": {
       const stages = snapshot.boardStages ?? [];
       return {
@@ -905,6 +998,20 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-stages:${environmentId}`)),
   );
 
+  /** The board's provider cooldowns (T3O-22, D14). Empty on the overwhelming
+      majority of boards, which is why it rides its own array rather than a
+      field on every card. */
+  const EMPTY_PROVIDER_LIMITS: ReadonlyArray<BoardProviderLimit> = [];
+  const providerLimitsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const state = get(options.shellStateValueAtom(environmentId));
+      return Option.match(state.snapshot, {
+        onNone: () => EMPTY_PROVIDER_LIMITS,
+        onSome: (snapshot) => snapshot.boardProviderLimits ?? EMPTY_PROVIDER_LIMITS,
+      });
+    }).pipe(Atom.withLabel(`environment-board-provider-limits:${environmentId}`)),
+  );
+
   const cardDetailStateAtom = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-board-card-detail",
     tag: BOARD_WS_METHODS.subscribeCard,
@@ -949,6 +1056,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
     cardThreadsByCardAtom,
     labelCatalogueAtom,
     stageListAtom,
+    providerLimitsAtom,
     /** Raw subscription state (loading/failure visible), keyed like
         `cardDetailValueAtom`. */
     cardDetailStateAtom,
@@ -990,6 +1098,17 @@ export function createBoardEnvironmentAtoms<R, ER>(
     detachCardFile: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:detach-card-file",
       execute: (input: BoardDetachCardFileInput) => detachBoardCardFile(input),
+    }),
+    /** Probe a limited provider now (T3O-22, D14) — "Resume now". */
+    probeProviderLimit: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:probe-provider-limit",
+      execute: (input: BoardProviderLimitActionInput) => probeBoardProviderLimit(input),
+    }),
+    /** Set a limited provider's resume time by hand (T3O-22, D14), or clear it
+        with null to hand the schedule back to the blind poll. */
+    setProviderLimitResumeAt: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-provider-limit-resume-at",
+      execute: (input: BoardProviderLimitResumeAtInput) => setBoardProviderLimitResumeAt(input),
     }),
     reorderCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reorder-card",

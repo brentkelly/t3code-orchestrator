@@ -1361,6 +1361,38 @@ export const BoardCardStepAwaitingReason = Schema.Literals(BOARD_STEP_AWAITING_R
 export type BoardCardStepAwaitingReason = typeof BoardCardStepAwaitingReason.Type;
 
 /**
+ * Why a `stalled` step stopped (T3O-22, D10).
+ *
+ * Waiting to retry IS stalled: the card has stopped, the board is struggling to
+ * restart it, and a human passing by should look. So this is a reason on the one
+ * status rather than a fourth parked status — same slot release, same amber,
+ * same board filter, same attention badge — and only the WORDS differ:
+ *
+ * | Reason            | Label                                |
+ * | ----------------- | ------------------------------------ |
+ * | `usage-limit`     | `Usage limit — resuming 2:50am`      |
+ * | `quota-exhausted` | `Out of credits — needs a human`     |
+ * | `waiting-retry`   | `Stalled — waiting to retry 2:32pm`  |
+ * | `gave-up`         | `Stalled — needs a human`            |
+ *
+ * All amber: none of them is working, so none may be blue, and green is
+ * reserved (`docs/t3o/status-colours.md`).
+ *
+ * It is also BEHAVIOURAL, not only a label. The resume set of a provider
+ * cooldown is keyed on `usage-limit` and nothing else (D9), which is what stops
+ * a provider coming back from shoving an unanswered question, a human's pause or
+ * an exhausted escalation back into work.
+ */
+export const BOARD_STEP_STALLED_REASONS = [
+  "usage-limit",
+  "quota-exhausted",
+  "waiting-retry",
+  "gave-up",
+] as const;
+export const BoardCardStepStalledReason = Schema.Literals(BOARD_STEP_STALLED_REASONS);
+export type BoardCardStepStalledReason = typeof BoardCardStepStalledReason.Type;
+
+/**
  * Why the card's live step is PARKED, on the wire (T3O-23, D1) — the shell's
  * `stepAwaiting` and the `card-stalled` delta that carries it.
  *
@@ -1563,6 +1595,30 @@ export const BoardCardStepState = Schema.Struct({
   awaitingReason: BoardCardStepAwaitingReason.pipe(
     Schema.withDecodingDefault(Effect.succeed("question" as const)),
   ),
+  /** Why the step is `stalled` (T3O-22, D10), and meaningless on every other
+      status — the twin of `awaitingReason` above, on the loud half of parking.
+   *
+   * Stored rather than derived from `retryAt` plus the provider slice, because
+   * the projector that writes the card face has no cross-entity read: deriving
+   * it would mean joining the provider-limit slice per card on every step
+   * transition to answer a question the writer already knew.
+   *
+   * A DECODING DEFAULT for the same replay reason as `stageLabel`: every stalled
+   * row written before T3O-22 was recovery giving up, which is exactly
+   * `gave-up`. */
+  stalledReason: BoardCardStepStalledReason.pipe(
+    Schema.withDecodingDefault(Effect.succeed("gave-up" as const)),
+  ),
+  /** When the board will try this step again (T3O-22, D7/D10), or null when
+      nothing is scheduled.
+   *
+   * Set on every parked-to-retry stop: the backoff ladder's next rung, a quota
+   * park's parsed reset time, a blind poll's next probe. Read by the card face
+   * so a waiting card says WHEN rather than only that it stopped, and by the
+   * sweep so a restart honours a wait it did not itself set.
+   *
+   * A DECODING DEFAULT for the same replay reason as `stageLabel`. */
+  retryAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Whether the step currently holds a concurrency slot (t3o-11). Tracked so
       release happens exactly once at every terminal outcome, including a crash
       — a leaked slot silently halves throughput. */
@@ -1790,6 +1846,64 @@ export type BoardCardActivityEntry = typeof BoardCardActivityEntry.Type;
  * as an optional field so read models built by pre-board code — upstream
  * tests included — decode and compile unchanged.
  */
+/**
+ * A provider instance the board is holding off (T3O-22, D1/D2).
+ *
+ * **The unit is the provider instance, not the card.** A usage limit belongs to
+ * a provider ACCOUNT: the two cards that motivated this spec hit one in the same
+ * instant because they share one Claude subscription. Parking only the card that
+ * noticed leaves every other card on that account to march into the same wall
+ * seconds later and burn its own recovery ladder, while the governor keeps
+ * admitting fresh ones. So the durable fact is keyed on `providerInstanceId` —
+ * which is already the board's concurrency scoping key.
+ *
+ * **Persisted and event-sourced, because the damage happens at boot.** The
+ * observed burn began at a server restart's boot reconcile. An in-memory
+ * cooldown would be lost on restart and every parked card re-nudged the moment
+ * the server came back: the same bug, reintroduced by its own fix.
+ */
+export const BoardProviderLimit = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  /** `wait` gates the governor and expires; `exhausted` gates nothing and
+      expires never — it exists only so the pill and popover can say the account
+      is out of credits (D16). */
+  kind: Schema.Literals(["wait", "exhausted"]),
+  /** When the next probe is due. On an `exhausted` record it is the detection
+      instant and means nothing — there is nothing to wait for. */
+  until: IsoDateTime,
+  detectedAt: IsoDateTime,
+  /** When a probe last actually asked the provider — set when a prober is
+      elected, and held still by a re-record, which is an answer rather than a
+      fresh ask. Drives the popover's "checked <relative>" line, so a human can
+      tell a live cooldown from a forgotten one; and, by sitting exactly on
+      `detectedAt` until the first probe, tells the seven-day ceiling whether
+      this cooldown has ever sent anyone to ask. */
+  lastCheckedAt: IsoDateTime,
+  /** The provider's OWN sentence, never our paraphrase. */
+  reason: Schema.NullOr(TrimmedNonEmptyString),
+  /** Which catalogue rule matched (D17), so a misfire in production names the
+      entry to fix rather than "some regex". */
+  ruleId: Schema.NullOr(TrimmedNonEmptyString),
+  /** The card whose turn discovered it, for the popover. Null once that card is
+      gone; the cooldown outlives any one card. */
+  sourceCardId: Schema.NullOr(BoardCardId),
+  /** True when `until` came from the provider's own words, false when we are
+      polling blind. The popover shows a countdown for the first and a cadence
+      for the second. */
+  knownTime: Schema.Boolean,
+  /** When blind polling started, or null while a time is known. The blind
+      cadence and the seven-day ceiling are both measured from it — never from
+      the last probe, which a restart would quietly reset. */
+  blindSince: Schema.NullOr(IsoDateTime),
+  /** The one card probing right now (D9), or null between probes. Exactly one
+      card wakes at `until`; the rest never know the probe happened. */
+  probeCardId: Schema.NullOr(BoardCardId),
+  /** A human typed this time in (D14). A human-set time is never overwritten by
+      a later loose match. */
+  setByHuman: Schema.Boolean,
+});
+export type BoardProviderLimit = typeof BoardProviderLimit.Type;
+
 export const BoardState = Schema.Struct({
   cards: Schema.Array(BoardCard),
   /** The label catalogue (t3o-06a). In the read model because the decider
@@ -1820,6 +1934,14 @@ export const BoardState = Schema.Struct({
       Bodies live only in `board_plans`. Optional and absent until the first
       `board_propose_plans`; rebuilt from `board_plans` on rehydration. */
   plans: Schema.optional(Schema.Array(BoardPlan)),
+  /** Provider instances the board is holding off (T3O-22, D2). In the read
+      model because the governor branches on it — `schedule()` withholds every
+      step on a limited instance before a worktree is cut — and the decider owns
+      its transitions. One entry per limited provider instance, and ABSENT on a
+      board that has never hit a limit, which is the overwhelming majority: an
+      ordinary board decodes exactly as it does today. Rebuilt from
+      `board_provider_limits` on rehydration. */
+  providerLimits: Schema.optional(Schema.Array(BoardProviderLimit)),
   /** User-defined stage list (t3o-15, D2). In the read model because the
       decider branches on it: stage adjacency, the `build`/`review`/`done`
       role positions and the ordering invariant are all validated off this
@@ -1979,6 +2101,93 @@ export function boardStageEntryRecoveryCount(board: BoardState, cardId: BoardCar
     opening each. */
 export function boardStalledStepStates(board: BoardState): ReadonlyArray<BoardCardStepState> {
   return (board.stepStates ?? []).filter((state) => state.status === "stalled");
+}
+
+// ── Provider limits (T3O-22) ───────────────────────────────────────────
+
+/** A board's provider cooldowns; empty on a board that has never hit one. */
+export function boardProviderLimits(board: BoardState): ReadonlyArray<BoardProviderLimit> {
+  return board.providerLimits ?? [];
+}
+
+/** The cooldown on one provider instance, or null. */
+export function boardProviderLimit(
+  board: BoardState,
+  providerInstanceId: ProviderInstanceId,
+): BoardProviderLimit | null {
+  return (
+    boardProviderLimits(board).find((limit) => limit.providerInstanceId === providerInstanceId) ??
+    null
+  );
+}
+
+/**
+ * Whether the governor must withhold this card's step right now (D13).
+ *
+ * Only a `wait` withholds: an `exhausted` record gates nothing at all. Waiting
+ * for a dead credit card to fix itself is not a strategy, and the cards on that
+ * instance are meant to reach a human on their own next turn, correctly
+ * labelled (D16) — withholding them would hide the very thing that needs saying.
+ *
+ * A `wait` withholds EVERY card on the instance except the one card the
+ * cooldown has picked as its prober (D9). That is the whole shape of the
+ * feature: at the reset time one card wakes and asks, rather than ten arriving
+ * at once at the exact moment a provider is most likely to still say no. It also
+ * means the gate lifts when the cooldown is CLEARED, not when its `until`
+ * passes — `until` is when the next prober is chosen, and a probe that comes
+ * back refused simply picks a later one.
+ *
+ * Takes the SLICE rather than the board so the reactor's per-candidate gate
+ * costs one array scan for the whole pass, not a board read per card.
+ */
+export function boardProviderLimitHolds(
+  limits: ReadonlyArray<BoardProviderLimit> | undefined,
+  providerInstanceId: ProviderInstanceId,
+  cardId: BoardCardId,
+): boolean {
+  const limit = (limits ?? []).find((entry) => entry.providerInstanceId === providerInstanceId);
+  if (limit === undefined || limit.kind !== "wait") return false;
+  return limit.probeCardId !== cardId;
+}
+
+/**
+ * The cards a provider cooldown is holding — and ONLY those (D9).
+ *
+ * This scoping is load-bearing, not a filter for tidiness. A card sitting in
+ * `awaiting-input` because its agent asked a human a question stopped for a
+ * reason that has nothing to do with the provider, and a provider coming back
+ * says nothing about it: resuming it would shove an unanswered question straight
+ * back into work, the precise failure a human-in-the-loop stage exists to
+ * prevent. A `paused` card (a human pressed Stop) and a `stalled` card whose
+ * reason is `gave-up`, `waiting-retry` or `quota-exhausted` are all left exactly
+ * where they are, for the same reason.
+ */
+export function boardUsageLimitParkedSteps(
+  board: BoardState,
+  providerInstanceId: ProviderInstanceId,
+): ReadonlyArray<BoardCardStepState> {
+  return (board.stepStates ?? []).filter(
+    (state) =>
+      state.providerInstanceId === providerInstanceId &&
+      state.status === "stalled" &&
+      state.stalledReason === "usage-limit",
+  );
+}
+
+/**
+ * Whether a `stalled` step is one the BOARD will start again by itself (T3O-22,
+ * D7/D9) — a quota park waiting for its provider's window, or a backoff rung
+ * waiting for its time — as opposed to one that has stopped until a human acts.
+ *
+ * The card face already says which in words. This is the same split for the
+ * surfaces that do more than label it: the open modal renders a red "stopped"
+ * failure callout for a stall, which for a card calmly counting down to its own
+ * resume is the loudest thing on screen contradicting the card's own chip.
+ */
+export function boardStallIsWaiting(
+  reason: BoardCardStepStalledReason | null | undefined,
+): boolean {
+  return reason === "usage-limit" || reason === "waiting-retry";
 }
 
 /** A card's proposed plans (t3o-08), in `ordinal` order. Absent slice means
@@ -2495,8 +2704,14 @@ export type BoardCardAttentionReason = (typeof BOARD_CARD_ATTENTION_REASONS)[num
     `neutral` is the quiet one (T3O-23): the card is held, but it is held by the
     user's own instruction and nothing is waiting on an answer, so it makes no
     claim and takes no colour — `docs/t3o/status-colours.md`, "no colour without
-    a claim". */
-export type BoardCardAttentionTone = "danger" | "warning" | "attention" | "neutral";
+    a claim".
+
+    There is deliberately no red one (T3O-22, D10): the status vocabulary is
+    green, blue, violet and amber, and the loudest thing a card face can say —
+    "stalled" in any of its four readings — is the amber "nobody is working on
+    this" fact, not an error. Leaving `danger` in this union is what let it be
+    reached by accident. */
+export type BoardCardAttentionTone = "warning" | "attention" | "neutral";
 
 export type BoardCardAttention = {
   readonly reason: BoardCardAttentionReason;
@@ -2524,9 +2739,75 @@ export type BoardCardAttention = {
  */
 export const BOARD_ATTENTION_SETTLE_MS = 5_000;
 
+/**
+ * A local clock time for a card chip: `2:50am`. Local to the READER, which is
+ * the right zone for a chip a human glances at — the provider's own zone rides
+ * the popover's full sentence, not a nine-character label.
+ *
+ * Returns null for an unreadable or absent instant, so every caller composes a
+ * label that simply omits the time rather than printing `Invalid Date`.
+ */
+export function boardShortClock(iso: string | null | undefined): string | null {
+  if (iso == null) return null;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(ms);
+}
+
+/**
+ * The chip words for a `stalled` step, by why it stopped (T3O-22, D10).
+ *
+ * Four readings of one status. Three of them are the board WAITING and say when;
+ * the fourth is the board having given up and says so. Splitting the words while
+ * keeping the status is what lets a quota park read honestly — "resuming 2:50am"
+ * — without inventing a fifth step status that every guard in the reactor and
+ * the decider would have to learn.
+ */
+function boardStalledWords(
+  reason: BoardCardStepStalledReason,
+  retryAt: string | null,
+  nowMs: number | undefined,
+): { readonly label: string; readonly detail: string } {
+  const clock = boardShortClock(retryAt);
+  // A time that has already gone says nothing useful — the probe is due and has
+  // not run yet, so the honest chip is the one without a stale promise on it.
+  const due = clock !== null && (nowMs === undefined || Date.parse(retryAt as string) > nowMs);
+  const at = due ? ` ${clock}` : "";
+  switch (reason) {
+    case "usage-limit":
+      return {
+        label: due ? `Usage limit — resuming${at}` : "Usage limit — waiting to resume",
+        detail:
+          "The provider's usage window is spent. The board is holding this card and will start it again by itself.",
+      };
+    case "quota-exhausted":
+      return {
+        label: "Out of credits — needs a human",
+        detail:
+          "The provider says the account is out of credits or its plan has ended. Waiting will not fix it — this needs a human.",
+      };
+    case "waiting-retry":
+      return {
+        label: due ? `Stalled — waiting to retry${at}` : "Stalled — waiting to retry",
+        detail: "This step stopped without finishing; the board will nudge it again shortly.",
+      };
+    case "gave-up":
+      return {
+        label: "Stalled — needs a human",
+        detail: "Stalled — recovery gave up; needs a human to retry or take over",
+      };
+  }
+}
+
 const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> = {
   paused: "neutral",
-  stalled: "danger",
+  // Amber, not red (T3O-22, D10). Red is not in the status vocabulary at all —
+  // `docs/t3o/status-colours.md` has green, blue, violet and amber — and all
+  // four readings of `stalled` are the amber fact: nobody is working, and the
+  // card is waiting on something outside itself. A card calmly counting down to
+  // its own automatic resume rendered as an error, which is the loudest colour
+  // on the board saying the opposite of what its own chip says.
+  stalled: "warning",
   approval: "warning",
   "review-held": "warning",
   held: "warning",
@@ -2568,6 +2849,12 @@ export function boardCardAttention(input: {
     // destructuring holds `T | undefined` on these keys, and a bare optional
     // would refuse the very shape the board page passes.
   > & {
+    /** Why the step stalled (T3O-22, D10) and when it next tries, so one
+        status can wear four honest labels. Absent reads as `gave-up`, which is
+        every stalled card written before T3O-22 and every caller that does not
+        hold the fields. */
+    readonly stalledReason?: BoardCardStepStalledReason | undefined;
+    readonly retryAt?: string | null | undefined;
     readonly planCount?: number | undefined;
     readonly planTotal?: number | undefined;
     readonly planDone?: number | undefined;
@@ -2613,11 +2900,13 @@ export function boardCardAttention(input: {
     };
   }
   if (card.stalled) {
+    // The words vary by WHY it stalled (T3O-22, D10); the reason and the tone
+    // do not — every reading is amber and every reading is the one `stalled`
+    // chip, so the board filter and the parent roll-up need no new member.
     return {
       reason: "stalled",
       tone: ATTENTION_TONES.stalled,
-      label: "Stalled",
-      detail: "Stalled — recovery gave up; needs a human to retry or take over",
+      ...boardStalledWords(card.stalledReason ?? "gave-up", card.retryAt ?? null, input.now),
     };
   }
   const stageState: BoardState = { cards: [], stages: input.stages, nextCardNumberByProject: {} };
@@ -3871,6 +4160,23 @@ export const BoardCardRecoverStepCommand = Schema.Struct({
       plain nudge never leaves a stale error attached to a step that is running
       again. */
   lastError: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Why the step is stalling, when `escalateToHuman` is true (T3O-22, D10).
+      Absent means `gave-up` — recovery exhausting its budget, the only reason
+      that existed before T3O-22. */
+  stalledReason: Schema.optionalKey(BoardCardStepStalledReason),
+  /** When the board will try again (T3O-22, D7/D10). Absent means never, which
+      is what `gave-up` and `quota-exhausted` both are: those two wait for a
+      human, and a time on them would be a promise nothing keeps. */
+  retryAt: Schema.optionalKey(IsoDateTime),
+  /** Whether this recovery spends the retry budget — `attempt`, `stallCount`
+      and `stageEntryRecoveries` (T3O-22, D12). Absent means true, which is every
+      recovery before T3O-22 and every ordinary one after it.
+   *
+   * False for a quota park alone. A card that hits a usage limit at midnight
+   * would otherwise poll its way to death by 2:30am — twenty minutes before the
+   * provider returns — having proved nothing except that the window was still
+   * shut. The card is not failing; the provider is. */
+  chargeBudget: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardRecoverStepCommand = typeof BoardCardRecoverStepCommand.Type;
@@ -3947,9 +4253,58 @@ export const BoardCardRequeueStepCommand = Schema.Struct({
   type: Schema.Literal("board.card.requeue-step"),
   commandId: CommandId,
   cardId: BoardCardId,
+  /** Keep the retry budget rather than resetting it (T3O-22, D12). Absent means
+      reset, which is the human's Resume and T3O-19's scheduled start: a person
+      intervening IS progress, and the ladder should start its count over.
+   *
+   * True for the board's OWN timed resumes — a backoff rung reaching its moment,
+   * a quota cooldown lifting. Nothing has been proved by the clock advancing, so
+   * resetting there would let a genuinely dead card be nudged for ever and never
+   * reach a human. The budget resets when the woken turn does real work, which
+   * `recover-step`'s `progressed` flag already carries. */
+  preserveBudget: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardRequeueStepCommand = typeof BoardCardRequeueStepCommand.Type;
+
+/**
+ * Record (or re-record) a provider instance's cooldown (T3O-22, D2).
+ *
+ * ONE command for detection, rescheduling and probe bookkeeping, because all
+ * three write the same row and the decider's job is identical: replace the whole
+ * cooldown with the one the reactor computed. Splitting it into `.record` /
+ * `.reschedule` / `.probe` would give three commands one body and three chances
+ * to disagree about which fields a probe may touch.
+ *
+ * Internal — the reactor dispatches it on a classified turn end, on a probe's
+ * verdict, and on the popover's Resume now / Set resume time (through the RPC
+ * seam, which owes the caller an answer and so must not be client-dispatchable).
+ */
+export const BoardProviderLimitRecordCommand = Schema.Struct({
+  type: Schema.Literal("board.provider-limit.record"),
+  commandId: CommandId,
+  limit: BoardProviderLimit,
+  createdAt: IsoDateTime,
+});
+export type BoardProviderLimitRecordCommand = typeof BoardProviderLimitRecordCommand.Type;
+
+/**
+ * Lift a provider instance's cooldown (T3O-22, D9).
+ *
+ * Dispatched when a probe comes back clean, when ANY turn on that instance
+ * succeeds (including a human's own non-board thread — if the provider is
+ * demonstrably answering, there is nothing to wait for), when a probe turns out
+ * to be a billing wall after all, and when the last card the cooldown was
+ * holding has gone. Idempotent: clearing a cooldown that is not there is a
+ * no-op, not a refusal, because every one of those triggers can fire twice.
+ */
+export const BoardProviderLimitClearCommand = Schema.Struct({
+  type: Schema.Literal("board.provider-limit.clear"),
+  commandId: CommandId,
+  providerInstanceId: ProviderInstanceId,
+  createdAt: IsoDateTime,
+});
+export type BoardProviderLimitClearCommand = typeof BoardProviderLimitClearCommand.Type;
 
 export const BoardCardSettleStepCommand = Schema.Struct({
   type: Schema.Literal("board.card.settle-step"),
@@ -4568,6 +4923,21 @@ export const BoardCardStepSteeredPayload = Schema.Struct({
 });
 export type BoardCardStepSteeredPayload = typeof BoardCardStepSteeredPayload.Type;
 
+/** A provider cooldown recorded, rescheduled or handed to a prober (T3O-22).
+    Carries the WHOLE post-change limit, exactly as the step events carry the
+    whole step state: the shell delta is a pure function of the event with no
+    projection re-read, so the event must contain everything a reader needs. */
+export const BoardProviderLimitRecordedPayload = Schema.Struct({
+  limit: BoardProviderLimit,
+});
+export type BoardProviderLimitRecordedPayload = typeof BoardProviderLimitRecordedPayload.Type;
+
+/** A provider cooldown lifted (T3O-22). */
+export const BoardProviderLimitClearedPayload = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+});
+export type BoardProviderLimitClearedPayload = typeof BoardProviderLimitClearedPayload.Type;
+
 // ── Thread todo lists (t3o-18, D1/D3/D4) ───────────────────────────────
 
 /**
@@ -4912,6 +5282,35 @@ export const BoardCardShell = Schema.Struct({
       authoritative, card-carrying deltas rest it at false, and the client
       preserves the last known value (`applyBoardShellStreamEvent`). */
   stepConflictFix: Schema.Boolean,
+  /** Why the step stalled (T3O-22, D10) — the four readings of one status. Its
+      absence IS the legacy `gave-up` reading, which is why this is KEY-optional
+      rather than nullable: the shell is under a fixed per-card byte budget
+      asserted in `board.test.ts`, and the overwhelming majority of cards are not
+      stalled at all.
+
+      Step-derived like `stalled` itself, so the snapshot and the `card-stalled`
+      delta are authoritative. Unlike `briefHasImage` there is no absent-means-
+      preserve rule: `card-stalled` describes the whole step-derived slice, so an
+      absent key on THAT delta really does clear the reason. Every other delta
+      omits it and leaves it alone. */
+  stalledReason: Schema.optionalKey(BoardCardStepStalledReason),
+  /** When the board will try this step again (T3O-22, D7/D10), absent when
+      nothing is scheduled — which is every card that is not waiting, and the
+      same byte-budget reason `stalledReason` is key-optional. Rides and clears
+      with `stalledReason`. */
+  retryAt: Schema.optionalKey(IsoDateTime),
+  /** Which provider instance is holding this card (T3O-22, D14), present ONLY
+      while `stalledReason` is `usage-limit`.
+   *
+      The provider-usage popover has to say WHICH account each waiting card is
+      waiting on, and a board with two limited providers cannot tell otherwise —
+      every other step field on the shell is a status, not an identity. Scoped to
+      the one status that needs it rather than carried on every card: a running
+      card's provider is not something any surface renders, and the shell is
+      under a fixed per-card byte budget asserted in `board.test.ts`.
+
+      Rides and clears with `stalledReason`. */
+  limitedByInstanceId: Schema.optionalKey(ProviderInstanceId),
   // Thread-derived — joined from `board_card_thread_links` (902) and the
   // linked thread's shell; no new plumbing (t3o-04).
   threadState: BoardCardThreadState,
@@ -5184,6 +5583,16 @@ export function makeBoardCardShell(input: {
       snapshot and the `card-stalled` delta; rests false on card deltas, which
       the client preserves through exactly like `stalled`. */
   readonly stepConflictFix?: boolean | undefined;
+  /** Why the step stalled and when it next tries (T3O-22, D10). Real on the
+      snapshot and the `card-stalled` delta; ABSENT on card deltas, where the
+      client preserves the last known pair. Absent on the snapshot means the
+      card is not stalled — or is stalled the old way, which reads `gave-up`. */
+  readonly stalledReason?: BoardCardStepStalledReason | null | undefined;
+  readonly retryAt?: IsoDateTime | null | undefined;
+  /** Which provider instance is holding a `usage-limit` park (T3O-22, D14).
+      Producers pass it only on that reason; it rides and clears with the pair
+      above. */
+  readonly limitedByInstanceId?: ProviderInstanceId | null | undefined;
   /** Whether the brief carries a picture. Omitted by producers that do not
       have the brief body in hand, which leaves the key absent so the client
       preserves its last known value. */
@@ -5248,6 +5657,15 @@ export function makeBoardCardShell(input: {
     stepRunning: input.stepRunning ?? false, // durable "being worked" flag: real on the snapshot, rests false on card deltas
     stepAwaiting: input.stepAwaiting ?? null, // t3o-34 (D4): real on the snapshot, rests null on card deltas
     stepConflictFix: input.stepConflictFix ?? false, // T3O-9: real on the snapshot, rests false on card deltas
+    // T3O-22 (D10): omitted when there is nothing to say, which keeps a board
+    // that has never hit a limit byte-identical to a pre-T3O-22 payload.
+    ...(input.stalledReason == null ? {} : { stalledReason: input.stalledReason }),
+    ...(input.retryAt == null ? {} : { retryAt: input.retryAt }),
+    // Only ever set beside a `usage-limit` reason (see the schema), so an
+    // ordinary card's shell is byte-identical to a pre-T3O-22 payload.
+    ...(input.stalledReason === "usage-limit" && input.limitedByInstanceId != null
+      ? { limitedByInstanceId: input.limitedByInstanceId }
+      : {}),
     threadState,
     awaitingInput,
     activeThreadId: input.activeThreadId,
@@ -5453,6 +5871,16 @@ export const BoardCardStalledShellEvent = Schema.Struct({
       copy: admission does not change WHICH step is running, and selection
       always precedes it, so the flag is never late. */
   stepConflictFix: Schema.Boolean,
+  /** And why the step stalled, plus when it next tries (T3O-22, D10) — key-
+      optional exactly as on the shell, and cleared by their absence here. They
+      ride this delta rather than one of their own for the reason `held` does:
+      the events that emit `card-stalled` are precisely the events that set and
+      clear them. */
+  stalledReason: Schema.optionalKey(BoardCardStepStalledReason),
+  retryAt: Schema.optionalKey(IsoDateTime),
+  /** …and which provider instance is holding it, on the one status that needs
+      it (T3O-22, D14). Same key-optional, cleared-by-absence rule. */
+  limitedByInstanceId: Schema.optionalKey(ProviderInstanceId),
   /** And the QUEUE flag, carried for the same reason as the three above: every
       event that emits this delta (settled / selected / recovered /
       awaiting-input) carries the step's status, and none of those statuses is
@@ -5579,6 +6007,31 @@ export const BoardStageRemovedShellEvent = Schema.Struct({
 export type BoardStageRemovedShellEvent = typeof BoardStageRemovedShellEvent.Type;
 
 /**
+ * A provider cooldown appearing or changing (T3O-22, D14).
+ *
+ * Its own delta rather than a field on every card, for the reason the label
+ * catalogue rides once: a cooldown is ONE fact about a provider account, and
+ * denormalising it onto every card that shares the account would put the same
+ * sentence on the wire N times and still leave the top bar with nothing to read
+ * when no card is on screen.
+ */
+export const BoardProviderLimitUpsertedShellEvent = Schema.Struct({
+  kind: Schema.Literal("card-provider-limit-upserted"),
+  sequence: NonNegativeInt,
+  limit: BoardProviderLimit,
+});
+export type BoardProviderLimitUpsertedShellEvent = typeof BoardProviderLimitUpsertedShellEvent.Type;
+
+/** A provider cooldown lifted (T3O-22) — a real removal, so it gets its own
+    delta rather than an upsert carrying a tombstone. */
+export const BoardProviderLimitClearedShellEvent = Schema.Struct({
+  kind: Schema.Literal("card-provider-limit-cleared"),
+  sequence: NonNegativeInt,
+  providerInstanceId: ProviderInstanceId,
+});
+export type BoardProviderLimitClearedShellEvent = typeof BoardProviderLimitClearedShellEvent.Type;
+
+/**
  * Type guards for the `board.` / `card-` prefix rule. Generic over the input
  * union (rather than typed against `OrchestrationCommand` etc.) because this
  * file cannot import `orchestration.ts` — narrowing still resolves to the
@@ -5677,6 +6130,8 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardRetuneStepCommand,
   // T3O-17: a human's own turn on a step thread, and the free ending it buys.
   BoardCardNoteHumanTurnCommand,
+  BoardProviderLimitRecordCommand,
+  BoardProviderLimitClearCommand,
   BoardCardAttachCommand,
   BoardCardDetachCommand,
 ] as const;
@@ -5725,6 +6180,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-step-retuned",
   // T3O-17: a human steered a running unattended step by typing into it.
   "board.card-step-steered",
+  "board.provider-limit-recorded",
+  "board.provider-limit-cleared",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
@@ -5738,6 +6195,8 @@ export const BOARD_SHELL_STREAM_EVENTS = [
   BoardLabelUpsertedShellEvent,
   BoardStageUpsertedShellEvent,
   BoardStageRemovedShellEvent,
+  BoardProviderLimitUpsertedShellEvent,
+  BoardProviderLimitClearedShellEvent,
 ] as const;
 
 /**
@@ -5959,6 +6418,16 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       type: Schema.Literal("board.card-step-steered"),
       payload: BoardCardStepSteeredPayload,
     }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.provider-limit-recorded"),
+      payload: BoardProviderLimitRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.provider-limit-cleared"),
+      payload: BoardProviderLimitClearedPayload,
+    }),
   ] as const;
 }
 
@@ -6007,6 +6476,17 @@ export const BOARD_WS_METHODS = {
   attachCardFile: "board.attachCardFile",
   /** Drop a brief attachment and delete its file. */
   detachCardFile: "board.detachCardFile",
+  /** Probe a limited provider NOW (T3O-22, D14) — the popover's "Resume now".
+      An RPC rather than a client command for the reason merging is one: the
+      caller is a human waiting to see whether the provider is back, and the
+      answer is the whole point of the click. It probes ONE card, matching D9:
+      waking the fleet at a moment the human picked is the same mistake as
+      waking it at the reset time. */
+  probeProviderLimit: "board.probeProviderLimit",
+  /** Set (or clear) a limited provider's resume time by hand (T3O-22, D14) —
+      offered when the provider named no time and the board is polling blind.
+      A human-set time is never overwritten by a later loose match. */
+  setProviderLimitResumeAt: "board.setProviderLimitResumeAt",
 } as const;
 
 /**
@@ -6308,6 +6788,20 @@ export class BoardCardAttachmentError extends Schema.TaggedErrorClass<BoardCardA
 ) {}
 
 /** Spread into `WsRpcGroup` (`RpcGroup.make` is variadic). */
+/** Which provider instance an RPC is about (T3O-22). */
+export const BoardProviderLimitActionInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+});
+export type BoardProviderLimitActionInput = typeof BoardProviderLimitActionInput.Type;
+
+/** A human's own resume time for a limited provider (T3O-22, D14), or null to
+    hand the schedule back to the blind poll. */
+export const BoardProviderLimitResumeAtInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  resumeAt: Schema.NullOr(IsoDateTime),
+});
+export type BoardProviderLimitResumeAtInput = typeof BoardProviderLimitResumeAtInput.Type;
+
 export const BOARD_RPCS = [
   Rpc.make(BOARD_WS_METHODS.subscribeCard, {
     payload: BoardSubscribeCardInput,
@@ -6340,6 +6834,16 @@ export const BOARD_RPCS = [
     success: Schema.Void,
     error: Schema.Union([BoardCardAttachmentError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.probeProviderLimit, {
+    payload: BoardProviderLimitActionInput,
+    success: Schema.Void,
+    error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(BOARD_WS_METHODS.setProviderLimitResumeAt, {
+    payload: BoardProviderLimitResumeAtInput,
+    success: Schema.Void,
+    error: EnvironmentAuthorizationError,
+  }),
 ] as const;
 
 /**
@@ -6363,6 +6867,10 @@ export const BOARD_RPC_SCOPES = {
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.detachCardFile]: AuthOrchestrationOperateScope,
+  // Both start work: one sends a turn at a provider, the other decides when
+  // the board will. The same mutation tier as every other board write.
+  [BOARD_WS_METHODS.probeProviderLimit]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.setProviderLimitResumeAt]: AuthOrchestrationOperateScope,
 } as const;
 
 // ── Board settings (D10, t3o-07) ───────────────────────────────────────

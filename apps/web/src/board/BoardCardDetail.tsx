@@ -23,6 +23,7 @@ import {
   assignBoardKeyPrefix,
   boardCardAttention,
   boardCardProjectLock,
+  boardStallIsWaiting,
   boardStageWithRole,
   resolveBoardProjectAccent,
   isBoardCardBaseRetargeted,
@@ -719,7 +720,14 @@ export function BoardCardDetail({
       recovery exhausting its budget — still gets a banner, with the sentence
       that describes it. */
   const stepFailure = stepStalled
-    ? { stageLabel: boardStageLabel(stages, card.stage), error: detail?.stepError ?? null }
+    ? {
+        stageLabel: boardStageLabel(stages, card.stage),
+        error: detail?.stepError ?? null,
+        // Amber and "waiting to resume" rather than red and "stopped" when the
+        // board is going to restart it itself (T3O-22) — read off the same shell
+        // field the card face's chip reads, so the two cannot disagree.
+        waiting: boardStallIsWaiting(cardShell?.stalledReason),
+      }
     : null;
   /** What the paused banner renders (T3O-23). Mutually exclusive with
       `stepFailure` by construction: `paused` and `stalled` are different step

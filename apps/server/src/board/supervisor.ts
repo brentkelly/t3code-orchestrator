@@ -101,6 +101,37 @@ function stalledSubject(stepState: Pick<BoardCardStepState, "stepLabel" | "stage
   return stepState.stageLabel === null ? "This stage" : `Stage "${stepState.stageLabel}"`;
 }
 
+/** Which of recovery's two ceilings a stop crosses, or null while both hold. */
+export type BoardRecoveryCeiling = "stage-entry" | "stall-streak";
+
+/**
+ * Ask the two ceilings on their own (T3O-22), given the totals a stop WOULD
+ * reach — one definition, so nothing enforces half of them.
+ *
+ * `recoveryDecision` below is the usual caller, but it is not the only stop
+ * that spends the retry budget: a lone LOOSE usage-limit match parks its card
+ * itself (D6) and never reaches recovery at all, so without asking here it
+ * would back the same card off every rung for ever, charging a budget nobody
+ * reads. Ceilings are what turn "try again later" into "and eventually tell a
+ * human", and every path that charges the budget owes the card that.
+ */
+export function recoveryCeilingCrossed(input: {
+  /** The consecutive-stall count this stop would reach, this stop included. */
+  readonly stallCount: number;
+  readonly maxAttempts: number;
+  /** The stage entry's recovery total this stop would reach, this one included. */
+  readonly stageEntryRecoveries: number;
+  readonly maxRecoveriesPerStageEntry: number;
+}): BoardRecoveryCeiling | null {
+  // D5 first: a stage that has spent more than the ceiling on RECOVERY is a
+  // runaway regardless of the per-step ladder — the backstop that stays
+  // observable even when no single step wedged.
+  if (input.stageEntryRecoveries > input.maxRecoveriesPerStageEntry) return "stage-entry";
+  // D1 per-step ladder: `maxAttempts` consecutive unproductive stalls.
+  if (input.stallCount >= input.maxAttempts) return "stall-streak";
+  return null;
+}
+
 /**
  * How a stalled or dead step recovers (t3o-17, D1/D5) — escalating and bounded,
  * and PURE (crit 5): git and SQL stay in the reactor, which resolves the
@@ -180,11 +211,14 @@ export function recoveryDecision(input: {
   const nextStageRecoveries = input.stageEntryRecoveries + 1;
   const escalateManually = `How should I proceed: retry it again, switch to a different provider, or do you want to take it over manually?`;
 
-  // D5 ceiling first: a stage that has spent more than the ceiling on RECOVERY
-  // is a runaway regardless of the per-step ladder — the backstop that stays
-  // observable even when no single step wedged. Planned steps never reach here,
-  // which is the whole of T3O-12's D4.
-  if (nextStageRecoveries > input.maxRecoveriesPerStageEntry) {
+  // Planned steps never reach here, which is the whole of T3O-12's D4.
+  const ceiling = recoveryCeilingCrossed({
+    stallCount: nextStallCount,
+    maxAttempts: input.stepState.maxAttempts,
+    stageEntryRecoveries: nextStageRecoveries,
+    maxRecoveriesPerStageEntry: input.maxRecoveriesPerStageEntry,
+  });
+  if (ceiling === "stage-entry") {
     return {
       kind: "escalate",
       attempt: nextAttempt,
@@ -198,8 +232,7 @@ export function recoveryDecision(input: {
       ].join(" "),
     };
   }
-  // D1 per-step ladder: `maxAttempts` consecutive unproductive stalls.
-  if (nextStallCount >= input.stepState.maxAttempts) {
+  if (ceiling === "stall-streak") {
     return {
       kind: "escalate",
       attempt: nextAttempt,
@@ -215,6 +248,38 @@ export function recoveryDecision(input: {
       ].join(" "),
     };
   }
+  return {
+    kind: "resume",
+    attempt: nextAttempt,
+    stallCount: nextStallCount,
+    nudge: boardRecoveryNudge({
+      stallCount: nextStallCount,
+      hasTodoList: input.hasTodoList,
+      endedWithQuestion: input.endedWithQuestion,
+    }),
+  };
+}
+
+/**
+ * The words a recovery nudge sends into the step's thread.
+ *
+ * Split out of `recoveryDecision` because the two are no longer sent at the same
+ * moment (T3O-22, D7): the decision is made when the turn ends and the ladder is
+ * charged there, while the nudge itself goes minutes later, when the backoff
+ * rung reaches its time and the governor re-admits the step. The delivery path
+ * holds the step row, so it composes the text from the row rather than carrying
+ * a string across a park, a restart and a queue.
+ *
+ * Pure, and every input is a scalar the reactor resolves — the same split
+ * `recoveryDecision` itself keeps.
+ */
+export function boardRecoveryNudge(input: {
+  /** The step's CONSECUTIVE stall count, already including this stall. The
+      outstanding-work reminder appears from the third onward. */
+  readonly stallCount: number;
+  readonly hasTodoList: boolean;
+  readonly endedWithQuestion: boolean;
+}): string {
   const nudgeLines = [
     `Your previous turn ended without calling board_complete_step, so your work is not finished.`,
     `Continue where you left off and call board_complete_step when done; if you are blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}.`,
@@ -228,7 +293,7 @@ export function recoveryDecision(input: {
       `You are not keeping a todo list: write one now (your task/plan tool) and work through it, so progress is visible and this run is not escalated as stalled.`,
     );
   }
-  if (nextStallCount >= 3) {
+  if (input.stallCount >= 3) {
     nudgeLines.splice(
       1,
       0,
@@ -250,13 +315,21 @@ export function recoveryDecision(input: {
       `You asked a question, but this run is unattended and nobody will answer it: decide it yourself with your best judgement, record the decision, and continue.`,
     );
   }
-  return {
-    kind: "resume",
-    attempt: nextAttempt,
-    stallCount: nextStallCount,
-    nudge: nudgeLines.join(" "),
-  };
+  return nudgeLines.join(" ");
 }
+
+/**
+ * What the board says to an agent when a provider's usage window reopens
+ * (T3O-22, D9) — sent into the parked step's thread when the cooldown lifts.
+ *
+ * Deliberately not a recovery nudge: nothing stalled, nothing failed, and no
+ * attempt was consumed (D12). The agent was refused by a provider that has since
+ * come back, and the only thing it needs to know is that it may carry on.
+ */
+export const BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE = [
+  `Your provider's usage limit has reset and this work has been resumed automatically.`,
+  `Continue from where you left off, and call board_complete_step when you are done.`,
+].join(" ");
 
 /**
  * What the board says to an agent when it resumes a step a human PAUSED

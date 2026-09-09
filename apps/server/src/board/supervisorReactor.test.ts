@@ -10,6 +10,8 @@ import {
   BoardStageId,
   ProjectId,
   ProviderInstanceId,
+  isBoardCommand,
+  isBoardEvent,
   ThreadId,
   type BoardCard,
   type BoardCardStepState,
@@ -24,7 +26,9 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Duration from "effect/Duration";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
@@ -37,6 +41,9 @@ import { ServerActivation } from "../serverActivation.ts";
 import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
 import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
+import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+import { projectBoardEvent } from "./projector.ts";
+import { UsageLimitDetector } from "./UsageLimitDetector.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -102,6 +109,8 @@ const runningState: BoardCardStepState = {
   baseTipAtRoundStart: null,
   lastError: null,
   awaitingReason: "question" as const,
+  stalledReason: "gave-up" as const,
+  retryAt: null,
   prompt: "do it",
   providerInstanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
@@ -172,21 +181,57 @@ function reconcileCommandObjects(input: {
   readonly gateOnActivation?: (
     dispatchedSoFar: Effect.Effect<ReadonlyArray<OrchestrationCommand>>,
   ) => Effect.Effect<void>;
+  /** Follow the reconcile with the backoff rung it just set (T3O-22, D7).
+      Recovery no longer nudges on the spot — it parks the step with a
+      `retryAt` and the retry sweep puts it back through the governor when the
+      rung arrives — so a test about what a RECOVERY does has to wait the rung
+      out. Absent leaves reconcile's own commands alone, which is what every
+      test about what reconcile does NOT do wants. */
+  readonly throughRetry?: boolean;
 }): Effect.Effect<ReadonlyArray<OrchestrationCommand>> {
   const shells = input.threadShells ?? new Map<string, OrchestrationThreadShell>();
   return Effect.gen(function* () {
     const recorded = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
-    const model = readModel(input.board);
+    // Ref-held rather than a frozen snapshot, and BOARD commands are folded back
+    // into it through the real decider and projector (T3O-22). Reconcile's own
+    // decisions used to be write-only here, which was fine while every recovery
+    // acted immediately; now a recovery PARKS the step and a later sweep acts on
+    // the parked row, so a model that never changed would leave the sweep
+    // reading a step that boot had already moved on from.
+    const model = yield* Ref.make(readModel(input.board));
+    const foldBoardCommand = (command: OrchestrationCommand) =>
+      isBoardCommand(command)
+        ? Effect.gen(function* () {
+            const decided = yield* decideBoardCommand({
+              command,
+              readModel: yield* Ref.get(model),
+            }).pipe(
+              Effect.map(boardDecidedEvents),
+              Effect.orElseSucceed(() => []),
+            );
+            for (const planned of decided) {
+              const event = { ...planned, sequence: 0 } as OrchestrationEvent;
+              if (!isBoardEvent(event)) continue;
+              const next = yield* projectBoardEvent(yield* Ref.get(model), event).pipe(
+                Effect.orDie,
+              );
+              yield* Ref.set(model, next);
+            }
+          })
+        : Effect.void;
 
     const engineStub = {
       dispatch: (command: OrchestrationCommand) =>
-        Ref.update(recorded, (all) => [...all, command]).pipe(Effect.as({ sequence: 0 })),
+        Ref.update(recorded, (all) => [...all, command]).pipe(
+          Effect.andThen(foldBoardCommand(command)),
+          Effect.as({ sequence: 0 }),
+        ),
       streamDomainEvents: Stream.empty as Stream.Stream<OrchestrationEvent>,
       latestSequence: Effect.succeed(0),
     } as unknown as OrchestrationEngineService["Service"];
 
     const snapshotStub = {
-      getCommandReadModel: () => Effect.succeed(model),
+      getCommandReadModel: () => Ref.get(model),
       getThreadShellById: (threadId: ThreadId) => {
         const shell = shells.get(String(threadId));
         return Effect.succeed(shell === undefined ? Option.none() : Option.some(shell));
@@ -226,6 +271,13 @@ function reconcileCommandObjects(input: {
         }),
       ),
       BoardStepSlotsLive,
+      // Boot reconcile classifies no turn (T3O-22): it reconciles step state
+      // against the world, and a stub that says "the catalogue matched nothing"
+      // is what leaves every reconcile decision exactly as it was.
+      Layer.succeed(
+        UsageLimitDetector,
+        UsageLimitDetector.of({ classifyTurn: () => Effect.succeed(null) }),
+      ),
       Layer.succeed(
         ServerActivation,
         input.gateOnActivation === undefined
@@ -239,6 +291,11 @@ function reconcileCommandObjects(input: {
     return yield* Effect.gen(function* () {
       const reactor = yield* SupervisorReactor;
       yield* reactor.reconcile;
+      if (input.throughRetry === true) {
+        yield* TestClock.adjust(Duration.minutes(5));
+        yield* reactor.fireRetries;
+        yield* reactor.drain;
+      }
       const commands = yield* Ref.get(recorded);
       return commands;
     }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provide(deps))));
@@ -251,6 +308,7 @@ function reconcileCommands(input: {
   readonly gateOnActivation?: (
     dispatchedSoFar: Effect.Effect<ReadonlyArray<OrchestrationCommand>>,
   ) => Effect.Effect<void>;
+  readonly throughRetry?: boolean;
 }): Effect.Effect<ReadonlyArray<string>> {
   return reconcileCommandObjects(input).pipe(
     Effect.map((commands) => commands.map((command) => command.type)),
@@ -363,9 +421,12 @@ it.effect("boot: a running step whose thread is gone is recovered (respawned)", 
     const types = yield* reconcileCommands({
       board: { cards: [card], stepStates: [runningState], nextCardNumberByProject: {} },
       // no shell for thread-1 → gone
+      throughRetry: true,
     });
     assert.include(types, "board.card.recover-step");
-    // A gone thread is respawned, not nudged into the void.
+    // A gone thread is respawned, not nudged into the void — through the
+    // governor when the backoff rung arrives (T3O-22, D7), which is also what
+    // gets the step its slot back.
     assert.include(types, "thread.turn.start");
     assert.include(types, "board.card.link-thread");
   }),
@@ -377,7 +438,8 @@ it.effect("respawn freezes the user-chosen access level, never forcing full-acce
     // full-access). The respawn must carry that posture verbatim.
     const commands = yield* reconcileCommandObjects({
       board: { cards: [card], stepStates: [runningState], nextCardNumberByProject: {} },
-      // no shell for thread-1 → gone → respawn
+      // no shell for thread-1 → gone → respawn once the backoff rung arrives
+      throughRetry: true,
     });
     const turnStart = commands.find((command) => command.type === "thread.turn.start");
     assert.isDefined(turnStart);
@@ -477,11 +539,13 @@ it.effect("boot: a session upstream marked `error` is dead even with a stale act
     const types = yield* reconcileCommands({
       board: { cards: [card], stepStates: [runningState], nextCardNumberByProject: {} },
       threadShells: new Map([["thread-1", restartOrphanShell]]),
+      throughRetry: true,
     });
     assert.include(types, "board.card.recover-step");
     // The shell still EXISTS, so recovery drives the thread it has rather than
     // respawning — which is upstream's own instruction on that error ("Send a
-    // new message to continue").
+    // new message to continue"). It goes out when the backoff rung arrives
+    // (T3O-22, D7) rather than on the spot.
     assert.include(types, "thread.turn.start");
   }),
 );

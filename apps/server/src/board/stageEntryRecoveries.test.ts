@@ -20,7 +20,9 @@
  */
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   BOARD_SEED_STAGE_IDS,
@@ -241,23 +243,38 @@ it.effect(
         // thing twenty times more slowly.
         settings: tightCeiling(1),
       },
-      ({ pumpDomain, pumpRuntime, board, shells }) =>
+      ({ pumpDomain, pumpRuntime, board, shells, reactor }) =>
         Effect.gen(function* () {
           yield* pumpDomain(cardMoved(reviewCard(), "building", "review", 1));
           const thread = liveThread(yield* board);
           yield* Ref.set(shells, shellsFor([[String(thread), idleThreadShell(String(thread))]]));
 
-          // First recovery: within budget, so the step is nudged and stays live.
+          // First recovery: within budget, so the step is RETRIED. Since T3O-22
+          // (D7) a retry waits its backoff rung, so both outcomes now wear the
+          // `stalled` status and the REASON is what tells them apart — waiting
+          // to retry, with a time, versus recovery having given up with none.
           yield* pumpRuntime(turnCompleted(thread));
           assert.strictEqual(recoveriesOf(yield* board), 1);
-          assert.strictEqual(boardCardStepState(yield* board, cardId)?.status, "running");
+          const retrying = boardCardStepState(yield* board, cardId);
+          assert.strictEqual(retrying?.stalledReason, "waiting-retry");
+          assert.ok(retrying?.retryAt !== null, "a retry says when it will try again");
 
           // Second: crosses the ceiling. `maxAttempts` is nowhere near exhausted
           // (this is stall #2 of a default 5), so the ladder is not what stops it
           // — the runaway detector is, which is the job it keeps.
+          // Wait the rung out and let the retry sweep put the step back to
+          // work, which is the real path — the ladder is charged at the stop and
+          // the nudge is delivered here.
+          yield* TestClock.adjust(Duration.minutes(5));
+          yield* reactor.fireRetries;
+          yield* reactor.drain;
+          assert.strictEqual(boardCardStepState(yield* board, cardId)?.status, "running");
           yield* pumpRuntime(turnCompleted(thread));
-          assert.strictEqual(boardCardStepState(yield* board, cardId)?.status, "stalled");
-          assert.isBelow(boardCardStepState(yield* board, cardId)?.stallCount ?? 99, 5);
+          const escalated = boardCardStepState(yield* board, cardId);
+          assert.strictEqual(escalated?.status, "stalled");
+          assert.strictEqual(escalated?.stalledReason, "gave-up");
+          assert.strictEqual(escalated?.retryAt, null, "an escalation promises no retry");
+          assert.isBelow(escalated?.stallCount ?? 99, 5);
         }),
     ),
 );
@@ -294,9 +311,9 @@ it.effect(
           // red with "Recovery gave up after repeated attempts with no
           // progress. Nothing is running." on a card whose loop was healthy.
           assert.strictEqual(
-            boardCardStepState(yield* board, cardId)?.status,
-            "running",
-            "a healthy long loop's first stall is nudged, not escalated",
+            boardCardStepState(yield* board, cardId)?.stalledReason,
+            "waiting-retry",
+            "a healthy long loop's first stall is retried, not escalated",
           );
           assert.strictEqual(recoveriesOf(yield* board), 1);
         }),

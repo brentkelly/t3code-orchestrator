@@ -59,6 +59,8 @@ const forcedQueuedStep = (id: string): BoardCardStepState => ({
   baseTipAtRoundStart: null,
   lastError: null,
   awaitingReason: "question",
+  stalledReason: "gave-up",
+  retryAt: null,
   prompt: "build it",
   providerInstanceId: codex,
   model: "gpt-5-codex",
@@ -203,7 +205,7 @@ it.effect("a force-started step is admitted despite a schedule (the gate's one b
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
     },
-    ({ board, reactor }) =>
+    ({ reactor, commands }) =>
       Effect.gen(function* () {
         // Reconcile ends in a scheduling pass, which is the governor path the
         // gate lives on.
@@ -215,7 +217,12 @@ it.effect("a force-started step is admitted despite a schedule (the gate's one b
         // scheduled step's `forceStart`, so this is a defensive guard rather
         // than a button — but a gate that ignored the override would be a card
         // whose "start anyway" silently did nothing.
-        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("forced")), "running");
+        // Asserted on the ADMISSION rather than on the step's later status: the
+        // gate's job is to let this candidate reach the governor, and what
+        // happens to the step afterwards (this fixture seeds no thread shell, so
+        // a second reconcile pass reads its spawned thread as gone and parks it
+        // for a retry) is a different mechanism's business.
+        assert.include(commandTypes(yield* commands), "board.card.admit-step");
       }),
   ),
 );

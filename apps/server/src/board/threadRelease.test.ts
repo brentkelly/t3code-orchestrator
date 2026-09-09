@@ -91,6 +91,8 @@ const stepState = (input: {
     lastError: null,
     status: input.status,
     awaitingReason: "question",
+    stalledReason: "gave-up",
+    retryAt: null,
     slotHeld: false,
     forceStart: false,
     startedAt: null,

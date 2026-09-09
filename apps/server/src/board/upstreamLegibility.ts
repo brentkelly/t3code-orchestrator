@@ -60,7 +60,14 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
  * side keeps the same rot-proofness in both places: an aggregate kind upstream
  * adds is counted as upstream automatically.
  */
-const BOARD_AGGREGATE_KINDS: ReadonlySet<string> = new Set(["card", "label", "stage"]);
+const BOARD_AGGREGATE_KINDS: ReadonlySet<string> = new Set([
+  "card",
+  "label",
+  "stage",
+  // The provider-cooldown aggregate (T3O-22): keyed on a provider instance,
+  // and as board-owned as the three above.
+  "provider-limit",
+]);
 
 /** Aggregate kinds stock t3code knows: everything t3o ships, minus the board's. */
 export const UPSTREAM_AGGREGATE_KINDS: ReadonlySet<string> = new Set(

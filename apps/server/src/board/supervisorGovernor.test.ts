@@ -158,31 +158,40 @@ it.effect("no slot leaks across success, failure, crash/death, and abandonment",
         yield* pumpDomain(stepCompleted(BoardCardId.make("succ"), "succeeded", 2));
         assert.strictEqual(yield* slots.heldFor(codex), 0); // released
 
-        // ── step failure → recovery keeps the slot (not a leak, not premature
-        //    release) → the eventual terminal (abandon) releases it ─────────
+        // ── step failure → recovery parks for its backoff rung and GIVES THE
+        //    SLOT BACK → the eventual terminal must not release it twice ────
         yield* pumpDomain(movedToBuilding(buildingCard("fail", "b"), 3));
         assert.strictEqual(yield* slots.heldFor(codex), 1);
         yield* pumpDomain(stepCompleted(BoardCardId.make("fail"), "failed", 4));
-        // A failed report enters recovery (retry) — the slot is HELD, so the
-        // recovering card keeps its place rather than dropping out of the queue.
-        assert.strictEqual(yield* slots.heldFor(codex), 1);
-        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("fail")), "running");
+        // A failed report enters recovery, and since T3O-22 (D7) a retry WAITS:
+        // the step parks with a `retryAt` and releases its slot rather than
+        // holding a worker idle for up to half an hour on a three-slot board.
+        // This supersedes t3o-17's "a retry keeps its place" for the waiting
+        // window — `orderBoardQueue` ranks started-and-later-stage first, so the
+        // card regains its place ahead of fresh work when its rung arrives.
+        assert.strictEqual(yield* slots.heldFor(codex), 0);
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("fail")), "stalled");
         yield* pumpDomain(cardArchived(buildingCard("fail", "b"), 5));
-        assert.strictEqual(yield* slots.heldFor(codex), 0); // released at the terminal
+        // Still zero, not minus one: the release is gated on the persisted
+        // `slotHeld`, which the park already cleared.
+        assert.strictEqual(yield* slots.heldFor(codex), 0);
 
-        // ── crash / death → the step's thread vanishes; death detection
-        //    recovers (respawns), still holding the slot → success releases ──
+        // ── crash / death → the step's thread vanishes; death detection parks
+        //    it for a rung and releases the slot → a later success must not
+        //    release it again ────────────────────────────────────────────────
         yield* pumpDomain(movedToBuilding(buildingCard("crash", "c"), 6));
         assert.strictEqual(yield* slots.heldFor(codex), 1);
         const running = boardCardStepState(yield* board, BoardCardId.make("crash"));
         assert.strictEqual(running?.status, "running");
         // The thread is gone (never added to the shells map) → turn.completed
-        // with no completion is death → recover, slot retained.
+        // with no completion is death → recovery parks it (T3O-22, D7) and the
+        // slot goes back. The respawn happens when the rung arrives, through the
+        // ordinary queue, which is where the slot is re-acquired.
         yield* pumpRuntime(turnCompleted(running!.threadId!));
-        assert.strictEqual(yield* slots.heldFor(codex), 1);
-        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("crash")), "running");
+        assert.strictEqual(yield* slots.heldFor(codex), 0);
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("crash")), "stalled");
         yield* pumpDomain(stepCompleted(BoardCardId.make("crash"), "succeeded", 7));
-        assert.strictEqual(yield* slots.heldFor(codex), 0); // released on eventual success
+        assert.strictEqual(yield* slots.heldFor(codex), 0); // still zero, never negative
 
         // ── abandonment of a live running step ─────────────────────────────
         yield* pumpDomain(movedToBuilding(buildingCard("abandon", "d"), 8));
