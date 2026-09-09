@@ -52,6 +52,31 @@ describe("boardCardScheduleLabel", () => {
     ).toBeNull();
   });
 
+  it("drops the pill once the moment has passed, rather than wearing a stale time", () => {
+    // `schedule()` admits a due card without clearing the field, so a card can
+    // be RUNNING with its time still set until the next 30s firing pass. A pill
+    // naming a moment that has gone would be a lying label for that window.
+    expect(
+      boardCardScheduleLabel({
+        scheduledStartAt: at(14),
+        done: false,
+        parked: false,
+        nowMs: NOW_MS,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the pill right up to the instant itself", () => {
+    expect(
+      boardCardScheduleLabel({
+        scheduledStartAt: new Date(NOW_MS + 1).toISOString(),
+        done: false,
+        parked: false,
+        nowMs: NOW_MS,
+      })?.label,
+    ).toBe("2:30 PM");
+  });
+
   it("renders no pill for a value it cannot read, rather than an empty chip", () => {
     expect(
       boardCardScheduleLabel({

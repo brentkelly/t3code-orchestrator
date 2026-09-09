@@ -99,6 +99,26 @@ export function untilLabel(iso: string, nowMs: number): string {
   return `in ${String(days)}d${rest === 0 ? "" : ` ${String(rest)}h`}`;
 }
 
+/**
+ * What the picker shows while it is open: the user's own half-typed draft, else
+ * the stored instant, else NOTHING.
+ *
+ * The empty third case is the whole point. The popover has no submit — it
+ * commits on every COMPLETE value — so a pre-filled input turns the first
+ * spinner nudge on an unscheduled card into a commit of a time the user never
+ * chose. On a running card that commit stops the agent and releases its slot.
+ * Starting empty makes an incomplete value the only thing a nudge can produce
+ * (`localInputValueToIso` returns null for one), so closing the popover without
+ * finishing a time is the cancel. The presets remain the one-click path.
+ */
+export function scheduleInputValue(input: {
+  readonly draft: string;
+  readonly scheduledStartAt: string | null;
+}): string {
+  if (input.draft !== "") return input.draft;
+  return input.scheduledStartAt === null ? "" : isoToLocalInputValue(input.scheduledStartAt);
+}
+
 export interface BoardSchedulePreset {
   readonly label: string;
   readonly iso: string;

@@ -7,6 +7,8 @@
  * when their card does: a relative label would either tick continuously or lie,
  * and this repo refuses both.
  */
+import { isBoardCardScheduleDue } from "@t3tools/contracts";
+
 import { untilLabel, whenLabel } from "./boardSchedule";
 
 export interface BoardCardScheduleLabel {
@@ -26,10 +28,18 @@ export function boardCardScheduleLabel(input: {
   readonly parked: boolean;
   readonly nowMs: number;
 }): BoardCardScheduleLabel | null {
-  if (input.scheduledStartAt === null || input.done) return null;
-  const label = whenLabel(input.scheduledStartAt, input.nowMs);
-  if (label === "") return null;
-  const until = untilLabel(input.scheduledStartAt, input.nowMs);
+  const at = input.scheduledStartAt;
+  if (at === null || input.done) return null;
+  // No pill once the moment has passed. `schedule()` admits a due card WITHOUT
+  // clearing the field — only the 30s firing pass clears it — so a card can be
+  // running for up to a tick with its time still set, and a pill naming a
+  // moment that has gone is a stale label. Sharing `isBoardCardScheduleDue`
+  // with the supervisor's gate and the queue derivation is what keeps the pill
+  // and the thing it describes from disagreeing; it also covers an instant
+  // this client cannot read, which is due by the same rule.
+  if (isBoardCardScheduleDue(at, input.nowMs)) return null;
+  const label = whenLabel(at, input.nowMs);
+  const until = untilLabel(at, input.nowMs);
   const verb = input.parked ? "resume" : "start";
   return { label, tooltip: `Scheduled to ${verb} ${label} · ${until}` };
 }

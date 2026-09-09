@@ -15,6 +15,7 @@ import {
   fromLocalInputValue,
   isoToLocalInputValue,
   localInputValueToIso,
+  scheduleInputValue,
   schedulePresets,
   toLocalInputValue,
   untilLabel,
@@ -196,5 +197,30 @@ describe("boardScheduleSetTip", () => {
         nowMs: NOW_MS,
       }),
     ).toContain("Resumes building");
+  });
+});
+
+describe("scheduleInputValue", () => {
+  it("opens EMPTY on an unscheduled card, so a nudge cannot commit a time nobody chose", () => {
+    // The popover has no submit: it writes on every complete value. A
+    // pre-filled field would therefore turn the first spinner nudge into a
+    // commit — and on a running card that commit stops the agent and releases
+    // its slot. Empty means an incomplete value is all a nudge can produce, and
+    // an incomplete value is never sent.
+    const value = scheduleInputValue({ draft: "", scheduledStartAt: null });
+    expect(value).toBe("");
+    expect(localInputValueToIso(value)).toBeNull();
+  });
+
+  it("shows the stored instant when the card already has one", () => {
+    expect(scheduleInputValue({ draft: "", scheduledStartAt: at({ hour: 21 }) })).toBe(
+      "2026-03-04T21:00",
+    );
+  });
+
+  it("lets a half-typed draft stand, so the field does not fight the user", () => {
+    expect(scheduleInputValue({ draft: "2026-03-", scheduledStartAt: at({ hour: 21 }) })).toBe(
+      "2026-03-",
+    );
   });
 });

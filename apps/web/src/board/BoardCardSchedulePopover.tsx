@@ -24,8 +24,8 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover"
 import {
   boardScheduleCopy,
   boardScheduleSetTip,
-  isoToLocalInputValue,
   localInputValueToIso,
+  scheduleInputValue,
   schedulePresets,
   whenLabel,
   type BoardScheduleKind,
@@ -60,12 +60,11 @@ export function BoardCardSchedulePopover({
 
   const copy = boardScheduleCopy(kind, stageLabel);
   const presets = schedulePresets(nowMs);
-  const value =
-    draft !== ""
-      ? draft
-      : scheduledStartAt !== null
-        ? isoToLocalInputValue(scheduledStartAt)
-        : isoToLocalInputValue(presets[0]!.iso);
+  // Empty when nothing is scheduled, deliberately: see `scheduleInputValue`.
+  // A pre-filled field plus commit-on-complete would make the first spinner
+  // nudge set a time the user never chose — and on a live card that nudge stops
+  // the agent.
+  const value = scheduleInputValue({ draft, scheduledStartAt });
 
   const commit = (iso: string | null) => {
     onChange(iso);
