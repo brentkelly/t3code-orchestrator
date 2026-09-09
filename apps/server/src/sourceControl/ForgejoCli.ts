@@ -260,6 +260,33 @@ export class ForgejoRepositoryDecodeError extends Schema.TaggedErrorClass<Forgej
   }
 }
 
+/**
+ * `fgj pr merge` said it merged and the host says otherwise.
+ *
+ * `fgj` v0.4.0 prints "Pull request #N merged successfully" and exits 0 without reading what the
+ * API answered — verified live against a closed-unmerged pull request and against one that does
+ * not exist. So the merge is not believed on its word: the change request is read back, and this
+ * is what a card sees when the merge did not happen.
+ */
+export class ForgejoMergeNotAppliedError extends Schema.TaggedErrorClass<ForgejoMergeNotAppliedError>()(
+  "ForgejoMergeNotAppliedError",
+  {
+    operation: Schema.Literal("mergePullRequest"),
+    command: Schema.Literal("fgj"),
+    cwd: Schema.String,
+    reference: Schema.String,
+    state: Schema.Literals(["open", "closed", "merged"]),
+  },
+) {
+  get detail(): string {
+    return `Forgejo did not merge pull request ${this.reference}; it is still ${this.state}. Open it on the host to see what it is waiting on.`;
+  }
+
+  override get message(): string {
+    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export class ForgejoPullRequestBodyReadError extends Schema.TaggedErrorClass<ForgejoPullRequestBodyReadError>()(
   "ForgejoPullRequestBodyReadError",
   {
@@ -307,6 +334,7 @@ export const ForgejoCliError = Schema.Union([
   ForgejoPullRequestListDecodeError,
   ForgejoPullRequestDecodeError,
   ForgejoRepositoryDecodeError,
+  ForgejoMergeNotAppliedError,
   ForgejoPullRequestBodyReadError,
   ForgejoCheckoutError,
 ]);
@@ -648,6 +676,20 @@ export const make = Effect.gen(function* () {
           reference,
           args: ["pr", "merge", reference, "--merge-method", input.strategy, ...targetArgs(remote)],
         });
+
+        // `fgj` reports success whatever the host answered, so the merge is confirmed rather than
+        // taken on its word. A card moved to Done on a merge that did not happen is wrong in the
+        // one direction that is hard to undo.
+        const after = yield* getPullRequest({ ...input, reference });
+        if (after.state !== "merged") {
+          return yield* new ForgejoMergeNotAppliedError({
+            operation: "mergePullRequest",
+            command: "fgj",
+            cwd: input.cwd,
+            reference,
+            state: after.state,
+          });
+        }
       }),
     getRepositoryCloneUrls: (input) =>
       viewRepository({

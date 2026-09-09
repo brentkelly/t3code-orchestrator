@@ -30,7 +30,7 @@ const layer = it.layer(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(VcsProcess.VcsProcess)({ run: mockedRun }),
-        Layer.mock(FileSystem.FileSystem)({ readFileString: mockedReadFileString }),
+        FileSystem.layerNoop({ readFileString: mockedReadFileString }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           listLocalBranchNames: mockedListLocalBranchNames,
           fetchPullRequestBranch: mockedFetchPullRequestBranch,
@@ -343,6 +343,7 @@ layer("ForgejoCli.layer", (it) => {
   it.effect("passes the merge strategy straight through as fgj's merge method", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput(FORGEJO_PR_VIEW_JSON)));
 
       const forgejo = yield* ForgejoCli.ForgejoCli;
       yield* forgejo.mergePullRequest({
@@ -352,9 +353,71 @@ layer("ForgejoCli.layer", (it) => {
         strategy: "squash",
       });
 
-      expect(mockedRun).toHaveBeenCalledWith(
+      expect(mockedRun).toHaveBeenNthCalledWith(
+        1,
         expect.objectContaining({
           args: ["pr", "merge", "41", "--merge-method", "squash", ...TARGET_ARGS],
+        }),
+      );
+    }),
+  );
+
+  // `fgj pr merge` v0.4.0 prints "Pull request #N merged successfully" and exits 0 whatever the
+  // host answered — verified live against a closed-unmerged PR and against a PR that does not
+  // exist. A card moved to Done on that word would be wrong in the one direction that cannot be
+  // undone, so the state is read back.
+  it.effect("does not believe fgj's merge report until the host agrees", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(processOutput("Pull request #37 merged successfully")),
+      );
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 37,
+              title: "Still open",
+              html_url: "https://forgejo.example.test/octocat/widgets/pulls/37",
+              base: { ref: "main" },
+              head: { ref: "feature" },
+              state: "open",
+              merged: false,
+            }),
+          ),
+        ),
+      );
+
+      const forgejo = yield* ForgejoCli.ForgejoCli;
+      const error = yield* forgejo
+        .mergePullRequest({ cwd: "/repo", context, reference: "37", strategy: "merge" })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "ForgejoMergeNotAppliedError");
+      assert.strictEqual(error.detail.includes("37"), true);
+      assert.strictEqual(error.detail.includes("open"), true);
+    }),
+  );
+
+  it.effect("accepts the merge once the host reports the change request merged", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(processOutput("Pull request #41 merged successfully")),
+      );
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput(FORGEJO_PR_VIEW_JSON)));
+
+      const forgejo = yield* ForgejoCli.ForgejoCli;
+      yield* forgejo.mergePullRequest({
+        cwd: "/repo",
+        context,
+        reference: "41",
+        strategy: "squash",
+      });
+
+      expect(mockedRun).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          args: ["pr", "view", "41", "--json", ...TARGET_ARGS],
         }),
       );
     }),

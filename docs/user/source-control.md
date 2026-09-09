@@ -141,7 +141,9 @@ token for that exact host — sign in first, then rescan. Codeberg, and any host
 `gitea` in its name, is recognised without signing in.
 
 What works: creating a pull request, seeing whether the current branch already has one, opening
-it in your browser, checking it out locally, and merging it. What does not: the **Pull requests**
+it in your browser, checking it out locally, and merging it. A merge is confirmed against the host
+before it is reported as done, because `fgj` 0.4.0 announces success whether or not the host
+agreed — so a merge Forgejo refused is reported as refused here, with the state it is stuck in. What does not: the **Pull requests**
 page, which needs comments, review threads and checks that `fgj` does not expose. Adding a project
 by cloning from Forgejo and publishing a local project to Forgejo are not offered either; clone
 by Git URL instead, and create the repository on the host first.

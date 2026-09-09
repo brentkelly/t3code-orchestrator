@@ -165,6 +165,13 @@ it.effect("reports implemented tools separately from locally available executabl
           auth: "unauthenticated",
           account: Option.none(),
         },
+        // T3o: t3o-28.
+        {
+          kind: "forgejo",
+          status: "missing",
+          auth: "unknown",
+          account: Option.none(),
+        },
       ],
     );
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
@@ -250,12 +257,16 @@ Logged in to gitlab.com as gitlab-user
     const result = yield* discovery.discover;
 
     assert.deepStrictEqual(
-      result.sourceControlProviders.map((item) => ({
-        kind: item.kind,
-        auth: item.auth.status,
-        account: item.auth.account,
-        detail: item.auth.detail,
-      })),
+      // T3o: Forgejo is asserted below — its detail is the spawn failure's own message, which
+      // carries a machine-dependent cwd (t3o-28).
+      result.sourceControlProviders
+        .filter((item) => item.kind !== "forgejo")
+        .map((item) => ({
+          kind: item.kind,
+          auth: item.auth.status,
+          account: item.auth.account,
+          detail: item.auth.detail,
+        })),
       [
         {
           kind: "github",
@@ -283,5 +294,13 @@ Logged in to gitlab.com as gitlab-user
         },
       ],
     );
+
+    // T3o: `fgj` answers `--version` here but not `auth status`, so its auth stays unknown and
+    // the probe's own failure is what the page reports (t3o-28).
+    const forgejo = result.sourceControlProviders.find((item) => item.kind === "forgejo");
+    assert.ok(forgejo);
+    assert.strictEqual(forgejo.auth.status, "unknown");
+    assert.deepStrictEqual(forgejo.auth.account, Option.none());
+    assert.strictEqual(Option.isSome(forgejo.auth.detail), true);
   }).pipe(Effect.provide(testLayer));
 });
