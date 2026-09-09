@@ -407,6 +407,81 @@ it.effect("clearing a schedule resumes a paused card on the thread it already ha
   ),
 );
 
+it.effect("a timed resume respawns when the paused step's thread is gone", () =>
+  withGovernor(oneCard(scheduledCard({ id: "dead" })), ({ pumpDomain, board, commands }) =>
+    Effect.gen(function* () {
+      const threadId = yield* startBuild({ pumpDomain, board }, scheduledCard({ id: "dead" }));
+      yield* pumpDomain(cardScheduleUpdated(scheduledCard({ id: "dead" }), FUTURE, 2));
+      assert.strictEqual(stepStatus(yield* board, BoardCardId.make("dead")), "paused");
+      const spawnsBeforeResume = commandTypes(yield* commands).filter(
+        (type) => type === "thread.create",
+      ).length;
+
+      // No shell was ever seeded for the spawned thread, so it reads as gone —
+      // a thread deleted, or a provider session that did not survive. The
+      // resume must still start the stage rather than nudging a dead
+      // conversation and reporting success.
+      yield* pumpDomain(
+        cardScheduleUpdated(
+          { ...scheduledCard({ id: "dead" }), scheduledStartAt: FUTURE },
+          null,
+          3,
+        ),
+      );
+
+      const state = boardCardStepState(yield* board, BoardCardId.make("dead"));
+      assert.strictEqual(state?.status, "running");
+      assert.notStrictEqual(state?.threadId, threadId);
+      assert.isAbove(
+        commandTypes(yield* commands).filter((type) => type === "thread.create").length,
+        spawnsBeforeResume,
+      );
+    }),
+  ),
+);
+
+it.effect("a due card with no free agent queues honestly rather than pretending", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          scheduledCard({ id: "busy" }),
+          scheduledCard({ id: "waiting", scheduledStartAt: FUTURE }),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+    },
+    ({ pumpDomain, board, reactor, slots }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(scheduledCard({ id: "busy" }), 1));
+        yield* pumpDomain(
+          movedToBuilding(scheduledCard({ id: "waiting", scheduledStartAt: FUTURE }), 2),
+        );
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("busy")), "running");
+        // Held by its schedule, so it is `pending` — not `queued`, and not
+        // counted against the card genuinely waiting for an agent.
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("waiting")), "pending");
+
+        yield* pumpDomain(
+          cardScheduleUpdated(scheduledCard({ id: "waiting", scheduledStartAt: FUTURE }), PAST, 3),
+        );
+        yield* reactor.fireSchedules;
+        yield* reactor.drain;
+
+        // Its time came and the only agent is busy. It joins the queue and says
+        // `Queued`, which is the honest answer — the schedule promised a start
+        // no earlier than then, not a start exactly then.
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("waiting")), "queued");
+        assert.strictEqual(yield* slots.heldTotal, 1);
+        const card = (yield* board).cards.find(
+          (candidate) => candidate.id === BoardCardId.make("waiting"),
+        );
+        assert.isNull(card?.scheduledStartAt ?? null);
+      }),
+  ),
+);
+
 it.effect("clearing a schedule admits a card the gate was withholding", () =>
   withGovernor(
     oneCard(scheduledCard({ id: "release", scheduledStartAt: FUTURE, provisioned: false })),
