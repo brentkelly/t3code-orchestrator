@@ -39,8 +39,8 @@ describe("boardConflictFix (T3O-9)", () => {
   });
 
   it("says a fix waiting for an agent is waiting, and starts by itself", () => {
-    // The build-queue pill covers the wait but not the reason — it says
-    // "queued for build" and nothing about a held merge.
+    // The queue pill covers the wait but not the reason — it says
+    // "Queued #3" and nothing about a held merge.
     const info = boardConflictFix({ live: true, queued: true, baseRef: "t3o" });
     expect(info?.headline).toBe("Waiting for an agent to resolve conflicts against t3o");
     // The mechanics — the queue position, the agent count, the override

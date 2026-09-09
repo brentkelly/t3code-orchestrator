@@ -1,6 +1,6 @@
 /**
- * T3o queued-for-build copy (t3o-33). One place that turns a card's place in
- * the build queue into the words every surface shows — the board card's
+ * T3o queued-for-a-slot copy (t3o-33). One place that turns a card's place in
+ * the agent queue into the words every surface shows — the board card's
  * tooltip, the modal header pill, the right-rail banner and the thread-pane
  * strip — so the four can never tell the user four different stories.
  *
@@ -52,6 +52,11 @@ function describeAgents(running: number, cap: number): string {
 /**
  * The full queued story for one card, or null when it is not queued.
  *
+ * The copy never names a STAGE either (T3O-32). One board-wide queue holds
+ * every stage's step, so a card waiting for a review or planning slot read
+ * `Queued for build` and named work it was not about to do. `Queued #3` is the
+ * one phrasing that is true wherever the card is sitting.
+ *
  * The copy never names a project. The queue is board-wide, so the work ahead
  * is frequently on someone else's board, and "1 task ahead" that implies this
  * board would send the user looking for a card that is not there.
@@ -72,9 +77,7 @@ export function boardQueueInfo(input: {
     cap: input.cap,
     startsNext: slot.startsNext,
     label: slot.startsNext ? "Next" : `Queued #${slot.position}`,
-    headline: slot.startsNext
-      ? "Queued for build — starts next"
-      : `Queued #${slot.position} for build`,
+    headline: slot.startsNext ? "Queued — starts next" : `Queued #${slot.position}`,
     detail: `${describeAgents(input.running, input.cap)}${ahead}. It starts on its own when an agent frees up.`,
   };
 }

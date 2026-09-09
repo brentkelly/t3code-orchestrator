@@ -797,7 +797,7 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
             </BoardHint>
           )}
           {props.onQueueMoveToFront === undefined ? null : (
-            <BoardHint label="Put this task at the front of the build queue.">
+            <BoardHint label="Put this task at the front of the queue.">
               <button
                 className="inline-flex h-[28px] items-center justify-center gap-[6px] rounded-lg border border-input bg-popover px-2.5 text-[12px] font-medium text-foreground shadow-xs hover:bg-accent"
                 onClick={props.onQueueMoveToFront}

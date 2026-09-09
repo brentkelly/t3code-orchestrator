@@ -5304,9 +5304,9 @@ export const BoardCardStalledShellEvent = Schema.Struct({
       `card-step-admitted`. It does not: a step held for a slot can be settled
       straight out of the queue (abandoned when its card is taken off the
       pipeline, failed before it ever ran), and the card then kept a queue badge
-      no later delta cleared. A done card reading `Queued for build — starts
-      next` is the visible form of that, and it survived until a reconnect
-      re-derived the shell from the snapshot. Carried explicitly rather than
+      no later delta cleared. A done card reading `Queued — starts next` is the
+      visible form of that, and it survived until a reconnect re-derived the
+      shell from the snapshot. Carried explicitly rather than
       inferred so the flag has one authority per delta, not two. */
   queued: Schema.Boolean,
 });

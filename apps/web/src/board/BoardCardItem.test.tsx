@@ -324,9 +324,9 @@ describe("BoardCardContent (D7)", () => {
   });
 
   it("says Conflicts while the fix is still waiting for an agent (T3O-9)", () => {
-    // The card's build-queue pill covers the wait but not the reason: it
-    // says "queued for build" and nothing about a held merge, so on its own it
-    // left the dead Merge button unexplained.
+    // The card's queue pill covers the wait but not the reason: it says
+    // "Queued #3" and nothing about a held merge, so on its own it left the
+    // dead Merge button unexplained.
     const queued = shell("merge", { stepConflictFix: true, queued: true });
     const html = renderToStaticMarkup(
       <BoardCardContent
