@@ -4264,6 +4264,14 @@ const make = Effect.gen(function* () {
         nowMs: yield* detectorNowMs,
       });
       if (handled) return;
+    } else {
+      // A turn the catalogue says nothing about is proof the provider is
+      // answering, so the loose-match tally zeroes (D6). Done HERE rather than
+      // in the any-clean-turn sweep because the step row already names the
+      // provider instance: no shell read, no query, no cost on a board that has
+      // never seen a loose match. It is also what keeps the tally honest before
+      // any cooldown exists — the sweep is gated on one already being there.
+      clearLooseMatches(String(found.state.providerInstanceId));
     }
     // Unattended, running with no question → died mid-work. Awaiting-input with
     // no pending question → the human answered and the agent ran another turn

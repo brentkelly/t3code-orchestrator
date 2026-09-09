@@ -358,6 +358,30 @@ it.effect("one loose match backs a single card off; a second from another card p
   ),
 );
 
+it.effect("a clean turn on the provider zeroes the loose-match tally", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a"), buildingCard("b", "b"), buildingCard("c", "c")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        // One loose match from card `a`…
+        yield* stopCard(harness, "a", "a", 1, looseWait());
+        // …then a turn the catalogue says nothing about, which is proof the
+        // provider is answering. The tally starts over.
+        yield* stopCard(harness, "b", "b", 2, null);
+        // So a loose match from a THIRD card is the first of a new pair, not the
+        // second of the old one, and promotes nothing.
+        yield* stopCard(harness, "c", "c", 3, looseWait());
+        assert.strictEqual(yield* limitOf(harness, codex), null);
+      }),
+  ),
+);
+
 it.effect("the same card repeating a loose match never promotes on its own", () =>
   withGovernor(
     {
