@@ -839,7 +839,7 @@ describe("BoardCardDetailPanel queued banner (t3o-33)", () => {
     cap: 3,
     startsNext: false,
     label: "Queued #2",
-    headline: "Queued #2 for build",
+    headline: "Queued #2",
     detail: "3 of 3 agents busy · 1 task ahead. It starts on its own when an agent frees up.",
   };
 
@@ -856,7 +856,7 @@ describe("BoardCardDetailPanel queued banner (t3o-33)", () => {
         onQueueMoveToFront={() => {}}
       />,
     );
-    expect(html).toContain("Queued #2 for build");
+    expect(html).toContain("Queued #2");
     expect(html).toContain("3 of 3 agents busy · 1 task ahead.");
     expect(html).toContain("It starts on its own when an agent frees up.");
     expect(html).toContain("Start now");
@@ -903,7 +903,7 @@ describe("BoardCardDetailPanel queued banner (t3o-33)", () => {
         projectName="P"
       />,
     );
-    expect(html).not.toContain("for build");
+    expect(html).not.toContain("Queued");
     expect(html).not.toContain("Start now");
   });
 });

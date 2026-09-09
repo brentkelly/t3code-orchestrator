@@ -1004,7 +1004,7 @@ export function boardShellStreamEvent(
         // when its card leaves the pipeline, failed before it ever ran) without
         // passing through the admission that used to be the only way to lower
         // the flag — which is how a card in Done kept reading
-        // `Queued for build — starts next` until a reconnect.
+        // `Queued — starts next` until a reconnect.
         queued: false,
       });
 

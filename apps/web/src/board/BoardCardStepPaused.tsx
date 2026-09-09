@@ -11,7 +11,7 @@
  * Neutral surface, per `docs/t3o/status-colours.md` — no colour without a claim.
  *
  * The copy names the consequence of pressing Resume: the step re-enters the
- * build queue and waits for an agent slot, so the `Queued` pill that follows
+ * queue and waits for an agent slot, so the `Queued` pill that follows
  * reads as expected rather than as the button having failed.
  */
 import { PauseIcon, PlayIcon } from "lucide-react";
@@ -49,8 +49,8 @@ export function BoardCardStepPaused(props: {
           </span>
           <span className="break-words text-[12px] leading-[1.5] text-muted-foreground">
             You stopped this, so nothing is running and the board is leaving it alone. Resuming puts
-            it back in the build queue — it carries on in the same thread as soon as an agent slot
-            is free.
+            it back in the queue — it carries on in the same thread as soon as an agent slot is
+            free.
           </span>
         </div>
       </div>

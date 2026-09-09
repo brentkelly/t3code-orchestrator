@@ -34,10 +34,9 @@ export function boardConflictFix(input: {
   /** `BoardCardShell.stepConflictFix`: a live conflict fix, running or queued. */
   readonly live: boolean;
   /** Whether that fix is still waiting for an agent slot rather than running.
-      Worth its own words: the card does get a build-queue pill while it
-      holds, but that pill says "queued for build" and nothing about a merge
-      being held, so on its own it explains neither the wait nor the dead Merge
-      button. */
+      Worth its own words: the card does get a queue pill while it holds,
+      but that pill says "Queued #3" and nothing about a merge being held, so
+      on its own it explains neither the wait nor the dead Merge button. */
   readonly queued?: boolean | undefined;
   /** The pull request's base branch, when the surface knows it. */
   readonly baseRef?: string | null | undefined;
