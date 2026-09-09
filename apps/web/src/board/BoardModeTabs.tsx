@@ -51,14 +51,20 @@ export function navigateToMode(
 export function BoardModeTabs({
   mode,
   className,
+  placement = "topbar",
 }: {
   readonly mode: WorkspaceMode;
   readonly className?: string;
+  /** Which of the control's two homes this mount is (T3O-34, D7). The top-bar
+      copy stands down while the thread sidebar's header is holding the tabs;
+      the sidebar copy is the one doing the holding. */
+  readonly placement?: "topbar" | "sidebar";
 }) {
   const router = useRouter();
   const locationHref = useRouterState({ select: (state) => state.location.href });
   const recordModeLocation = useBoardUiStore((state) => state.recordModeLocation);
   const lastLocationByMode = useBoardUiStore((state) => state.lastLocationByMode);
+  const sidebarHostsModeTabs = useBoardUiStore((state) => state.sidebarHostsModeTabs);
 
   useEffect(() => {
     recordModeLocation(mode, locationHref);
@@ -69,6 +75,14 @@ export function BoardModeTabs({
     [lastLocationByMode, mode, router],
   );
 
+  // After the hooks, never before: the hidden copy must keep recording the
+  // last threads location, or the moment the sidebar takes over there is
+  // nobody left writing it. Duplicate records are already a no-op in the
+  // store, so both copies running the effect costs nothing.
+  if (placement === "topbar" && mode === "threads" && sidebarHostsModeTabs) {
+    return null;
+  }
+
   return (
     <div
       aria-label="Workspace mode"
@@ -78,11 +92,13 @@ export function BoardModeTabs({
       )}
       role="group"
     >
-      <ModeTab active={mode === "threads"} label="Threads" onSelect={() => switchTo("threads")}>
-        <MessageSquareIcon />
-      </ModeTab>
+      {/* Board leads (T3O-34): the board is the app's primary mode, and the
+          tab order is the clearest place to say so. */}
       <ModeTab active={mode === "board"} label="Board" onSelect={() => switchTo("board")}>
         <Columns3Icon />
+      </ModeTab>
+      <ModeTab active={mode === "threads"} label="Threads" onSelect={() => switchTo("threads")}>
+        <MessageSquareIcon />
       </ModeTab>
     </div>
   );

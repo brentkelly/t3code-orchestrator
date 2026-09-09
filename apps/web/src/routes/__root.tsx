@@ -10,6 +10,8 @@ import {
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
+// T3o: a cold start at the root opens the board (T3O-34, D1).
+import { redirectColdStartToBoard } from "../board/boardHomeRedirect";
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
@@ -79,6 +81,9 @@ export const Route = createRootRoute({
     }
 
     const authGateState = await resolveInitialServerAuthGateState();
+    // T3o: the board is the app's entry; `/` stays threads home for the rest
+    // of the session (T3O-34, D1). Throws a redirect, or does nothing.
+    redirectColdStartToBoard(location.pathname, authGateState.status);
     return {
       authGateState,
     };
