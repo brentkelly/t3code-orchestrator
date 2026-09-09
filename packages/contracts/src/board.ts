@@ -2435,6 +2435,23 @@ export type BoardCardAttention = {
   readonly detail: string;
 };
 
+/**
+ * How long a card's thread has to have been quiet before either "Needs a human"
+ * chip appears (T3O-29).
+ *
+ * The step row and the thread state settle over a handful of round trips, and
+ * they do not settle together: a turn ends, the step parks, the supervisor
+ * decides whether to resume — and for that beat the card is neither working nor
+ * genuinely parked on anybody. Flashing amber through it trains people to
+ * ignore the one chip that is supposed to mean "this one is yours now".
+ *
+ * Only those two chips wait. A thread's own pending question is answerable the
+ * instant it is asked, a stall has already exhausted recovery, and a pause is
+ * the human's own instruction — none of them is guessing about a beat that has
+ * not finished.
+ */
+export const BOARD_ATTENTION_SETTLE_MS = 5_000;
+
 const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> = {
   paused: "neutral",
   stalled: "danger",
@@ -2457,6 +2474,10 @@ const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> 
  * A card in the DONE-role stage never qualifies, whatever its flags say: a
  * finished card is not asking for anything, which is the same rule the summary
  * already applies when it mutes Done. Archived cards are likewise out.
+ *
+ * Neither "Needs a human" chip appears while the card is being worked, or until
+ * its thread has been quiet for `BOARD_ATTENTION_SETTLE_MS` (T3O-29) — see
+ * `threadIdleSince` below.
  */
 export function boardCardAttention(input: {
   readonly card: Pick<
@@ -2482,8 +2503,24 @@ export function boardCardAttention(input: {
     readonly reviewOutcome?: BoardReviewLoopOutcome | undefined;
     readonly reviewHeldOutcome?: BoardReviewLoopOutcome | undefined;
     readonly reviewRoundComplete?: boolean | undefined;
+    /**
+     * When the card's active thread last finished a turn (T3O-29), for the
+     * settle grace the two "Needs a human" chips wait out. Absent — as it is
+     * on every caller that does not hold the thread shells — means no grace,
+     * so the chips behave exactly as they did before.
+     *
+     * NOT a shell field and never on the wire: it is joined client-side from
+     * the thread shells the board already holds, like the sub-board pips
+     * beside it, so the per-card byte budget (D7) is unchanged.
+     */
+    readonly threadIdleSince?: string | null | undefined;
   };
   readonly stages: ReadonlyArray<BoardStageDefinition>;
+  /** Epoch millis to measure `threadIdleSince` against. Passed in rather than
+      read here — this package reaches for no clock (`effect(globalDate)`) — by
+      the board page, which owns the timer that re-renders the cards when a
+      grace expires. Absent means no grace. */
+  readonly now?: number | undefined;
 }): BoardCardAttention | null {
   const { card } = input;
   if (card.archivedAt !== null) return null;
@@ -2578,10 +2615,33 @@ export function boardCardAttention(input: {
   // the counts converge and a parked parent flags normally.
   const buildingThroughChildren =
     card.planTotal !== undefined && card.planTotal > 0 && (card.planDone ?? 0) < card.planTotal;
+  // The two facts both "Needs a human" chips are gated on, because both make
+  // the same claim — nobody is working on this card, it is yours now — and both
+  // shipped making it while a thread was demonstrably mid-turn (T3O-18, T3O-29).
+  //
+  // `working` is the blue dot: evidence outranks the claim, exactly as
+  // `isBoardCardWorking` lets a provably dead thread veto `stepRunning` in the
+  // other direction.
+  //
+  // `settling` is the beat AFTER the dot goes dark, before the step row and the
+  // supervisor have agreed on what happens next — see `BOARD_ATTENTION_SETTLE_MS`.
+  const working = isBoardCardWorking(card);
+  const idleSince = card.threadIdleSince == null ? Number.NaN : Date.parse(card.threadIdleSince);
+  // Both halves or neither: a caller that supplies no clock, or a card with no
+  // thread that has ever finished a turn, has no evidence the stop is fresh —
+  // so it fails OPEN and the chip shows, exactly as it did before T3O-29.
+  const settling =
+    input.now !== undefined &&
+    Number.isFinite(idleSince) &&
+    input.now - idleSince < BOARD_ATTENTION_SETTLE_MS;
   if (
     card.held &&
+    // `working` alone would let a `failed` thread through beside a stale
+    // `stepRunning` claim, and a step cannot be both running and held.
+    !working &&
     !card.stepRunning &&
     !card.queued &&
+    !settling &&
     !buildingThroughChildren &&
     isBoardStageAtOrAfterBuild(stageState, card.stage)
   ) {
@@ -2625,10 +2685,10 @@ export function boardCardAttention(input: {
   // Only the step ROW's half is vetoed. `awaitingInput` is a live thread's real
   // pending question, one click from being answered, and a card can hold one
   // while a step runs — hiding that behind the dot would strand the answer.
-  // `held` is not vetoed either: it is a claim about the STAGE, not the agent.
-  // A settled step still needs a human to move the card on while somebody
-  // chats in its thread, and the modal's forward button reads it (t3o-06, D2).
-  const stepAwaiting = isBoardCardWorking(card) ? null : card.stepAwaiting;
+  // (`held` is vetoed too, at its own branch above: it wears the same words, so
+  // it tells the same lie. T3O-29 — it was exempt until a build that settled and
+  // was then chatted with wore the amber chip beside a pulsing blue dot.)
+  const stepAwaiting = working ? null : card.stepAwaiting;
   if (card.awaitingInput || stepAwaiting === "question") {
     return {
       reason: "input",
@@ -2637,7 +2697,10 @@ export function boardCardAttention(input: {
       detail: "A thread on this card is waiting on your answer",
     };
   }
-  if (stepAwaiting === "stopped") {
+  // Gated on `settling` as well, so the two chips that say the same words wait
+  // out the same beat. `question` above is not: it is a real pending question,
+  // answerable the moment it is asked.
+  if (stepAwaiting === "stopped" && !settling) {
     return {
       reason: "stopped",
       tone: ATTENTION_TONES.stopped,
@@ -2678,11 +2741,15 @@ export function deriveBoardCardChildAttention(input: {
     }
   >;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
+  /** Forwarded to `boardCardAttention` so a child's settle grace (T3O-29)
+      applies to the parent's roll-up of it too — one chip is not allowed to
+      appear five seconds before the one it is summarising. */
+  readonly now?: number | undefined;
 }): ReadonlyMap<BoardCardId, BoardCardChildAttention> {
   const worstByParent = new Map<BoardCardId, BoardCardChildAttention>();
   for (const card of input.cards) {
     if (card.parentCardId === undefined) continue;
-    const attention = boardCardAttention({ card, stages: input.stages });
+    const attention = boardCardAttention({ card, stages: input.stages, now: input.now });
     if (attention === null) continue;
     const current = worstByParent.get(card.parentCardId);
     if (current === undefined) {
