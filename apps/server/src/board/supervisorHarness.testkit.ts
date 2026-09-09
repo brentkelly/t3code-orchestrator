@@ -97,6 +97,13 @@ export const codexStep: TestBuildStep = {
   prompt: DEFAULT_BOARD_BUILD_PROMPT,
 };
 
+/** Every thread shell names the provider instance it runs on: the board reads
+    it off the shell to decide which provider a turn belongs to (T3O-22, D9). */
+const defaultShellModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5-codex",
+};
+
 /** A ready worktree — the state right after "Begin build" provisioned it. */
 export const readyWorktree = (id: string): BoardCardWorktree => ({
   branch: `board/${id}`,
@@ -114,6 +121,7 @@ export const readyWorktree = (id: string): BoardCardWorktree => ({
 export const aliveThreadShell = (threadId: string): OrchestrationThreadShell =>
   ({
     id: threadId,
+    modelSelection: defaultShellModelSelection,
     hasPendingUserInput: false,
     hasPendingApprovals: false,
     archivedAt: null,
@@ -131,6 +139,7 @@ export const failedThreadShell = (
 ): OrchestrationThreadShell =>
   ({
     id: threadId,
+    modelSelection: defaultShellModelSelection,
     hasPendingUserInput: false,
     hasPendingApprovals: false,
     archivedAt: null,
@@ -145,9 +154,16 @@ export const failedThreadShell = (
 /** A thread shell between turns: the agent has stopped, nothing is pending.
     What a board thread looks like the moment its turn ends — and therefore the
     moment a release the decider refused mid-turn can finally land (t3o-13). */
-export const idleThreadShell = (threadId: string): OrchestrationThreadShell =>
+export const idleThreadShell = (
+  threadId: string,
+  /** Which provider instance the thread runs on (T3O-22). The cooldown paths
+      read it off the shell — that is how a clean turn on ANY thread, including
+      a human's own non-board one, lifts a limit. */
+  instanceId: ProviderInstanceId = codexStep.providerInstanceId,
+): OrchestrationThreadShell =>
   ({
     id: threadId,
+    modelSelection: { instanceId, model: "gpt-5-codex" },
     hasPendingUserInput: false,
     hasPendingApprovals: false,
     archivedAt: null,
