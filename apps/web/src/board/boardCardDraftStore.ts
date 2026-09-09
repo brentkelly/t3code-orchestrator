@@ -98,6 +98,9 @@ export const useBoardCardDraftStore = create<BoardCardDraftStore>()(
       // v2 added each attachment reference's own `uploadedAt`. A v1 record
       // has no upload time to age its references against, so it is dropped
       // rather than guessed at — the sanitisers below do that for free.
+      // Dropping the draft's own `updatedAt` afterwards needed no bump: the
+      // schema ignores properties it does not name, so a record written
+      // before that decodes unchanged, minus a field nothing read.
       version: 2,
       storage: createJSONStorage(() => boardCardDraftStorage),
       migrate: sanitisePersistedBoardCardDrafts,

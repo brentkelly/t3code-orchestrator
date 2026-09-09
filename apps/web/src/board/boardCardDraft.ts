@@ -59,13 +59,10 @@ export const BoardCardDraftSchema = Schema.Struct({
   dependsOn: Schema.Array(BoardCardId),
   scheduledStartAt: Schema.NullOr(Schema.String),
   attachments: Schema.Array(BoardCardDraftAttachmentSchema),
-  /** Epoch millis of the last save. */
-  updatedAt: Schema.Number,
 });
+/** Exactly the dialog's own field state: the draft carries no clock of its
+    own, so nothing can be tempted to age an attachment against it again. */
 export type BoardCardDraft = typeof BoardCardDraftSchema.Type;
-
-/** The draft minus its bookkeeping: exactly the dialog's own field state. */
-export type BoardCardDraftFields = Omit<BoardCardDraft, "updatedAt">;
 
 const decodeDraft = Schema.decodeUnknownOption(BoardCardDraftSchema);
 
@@ -94,7 +91,7 @@ export function boardCardDraftKey(
  * merely opening the dialog leaves a draft that greets you forever.
  */
 export function boardCardDraftHasContent(
-  draft: Pick<BoardCardDraftFields, "title" | "brief" | "dependsOn" | "attachments">,
+  draft: Pick<BoardCardDraft, "title" | "brief" | "dependsOn" | "attachments">,
 ): boolean {
   return (
     draft.title.trim().length > 0 ||
@@ -104,8 +101,8 @@ export function boardCardDraftHasContent(
   );
 }
 
-/** Whether two drafts hold the same input, ignoring the save clock — the
-    autosave writes on every keystroke and most of them change nothing. */
+/** Whether two drafts hold the same input. The autosave hands the store a
+    fresh object on every render, and most of them changed nothing. */
 export function boardCardDraftContentEquals(left: BoardCardDraft, right: BoardCardDraft): boolean {
   return (
     left.title === right.title &&
@@ -136,7 +133,7 @@ export interface BoardCardDraftCard {
 }
 
 export interface BoardCardDraftRestore {
-  readonly fields: BoardCardDraftFields;
+  readonly fields: BoardCardDraft;
   /** Whether any stored attachment reference was dropped (expired or over
       the per-card cap), so the banner can say attachments went missing. */
   readonly droppedAttachments: boolean;
@@ -198,13 +195,12 @@ export function restoreBoardCardDraft(input: {
       draft.labelIds.indexOf(labelId) === index && liveLabelIds.has(labelId as string),
   );
 
-  // Each reference ages on its OWN upload time, never on the draft's save
-  // clock: an hour of typing after attaching a file must not pretend the
-  // pending upload is an hour younger than the server thinks it is.
+  // Each reference ages on its OWN upload time, which is the clock the
+  // server's sweep runs on: an hour of typing after attaching a file must not
+  // pretend the pending upload is an hour younger than the server thinks it
+  // is, and one expired file must not take the fresh ones with it.
   const attachments = draft.attachments
-    .filter(
-      (attachment) => input.now - attachment.uploadedAt <= BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS,
-    )
+    .filter((attachment) => input.now - attachment.uploadedAt <= BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS)
     .slice(0, input.maxAttachments ?? BOARD_CARD_ATTACHMENTS_MAX);
 
   return {

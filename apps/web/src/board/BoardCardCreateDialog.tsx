@@ -70,8 +70,8 @@ import {
   boardCardDraftHasContent,
   boardCardDraftKey,
   restoreBoardCardDraft,
+  type BoardCardDraft,
   type BoardCardDraftAttachment,
-  type BoardCardDraftFields,
 } from "./boardCardDraft";
 import {
   clearBoardCardDraft,
@@ -231,9 +231,11 @@ export function BoardCardCreateDialog({
   // re-render itself for its own writes.
   const draftKey = boardCardDraftKey(environmentId, subBoardParentId);
   const [restored, setRestored] = useState<{ readonly droppedAttachments: boolean } | null>(null);
-  // Set once a card has been created: the fields still hold what was just
-  // submitted, and the autosave must not write them back as a fresh draft.
-  const draftSuppressed = useRef(false);
+  // Set once the stored draft is gone for good — a card was created from
+  // these fields, or they were discarded. The autosave must not write them
+  // back as a fresh draft, and the footer must stop offering to keep one.
+  // State, not a ref: the footer renders from it.
+  const [draftSuppressed, setDraftSuppressed] = useState(false);
   // The autosave runs one commit behind the open edge, when the restored (or
   // reset) fields have not landed yet. Saving there would write the previous
   // dialog's state under this key; skip exactly that pass.
@@ -270,7 +272,7 @@ export function BoardCardCreateDialog({
     [briefAttachments.staged],
   );
 
-  const draftFields = useMemo<BoardCardDraftFields>(
+  const draftFields = useMemo<BoardCardDraft>(
     () => ({
       title,
       brief,
@@ -306,7 +308,7 @@ export function BoardCardCreateDialog({
     if (open && !wasOpen.current) {
       setFeedback(null);
       setSubmitting(false);
-      draftSuppressed.current = false;
+      setDraftSuppressed(false);
       skipNextSave.current = true;
       if (stagedScopeKey.current !== null && stagedScopeKey.current !== draftKey) {
         // `release: false`: those pending ids are still referenced by the
@@ -361,9 +363,9 @@ export function BoardCardCreateDialog({
       skipNextSave.current = false;
       return;
     }
-    if (draftSuppressed.current) return;
-    saveBoardCardDraft(draftKey, { ...draftFields, updatedAt: Date.now() });
-  }, [draftFields, draftKey, open]);
+    if (draftSuppressed) return;
+    saveBoardCardDraft(draftKey, draftFields);
+  }, [draftFields, draftKey, draftSuppressed, open]);
 
   // Closing, or going away entirely, is a save point: land the debounced
   // write rather than trust the page to still be here in 0.7s.
@@ -382,7 +384,7 @@ export function BoardCardCreateDialog({
   /** The one destructive path: drop the stored draft and everything staged,
       then close. X, Esc and the backdrop all keep the draft instead. */
   const discardDraft = () => {
-    draftSuppressed.current = true;
+    setDraftSuppressed(true);
     clearBoardCardDraft(draftKey);
     clearBriefAttachments();
     setRestored(null);
@@ -470,7 +472,7 @@ export function BoardCardCreateDialog({
       // The card exists, so the draft has served its purpose (T3O-26). Drop
       // it before the claims below, which can only fail per-file — a retry of
       // Create is not on the table once the card is there.
-      draftSuppressed.current = true;
+      setDraftSuppressed(true);
       clearBoardCardDraft(draftKey);
       setRestored(null);
       // The card exists; claim each staged upload onto it (K6). A claim that
@@ -751,8 +753,13 @@ export function BoardCardCreateDialog({
           />
           {/* The footer holds the ONLY destructive path (T3O-26): X, Esc and
               the backdrop all keep the draft, so say what closing does and
-              make discarding read as the deliberate act it is. */}
-          {draftHasContent ? (
+              make discarding read as the deliberate act it is. Once the draft
+              is gone — the card was created and only its files failed to
+              attach, so the dialog stays open on the words it was made from —
+              there is nothing left to keep or discard, and this goes back to a
+              plain Cancel rather than promising to keep a draft that no longer
+              exists. */}
+          {draftHasContent && !draftSuppressed ? (
             <>
               <span className="text-[12px] text-muted-foreground max-sm:sr-only">
                 Closing keeps this draft

@@ -33,7 +33,6 @@ const draftOf = (patch: Partial<BoardCardDraft> = {}): BoardCardDraft => ({
   dependsOn: [],
   scheduledStartAt: null,
   attachments: [],
-  updatedAt: 1_700_000_000_000,
   ...patch,
 });
 
@@ -93,11 +92,12 @@ describe("saveBoardCardDraft", () => {
 
   it("leaves state untouched when nothing a draft stores has changed", () => {
     const key = boardCardDraftKey(environmentOne, null);
-    saveBoardCardDraft(key, draftOf({ updatedAt: 1 }));
+    saveBoardCardDraft(key, draftOf({ labelIds: [] }));
     const first = useBoardCardDraftStore.getState().draftsByKey;
-    // Same input, later clock: the autosave fires on renders that changed
-    // nothing, and those must not churn state or the storage write.
-    saveBoardCardDraft(key, draftOf({ updatedAt: 2 }));
+    // The autosave fires on renders that changed nothing and hands over a
+    // fresh object each time; those must not churn state or the storage
+    // write.
+    saveBoardCardDraft(key, draftOf({ labelIds: [] }));
     expect(useBoardCardDraftStore.getState().draftsByKey).toBe(first);
   });
 
@@ -117,7 +117,7 @@ describe("sanitisePersistedBoardCardDrafts", () => {
       draftsByKey: {
         good: draftOf({ title: "Ship it" }),
         corrupt: { title: "Ship it" },
-        wrongType: { ...draftOf(), updatedAt: "now" },
+        wrongType: { ...draftOf(), labelIds: "none" },
         empty: draftOf({ title: "   " }),
         notAnObject: 7,
       },

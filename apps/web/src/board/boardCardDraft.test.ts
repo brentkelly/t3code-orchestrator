@@ -49,7 +49,6 @@ const draftOf = (patch: Partial<BoardCardDraft> = {}): BoardCardDraft => ({
   dependsOn: [],
   scheduledStartAt: null,
   attachments: [],
-  updatedAt: NOW,
   ...patch,
 });
 
@@ -139,11 +138,26 @@ describe("parseBoardCardDraft", () => {
     expect(parseBoardCardDraft(JSON.parse(JSON.stringify(draft)))).toEqual(draft);
   });
 
+  // The draft used to carry an `updatedAt` nothing read. Dropping it did not
+  // need a store version bump, because a record written with it still decodes
+  // — the schema ignores what it does not name.
+  it("still reads a record written before the save clock was dropped", () => {
+    const draft = draftOf({ title: "Ship it" });
+    expect(parseBoardCardDraft({ ...draft, updatedAt: NOW })).toEqual(draft);
+  });
+
   it("reads corrupt, foreign-shaped and empty records as no draft", () => {
     expect(parseBoardCardDraft(null)).toBeNull();
     expect(parseBoardCardDraft("draft")).toBeNull();
     expect(parseBoardCardDraft({ title: "Ship it" })).toBeNull();
-    expect(parseBoardCardDraft({ ...draftOf({ title: "Ship it" }), updatedAt: "now" })).toBeNull();
+    expect(parseBoardCardDraft({ ...draftOf({ title: "Ship it" }), labelIds: "none" })).toBeNull();
+    // A v1 reference, with no upload time to age it against.
+    expect(
+      parseBoardCardDraft({
+        ...draftOf({ title: "Ship it" }),
+        attachments: [{ ...attachment("a"), uploadedAt: undefined }],
+      }),
+    ).toBeNull();
     // Decodable, but nothing was typed — not a draft.
     expect(parseBoardCardDraft(draftOf({ stage: BOARD_SEED_STAGE_IDS.ready }))).toBeNull();
   });
@@ -261,7 +275,6 @@ describe("restoreBoardCardDraft — attachments", () => {
           attachment("a", NOW - BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS + 1_000),
           attachment("b"),
         ],
-        updatedAt: NOW - BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS + 1_000,
       }),
     );
     expect(restored.fields.attachments).toHaveLength(2);
@@ -273,16 +286,16 @@ describe("restoreBoardCardDraft — attachments", () => {
       draftOf({
         title: "Ship it",
         attachments: [attachment("a", NOW - BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS - 1)],
-        updatedAt: NOW - BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS - 1,
       }),
     );
     expect(restored.fields.attachments).toEqual([]);
     expect(restored.droppedAttachments).toBe(true);
   });
 
-  // The server sweeps a pending upload on the file's own mtime, so an hour of
-  // typing after attaching must not make the reference look an hour younger.
-  it("ages each reference on its upload time, not on the draft's last save", () => {
+  // The server sweeps a pending upload on the file's own mtime, so a set of
+  // references is aged one by one: attaching a second file an hour later must
+  // neither rescue the first nor be dragged out by it.
+  it("ages each reference on its own upload time", () => {
     const restored = restore(
       draftOf({
         title: "Ship it",
@@ -290,8 +303,6 @@ describe("restoreBoardCardDraft — attachments", () => {
           attachment("stale", NOW - BOARD_CARD_DRAFT_ATTACHMENT_TTL_MS - 1),
           attachment("fresh", NOW - 1_000),
         ],
-        // Still being edited a moment ago, long after the first file landed.
-        updatedAt: NOW,
       }),
     );
     expect(restored.fields.attachments.map((row) => row.pendingAttachmentId)).toEqual(["fresh"]);
