@@ -2184,7 +2184,10 @@ export function boardCardCanArmAutoStart(input: {
  */
 export function boardCardAutoStartDue(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt" | "dependsOn" | "autoStart">;
+  readonly card: Pick<
+    BoardCard,
+    "stage" | "parentCardId" | "archivedAt" | "dependsOn" | "autoStart"
+  >;
 }): boolean {
   if (!input.card.autoStart) return false;
   if (!isBoardCardAtAutoStartGate(input)) return false;

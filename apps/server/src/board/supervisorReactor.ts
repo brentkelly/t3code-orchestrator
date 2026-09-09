@@ -4305,6 +4305,11 @@ const make = Effect.gen(function* () {
    * out of the pre-build stage in one event (D4), so a second pass over the
    * same card finds it not due. That is what makes a raced targeted call and
    * the 30s sweep safe to run over the same board.
+   *
+   * Reads the board itself rather than taking its caller's: every call site is
+   * at the END of a handler that has already dispatched, so the caller's copy
+   * is stale — and this decides whether to MOVE a card, which is the last thing
+   * that should be decided off a board read from several events ago.
    */
   const startArmedCards = Effect.fn("board-supervisor-startArmedCards")(function* (
     /** Which cards to consider. The targeted paths narrow to the one card that
