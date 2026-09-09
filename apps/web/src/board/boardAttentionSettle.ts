@@ -88,13 +88,21 @@ export function useBoardAttentionSettle(input: {
     [cards, threadOf],
   );
   const [now, setNow] = useState(() => Date.now());
+  // The DEADLINE, not the map, is what the timer depends on. `cards` is a fresh
+  // array on every board delta, so the map behind it is a new identity many
+  // times a second on a busy board; the deadline it implies is a number, and an
+  // unchanged one leaves the pending timer alone instead of tearing it down and
+  // setting an identical replacement.
+  const settleAt = useMemo(
+    () => nextBoardAttentionSettleAt(threadIdleSinceByCard.values(), now),
+    [threadIdleSinceByCard, now],
+  );
   useEffect(() => {
-    const next = nextBoardAttentionSettleAt(threadIdleSinceByCard.values(), now);
-    if (next === null) return;
+    if (settleAt === null) return;
     // `+ 1` so the timer cannot land a millisecond short of the deadline and
     // re-arm itself for the same one.
-    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, next - Date.now()) + 1);
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, settleAt - Date.now()) + 1);
     return () => clearTimeout(timer);
-  }, [threadIdleSinceByCard, now]);
+  }, [settleAt]);
   return { threadIdleSinceByCard, now };
 }

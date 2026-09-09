@@ -2630,6 +2630,12 @@ export function boardCardAttention(input: {
   // Both halves or neither: a caller that supplies no clock, or a card with no
   // thread that has ever finished a turn, has no evidence the stop is fresh —
   // so it fails OPEN and the chip shows, exactly as it did before T3O-29.
+  //
+  // `threadIdleSince` is stamped by the server and `now` by whichever client is
+  // rendering, so the grace is five seconds modulo clock skew — the same skew
+  // every relative time on the board already carries. It is a settling beat, not
+  // a deadline: a client minutes out of step shows the chip a beat early or
+  // late, and nothing downstream depends on the boundary being exact.
   const settling =
     input.now !== undefined &&
     Number.isFinite(idleSince) &&
