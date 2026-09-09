@@ -594,6 +594,53 @@ it.effect("the handover's card update does not put the paused agent back to work
   ),
 );
 
+it.effect("switching the stance of a step parked on a question still puts it back to work", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("question", "m", true)], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, pumpRuntime, board, commands }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(buildingCard("question", "m", true), 1));
+        const running = boardCardStepState(yield* board, BoardCardId.make("question"));
+        assert.strictEqual(running?.humanInLoop, true);
+
+        // The agent asks a question, so the step parks and gives its slot back.
+        yield* pumpRuntime(userInputRequested(running!.threadId!));
+        assert.strictEqual(
+          stepStatus(yield* board, BoardCardId.make("question")),
+          "awaiting-input",
+        );
+
+        // The human answers by taking their hands off instead: the card detail's
+        // human-in-the-loop toggle, switched to unattended.
+        const card = (yield* board).cards.find(
+          (candidate) => candidate.id === BoardCardId.make("question"),
+        );
+        const turnsBefore = (yield* commands).filter(
+          (command) => command.type === "thread.turn.start",
+        ).length;
+        yield* pumpDomain(cardHumanInLoopUpdated(card!, false, 2));
+
+        // The stance turn is what carries that answer into the thread, and in
+        // production `resumeParkedStep` reads its `thread.turn-start-requested`
+        // and puts the step back to running. Guarding the turn on `running`
+        // rather than on `paused` would leave this step parked on its question
+        // for good — the sweep does not recover an `awaiting-input` step.
+        const turns = (yield* commands).filter((command) => command.type === "thread.turn.start");
+        assert.strictEqual(turns.length, turnsBefore + 1);
+        const stance = turns.at(-1)!;
+        assert.strictEqual(stance.threadId, running!.threadId!);
+        assert.include(stance.message.text, "Switching to unattended");
+        assert.strictEqual(
+          boardCardStepState(yield* board, BoardCardId.make("question"))?.humanInLoop,
+          false,
+        );
+      }),
+  ),
+);
+
 it.effect("boot carries a stance the crash lost onto the live step row (T3O-17)", () =>
   withGovernor(
     {

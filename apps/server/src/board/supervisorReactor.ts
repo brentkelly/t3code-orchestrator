@@ -2779,7 +2779,7 @@ const make = Effect.gen(function* () {
     //
     // The resulting `board.card-updated` re-enters this reactor at
     // `handleCardUpdated`, which carries the stance onto the live step row. Its
-    // `running` guard is what stops that from sending a turn into the thread we
+    // `paused` guard is what stops that from sending a turn into the thread we
     // just stopped; see the note there.
     if (found.state.humanInLoop || found.card.humanInLoop === true) return;
     yield* dispatchOptional({
@@ -4482,17 +4482,21 @@ const make = Effect.gen(function* () {
     // state the whole card is about.
     const desired = card.humanInLoop ?? state.humanInLoop;
     if (desired === state.humanInLoop) return;
-    // Only a step that is actually RUNNING is told about the switch. This is
-    // load-bearing, not cosmetic: the `humanInLoop: true` update that
-    // `pauseStepForHumanStop` dispatches re-enters this handler, and a turn
-    // sent into the step we just paused would raise `thread.turn-start-requested`,
-    // hit `resumeParkedStep` and un-pause the card — putting the agent straight
-    // back to work against the human's Stop. It fixes the same latent problem
-    // for a step parked as `awaiting-input` or `stalled`, where the turn would
-    // have resumed a step nobody asked to resume. The stance still lands on the
-    // row through the retune below, so the step reads correctly when it does
-    // resume.
-    if (state.threadId !== null && state.status === "running") {
+    // A `paused` step is NOT told about the switch. This is load-bearing, not
+    // cosmetic: the `humanInLoop: true` update that `pauseStepForHumanStop`
+    // dispatches re-enters this handler, and a turn sent into the step we just
+    // paused would raise `thread.turn-start-requested`, hit `resumeParkedStep`
+    // and un-pause the card — putting the agent straight back to work against
+    // the human's Stop. The stance still lands on the row through the retune
+    // below, so the step reads correctly when a human does resume it.
+    //
+    // ONLY `paused`, deliberately. The other two parked statuses are told, and
+    // the turn resuming them through `resumeParkedStep` is the point: flipping
+    // the stance on a step waiting on a question (`awaiting-input`) or one
+    // recovery gave up on (`stalled`) is a human saying how the work should
+    // carry on, and it has always put the step back to work. Only `paused`
+    // carries an explicit "stop" this must not overturn.
+    if (state.threadId !== null && state.status !== "paused") {
       const text = desired
         ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`
         : `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;
