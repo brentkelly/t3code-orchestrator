@@ -36,6 +36,8 @@ import {
   boardCardHasLiveBranch,
   isBoardCardBaseBranchShape,
   isEmptyBoardCardModelOverrides,
+  boardCardCanArmAutoStart,
+  boardStageBeforeBuild,
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterSubBoardFloor,
   boardCardPullRequestsEqual,
@@ -1050,6 +1052,22 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         ...card,
         stage: command.toStage,
         orderKey: nextOrderKey,
+        // ANY move spends the auto-start arm (T3O-24, D4). Clearing it here —
+        // inside the move rather than in a second command afterwards — is what
+        // makes fire-and-clear one atomic event, with none of the
+        // cleared-but-unstarted window T3O-19's clear-then-act ordering has to
+        // reason about.
+        //
+        // Every route, not just the one that fires: pressing Begin build by
+        // hand spends it, and so does a backward drag. Which is also why a card
+        // ARRIVING back at the pre-build stage arrives disarmed — a build that
+        // went wrong and got pulled back must never relaunch itself under the
+        // person parking it.
+        //
+        // A card reordered WITHIN the stage keeps its arm: that is
+        // `board.card.reorder`, a different command, and it moves the card
+        // nowhere.
+        autoStart: false,
         blocked: deriveBoardCardBlocked({
           board,
           stage: command.toStage,
@@ -1134,7 +1152,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.reviewOverrides === undefined &&
         command.modelOverrides === undefined &&
         command.baseBranch === undefined &&
-        command.scheduledStartAt === undefined
+        command.scheduledStartAt === undefined &&
+        command.autoStart === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -1216,6 +1235,36 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
               : yield* validateBaseBranch({ command, proposed: command.baseBranch });
 
       const dependsOn = proposedDependsOn ?? card.dependsOn;
+
+      // The auto-start arm (T3O-24, D1/D2). Refused where it could never act,
+      // rather than stored as a flag no path reads: the toggle is only offered
+      // on a live top-level card waiting in the stage before build with at
+      // least one unmet dependency, and `boardCardCanArmAutoStart` is the same
+      // predicate the web detail gates the control on, so the control and this
+      // refusal can never disagree.
+      //
+      // Validated against the dependencies THIS command leaves behind, not the
+      // card's current ones: one edit may both drop the last blocking edge and
+      // arm the card, and accepting that would arm a card with nothing left to
+      // wait for.
+      const autoStart =
+        command.autoStart === undefined
+          ? card.autoStart
+          : command.autoStart === false
+            ? // Disarming is always accepted. A reverse state that can be
+              // refused is not a reverse state.
+              false
+            : boardCardCanArmAutoStart({ board, card: { ...card, dependsOn } })
+              ? true
+              : yield* invariant(
+                  command,
+                  card.parentCardId !== null
+                    ? `Card '${card.key}' is a sub-board child; its siblings already start it when its dependencies finish, so it cannot arm an auto-start of its own.`
+                    : boardStageBeforeBuild(board)?.stageId !== card.stage
+                      ? `Card '${card.key}' is not waiting in '${boardStageBeforeBuild(board)?.label ?? "the stage before the build stage"}', so there is nothing for an auto-start to do.`
+                      : `Card '${card.key}' has no unmet dependencies to wait for, so it cannot be armed to start when they finish.`,
+                );
+
       const nextCard: BoardCard = {
         ...card,
         title: command.title ?? card.title,
@@ -1242,6 +1291,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // running step — the decider only records the intent.
         scheduledStartAt:
           command.scheduledStartAt === undefined ? card.scheduledStartAt : command.scheduledStartAt,
+        autoStart,
         updatedAt: command.createdAt,
       };
       return {
@@ -1262,6 +1312,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           ...(command.scheduledStartAt === undefined
             ? {}
             : { scheduledStartAt: command.scheduledStartAt }),
+          // Says the edit TOUCHED the arm, not what it is (T3O-24, D6). The
+          // supervisor checks an armed card for a dependency that landed
+          // between render and click only on an edit that named the field, so
+          // an unrelated edit never costs a board scan.
+          ...(command.autoStart === undefined ? {} : { autoStart: command.autoStart }),
           // Fold the review summary onto the event when the edit could change
           // it (t3o-22, D7), so a pure override edit updates the card face live
           // — the same reason the step-completion path folds it. Only when the

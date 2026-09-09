@@ -42,6 +42,13 @@ There is no separate **Start now** button — clearing the clock is it.
 If you go back to a paused card's thread and pick the work up by hand, the schedule clears itself.
 A decision you have already overtaken will not re-pause your card hours later.
 
+## Together with waiting on another card
+
+A card can be both scheduled and set to
+[start automatically when unblocked](board-auto-start.md). The two are independent: the card moves
+to Building the moment its last dependency lands, then holds there until its time. It wears its
+scheduled time on the board, not the **Auto-start** chip — a time is the more specific claim.
+
 ## What a scheduled card costs while it waits
 
 Nothing. A card holding a future time takes no agent slot and no place in the

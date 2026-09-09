@@ -67,6 +67,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: null,
+  autoStart: false,
   worktree: null,
   blocked: false,
   archivedAt: null,

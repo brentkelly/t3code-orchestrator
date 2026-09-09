@@ -994,6 +994,9 @@ export function BoardCardDetail({
       onSetScheduledStartAt={(scheduledStartAt) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, scheduledStartAt } }))
       }
+      onSetAutoStart={(autoStart) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, autoStart } }))
+      }
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running for this note's purpose: a queued step has
       // already been selected onto the run row, so its model and authority are

@@ -79,6 +79,9 @@ would be a regression:
 - Pull-request state colours (open green, merged violet, closed red) — GitHub's own convention,
   which users read faster than ours.
 - The blue "open" chip that marks a selected pull request. That is UI state, not work state.
+- The primary tint on the board card's **Start automatically when unblocked** switch when it is on.
+  Same argument: a checked control is UI state. The status surface for that feature — the card
+  face's **Auto-start** chip — is neutral, because the card is not running.
 - The teal terminal-process indicator, which deliberately reads as "not agent work".
 
 ## Where the seams are

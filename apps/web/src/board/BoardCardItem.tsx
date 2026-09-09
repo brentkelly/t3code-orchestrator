@@ -48,6 +48,7 @@ import {
   type BoardTodoThreadState,
 } from "./boardCardProgressBlock";
 import { boardConflictFix } from "./boardConflictFix";
+import { boardCardAutoStartChip } from "./boardCardAutoStartChip";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
@@ -287,6 +288,14 @@ export function BoardCardContent({
     parked: card.stepAwaiting !== null || card.stalled,
     nowMs: Date.now(),
   });
+  // The card's auto-start arm (T3O-24, D8). Yields the single right-hand slot
+  // to a schedule pill, which names a concrete moment and is the more specific
+  // claim; the queue pill below yields to both.
+  const autoStartChip = boardCardAutoStartChip({
+    autoStart: card.autoStart === true,
+    done: summary.muted,
+    scheduled: scheduleLabel !== null,
+  });
   return (
     <article
       className={cn(
@@ -423,7 +432,22 @@ export function BoardCardContent({
             </span>
           </BoardHint>
         )}
-        {scheduleLabel === null && queueSlot !== undefined ? (
+        {autoStartChip === null ? null : (
+          // Neutral, never coloured, for the schedule pill's reason above: the
+          // card is not running, not done, and nothing is waiting on a human.
+          // Amber's claim — "this will never move until someone acts" — is
+          // exactly what an armed card disproves.
+          <BoardHint label={autoStartChip.tooltip}>
+            <span
+              aria-label={autoStartChip.tooltip}
+              className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+            >
+              <ClockIcon className="size-2.5" />
+              {autoStartChip.label}
+            </span>
+          </BoardHint>
+        )}
+        {scheduleLabel === null && autoStartChip === null && queueSlot !== undefined ? (
           // The tooltip carries the WHOLE reason (t3o-33), so why a card is
           // waiting — and that it will start on its own — is readable without
           // opening it.

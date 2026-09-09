@@ -71,6 +71,7 @@ const card: BoardCard = {
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: null,
+  autoStart: false,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",

@@ -226,6 +226,10 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // the same way: absent — every legacy event and every card created without
     // a time — is null, which is "start as soon as the pipeline reaches it".
     scheduledStartAt: payload.scheduledStartAt ?? null,
+    // A card is never born armed (T3O-24, D2): the arm is a human delegating
+    // the D18 build gate on a card they can already see waiting, and there is
+    // no create-command field to set it with.
+    autoStart: false,
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
     worktree: null,
