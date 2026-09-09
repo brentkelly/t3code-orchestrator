@@ -1729,6 +1729,20 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             Archived
           </span>
         ) : null}
+        {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
+            is set, then the clock plus its label. Hidden on a done-role card
+            and on an archived one — neither is going to move again on a timer.
+            Beside the stage chip, because what it holds is the stage. */}
+        {archived || boardCardIsDone(props.stages, card.stage) ? null : (
+          <BoardCardSchedulePopover
+            // Sized to the chip row it sits in, not to a button row.
+            className="h-[18px]"
+            kind={props.scheduleKind}
+            onChange={props.onSetScheduledStartAt}
+            scheduledStartAt={card.scheduledStartAt}
+            stageLabel={boardStageLabel(props.stages, card.stage)}
+          />
+        )}
         {/* Queued for a build slot (t3o-33). Beside the stage badge, because
             "Building" alone is what made a queued card look mid-build. Neutral,
             not `--attention`: nothing is waiting on the user here — see
@@ -1741,18 +1755,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </span>
           </BoardHint>
         ) : null}
-        {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
-            is set, then the clock plus its label. Hidden on a done-role card
-            and on an archived one — neither is going to move again on a timer.
-            Beside the stage chip, because what it holds is the stage. */}
-        {archived || boardCardIsDone(props.stages, card.stage) ? null : (
-          <BoardCardSchedulePopover
-            kind={props.scheduleKind}
-            onChange={props.onSetScheduledStartAt}
-            scheduledStartAt={card.scheduledStartAt}
-            stageLabel={boardStageLabel(props.stages, card.stage)}
-          />
-        )}
         {/* Shown only once this card actually overrides something (t3o-29, D7).
             An override changes what the card spends and what authority it runs
             under; that should not be invisible from the card. It costs nothing
