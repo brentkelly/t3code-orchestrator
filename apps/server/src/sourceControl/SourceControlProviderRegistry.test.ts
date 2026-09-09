@@ -297,3 +297,75 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     assert.strictEqual(provider.kind, "azure-devops");
   }),
 );
+
+// T3o: Forgejo/Codeberg (t3o-28).
+it.effect("routes Codeberg remotes to the Forgejo provider", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@codeberg.org:octocat/widgets.git" }],
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "forgejo");
+  }),
+);
+
+it.effect("routes a host named after Forgejo without asking the CLI", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://forgejo.example.test/octocat/widgets.git" }],
+      process: {
+        run: () => Effect.succeed(processOutput("Not authenticated with any Forgejo instances\n")),
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "forgejo");
+  }),
+);
+
+it.effect("routes a self-hosted Forgejo remote fgj is signed in to, whatever it is named", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://git.example.test/octocat/widgets.git" }],
+      process: {
+        run: (input) =>
+          Effect.succeed(
+            processOutput(
+              input.command === "fgj"
+                ? `Authenticated instances:
+  \u2022 git.example.test (user: octocat)
+`
+                : "",
+            ),
+          ),
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "forgejo");
+  }),
+);
+
+it.effect("leaves a Forgejo host fgj is not signed in to as unknown", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://git.example.test/octocat/widgets.git" }],
+      process: {
+        run: (input) =>
+          Effect.succeed(
+            processOutput(
+              input.command === "fgj" ? "Not authenticated with any Forgejo instances\n" : "",
+            ),
+          ),
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "unknown");
+  }),
+);
