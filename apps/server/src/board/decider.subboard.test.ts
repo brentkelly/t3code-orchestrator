@@ -54,6 +54,7 @@ function makeCard(
     splitRationale: null,
     baseBranch: null,
     scheduledStartAt: null,
+    autoStart: false,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

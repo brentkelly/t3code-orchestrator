@@ -67,6 +67,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     splitRationale: null,
     baseBranch: null,
     scheduledStartAt: null,
+    autoStart: false,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

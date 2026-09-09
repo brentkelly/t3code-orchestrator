@@ -167,6 +167,13 @@ export const makeBoardCard = (input: {
   /** The card's scheduled start (T3O-19). Absent is unscheduled, which is what
       every fixture written before it reads as. */
   readonly scheduledStartAt?: string | null;
+  /** The card's auto-start arm (T3O-24). Absent is unarmed. */
+  readonly autoStart?: boolean;
+  /** The cards this one waits on (t3o-13). Absent is nothing. */
+  readonly dependsOn?: ReadonlyArray<string>;
+  /** The sub-board parent this card is a child of (t3o-23). Absent is
+      top-level, which every fixture written before sub-boards reads as. */
+  readonly parentCardId?: string | null;
 }): BoardCard => ({
   id: BoardCardId.make(input.id),
   key: input.id.toUpperCase(),
@@ -177,8 +184,8 @@ export const makeBoardCard = (input: {
   orderKey: input.orderKey,
   title: `Card ${input.id}`,
   briefRef: null,
-  dependsOn: [],
-  parentCardId: null,
+  dependsOn: (input.dependsOn ?? []).map((id) => BoardCardId.make(id)),
+  parentCardId: input.parentCardId == null ? null : BoardCardId.make(input.parentCardId),
   sourcePlanId: null,
   threadLinks: [],
   attachments: [],
@@ -189,6 +196,7 @@ export const makeBoardCard = (input: {
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],
+  autoStart: input.autoStart ?? false,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],

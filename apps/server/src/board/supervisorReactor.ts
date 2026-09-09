@@ -17,6 +17,7 @@
  * server will restart mid-step.
  */
 import {
+  boardCardAutoStartDue,
   boardCardChildren,
   boardBuildHumanInLoopDefault,
   boardCardPendingSplit,
@@ -185,6 +186,11 @@ export interface SupervisorReactorShape {
       sweep in production; exposed for the same reason, so a test can fire a due
       card without wall-clock time. */
   readonly fireSchedules: Effect.Effect<void>;
+  /** One auto-start pass: move every armed card whose dependencies are all met
+      into the build-role stage (T3O-24, D3/D6). Rides the same 30s timer and
+      boot reconciliation; exposed so a test can drive the self-healing pass
+      without wall-clock time. */
+  readonly startArmed: Effect.Effect<void>;
   /** One release pass: settle every thread the board is finished with (t3o-13).
       Runs on the same timer as the sweep and at every step boundary; exposed so
       tests can drive the retry that lands after an agent's turn ends. */
@@ -4279,6 +4285,73 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  /**
+   * Start every armed card the selector picks out whose last dependency has
+   * landed (T3O-24, D3) — the top-level analogue of `cascadeUnblockedChildren`,
+   * and modelled on it.
+   *
+   * The dispatch is an ORDINARY forward `board.card.move` into the build-role
+   * stage, exactly the one the human's Begin build would have made. Pre-build →
+   * build is adjacent by construction, so no `override`; everything downstream —
+   * worktree provisioning, the concurrency governor, `queued` visibility —
+   * is untouched, and an auto-started card that finds no free slot sits
+   * `Queued #n` like any other, which is the honest answer.
+   *
+   * The decider's dependency gate stays the single authority;
+   * `boardCardAutoStartDue` pre-checks it here so the fire path never teaches
+   * the rule by refusal — the same discipline the child cascade keeps.
+   *
+   * Re-entrant by construction: the move clears the arm and carries the card
+   * out of the pre-build stage in one event (D4), so a second pass over the
+   * same card finds it not due. That is what makes a raced targeted call and
+   * the 30s sweep safe to run over the same board.
+   */
+  const startArmedCards = Effect.fn("board-supervisor-startArmedCards")(function* (
+    /** Which cards to consider. The targeted paths narrow to the one card that
+        could have changed; the sweep and boot reconciliation pass everything. */
+    select: (card: BoardCard) => boolean,
+  ) {
+    const board = yield* readBoard;
+    const buildStage = boardStageWithRole(board, "build");
+    if (buildStage === null) return;
+    for (const card of board.cards) {
+      if (!select(card)) continue;
+      if (!boardCardAutoStartDue({ board, card })) continue;
+      // A move the decider would refuse for a NON-dependency reason (D5). The
+      // card stays ARMED and nothing is said: a pending split is already a
+      // human-facing state saying what it wants, and the card fires by itself
+      // once that gate clears. Clearing the arm here would silently spend it on
+      // a move that never happened.
+      if (boardCardPendingSplit(board, card.id)) continue;
+      yield* dispatch({
+        type: "board.card.move",
+        commandId: yield* commandId("auto-start"),
+        cardId: card.id,
+        toStage: buildStage.stageId,
+        createdAt: yield* nowIso,
+      });
+    }
+  });
+
+  /** The targeted narrowing (T3O-24, D6): only a card that DEPENDS on the one
+      that just finished or was archived can have become due, so a done arrival
+      on an ordinary board costs one board read and a filter rather than a
+      whole-board dependency resolution. */
+  const startArmedDependents = (dependencyId: BoardCardId) =>
+    startArmedCards((card) => card.dependsOn.includes(dependencyId));
+
+  /** The auto-start pass as the tick and the test hook consume it: TOTAL, for
+      the same reason `sweepSchedules` is. Missing a targeted trigger costs one
+      30s window; a dependency that lands while the server is down is caught by
+      boot reconciliation running the same pass. */
+  const sweepArmedCards = startArmedCards(() => true).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: auto-start sweep failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
+
   // Mid-run human-in-the-loop toggle (D5/D6): when the per-card Build toggle is
   // flipped on a card with a non-terminal step, retune the run row so
   // drop-monitoring and auto-advance honour the new stance, and — if the step
@@ -4299,6 +4372,14 @@ const make = Effect.gen(function* () {
     // an unrelated edit never resumes a card parked for another reason.
     if (event.payload.scheduledStartAt !== undefined) {
       yield* applyScheduleEdit(event.payload.cardId);
+    }
+    // An edit that ARMED the card (T3O-24, D6) may already be due: the last
+    // dependency can have finished between the modal rendering and the click,
+    // and dropping the last blocking edge is itself an edit that arrives here.
+    // Only an edit that NAMED the field asks — the payload key says so — so an
+    // unrelated title edit never pays for the check.
+    if (event.payload.autoStart === true) {
+      yield* startArmedCards((candidate) => candidate.id === event.payload.cardId);
     }
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
@@ -4379,6 +4460,9 @@ const make = Effect.gen(function* () {
       yield* cascadeUnblockedChildren(card.parentCardId);
       yield* advanceParentIfChildrenDone(card.parentCardId);
     }
+    // An ARCHIVED dependency stops gating (t3o-13, D1), so archiving a blocker
+    // frees its dependents exactly as finishing it would (T3O-24, D6).
+    yield* startArmedDependents(card.id);
   });
 
   /**
@@ -4847,6 +4931,13 @@ const make = Effect.gen(function* () {
     else if (boardCardChildren(board, card.id).some((child) => child.archivedAt === null)) {
       yield* cascadeUnblockedChildren(card.id);
     }
+    // Arriving in the done-role stage is what SATISFIES this card as a
+    // dependency (T3O-24, D6), so it is the moment an armed dependent can
+    // become due. The targeted trigger, for latency: the 30s sweep would find
+    // the same cards, up to half a minute later.
+    if (boardStageWithRole(board, "done")?.stageId === event.payload.toStage) {
+      yield* startArmedDependents(card.id);
+    }
   });
 
   // On-demand kickoff request (D7): start a thread for the card's current stage.
@@ -5211,6 +5302,11 @@ const make = Effect.gen(function* () {
     // this is free and self-terminating by construction — no forge calls, and a
     // settled thread stops being a candidate the moment it settles.
     yield* releaseFinishedThreads;
+    // Start every card whose last dependency landed while the server was down
+    // (T3O-24, D6). A predicate over state rather than an event to catch, so
+    // boot needs no backlog to replay — it simply asks the question once, and
+    // the 30s sweep asks it again from then on.
+    yield* sweepArmedCards;
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: reconciliation failed", { cause: Cause.pretty(cause) }),
@@ -5415,9 +5511,14 @@ const make = Effect.gen(function* () {
         // a board read and an in-memory pass, serialised against the handlers
         // for the same reason, on the cadence the board already has for
         // "check on things nothing told us about".
+        // And the auto-start sweep (T3O-24, D6): the same argument a third
+        // time. It is the self-healing half of the feature — a dropped
+        // targeted trigger costs one tick instead of stranding an armed card
+        // forever.
         return sweepTimeouts.pipe(
           Effect.andThen(releaseFinishedThreads),
           Effect.andThen(sweepSchedules),
+          Effect.andThen(sweepArmedCards),
         );
     }
   };
@@ -5525,6 +5626,7 @@ const make = Effect.gen(function* () {
     reconcile,
     sweep: sweepTimeouts,
     fireSchedules: sweepSchedules,
+    startArmed: sweepArmedCards,
     releaseThreads: releaseFinishedThreads,
     drain: worker.drain,
     // Both run OUTSIDE the serialised worker: they are request-scoped, the

@@ -139,6 +139,9 @@ const fullyPopulatedShell = {
   // scheduled, so the field is proven to fit in the worst case rather than
   // only in the absent-key case every unscheduled card sends.
   scheduledStartAt: "2026-01-01T00:00:00.000Z",
+  // Populated (T3O-24, D8) for the same reason: the budget is measured against
+  // a card that IS armed, not only against the absent-key case.
+  autoStart: true,
   roundCurrent: 3,
   roundMax: 5,
   stepLabel: "Adjudicating reviewer findings",
@@ -168,6 +171,7 @@ const typicalCard = (index: number): BoardCard => ({
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: null,
+  autoStart: false,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",
