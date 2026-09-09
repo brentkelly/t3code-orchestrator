@@ -1660,6 +1660,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       // reopen-step only accepts a settled step whose recorded payload cannot
       // be read (T3O-14), so the catalog's card carries exactly that record.
       const reopenCard = makeCard({ id: "card-reopen", stage: BOARD_SEED_STAGE_IDS.review });
+      // set-project only accepts a card that has never been built (T3O-33).
+      const projectCard = makeCard({ id: "card-project", stage: "ready" });
       const briefAttachment = {
         id: BoardCardAttachmentId.make("att-1"),
         name: "bug.png",
@@ -1696,6 +1698,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             splitCard,
             attachedCard,
             reopenCard,
+            projectCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           plans: [readyPlan, ...splitPlans],
@@ -1747,6 +1750,13 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           commandId: CommandId.make("cmd-update"),
           cardId: BoardCardId.make("card-ready"),
           title: "Renamed",
+          createdAt: NOW,
+        },
+        "board.card.set-project": {
+          type: "board.card.set-project",
+          commandId: CommandId.make("cmd-set-project"),
+          cardId: BoardCardId.make("card-project"),
+          projectId: otherProjectId,
           createdAt: NOW,
         },
         "board.card.attach": {

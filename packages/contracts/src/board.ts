@@ -1640,6 +1640,8 @@ export function boardPlanId(cardId: BoardCardId, key: string): BoardPlanId {
 export const BOARD_CARD_ACTIVITY_KINDS = [
   "card-created",
   "card-moved",
+  /** The card was moved to another project (T3O-33), retiring its old key. */
+  "card-project-changed",
   "plans-proposed",
   "plan-written",
   "plans-approved",
@@ -1719,6 +1721,14 @@ export const BoardCardActivityPayload = Schema.Struct({
   /** card-moved: the stage it left and the stage it entered. */
   fromStage: Schema.optionalKey(BoardStageId),
   toStage: Schema.optionalKey(BoardStageId),
+  /** card-project-changed: where the card came from and went, and the key it
+      gave up for the one it carries now. The project NAMES are resolved
+      client-side from the shell snapshot, exactly as every other project dot
+      is — the projection has no project titles. */
+  fromProjectId: Schema.optionalKey(ProjectId),
+  toProjectId: Schema.optionalKey(ProjectId),
+  fromKey: Schema.optionalKey(TrimmedNonEmptyString),
+  toKey: Schema.optionalKey(TrimmedNonEmptyString),
   /** plans-proposed: how many plans landed. plan-written: which plan. */
   planCount: Schema.optionalKey(NonNegativeInt),
   planId: Schema.optionalKey(BoardPlanId),
@@ -2214,6 +2224,48 @@ export function isBoardStageAtOrAfterSubBoardFloor(
   const floorIndex = boardStageIndex(board, floor.stageId);
   const stageIndex = boardStageIndex(board, stageId);
   return stageIndex >= 0 && floorIndex >= 0 && stageIndex >= floorIndex;
+}
+
+/**
+ * Why a card's project cannot be changed (T3O-33, D1/D4), or `null` when it
+ * can. ONE predicate, shared by the decider's refusals and the card detail's
+ * row, so the control and the rejection can never disagree about what is
+ * editable.
+ *
+ * Editable means *this card has never been built and is not being built now*.
+ * A pure stage test is wrong in both directions: a card dragged back out of
+ * Building still owns a worktree on the old project's checkout, and a Done card
+ * whose branch was cleaned up still has its key printed on a merged pull
+ * request. Both halves of a sub-board refuse outright — a child inherits its
+ * parent's project and integration branch, and a split parent builds THROUGH
+ * its children, so moving one would cascade key reissues and thread kills
+ * across the whole sub-board.
+ *
+ * `childCount` is passed rather than derived because the client holds card
+ * shells, not the aggregate list `boardCardChildren` needs; the server passes
+ * `boardCardChildren(board, card.id).length`.
+ */
+export type BoardCardProjectLock =
+  | { readonly kind: "child"; readonly parentCardId: BoardCardId }
+  | { readonly kind: "parent"; readonly childCount: number }
+  | { readonly kind: "built" };
+
+export function boardCardProjectLock(input: {
+  readonly board: BoardState;
+  readonly card: Pick<BoardCard, "stage" | "worktree" | "pullRequestHistory" | "parentCardId">;
+  readonly childCount: number;
+}): BoardCardProjectLock | null {
+  const card = input.card;
+  if (card.parentCardId !== null) return { kind: "child", parentCardId: card.parentCardId };
+  if (input.childCount > 0) return { kind: "parent", childCount: input.childCount };
+  if (
+    isBoardStageAtOrAfterBuild(input.board, card.stage) ||
+    card.worktree !== null ||
+    card.pullRequestHistory.length > 0
+  ) {
+    return { kind: "built" };
+  }
+  return null;
 }
 
 /** Every non-deleted child of `cardId`, archived included. Deleted children
@@ -3189,6 +3241,36 @@ export const BoardCardDetachCommand = Schema.Struct({
 });
 export type BoardCardDetachCommand = typeof BoardCardDetachCommand.Type;
 
+/**
+ * Move a card to a different project (T3O-33). Human-only: the MCP toolkit
+ * never gets this, because an agent calling it from inside its own card's
+ * planning thread would kill the thread making the call and respawn itself in
+ * a different repository.
+ *
+ * Refused once the card has ever been built — the decider tests stage, worktree
+ * and pull-request history, not stage alone — and refused on both halves of a
+ * sub-board (a child inherits its parent's project; a parent builds through
+ * its children).
+ *
+ * The move REISSUES the card's key against the target project's prefix and
+ * counter, and clears the base-branch pin: a branch named in the old project's
+ * checkout says nothing about the new one, and `null` means "follow this
+ * project's default", resolved live.
+ */
+export const BoardCardSetProjectCommand = Schema.Struct({
+  type: Schema.Literal("board.card.set-project"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  projectId: ProjectId,
+  /** The target project's key prefix, supplied by the caller exactly as
+      `board.card.create` does it — the decider can see neither board settings
+      nor project titles, so prefix resolution stays client-side. Absent falls
+      back to `DEFAULT_BOARD_KEY_PREFIX`. */
+  keyPrefix: Schema.optional(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+});
+export type BoardCardSetProjectCommand = typeof BoardCardSetProjectCommand.Type;
+
 export const BoardCardArchiveCommand = Schema.Struct({
   type: Schema.Literal("board.card.archive"),
   commandId: CommandId,
@@ -3989,6 +4071,29 @@ export const BoardCardMovedPayload = Schema.Struct({
   card: BoardCard,
 });
 export type BoardCardMovedPayload = typeof BoardCardMovedPayload.Type;
+
+/**
+ * A card changed project (T3O-33). `card` is the post-state aggregate, as every
+ * non-created card event carries. The three `previous*` fields are load-bearing
+ * rather than decoration:
+ *
+ * - `previousProjectId` + `previousCardNumber` raise the OLD project's
+ *   card-number floor. `nextCardNumberByProject` is rebuilt on rehydration as
+ *   `MAX(card_number)` over the cards UNION the floor, and a card leaving a
+ *   project takes its row with it — so without the floor a project whose
+ *   highest-numbered card moved away has its counter REGRESS across a restart
+ *   and hands the next card a key that already exists elsewhere on the board.
+ * - `previousKey` is what the activity row renders; the retired key is the one
+ *   fact the move's history is about.
+ */
+export const BoardCardProjectChangedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  previousProjectId: ProjectId,
+  previousKey: TrimmedNonEmptyString,
+  previousCardNumber: NonNegativeInt,
+  card: BoardCard,
+});
+export type BoardCardProjectChangedPayload = typeof BoardCardProjectChangedPayload.Type;
 
 export const BoardCardReorderedPayload = Schema.Struct({
   cardId: BoardCardId,
@@ -5465,6 +5570,8 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardCardMoveCommand,
   BoardCardReorderCommand,
   BoardCardUpdateCommand,
+  // T3O-33: move a card to another project, before it has ever been built.
+  BoardCardSetProjectCommand,
   BoardCardLinkThreadCommand,
   BoardCardUnlinkThreadCommand,
   BoardCardArchiveCommand,
@@ -5523,6 +5630,7 @@ export const BOARD_INTERNAL_COMMANDS = [
 export const BOARD_EVENT_TYPES = [
   "board.card-created",
   "board.card-moved",
+  "board.card-project-changed",
   "board.card-reordered",
   "board.card-updated",
   "board.card-thread-linked",
@@ -5594,6 +5702,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-moved"),
       payload: BoardCardMovedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-project-changed"),
+      payload: BoardCardProjectChangedPayload,
     }),
     Schema.Struct({
       ...base,

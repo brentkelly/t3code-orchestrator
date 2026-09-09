@@ -4767,6 +4767,82 @@ const make = Effect.gen(function* () {
     yield* beginStageRun({ card, onDemand: false });
   });
 
+  /**
+   * A card moved to another project (T3O-33). The card's stage does not change,
+   * but the repository it works in does, so anything live is now editing the
+   * wrong checkout: abandon it, clear the stage's threads off the card, and let
+   * the stage start again on a fresh thread if it auto-executes.
+   *
+   * The thread records themselves are KEPT (D2). A planning thread's real
+   * output is the plan, and that lives on the card; only a running agent is
+   * genuinely broken by the move, so it is stopped rather than deleted.
+   *
+   * The clearing mirrors `beginStageRun`'s on-demand arm rather than
+   * `handleCardMoved`'s: the destination stage is the stage the card is already
+   * in, so a link left by an EARLIER run of that stage (its role is the stage
+   * id) would trip the live-stage-thread guard and wedge the restart. A thread
+   * a human ADOPTED links with role `linked` and is left alone.
+   */
+  const handleCardProjectChanged = Effect.fn("board-supervisor-handleCardProjectChanged")(
+    function* (event: Extract<OrchestrationEvent, { type: "board.card-project-changed" }>) {
+      const card = event.payload.card;
+      const board = yield* readBoard;
+      const existing = boardCardStepState(board, card.id);
+      const live = existing !== null && !isBoardTerminalStepStatus(existing.status);
+      if (live) {
+        yield* settleStep({ card, state: existing, outcome: "abandoned" });
+      }
+      const cleared = new Set<string>();
+      for (const link of card.threadLinks) {
+        if (link.tombstonedAt !== null) continue;
+        if (link.role !== card.stage && link.threadId !== existing?.threadId) continue;
+        yield* dispatch({
+          type: "board.card.unlink-thread",
+          commandId: yield* commandId("unlink-project-changed"),
+          cardId: card.id,
+          threadId: link.threadId,
+          createdAt: yield* nowIso,
+        });
+        cleared.add(String(link.threadId));
+        // Unlinking a LIVE thread removes the link outright, so `threadRelease`
+        // can no longer derive it from any card and it would sit unsettled in
+        // the inbox forever. The card is finished with it — name it.
+        abandonedThreads.add(String(link.threadId));
+      }
+      // Stop the turn of the step that was actually running. A `stalled` step
+      // already gave up and a `paused` one had its turn stopped when the human
+      // stopped it, so neither needs an interrupt; anything else may still have
+      // a turn writing the OLD project's checkout, which is exactly what this
+      // move must not leave running. Best-effort, like every other orphan
+      // interrupt.
+      if (
+        live &&
+        existing.threadId !== null &&
+        existing.status !== "stalled" &&
+        existing.status !== "paused"
+      ) {
+        yield* interruptOrphan(existing.threadId);
+      }
+      // The abandoned step may have held a slot — offer it to the queue.
+      if (live) yield* schedule();
+      // Reflect the unlinks onto the card handed to the kickoff, so the guard
+      // does not see the very links we just tombstoned.
+      const kickoffCard: BoardCard = {
+        ...card,
+        threadLinks: card.threadLinks.map((link) =>
+          link.tombstonedAt === null && cleared.has(String(link.threadId))
+            ? { ...link, tombstonedAt: card.updatedAt }
+            : link,
+        ),
+      };
+      // `onDemand: false` on purpose: the stage's own `autoExecute` decides
+      // whether the card restarts, so Planning picks itself back up and Backlog
+      // stays put, with no branching of our own.
+      yield* beginStageRun({ card: kickoffCard, onDemand: false });
+      yield* releaseFinishedThreads;
+    },
+  );
+
   // A card crossed into a new stage (drag, or an auto-advance). The card holds
   // ONE step-state row, and until this move nothing has selected a step for the
   // destination — so any non-terminal step still on the row is a LEFTOVER from
@@ -5334,6 +5410,10 @@ const make = Effect.gen(function* () {
         // handler first clears any leftover step from the stage the card left,
         // so a card carrying a stalled/in-flight step still starts the new one.
         return handleCardMoved(event);
+      case "board.card-project-changed":
+        // T3O-33: the card is now in a different repository, so anything live
+        // is working the wrong checkout. Abandon it and restart the stage.
+        return handleCardProjectChanged(event);
       case "board.card-created":
         // Creating a card straight into an auto-executing stage is a real path
         // now (D10) and must behave identically to a drag.
@@ -5576,6 +5656,10 @@ const make = Effect.gen(function* () {
           // press, machine-wide — negligible beside what already crosses here.
           event.type !== "thread.turn-interrupt-requested" &&
           event.type !== "board.card-moved" &&
+          // T3O-33: a card changed project. Human-only and rare, and the whole
+          // point is that the agent working the card in the OLD repository is
+          // stopped now rather than at the next step boundary.
+          event.type !== "board.card-project-changed" &&
           event.type !== "board.card-created" &&
           event.type !== "board.card-stage-thread-requested" &&
           event.type !== "board.card-updated" &&
