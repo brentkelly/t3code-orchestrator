@@ -58,6 +58,12 @@ const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
 
+  // T3o: `fgj` says "no configuration found for host <h>" when it holds no token for the
+  // instance, which none of the phrases below would catch (t3o-28).
+  if (command === "fgj" && normalized.includes("no configuration found for host")) {
+    return "authentication";
+  }
+
   if (
     normalized.includes("authentication failed") ||
     normalized.includes("not logged in") ||
@@ -93,7 +99,12 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
         normalized.includes("404"))) ||
     (command === "az" &&
       normalized.includes("pull request") &&
-      (normalized.includes("not found") || normalized.includes("does not exist")))
+      (normalized.includes("not found") || normalized.includes("does not exist"))) ||
+    // T3o: Forgejo answers a missing PR or repository with "The target couldn't be found."
+    // (t3o-28).
+    (command === "fgj" &&
+      (normalized.includes("target couldn't be found") ||
+        normalized.includes("target could not be found")))
   ) {
     return "not-found";
   }

@@ -7,6 +7,8 @@ export const SourceControlProviderKind = Schema.Literals([
   "gitlab",
   "azure-devops",
   "bitbucket",
+  // T3o: Forgejo/Codeberg, served by the `fgj` CLI (t3o-28).
+  "forgejo",
   "unknown",
 ]);
 export type SourceControlProviderKind = typeof SourceControlProviderKind.Type;

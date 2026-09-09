@@ -130,12 +130,14 @@ export class SourceControlProvider extends Context.Service<
     /**
      * Integrate a change request into its base branch.
      *
-     * Implemented for GitHub only in v1 — every other provider returns the
-     * registry's unsupported-operation error, which the board surfaces as a
-     * plain "merging is not supported for <provider>" rather than a failure
-     * that looks like the merge went wrong. Read operations
-     * (`listChangeRequests`) stay provider-agnostic, so a card on GitLab or
-     * Bitbucket still shows its PR badge and link; only the merge is gated.
+     * Implemented for GitHub and, T3o-side, for Forgejo — `fgj pr merge
+     * --merge-method` maps onto `ChangeRequestMergeStrategy` exactly (t3o-28).
+     * Every other provider returns the registry's unsupported-operation error,
+     * which the board surfaces as a plain "merging is not supported for
+     * <provider>" rather than a failure that looks like the merge went wrong.
+     * Read operations (`listChangeRequests`) stay provider-agnostic, so a card
+     * on GitLab or Bitbucket still shows its PR badge and link; only the merge
+     * is gated.
      *
      * A refusal by the forge (failing checks, missing approvals, conflicts) is
      * a normal outcome here, not an exception in the caller's design: it comes

@@ -1,7 +1,8 @@
 import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
-  readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "change-request";
+  // T3o: "forgejo" (t3o-28).
+  readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "forgejo" | "change-request";
   readonly providerName: string;
   readonly shortName: string;
   readonly longName: string;
@@ -64,6 +65,18 @@ const BITBUCKET_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "https://bitbucket.org/workspace/repo/pull-requests/42",
 };
 
+// T3o: Forgejo speaks GitHub's vocabulary, but `fgj` has no checkout subcommand, so no
+// checkout example is offered — T3o fetches `refs/pull/<n>/head` itself (t3o-28).
+const FORGEJO_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
+  icon: "forgejo",
+  providerName: "Forgejo",
+  shortName: "PR",
+  longName: "pull request",
+  pluralLongName: "pull requests",
+  providerLongName: "Forgejo pull request",
+  urlExample: "https://codeberg.org/owner/repo/pulls/42",
+};
+
 const GENERIC_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "change-request",
   providerName: "source control",
@@ -87,6 +100,9 @@ export function resolveChangeRequestPresentation(
       return AZURE_DEVOPS_CHANGE_REQUEST_PRESENTATION;
     case "bitbucket":
       return BITBUCKET_CHANGE_REQUEST_PRESENTATION;
+    // T3o: t3o-28.
+    case "forgejo":
+      return FORGEJO_CHANGE_REQUEST_PRESENTATION;
     case "unknown":
       return GENERIC_CHANGE_REQUEST_PRESENTATION;
   }
@@ -198,6 +214,18 @@ function isBitbucketHost(host: string): boolean {
   return host === "bitbucket.org" || hasDnsLabel(host, "bitbucket");
 }
 
+// T3o: the free wins only. A Forgejo instance is usually named after the team that runs it
+// rather than after Forgejo, so most self-hosted installs stay `unknown` here and are claimed
+// later by `refineUnknownRemote` against `fgj auth status` (t3o-28).
+function isForgejoHost(host: string): boolean {
+  return (
+    host === "codeberg.org" ||
+    host.endsWith(".codeberg.org") ||
+    hasDnsLabel(host, "forgejo") ||
+    hasDnsLabel(host, "gitea")
+  );
+}
+
 export function detectSourceControlProviderFromRemoteUrl(
   remoteUrl: string,
 ): SourceControlProviderInfo | null {
@@ -235,6 +263,15 @@ export function detectSourceControlProviderFromRemoteUrl(
     return {
       kind: "bitbucket",
       name: hostname === "bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted",
+      baseUrl: toBaseUrl(host),
+    };
+  }
+
+  // T3o: t3o-28.
+  if (isForgejoHost(hostname)) {
+    return {
+      kind: "forgejo",
+      name: hostname === "codeberg.org" ? "Codeberg" : "Forgejo",
       baseUrl: toBaseUrl(host),
     };
   }
