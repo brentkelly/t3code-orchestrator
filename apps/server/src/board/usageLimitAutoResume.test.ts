@@ -1211,6 +1211,36 @@ it.effect("a second card refused during a cooldown does not count as its probe",
   ),
 );
 
+it.effect("a re-record naming no time keeps the reset time the provider gave", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a"), buildingCard("b", "b")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        // The same provider says both things. `a` gets the full sentence with
+        // the reset time in it; `b`, ending against the same wall moments later,
+        // gets the bare "You hit your weekly limit" and nothing else. The bare
+        // one knows less, so it changes nothing.
+        const threadA = yield* startCard(harness, "a", "a", 1);
+        const threadB = yield* startCard(harness, "b", "b", 2);
+        yield* endTurn(harness, threadA, waitAt());
+        yield* TestClock.adjust(Duration.minutes(5));
+        yield* endTurn(harness, threadB, waitAt(null));
+
+        const limit = yield* limitOf(harness, codex);
+        assert.strictEqual(limit?.until, RESETS_AT, "the named time survives");
+        assert.strictEqual(limit?.knownTime, true, "and the pill still shows it");
+        assert.strictEqual(limit?.blindSince, null, "nothing started polling blind");
+        assert.strictEqual((yield* stepOf(harness, "b"))?.retryAt, RESETS_AT);
+      }),
+  ),
+);
+
 it.effect("a prober still mid-turn is not replaced, so only one card ever probes", () =>
   withGovernor(
     {

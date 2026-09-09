@@ -3007,7 +3007,9 @@ const make = Effect.gen(function* () {
    * Turn a classified `wait` into a cooldown on the provider instance (D1/D5/D8).
    *
    * `until` is the provider's own reset time when it gave one, and the next
-   * blind-poll rung when it did not. A human-set time survives a later LOOSE
+   * blind-poll rung when it did not — except that a named time still in the
+   * future outlives a later re-record that names none, because the bare
+   * sentence the second card got says nothing the first one did not. A human-set time survives a later LOOSE
    * match (D14): the human looked at the provider and typed what they saw, and
    * a regex must not argue with them. A strict match carrying the provider's
    * own named time is not a regex arguing — it is the account answering — so it
@@ -3037,15 +3039,44 @@ const make = Effect.gen(function* () {
       input.match.confidence === "strict" && input.match.resumeAt !== null;
     if (existing !== null && existing.setByHuman && !providerNamedItsOwnTime) return existing;
     const nowIsoValue = DateTime.formatIso(DateTime.makeUnsafe(input.nowMs));
+    // A re-record that names NO time is a weaker statement than a reset time the
+    // provider named itself and that has not arrived yet, so it must not undo
+    // it. The same provider says both: the first card gets "You hit your weekly
+    // limit · resets in 3d 2h", the second, ending moments later against the
+    // same wall, gets the bare sentence. Letting the bare one win turned a
+    // three-day window into a blind 30-minute poll under a pill reading "No
+    // reset time given" — throwing away the one useful fact on the row, which is
+    // the same instinct D14 applies to a time a HUMAN typed.
+    //
+    // Only a time that is still ahead AND still the provider's own. Once `until`
+    // has passed, the row has stopped being a claim about the future; and once a
+    // prober is out, `until` is already our own next rung rather than the named
+    // time (`fireDueProbes` moves it on election), so the answer that prober
+    // brings back — including "still limited, and now I will not say when" —
+    // owns the row. That is the refused-probe case D9 reschedules on.
+    const keptKnownTime =
+      existing !== null &&
+      existing.knownTime &&
+      existing.probeCardId === null &&
+      input.match.resumeAt === null &&
+      Date.parse(existing.until) > input.nowMs
+        ? existing.until
+        : null;
     // Blind polling is measured from when it STARTED, never from the last
     // probe: measuring per-probe would let a restart quietly reset the ladder to
     // its finest cadence for ever, and the seven-day ceiling would never arrive.
-    const blindSince = input.match.resumeAt !== null ? null : (existing?.blindSince ?? nowIsoValue);
+    const blindSince =
+      keptKnownTime !== null || input.match.resumeAt !== null
+        ? null
+        : (existing?.blindSince ?? nowIsoValue);
     const blindElapsed = blindSince === null ? 0 : input.nowMs - Date.parse(blindSince);
     const pollDelay = boardUsageLimitPollDelayMs(Number.isFinite(blindElapsed) ? blindElapsed : 0);
-    if (input.match.resumeAt === null && pollDelay === null) return null; // ceiling reached
+    // Ceiling reached — but only a row that is actually polling blind can reach it.
+    if (keptKnownTime === null && input.match.resumeAt === null && pollDelay === null) return null;
     const until =
-      input.match.resumeAt ?? isoAfter(input.nowMs, yield* jittered(pollDelay as number));
+      keptKnownTime ??
+      input.match.resumeAt ??
+      isoAfter(input.nowMs, yield* jittered(pollDelay as number));
     const limit: BoardProviderLimit = {
       providerInstanceId: input.providerInstanceId,
       kind: "wait",
@@ -3063,7 +3094,7 @@ const make = Effect.gen(function* () {
       reason: input.match.reason,
       ruleId: input.match.ruleId,
       sourceCardId: input.cardId,
-      knownTime: input.match.resumeAt !== null,
+      knownTime: keptKnownTime !== null || input.match.resumeAt !== null,
       blindSince,
       // A fresh cooldown has no prober: the sweep picks one when `until`
       // arrives, and picking it fresh each time is what guarantees a successor
