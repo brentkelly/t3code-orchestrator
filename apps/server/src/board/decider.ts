@@ -3210,18 +3210,41 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // carries a reason records it, and one that does not clears whatever was
       // there. A nudge that puts the step back to `running` must not leave the
       // card showing the error from the stop before it.
+      // A quota park spends NOTHING (T3O-22, D12): the card is not failing, the
+      // provider is, and a card that hit a limit at midnight would otherwise
+      // poll its way to death by 2:30am — twenty minutes before the window
+      // reopened. `lastNudgeAt` is left alone with the rest, so the progress
+      // boundary the next recovery measures against still describes the last
+      // time the board actually put this step to work.
+      const charge = command.chargeBudget ?? true;
+      // …and the budget RESETS when the woken turn did real work (T3O-22, D12),
+      // which is exactly what `progressed` already means. It used to reset
+      // `stallCount` alone; extending it to `attempt` is what makes a card that
+      // resumes, works, and stalls again days later start its ladder over
+      // instead of inheriting a count from the stall before the resume.
+      // `stageEntryRecoveries` is deliberately NOT reset: it is the only thing
+      // that catches a card looping productively-looking for ever, and an
+      // automatic resume clearing it would leave the card unbounded.
       const state: BoardCardStepState = {
         ...current,
-        attempt: current.attempt + 1,
-        stallCount: (command.progressed ? 0 : current.stallCount) + 1,
+        attempt: charge ? (command.progressed ? 1 : current.attempt + 1) : current.attempt,
+        stallCount: charge ? (command.progressed ? 0 : current.stallCount) + 1 : current.stallCount,
         // The runaway ceiling's counter (T3O-12, D4): a recovery — a nudge, an
         // escalation, or a spawn failure — is the ONLY thing that spends it.
-        stageEntryRecoveries: current.stageEntryRecoveries + 1,
+        stageEntryRecoveries: charge
+          ? current.stageEntryRecoveries + 1
+          : current.stageEntryRecoveries,
         status: command.escalateToHuman ? "stalled" : "running",
         slotHeld: command.escalateToHuman ? false : current.slotHeld,
         threadId: command.threadId,
         lastError: command.lastError ?? null,
-        lastNudgeAt: command.createdAt,
+        // Why it stalled and when it next tries (T3O-22, D10). Both are
+        // REPLACED, never merged, for the same reason `lastError` is: a nudge
+        // that puts the step back to running must not leave the card promising a
+        // retry that has already happened.
+        stalledReason: command.escalateToHuman ? (command.stalledReason ?? "gave-up") : "gave-up",
+        retryAt: command.retryAt ?? null,
+        lastNudgeAt: charge ? command.createdAt : current.lastNudgeAt,
         updatedAt: command.createdAt,
       };
       return {
@@ -3306,11 +3329,21 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // The same "a human intervening is progress" reset `resume-step` applies,
       // and for the same reason: the ladder starts its count over rather than
       // re-escalating on the first quiet turn after the resume.
+      //
+      // …unless the BOARD resumed it on a timer (T3O-22, D12). A backoff rung
+      // reaching its moment, or a quota cooldown lifting, proves nothing — the
+      // clock advanced, that is all — and resetting there would let a genuinely
+      // dead card be nudged for ever and never reach a human.
+      const preserve = command.preserveBudget ?? false;
       const state: BoardCardStepState = {
         ...current,
         status: "queued",
-        stallCount: 0,
+        stallCount: preserve ? current.stallCount : 0,
         lastError: null,
+        // The step is going back to work, so the stall it was wearing — and the
+        // retry time that went with it — are over.
+        stalledReason: "gave-up",
+        retryAt: null,
         slotHeld: false,
         startedAt: null,
         updatedAt: command.createdAt,

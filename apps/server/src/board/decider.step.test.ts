@@ -466,7 +466,13 @@ it.effect(
         board,
       );
       if (event.type === "board.card-step-recovered") {
-        assert.strictEqual(event.payload.state.attempt, 4);
+        // Progress resets the whole retry budget, not just the streak (T3O-22,
+        // D12): the step demonstrably did real work since the last nudge, so it
+        // starts its ladder over rather than inheriting a count from the stall
+        // before it. `attempt` used to climb here regardless, which meant a card
+        // that resumed, worked for a day and stalled again arrived at the
+        // ceiling on its first quiet turn.
+        assert.strictEqual(event.payload.state.attempt, 1);
         // Progress forgets the streak; this stall is #1 of a new one.
         assert.strictEqual(event.payload.state.stallCount, 1);
         // A nudge is a recovery too, whether or not it progressed: the ceiling

@@ -45,6 +45,17 @@ import {
   CommandId,
   BOARD_ENVELOPE_QUESTION_MECHANISM,
   boardTextEndsWithQuestion,
+  applyBoardUsageLimitJitter,
+  boardProviderLimit,
+  boardProviderLimitHolds,
+  boardRetryDelayMs,
+  boardUsageLimitParkedSteps,
+  boardUsageLimitPollDelayMs,
+  BOARD_USAGE_LIMIT_RESUME_MARGIN_MS,
+  type BoardProviderLimit,
+  type BoardCardStepStalledReason,
+  type ProviderInstanceId,
+  type BoardUsageLimitMatch,
   BOARD_SUBMIT_STEP_ID,
   BOARD_SUBMIT_STEP_LABEL,
   DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
@@ -94,6 +105,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -126,6 +138,8 @@ import {
 } from "./worktree.ts";
 import {
   BOARD_STEP_RESUME_NUDGE,
+  BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE,
+  boardRecoveryNudge,
   composeStepPrompt,
   orderBoardQueue,
   outputSignalShieldsStep,
@@ -134,6 +148,7 @@ import {
   resolveBoardConcurrencyLimit,
   type BoardQueueCandidate,
 } from "./supervisor.ts";
+import { detectorNowMs, UsageLimitDetector } from "./UsageLimitDetector.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -191,6 +206,14 @@ export interface SupervisorReactorShape {
       boot reconciliation; exposed so a test can drive the self-healing pass
       without wall-clock time. */
   readonly startArmed: Effect.Effect<void>;
+  /** One retry pass: requeue every step whose backoff rung has arrived (T3O-22,
+      D7). Rides the same 30s timer and boot reconciliation; exposed so a test
+      can fire a due rung without waiting two minutes of wall-clock time. */
+  readonly fireRetries: Effect.Effect<void>;
+  /** One provider-cooldown pass: wake exactly ONE card per due cooldown, clear
+      a cooldown holding nothing, and give up at the seven-day ceiling (T3O-22,
+      D8/D9). Same timer, same reason for being exposed. */
+  readonly fireProbes: Effect.Effect<void>;
   /** One release pass: settle every thread the board is finished with (t3o-13).
       Runs on the same timer as the sweep and at every step boundary; exposed so
       tests can drive the retry that lands after an agent's turn ends. */
@@ -293,6 +316,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const serverSettings = yield* ServerSettingsService;
   const slots = yield* BoardStepSlots;
+  const usageLimits = yield* UsageLimitDetector;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const pullRequests = yield* BoardPullRequestGateway;
   const setupRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
@@ -1354,9 +1378,25 @@ const make = Effect.gen(function* () {
         createdAt: yield* nowIso,
       });
       if (!admitted) return "refused";
+      // What the agent is told depends on WHY it stopped (T3O-22). A human's
+      // Stop and a scheduled hold both resume as "you were paused, carry on"; a
+      // provider that ran out of quota resumes as "the window reopened"; and a
+      // backoff rung reaching its time resumes with the recovery nudge it would
+      // have carried had it gone out immediately, recomposed from the step row
+      // rather than dragged across a park, a restart and a queue.
+      const text =
+        state.stalledReason === "usage-limit"
+          ? BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE
+          : state.stalledReason === "waiting-retry"
+            ? boardRecoveryNudge({
+                stallCount: state.stallCount,
+                hasTodoList: (yield* threadTodoState(state.threadId))?.hasList ?? false,
+                endedWithQuestion: yield* endedWithQuestion(state),
+              })
+            : BOARD_STEP_RESUME_NUDGE;
       yield* sendTurn({
         threadId: state.threadId,
-        text: BOARD_STEP_RESUME_NUDGE,
+        text,
         runtimeMode: state.runtimeMode,
       });
       return "admitted";
@@ -1611,6 +1651,27 @@ const make = Effect.gen(function* () {
       if (state.status !== "pending" && state.status !== "queued") continue;
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined || card.archivedAt !== null) continue;
+      // The provider-cooldown gate (T3O-22, D13). FIRST, before the plan-mode
+      // branch and long before a worktree is provisioned or a slot offered, so a
+      // withheld card cuts no branch and takes no capacity. `forceStart` wins
+      // here exactly as it does over a scheduled time and the concurrency cap —
+      // a human pressing "start it anyway" has overtaken us.
+      //
+      // Ahead of the plan branch, unlike the scheduled-start gate below: a
+      // schedule is a promise about a HUMAN gate ("no effect until the card
+      // reaches Ready"), while a cooldown is a fact about the provider, and
+      // spawning a planning thread into a provider refusing every turn is the
+      // same wasted thread as a build step's.
+      //
+      // Keyed on step STATUS, not on `humanInLoop`: a pending or queued step is
+      // withheld too. That is a delayed START, never a resume, so it does not
+      // reopen D11 — the step admits normally once the cooldown clears.
+      if (
+        !state.forceStart &&
+        boardProviderLimitHolds(board.providerLimits, state.providerInstanceId, card.id)
+      ) {
+        continue;
+      }
       if (state.mode === "plan") {
         // Plan-mode holds no slot: spawn a freshly selected step now. Nothing
         // withholds a plan step, so `queued` used to be unreachable here — but a
@@ -2786,6 +2847,312 @@ const make = Effect.gen(function* () {
     yield* releaseSlot(input.state);
   });
 
+  // ── Usage limits (T3O-22) ────────────────────────────────────────────
+
+  /**
+   * Park a step as `stalled` with a reason and, usually, a time it will try
+   * again — the ONE way a step reaches every reading of `stalled` except a
+   * spawn failure.
+   *
+   * The dispatch is OBSERVED rather than fire-and-forget, exactly as
+   * `parkStepForInput` is: a refused park (the step moved on under us) must not
+   * release a slot the step still holds and will still release at settle.
+   */
+  const parkStepForRetry = Effect.fn("board-supervisor-parkStepForRetry")(function* (input: {
+    readonly card: BoardCard;
+    readonly state: BoardCardStepState;
+    readonly reason: BoardCardStepStalledReason;
+    readonly retryAt: string | null;
+    /** Whether this park spends the retry budget (D12). A quota park does not. */
+    readonly chargeBudget: boolean;
+    readonly progressed: boolean;
+    readonly lastError?: string | null;
+  }) {
+    const error = input.lastError ?? null;
+    const landed = yield* dispatchOptional({
+      type: "board.card.recover-step",
+      commandId: yield* commandId("park-retry"),
+      cardId: input.card.id,
+      stepId: input.state.stepId,
+      threadId: input.state.threadId,
+      escalateToHuman: true,
+      progressed: input.progressed,
+      stalledReason: input.reason,
+      chargeBudget: input.chargeBudget,
+      ...(input.retryAt === null ? {} : { retryAt: input.retryAt }),
+      ...(error === null ? {} : { lastError: error }),
+      createdAt: yield* nowIso,
+    });
+    if (!landed) return;
+    // Gated on the PRE-park `slotHeld`, exactly as escalation is: the decider
+    // has already set the persisted flag false, so a re-run releases nothing.
+    yield* releaseSlot(input.state);
+    // Let the freed slot flow to the queue within a beat. A waiting card must
+    // not hold a build slot for half an hour on a three-slot board — and
+    // `orderBoardQueue` ranks started-and-later-stage first, so it regains its
+    // place ahead of fresh work when it wakes rather than going to the back.
+    yield* schedule();
+  });
+
+  /** A delay spread by ±60s (D8), so a fleet of parked cards never hits one
+      provider on a precise cadence. The randomness is bound here and the
+      arithmetic stays pure. */
+  const jittered = (delayMs: number) =>
+    Effect.map(Random.next, (random) => applyBoardUsageLimitJitter(delayMs, random));
+
+  const isoAfter = (nowMs: number, delayMs: number) =>
+    DateTime.formatIso(DateTime.makeUnsafe(nowMs + delayMs));
+
+  /**
+   * Loose-match corroboration (D6), in memory and deliberately not persisted.
+   *
+   * A lone LOOSE `wait` match is card-local: it backs the one card right off and
+   * touches nothing else on the provider. Two loose matches from two DIFFERENT
+   * cards on one instance, with no successful turn between them, promote to a
+   * full cooldown.
+   *
+   * Different cards, not repeats, because one confused agent writing repeatedly
+   * about quota errors must not be able to freeze a provider by itself — which
+   * is the exact failure this tier exists to prevent. Two rather than three
+   * because the default global concurrency is 3, split across providers, so a
+   * threshold of 3 would almost never fire.
+   *
+   * In memory because it resets on any successful turn anyway: losing it on a
+   * restart only means two fresh loose matches are needed. The CONFIRMED
+   * cooldown is what must survive a restart, and it does — it is persisted.
+   */
+  const looseUsageMatches = new Map<string, Set<string>>();
+  const noteLooseMatch = (providerInstanceId: string, cardId: string): number => {
+    const seen = looseUsageMatches.get(providerInstanceId) ?? new Set<string>();
+    seen.add(cardId);
+    looseUsageMatches.set(providerInstanceId, seen);
+    return seen.size;
+  };
+  const clearLooseMatches = (providerInstanceId: string): void => {
+    looseUsageMatches.delete(providerInstanceId);
+  };
+
+  /** How many DIFFERENT cards must report a loose `wait` before it promotes. */
+  const LOOSE_USAGE_PROMOTION = 2;
+
+  /** Record (or replace) a provider cooldown. One command for detection, a
+      reschedule and a probe hand-off, because all three write the same row. */
+  const recordProviderLimit = Effect.fn("board-supervisor-recordProviderLimit")(function* (
+    limit: BoardProviderLimit,
+  ) {
+    yield* dispatchOptional({
+      type: "board.provider-limit.record",
+      commandId: yield* commandId("provider-limit"),
+      limit,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * Lift a provider cooldown and put every card it was holding back to work
+   * (D9).
+   *
+   * The resume set is scoped to `usage-limit` parks and NOTHING else, and that
+   * scoping is load-bearing rather than tidy. A card in `awaiting-input` stopped
+   * on a question a human has not answered; a `paused` card was stopped by a
+   * human; a `gave-up` card has already exhausted recovery. A provider coming
+   * back says nothing about any of them, and resuming one would shove an
+   * unanswered question straight back into work.
+   */
+  const clearProviderLimitAndResume = Effect.fn("board-supervisor-clearProviderLimit")(function* (
+    providerInstanceId: ProviderInstanceId,
+  ) {
+    clearLooseMatches(String(providerInstanceId));
+    const cleared = yield* dispatchOptional({
+      type: "board.provider-limit.clear",
+      commandId: yield* commandId("provider-limit-clear"),
+      providerInstanceId,
+      createdAt: yield* nowIso,
+    });
+    if (!cleared) return;
+    const board = yield* readBoard;
+    for (const parked of boardUsageLimitParkedSteps(board, providerInstanceId)) {
+      yield* startOrResumeCard(parked.cardId, { preserveBudget: true });
+    }
+  });
+
+  /**
+   * Turn a classified `wait` into a cooldown on the provider instance (D1/D5/D8).
+   *
+   * `until` is the provider's own reset time when it gave one, and the next
+   * blind-poll rung when it did not. A human-set time is never overwritten by a
+   * later match (D14): the human looked at the provider and typed what they
+   * saw, and a loose regex must not argue with them.
+   */
+  const recordUsageLimit = Effect.fn("board-supervisor-recordUsageLimit")(function* (input: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly cardId: BoardCardId | null;
+    readonly match: BoardUsageLimitMatch;
+    readonly nowMs: number;
+  }) {
+    const board = yield* readBoard;
+    const existing = boardProviderLimit(board, input.providerInstanceId);
+    if (existing !== null && existing.setByHuman) return existing;
+    const nowIsoValue = DateTime.formatIso(DateTime.makeUnsafe(input.nowMs));
+    // Blind polling is measured from when it STARTED, never from the last
+    // probe: measuring per-probe would let a restart quietly reset the ladder to
+    // its finest cadence for ever, and the seven-day ceiling would never arrive.
+    const blindSince = input.match.resumeAt !== null ? null : (existing?.blindSince ?? nowIsoValue);
+    const blindElapsed = blindSince === null ? 0 : input.nowMs - Date.parse(blindSince);
+    const pollDelay = boardUsageLimitPollDelayMs(Number.isFinite(blindElapsed) ? blindElapsed : 0);
+    if (input.match.resumeAt === null && pollDelay === null) return null; // ceiling reached
+    const until =
+      input.match.resumeAt ?? isoAfter(input.nowMs, yield* jittered(pollDelay as number));
+    const limit: BoardProviderLimit = {
+      providerInstanceId: input.providerInstanceId,
+      kind: "wait",
+      until,
+      detectedAt: existing?.detectedAt ?? nowIsoValue,
+      lastCheckedAt: nowIsoValue,
+      reason: input.match.reason,
+      ruleId: input.match.ruleId,
+      sourceCardId: input.cardId,
+      knownTime: input.match.resumeAt !== null,
+      blindSince,
+      // A fresh cooldown has no prober: the sweep picks one when `until`
+      // arrives, and picking it fresh each time is what guarantees a successor
+      // if the previous prober was archived, stopped or moved.
+      probeCardId: null,
+      setByHuman: false,
+    };
+    yield* recordProviderLimit(limit);
+    return limit;
+  });
+
+  /**
+   * Record that an account is out of credits (D16) — a fact for the pill and
+   * the popover, and nothing else.
+   *
+   * It gates no card and expires never: no amount of waiting fixes a billing
+   * wall, so blind-polling one for seven days is pure waste and, on a metered
+   * provider, seven days of failing requests. Every other card on the instance
+   * hits the same wall on its own next turn and lands in the same place,
+   * correctly labelled, which needs no cross-card machinery at all.
+   */
+  const recordExhausted = Effect.fn("board-supervisor-recordExhausted")(function* (input: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly cardId: BoardCardId | null;
+    readonly match: BoardUsageLimitMatch;
+    readonly nowMs: number;
+  }) {
+    const nowIsoValue = DateTime.formatIso(DateTime.makeUnsafe(input.nowMs));
+    clearLooseMatches(String(input.providerInstanceId));
+    yield* recordProviderLimit({
+      providerInstanceId: input.providerInstanceId,
+      kind: "exhausted",
+      until: nowIsoValue,
+      detectedAt: nowIsoValue,
+      lastCheckedAt: nowIsoValue,
+      reason: input.match.reason,
+      ruleId: input.match.ruleId,
+      sourceCardId: input.cardId,
+      knownTime: false,
+      blindSince: null,
+      probeCardId: null,
+      setByHuman: false,
+    });
+  });
+
+  /**
+   * Act on a classified turn end for an UNATTENDED step (D4/D11/D16).
+   *
+   * Returns true when it handled the stop, in which case the caller does not
+   * fall through to ordinary recovery. A `slow-down` and a no-match both return
+   * false: the retry backoff already covers the first and the second is not a
+   * limit at all.
+   */
+  const handleUsageLimitMatch = Effect.fn("board-supervisor-handleUsageLimitMatch")(
+    function* (input: {
+      readonly card: BoardCard;
+      readonly state: BoardCardStepState;
+      readonly match: BoardUsageLimitMatch;
+      readonly nowMs: number;
+    }) {
+      const { card, state, match } = input;
+      if (match.kind === "slow-down") return false;
+      if (match.kind === "exhausted") {
+        // Straight to a human, with the provider's own sentence on the card so it
+        // says WHY rather than "needs a human". No cooldown, no polling, and no
+        // retry budget spent — the card is not failing, the account is.
+        yield* recordExhausted({
+          providerInstanceId: state.providerInstanceId,
+          cardId: card.id,
+          match,
+          nowMs: input.nowMs,
+        });
+        yield* parkStepForRetry({
+          card,
+          state,
+          reason: "quota-exhausted",
+          retryAt: null,
+          chargeBudget: false,
+          progressed: false,
+          lastError: match.reason,
+        });
+        return true;
+      }
+      // A `wait`. A LOOSE match alone is card-local (D6): it backs this one card
+      // off and leaves the rest of the provider untouched, still spending its own
+      // pokes. Two different cards saying it promotes to a full cooldown.
+      const promoted =
+        match.confidence === "strict" ||
+        noteLooseMatch(String(state.providerInstanceId), String(card.id)) >= LOOSE_USAGE_PROMOTION;
+      if (!promoted) {
+        // It still skips the 2-minute rung: whatever this is, it is not something
+        // another poke in two minutes will fix.
+        const delay = yield* jittered(boardUsageLimitPollDelayMs(0) as number);
+        yield* parkStepForRetry({
+          card,
+          state,
+          reason: "waiting-retry",
+          retryAt: match.resumeAt ?? isoAfter(input.nowMs, delay),
+          chargeBudget: true,
+          progressed: false,
+          lastError: match.reason,
+        });
+        return true;
+      }
+      const limit = yield* recordUsageLimit({
+        providerInstanceId: state.providerInstanceId,
+        cardId: card.id,
+        match,
+        nowMs: input.nowMs,
+      });
+      // The seven-day ceiling was reached (D8): stop waiting and hand the card to
+      // a human, which is the honest end of a window that never reopened.
+      if (limit === null) {
+        yield* parkStepForRetry({
+          card,
+          state,
+          reason: "gave-up",
+          retryAt: null,
+          chargeBudget: true,
+          progressed: false,
+          lastError: match.reason,
+        });
+        return true;
+      }
+      // The park itself costs NOTHING (D12). A card that hits a limit at midnight
+      // would otherwise poll its way to death by 2:30am — twenty minutes before
+      // the provider returned.
+      yield* parkStepForRetry({
+        card,
+        state,
+        reason: "usage-limit",
+        retryAt: limit.until,
+        chargeBudget: false,
+        progressed: false,
+        lastError: match.reason,
+      });
+      return true;
+    },
+  );
+
   const recoverStep = Effect.fn("board-supervisor-recoverStep")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
@@ -2849,6 +3216,9 @@ const make = Effect.gen(function* () {
         threadId: input.state.threadId,
         escalateToHuman: true,
         progressed: progressedSinceLastNudge,
+        // The loud reading of `stalled` (T3O-22, D10): recovery gave up, and
+        // there is no time at which it will try again.
+        stalledReason: "gave-up",
         createdAt: yield* nowIso,
       });
       // Release the held slot exactly once (D4), riding the existing machinery:
@@ -2859,103 +3229,53 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // Ordinary retry. Recovery never releases the held slot (a retry keeps its
-    // place, D13). If the step's thread survives, nudge it in place; if it has
-    // vanished (reaped/deleted) — a routine path, not an error — respawn a fresh
-    // thread and continue there, so the nudge is never sent into the void.
+    // The retry BACKOFF (T3O-22, D7). Before this there was no gap at all — the
+    // next nudge went the instant the previous reply landed — which is how two
+    // cards on the live board spent their entire five-nudge budget in twelve
+    // seconds against a provider that was out of quota and answering in 0.7s.
+    //
+    // So the ladder is charged HERE, at the stop, and the nudge is delivered
+    // later: the step parks `stalled` with reason `waiting-retry` and a
+    // `retryAt`, releases its slot, and the retry sweep requeues it when its
+    // moment arrives. The nudge text is recomposed from the row at delivery
+    // (`resumeExistingStepThread`), so nothing has to survive the wait.
+    //
+    // Applied to EVERY nudge, not only recognised quota cases: the catalogue
+    // will never catch every wording and providers rewrite theirs, so this is
+    // the safety net that makes a missed detection harmless instead of five
+    // requests in twelve seconds. The cost is escalation latency — a genuinely
+    // dead card reaches a human after about an hour instead of instantly — and
+    // it is worth paying, because for that hour the card is honestly labelled
+    // and holds no capacity.
+    //
+    // First, the pre-existing "can this recovery act at all" test, unchanged in
+    // meaning and moved earlier: a step whose thread is gone and which cannot be
+    // respawned (no worktree, no workspace root) has nowhere to send anything,
+    // and burning an attempt on a recovery that will send nothing is what this
+    // guard has always prevented. It has to be asked BEFORE the park now,
+    // because the park is what spends the budget.
     const gone = yield* threadGone(input.state.threadId);
-    let threadId = input.state.threadId;
-    let acted = false;
-    // Where a respawn runs: a build-mode step needs its ready worktree; a
-    // plan-mode step respawns in the project workspace root (D5).
-    const respawnTarget = yield* Effect.gen(function* () {
-      if (input.state.mode === "build") {
-        return input.card.worktree?.path != null
-          ? { worktreePath: input.card.worktree.path, branch: input.card.worktree.branch ?? null }
-          : null;
-      }
+    const canRespawn = yield* Effect.gen(function* () {
+      if (input.state.mode === "build") return input.card.worktree?.path != null;
       const model = yield* snapshotQuery.getCommandReadModel();
-      const cwd = projectCwd(model, input.card);
-      return cwd === null ? null : { worktreePath: cwd, branch: null as string | null };
+      return projectCwd(model, input.card) !== null;
     });
-    if (gone) {
-      if (respawnTarget !== null) {
-        // Tombstone the dead thread's card link before spawning a fresh one, so
-        // links do not accumulate across recoveries (D9). Best-effort — the
-        // dispatch helper swallows a reject (e.g. already tombstoned by the
-        // thread-deletion path).
-        if (input.state.threadId !== null) {
-          yield* dispatch({
-            type: "board.card.unlink-thread",
-            commandId: yield* commandId("unlink-dead"),
-            cardId: input.card.id,
-            threadId: input.state.threadId,
-            createdAt: yield* nowIso,
-          });
-        }
-        const respawned = yield* spawnStepThread({
-          card: input.card,
-          step: {
-            stepId: input.state.stepId,
-            stepLabel: input.state.stepLabel,
-            stageLabel: input.state.stageLabel,
-            providerInstanceId: input.state.providerInstanceId,
-            model: input.state.model,
-            mode: input.state.mode,
-            runtimeMode: input.state.runtimeMode,
-            modelOptions: input.state.modelOptions,
-          },
-          worktreePath: respawnTarget.worktreePath,
-          branch: respawnTarget.branch,
-          runSetup: false,
-          text: decision.nudge,
-          attachments: [],
-        });
-        // A respawn that produced no thread sent nothing. Escalating here is
-        // what keeps the failure visible: the `!acted` arm below leaves the
-        // step `running` against the thread this recovery just tombstoned, so
-        // the timeout sweep would re-enter every `timeoutMs` forever — no
-        // attempt consumed, a build step's slot held throughout, and nothing
-        // the human can see or restart (the phantom-running state this whole
-        // change exists to eliminate).
-        if (respawned === null) {
-          yield* escalateSpawnFailure({ card: input.card, state: input.state });
-          yield* schedule();
-          return;
-        }
-        threadId = respawned;
-        acted = true;
-      }
-    } else if (input.state.threadId !== null) {
-      yield* sendTurn({
-        threadId: input.state.threadId,
-        text: decision.nudge,
-        runtimeMode: input.state.runtimeMode,
-      });
-      acted = true;
-    }
-    // If we could neither nudge a live thread nor respawn a vanished one (a gone
-    // thread with no worktree/provider to respawn against), do NOT burn an
-    // attempt on a recovery that sent nothing — leave the step as-is and say so.
-    if (!acted) {
+    if (gone && !canRespawn) {
       yield* Effect.logWarning(
         "board supervisor: cannot recover step — no thread and cannot respawn",
-        {
-          cardId: input.card.id,
-          stepId: input.state.stepId,
-        },
+        { cardId: input.card.id, stepId: input.state.stepId },
       );
       return;
     }
-    yield* dispatch({
-      type: "board.card.recover-step",
-      commandId: yield* commandId("recover-step"),
-      cardId: input.card.id,
-      stepId: input.state.stepId,
-      threadId,
-      escalateToHuman: false,
+    const delayMs = yield* jittered(boardRetryDelayMs(decision.stallCount - 1));
+    const nowMs = yield* detectorNowMs;
+    yield* parkStepForRetry({
+      card: input.card,
+      state: input.state,
+      reason: "waiting-retry",
+      retryAt: isoAfter(nowMs, delayMs),
+      chargeBudget: true,
       progressed: progressedSinceLastNudge,
-      createdAt: yield* nowIso,
     });
   });
 
@@ -3793,6 +4113,12 @@ const make = Effect.gen(function* () {
     /** The turn that just ENDED, off the runtime event. Optional because the
         base event schema makes it optional and not every adapter stamps it. */
     completedTurnId: TurnId | undefined,
+    /** The failed turn's own error text (T3O-22, D4). Grok's quota refusal
+        arrives ONLY this way — `turn.completed` with `state: "failed"` and an
+        `errorMessage`, no assistant message anywhere — and the board dropped it
+        entirely before this. It is also the unambiguous channel: nobody quotes a
+        sentence into a failed turn's error field. */
+    turnErrorMessage: string | null = null,
   ) {
     const found = stepThreadCard(board, threadId);
     if (found === null) return;
@@ -3898,6 +4224,36 @@ const make = Effect.gen(function* () {
       });
       return;
     }
+    // The usage-limit classifier (T3O-22, D11). HERE, between the
+    // human-in-the-loop arm above and ordinary recovery below, so only an
+    // UNATTENDED step ever reaches it and arms 1-4 behave exactly as they did.
+    //
+    // Human-in-the-loop is EXCLUDED rather than covered, and the argument is not
+    // close. Planning is an interview: a stopped planning card is waiting on a
+    // person whatever the provider is doing, so waking it at 2:50am achieves
+    // nothing — while agents in that stage routinely stop by asking a question
+    // in PROSE, which is a legitimate stop, and any probe that resumed one would
+    // shove an unanswered question back into work. A real risk of overriding a
+    // human gate, for a saving measured in minutes.
+    //
+    // Additive: it fires only on a match, and on no match — or on a
+    // `slow-down`, which the retry backoff already covers — control falls
+    // through to `recoverStep` exactly as before.
+    const match = yield* usageLimits.classifyTurn({
+      threadId,
+      turnErrorMessage,
+      nowMs: yield* detectorNowMs,
+      since: found.state.lastNudgeAt ?? found.state.startedAt,
+    });
+    if (match !== null) {
+      const handled = yield* handleUsageLimitMatch({
+        card: found.card,
+        state: found.state,
+        match,
+        nowMs: yield* detectorNowMs,
+      });
+      if (handled) return;
+    }
     // Unattended, running with no question → died mid-work. Awaiting-input with
     // no pending question → the human answered and the agent ran another turn
     // without completing (or died); either way death detection is re-armed.
@@ -3927,14 +4283,61 @@ const make = Effect.gen(function* () {
   const handleTurnEnded = Effect.fn("board-supervisor-handleTurnEnded")(function* (
     threadId: ThreadId,
     completedTurnId: TurnId | undefined,
+    turnErrorMessage: string | null = null,
   ) {
     const board = yield* readBoard;
-    yield* handleTurnCompleted(board, threadId, completedTurnId);
+    yield* handleTurnCompleted(board, threadId, completedTurnId, turnErrorMessage);
+    // ANY clean turn on a limited instance lifts its cooldown (T3O-22, D9) —
+    // including one from a human's own non-board thread. If the provider is
+    // demonstrably answering, there is nothing left to wait for, and making the
+    // fleet sit out the rest of a poll rung to prove it again would be waiting
+    // on a question already answered.
+    //
+    // Gated on the slice being non-empty, so an ordinary board pays exactly one
+    // array check per turn end and no query at all.
+    yield* clearLimitOnCleanTurn({ board, threadId, turnErrorMessage });
     const owned =
       resolveBoardCardForThread(board, threadId) !== null || abandonedThreads.has(String(threadId));
     if (!owned) return;
     yield* releaseFinishedThreads;
   });
+
+  /**
+   * The any-clean-turn cooldown lift (D9).
+   *
+   * "Clean" means the turn did not itself carry a refusal. A probe that comes
+   * back with the same limit must NOT clear the cooldown it was sent to test —
+   * that would lift the gate on the strength of the very evidence that it should
+   * hold — so the turn is re-classified here and only a turn the catalogue says
+   * nothing about counts.
+   */
+  const clearLimitOnCleanTurn = Effect.fn("board-supervisor-clearLimitOnCleanTurn")(
+    function* (input: {
+      readonly board: BoardState;
+      readonly threadId: ThreadId;
+      readonly turnErrorMessage: string | null;
+    }) {
+      if ((input.board.providerLimits ?? []).length === 0) return;
+      const shell = yield* snapshotQuery
+        .getThreadShellById(input.threadId)
+        .pipe(Effect.map(Option.getOrUndefined));
+      const providerInstanceId = shell?.modelSelection?.instanceId;
+      if (providerInstanceId === undefined) return;
+      const limit = boardProviderLimit(input.board, providerInstanceId);
+      if (limit === null || limit.kind !== "wait") return;
+      const match = yield* usageLimits.classifyTurn({
+        threadId: input.threadId,
+        turnErrorMessage: input.turnErrorMessage,
+        nowMs: yield* detectorNowMs,
+        // No lower bound here: this is asking "did THIS turn refuse us", and the
+        // step-row boundary the step handler uses does not exist for a thread the
+        // board does not own.
+        since: null,
+      });
+      if (match !== null && match.kind !== "slow-down") return;
+      yield* clearProviderLimitAndResume(providerInstanceId);
+    },
+  );
 
   const handleStepCompleted = Effect.fn("board-supervisor-handleStepCompleted")(function* (
     event: Extract<OrchestrationEvent, { type: "board.card-step-completed" }>,
@@ -4182,6 +4585,11 @@ const make = Effect.gen(function* () {
    */
   const startOrResumeCard = Effect.fn("board-supervisor-startOrResumeCard")(function* (
     cardId: BoardCardId,
+    /** T3O-22 (D12): the board's OWN timed resumes keep the retry budget, so a
+        genuinely dead card still climbs its ladder to a human across any number
+        of backoff rungs and quota waits. A human's Resume, and T3O-19's
+        scheduled start, reset it — a person intervening IS progress. */
+    options?: { readonly preserveBudget?: boolean },
   ) {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === cardId);
@@ -4192,6 +4600,7 @@ const make = Effect.gen(function* () {
         type: "board.card.requeue-step",
         commandId: yield* commandId("schedule-requeue"),
         cardId,
+        ...(options?.preserveBudget === true ? { preserveBudget: true } : {}),
         createdAt: yield* nowIso,
       });
     }
@@ -4344,6 +4753,155 @@ const make = Effect.gen(function* () {
       whole-board dependency resolution. */
   const startArmedDependents = (dependencyId: BoardCardId) =>
     startArmedCards((card) => card.dependsOn.includes(dependencyId));
+
+  /**
+   * Requeue every step whose backoff rung has arrived (T3O-22, D7/D10).
+   *
+   * Rides the existing 30s sweep tick, exactly as the scheduled-start and
+   * auto-start passes do: ±30s granularity on waits measured in minutes, and no
+   * new fiber. `preserveBudget` is what makes the ladder honest — the clock
+   * advancing proves nothing, so a genuinely dead card keeps climbing toward a
+   * human across every rung it waits out.
+   *
+   * `usage-limit` parks are deliberately NOT swept here. They wake through the
+   * prober (D9), one card at a time, because ten cards arriving together at the
+   * exact moment a provider is most likely to still say no is the failure this
+   * whole feature exists to remove.
+   */
+  const fireDueRetries = Effect.fn("board-supervisor-fireDueRetries")(function* () {
+    const board = yield* readBoard;
+    const nowMs = yield* detectorNowMs;
+    for (const state of board.stepStates ?? []) {
+      if (state.status !== "stalled" || state.stalledReason !== "waiting-retry") continue;
+      if (state.retryAt === null) continue;
+      const dueMs = Date.parse(state.retryAt);
+      if (!Number.isFinite(dueMs) || nowMs < dueMs) continue;
+      const card = board.cards.find((candidate) => candidate.id === state.cardId);
+      if (card === undefined || card.archivedAt !== null) continue;
+      yield* startOrResumeCard(state.cardId, { preserveBudget: true });
+    }
+  });
+
+  const sweepRetries = fireDueRetries().pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: retry sweep failed", { cause: Cause.pretty(cause) }),
+    ),
+  );
+
+  /**
+   * Wake ONE card per due provider cooldown (T3O-22, D9).
+   *
+   * The prober is chosen FRESH at every wake-up — the highest-priority
+   * `usage-limit` park on that instance by `orderBoardQueue` — so there is
+   * always a successor if the previous prober was archived, stopped or moved,
+   * and so the card that gets going first is the one that matters most.
+   *
+   * The cooldown's `until` is pushed out to the next rung before the prober is
+   * woken. That is the self-healing half: if the probe never reports back (its
+   * thread died, the server bounced mid-turn), the sweep tries again at the next
+   * rung rather than re-probing every thirty seconds for ever.
+   *
+   * A cooldown with no `usage-limit` parks left on its instance is CLEARED
+   * rather than probed: there is nothing for it to hold, and holding the gate
+   * shut against cards nobody parked would withhold fresh work for no reason.
+   */
+  const fireDueProbes = Effect.fn("board-supervisor-fireDueProbes")(function* () {
+    const board = yield* readBoard;
+    const nowMs = yield* detectorNowMs;
+    for (const limit of board.providerLimits ?? []) {
+      // `exhausted` gates nothing and expires never (D16) — no amount of waiting
+      // fixes a billing wall.
+      if (limit.kind !== "wait") continue;
+      const dueMs = Date.parse(limit.until);
+      if (Number.isFinite(dueMs) && nowMs < dueMs) continue;
+      const parked = boardUsageLimitParkedSteps(board, limit.providerInstanceId).filter((state) => {
+        const card = board.cards.find((candidate) => candidate.id === state.cardId);
+        return card !== undefined && card.archivedAt === null;
+      });
+      if (parked.length === 0) {
+        yield* clearProviderLimitAndResume(limit.providerInstanceId);
+        continue;
+      }
+      const ordered = orderBoardQueue(
+        parked.flatMap((state) => {
+          const card = board.cards.find((candidate) => candidate.id === state.cardId);
+          if (card === undefined) return [];
+          return [
+            {
+              cardId: card.id,
+              stepId: state.stepId,
+              providerInstanceId: state.providerInstanceId,
+              stageOrder: boardStageIndex(board, card.stage),
+              started: true,
+              orderKey: card.orderKey,
+            } satisfies BoardQueueCandidate,
+          ];
+        }),
+      );
+      const prober = ordered[0];
+      if (prober === undefined) continue;
+      // Blind polling coarsens by how long the limit has gone UNEXPLAINED (D8);
+      // a known time that has simply arrived falls back to the finest rung, so a
+      // probe that is refused again is re-read for a fresh time promptly.
+      const blindElapsed =
+        limit.blindSince === null ? 0 : Math.max(0, nowMs - Date.parse(limit.blindSince));
+      const pollDelay = boardUsageLimitPollDelayMs(
+        Number.isFinite(blindElapsed) ? blindElapsed : 0,
+      );
+      if (pollDelay === null) {
+        // Seven days with nothing learned (D8). Stop waiting and hand every card
+        // it was holding to a human — the honest end of a window that never
+        // reopened.
+        yield* giveUpOnProviderLimit(limit);
+        continue;
+      }
+      const nextUntil = isoAfter(nowMs, yield* jittered(pollDelay));
+      yield* recordProviderLimit({
+        ...limit,
+        until: nextUntil,
+        lastCheckedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
+        probeCardId: prober.cardId,
+      });
+      yield* startOrResumeCard(prober.cardId, { preserveBudget: true });
+    }
+  });
+
+  /** The seven-day ceiling (D8): clear the cooldown and escalate every card it
+      was holding, each keeping the provider's own sentence so the card says why
+      rather than only that it stopped. */
+  const giveUpOnProviderLimit = Effect.fn("board-supervisor-giveUpOnProviderLimit")(function* (
+    limit: BoardProviderLimit,
+  ) {
+    const board = yield* readBoard;
+    for (const state of boardUsageLimitParkedSteps(board, limit.providerInstanceId)) {
+      const card = board.cards.find((candidate) => candidate.id === state.cardId);
+      if (card === undefined || card.archivedAt !== null) continue;
+      yield* parkStepForRetry({
+        card,
+        state,
+        reason: "gave-up",
+        retryAt: null,
+        chargeBudget: true,
+        progressed: false,
+        ...(limit.reason === null ? {} : { lastError: limit.reason }),
+      });
+    }
+    yield* dispatchOptional({
+      type: "board.provider-limit.clear",
+      commandId: yield* commandId("provider-limit-give-up"),
+      providerInstanceId: limit.providerInstanceId,
+      createdAt: yield* nowIso,
+    });
+    clearLooseMatches(String(limit.providerInstanceId));
+  });
+
+  const sweepProviderLimits = fireDueProbes().pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: provider-limit sweep failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
 
   /** The auto-start pass as the tick and the test hook consume it: TOTAL, for
       the same reason `sweepSchedules` is. Missing a targeted trigger costs one
@@ -5320,6 +5878,14 @@ const make = Effect.gen(function* () {
     // boot needs no backlog to replay — it simply asks the question once, and
     // the 30s sweep asks it again from then on.
     yield* sweepArmedCards;
+    // And every retry rung and probe that came due while the server was down
+    // (T3O-22). A predicate over state rather than an event to catch, exactly
+    // like the armed-card pass above — and the half of this feature that makes a
+    // restart safe: the observed burn began at a boot reconcile, and without
+    // this a card parked behind a cooldown would sit until the first tick while
+    // one parked for a rung that expired hours ago would wait another 30s.
+    yield* sweepRetries;
+    yield* sweepProviderLimits;
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: reconciliation failed", { cause: Cause.pretty(cause) }),
@@ -5495,7 +6061,12 @@ const make = Effect.gen(function* () {
           // The ended turn's own id rides through: it is what lets the handler
           // tell a projection that has not caught up yet from a genuinely live
           // second turn.
-          return handleTurnEnded(threadId, input.event.turnId);
+          return handleTurnEnded(
+            threadId,
+            input.event.turnId,
+            // Grok's quota refusal rides here and nowhere else (T3O-22, D4).
+            input.event.payload.errorMessage ?? null,
+          );
         }
         // An ordinary agent question (t3o-18, D13): re-sourced from the runtime
         // event on the stream the reactor already consumes, so it fires for
@@ -5528,10 +6099,19 @@ const make = Effect.gen(function* () {
         // time. It is the self-healing half of the feature — a dropped
         // targeted trigger costs one tick instead of stranding an armed card
         // forever.
+        // And the retry and provider-limit passes (T3O-22, D7/D9): the same
+        // argument a fourth and fifth time. Both are a board read and an
+        // in-memory pass, both must be serialised against the handlers, and 30s
+        // is already the board's cadence for "check on things nothing told us
+        // about". Retries first, so a card whose rung and whose provider both
+        // came due in the same tick goes back through the ordinary queue rather
+        // than being picked as a prober.
         return sweepTimeouts.pipe(
           Effect.andThen(releaseFinishedThreads),
           Effect.andThen(sweepSchedules),
           Effect.andThen(sweepArmedCards),
+          Effect.andThen(sweepRetries),
+          Effect.andThen(sweepProviderLimits),
         );
     }
   };
@@ -5640,6 +6220,8 @@ const make = Effect.gen(function* () {
     sweep: sweepTimeouts,
     fireSchedules: sweepSchedules,
     startArmed: sweepArmedCards,
+    fireRetries: sweepRetries,
+    fireProbes: sweepProviderLimits,
     releaseThreads: releaseFinishedThreads,
     drain: worker.drain,
     // Both run OUTSIDE the serialised worker: they are request-scoped, the

@@ -66,6 +66,7 @@ import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReacto
 // T3o: the board supervisor reactor + its concurrency slots (t3o-10).
 import { SupervisorReactorLive } from "./board/supervisorReactor.ts";
 import { BoardStepSlotsLive } from "./board/BoardStepSlots.ts";
+import { UsageLimitDetectorLive } from "./board/UsageLimitDetector.ts";
 import { layer as BoardPullRequestGatewayLive } from "./board/BoardPullRequestGateway.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
@@ -263,8 +264,14 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),
-  // T3o: the board supervisor reactor joins the runtime, provided its slots.
-  Layer.provideMerge(SupervisorReactorLive.pipe(Layer.provide(BoardStepSlotsLive))),
+  // T3o: the board supervisor reactor joins the runtime, provided its slots and
+  // — T3O-22 — the usage-limit detector it asks about every unattended stop.
+  Layer.provideMerge(
+    SupervisorReactorLive.pipe(
+      Layer.provide(BoardStepSlotsLive),
+      Layer.provide(UsageLimitDetectorLive),
+    ),
+  ),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );

@@ -2089,13 +2089,20 @@ export function boardProviderLimit(
 }
 
 /**
- * Whether the governor must withhold work on this provider instance right now
- * (D13).
+ * Whether the governor must withhold this card's step right now (D13).
  *
- * Only a `wait` holds: an `exhausted` record gates nothing at all. Waiting for a
- * dead credit card to fix itself is not a strategy, and the cards on that
+ * Only a `wait` withholds: an `exhausted` record gates nothing at all. Waiting
+ * for a dead credit card to fix itself is not a strategy, and the cards on that
  * instance are meant to reach a human on their own next turn, correctly
  * labelled (D16) — withholding them would hide the very thing that needs saying.
+ *
+ * A `wait` withholds EVERY card on the instance except the one card the
+ * cooldown has picked as its prober (D9). That is the whole shape of the
+ * feature: at the reset time one card wakes and asks, rather than ten arriving
+ * at once at the exact moment a provider is most likely to still say no. It also
+ * means the gate lifts when the cooldown is CLEARED, not when its `until`
+ * passes — `until` is when the next prober is chosen, and a probe that comes
+ * back refused simply picks a later one.
  *
  * Takes the SLICE rather than the board so the reactor's per-candidate gate
  * costs one array scan for the whole pass, not a board read per card.
@@ -2103,14 +2110,11 @@ export function boardProviderLimit(
 export function boardProviderLimitHolds(
   limits: ReadonlyArray<BoardProviderLimit> | undefined,
   providerInstanceId: ProviderInstanceId,
-  nowMs: number,
+  cardId: BoardCardId,
 ): boolean {
   const limit = (limits ?? []).find((entry) => entry.providerInstanceId === providerInstanceId);
   if (limit === undefined || limit.kind !== "wait") return false;
-  const untilMs = Date.parse(limit.until);
-  // An unreadable instant holds: a cooldown we cannot measure is not one we may
-  // ignore, and the sweep will re-record or clear it within a tick.
-  return !Number.isFinite(untilMs) || nowMs < untilMs;
+  return limit.probeCardId !== cardId;
 }
 
 /**
@@ -4023,6 +4027,23 @@ export const BoardCardRecoverStepCommand = Schema.Struct({
       plain nudge never leaves a stale error attached to a step that is running
       again. */
   lastError: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Why the step is stalling, when `escalateToHuman` is true (T3O-22, D10).
+      Absent means `gave-up` — recovery exhausting its budget, the only reason
+      that existed before T3O-22. */
+  stalledReason: Schema.optionalKey(BoardCardStepStalledReason),
+  /** When the board will try again (T3O-22, D7/D10). Absent means never, which
+      is what `gave-up` and `quota-exhausted` both are: those two wait for a
+      human, and a time on them would be a promise nothing keeps. */
+  retryAt: Schema.optionalKey(IsoDateTime),
+  /** Whether this recovery spends the retry budget — `attempt`, `stallCount`
+      and `stageEntryRecoveries` (T3O-22, D12). Absent means true, which is every
+      recovery before T3O-22 and every ordinary one after it.
+   *
+   * False for a quota park alone. A card that hits a usage limit at midnight
+   * would otherwise poll its way to death by 2:30am — twenty minutes before the
+   * provider returns — having proved nothing except that the window was still
+   * shut. The card is not failing; the provider is. */
+  chargeBudget: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardRecoverStepCommand = typeof BoardCardRecoverStepCommand.Type;
@@ -4099,6 +4120,16 @@ export const BoardCardRequeueStepCommand = Schema.Struct({
   type: Schema.Literal("board.card.requeue-step"),
   commandId: CommandId,
   cardId: BoardCardId,
+  /** Keep the retry budget rather than resetting it (T3O-22, D12). Absent means
+      reset, which is the human's Resume and T3O-19's scheduled start: a person
+      intervening IS progress, and the ladder should start its count over.
+   *
+   * True for the board's OWN timed resumes — a backoff rung reaching its moment,
+   * a quota cooldown lifting. Nothing has been proved by the clock advancing, so
+   * resetting there would let a genuinely dead card be nudged for ever and never
+   * reach a human. The budget resets when the woken turn does real work, which
+   * `recover-step`'s `progressed` flag already carries. */
+  preserveBudget: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardRequeueStepCommand = typeof BoardCardRequeueStepCommand.Type;
