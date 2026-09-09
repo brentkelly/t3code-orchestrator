@@ -10,6 +10,7 @@ T3 Code works with the platforms your team already uses:
 - **GitLab** – Merge requests, repository publishing, and hosted clones
 - **Bitbucket** – Pull request workflows (via API token authentication)
 - **Azure DevOps** – Pull request support for Microsoft-hosted repositories
+- **Forgejo** – Pull requests on Codeberg and self-hosted Forgejo, including one-click merge
 
 ## What You Can Do
 
@@ -35,7 +36,7 @@ T3 Code works with the platforms your team already uses:
 - T3 Code can suggest titles and descriptions based on your commits
 - With **Repository conventions** selected, generated source control text follows the project's
   `AGENTS.md` along with recent commit subjects. Claude writers also follow `CLAUDE.md`
-- Supports GitHub Pull Requests, GitLab Merge Requests, Bitbucket Pull Requests, and Azure DevOps Pull Requests
+- Supports GitHub Pull Requests, GitLab Merge Requests, Bitbucket Pull Requests, Azure DevOps Pull Requests, and Forgejo Pull Requests
 
 **Stay on top of open reviews**
 
@@ -121,6 +122,32 @@ export T3CODE_BITBUCKET_API_TOKEN="your-token"
 If both are set, the access token wins. Restart T3 Code and verify the connection in **Source
 Control settings**.
 
+### For Forgejo and Codeberg
+
+1. Install the Forgejo CLI, [`fgj`](https://codeberg.org/romaintb/fgj). Version 0.4.0 is the
+   tested one:
+   ```bash
+   go install codeberg.org/romaintb/fgj@latest
+   ```
+2. Sign in to your instance:
+   ```bash
+   fgj auth login
+   ```
+3. Check **Settings → Source Control** to confirm the connection
+
+Most self-hosted Forgejo instances are named after the team that runs them rather than after
+Forgejo, so the hostname alone says nothing. T3 Code recognises such a remote once `fgj` holds a
+token for that exact host — sign in first, then rescan. Codeberg, and any host with `forgejo` or
+`gitea` in its name, is recognised without signing in.
+
+What works: creating a pull request, seeing whether the current branch already has one, opening
+it in your browser, checking it out locally, and merging it. A merge is confirmed against the host
+before it is reported as done, because `fgj` 0.4.0 announces success whether or not the host
+agreed — so a merge Forgejo refused is reported as refused here, with the state it is stuck in. What does not: the **Pull requests**
+page, which needs comments, review threads and checks that `fgj` does not expose. Adding a project
+by cloning from Forgejo and publishing a local project to Forgejo are not offered either; clone
+by Git URL instead, and create the repository on the host first.
+
 ### For Azure DevOps
 
 1. Install Azure CLI:
@@ -149,10 +176,12 @@ Control settings**.
 - **Provider shows "Not authenticated"** – Run the login command for that provider (e.g., `gh auth login`) in a terminal on the server, then rescan in Settings
 - **GitHub says it could not verify sign-in status** – T3 Code needs GitHub CLI 2.81.0 or newer to check sign-in status. Update `gh` (e.g., `brew upgrade gh`), then rescan
 - **Bitbucket not connecting** – Double-check your environment variables are set in the correct shell profile and the server was restarted
+- **A Forgejo project shows no provider** – T3 Code only claims an unnamed host that `fgj` is signed in to. Run `fgj auth status` on the server; if your host is not listed, run `fgj auth login`, then rescan
 - **Can't push to a remote** – Verify your Git remote URL matches the provider you've authenticated with (SSH vs HTTPS remotes may need different credentials)
 
 **Need more help?** Check your provider's CLI documentation:
 
 - [GitHub CLI](https://cli.github.com/)
 - [GitLab CLI](https://gitlab.com/gitlab-org/cli)
+- [Forgejo CLI](https://codeberg.org/romaintb/fgj)
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/)

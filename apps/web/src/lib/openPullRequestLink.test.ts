@@ -243,6 +243,26 @@ describe("parseChangeRequestUrl", () => {
     });
   });
 
+  // T3o: t3o-28.
+  it("reads a Forgejo pull request from a host that says it is Forgejo", () => {
+    expect(parseChangeRequestUrl("https://codeberg.org/octocat/widgets/pulls/41")).toEqual({
+      host: "codeberg.org",
+      repository: "octocat/widgets",
+      number: 41,
+    });
+    expect(parseChangeRequestUrl("https://forgejo.acme.test/octocat/widgets/pulls/41")).toEqual({
+      host: "forgejo.acme.test",
+      repository: "octocat/widgets",
+      number: 41,
+    });
+  });
+
+  // T3o: a self-hosted Forgejo named after its team is not recognisable from a URL alone, and
+  // `/pulls/` is one letter from GitHub's `/pull/` (t3o-28).
+  it("claims nothing from a `/pulls/` link on a host that names no forge", () => {
+    expect(parseChangeRequestUrl("https://git.acme.test/octocat/widgets/pulls/41")).toBeNull();
+  });
+
   it("reads both Azure DevOps URL forms, keeping `_git` in the repository path", () => {
     expect(
       parseChangeRequestUrl("https://dev.azure.com/acme/platform/_git/t3code/pullrequest/17"),

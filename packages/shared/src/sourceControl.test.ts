@@ -28,6 +28,19 @@ describe("source control presentation", () => {
       shortLabel: "PR",
       singular: "pull request",
     });
+    // T3o: t3o-28.
+    expect(getChangeRequestTerminologyForKind("forgejo")).toEqual({
+      shortLabel: "PR",
+      singular: "pull request",
+    });
+  });
+
+  // T3o: `fgj` has no checkout subcommand, so no checkout example may be offered (t3o-28).
+  it("offers no checkout command for Forgejo", () => {
+    expect(
+      resolveChangeRequestPresentation({ kind: "forgejo", name: "Forgejo", baseUrl: "" })
+        .checkoutCommandExample,
+    ).toBeUndefined();
   });
 
   it("falls back to generic change request copy for unknown providers", () => {
@@ -104,6 +117,24 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl("https://bitbucket.example.com/workspace/repo.git")
         ?.kind,
     ).toBe("bitbucket");
+    // T3o: t3o-28.
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://forgejo.example.com/owner/repo.git")?.kind,
+    ).toBe("forgejo");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://gitea.example.com/owner/repo.git")?.kind,
+    ).toBe("forgejo");
+  });
+
+  // T3o: most self-hosted Forgejo installs are named after their team, so the hostname says
+  // nothing and the server claims them later from `fgj auth status` (t3o-28).
+  it("names Codeberg but leaves an unnamed Forgejo host unknown", () => {
+    const codeberg = detectSourceControlProviderFromRemoteUrl("git@codeberg.org:owner/repo.git");
+    expect(codeberg?.kind).toBe("forgejo");
+    expect(codeberg?.name).toBe("Codeberg");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://git.example.com/owner/repo.git")?.kind,
+    ).toBe("unknown");
   });
 
   it("does not match provider names embedded in unrelated DNS labels", () => {
@@ -119,6 +150,11 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl(
         "https://notbitbucket.example.com/workspace/repo.git",
       )?.kind,
+    ).toBe("unknown");
+    // T3o: t3o-28.
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://notforgejo.example.com/owner/repo.git")
+        ?.kind,
     ).toBe("unknown");
   });
 

@@ -137,6 +137,10 @@ export class SourceControlProvider extends Context.Service<
      * (`listChangeRequests`) stay provider-agnostic, so a card on GitLab or
      * Bitbucket still shows its PR badge and link; only the merge is gated.
      *
+     * T3o: Forgejo also implements it — `fgj pr merge --merge-method` maps onto
+     * `ChangeRequestMergeStrategy` exactly, and one-click merge is the point of
+     * the board's Ready-for-merge stage (t3o-28).
+     *
      * A refusal by the forge (failing checks, missing approvals, conflicts) is
      * a normal outcome here, not an exception in the caller's design: it comes
      * back as a `SourceControlProviderError` whose `detail` carries the forge's

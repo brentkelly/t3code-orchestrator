@@ -13,6 +13,8 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
+// T3o: Forgejo/Codeberg via the `fgj` CLI (t3o-28).
+import * as ForgejoCli from "./ForgejoCli.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -90,6 +92,8 @@ function makeRegistry(input: {
         processLayer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
+        // T3o: t3o-28.
+        Layer.mock(ForgejoCli.ForgejoCli)({}),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
         ServerConfig.layerTest(process.cwd(), {
@@ -291,5 +295,77 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "azure-devops");
+  }),
+);
+
+// T3o: Forgejo/Codeberg (t3o-28).
+it.effect("routes Codeberg remotes to the Forgejo provider", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@codeberg.org:octocat/widgets.git" }],
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "forgejo");
+  }),
+);
+
+it.effect("routes a host named after Forgejo without asking the CLI", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://forgejo.example.test/octocat/widgets.git" }],
+      process: {
+        run: () => Effect.succeed(processOutput("Not authenticated with any Forgejo instances\n")),
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "forgejo");
+  }),
+);
+
+it.effect("routes a self-hosted Forgejo remote fgj is signed in to, whatever it is named", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://git.example.test/octocat/widgets.git" }],
+      process: {
+        run: (input) =>
+          Effect.succeed(
+            processOutput(
+              input.command === "fgj"
+                ? `Authenticated instances:
+  \u2022 git.example.test (user: octocat)
+`
+                : "",
+            ),
+          ),
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "forgejo");
+  }),
+);
+
+it.effect("leaves a Forgejo host fgj is not signed in to as unknown", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://git.example.test/octocat/widgets.git" }],
+      process: {
+        run: (input) =>
+          Effect.succeed(
+            processOutput(
+              input.command === "fgj" ? "Not authenticated with any Forgejo instances\n" : "",
+            ),
+          ),
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "unknown");
   }),
 );
