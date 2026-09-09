@@ -99,7 +99,9 @@ const supervisorCalls: {
   refresh: Array<string>;
   merge: Array<string>;
   submit: Array<string>;
-} = { refresh: [], merge: [], submit: [] };
+  probe: Array<string>;
+  setResumeAt: Array<string>;
+} = { refresh: [], merge: [], submit: [], probe: [], setResumeAt: [] };
 
 const supervisorStub: SupervisorReactorShape = {
   start: () => Effect.void,
@@ -109,6 +111,14 @@ const supervisorStub: SupervisorReactorShape = {
   startArmed: Effect.void,
   fireRetries: Effect.void,
   fireProbes: Effect.void,
+  probeProviderLimit: (providerInstanceId) =>
+    Effect.sync(() => {
+      supervisorCalls.probe.push(String(providerInstanceId));
+    }),
+  setProviderLimitResumeAt: (input) =>
+    Effect.sync(() => {
+      supervisorCalls.setResumeAt.push(`${input.providerInstanceId}:${input.resumeAt ?? "null"}`);
+    }),
   releaseThreads: Effect.void,
   drain: Effect.void,
   refreshPullRequest: (cardId) =>

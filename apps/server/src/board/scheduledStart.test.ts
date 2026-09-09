@@ -204,7 +204,7 @@ it.effect("a force-started step is admitted despite a schedule (the gate's one b
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
     },
-    ({ board, reactor, commands }) =>
+    ({ reactor, commands }) =>
       Effect.gen(function* () {
         // Reconcile ends in a scheduling pass, which is the governor path the
         // gate lives on.

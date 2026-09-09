@@ -6247,6 +6247,17 @@ export const BOARD_WS_METHODS = {
   attachCardFile: "board.attachCardFile",
   /** Drop a brief attachment and delete its file. */
   detachCardFile: "board.detachCardFile",
+  /** Probe a limited provider NOW (T3O-22, D14) — the popover's "Resume now".
+      An RPC rather than a client command for the reason merging is one: the
+      caller is a human waiting to see whether the provider is back, and the
+      answer is the whole point of the click. It probes ONE card, matching D9:
+      waking the fleet at a moment the human picked is the same mistake as
+      waking it at the reset time. */
+  probeProviderLimit: "board.probeProviderLimit",
+  /** Set (or clear) a limited provider's resume time by hand (T3O-22, D14) —
+      offered when the provider named no time and the board is polling blind.
+      A human-set time is never overwritten by a later loose match. */
+  setProviderLimitResumeAt: "board.setProviderLimitResumeAt",
 } as const;
 
 /**
@@ -6548,6 +6559,20 @@ export class BoardCardAttachmentError extends Schema.TaggedErrorClass<BoardCardA
 ) {}
 
 /** Spread into `WsRpcGroup` (`RpcGroup.make` is variadic). */
+/** Which provider instance an RPC is about (T3O-22). */
+export const BoardProviderLimitActionInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+});
+export type BoardProviderLimitActionInput = typeof BoardProviderLimitActionInput.Type;
+
+/** A human's own resume time for a limited provider (T3O-22, D14), or null to
+    hand the schedule back to the blind poll. */
+export const BoardProviderLimitResumeAtInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  resumeAt: Schema.NullOr(IsoDateTime),
+});
+export type BoardProviderLimitResumeAtInput = typeof BoardProviderLimitResumeAtInput.Type;
+
 export const BOARD_RPCS = [
   Rpc.make(BOARD_WS_METHODS.subscribeCard, {
     payload: BoardSubscribeCardInput,
@@ -6580,6 +6605,16 @@ export const BOARD_RPCS = [
     success: Schema.Void,
     error: Schema.Union([BoardCardAttachmentError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.probeProviderLimit, {
+    payload: BoardProviderLimitActionInput,
+    success: Schema.Void,
+    error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(BOARD_WS_METHODS.setProviderLimitResumeAt, {
+    payload: BoardProviderLimitResumeAtInput,
+    success: Schema.Void,
+    error: EnvironmentAuthorizationError,
+  }),
 ] as const;
 
 /**
@@ -6603,6 +6638,10 @@ export const BOARD_RPC_SCOPES = {
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.detachCardFile]: AuthOrchestrationOperateScope,
+  // Both start work: one sends a turn at a provider, the other decides when
+  // the board will. The same mutation tier as every other board write.
+  [BOARD_WS_METHODS.probeProviderLimit]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.setProviderLimitResumeAt]: AuthOrchestrationOperateScope,
 } as const;
 
 // ── Board settings (D10, t3o-07) ───────────────────────────────────────

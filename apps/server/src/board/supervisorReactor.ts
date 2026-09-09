@@ -228,6 +228,18 @@ export interface SupervisorReactorShape {
   /** Open the card's pull request from Building and route it past Code review
       ("Submit for merge — no review", t3o-07, D1). */
   readonly submitForMerge: (cardId: BoardCardId) => Effect.Effect<BoardSubmitAttemptResult>;
+  /** Probe a limited provider NOW (T3O-22, D14) — the popover's "Resume now".
+      Wakes exactly ONE card, matching the timed probe: waking the fleet at a
+      moment the human picked is the same mistake as waking it at the reset
+      time, and it costs nothing to be wrong about one card. */
+  readonly probeProviderLimit: (providerInstanceId: ProviderInstanceId) => Effect.Effect<void>;
+  /** Set (or clear) a limited provider's resume time by hand (T3O-22, D14).
+      A human-set time is never overwritten by a later loose match: they looked
+      at the provider and typed what they saw. */
+  readonly setProviderLimitResumeAt: (input: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly resumeAt: string | null;
+  }) => Effect.Effect<void>;
 }
 
 export class SupervisorReactor extends Context.Service<SupervisorReactor, SupervisorReactorShape>()(
@@ -4894,6 +4906,69 @@ const make = Effect.gen(function* () {
     clearLooseMatches(String(limit.providerInstanceId));
   });
 
+  /**
+   * "Resume now" (D14): bring a cooldown's `until` forward and run the probe
+   * pass immediately.
+   *
+   * Expressed as "make it due, then probe" rather than as its own resume path,
+   * so a human's click and the clock reaching the reset time go through exactly
+   * the same code — one prober, chosen the same way, rescheduling the same way
+   * if it is refused again.
+   */
+  const probeProviderLimitNow = Effect.fn("board-supervisor-probeProviderLimitNow")(function* (
+    providerInstanceId: ProviderInstanceId,
+  ) {
+    const board = yield* readBoard;
+    const limit = boardProviderLimit(board, providerInstanceId);
+    if (limit === null || limit.kind !== "wait") return;
+    const nowIsoValue = yield* nowIso;
+    yield* recordProviderLimit({ ...limit, until: nowIsoValue, probeCardId: null });
+    yield* fireDueProbes();
+  });
+
+  /**
+   * A human's own resume time (D14), or `null` to hand the schedule back to the
+   * blind poll.
+   *
+   * `setByHuman` is what stops a later loose match arguing with it: they looked
+   * at the provider and typed what they saw, and a regex must not overwrite that.
+   */
+  const setProviderLimitResumeAtNow = Effect.fn("board-supervisor-setProviderLimitResumeAt")(
+    function* (input: {
+      readonly providerInstanceId: ProviderInstanceId;
+      readonly resumeAt: string | null;
+    }) {
+      const board = yield* readBoard;
+      const limit = boardProviderLimit(board, input.providerInstanceId);
+      if (limit === null || limit.kind !== "wait") return;
+      const nowIsoValue = yield* nowIso;
+      if (input.resumeAt === null) {
+        // Back to the blind poll, measured from now: the human has withdrawn a
+        // time, not told us the window is longer than it was.
+        yield* recordProviderLimit({
+          ...limit,
+          until: isoAfter(
+            Date.parse(nowIsoValue),
+            yield* jittered(boardUsageLimitPollDelayMs(0) as number),
+          ),
+          knownTime: false,
+          blindSince: nowIsoValue,
+          probeCardId: null,
+          setByHuman: false,
+        });
+        return;
+      }
+      yield* recordProviderLimit({
+        ...limit,
+        until: input.resumeAt,
+        knownTime: true,
+        blindSince: null,
+        probeCardId: null,
+        setByHuman: true,
+      });
+    },
+  );
+
   const sweepProviderLimits = fireDueProbes().pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: provider-limit sweep failed", {
@@ -6254,6 +6329,24 @@ const make = Effect.gen(function* () {
               detail: "The merge could not be attempted. See the server log for details.",
             } as const),
           ),
+        ),
+      ),
+    probeProviderLimit: (providerInstanceId) =>
+      probeProviderLimitNow(providerInstanceId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: provider-limit probe failed", {
+            providerInstanceId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
+    setProviderLimitResumeAt: (input) =>
+      setProviderLimitResumeAtNow(input).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: provider-limit resume time not set", {
+            providerInstanceId: input.providerInstanceId,
+            cause: Cause.pretty(cause),
+          }),
         ),
       ),
     submitForMerge: (cardId) =>

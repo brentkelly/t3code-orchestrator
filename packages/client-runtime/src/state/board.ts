@@ -42,11 +42,14 @@ import {
   type BoardCardUpsertedShellEvent,
   type BoardLabel,
   type BoardLabelUpsertedShellEvent,
+  type BoardProviderLimit,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardStageRemovedShellEvent,
   isBoardCardScheduleDue,
   type BoardStageUpsertedShellEvent,
+  type BoardProviderLimitUpsertedShellEvent,
+  type BoardProviderLimitClearedShellEvent,
   type EnvironmentId,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
@@ -153,7 +156,9 @@ export type BoardShellStreamEvent =
   | BoardCardThreadsShellEvent
   | BoardLabelUpsertedShellEvent
   | BoardStageUpsertedShellEvent
-  | BoardStageRemovedShellEvent;
+  | BoardStageRemovedShellEvent
+  | BoardProviderLimitUpsertedShellEvent
+  | BoardProviderLimitClearedShellEvent;
 
 // Re-exported so the upstream reducer imports predicate + delegate on one line.
 export { isBoardShellStreamEvent };
@@ -383,12 +388,21 @@ export function applyBoardShellStreamEvent(
       // server arm that a restart would drop.
       const nextCards = Arr.map(cards, (card) => {
         if (card.cardId !== event.cardId) return card;
+        // …and WHY it stalled, plus when it next tries (T3O-22, D10). Both are
+        // key-optional and cleared by their absence HERE: this delta describes
+        // the whole step-derived slice, so an absent key on it is a real "no
+        // longer stalled", where an absent key on a card-carrying delta means
+        // "preserve", as it does for every other step-derived field.
+        const nextStalledReason = event.stalledReason;
+        const nextRetryAt = event.retryAt;
         return card.stalled === event.stalled &&
           card.queued === event.queued &&
           card.stepRunning === event.stepRunning &&
           card.held === event.held &&
           card.stepAwaiting === event.stepAwaiting &&
-          card.stepConflictFix === event.stepConflictFix
+          card.stepConflictFix === event.stepConflictFix &&
+          card.stalledReason === nextStalledReason &&
+          card.retryAt === nextRetryAt
           ? card
           : {
               ...card,
@@ -398,6 +412,8 @@ export function applyBoardShellStreamEvent(
               held: event.held,
               stepAwaiting: event.stepAwaiting,
               stepConflictFix: event.stepConflictFix,
+              ...(nextStalledReason === undefined ? {} : { stalledReason: nextStalledReason }),
+              ...(nextRetryAt === undefined ? {} : { retryAt: nextRetryAt }),
             };
       });
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
@@ -495,6 +511,30 @@ export function applyBoardShellStreamEvent(
       ).toSorted(compareBoardStages);
       return { ...snapshot, boardStages: nextStages, snapshotSequence: event.sequence };
     }
+    case "card-provider-limit-upserted": {
+      // The provider-cooldown slice (T3O-22, D14): one fact per provider
+      // ACCOUNT, riding once like the label catalogue rather than denormalised
+      // onto every card that shares it — which is also what lets the top bar
+      // say "Anthropic limit · 1:00 AM" with no card on screen.
+      const limits = snapshot.boardProviderLimits ?? [];
+      const nextLimits = limits.some(
+        (existing) => existing.providerInstanceId === event.limit.providerInstanceId,
+      )
+        ? Arr.map(limits, (existing) =>
+            existing.providerInstanceId === event.limit.providerInstanceId ? event.limit : existing,
+          )
+        : Arr.append(limits, event.limit);
+      return { ...snapshot, boardProviderLimits: nextLimits, snapshotSequence: event.sequence };
+    }
+    case "card-provider-limit-cleared":
+      return {
+        ...snapshot,
+        boardProviderLimits: Arr.filter(
+          snapshot.boardProviderLimits ?? [],
+          (existing) => existing.providerInstanceId !== event.providerInstanceId,
+        ),
+        snapshotSequence: event.sequence,
+      };
     case "stage-removed": {
       const stages = snapshot.boardStages ?? [];
       return {
@@ -902,6 +942,20 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-stages:${environmentId}`)),
   );
 
+  /** The board's provider cooldowns (T3O-22, D14). Empty on the overwhelming
+      majority of boards, which is why it rides its own array rather than a
+      field on every card. */
+  const EMPTY_PROVIDER_LIMITS: ReadonlyArray<BoardProviderLimit> = [];
+  const providerLimitsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const state = get(options.shellStateValueAtom(environmentId));
+      return Option.match(state.snapshot, {
+        onNone: () => EMPTY_PROVIDER_LIMITS,
+        onSome: (snapshot) => snapshot.boardProviderLimits ?? EMPTY_PROVIDER_LIMITS,
+      });
+    }).pipe(Atom.withLabel(`environment-board-provider-limits:${environmentId}`)),
+  );
+
   const cardDetailStateAtom = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-board-card-detail",
     tag: BOARD_WS_METHODS.subscribeCard,
@@ -946,6 +1000,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
     cardThreadsByCardAtom,
     labelCatalogueAtom,
     stageListAtom,
+    providerLimitsAtom,
     /** Raw subscription state (loading/failure visible), keyed like
         `cardDetailValueAtom`. */
     cardDetailStateAtom,
