@@ -46,6 +46,7 @@ import {
   BOARD_ENVELOPE_QUESTION_MECHANISM,
   boardTextEndsWithQuestion,
   applyBoardUsageLimitJitter,
+  BOARD_USAGE_LIMIT_MAX_HORIZON_MS,
   boardProviderLimit,
   boardProviderLimitHolds,
   boardRetryDelayMs,
@@ -3037,13 +3038,17 @@ const make = Effect.gen(function* () {
 
   /**
    * Record that an account is out of credits (D16) — a fact for the pill and
-   * the popover, and nothing else.
+   * the popover — and hand every card the old `wait` was holding to a human.
    *
    * It gates no card and expires never: no amount of waiting fixes a billing
    * wall, so blind-polling one for seven days is pure waste and, on a metered
-   * provider, seven days of failing requests. Every other card on the instance
-   * hits the same wall on its own next turn and lands in the same place,
-   * correctly labelled, which needs no cross-card machinery at all.
+   * provider, seven days of failing requests. A card that is still RUNNING hits
+   * the same wall on its own next turn and lands here correctly labelled, which
+   * needs no cross-card machinery — but a card already PARKED behind the `wait`
+   * this replaces never gets another turn. Nothing probes an `exhausted` row,
+   * nothing clears it, and the governor no longer withholds it, so without this
+   * sweep every sibling sits `stalled`/`usage-limit` for ever, across restarts,
+   * waiting for a window that is now known never to reopen.
    */
   const recordExhausted = Effect.fn("board-supervisor-recordExhausted")(function* (input: {
     readonly providerInstanceId: ProviderInstanceId;
@@ -3067,6 +3072,27 @@ const make = Effect.gen(function* () {
       probeCardId: null,
       setByHuman: false,
     });
+    // Read AFTER the record so the parked set is the one the cooldown was
+    // holding a moment ago, and mirror `giveUpOnProviderLimit`'s escalation —
+    // same scoping (`usage-limit` parks and nothing else), same "keep the
+    // provider's own sentence" — differing only in the reason, which here is the
+    // billing wall the card actually hit. The caller parks its OWN step, so skip
+    // it; it is not in the parked set anyway while its turn is ending.
+    const board = yield* readBoard;
+    for (const state of boardUsageLimitParkedSteps(board, input.providerInstanceId)) {
+      if (state.cardId === input.cardId) continue;
+      const card = board.cards.find((candidate) => candidate.id === state.cardId);
+      if (card === undefined || card.archivedAt !== null) continue;
+      yield* parkStepForRetry({
+        card,
+        state,
+        reason: "quota-exhausted",
+        retryAt: null,
+        chargeBudget: false,
+        progressed: false,
+        lastError: input.match.reason,
+      });
+    }
   });
 
   /**
@@ -4867,11 +4893,42 @@ const make = Effect.gen(function* () {
       const pollDelay = boardUsageLimitPollDelayMs(
         Number.isFinite(blindElapsed) ? blindElapsed : 0,
       );
-      if (pollDelay === null) {
+      // The ceiling is on the COOLDOWN, not only on the blind ladder. A named
+      // time keeps `blindSince` null, so its `blindElapsed` is permanently 0 and
+      // the ladder never runs out — a provider quoting a daily reset on an
+      // account that is chronically over quota would be re-probed once a window
+      // for ever, and its cards would never reach the human D8 promises them.
+      // Seven days measured from detection bounds both shapes with one rule.
+      //
+      // `probeCardId` is what keeps that rule from cutting a legitimate window
+      // short: a parsed time is believed out to the same seven days, so a real
+      // WEEKLY limit lands its first probe exactly at the ceiling. A cooldown
+      // that has never sent anyone to ask gets that first probe; only one that
+      // has already asked, and is still being told no seven days on, gives up.
+      const heldFor = Math.max(0, nowMs - Date.parse(limit.detectedAt));
+      const expired =
+        Number.isFinite(heldFor) &&
+        heldFor >= BOARD_USAGE_LIMIT_MAX_HORIZON_MS &&
+        limit.probeCardId !== null;
+      if (pollDelay === null || expired) {
         // Seven days with nothing learned (D8). Stop waiting and hand every card
         // it was holding to a human — the honest end of a window that never
         // reopened.
         yield* giveUpOnProviderLimit(limit);
+        continue;
+      }
+      // ONE prober at a time is the whole shape of D9, and a build turn routinely
+      // outlives the 30-minute rung that elected it. If last round's prober is
+      // still mid-turn, electing a second would put two cards against a provider
+      // that has not answered the first — so wait it out at the current rung and
+      // keep the prober we have.
+      const proberStatus =
+        limit.probeCardId === null ? null : boardCardStepState(board, limit.probeCardId)?.status;
+      if (proberStatus === "running" || proberStatus === "queued") {
+        yield* recordProviderLimit({
+          ...limit,
+          until: isoAfter(nowMs, yield* jittered(pollDelay)),
+        });
         continue;
       }
       const nextUntil = isoAfter(nowMs, yield* jittered(pollDelay));

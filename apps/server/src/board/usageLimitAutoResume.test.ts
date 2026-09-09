@@ -618,6 +618,17 @@ it.effect("a probe that turns out to be a billing wall escalates every card it h
           (yield* stepOf(harness, String(proberId)))?.stalledReason,
           "quota-exhausted",
         );
+        // And the SIBLING, which is the whole point of "every card it held". It
+        // is already parked, so it never gets a turn of its own to hit the wall
+        // on: nothing probes an `exhausted` row and nothing clears it, so left
+        // alone it would sit `usage-limit` for ever, waiting for a window now
+        // known never to reopen.
+        const siblingId = String(proberId) === "a" ? "b" : "a";
+        const sibling = yield* stepOf(harness, siblingId);
+        assert.strictEqual(sibling?.status, "stalled");
+        assert.strictEqual(sibling?.stalledReason, "quota-exhausted");
+        assert.strictEqual(sibling?.retryAt, null);
+        assert.strictEqual(sibling?.lastError, exhausted().reason);
       }),
   ),
 );
@@ -924,6 +935,161 @@ it.effect("seven days of learning nothing gives up and hands every card to a hum
       }),
   ),
 );
+
+it.effect("a NAMED reset time is bounded by the same seven days, not probed for ever", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a")],
+        stepStates: [parkedByLimit("a")],
+        // A provider that names a reset time keeps `blindSince` null, so the
+        // blind ladder never advances a rung and never runs out. Left to itself
+        // an account that is chronically over its daily quota would be re-probed
+        // once a window for ever and its cards would never reach the human D8
+        // promises them. The ceiling is on the COOLDOWN, so this one is over.
+        providerLimits: [
+          {
+            providerInstanceId: codex,
+            kind: "wait",
+            until: "1970-01-01T00:00:00.000Z",
+            detectedAt: "1969-12-24T00:00:00.000Z",
+            lastCheckedAt: "1969-12-31T00:00:00.000Z",
+            reason: waitAt().reason,
+            ruleId: "codex.usage-limit",
+            sourceCardId: BoardCardId.make("a"),
+            knownTime: true,
+            blindSince: null,
+            // It has already sent someone to ask and been told no, which is what
+            // separates a chronic wall from a real weekly window still owed its
+            // first probe.
+            probeCardId: BoardCardId.make("a"),
+            setByHuman: false,
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        yield* harness.reactor.fireProbes;
+        yield* harness.reactor.drain;
+        assert.strictEqual(yield* limitOf(harness, codex), null);
+        const escalated = yield* stepOf(harness, "a");
+        assert.strictEqual(escalated?.status, "stalled");
+        assert.strictEqual(escalated?.stalledReason, "gave-up");
+      }),
+  ),
+);
+
+it.effect("a real weekly window still gets its first probe at the ceiling", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a")],
+        stepStates: [parkedByLimit("a")],
+        // The other side of the same rule. A parsed time is believed out to the
+        // same seven days, so a genuine WEEKLY limit comes due exactly AT the
+        // ceiling — and a cooldown that has never sent anyone to ask has learned
+        // nothing to give up on. It gets its probe.
+        providerLimits: [
+          {
+            providerInstanceId: codex,
+            kind: "wait",
+            until: "1970-01-01T00:00:00.000Z",
+            detectedAt: "1969-12-25T00:00:00.000Z",
+            lastCheckedAt: "1969-12-25T00:00:00.000Z",
+            reason: waitAt().reason,
+            ruleId: "grok.weekly-limit",
+            sourceCardId: BoardCardId.make("a"),
+            knownTime: true,
+            blindSince: null,
+            probeCardId: null,
+            setByHuman: false,
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        yield* harness.reactor.fireProbes;
+        yield* harness.reactor.drain;
+
+        const limit = yield* limitOf(harness, codex);
+        assert.strictEqual(limit?.kind, "wait", "the cooldown is not given up on");
+        assert.strictEqual(String(limit?.probeCardId), "a", "a prober is elected instead");
+        assert.ok(Date.parse(limit?.until ?? "") > 0, "and the cooldown is re-armed behind it");
+        // Woken rather than handed to a human: the difference between this and
+        // the case above is the whole point of the rule. (It is the harness's
+        // seeded card, so its resumed turn goes no further than the backoff
+        // ladder — what matters here is that it was not escalated.)
+        assert.notStrictEqual((yield* stepOf(harness, "a"))?.stalledReason, "gave-up");
+      }),
+  ),
+);
+
+it.effect("a prober still mid-turn is not replaced, so only one card ever probes", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a"), buildingCard("b", "b")],
+        // `a` was elected at the last due tick and is still working; `b` is the
+        // sibling the cooldown is holding. A build turn routinely outlives the
+        // 30-minute rung that elected the prober, and the rung coming round
+        // again must not wake a second card into a provider that has not
+        // answered the first (D9).
+        stepStates: [probingStep("a"), parkedByLimit("b")],
+        providerLimits: [
+          {
+            providerInstanceId: codex,
+            kind: "wait",
+            until: "1970-01-01T00:00:00.000Z",
+            detectedAt: "1969-12-31T23:00:00.000Z",
+            lastCheckedAt: "1969-12-31T23:30:00.000Z",
+            reason: waitAt().reason,
+            ruleId: "codex.usage-limit",
+            sourceCardId: BoardCardId.make("a"),
+            knownTime: true,
+            blindSince: null,
+            probeCardId: BoardCardId.make("a"),
+            setByHuman: false,
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        yield* harness.reactor.fireProbes;
+        yield* harness.reactor.drain;
+
+        const limit = yield* limitOf(harness, codex);
+        assert.strictEqual(String(limit?.probeCardId), "a", "the prober we have is kept");
+        // Rescheduled, not abandoned: the cooldown is due again a rung from now.
+        assert.ok(Date.parse(limit?.until ?? "") > 0, "the cooldown is re-armed");
+        const sibling = yield* stepOf(harness, "b");
+        assert.strictEqual(sibling?.status, "stalled", "the sibling never woke");
+        assert.strictEqual(sibling?.stalledReason, "usage-limit");
+      }),
+  ),
+);
+
+/** The card a cooldown elected as its prober, mid-turn. */
+function probingStep(id: string): BoardCardStepState {
+  return {
+    ...parkedByLimit(id),
+    status: "running",
+    stalledReason: "gave-up",
+    retryAt: null,
+    threadId: ThreadId.make(`thread-${id}`),
+    slotHeld: true,
+    startedAt: "1970-01-01T00:00:00.000Z",
+    lastNudgeAt: "1970-01-01T00:00:00.000Z",
+  };
+}
 
 /** A step already parked behind a cooldown, as a restart finds it. */
 function parkedByLimit(id: string): BoardCardStepState {

@@ -541,6 +541,45 @@ it.effect(
     }),
 );
 
+it.effect("resume-step drops the park's reason and its scheduled retry (T3O-22)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    // A card parked behind a provider cooldown, resumed by a human who is not
+    // waiting for the window: the row is about to be RUNNING, so a `usage-limit`
+    // reason and a future `retryAt` on it are simply untrue. Every reader of
+    // both happens to gate on `status === "stalled"` today, which is what keeps
+    // this quiet rather than correct.
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [
+        stepState("card-1", "stalled", {
+          stalledReason: "usage-limit",
+          retryAt: "2026-01-01T05:00:00.000Z",
+        }),
+      ],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.resume-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(event.type, "board.card-step-recovered");
+    if (event.type === "board.card-step-recovered") {
+      assert.strictEqual(event.payload.state.status, "running");
+      // `gave-up` is the column's neutral value — the same clear `admit-step`
+      // writes when a requeued step is admitted.
+      assert.strictEqual(event.payload.state.stalledReason, "gave-up");
+      assert.strictEqual(event.payload.state.retryAt, null);
+    }
+  }),
+);
+
 it.effect("resume-step refuses a step that is not parked (t3o-17, D3; T3O-23)", () =>
   Effect.gen(function* () {
     const card = makeCard({ id: "card-1" });

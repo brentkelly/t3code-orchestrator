@@ -518,6 +518,26 @@ function rowToBoardPlanWithBody(row: BoardPlanDbRow): BoardPlanWithBody {
   return { ...rowToBoardPlan(row), body: row.body };
 }
 
+// Row → cooldown mapping, spelled once (T3O-22): the read-model rehydrator and
+// the shell-snapshot enricher both need it, and the two must agree about the
+// 0/1 coercions or a reload would disagree with a replay.
+function rowToBoardProviderLimit(row: BoardProviderLimitDbRow): BoardProviderLimit {
+  return {
+    providerInstanceId: row.providerInstanceId,
+    kind: row.kind,
+    until: row.until,
+    detectedAt: row.detectedAt,
+    lastCheckedAt: row.lastCheckedAt,
+    reason: row.reason,
+    ruleId: row.ruleId,
+    sourceCardId: row.sourceCardId,
+    knownTime: row.knownTime !== 0,
+    blindSince: row.blindSince,
+    probeCardId: row.probeCardId,
+    setByHuman: row.setByHuman !== 0,
+  };
+}
+
 /**
  * The narrow row behind `BoardCardShell` (t3o-04): exactly the columns the
  * shell needs, computed in SQL — never `SELECT *` mapped down. `dependsOn`,
@@ -3121,22 +3141,7 @@ export function loadBoardState(
         // limited — the same absent-vs-empty rule every slice above follows, so
         // an ordinary board rehydrates exactly as a from-empty replay.
         const providerLimits = providerLimitRows
-          .map(
-            (row): BoardProviderLimit => ({
-              providerInstanceId: row.providerInstanceId,
-              kind: row.kind,
-              until: row.until,
-              detectedAt: row.detectedAt,
-              lastCheckedAt: row.lastCheckedAt,
-              reason: row.reason,
-              ruleId: row.ruleId,
-              sourceCardId: row.sourceCardId,
-              knownTime: row.knownTime !== 0,
-              blindSince: row.blindSince,
-              probeCardId: row.probeCardId,
-              setByHuman: row.setByHuman !== 0,
-            }),
-          )
+          .map(rowToBoardProviderLimit)
           .sort(compareBoardProviderLimits);
         return {
           cards: cardRows
@@ -3457,6 +3462,38 @@ export function withBoardShellLabels(
         }))
         .sort(compareBoardLabels);
       return { ...shell, boardLabels };
+    }),
+  );
+}
+
+/**
+ * Provider cooldowns ride the shell snapshot ONCE (T3O-22, D14), on the
+ * `boardLabels` precedent — one fact per provider ACCOUNT, never denormalised
+ * onto the cards that share it.
+ *
+ * The snapshot is the ONLY producer a reconnecting client has: the
+ * `card-provider-limit-upserted` delta keeps a live client honest, but a
+ * cooldown is a multi-hour fact and the client that reloads in the middle of one
+ * replays no delta at all. Without this the pill, the popover, the waiting list
+ * and both of its buttons would be invisible for essentially the whole life of
+ * every limit. Attached only when something is limited, which on the
+ * overwhelming majority of boards is never — absent, not `[]`, like every other
+ * conditional slice here.
+ */
+export function withBoardShellProviderLimits(
+  queries: BoardCardQueries,
+  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
+): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
+  const limitRows = queries
+    .listBoardProviderLimitRows()
+    .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellProviderLimits:query")));
+  return Effect.all([snapshot, limitRows]).pipe(
+    Effect.map(([shell, rows]) => {
+      if (rows.length === 0) return shell;
+      const boardProviderLimits = rows
+        .map(rowToBoardProviderLimit)
+        .sort(compareBoardProviderLimits);
+      return { ...shell, boardProviderLimits };
     }),
   );
 }
@@ -3832,7 +3869,16 @@ export function boardSnapshotQueryMethods(
           queries,
           withBoardShellStages(
             queries,
-            withBoardShellLabels(queries, withBoardShellCards(queries, base.getShellSnapshot())),
+            withBoardShellLabels(
+              queries,
+              // T3O-22: the cooldown slice, so a client reconnecting mid-limit
+              // sees the pill it would otherwise only learn about from a delta
+              // it was not connected for.
+              withBoardShellProviderLimits(
+                queries,
+                withBoardShellCards(queries, base.getShellSnapshot()),
+              ),
+            ),
           ),
         ),
         base.getShellSnapshot(),

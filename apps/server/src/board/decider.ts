@@ -3423,6 +3423,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         stallCount: 0,
         lastError: null,
         slotHeld: current.mode === "build",
+        // The step is working again, so the park it was wearing is over
+        // (T3O-22) — the same clear `admit-step` does, for the same reason. A
+        // human resuming a card that stalled on a usage limit before its window
+        // reopened would otherwise leave a RUNNING row still claiming
+        // `usage-limit` and still carrying a future `retryAt`.
+        stalledReason: "gave-up",
+        retryAt: null,
         lastNudgeAt: command.createdAt,
         updatedAt: command.createdAt,
       };
@@ -3515,11 +3522,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     }
 
     case "board.provider-limit.clear": {
-      // Idempotent by design, NOT a refusal: every trigger that lifts a
-      // cooldown can fire twice — a probe's clean turn and the ordinary
-      // any-clean-turn sweep will routinely both land — and a refusal would
-      // turn the second into a logged invariant error for a state that is
-      // already correct.
+      // Idempotent by design: every trigger that lifts a cooldown can fire
+      // twice — a probe's clean turn and the ordinary any-clean-turn sweep will
+      // routinely both land — so the second must be a no-op rather than an
+      // error anyone reads. (An empty decision is refused by the engine exactly
+      // as an explicit `invariant` would be, and the reactor's `dispatchOptional`
+      // demotes both to a debug line; `[]` is chosen because it says "there was
+      // nothing to do" rather than "you were wrong to ask".)
       if (boardProviderLimit(board, command.providerInstanceId) === null) return [];
       return {
         ...(yield* makeBoardProviderLimitEventBase({
