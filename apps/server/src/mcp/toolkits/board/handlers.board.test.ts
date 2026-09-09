@@ -308,7 +308,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       role: "building",
       createdAt: t0,
     });
-    return { ownCard, ownThread };
+    return { ownCard, ownThread, ownProject };
   });
 
   /** Put a live, admitted step on `ownCard`, owned by `ownThread`. `stepId`
@@ -1116,6 +1116,35 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(orphanThread));
       const card = listed.cards.find((candidate) => candidate.cardId === created.cardId);
       assert.strictEqual(card?.stage, "building");
+    }),
+  );
+
+  it.effect("board_create_card lands the new card at the bottom of the stage's column", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // A resident in the same stage but ANOTHER project (T3O-27). The board's
+      // default scope merges the two into one column, and this tool's own read
+      // model is filtered to one project — so the placement has to come from
+      // the decider, which sees both.
+      const other = yield* seedOwnCard("bottom-of-column");
+      const resident = yield* boardHandlers
+        .board_create_card({
+          projectId: other.ownProject,
+          title: "Resident",
+          stage: BoardStageId.make("sprint"),
+        })
+        .pipe(withScope(orphanThread));
+      const created = yield* boardHandlers
+        .board_create_card({ projectId, title: "Newest", stage: BoardStageId.make("sprint") })
+        .pipe(withScope(orphanThread));
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const model = yield* snapshotQuery.getCommandReadModel();
+      const cards = model.board?.cards ?? [];
+      const newCard = cards.find((candidate) => candidate.id === created.cardId);
+      const residentCard = cards.find((candidate) => candidate.id === resident.cardId);
+      assert.isDefined(newCard);
+      assert.isDefined(residentCard);
+      assert.isTrue(newCard!.orderKey > residentCard!.orderKey);
     }),
   );
 

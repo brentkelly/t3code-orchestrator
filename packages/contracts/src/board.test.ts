@@ -31,7 +31,11 @@ import {
   BoardLabelId,
   BoardLabelName,
   boardAppendOrderKey,
+  boardArrivalOrderKey,
+  boardColumnOrderKeys,
   boardPrependOrderKey,
+  BoardStageId,
+  LEGACY_BOARD_CARD_ORDER_KEY,
   boardBuildHumanInLoopDefault,
   boardCardAttention,
   boardCardChildAttentionLabel,
@@ -1809,5 +1813,128 @@ describe("top-of-column order keys (T3O-15)", () => {
     const column = ["aaa", "m", "mm"];
     const key = boardPrependOrderKey(column);
     expect(sorted([...column, key]).indexOf(key)).toBe(1);
+  });
+});
+
+describe("board column scope and arrival placement (T3O-27)", () => {
+  const sorted = (keys: ReadonlyArray<string>) => [...keys].sort();
+  const stage = BoardStageId.make("building");
+  const done = BoardStageId.make("done");
+  const parent = BoardCardId.make("parent-1");
+  const card = (input: {
+    readonly stage: string;
+    readonly orderKey: string;
+    readonly archivedAt?: string | null;
+    readonly parentCardId?: BoardCardId | null;
+  }) => ({
+    stage: BoardStageId.make(input.stage),
+    orderKey: input.orderKey,
+    archivedAt: input.archivedAt ?? null,
+    parentCardId: input.parentCardId ?? null,
+  });
+
+  describe("boardColumnOrderKeys", () => {
+    it("spans every project, because the default board scope merges them", () => {
+      // The bug this card fixes: one key space per stage, not one per project.
+      const keys = boardColumnOrderKeys({
+        cards: [
+          card({ stage: "building", orderKey: "n" }),
+          card({ stage: "building", orderKey: "u" }),
+        ],
+        stage,
+        parentCardId: null,
+      });
+      expect(sorted(keys)).toEqual(["n", "u"]);
+    });
+
+    it("holds only the named stage", () => {
+      const keys = boardColumnOrderKeys({
+        cards: [
+          card({ stage: "building", orderKey: "n" }),
+          card({ stage: "backlog", orderKey: "z" }),
+        ],
+        stage,
+        parentCardId: null,
+      });
+      expect(keys).toEqual(["n"]);
+    });
+
+    it("excludes archived cards, which have left the board", () => {
+      const keys = boardColumnOrderKeys({
+        cards: [
+          card({ stage: "building", orderKey: "n" }),
+          card({ stage: "building", orderKey: "zz", archivedAt: "2026-01-01T00:00:00.000Z" }),
+        ],
+        stage,
+        parentCardId: null,
+      });
+      expect(keys).toEqual(["n"]);
+    });
+
+    it("separates the root board from a parent's sub-board", () => {
+      const cards = [
+        card({ stage: "building", orderKey: "n" }),
+        card({ stage: "building", orderKey: "u", parentCardId: parent }),
+      ];
+      expect(boardColumnOrderKeys({ cards, stage, parentCardId: null })).toEqual(["n"]);
+      expect(boardColumnOrderKeys({ cards, stage, parentCardId: parent })).toEqual(["u"]);
+    });
+  });
+
+  describe("boardArrivalOrderKey", () => {
+    it("lands a card below every card in the stage, whatever project they are in", () => {
+      const cards = [
+        card({ stage: "building", orderKey: "n" }),
+        card({ stage: "building", orderKey: "u" }),
+      ];
+      const key = boardArrivalOrderKey({ cards, stage, parentCardId: null, doneStageId: done });
+      expect(sorted(["n", "u", key]).at(-1)).toBe(key);
+    });
+
+    it("does not let an unrelated stage push the key down", () => {
+      const key = boardArrivalOrderKey({
+        cards: [card({ stage: "backlog", orderKey: "zzzz" })],
+        stage,
+        parentCardId: null,
+        doneStageId: done,
+      });
+      expect(key).toBe(LEGACY_BOARD_CARD_ORDER_KEY);
+    });
+
+    it("lands a card ARRIVING in the done-role stage at the top instead", () => {
+      const cards = [
+        card({ stage: "done", orderKey: "m" }),
+        card({ stage: "done", orderKey: "u" }),
+      ];
+      const key = boardArrivalOrderKey({
+        cards,
+        stage: done,
+        parentCardId: null,
+        doneStageId: done,
+      });
+      expect(sorted(["m", "u", key])[0]).toBe(key);
+    });
+
+    it("appends when the board has no done-role stage at all", () => {
+      const cards = [card({ stage: "done", orderKey: "m" })];
+      const key = boardArrivalOrderKey({
+        cards,
+        stage: done,
+        parentCardId: null,
+        doneStageId: null,
+      });
+      expect(sorted(["m", key]).at(-1)).toBe(key);
+    });
+
+    it("keeps successive arrivals in arrival order", () => {
+      const cards: Array<ReturnType<typeof card>> = [];
+      const placed: Array<string> = [];
+      for (let i = 0; i < 50; i += 1) {
+        const key = boardArrivalOrderKey({ cards, stage, parentCardId: null, doneStageId: done });
+        placed.push(key);
+        cards.push(card({ stage: "building", orderKey: key }));
+      }
+      expect(sorted(placed)).toEqual(placed);
+    });
   });
 });

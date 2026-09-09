@@ -25,7 +25,8 @@ import {
   BOARD_CARD_BRIEF_BODY_KIND,
   BOARD_CARD_LABELS_MAX,
   boardAppendOrderKey,
-  boardPrependOrderKey,
+  boardArrivalOrderKey,
+  boardColumnOrderKeys,
   boardCardChildren,
   boardCardPendingSplit,
   boardCardPlans,
@@ -790,6 +791,20 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
 
       const cardNumber = board.nextCardNumberByProject[command.projectId] ?? 1;
       const keyPrefix = command.keyPrefix ?? DEFAULT_BOARD_KEY_PREFIX;
+      // Where the card lands (T3O-27). Placed HERE rather than by the caller:
+      // the create dialog sees only the project (or sub-board) its view is
+      // scoped to, so its "bottom" was the bottom of a slice, and a card
+      // created into a slice that happened to be empty took the column
+      // minimum and jumped the queue. The decider sees the whole board. A
+      // caller that names a key still means it.
+      const orderKey =
+        command.orderKey ??
+        boardArrivalOrderKey({
+          cards: board.cards,
+          stage,
+          parentCardId: command.parentCardId ?? null,
+          doneStageId: boardStageWithRole(board, "done")?.stageId ?? null,
+        });
       return {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
@@ -815,7 +830,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           ...(baseBranch === null ? {} : { baseBranch }),
           dependsOn,
           stage,
-          orderKey: command.orderKey,
+          orderKey,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -1011,23 +1026,18 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // column (T3O-15): Done is read newest-first, so what just finished is
       // what you see. Only when the mover named no position — a drag names one
       // and means it, and every other column still keeps the card's own key
-      // (inside Building that key is queue priority, D11).
+      // (inside Building that key is queue priority, D11). `boardArrivalOrderKey`
+      // is the same placement a card created straight into Done gets (T3O-27),
+      // so the two routes into a column cannot disagree.
       const nextOrderKey =
         command.orderKey ??
         (doneStageId !== null && command.toStage === doneStageId
-          ? boardPrependOrderKey(
-              board.cards
-                .filter(
-                  (existing) =>
-                    existing.stage === doneStageId &&
-                    existing.archivedAt === null &&
-                    // The column the mover is looking at: a project's own
-                    // board, or one parent's sub-board.
-                    existing.projectId === card.projectId &&
-                    existing.parentCardId === card.parentCardId,
-                )
-                .map((existing) => existing.orderKey),
-            )
+          ? boardArrivalOrderKey({
+              cards: board.cards,
+              stage: doneStageId,
+              parentCardId: card.parentCardId,
+              doneStageId,
+            })
           : card.orderKey);
       const nextCard: BoardCard = {
         ...card,
@@ -2313,10 +2323,16 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       const keyPrefix = lastDash > 0 ? card.key.slice(0, lastDash) : DEFAULT_BOARD_KEY_PREFIX;
       let nextNumber = board.nextCardNumberByProject[card.projectId] ?? 1;
       // Appended at the bottom of the floor column in ordinal order; each key
-      // feeds the next so siblings sort in plan order.
-      const floorOrderKeys = board.cards
-        .filter((existing) => existing.stage === floor.stageId && existing.archivedAt === null)
-        .map((existing) => existing.orderKey);
+      // feeds the next so siblings sort in plan order. The column is this
+      // parent's sub-board (T3O-27) — the only place a child renders — not
+      // the root board's floor stage, which a child never appears in.
+      const floorOrderKeys = [
+        ...boardColumnOrderKeys({
+          cards: board.cards,
+          stage: floor.stageId,
+          parentCardId: card.id,
+        }),
+      ];
       const childIdByPlan = new Map<BoardPlanId, BoardCardId>();
       for (const plan of plans) {
         childIdByPlan.set(plan.planId, BoardCardId.make(yield* crypto.randomUUIDv4));

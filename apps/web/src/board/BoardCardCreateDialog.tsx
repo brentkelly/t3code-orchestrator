@@ -31,7 +31,6 @@ import {
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
-import { boardColumnAppendOrderKey } from "@t3tools/client-runtime/state/shell";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -246,9 +245,6 @@ export function BoardCardCreateDialog({
     if (trimmedTitle.length === 0) return;
     const trimmedBrief = brief.trim();
     setSubmitting(true);
-    const targetColumn = allCards.filter(
-      (card) => card.projectId === projectId && card.stage === stage,
-    );
     // Card keys carry the project's prefix. A project that has never been given
     // one is assigned an acronym from its name here, on its first card, and the
     // choice is persisted immediately — every later card reads the stored
@@ -290,7 +286,10 @@ export function BoardCardCreateDialog({
         // parent's child, exactly as if a plan had materialised it.
         ...(subBoardParentId === null ? {} : { parentCardId: subBoardParentId }),
         keyPrefix: prefix,
-        orderKey: boardColumnAppendOrderKey(targetColumn),
+        // No `orderKey`: the server places the card at the bottom of the
+        // stage's column (T3O-27). This dialog only ever saw the column its
+        // board scope renders, so its idea of "bottom" was the bottom of one
+        // project — which put a new card above older cards of every other.
       },
     }).then(async (result) => {
       if (result._tag === "Failure") {
