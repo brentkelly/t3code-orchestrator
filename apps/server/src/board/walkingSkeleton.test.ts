@@ -14,6 +14,7 @@ import {
   CommandId,
   ProjectId,
   ProviderInstanceId,
+  ThreadId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -382,6 +383,84 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
       }
       assert.deepStrictEqual(
         (replayed.board?.stepStates ?? []).find((candidate) => candidate.cardId === "card-forced"),
+        state,
+      );
+    }),
+  );
+
+  // T3O-17. The steer signal is a COLUMN, not memory: a server killed between
+  // a human's message and the turn ending must still owe that turn its free
+  // ending, or the nudge the human interrupted comes back after the restart.
+  // Written and read through the real projection, so a column migration 040
+  // never added — or an upsert that dropped it — fails here rather than in
+  // production.
+  it.effect("a steered step rehydrates carrying the instant the human typed", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const typedAt = "2026-01-01T00:05:00.000Z";
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-card-steered"),
+        cardId: BoardCardId.make("card-steered"),
+        projectId,
+        title: "Steered card",
+        orderKey: "z",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.select-step",
+        commandId: CommandId.make("cmd-select-steered"),
+        cardId: BoardCardId.make("card-steered"),
+        stepId: "building",
+        stepLabel: "Building",
+        stageLabel: "Building",
+        prompt: "Do the work.",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+        mode: "build",
+        runtimeMode: "auto",
+        humanInLoop: false,
+        maxAttempts: 3,
+        timeoutMs: 60_000,
+        baseTipAtRoundStart: null,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.admit-step",
+        commandId: CommandId.make("cmd-admit-steered"),
+        cardId: BoardCardId.make("card-steered"),
+        stepId: "building",
+        admitted: true,
+        threadId: ThreadId.make("thread-steered"),
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.note-human-turn",
+        commandId: CommandId.make("cmd-steer"),
+        cardId: BoardCardId.make("card-steered"),
+        stepId: "building",
+        at: typedAt,
+        createdAt,
+      });
+
+      const rehydrated = yield* snapshotQuery.getCommandReadModel();
+      const state = (rehydrated.board?.stepStates ?? []).find(
+        (candidate) => candidate.cardId === "card-steered",
+      );
+      assert.strictEqual(state?.humanTurnAt, typedAt);
+      assert.strictEqual(state?.lastNudgeAt, typedAt);
+      assert.strictEqual(state?.status, "running");
+
+      const events: OrchestrationEvent[] = Array.from(
+        yield* Stream.runCollect(engine.readEvents(0)),
+      );
+      let replayed = createEmptyReadModel(createdAt);
+      for (const event of events) {
+        replayed = yield* projectEvent(replayed, event);
+      }
+      assert.deepStrictEqual(
+        (replayed.board?.stepStates ?? []).find((candidate) => candidate.cardId === "card-steered"),
         state,
       );
     }),

@@ -5259,6 +5259,25 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /** Carry a card's explicit human-in-the-loop override onto its live step row
+      when the two have diverged (T3O-17) — the crash-recovery half of
+      `handleCardUpdated`'s stance arm. A no-op when they agree, which is every
+      card on an ordinary boot. */
+  const reconcileStanceOverride = Effect.fn("board-supervisor-reconcileStanceOverride")(function* (
+    card: BoardCard,
+    state: BoardCardStepState,
+  ) {
+    if (card.humanInLoop === null || card.humanInLoop === state.humanInLoop) return;
+    yield* dispatchOptional({
+      type: "board.card.retune-step",
+      commandId: yield* commandId("reconcile-stance"),
+      cardId: card.id,
+      stepId: state.stepId,
+      humanInLoop: card.humanInLoop,
+      createdAt: yield* nowIso,
+    });
+  });
+
   const reconcile = Effect.gen(function* () {
     // Read the world only once the server is ACTIVATED (t3o-10, D3). This item
     // is enqueued from `start`, which runs in the `reactors.start` startup
@@ -5299,6 +5318,24 @@ const make = Effect.gen(function* () {
     for (const state of boardNonTerminalStepStates(board)) {
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined) continue;
+      // Re-settle the stance a lost `board.card-updated` never carried onto the
+      // row (T3O-17). `streamDomainEvents` is a LIVE PubSub, not a durable
+      // replay from a watermark, so an edit committed to the log in the instant
+      // before a kill is never re-delivered: the card's override says one thing
+      // and the frozen run row says another, for as long as the step lives.
+      //
+      // Reachable from the ordinary human-in-the-loop toggle, and made common
+      // by the Stop button, which now dispatches exactly that edit — and there
+      // the divergence is the whole defect surviving a crash: a card that says
+      // a human took the wheel, resuming an agent that runs unattended.
+      //
+      // Cheap enough to be unconditional: a field comparison per non-terminal
+      // step, no I/O, and a dispatch only when they actually disagree, which is
+      // never in the ordinary case because the live handler already did it.
+      // Idempotent, so a restart loop re-runs it harmlessly. No turn is sent —
+      // boot is not the moment to message an agent, and `handleCardUpdated`
+      // would not have sent one into a parked step either.
+      yield* reconcileStanceOverride(card, state);
       const hasSucceeded = boardCardStepCompletions(board, card.id).some(
         (entry) => entry.stepId === state.stepId && entry.outcome === "succeeded",
       );
