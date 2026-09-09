@@ -46,7 +46,10 @@ describe("board corner menu", () => {
 
   it("makes the column scroller reserve the corner, and not with the old pb-3", () => {
     expect(boardPageSource).toContain("BOARD_UTILITY_MENU_RESERVED_SPACE");
-    expect(BOARD_UTILITY_MENU_RESERVED_SPACE).toBe("pb-[52px]");
+    // 14px corner inset + the 40px pill + 6px of clearance. A reserve merely
+    // equal to the inset plus the pill lets a card's last two pixels sit
+    // under the glass.
+    expect(BOARD_UTILITY_MENU_RESERVED_SPACE).toBe("pb-[60px]");
     expect(boardPageSource).not.toMatch(/overflow-auto px-3 pb-3/);
   });
 });

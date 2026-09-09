@@ -12,12 +12,25 @@
 import { modeForHref } from "./boardUiStore";
 
 /**
- * The width `BoardModeTabs` needs to render both labelled tabs without
- * squeezing. Two buttons of `h-[26px]` with a 14px icon, a 6px gap and 10px of
- * padding either side, inside a 2px track with a 3px gap — about 178px — plus
- * a margin so the tabs never sit hard against the wordmark.
+ * The rendered width of `BoardModeTabs` with both labels showing: two
+ * `h-[26px]` buttons carrying a 14px icon, a 6px gap and 10px of padding
+ * either side, inside a 2px track with a 3px gap. Measured at 169px in the
+ * default theme; rounded up because the control's metrics are in fixed pixels
+ * but its glyphs are not — a custom interface font is wider or narrower.
  */
-export const MODE_TABS_MIN_WIDTH = 196;
+const MODE_TABS_WIDTH = 172;
+
+/**
+ * Breathing room the slot must have on top of the control. Two jobs: it keeps
+ * the tabs off the header's right edge, and it absorbs a wide custom interface
+ * font, which is the one input to the control's width that this module cannot
+ * see. Without it, the tabs would appear at the exact pixel they start to
+ * touch the edge — the worst place to switch.
+ */
+const MODE_TABS_SLOT_GUTTER = 24;
+
+/** The measured slot width at or above which the sidebar takes the tabs. */
+export const MODE_TABS_MIN_WIDTH = MODE_TABS_WIDTH + MODE_TABS_SLOT_GUTTER;
 
 /**
  * Workspace routes that render a top bar with no mode tabs today. Usage, pull

@@ -25,12 +25,13 @@ import { cn } from "../lib/utils";
 import { useBoardUiStore } from "./boardUiStore";
 
 /**
- * Height the board's column scroller reserves at its bottom edge so no card
- * can come to rest under the pill (D5). The reserve does not change when the
- * menu collapses — quieting the corner should not reflow every column under
- * the user's cursor.
+ * Height the board's column scroller reserves at its bottom edge so no card can
+ * come to rest under the pill (D5): the corner's 14px inset plus the pill's
+ * 40px, plus 6px so a card stops short of it rather than against it. The
+ * reserve does not change when the menu collapses — quieting the corner should
+ * not reflow every column under the user's cursor.
  */
-export const BOARD_UTILITY_MENU_RESERVED_SPACE = "pb-[52px]";
+export const BOARD_UTILITY_MENU_RESERVED_SPACE = "pb-[60px]";
 
 const CORNER = "fixed bottom-3.5 left-3.5 z-40 flex items-center rounded-xl border p-[3px]";
 const GLASS = cn(
