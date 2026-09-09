@@ -8,13 +8,16 @@
  * thread pane's add MENU (t3o-14) can swap the same search into a popover it
  * already owns rather than nesting a second one inside a menu item.
  */
+import type { ProjectId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
+import { projectAccent } from "./projectAccent";
 
 export interface BoardPickerOption {
   readonly id: string;
@@ -24,6 +27,14 @@ export interface BoardPickerOption {
   /** The parent card's key when the option is a sub-board child (t3o-25), so
       a child offered among top-level cards names whose board it lives on. */
   readonly parentKey?: string | undefined;
+  /** The owning project when the option is OUTSIDE the current card's project
+      (T3O-33, D3). Cross-project dependencies are legal — a card that changes
+      project inherits them — so the picker offers them, marked with the same
+      dot the board colours their cards with. Absent for same-project options,
+      which is every option on a board with one project. */
+  readonly project?:
+    | { readonly id: ProjectId; readonly title: string; readonly accent: string | null }
+    | undefined;
 }
 
 export function BoardPickerSearchBody({
@@ -61,6 +72,16 @@ export function BoardPickerSearchBody({
               onClick={() => onPick(option.id)}
               type="button"
             >
+              {option.project === undefined ? null : (
+                <BoardHint label={`In ${option.project.title}`}>
+                  <span
+                    className={cn(
+                      "size-[7px] shrink-0 rounded-full",
+                      projectAccent(option.project.id, option.project.accent).dot,
+                    )}
+                  />
+                </BoardHint>
+              )}
               {option.key.length > 0 ? (
                 <span className="shrink-0 font-medium text-muted-foreground">{option.key}</span>
               ) : null}

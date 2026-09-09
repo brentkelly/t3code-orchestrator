@@ -41,6 +41,7 @@ import {
   type BoardCardAttachment,
   type BoardCardDetail,
   type BoardCardId,
+  type BoardCardProjectLock,
   type BoardCardShell,
   type BoardCardThreadLink,
   type BoardCardThreadShell,
@@ -54,6 +55,7 @@ import {
   type BoardStageId,
   type BoardState,
   type EnvironmentId,
+  type ProjectId,
   type ThreadId,
   type BoardCardReviewOverrides,
   type BoardReviewRoundOverride,
@@ -106,6 +108,8 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
 import { BoardBaseBranchConfirmDialog } from "./BoardBaseBranchConfirmDialog";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
+import { BoardCardProjectConfirmDialog } from "./BoardCardProjectConfirmDialog";
+import { BoardCardProjectRowValue, type BoardProjectOption } from "./BoardCardProjectSelect";
 import {
   BoardBriefAttachRow,
   BoardBriefThumbnailStrip,
@@ -252,16 +256,23 @@ function ActivitySection({
   detail,
   stages,
   agents,
+  projectNames,
 }: {
   readonly detail: BoardCardDetail;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly agents: BoardActivityAgentLookup | undefined;
+  readonly projectNames: ReadonlyMap<string, string>;
 }) {
   if (detail.activity.length === 0) return null;
   return (
     <div className="flex flex-col gap-2 border-t border-border p-3.5">
       <SectionHeading>Activity</SectionHeading>
-      <BoardCardActivityRail agents={agents} entries={detail.activity} stages={stages} />
+      <BoardCardActivityRail
+        agents={agents}
+        entries={detail.activity}
+        projectNames={projectNames}
+        stages={stages}
+      />
     </div>
   );
 }
@@ -478,6 +489,30 @@ export interface BoardCardDetailViewProps {
   /** Write the card's base branch; null clears the pin back to the project
       default. Absent on a sub-board child, which has no base of its own. */
   readonly onSetBaseBranch?: ((baseBranch: string | null) => void) | undefined;
+  /** The `Project ·` row (T3O-33), resolved by the container — the one layer
+      that can see the project list, the board settings and every card's key. */
+  readonly project: {
+    /** Why the row is pinned, or null while the card has never been built. The
+        same predicate the decider refuses on, so the control and the rejection
+        cannot disagree. */
+    readonly lock: BoardCardProjectLock | null;
+    /** The projects the card may move to, each with the key the move would
+        reissue. Empty while the row is pinned. */
+    readonly options: ReadonlyArray<BoardProjectOption>;
+    /** The card's accent, for the row's dot. */
+    readonly accent: string | null;
+    /** Whether an agent is working the card right now — the confirm dialog's
+        "the running agent is stopped" line. */
+    readonly stopsAgent: boolean;
+    /** Whether the card's stage auto-executes, so the move restarts it. */
+    readonly restartsStage: boolean;
+    /** Every project's title by id, so the Activity rail's move row can name
+        where the card went — including a project the menu does not offer. */
+    readonly names: ReadonlyMap<string, string>;
+  };
+  /** Move the card to another project. Absent leaves the row read-only, which
+      is what a pinned card and an archived one both get. */
+  readonly onSetProject?: ((projectId: ProjectId) => void) | undefined;
 }
 
 export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
@@ -1372,10 +1407,11 @@ function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   const base = props.baseBranch;
   return (
     <div className="border-t border-border p-3.5 text-[11.5px]/[1.7] text-muted-foreground">
-      <div>
-        Project ·{" "}
-        <span className="text-foreground">{props.projectName ?? "Project not on disk"}</span>
-      </div>
+      {/* Project (T3O-33). Editable until the card has been built, because a
+          card created in the wrong project was otherwise stuck there — and
+          pinned after, because a worktree, a branch and a key on a pull request
+          are all already spelled with the old project's name. */}
+      <BoardCardProjectRow props={props} />
       {props.branch === null ? null : (
         <div>
           Branch · <span className="text-foreground">{props.branch}</span>
@@ -1403,6 +1439,54 @@ function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
           <span className="font-mono">{base.effective}</span> at the next code review round.
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function BoardCardProjectRow({ props }: { readonly props: BoardCardDetailViewProps }) {
+  const card = props.detail.card;
+  const onSet = props.onSetProject;
+  const [confirming, setConfirming] = useState<BoardProjectOption | null>(null);
+
+  if (onSet === undefined) {
+    return (
+      <div>
+        Project ·{" "}
+        <span className="text-foreground">{props.projectName ?? "Project not on disk"}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative flex items-center gap-1.5">
+      <span>Project ·</span>
+      <BoardCardProjectRowValue
+        accent={props.project.accent}
+        lock={props.project.lock}
+        onSelect={(projectId) => {
+          const option = props.project.options.find((entry) => entry.id === projectId);
+          if (option !== undefined) setConfirming(option);
+        }}
+        options={props.project.options}
+        projectId={card.projectId}
+        projectName={props.projectName}
+      />
+      <BoardCardProjectConfirmDialog
+        cardKey={card.key}
+        nextKey={confirming?.nextKey ?? ""}
+        onConfirm={() => {
+          if (confirming !== null) onSet(confirming.id);
+          setConfirming(null);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setConfirming(null);
+        }}
+        open={confirming !== null}
+        projectName={confirming?.title ?? ""}
+        restartsStage={props.project.restartsStage}
+        stageLabel={boardStageLabel(props.stages, card.stage)}
+        stopsAgent={props.project.stopsAgent}
+      />
     </div>
   );
 }
@@ -2101,7 +2185,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <div className="border-t border-border p-3.5">
               <DependenciesSection {...props} />
             </div>
-            <ActivitySection agents={props.agents} detail={props.detail} stages={props.stages} />
+            <ActivitySection
+              agents={props.agents}
+              detail={props.detail}
+              projectNames={props.project.names}
+              stages={props.stages}
+            />
             <div className="flex flex-col gap-2 border-t border-border p-3.5">
               <LabelSection
                 catalogue={props.catalogue}
@@ -2184,6 +2273,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   <BoardCardActivityRail
                     agents={props.agents}
                     entries={props.detail.activity}
+                    projectNames={props.project.names}
                     stages={props.stages}
                   />
                 </div>

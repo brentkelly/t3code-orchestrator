@@ -20,8 +20,11 @@ import {
   isBoardReviewStageExecution,
   activeBoardCardThreadId,
   areBoardStagesAdjacent,
+  assignBoardKeyPrefix,
   boardCardAttention,
+  boardCardProjectLock,
   boardStageWithRole,
+  resolveBoardProjectAccent,
   isBoardCardBaseRetargeted,
   resolveBoardCardEffectiveBase,
   boardSubBoardFloorStage,
@@ -68,7 +71,7 @@ import { primaryServerProvidersAtom } from "../state/server";
 import { usePaginatedBranches } from "../state/queries";
 import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
-import { usePrimarySettings } from "../hooks/useSettings";
+import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   isBoardCardRunInFlight,
@@ -87,6 +90,8 @@ import {
   type BoardDetailDependency,
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
+import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
+import { boardCardProjectOptions } from "./BoardCardProjectSelect";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import {
   describeBoardCommandFailure,
@@ -156,6 +161,10 @@ export function BoardCardDetail({
   const approvePlans = useAtomCommand(boardEnvironment.approvePlans);
   const linkThread = useAtomCommand(boardEnvironment.linkThread);
   const unlinkThread = useAtomCommand(boardEnvironment.unlinkThread);
+  // T3O-33: moving the card to another project. Its own command rather than a
+  // field on `board.card.update` — it reissues the key, clears the base pin and
+  // restarts the stage, none of which is a partial edit.
+  const setCardProject = useAtomCommand(boardEnvironment.setCardProject);
   // Brief attachments (t3o-32): an attach failure is shown on the staged row
   // itself, so it opts out of the shared toast.
   const attachCardFile = useAtomCommand(boardEnvironment.attachCardFile, { reportFailure: false });
@@ -219,6 +228,9 @@ export function BoardCardDetail({
     [stages],
   );
   const boardSettings = usePrimarySettings((settings) => settings.board);
+  // Persisting a newly derived key prefix for the target project (T3O-33), the
+  // same write the create dialog makes on a project's first card.
+  const updateSettings = useUpdatePrimarySettings();
   // Full settings + providers resolve the default model for a blank thread — the
   // same resolution a Threads-view "new thread" uses, so a card-started blank
   // thread lands on the app's default model, not a board-specific one (D3).
@@ -313,21 +325,28 @@ export function BoardCardDetail({
     });
   }, [card, detail]);
 
-  // A dependency only ever names a card in the same project — the picker never
-  // offers one from another project. A sub-board child's picker is narrower
-  // still (t3o-25): siblings only, as materialised edges are scoped; the
-  // decider refuses anything else on create, and offering it here would only
-  // teach the rule by refusal. Children offered to a TOP-LEVEL card carry
-  // their parent's key as a badge instead.
+  // A dependency may name a card in ANOTHER project (T3O-33, D3). `dependsOn`
+  // stores card ids, and the decider has never enforced a same-project rule —
+  // only this picker did — so a card that CHANGES project inherits cross-project
+  // edges the UI could not otherwise create. Rather than leave a state that can
+  // be inherited but not made, the picker offers them and marks them with the
+  // owning project's dot.
+  //
+  // A sub-board child's picker is narrower still (t3o-25): siblings only, as
+  // materialised edges are scoped; the decider refuses anything else on create,
+  // and offering it here would only teach the rule by refusal. Children offered
+  // to a TOP-LEVEL card carry their parent's key as a badge instead.
   const dependencyOptions = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
     const shells = snapshot?.cards ?? [];
     const keyById = new Map(shells.map((shell) => [String(shell.cardId), shell.key]));
+    const titleById = new Map(
+      (snapshot?.projects ?? []).map((project) => [String(project.id), project.title]),
+    );
     const existing = new Set<string>([card.id, ...card.dependsOn]);
     return shells
       .filter(
         (candidate) =>
-          candidate.projectId === card.projectId &&
           !existing.has(candidate.cardId) &&
           (card.parentCardId === null || candidate.parentCardId === card.parentCardId),
       )
@@ -335,11 +354,20 @@ export function BoardCardDetail({
         id: candidate.cardId,
         key: candidate.key,
         title: candidate.title,
+        ...(candidate.projectId === card.projectId
+          ? {}
+          : {
+              project: {
+                id: candidate.projectId,
+                title: titleById.get(String(candidate.projectId)) ?? "Another project",
+                accent: resolveBoardProjectAccent(boardSettings, candidate.projectId),
+              },
+            }),
         ...(card.parentCardId === null && candidate.parentCardId !== undefined
           ? { parentKey: keyById.get(String(candidate.parentCardId)) }
           : {}),
       }));
-  }, [card, snapshot]);
+  }, [boardSettings, card, snapshot]);
 
   // The child's parent, resolved for the sheet's "part of" chip (t3o-25). An
   // archived parent is off the live shell and its sub-board would redirect
@@ -542,6 +570,32 @@ export function BoardCardDetail({
   }
 
   const projectName = snapshot?.projects.find((project) => project.id === card.projectId)?.title;
+
+  // ── Project (T3O-33) ───────────────────────────────────────────────────
+  // The lock comes from the SAME predicate the decider refuses on, so the row
+  // and the rejection cannot disagree. `detail.children` carries archived
+  // children too, which is what the parent refusal needs: an archived child is
+  // still a card holding a number in the parent's project namespace.
+  const projectLock = boardCardProjectLock({
+    board: stageState,
+    card,
+    childCount: detail.children.length,
+  });
+  const projectOptions =
+    projectLock === null
+      ? boardCardProjectOptions({
+          projects: snapshot?.projects ?? [],
+          settings: boardSettings,
+          currentProjectId: card.projectId,
+          cardKeys: snapshot?.cards ?? [],
+        })
+      : [];
+  // An archived card's row is read-only too: it is off the board, and the
+  // decider refuses it anyway.
+  const canSetProject = projectLock === null && card.archivedAt === null;
+  const projectNames = new Map(
+    (snapshot?.projects ?? []).map((entry) => [String(entry.id), entry.title]),
+  );
   // The card owns no branch — its active thread does. Shown when there is one,
   // absent otherwise (never a guessed default).
   const activeThreadId = activeBoardCardThreadId(card.threadLinks);
@@ -788,6 +842,44 @@ export function BoardCardDetail({
       onCreateBlankThread={createBlankThread}
       branch={branch}
       baseBranch={baseBranchInfo}
+      project={{
+        lock: projectLock,
+        options: projectOptions,
+        accent: resolveBoardProjectAccent(boardSettings, card.projectId),
+        names: projectNames,
+        stopsAgent: isBoardCardRunInFlight(cardShell),
+        restartsStage: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
+      }}
+      onSetProject={
+        canSetProject
+          ? (projectId) => {
+              // The target project's key prefix is resolved — and PERSISTED —
+              // here, exactly as the create dialog does it: a prefix derived
+              // per caller drifts, so the first writer settles it.
+              const target = (snapshot?.projects ?? []).find((entry) => entry.id === projectId);
+              const { prefix, assigned } = assignBoardKeyPrefix({
+                board: boardSettings,
+                projectId,
+                projectTitle: target?.title ?? "",
+              });
+              if (assigned) {
+                updateSettings({
+                  board: {
+                    projects: setBoardProjectSetting(boardSettings.projects, projectId, {
+                      keyPrefix: prefix,
+                    }),
+                  },
+                });
+              }
+              runCommand(
+                setCardProject({
+                  environmentId,
+                  input: { cardId: card.id, projectId, keyPrefix: prefix },
+                }),
+              );
+            }
+          : undefined
+      }
       onSetBaseBranch={
         card.parentCardId === null
           ? (next) =>
