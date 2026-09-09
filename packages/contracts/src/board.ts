@@ -2869,6 +2869,71 @@ export function boardPrependOrderKey(existingOrderKeys: ReadonlyArray<string>): 
   return below ?? LEGACY_BOARD_CARD_ORDER_KEY;
 }
 
+/**
+ * The order keys of one board column — the list a card is placed into.
+ *
+ * A column is a stage within one board scope: the root board's top-level
+ * cards (`parentCardId: null`), or one parent's sub-board children. Those are
+ * the only two groupings a board ever renders, so they are the only two a
+ * placement can mean.
+ *
+ * It is deliberately NOT scoped by project. The board's default scope merges
+ * every project's cards into one column per stage (`mergeBoardStageColumns`),
+ * so a per-project key space interleaves arbitrarily there — the T3O-27
+ * defect, where a card created into its project's empty Building column took
+ * the column minimum and landed above a 48-minute-older card of another
+ * project. One key space per stage is right in both scopes at once: a key
+ * above every card in the stage is also above every card of any single
+ * project within it, so a project-scoped view sees the same bottom.
+ *
+ * Archived cards are excluded, matching the move case's column: they have
+ * left the board, so they must not push a live card's key around.
+ */
+export function boardColumnOrderKeys(input: {
+  readonly cards: ReadonlyArray<
+    Pick<BoardCard, "stage" | "orderKey" | "archivedAt" | "parentCardId">
+  >;
+  readonly stage: BoardStageId;
+  readonly parentCardId: BoardCardId | null;
+}): ReadonlyArray<string> {
+  const keys: Array<string> = [];
+  for (const card of input.cards) {
+    if (
+      card.stage === input.stage &&
+      card.archivedAt === null &&
+      card.parentCardId === input.parentCardId
+    ) {
+      keys.push(card.orderKey);
+    }
+  }
+  return keys;
+}
+
+/**
+ * Where a card lands when it ARRIVES in a stage naming no position of its own
+ * — created there, materialised there, or moved there (T3O-27). The bottom of
+ * the column, except the done-role stage, which is read newest-first and so
+ * takes the top (T3O-15).
+ *
+ * One policy in one place, because every arrival must agree: two cards
+ * reaching Done by different routes have to be ordered by the same rule, and
+ * a caller computing its own key can only see the column its own view is
+ * scoped to. The server has the whole board, so this runs there.
+ */
+export function boardArrivalOrderKey(input: {
+  readonly cards: ReadonlyArray<
+    Pick<BoardCard, "stage" | "orderKey" | "archivedAt" | "parentCardId">
+  >;
+  readonly stage: BoardStageId;
+  readonly parentCardId: BoardCardId | null;
+  readonly doneStageId: BoardStageId | null;
+}): string {
+  const keys = boardColumnOrderKeys(input);
+  return input.doneStageId !== null && input.stage === input.doneStageId
+    ? boardPrependOrderKey(keys)
+    : boardAppendOrderKey(keys);
+}
+
 // ── Commands ───────────────────────────────────────────────────────────
 // Card-shape fields on commands/payloads are named `cardType` (not `type`)
 // because `type` is the command/event discriminant.
@@ -2900,8 +2965,13 @@ export const BoardCardCreateCommand = Schema.Struct({
       gate still applies. t3o-06 wires the create dialog's stage picker to
       this. */
   stage: Schema.optional(BoardStageId),
-  /** Client-computed fractional position in the target column. */
-  orderKey: TrimmedNonEmptyString,
+  /** An explicit fractional position in the target column. Absent — the
+      normal case — lets the decider place the card with `boardArrivalOrderKey`:
+      the bottom of the column, or the top of the done-role stage (T3O-27).
+      Mirrors `BoardCardMoveCommand.orderKey`: a caller that names a position
+      means it, and only a caller that can see the whole board (the server) is
+      in a position to name one. */
+  orderKey: Schema.optional(TrimmedNonEmptyString),
   /** Overrides DEFAULT_BOARD_KEY_PREFIX; the t3o-07 settings surface will
       supply the per-project value. */
   keyPrefix: Schema.optional(TrimmedNonEmptyString),

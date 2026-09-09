@@ -9,6 +9,9 @@ Every other column is unchanged. A card advancing into Building, Code review or 
 keeps the position it already had, which matters most in Building: position there is queue
 priority, and an advance must not quietly reshuffle the queue.
 
+A card created straight into Done follows the same rule and lands on top. Everywhere else, a new
+card starts at the bottom — see [Where a new card lands](./board-new-card-order.md).
+
 ## Dragging still means what you dropped
 
 Dragging a card into Done puts it exactly where you dropped it. You named a position, so the board

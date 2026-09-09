@@ -308,7 +308,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       role: "building",
       createdAt: t0,
     });
-    return { ownCard, ownThread };
+    return { ownCard, ownThread, ownProject };
   });
 
   /** Put a live, admitted step on `ownCard`, owned by `ownThread`. `stepId`
@@ -1119,6 +1119,35 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_create_card lands the new card at the bottom of the stage's column", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // A resident in the same stage but ANOTHER project (T3O-27). The board's
+      // default scope merges the two into one column, and this tool's own read
+      // model is filtered to one project — so the placement has to come from
+      // the decider, which sees both.
+      const other = yield* seedOwnCard("bottom-of-column");
+      const resident = yield* boardHandlers
+        .board_create_card({
+          projectId: other.ownProject,
+          title: "Resident",
+          stage: BoardStageId.make("sprint"),
+        })
+        .pipe(withScope(orphanThread));
+      const created = yield* boardHandlers
+        .board_create_card({ projectId, title: "Newest", stage: BoardStageId.make("sprint") })
+        .pipe(withScope(orphanThread));
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const model = yield* snapshotQuery.getCommandReadModel();
+      const cards = model.board?.cards ?? [];
+      const newCard = cards.find((candidate) => candidate.id === created.cardId);
+      const residentCard = cards.find((candidate) => candidate.id === resident.cardId);
+      assert.isDefined(newCard);
+      assert.isDefined(residentCard);
+      assert.isTrue(newCard!.orderKey > residentCard!.orderKey);
+    }),
+  );
+
   it.effect("board_move_card lands the moved card at the bottom of the target column", () =>
     Effect.gen(function* () {
       yield* seed();
@@ -1137,6 +1166,38 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const residentCard = cards.find((candidate) => candidate.id === resident.cardId);
       assert.strictEqual(movedCard?.stage, "sprint");
       // Bottom of the target column: the computed key sorts after the resident's.
+      assert.isDefined(movedCard);
+      assert.isDefined(residentCard);
+      assert.isTrue(movedCard!.orderKey > residentCard!.orderKey);
+    }),
+  );
+
+  it.effect("board_move_card lands below a resident of ANOTHER project in the same column", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // The merged column, not this project's slice of it (T3O-27). The only
+      // resident of the target column belongs to another project, so a
+      // per-project scope sees an EMPTY column and hands back the column
+      // minimum — landing the moved card level with, not below, the resident.
+      const other = yield* seedOwnCard("move-merged-column");
+      const resident = yield* boardHandlers
+        .board_create_card({
+          projectId: other.ownProject,
+          title: "Resident of another project",
+          stage: BoardStageId.make("planning"),
+        })
+        .pipe(withScope(orphanThread));
+      const mover = yield* boardHandlers
+        .board_create_card({ projectId, title: "Mover", stage: BoardStageId.make("sprint") })
+        .pipe(withScope(orphanThread));
+      yield* boardHandlers
+        .board_move_card({ cardId: mover.cardId, toStage: BoardStageId.make("planning") })
+        .pipe(withScope(orphanThread));
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const model = yield* snapshotQuery.getCommandReadModel();
+      const cards = model.board?.cards ?? [];
+      const movedCard = cards.find((candidate) => candidate.id === mover.cardId);
+      const residentCard = cards.find((candidate) => candidate.id === resident.cardId);
       assert.isDefined(movedCard);
       assert.isDefined(residentCard);
       assert.isTrue(movedCard!.orderKey > residentCard!.orderKey);

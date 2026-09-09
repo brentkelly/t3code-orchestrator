@@ -15,6 +15,7 @@ import {
   boardCardPlans,
   boardCardStepCompletions,
   boardCardStepState,
+  boardColumnOrderKeys,
   boardLabelCatalogue,
   boardStageWithRole,
   boardStepPayloadDefect,
@@ -714,12 +715,6 @@ export const boardHandlers = {
           });
         }
       }
-      // Bottom of the target column, computed from the read model.
-      const orderKey = boardAppendOrderKey(
-        board.cards
-          .filter((card) => card.projectId === projectId && card.stage === stage)
-          .map((card) => card.orderKey),
-      );
       const cardId = BoardCardId.make(yield* mintUuid);
       // ONE atomic command: the create command carries `brief` and `dependsOn`
       // natively (t3o-06), so the card lands whole — no follow-up update whose
@@ -735,7 +730,9 @@ export const boardHandlers = {
         ...(dependsOn.length > 0 ? { dependsOn } : {}),
         labels,
         stage,
-        orderKey,
+        // No `orderKey`: the decider places the card at the bottom of the
+        // stage's column (T3O-27), which is the only place that can see the
+        // whole board — this tool's read model is filtered to one project.
         keyPrefix: yield* resolveCardKeyPrefix(projectId, projectTitle),
         createdAt: yield* nowIso,
       };
@@ -763,12 +760,17 @@ export const boardHandlers = {
         card === undefined || input.toStage === doneStageId
           ? undefined
           : boardAppendOrderKey(
-              board.cards
-                .filter(
-                  (candidate) =>
-                    candidate.projectId === card.projectId && candidate.stage === input.toStage,
-                )
-                .map((candidate) => candidate.orderKey),
+              // The column the card is moving into, in the same scope every
+              // other placement uses (T3O-27): one key space per stage within
+              // the card's board (root, or its parent's sub-board), archived
+              // cards excluded. A per-project filter here computed a bottom
+              // for a slice of the merged column, which is not where the card
+              // lands on the board a human is looking at.
+              boardColumnOrderKeys({
+                cards: board.cards,
+                stage: input.toStage,
+                parentCardId: card.parentCardId,
+              }),
             );
       const command: BoardCardMoveCommand = {
         type: "board.card.move",
