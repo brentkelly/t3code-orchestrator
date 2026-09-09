@@ -180,6 +180,11 @@ export interface SupervisorReactorShape {
       production the worker runs it on a timer; exposed so tests can drive the
       liveness clock deterministically. */
   readonly sweep: Effect.Effect<void>;
+  /** One scheduled-start pass: clear every card whose time has arrived, which
+      is what makes it act (T3O-19, D3/D4). Rides the same 30s timer as the
+      sweep in production; exposed for the same reason, so a test can fire a due
+      card without wall-clock time. */
+  readonly fireSchedules: Effect.Effect<void>;
   /** One release pass: settle every thread the board is finished with (t3o-13).
       Runs on the same timer as the sweep and at every step boundary; exposed so
       tests can drive the retry that lands after an agent's turn ends. */
@@ -4155,17 +4160,46 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * Make the move the supervisor would otherwise make now (T3O-19, D3) — the
+   * one action a schedule reaching its moment, or being cleared, performs.
+   *
+   * A PARKED step goes back through the ordinary governor queue (T3O-23's
+   * `requeue-step`), which keeps its thread, so admission nudges the
+   * conversation the agent already has rather than starting a fresh one; the
+   * `board.card-step-recovered` handler runs the scheduling pass for it, and a
+   * full board simply leaves it `Queued`, which is the honest answer. Anything
+   * else is a step the gate was withholding, and one pass admits it.
+   */
+  const startOrResumeCard = Effect.fn("board-supervisor-startOrResumeCard")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || card.archivedAt !== null) return;
+    const state = boardCardStepState(board, cardId);
+    if (state !== null && isBoardParkedStepStatus(state.status)) {
+      yield* dispatchOptional({
+        type: "board.card.requeue-step",
+        commandId: yield* commandId("schedule-requeue"),
+        cardId,
+        createdAt: yield* nowIso,
+      });
+    }
+    // Unconditional, and deliberately not left to the `board.card-step-recovered`
+    // handler: the requeue is dispatched from INSIDE this reactor, and a card
+    // whose only route back to the governor was its own event coming round again
+    // would be one stream hop from sitting `queued` forever. The handler stays —
+    // it is the seam for the client's Resume button — and a second pass finds
+    // the step already admitted and does nothing.
+    yield* schedule();
+  });
+
+  /**
    * React to an edit that TOUCHED the card's scheduled start (T3O-19, D3/D6).
    *
-   * One rule, in both directions: if the time has arrived (or was cleared), make
-   * the move the supervisor would otherwise make now; if it has not, hold the
-   * card still, stopping a step that is running right now.
-   *
-   * A time already in the PAST is cleared rather than acted on directly, and the
-   * clear re-enters here with `null` to do the acting. That re-entrancy is
-   * bounded and terminating — an enqueued follow-up through the worker, not
-   * recursion — and it means the card never wears a pill for a moment that has
-   * already gone.
+   * One rule, in both directions: if the time has arrived (or was cleared),
+   * make the move the supervisor would otherwise make now; if it has not, hold
+   * the card still, stopping a step that is running right now.
    */
   const applyScheduleEdit = Effect.fn("board-supervisor-applyScheduleEdit")(function* (
     cardId: BoardCardId,
@@ -4173,7 +4207,6 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === cardId);
     if (card === undefined || card.archivedAt !== null) return;
-    const state = boardCardStepState(board, cardId);
     if (!isBoardCardScheduleDue(card.scheduledStartAt, Date.parse(yield* nowIso))) {
       // Held for later. A step that is RUNNING is stopped now and picked up
       // then — the popover says so before the click, and clearing the time
@@ -4184,41 +4217,42 @@ const make = Effect.gen(function* () {
       // throw away the reason the card is showing to say nothing new; the time
       // simply schedules its exit. A `pending`/`queued` step needs nothing at
       // all — the gate in `schedule()` withholds it.
+      const state = boardCardStepState(board, cardId);
       if (state !== null && state.status === "running") {
         yield* pauseStepNow({ card, state });
       }
       return;
     }
-    if (card.scheduledStartAt !== null) {
-      // Due, but the field is still set — a past time, or the tick catching one
-      // up. Clear it and let the clear do the acting.
-      yield* clearCardSchedule(card);
-      return;
-    }
-    // Cleared or fired. A parked step goes back through the ordinary governor
-    // queue (T3O-23's `requeue-step`), which keeps its thread, so admission
-    // nudges the conversation the agent already has rather than starting over;
-    // `board.card-step-recovered` runs the scheduling pass for it. Anything else
-    // is a step the gate was withholding, and one pass admits it.
-    if (state !== null && isBoardParkedStepStatus(state.status)) {
-      yield* dispatchOptional({
-        type: "board.card.requeue-step",
-        commandId: yield* commandId("schedule-requeue"),
-        cardId: card.id,
-        createdAt: yield* nowIso,
-      });
-      return;
-    }
-    yield* schedule();
+    // A time set in the PAST means "now" (D6), so it fires here rather than
+    // waiting up to 30s for the tick — and the card never wears a pill for a
+    // moment that has already gone.
+    if (card.scheduledStartAt !== null) return yield* fireCardSchedule(card);
+    yield* startOrResumeCard(cardId);
+  });
+
+  /**
+   * Fire ONE card's scheduled start: clear the field, then act (T3O-19, D4).
+   *
+   * The order is the whole content of this function. A crash between the two
+   * leaves a cleared-but-unstarted card, which the next scheduling pass — or
+   * boot's reconcile, which ends in one — starts. Acting first would leave a
+   * stale time behind on a crash, and that time would re-gate the NEXT stage
+   * from a decision the user made about something else. Benign in one
+   * direction, silently wrong in the other.
+   */
+  const fireCardSchedule = Effect.fn("board-supervisor-fireCardSchedule")(function* (
+    card: BoardCard,
+  ) {
+    yield* clearCardSchedule(card);
+    yield* startOrResumeCard(card.id);
   });
 
   /**
    * Fire every card whose scheduled start has arrived (T3O-19, D3).
    *
    * Rides the existing 30s sweep tick rather than a timer of its own: ±30s
-   * granularity on a control whose finest input is one minute. It only CLEARS —
-   * the clear's own event does the acting, which is what keeps clear-before-act
-   * true by construction (see `clearCardSchedule`).
+   * granularity on a control whose finest input is one minute, and no new
+   * fiber, no polling loop.
    */
   const fireDueSchedules = Effect.fn("board-supervisor-fireDueSchedules")(function* () {
     const board = yield* readBoard;
@@ -4226,9 +4260,20 @@ const make = Effect.gen(function* () {
     for (const card of board.cards) {
       if (card.scheduledStartAt === null || card.archivedAt !== null) continue;
       if (!isBoardCardScheduleDue(card.scheduledStartAt, nowMs)) continue;
-      yield* clearCardSchedule(card);
+      yield* fireCardSchedule(card);
     }
   });
+
+  /** The scheduled-start pass as the tick and the test hook consume it: TOTAL,
+      like the timeout sweep beside it. A read-model hiccup must cost one 30s
+      window, never take the sweep fiber down. */
+  const sweepSchedules = fireDueSchedules().pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: scheduled-start sweep failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
 
   // Mid-run human-in-the-loop toggle (D5/D6): when the per-card Build toggle is
   // flipped on a card with a non-terminal step, retune the run row so
@@ -4966,6 +5011,11 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (!landed) return;
+    // A human put this step back to work themselves, so a schedule that would
+    // stop it again later has been overtaken (T3O-19, D6). Cleared here rather
+    // than only on the `board.card-step-recovered` this dispatch produces,
+    // because that event is raised from inside this reactor.
+    yield* clearScheduleForCard(found.card.id);
     // The decider wrote `slotHeld: true` for a build step, so the in-memory
     // count has to match it. `restore` rather than `acquire`: the human already
     // sent the turn and the agent is already working, so this is a take, not a
@@ -5363,7 +5413,7 @@ const make = Effect.gen(function* () {
         // "check on things nothing told us about".
         return sweepTimeouts.pipe(
           Effect.andThen(releaseFinishedThreads),
-          Effect.andThen(fireDueSchedules),
+          Effect.andThen(sweepSchedules),
         );
     }
   };
@@ -5470,6 +5520,7 @@ const make = Effect.gen(function* () {
     start,
     reconcile,
     sweep: sweepTimeouts,
+    fireSchedules: sweepSchedules,
     releaseThreads: releaseFinishedThreads,
     drain: worker.drain,
     // Both run OUTSIDE the serialised worker: they are request-scoped, the

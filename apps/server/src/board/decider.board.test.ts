@@ -28,7 +28,7 @@ import {
   type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { boardDecidedEvents, decideBoardCommand, type BoardCommand } from "./decider.ts";
@@ -199,6 +199,7 @@ const createCommand = (input: {
   readonly labels?: ReadonlyArray<string>;
   readonly brief?: string;
   readonly dependsOn?: ReadonlyArray<string>;
+  readonly scheduledStartAt?: string;
 }) =>
   ({
     type: "board.card.create",
@@ -216,6 +217,7 @@ const createCommand = (input: {
     ...(input.dependsOn === undefined
       ? {}
       : { dependsOn: input.dependsOn.map((id) => BoardCardId.make(id)) }),
+    ...(input.scheduledStartAt === undefined ? {} : { scheduledStartAt: input.scheduledStartAt }),
     createdAt: NOW,
   }) as const;
 
@@ -3279,4 +3281,108 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       assert.deepStrictEqual(column, arrived.toReversed());
     }),
   );
+
+  // ── Scheduled starts (T3O-19) ─────────────────────────────────────────────
+
+  describe("scheduled starts (T3O-19, D1)", () => {
+    const AT = "2026-03-04T09:00:00.000Z";
+    const LATER = "2026-03-05T21:00:00.000Z";
+    const PAST = "2020-01-01T00:00:00.000Z";
+
+    const updateSchedule = (scheduledStartAt: string | null) =>
+      ({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-schedule"),
+        cardId: BoardCardId.make("card-1"),
+        scheduledStartAt,
+        createdAt: NOW,
+      }) satisfies BoardCommand;
+
+    const boardWithCard = (scheduledStartAt: string | null) =>
+      makeReadModel({
+        board: seededBoard([makeCard({ id: "card-1", scheduledStartAt })]),
+      });
+
+    it.effect("a create carries the schedule onto the card, and omits the key without one", () =>
+      Effect.gen(function* () {
+        const scheduled = yield* decide(
+          createCommand({ cardId: "card-new", scheduledStartAt: AT }),
+          makeReadModel({ board: seededBoard() }),
+        );
+        assert.strictEqual(scheduled.type, "board.card-created");
+        if (scheduled.type !== "board.card-created") return;
+        assert.strictEqual(scheduled.payload.scheduledStartAt, AT);
+
+        const plain = yield* decide(
+          createCommand({ cardId: "card-plain" }),
+          makeReadModel({ board: seededBoard() }),
+        );
+        assert.strictEqual(plain.type, "board.card-created");
+        if (plain.type !== "board.card-created") return;
+        // Key-optional, so a card created without a time replays identically to
+        // every event written before this spec existed.
+        assert.isFalse("scheduledStartAt" in plain.payload);
+      }),
+    );
+
+    it.effect("an update sets, changes and clears the time, and says it touched it", () =>
+      Effect.gen(function* () {
+        const set = yield* decide(updateSchedule(AT), boardWithCard(null));
+        assert.strictEqual(set.type, "board.card-updated");
+        if (set.type !== "board.card-updated") return;
+        assert.strictEqual(set.payload.card.scheduledStartAt, AT);
+        // The marker the supervisor reads to tell a schedule edit from any other
+        // edit; without it, clearing and a title change look the same.
+        assert.strictEqual(set.payload.scheduledStartAt, AT);
+
+        const changed = yield* decide(updateSchedule(LATER), boardWithCard(AT));
+        assert.strictEqual(changed.type, "board.card-updated");
+        if (changed.type !== "board.card-updated") return;
+        assert.strictEqual(changed.payload.card.scheduledStartAt, LATER);
+
+        const cleared = yield* decide(updateSchedule(null), boardWithCard(AT));
+        assert.strictEqual(cleared.type, "board.card-updated");
+        if (cleared.type !== "board.card-updated") return;
+        assert.isNull(cleared.payload.card.scheduledStartAt);
+        assert.isNull(cleared.payload.scheduledStartAt);
+      }),
+    );
+
+    it.effect("an unrelated edit leaves the time alone and does not claim to touch it", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          {
+            type: "board.card.update",
+            commandId: CommandId.make("cmd-title"),
+            cardId: BoardCardId.make("card-1"),
+            title: "Renamed",
+            createdAt: NOW,
+          },
+          boardWithCard(AT),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        assert.strictEqual(event.payload.card.scheduledStartAt, AT);
+        assert.isFalse("scheduledStartAt" in event.payload);
+      }),
+    );
+
+    it.effect("a past time is accepted — it means now, and the picker refuses none", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(updateSchedule(PAST), boardWithCard(null));
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        assert.strictEqual(event.payload.card.scheduledStartAt, PAST);
+      }),
+    );
+
+    it.effect("a schedule on its own is a real change, not an empty update", () =>
+      Effect.gen(function* () {
+        // The no-changes guard lists every field; a schedule missing from it would
+        // reject the one command this whole feature is driven by.
+        const event = yield* decide(updateSchedule(AT), boardWithCard(null));
+        assert.strictEqual(event.type, "board.card-updated");
+      }),
+    );
+  });
 });

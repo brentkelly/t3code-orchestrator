@@ -164,6 +164,9 @@ export const makeBoardCard = (input: {
   readonly pullRequest?: BoardCardPullRequest | null;
   readonly pullRequestHistory?: ReadonlyArray<BoardCardPullRequest>;
   readonly pullRequestFloor?: number | null;
+  /** The card's scheduled start (T3O-19). Absent is unscheduled, which is what
+      every fixture written before it reads as. */
+  readonly scheduledStartAt?: string | null;
 }): BoardCard => ({
   id: BoardCardId.make(input.id),
   key: input.id.toUpperCase(),
@@ -185,7 +188,7 @@ export const makeBoardCard = (input: {
   modelOverrides: null,
   splitRationale: null,
   baseBranch: null,
-  scheduledStartAt: null,
+  scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],
@@ -935,7 +938,16 @@ export function withGovernor(
             // reactor, where the double has already folded it in — the
             // projection is an idempotent upsert of the whole state, so folding
             // it twice is the same as folding it once.
-            event.type === "board.card-step-recovered")
+            event.type === "board.card-step-recovered" ||
+            // And a card EDIT (T3O-19): `board.card.update` is a client command
+            // too, so its event reaches a running board from outside the
+            // reactor with the projection already folded in — and the schedule
+            // handler re-reads the card from the model, so a pump that skipped
+            // the fold would hand it the card as it was BEFORE the edit and
+            // prove the opposite of what the test says. The projector's update
+            // path is an idempotent upsert of the card the payload carries, so
+            // a fixture must build the event from the card it currently holds.
+            event.type === "board.card-updated")
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),
@@ -1064,6 +1076,35 @@ export const stepRequeued = (state: BoardCardStepState, sequence: number): Orche
         startedAt: null,
       },
     },
+  }) as unknown as OrchestrationEvent;
+
+/** A card edit as the decider emits it (T3O-19): the whole card, plus the
+    key that says the edit TOUCHED the schedule. That key is what the reactor
+    reads to tell a schedule edit from a title edit, so a helper that omitted it
+    would drive a path production never takes. */
+export const cardScheduleUpdated = (
+  card: BoardCard,
+  scheduledStartAt: string | null,
+  sequence: number,
+): OrchestrationEvent =>
+  ({
+    type: "board.card-updated",
+    sequence,
+    payload: {
+      cardId: card.id,
+      card: { ...card, scheduledStartAt },
+      scheduledStartAt,
+    },
+  }) as unknown as OrchestrationEvent;
+
+/** An edit that leaves the schedule alone — a title change. The absent
+    `scheduledStartAt` key is the whole point: it is what must stop an unrelated
+    edit from resuming a card parked for another reason. */
+export const cardTitleUpdated = (card: BoardCard, sequence: number): OrchestrationEvent =>
+  ({
+    type: "board.card-updated",
+    sequence,
+    payload: { cardId: card.id, card: { ...card, title: `${card.title} (edited)` } },
   }) as unknown as OrchestrationEvent;
 
 export const cardArchived = (card: BoardCard, sequence: number): OrchestrationEvent =>
