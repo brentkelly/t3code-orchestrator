@@ -89,10 +89,11 @@ export function BoardProviderUsagePill({
               setOpen(false);
               onResumeNow(row.providerInstanceId);
             }}
-            onSetResumeAt={(iso) => {
+            onCommitResumeAt={(iso) => {
               setOpen(false);
               onSetResumeAt(row.providerInstanceId, iso);
             }}
+            onSetResumeAt={(iso) => onSetResumeAt(row.providerInstanceId, iso)}
             row={row}
           />
         ))}
@@ -105,11 +106,16 @@ function UsageRow({
   row,
   onResumeNow,
   onSetResumeAt,
+  onCommitResumeAt,
   onOpenCard,
 }: {
   readonly row: BoardProviderUsageRow;
   readonly onResumeNow: () => void;
+  /** A time typed into the field: sent, and the popover stays open. */
   readonly onSetResumeAt: (resumeAt: string | null) => void;
+  /** A time chosen outright — a preset, or handing the schedule back: sent, and
+      the popover closes behind it. */
+  readonly onCommitResumeAt: (resumeAt: string | null) => void;
   readonly onOpenCard: (cardId: string) => void;
 }) {
   return (
@@ -172,7 +178,13 @@ function UsageRow({
           behind `knownTime` left the one person who could correct it with no way
           to. Their time survives any later loose match; only the provider naming
           a time of its own replaces it. */}
-      {row.limited ? <SetResumeTime knownTime={row.knownTime} onSet={onSetResumeAt} /> : null}
+      {row.limited ? (
+        <SetResumeTime
+          knownTime={row.knownTime}
+          onCommit={onCommitResumeAt}
+          onSet={onSetResumeAt}
+        />
+      ) : null}
       {row.tasks.map((task) => (
         <button
           className="flex h-[26px] w-full items-center gap-2 rounded-md px-1.5 text-left hover:bg-accent"
@@ -200,9 +212,11 @@ function UsageRow({
 function SetResumeTime({
   knownTime,
   onSet,
+  onCommit,
 }: {
   readonly knownTime: boolean;
   readonly onSet: (resumeAt: string | null) => void;
+  readonly onCommit: (resumeAt: string | null) => void;
 }) {
   const [nowMs] = useState(() => Date.now());
   const [draft, setDraft] = useState("");
@@ -217,6 +231,11 @@ function SetResumeTime({
         className="h-[30px] w-full rounded-md border border-input bg-background px-2 text-[12.5px] text-foreground outline-none focus-visible:border-ring"
         onChange={(event) => {
           setDraft(event.target.value);
+          // Sent on every COMPLETE value, exactly as the card's schedule field
+          // does — and, like it, WITHOUT closing the popover. The field becomes
+          // valid the moment the hour is filled in, and closing there would
+          // dismiss the control under the cursor before the minute or the AM/PM
+          // was chosen, leaving a real resume time the sweep acts on.
           const iso = localInputValueToIso(event.target.value);
           if (iso !== null) onSet(iso);
         }}
@@ -228,7 +247,7 @@ function SetResumeTime({
           <button
             className="h-[26px] rounded-md border border-input px-2 text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
             key={preset.label}
-            onClick={() => onSet(preset.iso)}
+            onClick={() => onCommit(preset.iso)}
             type="button"
           >
             {preset.label}
@@ -237,7 +256,7 @@ function SetResumeTime({
         {knownTime ? (
           <button
             className="h-[26px] rounded-md border border-input px-2 text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={() => onSet(null)}
+            onClick={() => onCommit(null)}
             type="button"
           >
             Check periodically
