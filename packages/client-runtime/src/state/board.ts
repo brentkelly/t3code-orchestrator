@@ -75,6 +75,7 @@ import {
   refreshBoardCardPullRequest,
   renameBoardStage,
   reorderBoardCard,
+  requeueBoardCardStep,
   forceStartBoardCardStep,
   reopenBoardCardStep,
   reorderBoardStage,
@@ -97,6 +98,7 @@ import {
   type MoveBoardCardInput,
   type RenameBoardStageInput,
   type ReorderBoardCardInput,
+  type RequeueBoardCardStepInput,
   type ForceStartBoardCardStepInput,
   type ReopenBoardCardStepInput,
   type ReorderBoardStageInput,
@@ -128,6 +130,7 @@ export type {
   MoveBoardCardInput,
   RenameBoardStageInput,
   ReorderBoardCardInput,
+  RequeueBoardCardStepInput,
   ForceStartBoardCardStepInput,
   ReopenBoardCardStepInput,
   ReorderBoardStageInput,
@@ -366,11 +369,12 @@ export function applyBoardShellStreamEvent(
       // same delta: recovered-to-running lights it, while stalled / freshly
       // selected (pending) / settled (terminal) put it out.
       //
-      // And it carries `stepAwaiting` (t3o-34, D4), which is why a step PARKING
-      // for a human publishes through this delta at all: awaiting-input emitted
-      // nothing to the column card before. Every other emitter clears it, so
-      // answering the question clears the badge on the same event that re-lights
-      // the dot.
+      // And it carries `stepAwaiting` (t3o-34, D4; T3O-23), which is why a step
+      // PARKING publishes through this delta at all: awaiting-input emitted
+      // nothing to the column card before. Two emitters SET it — the step
+      // parking on a question and a human pausing it — and every other one
+      // clears it, so answering the question or pressing Resume clears the badge
+      // on the same event that re-lights the dot or raises the queue pill.
       //
       // And `stepConflictFix` (T3O-9): the fix's own select-step raises it, its
       // settle lowers it, and the awaiting/recovered emitters carry it through —
@@ -974,6 +978,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
     forceStartStep: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:force-start-step",
       execute: (input: ForceStartBoardCardStepInput) => forceStartBoardCardStep(input),
+    }),
+    /** Resume a card's paused step (T3O-23): it re-enters the build queue and
+        the governor admits it into its EXISTING thread when a slot frees. */
+    requeueStep: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:requeue-step",
+      execute: (input: RequeueBoardCardStepInput) => requeueBoardCardStep(input),
     }),
     /** Send a settled step back because its recorded payload cannot be read
         (T3O-14) — the way out of a review round that halted `unreadable`. */

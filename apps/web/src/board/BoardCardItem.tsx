@@ -75,10 +75,17 @@ export interface BoardCardTodoContext {
 const EMPTY_TODO_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
 
 /**
- * The three attention tones as card-level treatments: border, fill tint, and
- * the 1px ring. One entry per tone rather than a branch per reason — the
- * reason picks the tone (`boardCardAttention`), and the card only ever renders
- * a tone.
+ * The attention tones as card-level treatments: border, fill tint, and the 1px
+ * ring. One entry per tone rather than a branch per reason — the reason picks
+ * the tone (`boardCardAttention`), and the card only ever renders a tone.
+ *
+ * `neutral` (T3O-23) is the tone that takes NO treatment: a paused card is held
+ * by the user's own instruction and asserts nothing about work, so it reads
+ * exactly like an untinted card and says why in the chip's words —
+ * `docs/t3o/status-colours.md`, "no colour without a claim". Its entries are the
+ * untinted card's own classes rather than an early return, so the "exactly one
+ * border / fill / shadow class per card" rule below still holds by
+ * construction.
  *
  * The tint is a colour-MIX into the card fill, not a translucent overlay, so it
  * reads the same over the light `--card` and the dark lift — a flat `bg-attention/7`
@@ -90,6 +97,7 @@ const TONE_BORDER: Record<BoardCardAttentionTone, string> = {
   danger: "border-destructive/60",
   warning: "border-amber-500/60",
   attention: "border-attention/55",
+  neutral: "border-border",
 };
 
 const TONE_TINT: Record<BoardCardAttentionTone, string> = {
@@ -99,6 +107,7 @@ const TONE_TINT: Record<BoardCardAttentionTone, string> = {
     "bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]",
   attention:
     "bg-[color-mix(in_srgb,var(--attention)_7%,var(--card))] dark:bg-[color-mix(in_srgb,var(--attention)_9%,#1c1c20)]",
+  neutral: "bg-card hover:border-foreground/18 dark:bg-[#1c1c20]",
 };
 
 const TONE_RING: Record<BoardCardAttentionTone, string> = {
@@ -108,6 +117,7 @@ const TONE_RING: Record<BoardCardAttentionTone, string> = {
     "shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,#f59e0b_45%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
   attention:
     "shadow-[0_0_0_1px_color-mix(in_srgb,var(--attention)_40%,transparent)] hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--attention)_40%,transparent),0_4px_14px_-8px_rgb(0_0_0/0.35)]",
+  neutral: "shadow-xs/5 hover:shadow-[0_4px_14px_-8px_rgb(0_0_0/0.35)]",
 };
 
 /** The chip's leading mark per reason. The violet question keeps its DOT rather
@@ -115,6 +125,8 @@ const TONE_RING: Record<BoardCardAttentionTone, string> = {
     indicator as the running dot in a different colour — while the states where
     nothing is running at all wear an icon. */
 const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
+  // The literal meaning of the glyph, for once (T3O-23): a human pressed Stop.
+  paused: <PauseIcon className="size-3" />,
   stalled: <TriangleAlertIcon className="size-3" />,
   approval: <LayersIcon className="size-3" />,
   "review-held": <TriangleAlertIcon className="size-3" />,
@@ -131,6 +143,7 @@ const TONE_CHIP: Record<BoardCardAttentionTone, string> = {
   danger: "text-destructive-foreground",
   warning: "text-amber-700 dark:text-amber-300",
   attention: "text-attention-foreground",
+  neutral: "text-muted-foreground",
 };
 
 export function BoardCardContent({

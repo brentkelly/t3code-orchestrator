@@ -38,6 +38,7 @@ import {
   BoardCardStepAdmittedPayload,
   BoardCardStepAwaitingInputPayload,
   BoardCardStepForceStartRequestedPayload,
+  BoardCardStepPausedPayload,
   BoardCardStepRecoveredPayload,
   BoardCardStepSettledPayload,
   BoardCardStepRetunedPayload,
@@ -60,6 +61,7 @@ import {
   BoardStageRenamedPayload,
   BoardStageReorderedPayload,
   boardStages,
+  boardStepParkedReason,
   compareBoardLabels,
   compareBoardStages,
   EMPTY_BOARD_STATE,
@@ -149,6 +151,7 @@ const decodeBoardCardStepAwaitingInputPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardStepForceStartRequestedPayload = Schema.decodeUnknownEffect(
   BoardCardStepForceStartRequestedPayload,
 );
+const decodeBoardCardStepPausedPayload = Schema.decodeUnknownEffect(BoardCardStepPausedPayload);
 const decodeBoardCardStepRecoveredPayload = Schema.decodeUnknownEffect(
   BoardCardStepRecoveredPayload,
 );
@@ -720,6 +723,12 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
+    case "board.card-step-paused":
+      return decodeBoardCardStepPausedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
     case "board.card-step-recovered":
       return decodeBoardCardStepRecoveredPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
@@ -910,17 +919,21 @@ export function boardShellStreamEvent(
         held: false,
         // And it is never awaiting input (t3o-34, D4): recovery either escalated
         // or resumed. This is the delta that clears the card's "Input needed" /
-        // "Needs a human" badge when a human answers, because `resume-step`
-        // publishes through here.
-        stepAwaiting: null,
+        // "Needs a human" / "Paused" badge when a human answers or presses
+        // Resume, because `resume-step` and `requeue-step` both publish through
+        // here. Derived rather than hardcoded so the one definition
+        // (`boardStepParkedReason`) answers for every producer.
+        stepAwaiting: boardStepParkedReason(event.payload.state),
         // A recovered conflict fix keeps its identity — `recoverStep`
         // re-dispatches the row's own `stepLabel`, so the nudged step is still
         // the same fix. An ESCALATION lands it on `stalled`, which
         // `isBoardConflictFixLive` excludes so the pill hands over to the
         // louder "Stalled" chip rather than fighting it (T3O-9).
         stepConflictFix: isBoardConflictFixLive(event.payload.state),
-        // Recovery lands on `running` or `stalled`, so it is never queued.
-        queued: false,
+        // Recovery lands on `running` or `stalled` — but a board-driven resume
+        // (T3O-23) lands on `queued`, and this is the one delta that carries
+        // both the parked chip it clears and the queue pill it raises.
+        queued: event.payload.state.status === "queued",
       });
 
     case "board.card-step-selected":
@@ -1017,6 +1030,33 @@ export function boardShellStreamEvent(
       }
       return Option.none();
 
+    case "board.card-step-paused":
+      // A human stopped the step (T3O-23) — the fourth step transition that is
+      // a column-card field, and the mirror of the awaiting-input arm below. It
+      // rides `card-stalled` for the same reason: that delta already carries
+      // every step-derived shell flag, and a fifth delta for one field would be
+      // payload for nothing.
+      return Option.some({
+        kind: "card-stalled",
+        sequence: event.sequence,
+        cardId: event.payload.cardId,
+        // Paused is NOT stalled: recovery has not given up, nothing failed, and
+        // the chip that renders is neutral rather than the loud red one.
+        stalled: false,
+        // Nobody is working — this is the half of the fix that makes the stop
+        // visible at all.
+        stepRunning: false,
+        // Non-terminal, so the stage has not finished with the card.
+        held: false,
+        stepAwaiting: boardStepParkedReason(event.payload.state),
+        // A paused conflict fix hands the card face to the louder Paused chip
+        // (`isBoardConflictFixLive` excludes it), so this always clears.
+        stepConflictFix: isBoardConflictFixLive(event.payload.state),
+        // A paused step held a slot and gave it back; it is parked, not waiting
+        // in the queue. Pressing Resume is what makes it `queued`.
+        queued: false,
+      });
+
     case "board.card-step-awaiting-input":
       // The third step transition that IS a column-card field (t3o-34, D4).
       // This case used to fall through to "step transitions are card DETAIL",
@@ -1038,7 +1078,7 @@ export function boardShellStreamEvent(
         stepRunning: false,
         // Non-terminal, so nothing is `held`.
         held: false,
-        stepAwaiting: event.payload.state.awaitingReason,
+        stepAwaiting: boardStepParkedReason(event.payload.state),
         // A conflict fix that asks a question is still the same live fix
         // (T3O-9): the merge is still held, so the flag rides through unchanged.
         stepConflictFix: isBoardConflictFixLive(event.payload.state),

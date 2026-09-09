@@ -359,6 +359,47 @@ describe("board shell reducer", () => {
     expect(resumed.cards?.[0]?.stepRunning).toBe(true);
   });
 
+  it("carries a human pause through a drag, and Resume raises the queue pill (T3O-23)", () => {
+    const paused = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
+      {
+        kind: "card-stalled",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        stalled: false,
+        stepRunning: false,
+        held: false,
+        stepAwaiting: "paused",
+        stepConflictFix: false,
+        queued: false,
+      },
+    );
+    expect(paused.cards?.[0]?.stepAwaiting).toBe("paused");
+    const reordered = applyShellStreamEvent(paused, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
+    });
+    expect(reordered.cards?.[0]?.stepAwaiting).toBe("paused"); // preserved
+    // Resume sends the step back through the governor, so the ONE delta that
+    // carries both clears the Paused chip and raises the queue pill together —
+    // the card never shows both, and never neither.
+    const requeued = applyShellStreamEvent(reordered, {
+      kind: "card-stalled",
+      sequence: 4,
+      cardId: BoardCardId.make("card-1"),
+      stalled: false,
+      stepRunning: false,
+      held: false,
+      stepAwaiting: null,
+      stepConflictFix: false,
+      queued: true,
+    });
+    expect(requeued.cards?.[0]?.stepAwaiting).toBeNull();
+    expect(requeued.cards?.[0]?.queued).toBe(true);
+    expect(requeued.cards?.[0]?.stepRunning).toBe(false);
+  });
+
   it("carries the conflict-fix flag, and a drag never blanks it (T3O-9)", () => {
     const fixing = applyShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge })] }),

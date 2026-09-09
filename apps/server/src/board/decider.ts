@@ -62,6 +62,7 @@ import {
   EventId,
   isBoardCommand,
   isBoardStageAtOrAfterBuild,
+  isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
   isEmptyBoardCardReviewOverrides,
   pickNextBoardLabelColour,
@@ -2927,6 +2928,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             // admission, and leaving it set would silently force the card's next
             // step past the cap too.
             forceStart: false,
+            // The timeout sweep measures from `lastNudgeAt` in preference to
+            // `startedAt`, so admission has to move it (T3O-23). Today's admits
+            // only ever run on a fresh `pending` step whose `lastNudgeAt` is
+            // null, which is why this was never wrong — but a step that sat
+            // `queued` for three hours after a requeue would be instantly
+            // overdue the moment it was admitted.
+            lastNudgeAt: command.createdAt,
             startedAt: command.createdAt,
             updatedAt: command.createdAt,
           }
@@ -2962,10 +2970,18 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // answer (a structured pending question, an agent-reported `blocked`, or
       // prose the stop-signal reader read as a question), `stopped` when a
       // human-in-the-loop turn simply ended. One status, two card treatments.
+      //
+      // And it RELEASES the slot (T3O-23), for the reason the escalation path
+      // has always carried: no thread is running, so a parked card must not hold
+      // capacity for a weekend. That applies identically to an unanswered
+      // question — a card can sit on one all weekend. The consequence is
+      // accepted: after the human answers, the step re-takes a slot
+      // (`resume-step`) rather than resuming into one it never let go of.
       const state: BoardCardStepState = {
         ...current,
         status: "awaiting-input",
         awaitingReason: command.reason,
+        slotHeld: false,
         updatedAt: command.createdAt,
       };
       return {
@@ -3022,6 +3038,18 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' step '${command.stepId}' is settled ('${current.status}'); nothing to recover.`,
         );
       }
+      // A step a human PAUSED is immune to recovery (T3O-23). The reactor's own
+      // call sites already gate on `running`, so this is the backstop that makes
+      // the brief's requirement a property of the state machine rather than of
+      // five separate guards staying correct: recovery would nudge the agent
+      // back to work, or escalate the card to `stalled`, and either way the stop
+      // the human asked for would be undone by the board.
+      if (current.status === "paused") {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' step '${command.stepId}' is paused; a human stopped it, so it is not recovered.`,
+        );
+      }
       // Recovery reuses the held slot — a retry never releases and re-acquires,
       // which could starve the step behind a queue it was already at the front
       // of. Escalation (t3o-17, D3/D4) lands the step in the distinct `stalled`
@@ -3061,6 +3089,97 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       };
     }
 
+    // A human stopped the step (T3O-23). Parks it: slot released, thread and
+    // worktree kept, driven by nothing until somebody resumes it. Accepted from
+    // a step that HAD a turn to stop — `running`, or `awaiting-input` where the
+    // human stopped a turn the agent had already ended — and from `stalled`,
+    // which is where the reverse interleaving lands: the interrupted turn's
+    // `turn.completed` overtook the interrupt, and with no recovery budget left
+    // it escalated. The human's Stop is authoritative over an escalation that
+    // landed a beat earlier, so it downgrades the loud "Needs a human" to the
+    // neutral `Paused` they actually asked for; both are parked, both release
+    // the slot, and both leave through the same resume. `queued` and `pending`
+    // hold no slot and have nothing to interrupt, `paused` is already there
+    // (which is what terminates the reactor's re-interrupt), and a terminal step
+    // is over.
+    case "board.card.pause-step": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
+      if (
+        current.status !== "running" &&
+        current.status !== "awaiting-input" &&
+        current.status !== "stalled"
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not running, awaiting input or stalled; nothing to pause.`,
+        );
+      }
+      // `attempt`, `stallCount` and `stageEntryRecoveries` are all UNTOUCHED:
+      // the human asked for this, so it is not a stall and it spends none of the
+      // recovery budget. `lastError` is cleared because a deliberate stop is not
+      // a failure and the card must not wear the error from the stop before it.
+      const state: BoardCardStepState = {
+        ...current,
+        status: "paused",
+        slotHeld: false,
+        lastError: null,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-paused",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
+    // The board-driven way out of a parked step (T3O-23) — the card's Resume
+    // button, and later T3O-19's scheduled resume. Nothing is running, so the
+    // step goes back to `queued` holding no slot and re-enters the governor's
+    // queue the ordinary way; it KEEPS its thread, so admission nudges the
+    // conversation the agent already has rather than spawning a fresh one.
+    //
+    // Names no step, exactly like `force-start-step`: one live step row per card
+    // (D4), so the server resolves it.
+    case "board.card.requeue-step": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = boardCardStepState(board, command.cardId);
+      if (current === null) {
+        return yield* invariant(command, `Card '${command.cardId}' has no live step to resume.`);
+      }
+      if (!isBoardParkedStepStatus(current.status)) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' step '${current.stepId}' is '${current.status}', not parked; nothing to resume.`,
+        );
+      }
+      // The same "a human intervening is progress" reset `resume-step` applies,
+      // and for the same reason: the ladder starts its count over rather than
+      // re-escalating on the first quiet turn after the resume.
+      const state: BoardCardStepState = {
+        ...current,
+        status: "queued",
+        stallCount: 0,
+        lastError: null,
+        slotHeld: false,
+        startedAt: null,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-recovered",
+        payload: { cardId: command.cardId, state },
+      };
+    }
+
     case "board.card.resume-step": {
       yield* requireActiveBoardCard({ board, command });
       const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
@@ -3068,11 +3187,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // does. Without it a step parked for a question stays parked in the read
       // model after the human answers, and the card keeps asking for an answer
       // it already has — the same lie, in the other direction, that this whole
-      // change removes.
-      if (current.status !== "stalled" && current.status !== "awaiting-input") {
+      // change removes. T3O-23 adds `paused`, which resumes on the same signal
+      // again: a human typing in the thread of a step they stopped has restarted
+      // it themselves.
+      if (!isBoardParkedStepStatus(current.status)) {
         return yield* invariant(
           command,
-          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not stalled or awaiting input; nothing to resume.`,
+          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not parked; nothing to resume.`,
         );
       }
       // A human sent a turn into the parked step's thread — a stalled one
@@ -3089,13 +3210,16 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       //    intervening is progress, exactly as `progressed` is on a nudge, so
       //    the ladder starts its count over instead of re-escalating on the
       //    first quiet turn.
-      //  - `slotHeld` is carried through untouched, which means different
-      //    things on the two paths and is right on both: escalation already
-      //    released the stalled step's slot (D4) and a resume must not
-      //    re-acquire one (the governor caps runs the BOARD spawns, and a
-      //    re-acquire the cap refused would leave the card unable to resume at
-      //    all); an awaiting-input step never released its slot, so it simply
-      //    keeps the place it has held all along.
+      //  - `slotHeld` is TAKEN, not requested (T3O-23). Every parked status now
+      //    releases its slot, so a step resuming out of one holds none — and a
+      //    build step that ran on `slotHeld: false` would occupy a worker
+      //    invisibly and skip its release at settle, which is the pre-existing
+      //    undercount this fixes. The take is unconditional rather than capped
+      //    (the reactor's matching `slots.restore`, the `forceStart` and
+      //    boot-reconcile precedent): the human ALREADY sent the turn, the agent
+      //    is already working, and a cap that refused would leave the card
+      //    unable to resume at all. The count stays honest — it may sit over the
+      //    ceiling until this step settles and releases exactly once.
       // `lastNudgeAt` moves to now so the timeout sweep measures from the
       // takeover, not from the stop the human just cleared.
       const state: BoardCardStepState = {
@@ -3103,6 +3227,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         status: "running",
         stallCount: 0,
         lastError: null,
+        slotHeld: current.mode === "build",
         lastNudgeAt: command.createdAt,
         updatedAt: command.createdAt,
       };

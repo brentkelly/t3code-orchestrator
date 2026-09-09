@@ -147,6 +147,7 @@ export function BoardCardDetail({
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
   const reorderCard = useAtomCommand(boardEnvironment.reorderCard);
   const forceStartStep = useAtomCommand(boardEnvironment.forceStartStep);
+  const requeueStep = useAtomCommand(boardEnvironment.requeueStep);
   const reopenStep = useAtomCommand(boardEnvironment.reopenStep);
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
@@ -275,6 +276,14 @@ export function BoardCardDetail({
       restart (t3o-30, D3). */
   const stepStalled = useMemo(
     () => (snapshot?.cards ?? []).find((shell) => shell.cardId === cardId)?.stalled === true,
+    [snapshot, cardId],
+  );
+  /** Whether a human stopped the card's live step (T3O-23) — the paused
+      banner's gate. Read off the same shell field the card face's neutral chip
+      reads, so the board and the open modal cannot disagree about it. */
+  const stepPausedByHuman = useMemo(
+    () =>
+      (snapshot?.cards ?? []).find((shell) => shell.cardId === cardId)?.stepAwaiting === "paused",
     [snapshot, cardId],
   );
 
@@ -480,6 +489,9 @@ export function BoardCardDetail({
   // that waits for a signal which may never arrive is stuck forever. The
   // request is durable on the step row, so asking again is harmless.
   const [forceStartPending, setForceStartPending] = useState(false);
+  // T3O-23: the Resume button's in-flight guard, so a second press cannot queue
+  // the same step twice.
+  const [resumePending, setResumePending] = useState(false);
 
   // ── Base branch (T3O-5, D3/D13) ────────────────────────────────────────
   // The container resolves the card's base because it is the only layer that
@@ -641,6 +653,10 @@ export function BoardCardDetail({
   const stepFailure = stepStalled
     ? { stageLabel: boardStageLabel(stages, card.stage), error: detail?.stepError ?? null }
     : null;
+  /** What the paused banner renders (T3O-23). Mutually exclusive with
+      `stepFailure` by construction: `paused` and `stalled` are different step
+      statuses and a card has one live step. */
+  const stepPaused = stepPausedByHuman ? { stageLabel: boardStageLabel(stages, card.stage) } : null;
 
   // Restart is a server command (D2): the reactor runs the stage's configured
   // prompt through the same envelope the automatic trigger uses, so the two
@@ -724,6 +740,18 @@ export function BoardCardDetail({
       adoptableThreads={adoptableThreads}
       stageRestart={stageRestart}
       stepFailure={stepFailure}
+      stepPaused={stepPaused}
+      resumeStepPending={resumePending}
+      onResumeStep={() => {
+        setFeedback(null);
+        setResumePending(true);
+        void requeueStep({ environmentId, input: { cardId: card.id } }).then((result) => {
+          setResumePending(false);
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            setFeedback(describeBoardCommandFailure(result));
+          }
+        });
+      }}
       onRestartStage={restartStage}
       onCreateBlankThread={createBlankThread}
       branch={branch}

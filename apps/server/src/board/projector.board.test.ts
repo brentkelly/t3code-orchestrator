@@ -718,6 +718,48 @@ describe("board projector", () => {
         stepConflictFix: false,
         queued: false,
       });
+      // T3O-23: a human stop is the fourth transition that is a column-card
+      // fact, and it rides the same delta. `paused` is derived from the STATUS
+      // — the row's `awaitingReason` still says whatever it last said, and the
+      // delta must ignore it.
+      const pausedEvent: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-paused",
+        payload: {
+          cardId,
+          state: { ...running, status: "paused", awaitingReason: "question", slotHeld: false },
+        },
+      };
+      assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(pausedEvent)), {
+        kind: "card-stalled",
+        sequence: pausedEvent.sequence,
+        cardId,
+        stalled: false,
+        stepRunning: false,
+        held: false,
+        stepAwaiting: "paused",
+        stepConflictFix: false,
+        // Parked, not waiting in the queue — pressing Resume is what queues it.
+        queued: false,
+      });
+      // …and the resume that follows clears the chip and raises the queue pill
+      // on the ONE delta that carries both, so the card never shows neither.
+      const requeuedEvent: BoardEvent = {
+        ...eventBase,
+        type: "board.card-step-recovered",
+        payload: { cardId, state: { ...running, status: "queued", slotHeld: false } },
+      };
+      assert.deepStrictEqual(Option.getOrThrow(boardShellStreamEvent(requeuedEvent)), {
+        kind: "card-stalled",
+        sequence: requeuedEvent.sequence,
+        cardId,
+        stalled: false,
+        stepRunning: false,
+        held: false,
+        stepAwaiting: null,
+        stepConflictFix: false,
+        queued: true,
+      });
     }),
   );
 

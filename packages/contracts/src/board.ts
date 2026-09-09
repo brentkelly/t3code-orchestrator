@@ -1230,11 +1230,18 @@ export type BoardStepCompletion = typeof BoardStepCompletion.Type;
  * unattended step that stops making progress lands here — distinct from
  * `awaiting-input`, which is a healthy agent question. It is non-terminal (a
  * human still has to act) but supervision does not drive it, so boot
- * reconciliation re-reads and leaves it alone. Every way in has a way out:
+ * reconciliation re-reads and leaves it alone. `paused` (T3O-23, D1) is the
+ * deliberate twin of that: a human interrupted the step's turn, so the board
+ * parks it — slot released, thread and worktree kept, immune to recovery and to
+ * the timeout sweep — and leaves it parked. It is NOT `stalled`, which is the
+ * loud "recovery gave up" label, and it charges no stall count and no recovery
+ * attempt, because the human asked for it. Every way in has a way out:
  * `queued` → `running` on admission, `awaiting-input` → `running` on the
- * answer, `stalled` → `queued`/`running` when a human retries, and the three
- * terminals (`succeeded`, `failed`, `abandoned`) are the reverse states a
- * running step owes.
+ * answer, `stalled` → `queued`/`running` when a human retries, `paused` →
+ * `running` when a human types in the step's thread or `queued` when the board
+ * is asked to resume it (`board.card.resume-step` / `board.card.requeue-step`),
+ * and the three terminals (`succeeded`, `failed`, `abandoned`) are the reverse
+ * states a running step owes.
  */
 export const BOARD_STEP_STATUSES = [
   "pending",
@@ -1242,6 +1249,7 @@ export const BOARD_STEP_STATUSES = [
   "running",
   "awaiting-input",
   "stalled",
+  "paused",
   "completing",
   "succeeded",
   "failed",
@@ -1259,6 +1267,17 @@ export const BOARD_TERMINAL_STEP_STATUSES = ["succeeded", "failed", "abandoned"]
     definition. */
 export function isBoardTerminalStepStatus(status: BoardStepStatus): boolean {
   return (BOARD_TERMINAL_STEP_STATUSES as ReadonlyArray<string>).includes(status);
+}
+
+/** The PARKED step statuses (T3O-23): non-terminal, holding no slot, driven by
+    nothing until a human (or, from T3O-19, a schedule) acts. The single reader
+    the decider's two resume paths share, so "what can be resumed" has one
+    definition and a fourth parked status cannot be added to only half of it. */
+export const BOARD_PARKED_STEP_STATUSES = ["stalled", "awaiting-input", "paused"] as const;
+
+/** Whether a step status is parked — see `BOARD_PARKED_STEP_STATUSES`. */
+export function isBoardParkedStepStatus(status: BoardStepStatus): boolean {
+  return (BOARD_PARKED_STEP_STATUSES as ReadonlyArray<string>).includes(status);
 }
 
 /**
@@ -1279,6 +1298,33 @@ export function isBoardTerminalStepStatus(status: BoardStepStatus): boolean {
 export const BOARD_STEP_AWAITING_REASONS = ["question", "stopped"] as const;
 export const BoardCardStepAwaitingReason = Schema.Literals(BOARD_STEP_AWAITING_REASONS);
 export type BoardCardStepAwaitingReason = typeof BoardCardStepAwaitingReason.Type;
+
+/**
+ * Why the card's live step is PARKED, on the wire (T3O-23, D1) — the shell's
+ * `stepAwaiting` and the `card-stalled` delta that carries it.
+ *
+ * A superset of `BoardCardStepAwaitingReason` by exactly one member: `paused`,
+ * a human stopped this step and it stays stopped until they resume it. Two
+ * types rather than one widened union, because `paused` is derived from the
+ * STATUS and is never written to the step row's `awaitingReason` column — the
+ * split makes that a compile-time fact instead of a comment somebody has to
+ * read. Every guard in the reactor and the decider branches on the status, so
+ * `awaiting-input` keeps meaning exactly one thing.
+ */
+export const BOARD_STEP_PARKED_REASONS = [...BOARD_STEP_AWAITING_REASONS, "paused"] as const;
+export const BoardCardStepParkedReason = Schema.Literals(BOARD_STEP_PARKED_REASONS);
+export type BoardCardStepParkedReason = typeof BoardCardStepParkedReason.Type;
+
+/** The shell's `stepAwaiting`, derived from the live step row (T3O-23, D1).
+    ONE definition, shared by the snapshot builder and the projector's deltas so
+    the two can never disagree: `paused` comes off the status, every other
+    parked reason off the column, and a step that is neither is not parked. */
+export function boardStepParkedReason(
+  state: Pick<BoardCardStepState, "status" | "awaitingReason">,
+): BoardCardStepParkedReason | null {
+  if (state.status === "paused") return "paused";
+  return state.status === "awaiting-input" ? state.awaitingReason : null;
+}
 
 export const BoardCardStepState = Schema.Struct({
   cardId: BoardCardId,
@@ -1776,15 +1822,21 @@ export function boardSelectedStepLabel(
  * `stalled` is excluded deliberately, even though it is non-terminal: a stalled
  * step already draws the louder "Stalled" chip that `boardCardAttention` ranks
  * first, and two chips claiming the same card is exactly what that ranking
- * exists to prevent. Every other non-terminal status is live — including
- * `queued`, where the fix is waiting for an agent slot and the build-queue pill
- * says only "queued for build" — never that a merge is being held.
+ * exists to prevent. `paused` is excluded for the same reason (T3O-23): its
+ * chip is ranked ahead of every other one, so the fix pill would only be
+ * fighting it. Every other non-terminal status is live — including `queued`,
+ * where the fix is waiting for an agent slot and the build-queue pill says only
+ * "queued for build" — never that a merge is being held.
  */
 export function isBoardConflictFixLive(
   state: Pick<BoardCardStepState, "stepLabel" | "status">,
 ): boolean {
   if (state.stepLabel !== BOARD_CONFLICT_STEP_LABEL) return false;
-  return !isBoardTerminalStepStatus(state.status) && state.status !== "stalled";
+  return (
+    !isBoardTerminalStepStatus(state.status) &&
+    state.status !== "stalled" &&
+    state.status !== "paused"
+  );
 }
 
 /** A card's live step state (t3o-10), or null when the card has no step
@@ -2174,6 +2226,15 @@ export function deriveBoardCardPlanProgress(input: {
  * room for one, so the list IS the ranking.
  */
 export const BOARD_CARD_ATTENTION_REASONS = [
+  /** A human stopped the step and it is parked until they resume it (T3O-23).
+   *
+      Ranked FIRST because it is the definitive statement about the card's live
+      step — the human made it themselves, a beat ago — and it is mutually
+      exclusive with `stalled` and `held` by construction (a paused step is
+      neither settled nor given up on). The trade-off is the one `stalled`
+      already makes: a sibling thread's answerable question is hidden behind it,
+      and stays one click away in the card's thread list. */
+  "paused",
   /** Recovery gave up on the step (t3o-17, D3). */
   "stalled",
   /** Planning proposed a split nobody has approved yet (t3o-27). */
@@ -2205,8 +2266,13 @@ export type BoardCardAttentionReason = (typeof BOARD_CARD_ATTENTION_REASONS)[num
 /** How loudly a reason reads on the card face. Per-reason rather than one
     colour for all: violet already means "a thread is waiting on you" and amber
     "a decision is waiting on you", and collapsing them would cost information
-    the board has been carrying since t3o-18. */
-export type BoardCardAttentionTone = "danger" | "warning" | "attention";
+    the board has been carrying since t3o-18.
+
+    `neutral` is the quiet one (T3O-23): the card is held, but it is held by the
+    user's own instruction and nothing is waiting on an answer, so it makes no
+    claim and takes no colour — `docs/t3o/status-colours.md`, "no colour without
+    a claim". */
+export type BoardCardAttentionTone = "danger" | "warning" | "attention" | "neutral";
 
 export type BoardCardAttention = {
   readonly reason: BoardCardAttentionReason;
@@ -2218,6 +2284,7 @@ export type BoardCardAttention = {
 };
 
 const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> = {
+  paused: "neutral",
   stalled: "danger",
   approval: "warning",
   "review-held": "warning",
@@ -2271,6 +2338,19 @@ export function boardCardAttention(input: {
   const stage = input.stages.find((entry) => entry.stageId === card.stage);
   if (stage !== undefined && effectiveBoardStageRole(stage) === "done") return null;
 
+  // A human stopped this step (T3O-23). First, and NOT vetoed by the working
+  // dot the way the two parked-on-a-human chips below are: those assert "nobody
+  // is working on this card", which a blue dot contradicts, whereas this asserts
+  // only that the human pressed Stop — which stays true across the beat between
+  // the pause landing and the interrupted turn actually ending.
+  if (card.stepAwaiting === "paused") {
+    return {
+      reason: "paused",
+      tone: ATTENTION_TONES.paused,
+      label: "Paused",
+      detail: "Paused — you stopped this; resume it when you want it to carry on",
+    };
+  }
   if (card.stalled) {
     return {
       reason: "stalled",
@@ -3409,6 +3489,60 @@ export const BoardCardResumeStepCommand = Schema.Struct({
 });
 export type BoardCardResumeStepCommand = typeof BoardCardResumeStepCommand.Type;
 
+/**
+ * Park a step because a HUMAN stopped it (T3O-23) — the way into `paused`.
+ *
+ * The signal is the human interrupting the step's turn. The step keeps its
+ * thread and its worktree, releases its concurrency slot, and is driven by
+ * nothing until somebody resumes it: no recovery, no timeout sweep, no attempt
+ * consumed and no stall charged, because the human asked for this and a
+ * deliberate stop is not a stall.
+ *
+ * Distinct from `await-step-input`, which is the AGENT stopping and asking, and
+ * from the escalation that lands a step `stalled`, which is recovery giving up.
+ * Accepted from a `stalled` step all the same: the interrupt and the interrupted
+ * turn's completion race, and when recovery has no budget left the completion
+ * escalates first. A human's Stop outranks an escalation that landed a beat
+ * earlier, so it takes the step from `stalled` to `paused`.
+ *
+ * Internal — dispatched by the reactor when it sees `thread.turn-interrupt-requested`
+ * for a step thread the board did not itself interrupt.
+ */
+export const BoardCardPauseStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.pause-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardPauseStepCommand = typeof BoardCardPauseStepCommand.Type;
+
+/**
+ * Send a parked step back to the BUILD QUEUE (T3O-23) — the board-driven way
+ * out of `paused`, and the card's Resume button.
+ *
+ * The counterpart of `resume-step`, split by who drove the agent. `resume-step`
+ * fires when a human has ALREADY sent a turn into the step's thread: the agent
+ * is working, so the step takes its slot unconditionally and goes straight to
+ * `running`, because rendering `Queued` over a live turn would be a lying
+ * label. Nothing is running when the board resumes a step, so this one goes to
+ * `queued` holding no slot and re-enters the governor's queue the ordinary way;
+ * admission then nudges the step's EXISTING thread rather than spawning a new
+ * one. The card shows `Queued` while it waits, which is visible and true.
+ *
+ * Carries no `stepId`, exactly like `force-start-step`: one live step row per
+ * card (D4), so the server resolves it and a client that rendered the card a
+ * moment ago cannot aim at a stale one. Client-dispatchable for that button;
+ * T3O-19's scheduled resume is the same command on a timer.
+ */
+export const BoardCardRequeueStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.requeue-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardRequeueStepCommand = typeof BoardCardRequeueStepCommand.Type;
+
 export const BoardCardSettleStepCommand = Schema.Struct({
   type: Schema.Literal("board.card.settle-step"),
   commandId: CommandId,
@@ -3920,6 +4054,15 @@ export const BoardCardStepAwaitingInputPayload = Schema.Struct({
 });
 export type BoardCardStepAwaitingInputPayload = typeof BoardCardStepAwaitingInputPayload.Type;
 
+/** A step a human stopped (T3O-23). Carries the whole state like every other
+    step event, so the projector upserts exactly that and replay equals
+    rehydration. */
+export const BoardCardStepPausedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardCardStepPausedPayload = typeof BoardCardStepPausedPayload.Type;
+
 export const BoardCardStepRecoveredPayload = Schema.Struct({
   cardId: BoardCardId,
   state: BoardCardStepState,
@@ -4258,8 +4401,13 @@ export const BoardCardShell = Schema.Struct({
       Step-derived like `queued`/`stalled`/`held`, so it follows the same rule:
       the snapshot and the `card-stalled` delta are authoritative, card-carrying
       deltas rest it at null, and the client preserves the last known value
-      (`applyBoardShellStreamEvent`). */
-  stepAwaiting: Schema.NullOr(BoardCardStepAwaitingReason),
+      (`applyBoardShellStreamEvent`).
+
+      Widened by T3O-23 to carry `paused` — a step a human stopped — so the one
+      field answers "why is this step parked" for all three ways it can be.
+      Derived through `boardStepParkedReason` at every producer, which is what
+      keeps `paused` off the step row's own `awaitingReason` column. */
+  stepAwaiting: Schema.NullOr(BoardCardStepParkedReason),
   /** Whether the card's live step is a merge conflict fix (T3O-9) — the merge
       the board tried is held until an agent rewrites the branch on top of its
       base.
@@ -4521,10 +4669,10 @@ export function makeBoardCardShell(input: {
   /** Whether the card's step has settled and left the card where it stands.
       Real on the snapshot; rests false on card deltas. */
   readonly held?: boolean | undefined;
-  /** Why the card's live step is parked on a human, or null (t3o-34, D4). Real
+  /** Why the card's live step is parked, or null (t3o-34 D4; T3O-23). Real
       on the snapshot; rests null on card deltas, which the client preserves
       through exactly like `stalled`. */
-  readonly stepAwaiting?: BoardCardStepAwaitingReason | null | undefined;
+  readonly stepAwaiting?: BoardCardStepParkedReason | null | undefined;
   /** Whether the card's live step is a merge conflict fix (T3O-9). Real on the
       snapshot and the `card-stalled` delta; rests false on card deltas, which
       the client preserves through exactly like `stalled`. */
@@ -4769,8 +4917,9 @@ export const BoardCardStalledShellEvent = Schema.Struct({
       `card-stalled` (settled / selected / recovered) all clear it, and the one
       event that SETS it — `board.card-step-awaiting-input`, which emitted no
       shell delta at all before t3o-34 — now emits this one rather than a fourth
-      delta carrying a single field. */
-  stepAwaiting: Schema.NullOr(BoardCardStepAwaitingReason),
+      delta carrying a single field. `board.card-step-paused` (T3O-23) joins it
+      on exactly the same terms. */
+  stepAwaiting: Schema.NullOr(BoardCardStepParkedReason),
   /** And whether the step is a live merge conflict fix (T3O-9), which rides
       here for the same reason as the flags above: the four events that emit
       this delta — selected / settled / recovered / awaiting-input — are exactly
@@ -4965,6 +5114,8 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardCardCompleteStepCommand,
   BoardCardReopenStepCommand,
   BoardCardForceStartStepCommand,
+  // T3O-23: the card's Resume button — a parked step re-enters the build queue.
+  BoardCardRequeueStepCommand,
   BoardPlansProposeCommand,
   BoardPlanWriteCommand,
   BoardPlansApproveCommand,
@@ -4992,6 +5143,7 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardSelectStepCommand,
   BoardCardAdmitStepCommand,
   BoardCardAwaitStepInputCommand,
+  BoardCardPauseStepCommand,
   BoardCardRecoverStepCommand,
   BoardCardResumeStepCommand,
   BoardCardSettleStepCommand,
@@ -5037,6 +5189,7 @@ export const BOARD_EVENT_TYPES = [
   "board.card-step-admitted",
   "board.card-step-force-start-requested",
   "board.card-step-awaiting-input",
+  "board.card-step-paused",
   "board.card-step-recovered",
   "board.card-step-settled",
   "board.card-step-retuned",
@@ -5243,6 +5396,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-step-awaiting-input"),
       payload: BoardCardStepAwaitingInputPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-paused"),
+      payload: BoardCardStepPausedPayload,
     }),
     Schema.Struct({
       ...base,

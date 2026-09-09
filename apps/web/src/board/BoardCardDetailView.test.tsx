@@ -175,6 +175,7 @@ const baseProps = {
   onOpenPullRequest: noop,
   conflictFix: null,
   stepFailure: null,
+  stepPaused: null,
   merging: false,
   catalogue: [] as ReadonlyArray<BoardLabel>,
   stages: BOARD_SEED_STAGES,

@@ -258,6 +258,21 @@ export function recoveryDecision(input: {
   };
 }
 
+/**
+ * What the board says to an agent when it resumes a step a human PAUSED
+ * (T3O-23) — sent into the step's existing thread on admission, in place of the
+ * full step prompt a fresh spawn would carry.
+ *
+ * Deliberately not a recovery nudge, and it must not read like one: nothing
+ * stalled, nothing failed, and no attempt was consumed. The agent stopped
+ * because a human told it to, and the only thing it needs to know is that it may
+ * carry on.
+ */
+export const BOARD_STEP_RESUME_NUDGE = [
+  `This work was paused and has now been resumed.`,
+  `Continue from where you left off, and call board_complete_step when you are done.`,
+].join(" ");
+
 export type BoardReconcileDecision =
   | { readonly kind: "resume-watch" }
   | { readonly kind: "recover" }
@@ -272,6 +287,7 @@ export type BoardReconcileDecision =
  * error handling:
  *
  * - the step already succeeded while we were down → advance;
+ * - a human paused it (T3O-23) → leave it parked;
  * - its thread is still alive → resume watching;
  * - a human-in-the-loop step whose thread is present but idle → park it on the
  *   human (t3o-34), the boot-time twin of `handleTurnCompleted`'s arm;
@@ -303,6 +319,14 @@ export function reconcileStepDecision(input: {
     // reconciliation must keep re-reading it, but supervision does not drive it
     // — it stops until a human acts. Leave it exactly as it is (no recover, no
     // slot restore: a stalled step already released its slot, D4).
+    return { kind: "resume-watch" };
+  }
+  if (input.status === "paused") {
+    // A human stopped this step (T3O-23). Same shape as `stalled`: non-terminal,
+    // so boot reconciliation keeps re-reading it, but supervision does not drive
+    // it — it stays parked until somebody resumes it. And no slot restore: a
+    // paused step released its slot when it parked, which the caller's
+    // `state.slotHeld` gate already reflects.
     return { kind: "resume-watch" };
   }
   if (input.status === "awaiting-input") {

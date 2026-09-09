@@ -1169,6 +1169,11 @@ describe("cards that need a human (boardCardAttention)", () => {
   it("ranks the reasons, loudest first", () => {
     // The ranking IS the contract: a card can satisfy several at once and the
     // face has room for one.
+    // A human's own stop outranks everything (T3O-23): it is the definitive
+    // statement about the card's live step, and they made it a beat ago.
+    expect(
+      attention({ stepAwaiting: "paused", stalled: true, held: true, awaitingInput: true })?.reason,
+    ).toBe("paused");
     expect(attention({ stalled: true, held: true, awaitingInput: true })?.reason).toBe("stalled");
     expect(attention({ held: true, awaitingInput: true })?.reason).toBe("held");
     expect(attention({ awaitingInput: true })?.reason).toBe("input");
@@ -1179,6 +1184,23 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(attention({ stalled: true })?.tone).toBe("danger");
     expect(attention({ held: true })?.tone).toBe("warning");
     expect(attention({ awaitingInput: true })?.tone).toBe("attention");
+    // Neutral, per `docs/t3o/status-colours.md`: a paused card is held by the
+    // user's own instruction and nothing is waiting on an answer, so it makes
+    // no claim and takes no colour.
+    expect(attention({ stepAwaiting: "paused" })?.tone).toBe("neutral");
+    expect(attention({ stepAwaiting: "paused" })?.label).toBe("Paused");
+  });
+
+  it("keeps saying Paused while the card's thread is still winding down", () => {
+    // Unlike the two parked-on-a-human chips, this one is NOT vetoed by the
+    // working dot. Those assert "nobody is working on this card", which a blue
+    // dot flatly contradicts; this asserts only that the human pressed Stop,
+    // which stays true across the beat between the pause landing and the
+    // interrupted turn actually ending.
+    expect(attention({ stepAwaiting: "paused", threadState: "working" })?.reason).toBe("paused");
+    expect(attention({ stepAwaiting: "paused", stepRunning: true })?.reason).toBe("paused");
+    // …while the two it sits beside stay vetoed.
+    expect(attention({ stepAwaiting: "stopped", threadState: "working" })).toBeNull();
   });
 
   it("never flags a finished or archived card", () => {
@@ -1679,7 +1701,7 @@ describe("a live merge conflict fix (isBoardConflictFixLive, T3O-9)", () => {
   /** The whole status vocabulary, so a new status has to be classified here
       rather than silently landing on one side of the line. */
   const LIVE_STATUSES = ["pending", "queued", "running", "awaiting-input", "completing"] as const;
-  const NOT_LIVE_STATUSES = ["stalled", "succeeded", "failed", "abandoned"] as const;
+  const NOT_LIVE_STATUSES = ["stalled", "paused", "succeeded", "failed", "abandoned"] as const;
 
   it("covers every step status exactly once", () => {
     expect([...LIVE_STATUSES, ...NOT_LIVE_STATUSES].toSorted()).toEqual(
@@ -1693,11 +1715,13 @@ describe("a live merge conflict fix (isBoardConflictFixLive, T3O-9)", () => {
     }
   });
 
-  it("is not live once the step settles — or stalls", () => {
+  it("is not live once the step settles — or stalls, or a human pauses it", () => {
     for (const status of NOT_LIVE_STATUSES) {
       // `stalled` is excluded deliberately: it already draws the louder
       // "Stalled" chip, and two chips claiming the same card is exactly what
-      // `boardCardAttention`'s ranking exists to prevent.
+      // `boardCardAttention`'s ranking exists to prevent. `paused` (T3O-23) is
+      // excluded for the same reason, and its chip is ranked ahead of every
+      // other one.
       expect(isBoardConflictFixLive(row({ status })), status).toBe(false);
     }
   });

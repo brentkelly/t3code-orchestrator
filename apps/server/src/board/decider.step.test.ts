@@ -520,15 +520,18 @@ it.effect(
         // their turn ended.
         assert.strictEqual(event.payload.state.attempt, 3);
         assert.strictEqual(event.payload.state.stageEntryRecoveries, 4);
-        // The slot stayed released at escalation and is not re-acquired.
-        assert.strictEqual(event.payload.state.slotHeld, false);
+        // The slot escalation released is TAKEN BACK (T3O-23): a build step
+        // running on `slotHeld: false` would occupy a worker invisibly and skip
+        // its release at settle. The reactor performs the matching
+        // `slots.restore` when the dispatch lands.
+        assert.strictEqual(event.payload.state.slotHeld, true);
         // The timeout sweep measures from the takeover, not from the stop.
         assert.strictEqual(event.payload.state.lastNudgeAt, NOW);
       }
     }),
 );
 
-it.effect("resume-step refuses a step that is not stalled (t3o-17, D3)", () =>
+it.effect("resume-step refuses a step that is not parked (t3o-17, D3; T3O-23)", () =>
   Effect.gen(function* () {
     const card = makeCard({ id: "card-1" });
     const board = makeReadModel({
@@ -546,7 +549,7 @@ it.effect("resume-step refuses a step that is not stalled (t3o-17, D3)", () =>
       },
       board,
     );
-    assert.include(String(failure), "not stalled");
+    assert.include(String(failure), "not parked");
   }),
 );
 
@@ -621,6 +624,346 @@ it.effect("await-step-input only fires on a running step (D13: no retry consumed
     if (event.type === "board.card-step-awaiting-input") {
       assert.strictEqual(event.payload.state.status, "awaiting-input");
       assert.strictEqual(event.payload.state.attempt, 1); // unchanged — a question is not a retry
+    }
+  }),
+);
+
+// ── A human stop parks the step (T3O-23) ────────────────────────────────
+
+it.effect("pause-step parks a running step and gives its slot back (T3O-23)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [
+        stepState("card-1", "running", {
+          attempt: 3,
+          stallCount: 2,
+          stageEntryRecoveries: 4,
+          slotHeld: true,
+          lastError: "turn/setPermissionMode failed",
+        }),
+      ],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.pause-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(event.type, "board.card-step-paused");
+    if (event.type === "board.card-step-paused") {
+      assert.strictEqual(event.payload.state.status, "paused");
+      // Nothing is running, so the card must not hold capacity for a weekend.
+      assert.strictEqual(event.payload.state.slotHeld, false);
+      // The human asked for this: it is not a stall and it spends none of the
+      // recovery budget, or stopping a card twice would escalate it.
+      assert.strictEqual(event.payload.state.stallCount, 2);
+      assert.strictEqual(event.payload.state.attempt, 3);
+      assert.strictEqual(event.payload.state.stageEntryRecoveries, 4);
+      // A deliberate stop is not a failure, so the card stops wearing one.
+      assert.strictEqual(event.payload.state.lastError, null);
+      // The thread and its worktree are kept — that is the whole point.
+      assert.strictEqual(event.payload.state.threadId, ThreadId.make("thread-1"));
+    }
+  }),
+);
+
+it.effect("pause-step also parks a step the agent had already parked on a question", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "awaiting-input", { slotHeld: false })],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.pause-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        createdAt: NOW,
+      },
+      board,
+    );
+    if (event.type === "board.card-step-paused") {
+      assert.strictEqual(event.payload.state.status, "paused");
+    }
+  }),
+);
+
+it.effect("pause-step refuses a step with no turn to stop (T3O-23)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    // `queued` holds no slot and has nothing running; `paused` is already there;
+    // a terminal step is over. `stalled` is NOT here — a human's Stop outranks
+    // an escalation that won the ordering race by a beat, see below.
+    for (const status of ["queued", "paused", "succeeded"] as const) {
+      const board = makeReadModel({
+        cards: [card],
+        stepStates: [stepState("card-1", status)],
+        nextCardNumberByProject: {},
+      });
+      const failure = yield* decideFail(
+        {
+          type: "board.card.pause-step",
+          commandId: CommandId.make("c1"),
+          cardId: card.id,
+          stepId: "build",
+          createdAt: NOW,
+        },
+        board,
+      );
+      assert.include(String(failure), "nothing to pause");
+    }
+  }),
+);
+
+it.effect("pause-step overrides an escalation that won the ordering race (T3O-23)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "stalled", { slotHeld: false })],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.pause-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(event.type, "board.card-step-paused");
+    if (event.type === "board.card-step-paused") {
+      // The human asked for a stop, so they get the neutral `Paused`, not the
+      // loud "Needs a human" a recovery escalation left behind a beat earlier.
+      assert.strictEqual(event.payload.state.status, "paused");
+      assert.strictEqual(event.payload.state.slotHeld, false);
+    }
+  }),
+);
+
+it.effect("requeue-step sends a parked step back to the queue, keeping its thread (T3O-23)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    // Every parked status is resumable this way — a human stop, a stall
+    // recovery gave up on, and an unanswered question.
+    for (const status of ["paused", "stalled", "awaiting-input"] as const) {
+      const board = makeReadModel({
+        cards: [card],
+        stepStates: [
+          stepState("card-1", status, {
+            attempt: 2,
+            stallCount: 3,
+            stageEntryRecoveries: 4,
+            slotHeld: false,
+            lastError: "something broke",
+          }),
+        ],
+        nextCardNumberByProject: {},
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.requeue-step",
+          commandId: CommandId.make("c1"),
+          cardId: card.id,
+          createdAt: NOW,
+        },
+        board,
+      );
+      assert.strictEqual(event.type, "board.card-step-recovered");
+      if (event.type === "board.card-step-recovered") {
+        // Back through the governor, holding nothing: the card shows `Queued`
+        // while it waits, which is visible rather than a lying spinner.
+        assert.strictEqual(event.payload.state.status, "queued");
+        assert.strictEqual(event.payload.state.slotHeld, false);
+        assert.strictEqual(event.payload.state.startedAt, null);
+        // The thread is RETAINED, so admission nudges the conversation the
+        // agent already has instead of spawning a second one.
+        assert.strictEqual(event.payload.state.threadId, ThreadId.make("thread-1"));
+        // A human intervening is progress, exactly as it is on `resume-step`.
+        assert.strictEqual(event.payload.state.stallCount, 0);
+        assert.strictEqual(event.payload.state.lastError, null);
+        // The board invoked nothing, so neither ledger is charged.
+        assert.strictEqual(event.payload.state.attempt, 2);
+        assert.strictEqual(event.payload.state.stageEntryRecoveries, 4);
+      }
+    }
+  }),
+);
+
+it.effect("recover-step refuses a step a human paused (T3O-23)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "paused", { slotHeld: false })],
+      nextCardNumberByProject: {},
+    });
+    // The backstop behind the reactor's own guards: recovery would either nudge
+    // the agent back to work or escalate the card to `stalled`, and either way
+    // the board would have undone the stop the human asked for.
+    const failure = yield* decideFail(
+      {
+        type: "board.card.recover-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        threadId: ThreadId.make("thread-1"),
+        escalateToHuman: false,
+        progressed: false,
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.include(String(failure), "is paused");
+  }),
+);
+
+it.effect("requeue-step refuses a step that is not parked (T3O-23)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "running")],
+      nextCardNumberByProject: {},
+    });
+    const failure = yield* decideFail(
+      {
+        type: "board.card.requeue-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.include(String(failure), "not parked");
+  }),
+);
+
+it.effect("resume-step un-parks a paused step and takes its slot back (T3O-23)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "paused", { slotHeld: false })],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.resume-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        createdAt: NOW,
+      },
+      board,
+    );
+    if (event.type === "board.card-step-recovered") {
+      assert.strictEqual(event.payload.state.status, "running");
+      // The human typed in the thread themselves, so the agent is already
+      // working: the slot is taken, not requested.
+      assert.strictEqual(event.payload.state.slotHeld, true);
+    }
+  }),
+);
+
+it.effect("resume-step takes no slot for a plan-mode step, which never holds one", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "paused", { mode: "plan", slotHeld: false })],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.resume-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        createdAt: NOW,
+      },
+      board,
+    );
+    if (event.type === "board.card-step-recovered") {
+      assert.strictEqual(event.payload.state.slotHeld, false);
+    }
+  }),
+);
+
+it.effect("await-step-input releases the step's slot (T3O-23)", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [stepState("card-1", "running", { slotHeld: true })],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.await-step-input",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        reason: "question",
+        createdAt: NOW,
+      },
+      board,
+    );
+    assert.strictEqual(event.type, "board.card-step-awaiting-input");
+    if (event.type === "board.card-step-awaiting-input") {
+      assert.strictEqual(event.payload.state.status, "awaiting-input");
+      // A card can sit on an unanswered question all weekend, and nothing is
+      // running while it does.
+      assert.strictEqual(event.payload.state.slotHeld, false);
+    }
+  }),
+);
+
+it.effect("admit-step refreshes lastNudgeAt so a requeued step is not instantly overdue", () =>
+  Effect.gen(function* () {
+    const card = makeCard({ id: "card-1" });
+    const board = makeReadModel({
+      cards: [card],
+      stepStates: [
+        stepState("card-1", "queued", {
+          threadId: null,
+          slotHeld: false,
+          startedAt: null,
+          // The step ran, was paused, and sat in the queue for hours.
+          lastNudgeAt: "2025-12-31T00:00:00.000Z",
+        }),
+      ],
+      nextCardNumberByProject: {},
+    });
+    const event = yield* decide(
+      {
+        type: "board.card.admit-step",
+        commandId: CommandId.make("c1"),
+        cardId: card.id,
+        stepId: "build",
+        admitted: true,
+        threadId: ThreadId.make("thread-1"),
+        createdAt: NOW,
+      },
+      board,
+    );
+    if (event.type === "board.card-step-admitted") {
+      // `sweepTimeouts` prefers `lastNudgeAt` over `startedAt`, so a stale one
+      // would make the step overdue the instant it was admitted.
+      assert.strictEqual(event.payload.state.lastNudgeAt, NOW);
+      assert.strictEqual(event.payload.state.startedAt, NOW);
     }
   }),
 );
