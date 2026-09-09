@@ -68,3 +68,9 @@ being instant. A card scheduled for a moment when every agent is busy queues nor
 - The board checks every thirty seconds, so a card can start up to half a minute after its time.
 - The pill on a card shows the time itself — `9:00 PM`, `tomorrow 8:00 AM` — and hovering it says
   how long that is away.
+
+## When a provider runs out of usage
+
+A time you set is yours. If a provider hits a usage limit, the board parks the affected cards and
+resumes them on its own schedule — see [usage limits](board-usage-limits.md) — but it never
+overwrites a time you set, and clearing a usage-limit hold does not clear your own clock.

@@ -44,6 +44,16 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   spinner, because a board shows thirty cards at once and one more continuously animating element
   per card is a cost the fact does not justify; the card modal's banner, being one element in an
   open modal, keeps its spinner.
+- **A card waiting on a provider is amber, and so is the header pill (T3O-22).** A usage limit is
+  the same fact as blocked, one level up: nobody is working, the board cannot make it work, and it
+  is waiting on something outside itself. All four readings of `stalled` — waiting to resume on a
+  usage limit, out of credits, waiting for a retry rung, and recovery having given up — are amber
+  and are the same chip; only the words differ, because the colour is answering "is work happening"
+  and the answer is no in every one of them. Green would be a lie in all four, and blue in all four.
+  The provider-usage pill in the board header takes the same amber for the same reason. It carries
+  no spinner and no ticking countdown: its numbers are coarse (`in 1h 38m`) and repaint only when
+  the board does, because a header is on screen all the time and a per-second repaint there is the
+  GPU cost this document exists to refuse.
 - **No colour without a claim.** A colour asserts something about work happening right now, so an
   indicator that cannot make that assertion stays neutral (`bg-muted text-muted-foreground`) and
   says why in words. The review pane is the case that forced the rule: its loop and round state are

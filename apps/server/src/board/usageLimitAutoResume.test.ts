@@ -775,6 +775,52 @@ it.effect("boot reconcile honours a live cooldown and nudges nothing behind it",
   ),
 );
 
+it.effect("seven days of learning nothing gives up and hands every card to a human", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a")],
+        stepStates: [parkedByLimit("a")],
+        // A blind poll that started eight days ago: the provider never named a
+        // time and never came back. Blind-polling a wall for a ninth day is
+        // pure waste, and on a metered provider it is a ninth day of failing
+        // requests.
+        providerLimits: [
+          {
+            providerInstanceId: codex,
+            kind: "wait",
+            until: "1970-01-01T00:00:00.000Z",
+            detectedAt: "1969-12-24T00:00:00.000Z",
+            lastCheckedAt: "1969-12-31T00:00:00.000Z",
+            reason: waitAt().reason,
+            ruleId: "grok.weekly-limit",
+            sourceCardId: BoardCardId.make("a"),
+            knownTime: false,
+            blindSince: "1969-12-24T00:00:00.000Z",
+            probeCardId: null,
+            setByHuman: false,
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        yield* harness.reactor.fireProbes;
+        yield* harness.reactor.drain;
+        // The cooldown is gone and the card says so in the provider's own
+        // words, rather than sitting silently on a window that never reopened.
+        assert.strictEqual(yield* limitOf(harness, codex), null);
+        const escalated = yield* stepOf(harness, "a");
+        assert.strictEqual(escalated?.status, "stalled");
+        assert.strictEqual(escalated?.stalledReason, "gave-up");
+        assert.strictEqual(escalated?.retryAt, null);
+        assert.strictEqual(escalated?.lastError, waitAt().reason);
+      }),
+  ),
+);
+
 /** A step already parked behind a cooldown, as a restart finds it. */
 function parkedByLimit(id: string): BoardCardStepState {
   return {
