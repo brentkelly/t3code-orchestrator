@@ -27,7 +27,7 @@ import {
   localInputValueToIso,
   scheduleInputValue,
   schedulePresets,
-  whenLabel,
+  scheduleTriggerLabel,
   type BoardScheduleKind,
 } from "./boardSchedule";
 
@@ -51,15 +51,22 @@ export function BoardCardSchedulePopover({
   readonly disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  // Sampled when the popover opens rather than on every render: the presets and
-  // the tooltip's relative reading are a snapshot of the moment the user looked
-  // at them, and re-deriving them on each keystroke would move "In 1 hour"
-  // under the pointer.
+  // Sampled when the popover OPENS rather than on every render: the presets are
+  // a snapshot of the moment the user looked at them, and re-deriving them on
+  // each keystroke would move "In 1 hour" under the pointer. The trigger's own
+  // label and tooltip use `triggerNowMs` below instead.
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [draft, setDraft] = useState("");
 
   const copy = boardScheduleCopy(kind, stageLabel);
   const presets = schedulePresets(nowMs);
+  // The TRIGGER reads the clock on every render, unlike the popover's contents.
+  // It is on screen while the card is not, so the sampled `nowMs` would still
+  // be sitting before the scheduled moment at exactly the point the moment
+  // passes — and that is the window this label has to be honest about. The
+  // board pill next to it does the same (`BoardCardItem`); a `Date.now()` per
+  // render costs nothing and starts nothing ticking.
+  const triggerNowMs = Date.now();
   // Empty when nothing is scheduled, deliberately: see `scheduleInputValue`.
   // A pre-filled field plus commit-on-complete would make the first spinner
   // nudge set a time the user never chose — and on a live card that nudge stops
@@ -96,14 +103,19 @@ export function BoardCardSchedulePopover({
         title={
           scheduledStartAt === null
             ? copy.emptyTip
-            : boardScheduleSetTip({ kind, stageLabel, iso: scheduledStartAt, nowMs })
+            : boardScheduleSetTip({
+                kind,
+                stageLabel,
+                iso: scheduledStartAt,
+                nowMs: triggerNowMs,
+              })
         }
         type="button"
       >
         <Clock className="size-3 shrink-0" />
         {scheduledStartAt === null ? null : (
           <span className="whitespace-nowrap text-[10.5px] font-medium">
-            {whenLabel(scheduledStartAt, nowMs)}
+            {scheduleTriggerLabel(scheduledStartAt, triggerNowMs)}
           </span>
         )}
       </PopoverTrigger>

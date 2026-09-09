@@ -13,7 +13,7 @@
  * UTC instant, and the server only ever compares instants. A phone in another
  * timezone is correct with no server configuration (D12).
  */
-import type { BoardStepStatus } from "@t3tools/contracts";
+import { isBoardCardScheduleDue, type BoardStepStatus } from "@t3tools/contracts";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -97,6 +97,21 @@ export function untilLabel(iso: string, nowMs: number): string {
   const days = Math.floor(hours / 24);
   const rest = hours % 24;
   return `in ${String(days)}d${rest === 0 ? "" : ` ${String(rest)}h`}`;
+}
+
+/**
+ * The trigger's own label once a time is set: the moment, unless that moment
+ * has passed, in which case "due now".
+ *
+ * `schedule()` admits a due card WITHOUT clearing `scheduledStartAt` — only the
+ * 30s firing pass clears it — so for up to a tick the card is already moving
+ * while its field still names a time that has gone. The board pill drops
+ * itself in that window (`boardCardScheduleLabel`); this control cannot, because
+ * it is an edit control and the field really is still set, with a live Clear
+ * button under it. So it reads the same predicate and says what is true: due.
+ */
+export function scheduleTriggerLabel(iso: string, nowMs: number): string {
+  return isBoardCardScheduleDue(iso, nowMs) ? "due now" : whenLabel(iso, nowMs);
 }
 
 /**
@@ -229,7 +244,12 @@ export function boardScheduleSetTip(input: {
   readonly iso: string;
   readonly nowMs: number;
 }): string {
-  const when = `${whenLabel(input.iso, input.nowMs)} · ${untilLabel(input.iso, input.nowMs)}`;
+  // "now" rather than a moment that has gone, for the same sub-tick window
+  // `scheduleTriggerLabel` covers — the tooltip and the label it explains have
+  // to agree.
+  const when = isBoardCardScheduleDue(input.iso, input.nowMs)
+    ? "now"
+    : `${whenLabel(input.iso, input.nowMs)} · ${untilLabel(input.iso, input.nowMs)}`;
   const what =
     input.kind === "before-build"
       ? "Starts the build"

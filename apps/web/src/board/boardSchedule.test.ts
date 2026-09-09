@@ -17,6 +17,7 @@ import {
   localInputValueToIso,
   scheduleInputValue,
   schedulePresets,
+  scheduleTriggerLabel,
   toLocalInputValue,
   untilLabel,
   whenLabel,
@@ -188,6 +189,17 @@ describe("boardScheduleSetTip", () => {
     ).toBe("Starts the build 9:00 PM · in 6h 30m — click to change");
   });
 
+  it("says 'now' for a passed instant, so the tooltip and its label agree", () => {
+    expect(
+      boardScheduleSetTip({
+        kind: "waiting",
+        stageLabel: "Building",
+        iso: at({ hour: 14, minute: 0 }),
+        nowMs: NOW_MS,
+      }),
+    ).toBe("Starts building now — click to change");
+  });
+
   it("says resume for a parked card, not start", () => {
     expect(
       boardScheduleSetTip({
@@ -197,6 +209,26 @@ describe("boardScheduleSetTip", () => {
         nowMs: NOW_MS,
       }),
     ).toContain("Resumes building");
+  });
+});
+
+describe("scheduleTriggerLabel", () => {
+  it("names the moment while it is still ahead", () => {
+    expect(scheduleTriggerLabel(at({ hour: 21 }), NOW_MS)).toBe("9:00 PM");
+  });
+
+  it("reads 'due now' once the moment has passed, rather than a time that has gone", () => {
+    // `schedule()` admits a due card without clearing the field; only the 30s
+    // firing pass clears it. For that window the control must not name a
+    // moment that is behind the user — the board pill drops itself here, and
+    // the two surfaces have to agree about the same card.
+    expect(scheduleTriggerLabel(at({ hour: 14, minute: 0 }), NOW_MS)).toBe("due now");
+  });
+
+  it("keeps the moment right up to the instant itself", () => {
+    const iso = at({ hour: 14, minute: 30 });
+    expect(scheduleTriggerLabel(iso, NOW_MS - 1)).toBe("2:30 PM");
+    expect(scheduleTriggerLabel(iso, NOW_MS)).toBe("due now");
   });
 });
 
