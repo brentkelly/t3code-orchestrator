@@ -1097,7 +1097,11 @@ function ActionsSection({
   // the way in, so the control and the refusal can never disagree.
   const autoStart =
     gate.canArm && props.onSetAutoStart !== undefined
-      ? { armed: card.autoStart, onToggle: props.onSetAutoStart }
+      ? {
+          armed: card.autoStart,
+          copy: boardCardAutoStartCopy(card.autoStart),
+          onToggle: props.onSetAutoStart,
+        }
       : null;
   // The caret beside the forward button (t3o-07, D8) — today at most one item.
   // An archived card gets none for the same reason it gets no forward button.
@@ -1289,34 +1293,36 @@ function ActionsSection({
         </div>
       ) : null}
       {autoStart !== null ? (
-        // The arm (T3O-24, D9), directly under the callout it answers.
+        // The arm (T3O-24, D9), directly under the callout it answers, with the
+        // switch leading the row as the mockups have it.
         //
         // Tinted with `--primary`, never `--info`. `docs/t3o/status-colours.md`
         // gives blue to RUNNING, and this card is not running; a CHECKED
         // CONTROL is UI state, the exemption that doc already grants the blue
         // open chip on a selected pull request. The status SURFACE for this
         // feature — the card face's chip — stays neutral (D8).
-        <label
+        //
+        // A DIV, not a label: `Switch` renders a `role="switch"` button, and a
+        // label wrapping a button toggles nothing — the row would look like one
+        // tap target and behave like two. The switch is the control, as it is
+        // in every settings row.
+        <div
           className={cn(
-            "flex cursor-pointer items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-[12.5px]",
+            "flex items-center gap-2.5 rounded-lg border px-2.5 py-2 text-[12.5px]",
             autoStart.armed ? "border-primary/55 bg-primary/8" : "border-input bg-popover",
           )}
         >
-          <span className="flex flex-col">
-            <span className="font-medium text-foreground">
-              {boardCardAutoStartCopy(autoStart.armed).label}
-            </span>
-            <span className="text-[11px] text-muted-foreground">
-              {boardCardAutoStartCopy(autoStart.armed).hint}
-            </span>
-          </span>
           <Switch
-            aria-label="Start automatically when unblocked"
+            aria-label={autoStart.copy.label}
             checked={autoStart.armed}
             className="shrink-0"
             onCheckedChange={(next) => autoStart.onToggle(next)}
           />
-        </label>
+          <span className="flex min-w-0 flex-col">
+            <span className="font-medium text-foreground">{autoStart.copy.label}</span>
+            <span className="text-[11px] text-muted-foreground">{autoStart.copy.hint}</span>
+          </span>
+        </div>
       ) : null}
       {humanInLoop !== null ? (
         <label className="flex items-center justify-between gap-2 rounded-lg border border-input bg-popover px-2.5 py-2 text-[12.5px]">
