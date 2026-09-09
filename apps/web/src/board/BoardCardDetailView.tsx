@@ -510,8 +510,10 @@ export interface BoardCardDetailViewProps {
         where the card went — including a project the menu does not offer. */
     readonly names: ReadonlyMap<string, string>;
   };
-  /** Move the card to another project. Absent leaves the row read-only, which
-      is what a pinned card and an archived one both get. */
+  /** Move the card to another project. Absent renders the row as plain text —
+      an ARCHIVED card, which is off the board entirely. A pinned live card
+      still passes this: the row reads its `lock` and renders the padlock, so a
+      user is told WHY rather than shown a control that has quietly vanished. */
   readonly onSetProject?: ((projectId: ProjectId) => void) | undefined;
 }
 

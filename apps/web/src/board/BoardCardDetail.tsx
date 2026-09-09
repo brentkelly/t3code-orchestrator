@@ -590,9 +590,12 @@ export function BoardCardDetail({
           cardKeys: snapshot?.cards ?? [],
         })
       : [];
-  // An archived card's row is read-only too: it is off the board, and the
-  // decider refuses it anyway.
-  const canSetProject = projectLock === null && card.archivedAt === null;
+  // An ARCHIVED card gets the plain text row: it is off the board, the decider
+  // refuses the command anyway, and a padlock explaining a pin it does not have
+  // would be a lie. A live card always gets the rich row — the pinned variant
+  // renders the padlock and its reason, which is the whole point of resolving
+  // the lock rather than just hiding the control.
+  const canSetProject = card.archivedAt === null;
   const projectNames = new Map(
     (snapshot?.projects ?? []).map((entry) => [String(entry.id), entry.title]),
   );
