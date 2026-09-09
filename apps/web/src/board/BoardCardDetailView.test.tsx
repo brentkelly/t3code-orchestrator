@@ -73,6 +73,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     modelOverrides: null,
     splitRationale: null,
     baseBranch: null,
+    scheduledStartAt: null,
     worktree: null,
     blocked: false,
     archivedAt: null,
@@ -219,6 +220,8 @@ const baseProps = {
   onUnlinkThread: noop,
   boardSettings: DEFAULT_SERVER_SETTINGS.board,
   onSetModelOverrides: noop,
+  scheduleKind: "before-build" as const,
+  onSetScheduledStartAt: noop,
 } as const;
 
 /** The pane switch's selected tab — the one tab styled active (`bg-card`) —

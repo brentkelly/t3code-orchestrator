@@ -1120,6 +1120,29 @@ export const BoardCard = Schema.Struct({
   baseBranch: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** When the supervisor may next move this card (T3O-19, D1), or null to move
+      it as soon as it can — which is every card that has never been scheduled.
+
+      ONE instant for the whole card, not a per-stage map. Until it passes,
+      nothing admits, queues, provisions or nudges the card; at it, the
+      supervisor makes the move it would otherwise have made now and CLEARS the
+      field in the same pass (D4, clear-before-act). The clearing is what keeps
+      a time set before the build from silently re-gating Code review and every
+      later stage from a decision the user made about something else days
+      earlier.
+
+      Because the gate lives only in the governor's scheduling pass, it never
+      blocks a button a human just pressed: an explicit merge, conflict fix or
+      `start-stage-thread` is untouched. A time in the PAST is legal and means
+      "now" — the picker refuses nothing.
+
+      Modelled field-for-field on `baseBranch` — nullable column, decoding
+      default of null — so a from-empty replay of a log written before this spec
+      matches the table-rehydrated model, with migration 038's
+      `scheduled_start_at` column defaulting to NULL to the same end. */
+  scheduledStartAt: Schema.NullOr(IsoDateTime).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -1128,6 +1151,27 @@ export const BoardCard = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type BoardCard = typeof BoardCard.Type;
+
+/**
+ * Whether a card's scheduled start has arrived (T3O-19, D1) — the ONE
+ * definition of "due", shared by the supervisor's gate, its firing pass and
+ * every client that hides a pill or renumbers a queue, so none of them can
+ * disagree about the same card.
+ *
+ * An unscheduled card is always due. So is one whose time is in the past: a
+ * past instant means "now", the picker refuses none, and a card that missed its
+ * moment while the server was down must catch up rather than wait forever. An
+ * unparseable instant is treated as due for the same reason — the failure
+ * direction that moves the card.
+ */
+export function isBoardCardScheduleDue(
+  scheduledStartAt: string | null | undefined,
+  nowMs: number,
+): boolean {
+  if (scheduledStartAt == null) return true;
+  const atMs = Date.parse(scheduledStartAt);
+  return !Number.isFinite(atMs) || atMs <= nowMs;
+}
 
 /**
  * The unmet subset of a card's dependencies. A dependency is met when its
@@ -2830,6 +2874,11 @@ export const BoardCardCreateCommand = Schema.Struct({
       (`isBoardCardBaseBranchShape`); its existence is checked by the reactor at
       provisioning time, which is where git is. */
   baseBranch: Schema.optional(TrimmedNonEmptyString),
+  /** Hold the card until this instant (T3O-19, D1). Absent starts it as soon as
+      the pipeline reaches it, which is every unscheduled card. A creation-stage
+      card is before Building, so this reads as "start the build at" — plan-mode
+      steps are never withheld, and the create dialog's copy says so. */
+  scheduledStartAt: Schema.optional(IsoDateTime),
   /** Create the card as a sub-board child of this parent (t3o-25): the
       drill-in view's create dialog presets it. The decider requires the
       parent to be a live top-level card in the same project, restricts the
@@ -2904,6 +2953,12 @@ export const BoardCardUpdateCommand = Schema.Struct({
       on a sub-board child (D4), which inherits its parent's integration branch
       and would otherwise store dead data no resolver reads. */
   baseBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** When the supervisor may next move this card (T3O-19, D1). Absent leaves it
+      unchanged; `null` clears the hold, which starts or resumes the card
+      immediately (D6 — the schedule's only reverse state, and its "start now");
+      an instant sets it, which PAUSES a step that is running right now. A past
+      instant is accepted and means "now". */
+  scheduledStartAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -3695,6 +3750,12 @@ export const BoardCardCreatedPayload = Schema.Struct({
       explicit base, both of which mean "follow the project default" — the same
       null migration 036's column defaults to, so replay equals rehydration. */
   baseBranch: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The instant the card is held until (T3O-19, D1). Key-optional: absent on
+      every event written before this spec and on every card created without a
+      schedule, both of which mean "start as soon as the pipeline reaches it" —
+      the same null migration 038's column defaults to, so replay equals
+      rehydration. */
+  scheduledStartAt: Schema.optionalKey(IsoDateTime),
   /** A child arrives with its plan's BODY as its brief — but the decider has
       no SQL client and bodies never ride the read model (D8), so the created
       payload carries this pointer instead of the text and the SQL projector
@@ -3762,6 +3823,16 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       model — D8). */
   brief: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   card: BoardCard,
+  /** What this edit set the schedule to (T3O-19, D3), mirroring `brief` above:
+      absent means the edit did not touch it, `null` means it was cleared, an
+      instant means it was set.
+
+      The card rides this payload whole, so the VALUE is already there — this
+      key exists to say the edit TOUCHED it. That distinction is load-bearing in
+      the supervisor: clearing a schedule resumes a parked card immediately
+      (D6), so without it a title edit on a card parked for any other reason
+      would resume it too. */
+  scheduledStartAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   /** The card face's review summary AFTER this edit (t3o-22, D7), folded by
       the decider when the edit could change it (a round budget or a stop). It
       rides the `card-upserted` shell delta this event produces, so a pure
@@ -4544,6 +4615,17 @@ export const BoardCardShell = Schema.Struct({
   /** Set on sub-board children (t3o-23) so a child's face can wear its
       "part of <parent key>" chip and t3o-25's drill-in can scope by it. */
   parentCardId: Schema.optionalKey(BoardCardId),
+  /** When the card is held until (T3O-19, D8), absent when it is not scheduled
+      — which is nearly every card, and why this is KEY-optional rather than
+      nullable: the shell is under a fixed per-card byte budget asserted in
+      `board.test.ts` and the snapshot grows linearly with card count, so an
+      unscheduled card must cost exactly what it costs today.
+
+      Unlike `queued`/`stalled`, this is CARD-AGGREGATE data, so it rides every
+      card-carrying delta for free — no dedicated delta, and no absent-means-
+      preserve rule on the client. Absent really does mean unscheduled, and
+      clearing a schedule really does clear the pill. */
+  scheduledStartAt: Schema.optionalKey(IsoDateTime),
   /** The card's linked pull request number, absent when it has none. Sourced
       from `BoardCard.pullRequest`, so — unlike `briefHasImage` / `planCount` —
       it is on the aggregate and every card-carrying delta asserts it; there is
@@ -4767,6 +4849,11 @@ export function makeBoardCardShell(input: {
       omitted for top-level cards to keep their shells byte-identical to
       pre-sub-board payloads. */
   readonly parentCardId?: BoardCardId | null | undefined;
+  /** When the card is held until (T3O-19), or null when it is not scheduled.
+      Rides the card aggregate like `prNumber`, so every producer asserts it;
+      the key is omitted for an unscheduled card to keep its shell
+      byte-identical to a pre-schedule payload. */
+  readonly scheduledStartAt?: IsoDateTime | null | undefined;
   /** The card's review-loop summary (t3o-22, D7), or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -4819,6 +4906,10 @@ export function makeBoardCardShell(input: {
     // Sub-board membership (t3o-23): on the aggregate, so asserted whenever
     // present; omitted for top-level cards (see the input doc).
     ...(input.parentCardId == null ? {} : { parentCardId: input.parentCardId }),
+    // The schedule (T3O-19, D8): on the aggregate like `parentCardId`, and
+    // omitted when there is none, which keeps an unscheduled card's shell
+    // exactly the size it was before this field existed.
+    ...(input.scheduledStartAt == null ? {} : { scheduledStartAt: input.scheduledStartAt }),
     // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -4889,6 +4980,7 @@ export function boardCardShellFromCard(
     // `cardMetaShellFields.test.ts`.
     prNumber: boardCardDisplayPullRequest(card)?.number ?? null,
     parentCardId: card.parentCardId,
+    scheduledStartAt: card.scheduledStartAt,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined

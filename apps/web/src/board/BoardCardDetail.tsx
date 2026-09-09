@@ -60,6 +60,7 @@ import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils
 import { boardEnvironment } from "../state/board";
 import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { boardConflictFix } from "./boardConflictFix";
+import { boardScheduleKind } from "./boardSchedule";
 import { boardQueueInfo } from "./boardQueueInfo";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
@@ -462,7 +463,7 @@ export function BoardCardDetail({
       cardShell?.queued !== true
         ? null
         : boardQueueInfo({
-            slot: boardBuildQueue(allShellCards, queueStages).get(cardId),
+            slot: boardBuildQueue(allShellCards, queueStages, Date.now()).get(cardId),
             running: boardRunningStepCount(allShellCards),
             cap: boardSettings.concurrency.globalMaxConcurrent,
           }),
@@ -480,7 +481,12 @@ export function BoardCardDetail({
     () =>
       queueInfo === null
         ? null
-        : planBoardQueueMoveToFront({ cards: allShellCards, stages: queueStages, cardId }),
+        : planBoardQueueMoveToFront({
+            cards: allShellCards,
+            stages: queueStages,
+            cardId,
+            nowMs: Date.now(),
+          }),
     [allShellCards, cardId, queueInfo, queueStages],
   );
   // Strictly "the command is in flight" — cleared when it settles, either way.
@@ -657,6 +663,27 @@ export function BoardCardDetail({
       `stepFailure` by construction: `paused` and `stalled` are different step
       statuses and a card has one live step. */
   const stepPaused = stepPausedByHuman ? { stageLabel: boardStageLabel(stages, card.stage) } : null;
+
+  /** What the schedule control is offering (T3O-19, D13). Derived from the
+      shell's step flags rather than a step row, because those flags are what
+      every other status affordance on this card already reads — the pill, the
+      banners, the queue chip — so the popover's wording cannot disagree with
+      the card it sits on.
+
+      A card with a PARKED step gets "Resume … at": there is nothing to stop,
+      and the time schedules its exit. A card at or after the build stage with
+      nothing running gets "Start {Stage} at". Everything earlier gets "Start
+      the build at", which is the only honest reading before anything has been
+      admitted. */
+  const scheduleKind = boardScheduleKind({
+    atOrAfterBuild: isBoardStageAtOrAfterBuild(stageState, card.stage),
+    stepStatus:
+      cardShell?.stepAwaiting != null || stepStalled
+        ? "paused"
+        : cardShell?.stepRunning === true
+          ? "running"
+          : null,
+  });
 
   // Restart is a server command (D2): the reactor runs the stage's configured
   // prompt through the same envelope the automatic trigger uses, so the two
@@ -962,6 +989,10 @@ export function BoardCardDetail({
       boardSettings={boardSettings}
       onSetModelOverrides={(modelOverrides) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, modelOverrides } }))
+      }
+      scheduleKind={scheduleKind}
+      onSetScheduledStartAt={(scheduledStartAt) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, scheduledStartAt } }))
       }
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running for this note's purpose: a queued step has

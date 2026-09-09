@@ -105,6 +105,7 @@ const supervisorStub: SupervisorReactorShape = {
   start: () => Effect.void,
   reconcile: Effect.void,
   sweep: Effect.void,
+  fireSchedules: Effect.void,
   releaseThreads: Effect.void,
   drain: Effect.void,
   refreshPullRequest: (cardId) =>

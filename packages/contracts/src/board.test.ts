@@ -21,6 +21,7 @@ import {
   boardModelSelectionOfOverride,
   isBoardCardBaseBranchShape,
   isBoardCardBaseRetargeted,
+  isBoardCardScheduleDue,
   isEmptyBoardCardModelOverrides,
   resolveBoardCardEffectiveBase,
   resolveBoardCardStageModelOverride,
@@ -88,8 +89,16 @@ const utf8Bytes = (value: unknown): number =>
  * scalar-plus-one-small-array, and still linear in card count. If a change
  * pushes past this, it added real bytes to every card on every reconnect,
  * and the right fix is almost never raising the number.
+ *
+ * T3O-19 raised it to 1344 for the ONE case that argument does not cover: a
+ * key-optional field that no ordinary card carries. `scheduledStartAt` costs a
+ * scheduled card ~45 bytes and every other card exactly zero (asserted below,
+ * and by the linear-growth test, which measures unscheduled cards — the real
+ * per-card cost on reconnect, and unchanged). The ceiling moved only for a
+ * worst case that cannot actually occur: a card cannot be scheduled and running
+ * and queued and mid-review-round at the same instant.
  */
-const BOARD_CARD_SHELL_BYTE_BUDGET = 1280;
+const BOARD_CARD_SHELL_BYTE_BUDGET = 1344;
 
 /** Five UUID-length label ids: a card at exactly `BOARD_CARD_LABELS_MAX`,
     the worst case the shell must lay out for. */
@@ -130,6 +139,10 @@ const fullyPopulatedShell = {
   planTotal: 24,
   planDone: 12,
   prNumber: 48213,
+  // Populated (T3O-19, D8): the budget is measured against a card that IS
+  // scheduled, so the field is proven to fit in the worst case rather than
+  // only in the absent-key case every unscheduled card sends.
+  scheduledStartAt: "2026-01-01T00:00:00.000Z",
   roundCurrent: 3,
   roundMax: 5,
   stepLabel: "Adjudicating reviewer findings",
@@ -158,6 +171,7 @@ const typicalCard = (index: number): BoardCard => ({
   modelOverrides: null,
   splitRationale: null,
   baseBranch: null,
+  scheduledStartAt: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",
@@ -219,6 +233,27 @@ describe("BoardCardShell payload discipline", () => {
     }
   });
 
+  it("costs an unscheduled card nothing and carries a scheduled card's instant (T3O-19, D8)", () => {
+    // D8's whole argument: the shell is under a per-card budget and the
+    // snapshot grows linearly with card count, so the COMMON card — the one
+    // that is not scheduled — must be byte-for-byte what it was before this
+    // field existed.
+    const unscheduled = encodeShell(boardCardShellFromCard(typicalCard(1))) as Record<
+      string,
+      unknown
+    >;
+    expect("scheduledStartAt" in unscheduled).toBe(false);
+
+    const scheduled = boardCardShellFromCard({
+      ...typicalCard(1),
+      scheduledStartAt: "2026-03-04T09:00:00.000Z",
+    });
+    expect(scheduled.scheduledStartAt).toBe("2026-03-04T09:00:00.000Z");
+    // On the card aggregate, so it rides every card-carrying delta and survives
+    // an encode/decode round trip rather than needing a dedicated delta.
+    expect(decodeShell(encodeShell(scheduled)).scheduledStartAt).toBe("2026-03-04T09:00:00.000Z");
+  });
+
   it("grows the shell snapshot linearly and modestly with card count", () => {
     const bytesAt10 = utf8Bytes(encodeSnapshot(snapshotWithCards(10)));
     const bytesAt1000 = utf8Bytes(encodeSnapshot(snapshotWithCards(1000)));
@@ -229,6 +264,27 @@ describe("BoardCardShell payload discipline", () => {
     // key-length jitter of larger indices — i.e. growth is linear, not
     // super-linear.
     expect(bytesAt1000).toBeLessThanOrEqual((bytesAt10 / 10) * 1000 * 1.05);
+  });
+});
+
+describe("isBoardCardScheduleDue (T3O-19, D1)", () => {
+  const now = Date.parse("2026-03-04T09:00:00.000Z");
+
+  it("treats an unscheduled card as always due", () => {
+    expect(isBoardCardScheduleDue(null, now)).toBe(true);
+    expect(isBoardCardScheduleDue(undefined, now)).toBe(true);
+  });
+
+  it("withholds a future card and admits one at or past its instant", () => {
+    expect(isBoardCardScheduleDue("2026-03-04T09:00:01.000Z", now)).toBe(false);
+    expect(isBoardCardScheduleDue("2026-03-04T09:00:00.000Z", now)).toBe(true);
+    // A past time means "now" (D6): the picker refuses none, and a card that
+    // missed its moment while the server was down catches up.
+    expect(isBoardCardScheduleDue("2020-01-01T00:00:00.000Z", now)).toBe(true);
+  });
+
+  it("fails in the direction that moves the card", () => {
+    expect(isBoardCardScheduleDue("not an instant", now)).toBe(true);
   });
 });
 

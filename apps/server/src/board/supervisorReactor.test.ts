@@ -70,6 +70,7 @@ const card: BoardCard = {
   modelOverrides: null,
   splitRationale: null,
   baseBranch: null,
+  scheduledStartAt: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",

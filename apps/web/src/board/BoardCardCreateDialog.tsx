@@ -67,6 +67,7 @@ import {
 } from "./BoardBriefAttachments";
 import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
+import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import { BoardLabelField } from "./BoardLabelField";
 import { boardStageLabel } from "./boardStages";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
@@ -142,6 +143,8 @@ export function BoardCardCreateDialog({
   // The card's base branch (T3O-5, D13): null follows the chosen project's
   // default, which is what the picker reads until someone changes it.
   const [baseBranch, setBaseBranch] = useState<string | null>(null);
+  /** The card's scheduled start (T3O-19), null until the clock is touched. */
+  const [scheduledStartAt, setScheduledStartAt] = useState<string | null>(null);
   const [stage, setStage] = useState<BoardStageId>(defaultStage);
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
@@ -160,6 +163,7 @@ export function BoardCardCreateDialog({
     if (open && !wasOpen.current) {
       setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
       setBaseBranch(null);
+      setScheduledStartAt(null);
       setStage(defaultStage);
       setTitle("");
       setBrief("");
@@ -282,6 +286,10 @@ export function BoardCardCreateDialog({
         // (T3O-5, D12/D16): "no opinion" and "pinned to whatever main is
         // called today" must not collapse into the same stored value.
         ...(baseBranch === null ? {} : { baseBranch }),
+        // The scheduled start (T3O-19, D14). Absent when the clock was never
+        // touched, which is nearly every card — and the reason the field is
+        // key-optional on the command rather than a nullable one.
+        ...(scheduledStartAt === null ? {} : { scheduledStartAt }),
         // The child preset (t3o-25): a card created inside a drill-in is that
         // parent's child, exactly as if a plan had materialised it.
         ...(subBoardParentId === null ? {} : { parentCardId: subBoardParentId }),
@@ -542,6 +550,16 @@ export function BoardCardCreateDialog({
         </div>
 
         <DialogFooter className="shrink-0 px-5">
+          {/* Left of Cancel, and a bare clock until a time is set: the brief
+              asks for this to be largely hidden, and it is one of the few
+              things on a new card that almost nobody sets. */}
+          <BoardCardSchedulePopover
+            className="sm:mr-auto"
+            kind="before-build"
+            onChange={setScheduledStartAt}
+            scheduledStartAt={scheduledStartAt}
+            stageLabel="the build"
+          />
           <Button onClick={() => onOpenChange(false)} size="sm" variant="ghost">
             Cancel
           </Button>
