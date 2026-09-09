@@ -959,10 +959,13 @@ it.effect("a NAMED reset time is bounded by the same seven days, not probed for 
             sourceCardId: BoardCardId.make("a"),
             knownTime: true,
             blindSince: null,
-            // It has already sent someone to ask and been told no, which is what
-            // separates a chronic wall from a real weekly window still owed its
-            // first probe.
-            probeCardId: BoardCardId.make("a"),
+            // `lastCheckedAt` past `detectedAt` is what says it has already sent
+            // someone to ask and been told no, which separates a chronic wall
+            // from a real weekly window still owed its first probe. `probeCardId`
+            // is NULL here on purpose: that is the value the chronic loop
+            // actually leaves, because every re-record of the row drops the
+            // prober. Gating the ceiling on it instead would never fire.
+            probeCardId: null,
             setByHuman: false,
           },
         ],
@@ -1026,6 +1029,43 @@ it.effect("a real weekly window still gets its first probe at the ceiling", () =
         // seeded card, so its resumed turn goes no further than the backoff
         // ladder — what matters here is that it was not escalated.)
         assert.notStrictEqual((yield* stepOf(harness, "a"))?.stalledReason, "gave-up");
+      }),
+  ),
+);
+
+it.effect("a second card refused during a cooldown does not count as its probe", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("a", "a"), buildingCard("b", "b")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        // Both cards are already RUNNING when the account runs out, which is the
+        // ordinary shape of a busy board: `a`'s turn ends against the wall and
+        // records the cooldown, then `b`'s turn ends against the same wall and
+        // re-records it. Neither is a probe — nothing was elected and nothing
+        // waited for the window — so the cooldown is still owed its first probe
+        // at the seven-day ceiling. Stamping `lastCheckedAt` on that re-record
+        // would make a genuine weekly window look chronic and hand its cards to
+        // a human at the exact moment they were due to resume.
+        const threadA = yield* startCard(harness, "a", "a", 1);
+        const threadB = yield* startCard(harness, "b", "b", 2);
+        yield* endTurn(harness, threadA, waitAt());
+        yield* TestClock.adjust(Duration.minutes(5));
+        yield* endTurn(harness, threadB, waitAt());
+
+        const limit = yield* limitOf(harness, codex);
+        assert.strictEqual(limit?.kind, "wait");
+        assert.strictEqual((yield* stepOf(harness, "b"))?.stalledReason, "usage-limit");
+        assert.strictEqual(
+          limit?.lastCheckedAt,
+          limit?.detectedAt,
+          "the re-record left the cooldown still un-probed",
+        );
       }),
   ),
 );

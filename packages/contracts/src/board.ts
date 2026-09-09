@@ -1842,9 +1842,12 @@ export const BoardProviderLimit = Schema.Struct({
       instant and means nothing — there is nothing to wait for. */
   until: IsoDateTime,
   detectedAt: IsoDateTime,
-  /** When a probe last actually asked the provider. Drives the popover's
-      "checked <relative>" line, so a human can tell a live cooldown from a
-      forgotten one. */
+  /** When a probe last actually asked the provider — set when a prober is
+      elected, and held still by a re-record, which is an answer rather than a
+      fresh ask. Drives the popover's "checked <relative>" line, so a human can
+      tell a live cooldown from a forgotten one; and, by sitting exactly on
+      `detectedAt` until the first probe, tells the seven-day ceiling whether
+      this cooldown has ever sent anyone to ask. */
   lastCheckedAt: IsoDateTime,
   /** The provider's OWN sentence, never our paraphrase. */
   reason: Schema.NullOr(TrimmedNonEmptyString),

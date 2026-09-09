@@ -3020,7 +3020,15 @@ const make = Effect.gen(function* () {
       kind: "wait",
       until,
       detectedAt: existing?.detectedAt ?? nowIsoValue,
-      lastCheckedAt: nowIsoValue,
+      // `lastCheckedAt` is when a PROBE last asked, and a re-record is not a
+      // probe: it is either a second card whose turn ended against the same wall
+      // moments after detection, or the answer to a probe that `fireDueProbes`
+      // already stamped when it elected the prober. Holding it still is what
+      // makes `lastCheckedAt > detectedAt` mean exactly "this cooldown has
+      // already sent someone to ask" — the signal the seven-day ceiling gates
+      // on, and the one thing here that survives `probeCardId` going back to
+      // null.
+      lastCheckedAt: existing?.lastCheckedAt ?? nowIsoValue,
       reason: input.match.reason,
       ruleId: input.match.ruleId,
       sourceCardId: input.cardId,
@@ -4900,16 +4908,21 @@ const make = Effect.gen(function* () {
       // for ever, and its cards would never reach the human D8 promises them.
       // Seven days measured from detection bounds both shapes with one rule.
       //
-      // `probeCardId` is what keeps that rule from cutting a legitimate window
-      // short: a parsed time is believed out to the same seven days, so a real
-      // WEEKLY limit lands its first probe exactly at the ceiling. A cooldown
-      // that has never sent anyone to ask gets that first probe; only one that
-      // has already asked, and is still being told no seven days on, gives up.
+      // "Has it already sent someone to ask?" is what keeps that rule from
+      // cutting a legitimate window short: a parsed time is believed out to the
+      // same seven days, so a real WEEKLY limit lands its first probe exactly at
+      // the ceiling. A cooldown that has never asked gets that first probe; only
+      // one that has asked, and is still being told no seven days on, gives up.
+      //
+      // `lastCheckedAt` is that signal and `probeCardId` is not: the chronic
+      // loop this ceiling exists for re-records the row on every refusal, and a
+      // re-record has no prober, so `probeCardId` is null at every due tick.
+      // `lastCheckedAt` equals `detectedAt` at first detection and moves only
+      // when a prober is elected, so it survives the re-record.
       const heldFor = Math.max(0, nowMs - Date.parse(limit.detectedAt));
+      const probed = Date.parse(limit.lastCheckedAt) > Date.parse(limit.detectedAt);
       const expired =
-        Number.isFinite(heldFor) &&
-        heldFor >= BOARD_USAGE_LIMIT_MAX_HORIZON_MS &&
-        limit.probeCardId !== null;
+        Number.isFinite(heldFor) && heldFor >= BOARD_USAGE_LIMIT_MAX_HORIZON_MS && probed;
       if (pollDelay === null || expired) {
         // Seven days with nothing learned (D8). Stop waiting and hand every card
         // it was holding to a human — the honest end of a window that never
