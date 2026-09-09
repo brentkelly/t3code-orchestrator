@@ -102,6 +102,7 @@ const expectedCard = {
   modelOverrides: null,
   splitRationale: null,
   baseBranch: null,
+  scheduledStartAt: null,
   worktree: null,
   pullRequest: null,
   pullRequestHistory: [],

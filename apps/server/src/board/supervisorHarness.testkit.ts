@@ -185,6 +185,7 @@ export const makeBoardCard = (input: {
   modelOverrides: null,
   splitRationale: null,
   baseBranch: null,
+  scheduledStartAt: null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],
