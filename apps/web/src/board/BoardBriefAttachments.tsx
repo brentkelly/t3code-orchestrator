@@ -32,6 +32,7 @@ import { useAssetUrl } from "../assets/assetUrls";
 import { cn, randomUUID } from "../lib/utils";
 import { usePreparedConnection } from "../state/session";
 import { BoardHint } from "./BoardHint";
+import { stagedRowsFromUploads } from "./boardCardDraft";
 import {
   formatBoardAttachmentSize,
   pastedImageFiles,
@@ -281,21 +282,37 @@ export function useBoardBriefAttachments(input: {
   };
 
   /** Drop every staged row, releasing local previews and unclaimed uploads —
-      the dialog's reset on its open edge. */
-  const clear = useCallback(() => {
-    for (const row of stagedRef.current) {
-      const runtime = runtimes.current.get(row.id);
-      if (runtime) {
-        runtime.cancelled = true;
-        runtime.abort?.();
+      Discard draft, Start fresh and the dialog's reset. `release: false` is
+      for a create that has just claimed those uploads onto the card: the ids
+      are the card's now, and releasing them would delete its files. */
+  const clear = useCallback(
+    (options?: { readonly release?: boolean }) => {
+      const release = options?.release ?? true;
+      for (const row of stagedRef.current) {
+        const runtime = runtimes.current.get(row.id);
+        if (runtime) {
+          runtime.cancelled = true;
+          runtime.abort?.();
+        }
+        if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
+        if (release && row.upload) {
+          releaseBoardPendingUpload(environmentId, row.upload.pendingAttachmentId);
+        }
       }
-      if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
-      if (row.upload) releaseBoardPendingUpload(environmentId, row.upload.pendingAttachmentId);
-    }
-    runtimes.current.clear();
-    setStaged([]);
-    setNotice(null);
-  }, [environmentId]);
+      runtimes.current.clear();
+      setStaged([]);
+      setNotice(null);
+    },
+    [environmentId],
+  );
+
+  /** Seed rows from a restored draft's references (T3O-26). A no-op when
+      rows are already staged: those are this session's, and still hold their
+      real bytes, live previews and in-flight uploads. */
+  const hydrate = useCallback((uploads: ReadonlyArray<BoardPendingUpload>) => {
+    if (uploads.length === 0) return;
+    setStaged((rows) => (rows.length > 0 ? rows : stagedRowsFromUploads(uploads)));
+  }, []);
 
   /** True while any row is still moving: the dialog blocks Create on it. */
   const busy = staged.some(
@@ -309,6 +326,7 @@ export function useBoardBriefAttachments(input: {
     busy,
     failed,
     clear,
+    hydrate,
     notice,
     dropZone,
     handlers,
@@ -434,6 +452,40 @@ function StagedImageThumb(props: {
   );
 }
 
+/** A row restored from a draft (T3O-26): the bytes are gone, so the tile
+    renders from the pending upload's signed URL. No progress bar and no
+    retry — there is nothing local left to retry with; remove and attach
+    again. A URL that never resolves degrades to the empty tile. */
+function HydratedImageThumb(props: {
+  readonly environmentId: EnvironmentId;
+  readonly row: BoardStagedAttachment;
+  readonly onRemove: (id: string) => void;
+}) {
+  const { row } = props;
+  const url = useAssetUrl(props.environmentId, {
+    _tag: "attachment",
+    attachmentId: row.upload?.pendingAttachmentId ?? "",
+    fileName: row.name,
+    mimeType: row.mimeType,
+  });
+  return (
+    <div className="relative shrink-0">
+      <BoardHint label={row.name}>
+        <div
+          className={THUMB_CLASS}
+          style={url ? { backgroundImage: `url("${url}")` } : undefined}
+        />
+      </BoardHint>
+      <RemoveBadge label="Remove" onClick={() => props.onRemove(row.id)} />
+    </div>
+  );
+}
+
+/** Whether a staged row lost its local bytes to a reload (T3O-26). */
+function isHydratedRow(row: BoardStagedAttachment): boolean {
+  return row.file === null && row.previewUrl === null && row.upload !== null;
+}
+
 /** Images: persisted from the card, then staged, as 56×56 tiles. Renders
     nothing when there are none, so the editor sits flush. */
 export function BoardBriefThumbnailStrip(props: {
@@ -462,14 +514,23 @@ export function BoardBriefThumbnailStrip(props: {
             />
           ))
         : null}
-      {stagedImages.map((row) => (
-        <StagedImageThumb
-          key={row.id}
-          onRemove={props.state.removeStaged}
-          onRetry={props.state.retry}
-          row={row}
-        />
-      ))}
+      {stagedImages.map((row) =>
+        isHydratedRow(row) ? (
+          <HydratedImageThumb
+            environmentId={props.environmentId}
+            key={row.id}
+            onRemove={props.state.removeStaged}
+            row={row}
+          />
+        ) : (
+          <StagedImageThumb
+            key={row.id}
+            onRemove={props.state.removeStaged}
+            onRetry={props.state.retry}
+            row={row}
+          />
+        ),
+      )}
     </div>
   );
 }

@@ -34,7 +34,7 @@ import {
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Dialog, DialogFooter, DialogPopup, DialogTitle } from "../components/ui/dialog";
@@ -65,7 +65,19 @@ import {
   boardBriefDropClass,
   useBoardBriefAttachments,
 } from "./BoardBriefAttachments";
-import { boardAttachmentLimits } from "./boardAttachmentUpload";
+import { boardAttachmentLimits, type BoardPendingUpload } from "./boardAttachmentUpload";
+import {
+  boardCardDraftHasContent,
+  boardCardDraftKey,
+  restoreBoardCardDraft,
+  type BoardCardDraftFields,
+} from "./boardCardDraft";
+import {
+  clearBoardCardDraft,
+  flushBoardCardDrafts,
+  readBoardCardDraft,
+  saveBoardCardDraft,
+} from "./boardCardDraftStore";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import { BoardLabelField } from "./BoardLabelField";
@@ -153,29 +165,6 @@ export function BoardCardCreateDialog({
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  // Reset the form ONLY on the closed→open transition, honouring the caller's
-  // prefilled stage/project (the column button opens onto its own stage). A
-  // plain `open`-guarded effect would re-run — and wipe in-progress input —
-  // every time a background shell delta gives `projects` a new identity while
-  // the dialog is open; the ref pins the reset to the actual open edge.
-  const wasOpen = useRef(false);
-  useEffect(() => {
-    if (open && !wasOpen.current) {
-      setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
-      setBaseBranch(null);
-      setScheduledStartAt(null);
-      setStage(defaultStage);
-      setTitle("");
-      setBrief("");
-      setLabelIds([]);
-      setDependsOn([]);
-      setFeedback(null);
-      setSubmitting(false);
-      clearBriefAttachments();
-    }
-    wasOpen.current = open;
-  }, [open, defaultProjectId, defaultStage, projects, clearBriefAttachments]);
-
   // Dependencies stay inside one project, so the picker only offers cards from
   // the project this card is being created in. A child's picker is narrower
   // still (t3o-25): siblings only — the decider refuses anything else — while
@@ -234,6 +223,178 @@ export function BoardCardCreateDialog({
         );
   }, [stages, subBoardParentId]);
 
+  // ── Draft persistence (T3O-26) ──────────────────────────────────────
+  // One draft per board scope, autosaved while the dialog is open and offered
+  // back the next time it opens. The dialog writes through the store's plain
+  // functions rather than a hook: it saves on every keystroke and must not
+  // re-render itself for its own writes.
+  const draftKey = boardCardDraftKey(environmentId, subBoardParentId);
+  const [restored, setRestored] = useState<{ readonly droppedAttachments: boolean } | null>(null);
+  // Set once a card has been created: the fields still hold what was just
+  // submitted, and the autosave must not write them back as a fresh draft.
+  const draftSuppressed = useRef(false);
+  // The autosave runs one commit behind the open edge, when the restored (or
+  // reset) fields have not landed yet. Saving there would write the previous
+  // dialog's state under this key; skip exactly that pass.
+  const skipNextSave = useRef(false);
+  // Which scope the staged rows were attached for. The dialog stays mounted
+  // while the board navigates in and out of a sub-board, so without this the
+  // files staged on a child card would follow you to the root board's next
+  // card.
+  const stagedScopeKey = useRef<string | null>(null);
+  const hydrateBriefAttachments = briefAttachments.hydrate;
+
+  /** Every field back to what the dialog opens with. */
+  const resetFields = useCallback(() => {
+    setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
+    setBaseBranch(null);
+    setScheduledStartAt(null);
+    setStage(defaultStage);
+    setTitle("");
+    setBrief("");
+    setLabelIds([]);
+    setDependsOn([]);
+  }, [defaultProjectId, defaultStage, projects]);
+
+  /** The staged rows that are safe to persist: an upload that has landed is a
+      server-side pending attachment the next session can claim. Rows still in
+      flight are this session's only. */
+  const attachmentRefs = useMemo<ReadonlyArray<BoardPendingUpload>>(
+    () =>
+      briefAttachments.staged.flatMap((row) =>
+        row.status === "uploaded" && row.upload !== null ? [row.upload] : [],
+      ),
+    [briefAttachments.staged],
+  );
+
+  const draftFields = useMemo<BoardCardDraftFields>(
+    () => ({
+      title,
+      brief,
+      stage,
+      projectId,
+      baseBranch,
+      labelIds,
+      dependsOn,
+      scheduledStartAt,
+      attachments: attachmentRefs,
+    }),
+    [
+      attachmentRefs,
+      baseBranch,
+      brief,
+      dependsOn,
+      labelIds,
+      projectId,
+      scheduledStartAt,
+      stage,
+      title,
+    ],
+  );
+  const draftHasContent = boardCardDraftHasContent(draftFields);
+
+  // Restore or reset ONLY on the closed→open transition, honouring the
+  // caller's prefilled stage/project (the column button opens onto its own
+  // stage). A plain `open`-guarded effect would re-run — and wipe in-progress
+  // input — every time a background shell delta gives `projects` a new
+  // identity while the dialog is open; the ref pins this to the open edge.
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      setFeedback(null);
+      setSubmitting(false);
+      draftSuppressed.current = false;
+      skipNextSave.current = true;
+      if (stagedScopeKey.current !== null && stagedScopeKey.current !== draftKey) {
+        // `release: false`: those pending ids are still referenced by the
+        // other scope's stored draft, which will offer them back.
+        clearBriefAttachments({ release: false });
+      }
+      stagedScopeKey.current = draftKey;
+      const draft = readBoardCardDraft(draftKey);
+      if (draft === null) {
+        resetFields();
+        setRestored(null);
+      } else {
+        const restoration = restoreBoardCardDraft({
+          draft,
+          now: Date.now(),
+          cards: allCards,
+          projectIds: projects.map((project) => project.id),
+          labels: catalogue,
+          stageOptions,
+          subBoardParentId,
+          fallbackProjectId: defaultProjectId ?? projects[0]?.id ?? null,
+          openedStage: defaultStage,
+          maxAttachments: BOARD_CARD_ATTACHMENTS_MAX,
+        });
+        const fields = restoration.fields;
+        setProjectId(fields.projectId);
+        setBaseBranch(fields.baseBranch);
+        setScheduledStartAt(fields.scheduledStartAt);
+        setStage(fields.stage);
+        setTitle(fields.title);
+        setBrief(fields.brief);
+        setLabelIds(fields.labelIds);
+        setDependsOn(fields.dependsOn);
+        setRestored({ droppedAttachments: restoration.droppedAttachments });
+        // Two tiers: rows still in memory are this session's and keep their
+        // real bytes, live previews and in-flight uploads — `hydrate` leaves
+        // them alone. Across a reload there are none, and the draft's
+        // references become uploaded rows with no local bytes.
+        hydrateBriefAttachments(fields.attachments);
+      }
+    }
+    wasOpen.current = open;
+    // `open` alone on purpose: everything the branch reads (the snapshot's
+    // cards, the projects, the catalogue, the stored draft) is read ONCE, as
+    // the dialog opens. Listing them would re-run the restore mid-edit every
+    // time a background delta gave one a new identity.
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
+    if (draftSuppressed.current) return;
+    saveBoardCardDraft(draftKey, { ...draftFields, updatedAt: Date.now() });
+  }, [draftFields, draftKey, open]);
+
+  // Closing, or going away entirely, is a save point: land the debounced
+  // write rather than trust the page to still be here in 0.7s.
+  useEffect(
+    () => () => {
+      flushBoardCardDrafts();
+    },
+    [],
+  );
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next) flushBoardCardDrafts();
+    onOpenChange(next);
+  };
+
+  /** The one destructive path: drop the stored draft and everything staged,
+      then close. X, Esc and the backdrop all keep the draft instead. */
+  const discardDraft = () => {
+    draftSuppressed.current = true;
+    clearBoardCardDraft(draftKey);
+    clearBriefAttachments();
+    setRestored(null);
+    onOpenChange(false);
+  };
+
+  /** The restore banner's escape: same clearing, but the dialog stays open on
+      an empty form. */
+  const startFresh = () => {
+    clearBoardCardDraft(draftKey);
+    clearBriefAttachments();
+    resetFields();
+    setRestored(null);
+  };
+
   // Like the composer's send button: every upload must have landed, and a
   // failed one must be retried or removed, before the card can be created.
   const canSubmit =
@@ -269,9 +430,7 @@ export function BoardCardCreateDialog({
       });
     }
     const cardId = BoardCardId.make(randomUUID());
-    const uploads = briefAttachments.staged.flatMap((row) =>
-      row.status === "uploaded" && row.upload !== null ? [row.upload] : [],
-    );
+    const uploads = attachmentRefs;
     void createCard({
       environmentId,
       input: {
@@ -305,6 +464,12 @@ export function BoardCardCreateDialog({
         if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
         return;
       }
+      // The card exists, so the draft has served its purpose (T3O-26). Drop
+      // it before the claims below, which can only fail per-file — a retry of
+      // Create is not on the table once the card is there.
+      draftSuppressed.current = true;
+      clearBoardCardDraft(draftKey);
+      setRestored(null);
       // The card exists; claim each staged upload onto it (K6). A claim that
       // fails leaves a card without that file — say so rather than pretend.
       const failures: string[] = [];
@@ -321,15 +486,18 @@ export function BoardCardCreateDialog({
             failures.length === 1 ? "it" : "them"
           } again.`,
         );
-        briefAttachments.clear();
+        // `release: false`: these ids belong to the card now, and releasing
+        // them would delete the files it just claimed.
+        briefAttachments.clear({ release: false });
         return;
       }
+      briefAttachments.clear({ release: false });
       onOpenChange(false);
     });
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogPopup className="max-h-[86vh] w-[min(600px,100%)] max-w-[600px] overflow-hidden p-0">
         {/* Identity row — the card modal's, with the stage the card will land
             in standing where the open card shows the stage it is in. */}
@@ -368,6 +536,22 @@ export function BoardCardCreateDialog({
         ) : null}
 
         <div className="mt-3 flex min-h-0 flex-[0_1_auto] flex-col gap-[18px] overflow-y-auto border-t border-border px-5 pt-4 pb-5">
+          {/* Restored-draft banner (T3O-26). Neutral, never blue: the status
+              vocabulary reserves `--info` for "running"
+              (docs/t3o/status-colours.md), and a draft is not work in
+              progress. */}
+          {restored !== null ? (
+            <div className="flex items-center gap-3 rounded-md bg-accent px-2.5 py-2">
+              <p className="min-w-0 flex-1 text-[12px] text-muted-foreground">
+                Unsaved draft restored.
+                {restored.droppedAttachments ? " Some attachments expired and were removed." : null}
+              </p>
+              <Button onClick={startFresh} size="xs" variant="outline">
+                Start fresh
+              </Button>
+            </div>
+          ) : null}
+
           {feedback !== null ? (
             <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[12px] text-destructive-foreground">
               {feedback}
@@ -560,9 +744,28 @@ export function BoardCardCreateDialog({
             scheduledStartAt={scheduledStartAt}
             stageLabel="the build"
           />
-          <Button onClick={() => onOpenChange(false)} size="sm" variant="ghost">
-            Cancel
-          </Button>
+          {/* The footer holds the ONLY destructive path (T3O-26): X, Esc and
+              the backdrop all keep the draft, so say what closing does and
+              make discarding read as the deliberate act it is. */}
+          {draftHasContent ? (
+            <>
+              <span className="text-[12px] text-muted-foreground max-sm:sr-only">
+                Closing keeps this draft
+              </span>
+              <Button
+                className="hover:border-destructive hover:text-destructive-foreground"
+                onClick={discardDraft}
+                size="sm"
+                variant="outline"
+              >
+                Discard draft
+              </Button>
+            </>
+          ) : (
+            <Button onClick={() => handleOpenChange(false)} size="sm" variant="ghost">
+              Cancel
+            </Button>
+          )}
           <Button disabled={!canSubmit} onClick={submit} size="sm">
             Create card
           </Button>
