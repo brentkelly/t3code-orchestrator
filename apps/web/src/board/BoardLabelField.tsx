@@ -58,6 +58,16 @@ const TRIGGER_CHIP_CLASS =
     restore rows so the list reads as one list. */
 const ROW_CLASS = "flex h-[30px] items-center gap-2 rounded-[7px] px-2 text-[12.5px]";
 
+/** Every control in the popover acts on CLICK, not on mousedown: a keyboard
+    activation dispatches a click and no mousedown, so a mousedown-only button
+    would sit in the tab order doing nothing. `mousedown` is still prevented —
+    but only to suppress the focus shift, so a mouse pick leaves the caret in
+    the search box and you can type, pick, type again. Same pair as
+    `CommandPaletteResults`/`ComposerCommandMenu`. */
+const keepFocus = (event: { preventDefault: () => void }) => {
+  event.preventDefault();
+};
+
 export interface BoardLabelFieldProps {
   readonly catalogue: ReadonlyArray<BoardLabel>;
   readonly selectedLabelIds: ReadonlyArray<BoardLabelId>;
@@ -167,8 +177,8 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
             value={query}
           />
 
-          {/* `onMouseDown` is prevented on every row, so a pick never pulls
-              focus out of the search box — you can type, pick, type again. */}
+          {/* Rows act on click and only suppress mousedown's focus shift
+              (`keepFocus`), so mouse and keyboard run the same code. */}
           <div className="flex max-h-[220px] flex-col gap-px overflow-y-auto">
             {model.matches.map(({ label, selected }) => (
               <div className="flex flex-col" key={label.labelId}>
@@ -181,11 +191,11 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                       "flex min-w-0 flex-1 items-center gap-2 text-left text-foreground",
                       selected ? "font-semibold" : "font-normal",
                     )}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
+                    onClick={() => {
                       props.onToggle(label.labelId);
                       setQuery("");
                     }}
+                    onMouseDown={keepFocus}
                     type="button"
                   >
                     {/* The checkbox is the selection state. It fills with the
@@ -218,12 +228,12 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                   <BoardHint label="Change colour">
                     <button
                       className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-accent hover:text-foreground"
-                      onMouseDown={(event) => {
-                        event.preventDefault();
+                      onClick={() => {
                         setEditingColourFor((current) =>
                           current === label.labelId ? null : label.labelId,
                         );
                       }}
+                      onMouseDown={keepFocus}
                       type="button"
                     >
                       <PencilIcon className="size-3" />
@@ -232,10 +242,10 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                   <BoardHint label="Delete label">
                     <button
                       className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground"
-                      onMouseDown={(event) => {
-                        event.preventDefault();
+                      onClick={() => {
                         props.onDelete(label.labelId);
                       }}
+                      onMouseDown={keepFocus}
                       type="button"
                     >
                       <TrashIcon className="size-3" />
@@ -251,11 +261,11 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                             "size-5 rounded-md border-2",
                             label.colour === swatch ? "border-foreground" : "border-transparent",
                           )}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
+                          onClick={() => {
                             props.onRecolour(label.labelId, swatch);
                             setEditingColourFor(null);
                           }}
+                          onMouseDown={keepFocus}
                           style={{ backgroundColor: swatch }}
                           type="button"
                         />
@@ -269,11 +279,11 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
             {model.canCreate ? (
               <button
                 className={cn(ROW_CLASS, "text-foreground hover:bg-accent")}
-                onMouseDown={(event) => {
-                  event.preventDefault();
+                onClick={() => {
                   props.onCreate(model.createName);
                   setQuery("");
                 }}
+                onMouseDown={keepFocus}
                 type="button"
               >
                 <span className="min-w-0 flex-1 truncate text-left">
@@ -305,10 +315,10 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                     <BoardHint label="Restore label">
                       <button
                         className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] hover:bg-accent hover:text-foreground"
-                        onMouseDown={(event) => {
-                          event.preventDefault();
+                        onClick={() => {
                           props.onUndelete(label.labelId);
                         }}
+                        onMouseDown={keepFocus}
                         type="button"
                       >
                         <RotateCcwIcon className="size-3" />
