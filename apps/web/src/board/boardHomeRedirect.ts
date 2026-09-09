@@ -19,11 +19,27 @@ export const BOARD_HOME_PATH = "/board";
 export const THREADS_HOME_PATH = "/";
 
 /**
+ * The auth-gate statuses this file branches on. Upstream assembles them in two
+ * places and exports a type from neither: `resolveInitialServerAuthGateState`
+ * yields `authenticated` / `requires-auth`, and `__root.tsx` returns
+ * `hosted-static` / `hosted-pairing` from its own early returns. Naming the set
+ * here makes an upstream rename a compile error at the seams that pass
+ * `authGateState.status` in, instead of every comparison below silently falling
+ * to its default branch — which would stop the cold-start redirect firing and
+ * send hosted-static pairing to the board.
+ */
+export type BoardAuthStatus =
+  | "authenticated"
+  | "requires-auth"
+  | "hosted-static"
+  | "hosted-pairing";
+
+/**
  * Where the pairing flow lets go of the user. The hosted static app with no
  * environment connected has no board worth showing (D3), so it keeps the
  * threads surface and its "Connect an environment" hero.
  */
-export function resolvePairExitTarget(authStatus: string): "/" | "/board" {
+export function resolvePairExitTarget(authStatus: BoardAuthStatus): "/" | "/board" {
   return authStatus === "hosted-static" ? THREADS_HOME_PATH : BOARD_HOME_PATH;
 }
 
@@ -33,7 +49,7 @@ export interface ColdStartHomeRedirect {
    * a session that booted at `/`, and only when that resolution is still at
    * `/`. Spends its own flag, so callers can ask on every route resolution.
    */
-  readonly shouldRedirectHome: (pathname: string, authStatus: string) => boolean;
+  readonly shouldRedirectHome: (pathname: string, authStatus: BoardAuthStatus) => boolean;
 }
 
 /**
@@ -76,7 +92,7 @@ const appColdStartHomeRedirect = createColdStartHomeRedirect({
  * app's cold start at `/`, and does nothing otherwise — so the whole rule,
  * including the router dependency, stays in this file.
  */
-export function redirectColdStartToBoard(pathname: string, authStatus: string): void {
+export function redirectColdStartToBoard(pathname: string, authStatus: BoardAuthStatus): void {
   if (!appColdStartHomeRedirect.shouldRedirectHome(pathname, authStatus)) return;
   throw redirect({ to: BOARD_HOME_PATH, replace: true });
 }

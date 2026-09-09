@@ -81,4 +81,13 @@ describe("resolvePairExitTarget", () => {
   it("keeps the hosted static app on the threads surface (D3)", () => {
     expect(resolvePairExitTarget("hosted-static")).toBe("/");
   });
+
+  it("rejects a status outside the union at compile time", () => {
+    // The real guard against an upstream status rename is the type, not a
+    // runtime branch: a renamed status must stop compiling at the seam rather
+    // than falling quietly to the board default. Widening the parameter back
+    // to `string` makes this @ts-expect-error unused, and typecheck fails.
+    // @ts-expect-error - "signed-in" is not a BoardAuthStatus
+    expect(resolvePairExitTarget("signed-in")).toBe(BOARD_HOME_PATH);
+  });
 });
