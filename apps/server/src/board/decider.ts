@@ -3081,6 +3081,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             // `queued` for three hours after a requeue would be instantly
             // overdue the moment it was admitted.
             lastNudgeAt: command.createdAt,
+            // The step is working again, so the stall it was wearing is over
+            // (T3O-22). `requeue-step` carries the reason this far ON PURPOSE —
+            // it is what the resume nudge is chosen from — and this is where it
+            // stops, so a later pause or stall cannot inherit a reason from the
+            // resume before it.
+            stalledReason: "gave-up",
+            retryAt: null,
             startedAt: command.createdAt,
             updatedAt: command.createdAt,
           }
@@ -3340,9 +3347,18 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         status: "queued",
         stallCount: preserve ? current.stallCount : 0,
         lastError: null,
-        // The step is going back to work, so the stall it was wearing — and the
-        // retry time that went with it — are over.
-        stalledReason: "gave-up",
+        // The retry TIME is over — the rung has arrived, or a human resumed
+        // ahead of it — but the REASON survives the requeue, because it is the
+        // only thing that tells admission what to say when it nudges the thread
+        // (T3O-22, D7/D9). A quota park resumes as "the window reopened" and a
+        // backoff rung as the recovery reminder it would have carried had it
+        // gone out immediately; clearing the reason here made both branches
+        // unreachable and sent every board-driven resume the generic paused
+        // text. It is carried only off a `stalled` park — the resting value on
+        // a `paused` or `awaiting-input` row means nothing — and `admit-step`
+        // clears it when the step actually goes back to running, so it cannot
+        // outlive the resume it was for.
+        stalledReason: current.status === "stalled" ? current.stalledReason : "gave-up",
         retryAt: null,
         slotHeld: false,
         startedAt: null,

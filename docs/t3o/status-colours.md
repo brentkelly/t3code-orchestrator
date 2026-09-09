@@ -50,6 +50,11 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   usage limit, out of credits, waiting for a retry rung, and recovery having given up — are amber
   and are the same chip; only the words differ, because the colour is answering "is work happening"
   and the answer is no in every one of them. Green would be a lie in all four, and blue in all four.
+  The card modal's stalled banner splits where the chip does not: the two readings the board will
+  end by itself (a usage-limit park, a retry rung) are amber and read "waiting to resume", while the
+  two that stay put until a human acts keep the red failure treatment they have had since t3o-30 —
+  the banner asserts "this needs you", which is exactly the half of `stalled` it is still true of.
+  `boardStallIsWaiting` is that split, so the banner cannot drift from the chip beside it.
   The provider-usage pill in the board header takes the same amber for the same reason. It carries
   no spinner and no ticking countdown: its numbers are coarse (`in 1h 38m`) and repaint only when
   the board does, because a header is on screen all the time and a per-second repaint there is the

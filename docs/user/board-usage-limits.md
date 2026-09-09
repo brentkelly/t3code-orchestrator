@@ -14,6 +14,11 @@ A card held by a usage limit reads **Usage limit — resuming 2:50am**, in amber
 and nothing is lost: the card keeps its conversation and its workspace, holds no agent slot, and
 picks up exactly where it left off.
 
+Open the card and the same fact is at the top of it, in the same amber: **Building is waiting to
+resume**, with the provider's own sentence underneath. A card the board is going to restart by
+itself never wears the red "stopped" banner — that one is kept for a card that has stopped until you
+do something about it.
+
 Two other things a stopped card can now say:
 
 - **Out of credits — needs a human.** The provider is not rate-limiting you, it is telling you the

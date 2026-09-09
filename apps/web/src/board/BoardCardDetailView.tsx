@@ -352,7 +352,14 @@ export interface BoardCardDetailViewProps {
       the failure banner's whole input. Resolved by the container, which is the
       only layer that can see both the card shell's `stalled` flag and the
       detail's `stepError` text. */
-  readonly stepFailure: { readonly stageLabel: string; readonly error: string | null } | null;
+  readonly stepFailure: {
+    readonly stageLabel: string;
+    readonly error: string | null;
+    /** Whether the board will start this step again by itself (T3O-22) — the
+        banner reads amber and "waiting to resume" rather than red and
+        "stopped". */
+    readonly waiting: boolean;
+  } | null;
   /** The paused-step banner (T3O-23), or null when the card's step is not
       paused. Separate from `stepFailure` because the two are opposite claims —
       one says recovery gave up, the other says the human chose to stop — and a
@@ -2082,6 +2089,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 className="mx-3.5 mb-3.5"
                 stageLabel={props.stepFailure.stageLabel}
                 error={props.stepFailure.error}
+                waiting={props.stepFailure.waiting}
                 onRestart={props.stageRestart?.disabledReason == null ? props.onRestartStage : null}
               />
             ) : null}
@@ -2133,6 +2141,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 <BoardCardStepFailure
                   stageLabel={props.stepFailure.stageLabel}
                   error={props.stepFailure.error}
+                  waiting={props.stepFailure.waiting}
                   onRestart={
                     props.stageRestart?.disabledReason == null ? props.onRestartStage : null
                   }

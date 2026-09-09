@@ -30,6 +30,7 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardUsageLimitMatch,
+  type OrchestrationCommand,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -38,6 +39,7 @@ import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
+import { BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE } from "./supervisor.ts";
 import {
   cardArchived,
   cardMoved,
@@ -98,6 +100,24 @@ const slowDown = (): BoardUsageLimitMatch => ({
   reason: "429 Too Many Requests",
   ruleId: "http.429",
 });
+
+/** Every turn the reactor sent into one thread, in order.
+ *
+ * The WORDS a resumed step is nudged with live nowhere on the card row, so this
+ * is the only place a test can read them — and they are the whole point of the
+ * resume: a quota park has to be told its window reopened, and a backoff rung
+ * has to carry the recovery reminder it would have sent immediately. */
+const turnTextsFor = (harness: Harness, threadId: ThreadId) =>
+  harness.commands.pipe(
+    Effect.map((commands) =>
+      commands
+        .filter(
+          (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
+            command.type === "thread.turn.start" && command.threadId === threadId,
+        )
+        .map((command) => command.message.text),
+    ),
+  );
 
 const stepOf = (harness: Harness, id: string) =>
   harness.board.pipe(Effect.map((board) => boardCardStepState(board, BoardCardId.make(id))));
@@ -456,6 +476,66 @@ it.effect("at the reset time exactly one card wakes, and a clean turn frees the 
             `card ${id} is no longer held by a lifted cooldown`,
           );
         }
+      }),
+  ),
+);
+
+it.effect("the woken prober is told its window reopened, not that it was paused", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("a", "a")], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        const thread = yield* stopCard(harness, "a", "a", 1, waitAt());
+        assert.strictEqual((yield* stepOf(harness, "a"))?.stalledReason, "usage-limit");
+
+        yield* TestClock.adjust(Duration.minutes(61));
+        yield* harness.reactor.fireProbes;
+        yield* harness.reactor.drain;
+        assert.strictEqual((yield* stepOf(harness, "a"))?.status, "running");
+
+        // Nothing stalled and nothing failed here — a provider refused and has
+        // since come back — so the agent must not be told it was paused, which
+        // is what it heard while the requeue cleared the reason the nudge is
+        // chosen from.
+        assert.strictEqual(
+          (yield* turnTextsFor(harness, thread)).at(-1),
+          BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE,
+        );
+      }),
+  ),
+);
+
+it.effect("a backoff rung arriving delivers the recovery nudge it deferred", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("a", "a")], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        const thread = yield* stopCard(harness, "a", "a", 1, null);
+        assert.strictEqual((yield* stepOf(harness, "a"))?.stalledReason, "waiting-retry");
+
+        yield* TestClock.adjust(Duration.minutes(10));
+        yield* harness.reactor.fireRetries;
+        yield* harness.reactor.drain;
+        assert.strictEqual((yield* stepOf(harness, "a"))?.status, "running");
+
+        // D7 defers the WORDS, not the recovery: the nudge is recomposed at
+        // delivery from the step row. The unattended run has nobody to answer a
+        // question, so the reminders are the only thing that gets the card
+        // moving again — and a generic "you were paused" drops every one of them.
+        const delivered = (yield* turnTextsFor(harness, thread)).at(-1) ?? "";
+        assert.include(delivered, "board_complete_step");
+        assert.include(delivered, "todo list");
+
+        // And the reason does not outlive the resume: a step back at work wears
+        // no stall, so the next pause cannot inherit this one's words.
+        assert.strictEqual((yield* stepOf(harness, "a"))?.stalledReason, "gave-up");
+        assert.strictEqual((yield* stepOf(harness, "a"))?.retryAt, null);
       }),
   ),
 );

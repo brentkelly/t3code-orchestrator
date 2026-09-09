@@ -43,6 +43,7 @@ import {
   boardBuildHumanInLoopDefault,
   BOARD_ATTENTION_SETTLE_MS,
   boardCardAttention,
+  boardStallIsWaiting,
   boardCardChildAttentionLabel,
   boardCardChildRunningLabel,
   deriveBoardCardChildAttention,
@@ -1257,7 +1258,7 @@ describe("cards that need a human (boardCardAttention)", () => {
   });
 
   it("keeps its tones apart — a question is not a failure", () => {
-    expect(attention({ stalled: true })?.tone).toBe("danger");
+    expect(attention({ stalled: true })?.tone).toBe("warning");
     expect(attention({ held: true })?.tone).toBe("warning");
     expect(attention({ awaitingInput: true })?.tone).toBe("attention");
     // Neutral, per `docs/t3o/status-colours.md`: a paused card is held by the
@@ -1265,6 +1266,25 @@ describe("cards that need a human (boardCardAttention)", () => {
     // no claim and takes no colour.
     expect(attention({ stepAwaiting: "paused" })?.tone).toBe("neutral");
     expect(attention({ stepAwaiting: "paused" })?.label).toBe("Paused");
+  });
+
+  it("paints every reading of stalled amber, never red", () => {
+    // `docs/t3o/status-colours.md` (T3O-22, D10): the vocabulary is green,
+    // blue, violet and amber, and all four readings of `stalled` are the same
+    // amber fact — nobody is working on this card. A usage-limit card counting
+    // down to its own automatic resume rendered as an error is the case that
+    // forced this: the loudest colour on the board, contradicting the chip's
+    // own words.
+    for (const stalledReason of [
+      "usage-limit",
+      "quota-exhausted",
+      "waiting-retry",
+      "gave-up",
+    ] as const) {
+      const chip = attention({ stalled: true, stalledReason });
+      expect(chip?.reason).toBe("stalled");
+      expect(chip?.tone).toBe("warning");
+    }
   });
 
   it("keeps saying Paused while the card's thread is still winding down", () => {
@@ -1575,6 +1595,23 @@ describe("cards that need a human (boardCardAttention)", () => {
         stages: BOARD_SEED_STAGES,
       }).size,
     ).toBe(0);
+  });
+});
+
+describe("a stall the board will end by itself (boardStallIsWaiting, T3O-22)", () => {
+  it("splits the four readings by whether anything is coming", () => {
+    // The two the board restarts on its own clock…
+    expect(boardStallIsWaiting("usage-limit")).toBe(true);
+    expect(boardStallIsWaiting("waiting-retry")).toBe(true);
+    // …and the two that stay put until a human acts. The modal's banner reads
+    // red and "stopped" for these and amber and "waiting to resume" for the
+    // pair above; before this it called a card counting down to its own resume
+    // a failure.
+    expect(boardStallIsWaiting("gave-up")).toBe(false);
+    expect(boardStallIsWaiting("quota-exhausted")).toBe(false);
+    // A card that is not stalled at all carries no reason.
+    expect(boardStallIsWaiting(null)).toBe(false);
+    expect(boardStallIsWaiting(undefined)).toBe(false);
   });
 });
 

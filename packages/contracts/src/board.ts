@@ -2141,6 +2141,22 @@ export function boardUsageLimitParkedSteps(
   );
 }
 
+/**
+ * Whether a `stalled` step is one the BOARD will start again by itself (T3O-22,
+ * D7/D9) — a quota park waiting for its provider's window, or a backoff rung
+ * waiting for its time — as opposed to one that has stopped until a human acts.
+ *
+ * The card face already says which in words. This is the same split for the
+ * surfaces that do more than label it: the open modal renders a red "stopped"
+ * failure callout for a stall, which for a card calmly counting down to its own
+ * resume is the loudest thing on screen contradicting the card's own chip.
+ */
+export function boardStallIsWaiting(
+  reason: BoardCardStepStalledReason | null | undefined,
+): boolean {
+  return reason === "usage-limit" || reason === "waiting-retry";
+}
+
 /** A card's proposed plans (t3o-08), in `ordinal` order. Absent slice means
     none. Note that a sub-board child owns NO plan row — materialisation copies
     its plan's body into the child's brief and records `sourcePlanId` instead —
@@ -2613,8 +2629,14 @@ export type BoardCardAttentionReason = (typeof BOARD_CARD_ATTENTION_REASONS)[num
     `neutral` is the quiet one (T3O-23): the card is held, but it is held by the
     user's own instruction and nothing is waiting on an answer, so it makes no
     claim and takes no colour — `docs/t3o/status-colours.md`, "no colour without
-    a claim". */
-export type BoardCardAttentionTone = "danger" | "warning" | "attention" | "neutral";
+    a claim".
+
+    There is deliberately no red one (T3O-22, D10): the status vocabulary is
+    green, blue, violet and amber, and the loudest thing a card face can say —
+    "stalled" in any of its four readings — is the amber "nobody is working on
+    this" fact, not an error. Leaving `danger` in this union is what let it be
+    reached by accident. */
+export type BoardCardAttentionTone = "warning" | "attention" | "neutral";
 
 export type BoardCardAttention = {
   readonly reason: BoardCardAttentionReason;
@@ -2704,7 +2726,13 @@ function boardStalledWords(
 
 const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> = {
   paused: "neutral",
-  stalled: "danger",
+  // Amber, not red (T3O-22, D10). Red is not in the status vocabulary at all —
+  // `docs/t3o/status-colours.md` has green, blue, violet and amber — and all
+  // four readings of `stalled` are the amber fact: nobody is working, and the
+  // card is waiting on something outside itself. A card calmly counting down to
+  // its own automatic resume rendered as an error, which is the loudest colour
+  // on the board saying the opposite of what its own chip says.
+  stalled: "warning",
   approval: "warning",
   "review-held": "warning",
   held: "warning",

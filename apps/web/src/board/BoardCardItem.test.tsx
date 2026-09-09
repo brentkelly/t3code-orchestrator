@@ -276,9 +276,13 @@ describe("BoardCardContent (D7)", () => {
         attention={attentionOf(shell("building", { stalled: true }))}
       />,
     );
-    // The loud, human-needed signal — distinct from the blue "Input needed".
+    // The human-needed signal — amber, and distinct from the blue "Input
+    // needed". Amber rather than red because red is not in the status
+    // vocabulary at all (T3O-22, `docs/t3o/status-colours.md`): every reading of
+    // `stalled` says "nobody is working on this", including a card calmly
+    // counting down to its own automatic resume.
     expect(stalled).toContain("Stalled");
-    expect(stalled).toContain("text-destructive-foreground");
+    expect(stalled).toContain("text-amber-700");
     expect(stalled).not.toContain("Input needed");
 
     // A healthy question is still the blue awaiting-input treatment, never flagged
@@ -603,9 +607,9 @@ describe("cards that need a human (attention)", () => {
         childAttention={inherited}
       />,
     );
-    // The child's RED, not a generic warning — the colour keeps meaning one
-    // thing wherever it appears.
-    expect(html).toContain("border-destructive/60");
+    // The child's own amber, carried up unchanged — the colour keeps meaning
+    // one thing wherever it appears.
+    expect(html).toContain("border-amber-500/60");
     expect(html).toContain("1 child needs you");
   });
 
