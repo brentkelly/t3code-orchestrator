@@ -29,6 +29,8 @@ export function BoardCardProjectConfirmDialog({
   stageLabel,
   stopsAgent,
   restartsStage,
+  retainedThreads,
+  currentProjectName,
   onConfirm,
   onOpenChange,
   open,
@@ -44,6 +46,13 @@ export function BoardCardProjectConfirmDialog({
   readonly stopsAgent: boolean;
   /** Whether the card's stage will start again on a fresh thread. */
   readonly restartsStage: boolean;
+  /** How many of the card's other live threads STAY where they are. A thread is
+      created in a project and never moves between them, so a link the move does
+      not clear still opens a composer against the old repository — disclosed
+      here rather than discovered later. */
+  readonly retainedThreads: number;
+  /** The project the card is leaving, for that line. */
+  readonly currentProjectName: string;
   readonly onConfirm: () => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
@@ -77,6 +86,15 @@ export function BoardCardProjectConfirmDialog({
             {restartsStage ? (
               <span className="mt-1.5 block">
                 {stageLabel} restarts in {projectName} on a new thread.
+              </span>
+            ) : null}
+            {retainedThreads > 0 ? (
+              <span className="mt-1.5 block">
+                {retainedThreads === 1
+                  ? "One other thread on this card stays"
+                  : `${retainedThreads} other threads on this card stay`}{" "}
+                in {currentProjectName} — a thread cannot move between projects, so anything you
+                send there still runs against that repository.
               </span>
             ) : null}
           </AlertDialogDescription>

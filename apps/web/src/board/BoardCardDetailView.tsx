@@ -1449,6 +1449,13 @@ function BoardCardProjectRow({ props }: { readonly props: BoardCardDetailViewPro
   const card = props.detail.card;
   const onSet = props.onSetProject;
   const [confirming, setConfirming] = useState<BoardProjectOption | null>(null);
+  // Live links the move leaves alone: a thread a human ADOPTED (role `linked`)
+  // and any left by an earlier run of another stage. The reactor clears only the
+  // current stage's, and a thread is pinned to the project it was created in, so
+  // these keep pointing at the old repository.
+  const retainedThreads = card.threadLinks.filter(
+    (link) => link.tombstonedAt === null && link.role !== card.stage,
+  ).length;
 
   if (onSet === undefined) {
     return (
@@ -1475,6 +1482,7 @@ function BoardCardProjectRow({ props }: { readonly props: BoardCardDetailViewPro
       />
       <BoardCardProjectConfirmDialog
         cardKey={card.key}
+        currentProjectName={props.projectName ?? "its current project"}
         nextKey={confirming?.nextKey ?? ""}
         onConfirm={() => {
           if (confirming !== null) onSet(confirming.id);
@@ -1486,6 +1494,7 @@ function BoardCardProjectRow({ props }: { readonly props: BoardCardDetailViewPro
         open={confirming !== null}
         projectName={confirming?.title ?? ""}
         restartsStage={props.project.restartsStage}
+        retainedThreads={retainedThreads}
         stageLabel={boardStageLabel(props.stages, card.stage)}
         stopsAgent={props.project.stopsAgent}
       />
