@@ -99,6 +99,7 @@ import {
   hasBoardCardModelOverride,
   type BoardCardModelRowSpec,
 } from "./boardCardModelRows";
+import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -138,6 +139,7 @@ import {
 } from "./boardStageActions";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
+import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
@@ -437,6 +439,9 @@ export interface BoardCardDetailViewProps {
   /** Set or clear the card's scheduled start; null clears the hold, which
       starts or resumes the card immediately. */
   readonly onSetScheduledStartAt: (next: string | null) => void;
+  /** Arm or disarm the card's auto-start (T3O-24). Absent hides the control
+      entirely — the eager view is mounted by tests that pass no handler. */
+  readonly onSetAutoStart?: ((next: boolean) => void) | undefined;
   /** Resolve an override's model slug to its display name for the header pill
       and tooltip (t3o-29, D7). Passed from the container, which holds the
       provider list; absent, the pill falls back to the raw slug. */
@@ -1072,6 +1077,28 @@ function ActionsSection({
   };
   const primaryAction = boardStagePrimaryAction(props.stages, card.stage, actionContext);
   const forward = primaryAction !== null && !archived ? primaryAction : null;
+  // The pre-build dependency gate (T3O-24, D7). `card.blocked` is derived from
+  // the build role ONWARD, so a card waiting at Ready carries `false` and the
+  // forward button below would be live at the exact gate the decider refuses.
+  // Read from the dependencies this view already resolved, and folded into one
+  // `blocked` for everything in this section — the button, its hint and the
+  // callout — so the three cannot disagree about the same card.
+  const gate = boardCardAutoStartGate({
+    stages: props.stages,
+    stage: card.stage,
+    toStage: forward !== null && forward.kind === "move" ? forward.toStage : null,
+    parentCardId: card.parentCardId,
+    archived,
+    unmetCount: unmet.length,
+  });
+  const blocked = card.blocked || gate.moveBlocked;
+  // The arm (D9). Offered only where it can act, and only when the container
+  // gave this view a way to set it — the same predicate the decider enforces on
+  // the way in, so the control and the refusal can never disagree.
+  const autoStart =
+    gate.canArm && props.onSetAutoStart !== undefined
+      ? { armed: card.autoStart, onToggle: props.onSetAutoStart }
+      : null;
   // The caret beside the forward button (t3o-07, D8) — today at most one item.
   // An archived card gets none for the same reason it gets no forward button.
   const secondary =
@@ -1113,7 +1140,8 @@ function ActionsSection({
   if (
     forward === null &&
     !props.canApproveSplit &&
-    !card.blocked &&
+    !blocked &&
+    autoStart === null &&
     humanInLoop === null &&
     displayed === null &&
     stopRound === null
@@ -1179,7 +1207,7 @@ function ActionsSection({
         <div className="flex items-stretch">
           <BoardHint
             label={
-              card.blocked
+              blocked
                 ? "Blocked by unmet dependencies"
                 : forward.kind === "merge"
                   ? (forward.disabledReason ?? undefined)
@@ -1194,13 +1222,13 @@ function ActionsSection({
                   : "border-input bg-popover text-foreground hover:bg-accent",
                 // The dependency gate is not overridable (D18) — the button says
                 // so rather than bouncing off the decider.
-                (card.blocked || (forward.kind === "merge" && forward.disabled)) &&
+                (blocked || (forward.kind === "merge" && forward.disabled)) &&
                   "cursor-not-allowed opacity-50",
                 merging && "cursor-wait",
                 secondary.length > 0 && "rounded-r-none",
               )}
               disabled={
-                card.blocked || (forward.kind === "merge" && (forward.disabled || props.merging))
+                blocked || (forward.kind === "merge" && (forward.disabled || props.merging))
               }
               onClick={() => {
                 if (forward.kind === "merge") {
@@ -1250,7 +1278,7 @@ function ActionsSection({
           </button>
         </BoardHint>
       ) : null}
-      {card.blocked ? (
+      {blocked ? (
         <div className="flex gap-[7px] rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-warning-foreground">
           <LockIcon className="mt-px size-3.5 shrink-0" />
           <span>
@@ -1259,6 +1287,36 @@ function ActionsSection({
               : `Blocked by ${unmet.map((dependency) => dependency.key).join(", ")}`}
           </span>
         </div>
+      ) : null}
+      {autoStart !== null ? (
+        // The arm (T3O-24, D9), directly under the callout it answers.
+        //
+        // Tinted with `--primary`, never `--info`. `docs/t3o/status-colours.md`
+        // gives blue to RUNNING, and this card is not running; a CHECKED
+        // CONTROL is UI state, the exemption that doc already grants the blue
+        // open chip on a selected pull request. The status SURFACE for this
+        // feature — the card face's chip — stays neutral (D8).
+        <label
+          className={cn(
+            "flex cursor-pointer items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-[12.5px]",
+            autoStart.armed ? "border-primary/55 bg-primary/8" : "border-input bg-popover",
+          )}
+        >
+          <span className="flex flex-col">
+            <span className="font-medium text-foreground">
+              {boardCardAutoStartCopy(autoStart.armed).label}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {boardCardAutoStartCopy(autoStart.armed).hint}
+            </span>
+          </span>
+          <Switch
+            aria-label="Start automatically when unblocked"
+            checked={autoStart.armed}
+            className="shrink-0"
+            onCheckedChange={(next) => autoStart.onToggle(next)}
+          />
+        </label>
       ) : null}
       {humanInLoop !== null ? (
         <label className="flex items-center justify-between gap-2 rounded-lg border border-input bg-popover px-2.5 py-2 text-[12.5px]">
