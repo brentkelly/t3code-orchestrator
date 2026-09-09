@@ -15,6 +15,7 @@ import {
   boardCardPlans,
   boardCardStepCompletions,
   boardCardStepState,
+  boardColumnOrderKeys,
   boardLabelCatalogue,
   boardStageWithRole,
   boardStepPayloadDefect,
@@ -759,12 +760,17 @@ export const boardHandlers = {
         card === undefined || input.toStage === doneStageId
           ? undefined
           : boardAppendOrderKey(
-              board.cards
-                .filter(
-                  (candidate) =>
-                    candidate.projectId === card.projectId && candidate.stage === input.toStage,
-                )
-                .map((candidate) => candidate.orderKey),
+              // The column the card is moving into, in the same scope every
+              // other placement uses (T3O-27): one key space per stage within
+              // the card's board (root, or its parent's sub-board), archived
+              // cards excluded. A per-project filter here computed a bottom
+              // for a slice of the merged column, which is not where the card
+              // lands on the board a human is looking at.
+              boardColumnOrderKeys({
+                cards: board.cards,
+                stage: input.toStage,
+                parentCardId: card.parentCardId,
+              }),
             );
       const command: BoardCardMoveCommand = {
         type: "board.card.move",

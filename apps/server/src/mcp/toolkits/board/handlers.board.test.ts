@@ -1172,6 +1172,38 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_move_card lands below a resident of ANOTHER project in the same column", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // The merged column, not this project's slice of it (T3O-27). The only
+      // resident of the target column belongs to another project, so a
+      // per-project scope sees an EMPTY column and hands back the column
+      // minimum — landing the moved card level with, not below, the resident.
+      const other = yield* seedOwnCard("move-merged-column");
+      const resident = yield* boardHandlers
+        .board_create_card({
+          projectId: other.ownProject,
+          title: "Resident of another project",
+          stage: BoardStageId.make("planning"),
+        })
+        .pipe(withScope(orphanThread));
+      const mover = yield* boardHandlers
+        .board_create_card({ projectId, title: "Mover", stage: BoardStageId.make("sprint") })
+        .pipe(withScope(orphanThread));
+      yield* boardHandlers
+        .board_move_card({ cardId: mover.cardId, toStage: BoardStageId.make("planning") })
+        .pipe(withScope(orphanThread));
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const model = yield* snapshotQuery.getCommandReadModel();
+      const cards = model.board?.cards ?? [];
+      const movedCard = cards.find((candidate) => candidate.id === mover.cardId);
+      const residentCard = cards.find((candidate) => candidate.id === resident.cardId);
+      assert.isDefined(movedCard);
+      assert.isDefined(residentCard);
+      assert.isTrue(movedCard!.orderKey > residentCard!.orderKey);
+    }),
+  );
+
   it.effect("board_move_card lands a card moved into Done at the TOP of that column", () =>
     Effect.gen(function* () {
       yield* seed();
