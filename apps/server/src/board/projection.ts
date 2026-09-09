@@ -2502,6 +2502,39 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         });
         return;
 
+      // T3O-33: the card moved to another project. `upsertCard` already writes
+      // `project_id`, `key` and `card_number` from the post-state aggregate, so
+      // the row needs no special handling — but the OLD project's counter does.
+      //
+      // `nextCardNumberByProject` is rebuilt on rehydration as MAX(card_number)
+      // over `board_cards` UNION `board_card_number_floor`. The card takes its
+      // row to the new project, so if it held the old project's highest number
+      // that counter REGRESSES across a restart and the next card created there
+      // is handed a key that already exists elsewhere on the board. Raising the
+      // floor is the same monotonic record a delete leaves behind, for the same
+      // reason: the number was issued once and must never be issued again.
+      case "board.card-project-changed":
+        yield* queries
+          .raiseBoardCardNumberFloor({
+            projectId: event.payload.previousProjectId,
+            cardNumber: event.payload.previousCardNumber,
+          })
+          .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.numberFloor:query")));
+        yield* upsertCard(event.payload.card);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-project-changed",
+          payload: {
+            fromProjectId: event.payload.previousProjectId,
+            toProjectId: event.payload.card.projectId,
+            fromKey: event.payload.previousKey,
+            toKey: event.payload.card.key,
+          },
+          threadId: null,
+        });
+        return;
+
       case "board.card-archived":
         yield* upsertCard(event.payload.card);
         // An archived card leaves the board, so its cached todo lists go with it

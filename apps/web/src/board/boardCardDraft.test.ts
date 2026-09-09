@@ -203,24 +203,32 @@ describe("restoreBoardCardDraft — stage", () => {
 });
 
 describe("restoreBoardCardDraft — project, dependencies and labels", () => {
-  it("keeps dependencies that still exist in the chosen project", () => {
-    const restored = restore(
-      draftOf({ dependsOn: [BoardCardId.make("one"), BoardCardId.make("two")] }),
-      { cards: [card("one", projectOne), card("two", projectOne)] },
-    );
-    expect(restored.fields.dependsOn).toEqual([BoardCardId.make("one"), BoardCardId.make("two")]);
-  });
-
-  it("drops dependencies that are gone or belong to another project", () => {
+  it("keeps dependencies that still exist, including ones in another project", () => {
+    // A cross-project edge is legal (T3O-33, D3) and the picker offers those
+    // cards, so restoring a draft must not drop what it let the user choose.
     const restored = restore(
       draftOf({
         dependsOn: [
           BoardCardId.make("one"),
+          BoardCardId.make("two"),
           BoardCardId.make("elsewhere"),
-          BoardCardId.make("deleted"),
         ],
       }),
-      { cards: [card("one", projectOne), card("elsewhere", projectTwo)] },
+      {
+        cards: [card("one", projectOne), card("two", projectOne), card("elsewhere", projectTwo)],
+      },
+    );
+    expect(restored.fields.dependsOn).toEqual([
+      BoardCardId.make("one"),
+      BoardCardId.make("two"),
+      BoardCardId.make("elsewhere"),
+    ]);
+  });
+
+  it("drops dependencies whose card is gone", () => {
+    const restored = restore(
+      draftOf({ dependsOn: [BoardCardId.make("one"), BoardCardId.make("deleted")] }),
+      { cards: [card("one", projectOne)] },
     );
     expect(restored.fields.dependsOn).toEqual([BoardCardId.make("one")]);
   });
@@ -236,7 +244,7 @@ describe("restoreBoardCardDraft — project, dependencies and labels", () => {
     expect(restored.fields.dependsOn).toEqual([BoardCardId.make("sibling")]);
   });
 
-  it("falls back to the default project when the draft's is gone, taking its dependencies and base branch with it", () => {
+  it("falls back to the default project when the draft's is gone, taking its base branch with it", () => {
     const restored = restore(
       draftOf({
         projectId: ProjectId.make("removed"),
@@ -248,7 +256,9 @@ describe("restoreBoardCardDraft — project, dependencies and labels", () => {
     );
     expect(restored.fields.projectId).toBe(projectTwo);
     expect(restored.fields.baseBranch).toBeNull();
-    expect(restored.fields.dependsOn).toEqual([]);
+    // The dependency outlives the project it was drafted against: the edge is
+    // to a card that still exists, and cross-project edges are legal.
+    expect(restored.fields.dependsOn).toEqual([BoardCardId.make("one")]);
     // The typed text survives the project going missing.
     expect(restored.fields.title).toBe("Ship it");
   });

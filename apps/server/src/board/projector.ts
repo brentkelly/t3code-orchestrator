@@ -22,6 +22,7 @@ import {
   BoardCardCreatedPayload,
   BoardCardDeletedPayload,
   BoardCardMovedPayload,
+  BoardCardProjectChangedPayload,
   BoardCardReorderedPayload,
   BoardCardStepCompletedPayload,
   BoardCardThreadLinkedPayload,
@@ -77,6 +78,7 @@ import {
   type BoardStepCompletion,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type ProjectId,
   type OrchestrationShellStreamEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -95,6 +97,9 @@ export { isBoardEvent };
 
 const decodeBoardCardCreatedPayload = Schema.decodeUnknownEffect(BoardCardCreatedPayload);
 const decodeBoardCardMovedPayload = Schema.decodeUnknownEffect(BoardCardMovedPayload);
+const decodeBoardCardProjectChangedPayload = Schema.decodeUnknownEffect(
+  BoardCardProjectChangedPayload,
+);
 const decodeBoardCardReorderedPayload = Schema.decodeUnknownEffect(BoardCardReorderedPayload);
 const decodeBoardCardUpdatedPayload = Schema.decodeUnknownEffect(BoardCardUpdatedPayload);
 const decodeBoardCardThreadLinkedPayload = Schema.decodeUnknownEffect(BoardCardThreadLinkedPayload);
@@ -344,22 +349,27 @@ function removeStage(
   return { ...model, board: { ...board, stages } };
 }
 
-/** Counter bump on create: monotonic max, so replaying a legacy event
-    (cardNumber 0) still lands the counter at 1, matching the
-    `MAX(card_number) + 1` rehydration. */
+/** Counter bump: monotonic max, so replaying a legacy event (cardNumber 0)
+    still lands the counter at 1, matching the `MAX(card_number) + 1`
+    rehydration.
+
+    Two events reach here. `board.card-created` allocates a number, and so does
+    `board.card-project-changed` (T3O-33) — a card moving into a project draws
+    from that project's counter exactly as a create does, so the two must not
+    be able to hand out the same key. */
 function bumpNextCardNumber(
   model: OrchestrationReadModel,
-  payload: BoardCardCreatedPayload,
+  allocation: { readonly projectId: ProjectId; readonly cardNumber: number },
 ): OrchestrationReadModel {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  const current = board.nextCardNumberByProject[payload.projectId] ?? 1;
+  const current = board.nextCardNumberByProject[allocation.projectId] ?? 1;
   return {
     ...model,
     board: {
       ...board,
       nextCardNumberByProject: {
         ...board.nextCardNumberByProject,
-        [payload.projectId]: Math.max(current, payload.cardNumber + 1),
+        [allocation.projectId]: Math.max(current, allocation.cardNumber + 1),
       },
     },
   };
@@ -505,6 +515,21 @@ export function projectBoardEvent(
       return decodeBoardCardMovedPayload(event.payload).pipe(
         Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-project-changed":
+      // The OLD project's counter is deliberately left where it is: it is
+      // monotonic, and the card's number leaving that project is recorded by
+      // the SQL projection's card-number floor instead — the in-memory model
+      // is rebuilt from that floor on the next rehydration.
+      return decodeBoardCardProjectChangedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) =>
+          bumpNextCardNumber(upsertCard(model, payload.card), {
+            projectId: payload.card.projectId,
+            cardNumber: payload.card.cardNumber,
+          }),
+        ),
       );
 
     case "board.card-reordered":
@@ -817,6 +842,9 @@ export function boardShellStreamEvent(
       });
 
     case "board.card-moved":
+    // T3O-33: the card's `projectId` and `key` are both on the shell, so the
+    // board relabels and recolours it live.
+    case "board.card-project-changed":
     case "board.card-reordered":
     case "board.card-thread-linked":
     case "board.card-thread-unlinked":

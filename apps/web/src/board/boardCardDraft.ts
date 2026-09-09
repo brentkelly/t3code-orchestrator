@@ -149,10 +149,11 @@ export interface BoardCardDraftRestore {
  * result is always clamped to the offered stages.
  *
  * Everything else is filtered against the live snapshot: a project that is
- * gone takes its dependencies and base branch with it (the same reasoning as
- * the dialog's project-switch handler), dependencies must still exist in the
- * chosen project and inside this sub-board, deleted labels drop out, and
- * attachment references past the pending-upload TTL are not offered back.
+ * gone takes its base branch with it (the same reasoning as the dialog's
+ * project-switch handler), dependencies must still exist and stay inside this
+ * sub-board — but not inside the chosen project, since a cross-project edge is
+ * legal (T3O-33, D3) and the picker offers those too — deleted labels drop out,
+ * and attachment references past the pending-upload TTL are not offered back.
  */
 export function restoreBoardCardDraft(input: {
   readonly draft: BoardCardDraft;
@@ -176,14 +177,18 @@ export function restoreBoardCardDraft(input: {
   const projectId = projectKnown ? draft.projectId : input.fallbackProjectId;
 
   const cardsById = new Map(input.cards.map((card) => [card.cardId as string, card]));
-  const dependsOn = projectKnown
-    ? draft.dependsOn.filter((cardId, index) => {
-        if (draft.dependsOn.indexOf(cardId) !== index) return false;
-        const card = cardsById.get(cardId as string);
-        if (card === undefined || card.projectId !== projectId) return false;
-        return input.subBoardParentId === null || card.parentCardId === input.subBoardParentId;
-      })
-    : [];
+  // A dependency survives on the card still existing, not on which project it
+  // sits in (T3O-33, D3): `dependsOn` stores card ids, the decider has never
+  // enforced a same-project rule, and the dialog's picker now offers foreign
+  // cards — so a restored draft must not quietly drop an edge the picker was
+  // happy to create. The sub-board rule still binds: a child may only depend
+  // on its siblings, and the decider refuses anything else.
+  const dependsOn = draft.dependsOn.filter((cardId, index) => {
+    if (draft.dependsOn.indexOf(cardId) !== index) return false;
+    const card = cardsById.get(cardId as string);
+    if (card === undefined) return false;
+    return input.subBoardParentId === null || card.parentCardId === input.subBoardParentId;
+  });
 
   const liveLabelIds = new Set(
     input.labels

@@ -166,16 +166,21 @@ export function BoardCardCreateDialog({
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  // Dependencies stay inside one project, so the picker only offers cards from
-  // the project this card is being created in. A child's picker is narrower
-  // still (t3o-25): siblings only — the decider refuses anything else — while
-  // a top-level card's options badge any child with its parent's key.
+  // Dependencies may cross projects (T3O-33, D3): `dependsOn` stores card ids
+  // and the decider has never enforced a same-project rule, so a card that
+  // changes project inherits cross-project edges — a state the picker should be
+  // able to create too. Foreign options carry their project's dot. A child's
+  // picker is narrower still (t3o-25): siblings only — the decider refuses
+  // anything else — while a top-level card's options badge any child with its
+  // parent's key.
   const dependencyOptions = useMemo(() => {
     const keyById = new Map(allCards.map((card) => [String(card.cardId), card.key]));
+    const projectTitleById = new Map(
+      projects.map((project) => [String(project.id), project.title]),
+    );
     return allCards
       .filter(
         (card) =>
-          card.projectId === projectId &&
           !dependsOn.includes(card.cardId as BoardCardId) &&
           (subBoardParentId === null || card.parentCardId === subBoardParentId),
       )
@@ -183,11 +188,20 @@ export function BoardCardCreateDialog({
         id: card.cardId,
         key: card.key,
         title: card.title,
+        ...(card.projectId === projectId
+          ? {}
+          : {
+              project: {
+                id: card.projectId,
+                title: projectTitleById.get(String(card.projectId)) ?? "Another project",
+                accent: resolveBoardProjectAccent(boardSettings, card.projectId),
+              },
+            }),
         ...(subBoardParentId === null && card.parentCardId !== undefined
           ? { parentKey: keyById.get(String(card.parentCardId)) }
           : {}),
       }));
-  }, [allCards, dependsOn, projectId, subBoardParentId]);
+  }, [allCards, boardSettings, dependsOn, projectId, projects, subBoardParentId]);
 
   /** The chosen dependencies as the card modal's rows — same shape, same
       renderer, so an unresolvable id reads the same in both sheets. */
@@ -582,13 +596,13 @@ export function BoardCardCreateDialog({
                 onValueChange={(value: string | null) => {
                   if (value === null || value === projectId) return;
                   setProjectId(value as ProjectId);
-                  // Chosen dependencies belong to the old project, so they can no
-                  // longer be depended on — drop them rather than submit an
-                  // out-of-project edge.
-                  setDependsOn([]);
-                  // Same reasoning for the base branch (T3O-5, D13): a branch
-                  // named in the old project's checkout says nothing about the
-                  // new one. Back to that project's default.
+                  // Chosen dependencies are KEPT (T3O-33, D3): a cross-project
+                  // edge is legal, so switching project no longer silently
+                  // discards work the user has already done in this dialog.
+                  //
+                  // The base branch still resets (T3O-5, D13): a branch named in
+                  // the old project's checkout says nothing about the new one,
+                  // so it goes back to that project's default.
                   setBaseBranch(null);
                 }}
                 value={projectId ?? ""}

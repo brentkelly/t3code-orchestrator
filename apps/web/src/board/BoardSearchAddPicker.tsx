@@ -8,13 +8,17 @@
  * thread pane's add MENU (t3o-14) can swap the same search into a popover it
  * already owns rather than nesting a second one inside a menu item.
  */
+import type { ProjectId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
+import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
+import { boardCardMatchesQuery, normaliseBoardCardQuery } from "./boardCardFilter";
+import { projectAccent } from "./projectAccent";
 
 export interface BoardPickerOption {
   readonly id: string;
@@ -24,6 +28,34 @@ export interface BoardPickerOption {
   /** The parent card's key when the option is a sub-board child (t3o-25), so
       a child offered among top-level cards names whose board it lives on. */
   readonly parentKey?: string | undefined;
+  /** The owning project when the option is OUTSIDE the current card's project
+      (T3O-33, D3). Cross-project dependencies are legal — a card that changes
+      project inherits them — so the picker offers them, marked with the same
+      dot the board colours their cards with. Absent for same-project options,
+      which is every option on a board with one project. */
+  readonly project?:
+    | { readonly id: ProjectId; readonly title: string; readonly accent: string | null }
+    | undefined;
+}
+
+/** How many rows the popover will build at once. The list scrolls in a
+    `max-h-64` box — about eight rows — so anything past this is reached by
+    typing, never by scrolling. The cap is what keeps the popover's cost flat:
+    since T3O-33 the dependency picker offers cards from EVERY project, so its
+    option list grows with the whole board rather than with one project. */
+const PICKER_RENDER_LIMIT = 50;
+
+/** The rows to render for a query, and how many matches are left off the end.
+    Matching is `boardCardMatchesQuery`, the same rule the board's own filter
+    box uses, so a card found by one is a card found by the other. */
+export function boardPickerVisibleOptions(
+  options: ReadonlyArray<BoardPickerOption>,
+  query: string,
+  limit: number = PICKER_RENDER_LIMIT,
+): { readonly visible: ReadonlyArray<BoardPickerOption>; readonly hidden: number } {
+  const normalised = normaliseBoardCardQuery(query);
+  const matched = options.filter((option) => boardCardMatchesQuery(option, normalised));
+  return { visible: matched.slice(0, limit), hidden: Math.max(matched.length - limit, 0) };
 }
 
 export function BoardPickerSearchBody({
@@ -36,11 +68,7 @@ export function BoardPickerSearchBody({
   readonly onPick: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
-  const q = query.trim().toLowerCase();
-  const filtered = options.filter((option) => {
-    if (q.length === 0) return true;
-    return option.title.toLowerCase().includes(q) || option.key.toLowerCase().includes(q);
-  });
+  const { visible: filtered, hidden } = boardPickerVisibleOptions(options, query);
   return (
     <>
       <Input
@@ -54,26 +82,43 @@ export function BoardPickerSearchBody({
         {filtered.length === 0 ? (
           <span className="px-1.5 py-1 text-[12.5px] text-muted-foreground">No matches.</span>
         ) : (
-          filtered.map((option) => (
-            <button
-              className="flex items-center gap-2 rounded px-1.5 py-1 text-left text-[12.5px] hover:bg-accent"
-              key={option.id}
-              onClick={() => onPick(option.id)}
-              type="button"
-            >
-              {option.key.length > 0 ? (
-                <span className="shrink-0 font-medium text-muted-foreground">{option.key}</span>
-              ) : null}
-              <span className="min-w-0 flex-1 truncate">{option.title}</span>
-              {option.parentKey !== undefined ? (
-                <BoardHint label={`Part of ${option.parentKey}'s sub-board`}>
-                  <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
-                    {option.parentKey}
-                  </span>
-                </BoardHint>
-              ) : null}
-            </button>
-          ))
+          <>
+            {filtered.map((option) => (
+              <button
+                className="flex items-center gap-2 rounded px-1.5 py-1 text-left text-[12.5px] hover:bg-accent"
+                key={option.id}
+                onClick={() => onPick(option.id)}
+                type="button"
+              >
+                {option.project === undefined ? null : (
+                  <BoardHint label={`In ${option.project.title}`}>
+                    <span
+                      className={cn(
+                        "size-[7px] shrink-0 rounded-full",
+                        projectAccent(option.project.id, option.project.accent).dot,
+                      )}
+                    />
+                  </BoardHint>
+                )}
+                {option.key.length > 0 ? (
+                  <span className="shrink-0 font-medium text-muted-foreground">{option.key}</span>
+                ) : null}
+                <span className="min-w-0 flex-1 truncate">{option.title}</span>
+                {option.parentKey !== undefined ? (
+                  <BoardHint label={`Part of ${option.parentKey}'s sub-board`}>
+                    <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+                      {option.parentKey}
+                    </span>
+                  </BoardHint>
+                ) : null}
+              </button>
+            ))}
+            {hidden > 0 ? (
+              <span className="px-1.5 py-1 text-[12.5px] text-muted-foreground">
+                {hidden} more — keep typing to narrow.
+              </span>
+            ) : null}
+          </>
         )}
       </div>
     </>
