@@ -65,8 +65,14 @@ export function BoardCardProjectConfirmDialog({
             Move {cardKey} to {projectName}?
           </AlertDialogTitle>
           <AlertDialogDescription>
+            {/* `nextKey` is the client's preview of the next free number, not
+                the allocation — the decider issues that from the project's own
+                counter, which also knows about archived cards and the
+                card-number floor. Hedged here so a rare off-by-one reads as the
+                estimate it always was rather than a broken promise. */}
             <span className="block">
-              Reissued as <code className="font-mono text-foreground">{nextKey}</code>. The{" "}
+              Reissued as <code className="font-mono text-foreground">{nextKey}</code> — the next
+              free number in {projectName}. The{" "}
               <code className="font-mono text-foreground">{cardKey}</code> key is retired — moving
               the card back gives it a third key, not this one.
             </span>

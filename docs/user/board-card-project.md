@@ -45,6 +45,8 @@ board does not jump under you and an open card stays open.
 Its dependencies come too, including ones that now point at cards in a different project. That is
 allowed: dependencies are between cards, not within a project, and you can pick a card from another
 project in the dependency list yourself. Cards from elsewhere are marked with their project's dot.
+On a big board that list is long, so it shows the first fifty and counts the rest — type to narrow
+it and the card you want comes to the top.
 
 Threads already attached to the card stay attached, and stay where they are — a conversation cannot
 move between projects. If you send another message in one, it still runs against the old
