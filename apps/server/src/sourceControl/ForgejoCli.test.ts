@@ -319,6 +319,30 @@ layer("ForgejoCli.layer", (it) => {
     }),
   );
 
+  // A single argv entry is capped at 128 KiB on Linux; past it the spawn fails with E2BIG, which
+  // the error mapping would otherwise report as "`fgj` is not on PATH" and send someone chasing
+  // a problem they do not have. `fgj pr create` has no --body-file to fall back to.
+  it.effect("says the body is too large rather than reporting fgj as missing", () =>
+    Effect.gen(function* () {
+      mockedReadFileString.mockReturnValueOnce(Effect.succeed("x".repeat(200_000)));
+
+      const forgejo = yield* ForgejoCli.ForgejoCli;
+      const error = yield* forgejo
+        .createPullRequest({
+          cwd: "/repo",
+          context,
+          baseBranch: "main",
+          headSelector: "board/t3o-28",
+          title: "Forgejo support",
+          bodyFile: "/tmp/body.md",
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "ForgejoPullRequestBodyTooLargeError");
+      expect(mockedRun).not.toHaveBeenCalled();
+    }),
+  );
+
   it.effect("does not run fgj when the body file cannot be read", () =>
     Effect.gen(function* () {
       mockedReadFileString.mockReturnValueOnce(Effect.fail(new Error("gone") as never));

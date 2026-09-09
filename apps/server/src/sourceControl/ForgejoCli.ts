@@ -32,6 +32,14 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  */
 const LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
+/**
+ * `fgj pr create` has no `--body-file`, so the body travels as one argv entry — and Linux caps a
+ * single entry at 128 KiB (`MAX_ARG_STRLEN`). Past that the spawn fails with `E2BIG`, which reads
+ * as "`fgj` is not on PATH" by the time it reaches the error mapping. The margin leaves room for
+ * the rest of the command line.
+ */
+const MAX_BODY_BYTES = 120 * 1024;
+
 const forgejoCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
   command: Schema.Literal("fgj"),
@@ -305,6 +313,24 @@ export class ForgejoPullRequestBodyReadError extends Schema.TaggedErrorClass<For
   }
 }
 
+export class ForgejoPullRequestBodyTooLargeError extends Schema.TaggedErrorClass<ForgejoPullRequestBodyTooLargeError>()(
+  "ForgejoPullRequestBodyTooLargeError",
+  {
+    command: Schema.Literal("fgj"),
+    cwd: Schema.String,
+    bodyBytes: NonNegativeInt,
+    maxBodyBytes: NonNegativeInt,
+  },
+) {
+  get detail(): string {
+    return `The pull request body is ${this.bodyBytes} bytes, over the ${this.maxBodyBytes} \`fgj\` can take. \`fgj pr create\` has no --body-file, so the body must fit on the command line.`;
+  }
+
+  override get message(): string {
+    return `Forgejo CLI failed in createPullRequest: ${this.detail}`;
+  }
+}
+
 export class ForgejoCheckoutError extends Schema.TaggedErrorClass<ForgejoCheckoutError>()(
   "ForgejoCheckoutError",
   {
@@ -336,6 +362,7 @@ export const ForgejoCliError = Schema.Union([
   ForgejoRepositoryDecodeError,
   ForgejoMergeNotAppliedError,
   ForgejoPullRequestBodyReadError,
+  ForgejoPullRequestBodyTooLargeError,
   ForgejoCheckoutError,
 ]);
 export type ForgejoCliError = typeof ForgejoCliError.Type;
@@ -650,6 +677,15 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+        const bodyBytes = Buffer.byteLength(body, "utf8");
+        if (bodyBytes > MAX_BODY_BYTES) {
+          return yield* new ForgejoPullRequestBodyTooLargeError({
+            command: "fgj",
+            cwd: input.cwd,
+            bodyBytes,
+            maxBodyBytes: MAX_BODY_BYTES,
+          });
+        }
         yield* execute({
           cwd: input.cwd,
           args: [
