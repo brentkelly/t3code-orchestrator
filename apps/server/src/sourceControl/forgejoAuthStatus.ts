@@ -37,20 +37,26 @@ export function parseForgejoAuthStatusHosts(text: string): ReadonlyArray<Forgejo
   return hosts;
 }
 
+/**
+ * The instance to show in Settings. Every bullet `fgj` prints is one it holds a token for, so a
+ * host whose login went unread still counts; a host that named its login is merely preferred,
+ * because it has more to show.
+ */
 export function findAuthenticatedForgejoHost(
   hosts: ReadonlyArray<ForgejoAuthStatusHost>,
 ): ForgejoAuthStatusHost | undefined {
-  return hosts.find((host) => host.account !== null);
+  return hosts.find((host) => host.account !== null) ?? hosts[0];
 }
 
 /**
- * Whether `fgj` holds a token for this host. Hosts are compared with their port, because that is
- * how `fgj` keys its own config and how a remote URL addresses the instance.
+ * Whether `fgj` holds a token for this host — which is what being listed means, login parsed or
+ * not. Hosts are compared with their port, because that is how `fgj` keys its own config and how
+ * a remote URL addresses the instance.
  */
 export function isAuthenticatedForgejoHost(
   hosts: ReadonlyArray<ForgejoAuthStatusHost>,
   host: string,
 ): boolean {
   const normalized = host.trim().toLowerCase();
-  return hosts.some((entry) => entry.account !== null && entry.host === normalized);
+  return hosts.some((entry) => entry.host === normalized);
 }

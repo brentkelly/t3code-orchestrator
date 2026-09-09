@@ -231,6 +231,25 @@ it("claims an unnamed host only when fgj holds a token for it", () => {
   );
 });
 
+it("claims a host fgj listed without a readable login", () => {
+  assert.deepStrictEqual(
+    ForgejoSourceControlProvider.discovery.refineUnknownRemote?.({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "unknown" as const,
+          name: "forgejo.example.test",
+          baseUrl: "https://forgejo.example.test",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://forgejo.example.test/octocat/widgets.git",
+      },
+      auth: authProbe("Authenticated instances:\n  • forgejo.example.test\n"),
+    }),
+    { kind: "forgejo", name: "Forgejo", baseUrl: "https://forgejo.example.test" },
+  );
+});
+
 it("does not claim a host fgj is signed in to under a different name", () => {
   assert.strictEqual(
     ForgejoSourceControlProvider.discovery.refineUnknownRemote?.({

@@ -46,7 +46,7 @@ describe("parseForgejoAuthStatusHosts", () => {
 });
 
 describe("findAuthenticatedForgejoHost", () => {
-  it("skips a host with no login", () => {
+  it("prefers a host that named its login", () => {
     const hosts = parseForgejoAuthStatusHosts(`Authenticated instances:
   • codeberg.org
   • forgejo.example.test (user: octocat)
@@ -56,6 +56,21 @@ describe("findAuthenticatedForgejoHost", () => {
       host: "forgejo.example.test",
       account: "octocat",
     });
+  });
+
+  it("still reports a host whose login fgj did not print", () => {
+    const hosts = parseForgejoAuthStatusHosts(`Authenticated instances:
+  • codeberg.org
+`);
+
+    assert.deepStrictEqual(findAuthenticatedForgejoHost(hosts), {
+      host: "codeberg.org",
+      account: null,
+    });
+  });
+
+  it("finds nothing when fgj listed no instance", () => {
+    assert.strictEqual(findAuthenticatedForgejoHost([]), undefined);
   });
 });
 
@@ -72,5 +87,12 @@ describe("isAuthenticatedForgejoHost", () => {
 
   it("treats a port as part of the host", () => {
     assert.strictEqual(isAuthenticatedForgejoHost(hosts, "forgejo.example.test:3000"), false);
+  });
+
+  it("counts a listed host whose login fgj did not print", () => {
+    assert.strictEqual(
+      isAuthenticatedForgejoHost(parseForgejoAuthStatusHosts("  • codeberg.org"), "codeberg.org"),
+      true,
+    );
   });
 });

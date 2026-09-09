@@ -650,7 +650,10 @@ export const make = Effect.gen(function* () {
         }
 
         // `fgj` filters by state alone, so the head branch, the merged/closed split and the
-        // caller's limit are all applied here.
+        // caller's limit are all applied here. That costs: `-s all`, which is what a branch's
+        // status check asks for, transfers and decodes every pull request the repository has ever
+        // had (~10 KB each), bounded only by the truncation guard above. `fgj pr list` offers no
+        // head, limit or pagination flag, so the fix is a REST-backed provider, not a better call.
         const headRefName = SourceControlProvider.sourceBranch(input);
         const matches = decoded.success.filter(
           (record) =>

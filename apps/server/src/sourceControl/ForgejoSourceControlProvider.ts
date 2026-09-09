@@ -251,8 +251,10 @@ export const make = Effect.gen(function* () {
     // Unlike the other non-GitHub providers, merging is implemented here: `fgj pr merge
     // --merge-method` maps onto `ChangeRequestMergeStrategy` exactly, and one-click merge is the
     // point of the board's Ready-for-merge stage. A refusal by the forge — failing checks, a
-    // missing approval, a conflict — comes back as its own words in `detail`, which is what the
-    // card shows.
+    // missing approval, a conflict — never reaches us in the forge's own words, because `fgj`
+    // exits 0 and claims success regardless; `mergePullRequest` catches it by reading the state
+    // back, so the card says the merge did not happen and names the state, not the reason. Read
+    // the pull request on the host to see what it is waiting on.
     mergeChangeRequest: (input) =>
       forgejo
         .mergePullRequest({
