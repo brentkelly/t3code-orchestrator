@@ -187,6 +187,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                   style={boardLabelRowStyle(label.colour, selected)}
                 >
                   <button
+                    aria-pressed={selected}
                     className={cn(
                       "flex min-w-0 flex-1 items-center gap-2 text-left text-foreground",
                       selected ? "font-semibold" : "font-normal",
@@ -198,11 +199,14 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                     onMouseDown={keepFocus}
                     type="button"
                   >
-                    {/* The checkbox is the selection state. It fills with the
-                        label's own colour, and the tick's colour is COMPUTED
-                        from that fill — a flat white tick disappears on the
-                        amber and yellow swatches. */}
+                    {/* The checkbox draws the selection state that
+                        `aria-pressed` above announces, so it is hidden from
+                        assistive tech. It fills with the label's own colour,
+                        and the tick's colour is COMPUTED from that fill — a
+                        flat white tick disappears on the amber and yellow
+                        swatches. */}
                     <span
+                      aria-hidden="true"
                       className={cn(
                         "inline-flex size-[15px] shrink-0 items-center justify-center rounded-[4px] border",
                         selected ? "border-transparent" : "border-input bg-background",
@@ -227,6 +231,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                   </button>
                   <BoardHint label="Change colour">
                     <button
+                      aria-label={`Change the colour of ${label.name}`}
                       className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-accent hover:text-foreground"
                       onClick={() => {
                         setEditingColourFor((current) =>
@@ -241,6 +246,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                   </BoardHint>
                   <BoardHint label="Delete label">
                     <button
+                      aria-label={`Delete the label ${label.name}`}
                       className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground"
                       onClick={() => {
                         props.onDelete(label.labelId);
@@ -257,6 +263,8 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                     {BOARD_LABEL_SWATCHES.map((swatch) => (
                       <BoardHint key={swatch} label={swatch}>
                         <button
+                          aria-label={`Recolour ${label.name} to ${swatch}`}
+                          aria-pressed={label.colour === swatch}
                           className={cn(
                             "size-5 rounded-md border-2",
                             label.colour === swatch ? "border-foreground" : "border-transparent",
@@ -306,6 +314,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                 {model.deleted.map((label) => (
                   <div className={cn(ROW_CLASS, "text-muted-foreground")} key={label.labelId}>
                     <span
+                      aria-hidden="true"
                       className="size-2.5 shrink-0 rounded-[3px] opacity-55"
                       style={{ backgroundColor: label.colour }}
                     />
@@ -314,6 +323,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
                     </span>
                     <BoardHint label="Restore label">
                       <button
+                        aria-label={`Restore the label ${label.name}`}
                         className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] hover:bg-accent hover:text-foreground"
                         onClick={() => {
                           props.onUndelete(label.labelId);
