@@ -5111,6 +5111,18 @@ export const BoardCardShell = Schema.Struct({
       same byte-budget reason `stalledReason` is key-optional. Rides and clears
       with `stalledReason`. */
   retryAt: Schema.optionalKey(IsoDateTime),
+  /** Which provider instance is holding this card (T3O-22, D14), present ONLY
+      while `stalledReason` is `usage-limit`.
+   *
+      The provider-usage popover has to say WHICH account each waiting card is
+      waiting on, and a board with two limited providers cannot tell otherwise —
+      every other step field on the shell is a status, not an identity. Scoped to
+      the one status that needs it rather than carried on every card: a running
+      card's provider is not something any surface renders, and the shell is
+      under a fixed per-card byte budget asserted in `board.test.ts`.
+
+      Rides and clears with `stalledReason`. */
+  limitedByInstanceId: Schema.optionalKey(ProviderInstanceId),
   // Thread-derived — joined from `board_card_thread_links` (902) and the
   // linked thread's shell; no new plumbing (t3o-04).
   threadState: BoardCardThreadState,
@@ -5389,6 +5401,10 @@ export function makeBoardCardShell(input: {
       card is not stalled — or is stalled the old way, which reads `gave-up`. */
   readonly stalledReason?: BoardCardStepStalledReason | null | undefined;
   readonly retryAt?: IsoDateTime | null | undefined;
+  /** Which provider instance is holding a `usage-limit` park (T3O-22, D14).
+      Producers pass it only on that reason; it rides and clears with the pair
+      above. */
+  readonly limitedByInstanceId?: ProviderInstanceId | null | undefined;
   /** Whether the brief carries a picture. Omitted by producers that do not
       have the brief body in hand, which leaves the key absent so the client
       preserves its last known value. */
@@ -5457,6 +5473,11 @@ export function makeBoardCardShell(input: {
     // that has never hit a limit byte-identical to a pre-T3O-22 payload.
     ...(input.stalledReason == null ? {} : { stalledReason: input.stalledReason }),
     ...(input.retryAt == null ? {} : { retryAt: input.retryAt }),
+    // Only ever set beside a `usage-limit` reason (see the schema), so an
+    // ordinary card's shell is byte-identical to a pre-T3O-22 payload.
+    ...(input.stalledReason === "usage-limit" && input.limitedByInstanceId != null
+      ? { limitedByInstanceId: input.limitedByInstanceId }
+      : {}),
     threadState,
     awaitingInput,
     activeThreadId: input.activeThreadId,
@@ -5669,6 +5690,9 @@ export const BoardCardStalledShellEvent = Schema.Struct({
       clear them. */
   stalledReason: Schema.optionalKey(BoardCardStepStalledReason),
   retryAt: Schema.optionalKey(IsoDateTime),
+  /** …and which provider instance is holding it, on the one status that needs
+      it (T3O-22, D14). Same key-optional, cleared-by-absence rule. */
+  limitedByInstanceId: Schema.optionalKey(ProviderInstanceId),
   /** And the QUEUE flag, carried for the same reason as the three above: every
       event that emits this delta (settled / selected / recovered /
       awaiting-input) carries the step's status, and none of those statuses is

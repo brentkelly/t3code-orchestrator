@@ -21,6 +21,7 @@ import {
   isBoardProjectHidden,
   resolveBoardProjectAccent,
   type BoardCardShell,
+  type ProviderInstanceId,
   type BoardCardThreadShell,
   type BoardStageDefinition,
   type BoardStageId,
@@ -62,6 +63,8 @@ import { boardEnvironment } from "../state/board";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
+import { primaryServerProvidersAtom } from "../state/server";
+import { deriveProviderInstanceEntries } from "../providerInstances";
 import { BoardArchivedCardsSheet, refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
 import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
 import { countBoardColumnCards, filterBoardColumnsByQuery } from "./boardCardFilter";
@@ -84,6 +87,7 @@ import {
 import { BoardSubBoardHeader } from "./BoardSubBoardHeader";
 import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
 import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
+import { BoardProviderUsagePill } from "./BoardProviderUsagePill";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
 import { projectAccent } from "./projectAccent";
 import type { BoardSearch } from "../routes/board";
@@ -248,6 +252,22 @@ function EnvironmentBoard({
   // The user-defined stage list drives column order and labels (D13); falls
   // back to the compiled seeds until the first shell snapshot arrives.
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+  // T3O-22 (D14): the board's provider cooldowns, riding the shell once. Empty
+  // on the overwhelming majority of boards, and the pill renders nothing then.
+  const providerLimits = useAtomValue(boardEnvironment.providerLimitsAtom(environmentId));
+  const probeProviderLimit = useAtomCommand(boardEnvironment.probeProviderLimit);
+  const setProviderLimitResumeAt = useAtomCommand(boardEnvironment.setProviderLimitResumeAt);
+  // Provider display names, resolved the same way every other board surface
+  // resolves them. A limit the registry cannot name falls back to its instance
+  // id, which is still the thing a human would grep for.
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const providerDisplayName = useCallback(
+    (instanceId: ProviderInstanceId) =>
+      deriveProviderInstanceEntries(serverProviders).find(
+        (entry) => entry.instanceId === instanceId,
+      )?.displayName,
+    [serverProviders],
+  );
   const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const stageState = useMemo(() => stageStateOf(orderedStages), [orderedStages]);
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
@@ -1018,6 +1038,25 @@ function EnvironmentBoard({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <BoardTopBar>
+        {/* T3o (T3O-22, D14): a usage limit is a fact about a provider ACCOUNT
+            and holds every card on it, so it belongs in the board's own header
+            rather than on whichever card happened to notice. Renders nothing
+            unless something is limited. */}
+        <BoardProviderUsagePill
+          cards={everyCard}
+          limits={providerLimits}
+          nameFor={providerDisplayName}
+          onOpenCard={(cardId) => patchSearch((previous) => ({ ...previous, card: cardId }))}
+          onResumeNow={(providerInstanceId) => {
+            void probeProviderLimit({ environmentId, input: { providerInstanceId } });
+          }}
+          onSetResumeAt={(providerInstanceId, resumeAt) => {
+            void setProviderLimitResumeAt({
+              environmentId,
+              input: { providerInstanceId, resumeAt },
+            });
+          }}
+        />
         <BoardCardFilterField onQueryChange={setQuery} query={query} />
         {canCreate ? (
           <Button onClick={() => openCreate(firstStageId)} size="xs">

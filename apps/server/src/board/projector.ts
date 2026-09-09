@@ -433,6 +433,22 @@ export function compareBoardStepStates(
   return compareStrings(left.cardId, right.cardId);
 }
 
+/** The three step-derived stall fields the `card-stalled` delta carries
+    (T3O-22, D10/D14), spread whole or not at all: a step that is not stalled
+    omits every one of them, and their ABSENCE on this delta is what clears the
+    card's chip. `limitedByInstanceId` rides only beside a `usage-limit` reason,
+    so an ordinary stall costs no extra bytes. */
+function stallShellFields(state: BoardCardStepState) {
+  if (state.status !== "stalled") return {};
+  return {
+    stalledReason: state.stalledReason,
+    ...(state.retryAt === null ? {} : { retryAt: state.retryAt }),
+    ...(state.stalledReason === "usage-limit"
+      ? { limitedByInstanceId: state.providerInstanceId }
+      : {}),
+  };
+}
+
 /** Canonical provider-cooldown order (T3O-22): by provider instance id, one
     record per instance. Applied on both sides of replay-equals-rehydration,
     like every other board slice. */
@@ -1006,6 +1022,7 @@ export function boardShellStreamEvent(
         // here. Derived rather than hardcoded so the one definition
         // (`boardStepParkedReason`) answers for every producer.
         stepAwaiting: boardStepParkedReason(event.payload.state),
+        ...stallShellFields(event.payload.state),
         // A recovered conflict fix keeps its identity — `recoverStep`
         // re-dispatches the row's own `stepLabel`, so the nudged step is still
         // the same fix. An ESCALATION lands it on `stalled`, which
@@ -1149,6 +1166,7 @@ export function boardShellStreamEvent(
         // Non-terminal, so the stage has not finished with the card.
         held: false,
         stepAwaiting: boardStepParkedReason(event.payload.state),
+        ...stallShellFields(event.payload.state),
         // A paused conflict fix hands the card face to the louder Paused chip
         // (`isBoardConflictFixLive` excludes it), so this always clears.
         stepConflictFix: isBoardConflictFixLive(event.payload.state),
@@ -1179,6 +1197,7 @@ export function boardShellStreamEvent(
         // Non-terminal, so nothing is `held`.
         held: false,
         stepAwaiting: boardStepParkedReason(event.payload.state),
+        ...stallShellFields(event.payload.state),
         // A conflict fix that asks a question is still the same live fix
         // (T3O-9): the merge is still held, so the flag rides through unchanged.
         stepConflictFix: isBoardConflictFixLive(event.payload.state),

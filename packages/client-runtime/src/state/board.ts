@@ -26,6 +26,8 @@ import {
   BOARD_WS_METHODS,
   type BoardAttachCardFileInput,
   type BoardDetachCardFileInput,
+  type BoardProviderLimitActionInput,
+  type BoardProviderLimitResumeAtInput,
   compareBoardStages,
   deriveBoardCardThreadState,
   isBoardShellStreamEvent,
@@ -74,6 +76,8 @@ import {
   linkBoardCardThread,
   attachBoardCardFile,
   detachBoardCardFile,
+  probeBoardProviderLimit,
+  setBoardProviderLimitResumeAt,
   mergeBoardCardPullRequest,
   moveBoardCard,
   refreshBoardCardPullRequest,
@@ -216,6 +220,16 @@ const REVIEW_SHELL_FIELDS = [
   "issuesRejected",
   "issuesOpen",
   "issuesDisputed",
+] as const satisfies ReadonlyArray<keyof BoardCardShell>;
+
+/** The stall slice (T3O-22, D10/D14) — carried as a group for the same reason
+    the review slice is: the reason, the retry time and the provider holding the
+    card describe ONE stop, and half of them left behind would put a stale
+    "resuming 2:50am" under a card that is running again. */
+const STALL_SHELL_FIELDS = [
+  "stalledReason",
+  "retryAt",
+  "limitedByInstanceId",
 ] as const satisfies ReadonlyArray<keyof BoardCardShell>;
 
 /**
@@ -395,26 +409,38 @@ export function applyBoardShellStreamEvent(
         // "preserve", as it does for every other step-derived field.
         const nextStalledReason = event.stalledReason;
         const nextRetryAt = event.retryAt;
-        return card.stalled === event.stalled &&
+        const nextLimitedBy = event.limitedByInstanceId;
+        if (
+          card.stalled === event.stalled &&
           card.queued === event.queued &&
           card.stepRunning === event.stepRunning &&
           card.held === event.held &&
           card.stepAwaiting === event.stepAwaiting &&
           card.stepConflictFix === event.stepConflictFix &&
           card.stalledReason === nextStalledReason &&
-          card.retryAt === nextRetryAt
-          ? card
-          : {
-              ...card,
-              stalled: event.stalled,
-              queued: event.queued,
-              stepRunning: event.stepRunning,
-              held: event.held,
-              stepAwaiting: event.stepAwaiting,
-              stepConflictFix: event.stepConflictFix,
-              ...(nextStalledReason === undefined ? {} : { stalledReason: nextStalledReason }),
-              ...(nextRetryAt === undefined ? {} : { retryAt: nextRetryAt }),
-            };
+          card.retryAt === nextRetryAt &&
+          card.limitedByInstanceId === nextLimitedBy
+        ) {
+          return card;
+        }
+        // The three stall keys are DELETED first, then re-applied from the
+        // delta. Spreading them conditionally over `...card` would preserve a
+        // stale reason on the delta that says the step is no longer stalled —
+        // and this delta is the only thing that ever clears the chip.
+        const stripped = { ...card };
+        for (const field of STALL_SHELL_FIELDS) delete stripped[field];
+        return {
+          ...stripped,
+          stalled: event.stalled,
+          queued: event.queued,
+          stepRunning: event.stepRunning,
+          held: event.held,
+          stepAwaiting: event.stepAwaiting,
+          stepConflictFix: event.stepConflictFix,
+          ...(nextStalledReason === undefined ? {} : { stalledReason: nextStalledReason }),
+          ...(nextRetryAt === undefined ? {} : { retryAt: nextRetryAt }),
+          ...(nextLimitedBy === undefined ? {} : { limitedByInstanceId: nextLimitedBy }),
+        };
       });
       return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
     }
@@ -1042,6 +1068,17 @@ export function createBoardEnvironmentAtoms<R, ER>(
     detachCardFile: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:detach-card-file",
       execute: (input: BoardDetachCardFileInput) => detachBoardCardFile(input),
+    }),
+    /** Probe a limited provider now (T3O-22, D14) — "Resume now". */
+    probeProviderLimit: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:probe-provider-limit",
+      execute: (input: BoardProviderLimitActionInput) => probeBoardProviderLimit(input),
+    }),
+    /** Set a limited provider's resume time by hand (T3O-22, D14), or clear it
+        with null to hand the schedule back to the blind poll. */
+    setProviderLimitResumeAt: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-provider-limit-resume-at",
+      execute: (input: BoardProviderLimitResumeAtInput) => setBoardProviderLimitResumeAt(input),
     }),
     reorderCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reorder-card",

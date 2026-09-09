@@ -3234,6 +3234,14 @@ export function withBoardShellCards(
       const runningByCard = new Set<BoardCardId>();
       const heldByCard = new Set<BoardCardId>();
       const awaitingByCard = new Map<BoardCardId, BoardCardStepParkedReason>();
+      const stallByCard = new Map<
+        BoardCardId,
+        {
+          readonly stalledReason: BoardCardStepStalledReason;
+          readonly retryAt: string | null;
+          readonly limitedByInstanceId: ProviderInstanceId | null;
+        }
+      >();
       const conflictFixByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
@@ -3265,6 +3273,19 @@ export function withBoardShellCards(
           awaitingReason: row.awaitingReason ?? "question",
         });
         if (parked !== null) awaitingByCard.set(row.cardId, parked);
+        // Why the step stalled, when it next tries, and which provider account
+        // is holding it (T3O-22, D10/D14). Read off the persisted row through
+        // the same rule the delta uses, so a reconnect renders identically to
+        // the live stream — which matters most here, because a cooldown outlives
+        // any one connection.
+        if (row.status === "stalled") {
+          stallByCard.set(row.cardId, {
+            stalledReason: row.stalledReason ?? "gave-up",
+            retryAt: row.retryAt,
+            limitedByInstanceId:
+              (row.stalledReason ?? "gave-up") === "usage-limit" ? row.providerInstanceId : null,
+          });
+        }
         // Whether the live step is a merge conflict fix (T3O-9). Read off the
         // PERSISTED step label through the same predicate the delta uses, so a
         // reconnect mid-fix renders identically to the live stream — and so a
@@ -3318,6 +3339,7 @@ export function withBoardShellCards(
           stepRunning: runningByCard.has(row.cardId),
           held: heldByCard.has(row.cardId),
           stepAwaiting: awaitingByCard.get(row.cardId) ?? null,
+          ...(stallByCard.get(row.cardId) ?? {}),
           stepConflictFix: conflictFixByCard.has(row.cardId),
           thread: liveThreads,
         });

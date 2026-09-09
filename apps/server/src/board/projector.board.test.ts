@@ -860,10 +860,15 @@ describe("board projector", () => {
         stepRunning: false,
         held: false,
         stepAwaiting: null,
+        // Why it stalled rides the same delta (T3O-22, D10). No `retryAt` here:
+        // recovery giving up promises no retry, and a time on it would be a
+        // promise nothing keeps.
+        stalledReason: "gave-up",
         stepConflictFix: false,
         queued: false,
       });
-      // An ordinary retry (status running) clears the badge.
+      // An ordinary retry (status running) clears the badge — and, by their
+      // absence from the delta, the stall reason and retry time with it.
       const retryRecover: BoardEvent = {
         ...eventBase,
         type: "board.card-step-recovered",
