@@ -345,6 +345,15 @@ path), `vcs/VcsProcess.ts` 3
 agent-session spawn). All the logic lives in the new `sourceControl/gitenv.ts`; every seam is an
 import or a one-expression env merge.
 
+Making the board primary (`T3O-34`) added 7 markers across 3 upstream-owned files:
+`__root.tsx` 2 (import + the cold-start guard), `pair.tsx` 3 (import + the two pairing exits) and
+`SidebarChrome.tsx` 2 (import + the mode-tabs slot). `SidebarChrome.tsx` was pristine upstream
+before this card, so its two rows are new rather than restored. Every seam is an import or a
+one-expression delegation; the redirect rule, the fit measurement and the corner menu all live in
+board-owned files (`boardHomeRedirect.ts`, `modeTabsSlot.ts`, `BoardModeTabsSidebarSlot.tsx`,
+`BoardUtilityMenu.tsx`). The corner menu deliberately **mounts** upstream's `SidebarUtilityMenu`
+rather than seaming into it, so the board and the sidebar footer cannot drift apart.
+
 The **unified status palette** (see [Status colours](./status-colours.md)) added 12 markers across
 9 upstream-owned files, 8 of them newly marked: `apps/web/src/index.css` 3 (the `--attention`
 token), `Sidebar.logic.ts` 1 and `Sidebar.tsx` 2 (thread status pills), `ComposerBanner.tsx` 1 (the
@@ -409,6 +418,13 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`     | Threads/Board mode tabs before the breadcrumb (D1 shell tab)                              | one-line append (delegating element)                                     |
 | `apps/web/src/components/NoActiveThreadState.tsx`                      | `t3o-05`     | Import `BoardModeTabs`                                                                    | one-line append (import)                                                 |
 | `apps/web/src/components/NoActiveThreadState.tsx`                      | `t3o-05`     | Mode tabs in the no-thread top bar (Board entry must survive it)                          | one-line append (delegating element)                                     |
+| `apps/web/src/components/sidebar/SidebarChrome.tsx`                    | `T3O-34`     | Import `BoardModeTabsSidebarSlot`                                                         | one-line append (import)                                                 |
+| `apps/web/src/components/sidebar/SidebarChrome.tsx`                    | `T3O-34`     | Mode-tabs slot in the sidebar header (measures its own fit)                               | one-line append (delegating element)                                     |
+| `apps/web/src/routes/__root.tsx`                                       | `T3O-34`     | Import `redirectColdStartToBoard`                                                         | one-line append (import)                                                 |
+| `apps/web/src/routes/__root.tsx`                                       | `T3O-34`     | Cold start at `/` opens the board (D1); `/` stays threads home after                      | one-line append (delegating call, throws the redirect itself)            |
+| `apps/web/src/routes/pair.tsx`                                         | `T3O-34`     | Import `resolvePairExitTarget`                                                            | one-line append (import)                                                 |
+| `apps/web/src/routes/pair.tsx`                                         | `T3O-34`     | Already-paired client redirects to the board, not `/` (D2/D3)                              | one-line edit (delegating call in the existing `redirect`)               |
+| `apps/web/src/routes/pair.tsx`                                         | `T3O-34`     | Completed pairing navigates to the board, not `/` (D2/D3)                                  | one-line edit (delegating call in the existing `navigate`)               |
 | `packages/client-runtime/src/state/shell.ts`                           | `t3o-02`     | Export board client state through `state/shell`                                           | one-line append (re-export)                                              |
 | `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02`     | Import board reducer + predicate                                                          | one-line append (import)                                                 |
 | `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02a`    | Card deltas delegate to the board reducer                                                 | predicate delegation in `default`                                        |

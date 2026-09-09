@@ -36,6 +36,12 @@ If reordering is unavailable for one environment, update the T3 Code server runn
 environment. Older servers can still pin and unpin threads, but do not understand synced ordering;
 their pinned threads keep the default newest-first order below the ones you have arranged.
 
+## The Board and Threads tabs
+
+When the sidebar is wide enough, the **Board** and **Threads** tabs sit in its header beside the T3
+Code wordmark. Narrow or collapse the sidebar and they move back into the top bar. See
+[Moving between the board and your threads](./board-navigation.md).
+
 ## Environment artwork
 
 Dev and Nightly environments can identify themselves with artwork at the top of the sidebar and in
