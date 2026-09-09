@@ -284,6 +284,7 @@ export function BoardCardContent({
   const scheduleLabel = boardCardScheduleLabel({
     scheduledStartAt: card.scheduledStartAt ?? null,
     done: summary.muted,
+    parked: card.stepAwaiting !== null || card.stalled,
     nowMs: Date.now(),
   });
   return (

@@ -4137,8 +4137,12 @@ const make = Effect.gen(function* () {
   const clearCardSchedule = Effect.fn("board-supervisor-clearCardSchedule")(function* (
     card: BoardCard,
   ) {
-    if (card.scheduledStartAt === null) return;
-    yield* dispatch({
+    if (card.scheduledStartAt === null) return true;
+    // OBSERVED, not fire-and-forget: a refused clear must not be followed by
+    // the act. The only way this is refused is the card being archived or gone,
+    // and neither should start — while acting anyway would leave the stale time
+    // that D4's ordering exists to prevent.
+    return yield* dispatchOptional({
       type: "board.card.update",
       commandId: yield* commandId("clear-schedule"),
       cardId: card.id,
@@ -4195,6 +4199,23 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * Fire ONE card's scheduled start: clear the field, then act (T3O-19, D4).
+   *
+   * The order is the whole content of this function. A crash between the two
+   * leaves a cleared-but-unstarted card, which the next scheduling pass — or
+   * boot's reconcile, which ends in one — starts. Acting first would leave a
+   * stale time behind on a crash, and that time would re-gate the NEXT stage
+   * from a decision the user made about something else. Benign in one
+   * direction, silently wrong in the other.
+   */
+  const fireCardSchedule = Effect.fn("board-supervisor-fireCardSchedule")(function* (
+    card: BoardCard,
+  ) {
+    if (!(yield* clearCardSchedule(card))) return;
+    yield* startOrResumeCard(card.id);
+  });
+
+  /**
    * React to an edit that TOUCHED the card's scheduled start (T3O-19, D3/D6).
    *
    * One rule, in both directions: if the time has arrived (or was cleared),
@@ -4228,23 +4249,6 @@ const make = Effect.gen(function* () {
     // moment that has already gone.
     if (card.scheduledStartAt !== null) return yield* fireCardSchedule(card);
     yield* startOrResumeCard(cardId);
-  });
-
-  /**
-   * Fire ONE card's scheduled start: clear the field, then act (T3O-19, D4).
-   *
-   * The order is the whole content of this function. A crash between the two
-   * leaves a cleared-but-unstarted card, which the next scheduling pass — or
-   * boot's reconcile, which ends in one — starts. Acting first would leave a
-   * stale time behind on a crash, and that time would re-gate the NEXT stage
-   * from a decision the user made about something else. Benign in one
-   * direction, silently wrong in the other.
-   */
-  const fireCardSchedule = Effect.fn("board-supervisor-fireCardSchedule")(function* (
-    card: BoardCard,
-  ) {
-    yield* clearCardSchedule(card);
-    yield* startOrResumeCard(card.id);
   });
 
   /**
