@@ -43,10 +43,15 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import {
+  boardActivityGroupView,
+  groupBoardActivity,
+  toggleBoardActivityGroup,
+} from "./boardActivityGroups";
 import { boardStageLabel } from "./boardStages";
 import { BoardHint } from "./BoardHint";
 
@@ -296,9 +301,70 @@ function activitySentence(
   }
 }
 
+/** The toggle that ends a collapsed run. It makes no claim about work, so by
+    the "no colour without a claim" rule it stays neutral rather than borrowing
+    the violet the row's own icon wears. */
+function ActivityRunToggle({
+  expanded,
+  label,
+  onToggle,
+}: {
+  readonly expanded: boolean;
+  readonly label: string;
+  readonly onToggle: () => void;
+}) {
+  return (
+    <button
+      aria-expanded={expanded}
+      className="ml-1 cursor-pointer rounded-sm font-medium text-muted-foreground/80 underline-offset-2 hover:text-foreground hover:underline"
+      onClick={onToggle}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
+function ActivityRow({
+  entry,
+  stages,
+  agents,
+  projectNames,
+  toggle,
+}: {
+  readonly entry: BoardCardActivityEntry;
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+  readonly agents: BoardActivityAgentLookup | undefined;
+  readonly projectNames: ReadonlyMap<string, string> | undefined;
+  readonly toggle: ReactNode;
+}) {
+  return (
+    <li className="flex items-start gap-1.5 text-[12px]/[1.5] text-muted-foreground">
+      <span className="mt-[3px]">
+        <ActivityIcon kind={entry.kind} />
+      </span>
+      <span className="min-w-0 flex-1 text-pretty">
+        <ActorName agents={agents} entry={entry} /> {activitySentence(entry, stages, projectNames)}
+        {toggle}
+      </span>
+      <BoardHint label={entry.createdAt}>
+        <span className="mt-[1px] shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70">
+          {formatRelativeTimeLabel(entry.createdAt)}
+        </span>
+      </BoardHint>
+    </li>
+  );
+}
+
 /**
  * The rail. Newest LAST, matching the chronological order the projector writes
  * and the way a card's story reads top to bottom.
+ *
+ * A run of identical consecutive rows renders as its newest member plus a
+ * "+N more" toggle (T3O-35) — a planning session that asked thirty questions
+ * used to spend thirty rows saying so. The toggle sits at the same row whether
+ * open or shut, so expanding a run never moves the control the user just
+ * pressed.
  *
  * Renders nothing when the card has no activity — absent, not an empty skeleton
  * (no-speculative-inventory), exactly as the two placeholders this replaces
@@ -316,28 +382,40 @@ export function BoardCardActivityRail({
   /** Project titles by id (T3O-33), for the one row that names a project. */
   readonly projectNames?: ReadonlyMap<string, string> | undefined;
 }) {
+  const groups = useMemo(() => groupBoardActivity(entries), [entries]);
+  const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set());
+
   if (entries.length === 0) return null;
   return (
     <ol className="flex flex-col gap-1.5">
-      {entries.map((entry) => (
-        <li
-          className="flex items-start gap-1.5 text-[12px]/[1.5] text-muted-foreground"
-          key={entry.activityId}
-        >
-          <span className="mt-[3px]">
-            <ActivityIcon kind={entry.kind} />
-          </span>
-          <span className="min-w-0 flex-1 text-pretty">
-            <ActorName agents={agents} entry={entry} />{" "}
-            {activitySentence(entry, stages, projectNames)}
-          </span>
-          <BoardHint label={entry.createdAt}>
-            <span className="mt-[1px] shrink-0 text-[10.5px] tabular-nums text-muted-foreground/70">
-              {formatRelativeTimeLabel(entry.createdAt)}
-            </span>
-          </BoardHint>
-        </li>
-      ))}
+      {groups.map((group) => {
+        const expanded = expandedKeys.has(group.key);
+        const { rows, toggleLabel } = boardActivityGroupView(group, expanded);
+        const toggle =
+          toggleLabel === null ? null : (
+            <ActivityRunToggle
+              expanded={expanded}
+              label={toggleLabel}
+              onToggle={() => {
+                setExpandedKeys((current) => toggleBoardActivityGroup(current, group.key));
+              }}
+            />
+          );
+        return (
+          <Fragment key={group.key}>
+            {rows.map((entry, index) => (
+              <ActivityRow
+                agents={agents}
+                entry={entry}
+                key={entry.activityId}
+                projectNames={projectNames}
+                stages={stages}
+                toggle={index === rows.length - 1 ? toggle : null}
+              />
+            ))}
+          </Fragment>
+        );
+      })}
     </ol>
   );
 }
