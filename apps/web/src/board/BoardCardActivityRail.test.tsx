@@ -1,7 +1,9 @@
 /**
- * The Activity rail's collapsed rendering (T3O-35). The grouping rule itself is
- * pinned in `boardActivityGroups.test.ts`; these check the rail actually shows
- * a run as one row plus its toggle, and leaves an unrepeated rail alone.
+ * The Activity rail's collapsed rendering (T3O-35). The grouping rule and the
+ * expand/collapse behaviour behind the toggle are pinned in
+ * `boardActivityGroups.test.ts`; these check the rail wires them to the screen —
+ * a run reads as one sentence plus its toggle, and an unrepeated rail is left
+ * alone.
  */
 import {
   BoardActivityId,
@@ -44,6 +46,8 @@ const entry = (
 });
 
 const occurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+/** How many rows the rail actually drew. */
+const rowCount = (html: string) => occurrences(html, "<li class");
 
 describe("BoardCardActivityRail", () => {
   it("renders nothing for a card with no activity", () => {
@@ -68,11 +72,10 @@ describe("BoardCardActivityRail", () => {
     );
     expect(occurrences(html, "asked for input on Planning")).toBe(1);
     expect(html).toContain("+5 more");
-    expect(html).toContain('aria-expanded="false"');
     // The rows around the run are untouched.
     expect(html).toContain("created the card in Planning");
     expect(html).toContain("proposed 1 plan");
-    expect(occurrences(html, "<li class")).toBe(3);
+    expect(rowCount(html)).toBe(3);
   });
 
   it("leaves a rail with nothing repeated fully expanded and toggle-free", () => {
@@ -86,7 +89,7 @@ describe("BoardCardActivityRail", () => {
         stages={stages}
       />,
     );
-    expect(occurrences(html, "<li class")).toBe(3);
+    expect(rowCount(html)).toBe(3);
     expect(html).not.toContain("more");
     expect(html).not.toContain("Show less");
   });

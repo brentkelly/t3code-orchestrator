@@ -47,7 +47,11 @@ import { Fragment, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
-import { groupBoardActivity } from "./boardActivityGroups";
+import {
+  boardActivityGroupView,
+  groupBoardActivity,
+  toggleBoardActivityGroup,
+} from "./boardActivityGroups";
 import { boardStageLabel } from "./boardStages";
 import { BoardHint } from "./BoardHint";
 
@@ -302,11 +306,11 @@ function activitySentence(
     the violet the row's own icon wears. */
 function ActivityRunToggle({
   expanded,
-  hiddenCount,
+  label,
   onToggle,
 }: {
   readonly expanded: boolean;
-  readonly hiddenCount: number;
+  readonly label: string;
   readonly onToggle: () => void;
 }) {
   return (
@@ -316,7 +320,7 @@ function ActivityRunToggle({
       onClick={onToggle}
       type="button"
     >
-      {expanded ? "Show less" : `+${hiddenCount} more`}
+      {label}
     </button>
   );
 }
@@ -386,33 +390,27 @@ export function BoardCardActivityRail({
     <ol className="flex flex-col gap-1.5">
       {groups.map((group) => {
         const expanded = expandedKeys.has(group.key);
-        const toggle = !group.collapsible ? null : (
-          <ActivityRunToggle
-            expanded={expanded}
-            hiddenCount={group.entries.length - 1}
-            onToggle={() => {
-              setExpandedKeys((current) => {
-                const next = new Set(current);
-                if (!next.delete(group.key)) next.add(group.key);
-                return next;
-              });
-            }}
-          />
-        );
-        const visible =
-          group.collapsible && !expanded
-            ? [group.entries[group.entries.length - 1]!]
-            : group.entries;
+        const { rows, toggleLabel } = boardActivityGroupView(group, expanded);
+        const toggle =
+          toggleLabel === null ? null : (
+            <ActivityRunToggle
+              expanded={expanded}
+              label={toggleLabel}
+              onToggle={() => {
+                setExpandedKeys((current) => toggleBoardActivityGroup(current, group.key));
+              }}
+            />
+          );
         return (
           <Fragment key={group.key}>
-            {visible.map((entry, index) => (
+            {rows.map((entry, index) => (
               <ActivityRow
                 agents={agents}
                 entry={entry}
                 key={entry.activityId}
                 projectNames={projectNames}
                 stages={stages}
-                toggle={index === visible.length - 1 ? toggle : null}
+                toggle={index === rows.length - 1 ? toggle : null}
               />
             ))}
           </Fragment>
