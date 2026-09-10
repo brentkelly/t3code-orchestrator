@@ -1049,3 +1049,55 @@ describe("initialBoardCardThreadId", () => {
     );
   });
 });
+
+/**
+ * How a done card says it is done (t3o-36). The sheet used to wear a lime wash
+ * over its surface tokens; it now reads as done from two marks that cost the
+ * rest of the sheet nothing — the stage chip cut as a success chip, and a check
+ * after the title.
+ */
+describe("BoardCardDetailPanel done marks", () => {
+  const panel = (stage: BoardStageId) =>
+    renderToStaticMarkup(
+      <BoardCardDetailPanel {...baseProps} detail={detail({ stage })} projectName="widgets" />,
+    );
+
+  /** The heading, sliced out of the markup by the id the dialog labels itself
+      with — the check lives inside it, beside the title text. */
+  const heading = (html: string) => {
+    const start = html.indexOf('id="board-card-detail-title"');
+    expect(start).toBeGreaterThan(-1);
+    return html.slice(start, html.indexOf("</h2>", start));
+  };
+
+  /** The class list of the chip carrying `label` in the identity row. */
+  const chipClass = (html: string, label: string) =>
+    new RegExp(`<span class="([^"]*)">${label}</span>`).exec(html)?.[1] ?? null;
+
+  it("checks the title of a done card, and only a done card", () => {
+    expect(heading(panel(BOARD_SEED_STAGE_IDS.done))).toContain("lucide-check");
+    expect(heading(panel(BOARD_SEED_STAGE_IDS.done))).toContain("Wire the widget");
+    expect(heading(panel(BOARD_SEED_STAGE_IDS.building))).not.toContain("lucide-check");
+  });
+
+  it("cuts the done stage chip as a success chip, matching the label chips", () => {
+    const doneChip = chipClass(panel(BOARD_SEED_STAGE_IDS.done), "Done");
+    expect(doneChip).toContain("bg-success/16");
+    expect(doneChip).toContain("text-success-foreground");
+    // The label chips' own shape: 16px tall, 5px radius, 10px uppercase.
+    expect(doneChip).toContain("h-4");
+    expect(doneChip).toContain("rounded-[5px]");
+    expect(doneChip).toContain("text-[10px]");
+    expect(doneChip).toContain("uppercase");
+  });
+
+  it("leaves every other stage's chip neutral", () => {
+    const buildingChip = chipClass(panel(BOARD_SEED_STAGE_IDS.building), "Building");
+    expect(buildingChip).toContain("bg-muted-foreground/14");
+    expect(buildingChip).not.toContain("success");
+  });
+
+  it("washes nothing: no surface-token override rides on a done card", () => {
+    expect(panel(BOARD_SEED_STAGE_IDS.done)).not.toContain("board-card-done");
+  });
+});

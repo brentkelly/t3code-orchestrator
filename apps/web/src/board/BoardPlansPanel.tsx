@@ -17,7 +17,14 @@
  * Pure presentation over `deriveBoardPlanRows` — see `boardPlanRows.ts` for
  * why none of this needed a wire change.
  */
-import { ChevronRightIcon, CircleAlertIcon, Columns3Icon, Link2Icon, LockIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  CircleAlertIcon,
+  Columns3Icon,
+  Link2Icon,
+  LockIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "../lib/utils";
@@ -131,9 +138,8 @@ function PlanRow({
     <BoardHint label={openable ? `Open ${row.key ?? row.title} in the sub-board` : row.title}>
       <button
         className={cn(
-          "flex w-full items-center gap-[11px] rounded-[10px] border px-3 py-2.5 text-left shadow-xs",
+          "flex w-full items-center gap-[11px] rounded-[10px] border bg-card px-3 py-2.5 text-left shadow-xs",
           row.live?.awaitingInput === true ? "border-attention/50" : "border-border",
-          row.done ? "bg-foreground/3" : "bg-card",
           row.state !== "live" && "opacity-70",
           openable ? "hover:border-foreground/20" : "cursor-default",
         )}
@@ -141,7 +147,17 @@ function PlanRow({
         onClick={openable ? () => onOpenChild(cardId) : undefined}
         type="button"
       >
-        <span className={cn("size-[7px] shrink-0 rounded-full", TONE_DOT[row.tone])} />
+        {/* A done row swaps its stage dot for a filled check (t3o-36), so
+            completion reads down the rail without leaning on colour. The
+            negative margin keeps the bigger glyph on the dot's baseline, so
+            the column of titles beside it does not shift. */}
+        {row.done ? (
+          <span className="-mx-[5px] inline-flex size-[17px] shrink-0 items-center justify-center rounded-full bg-foreground">
+            <CheckIcon aria-hidden className="size-[11px] text-card" strokeWidth={3.4} />
+          </span>
+        ) : (
+          <span className={cn("size-[7px] shrink-0 rounded-full", TONE_DOT[row.tone])} />
+        )}
         <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">#{row.n}</span>
         <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
           <span
@@ -182,12 +198,7 @@ function PlanRow({
             />
           </BoardHint>
         ) : null}
-        <span
-          className={cn(
-            "inline-flex h-5 shrink-0 items-center rounded-md border border-border px-2 text-[11px] font-medium text-muted-foreground",
-            row.done ? "bg-success/12" : "bg-muted",
-          )}
-        >
+        <span className="inline-flex h-5 shrink-0 items-center rounded-md border border-border bg-muted px-2 text-[11px] font-medium text-muted-foreground">
           {row.stageLabel ?? "No card"}
         </span>
         <ChevronRightIcon
