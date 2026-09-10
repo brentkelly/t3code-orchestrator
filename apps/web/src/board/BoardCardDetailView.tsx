@@ -234,10 +234,10 @@ export function boardCardDetailIsWide(
 }
 
 /**
- * A finished card reads as finished from across the room: the whole sheet
- * wears a lime wash while the card sits on the done-role stage, and loses it
- * the moment the card moves back off. Keyed on the ROLE, never the label (D3),
- * so a renamed or re-ordered done column keeps the wash.
+ * Whether the card sits on the done-role stage — what the sheet's completion
+ * marks (the header's success chip, the check after the title) key off. Keyed
+ * on the ROLE, never the label (D3), so a renamed or re-ordered done column
+ * still reads as done.
  */
 export function boardCardIsDone(
   stages: ReadonlyArray<BoardStageDefinition>,
@@ -554,12 +554,18 @@ const THREAD_STATE_LABEL: Record<BoardCardThreadState, string> = {
  *
  * A blank title is a cancel, not a clear: `board.card.update` takes a non-empty
  * title, and a card with no title is nothing anyone can find again.
+ *
+ * A done card gets a check glyph after the title, in the title's own size and
+ * colour: completion reads off the heading without tinting the sheet. It is a
+ * sibling of the text, not a badge, so a wrapping title carries it along.
  */
 function TitleBody({
   title,
+  done,
   onSave,
 }: {
   readonly title: string;
+  readonly done: boolean;
   readonly onSave: (title: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -612,6 +618,13 @@ function TitleBody({
           type="button"
         >
           {title}
+          {done ? (
+            <CheckIcon
+              aria-hidden
+              className="ml-[9px] inline-block size-[21px] align-[-3px]"
+              strokeWidth={3.2}
+            />
+          ) : null}
         </button>
       </BoardHint>
     </h2>
@@ -1742,6 +1755,7 @@ function PaneTabs({
 export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
+  const done = boardCardIsDone(props.stages, card.stage);
   const wide = boardCardDetailIsWide(props.stages, card.stage, props.paneChoice);
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
@@ -1888,7 +1902,18 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           </BoardHint>
         ) : null}
         <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
-        <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground">
+        {/* On a done card the stage chip IS the completion badge, cut to the
+            same block as the label chips beside it (t3o-36): the sheet no
+            longer wears a wash, so this and the title's check carry "done".
+            Green means done and only done — docs/t3o/status-colours.md. */}
+        <span
+          className={cn(
+            "inline-flex shrink-0 items-center font-medium",
+            done
+              ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
+              : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
+          )}
+        >
           {boardStageLabel(props.stages, card.stage)}
         </span>
         {archived ? (
@@ -1900,7 +1925,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             is set, then the clock plus its label. Hidden on a done-role card
             and on an archived one — neither is going to move again on a timer.
             Beside the stage chip, because what it holds is the stage. */}
-        {archived || boardCardIsDone(props.stages, card.stage) ? null : (
+        {archived || done ? null : (
           <BoardCardSchedulePopover
             // Sized to the chip row it sits in, not to a button row.
             className="h-[18px]"
@@ -2036,7 +2061,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         </BoardHint>
       </div>
 
-      <TitleBody onSave={props.onSaveTitle} title={card.title} />
+      <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
 
       {/* One insertion above the layout split covers both forms (T3O-9). Only
           the wide one offers `View thread`: the narrow layout has no thread
@@ -2336,7 +2361,6 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   const [maximised, setMaximised] = useState(false);
   const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(null);
   const wide = boardCardDetailIsWide(props.stages, props.detail.card.stage, paneChoice);
-  const done = boardCardIsDone(props.stages, props.detail.card.stage);
   return (
     <Dialog
       open
@@ -2344,12 +2368,7 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
         if (!open) props.onClose();
       }}
     >
-      <BoardCardDetailPopup
-        cardId={props.detail.card.id}
-        done={done}
-        maximised={wide && maximised}
-        wide={wide}
-      >
+      <BoardCardDetailPopup cardId={props.detail.card.id} maximised={wide && maximised} wide={wide}>
         <BoardCardDetailPanel
           {...props}
           maximised={maximised}
@@ -2370,13 +2389,11 @@ export function BoardCardDetailPopup({
   cardId,
   wide = false,
   maximised = false,
-  done = false,
   children,
 }: {
   readonly cardId: BoardCardId | null;
   readonly wide?: boolean;
   readonly maximised?: boolean;
-  readonly done?: boolean;
   readonly children: React.ReactNode;
 }) {
   return (
@@ -2384,7 +2401,6 @@ export function BoardCardDetailPopup({
       aria-labelledby={CARD_TITLE_ID}
       className={cn(
         "overflow-hidden p-0",
-        done && "board-card-done",
         maximised
           ? "fixed inset-0 h-screen max-h-none w-screen max-w-none rounded-none border-0"
           : wide

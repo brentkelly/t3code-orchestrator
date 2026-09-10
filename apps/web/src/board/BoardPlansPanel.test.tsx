@@ -170,3 +170,38 @@ describe("BoardPlansPanel", () => {
     expect(render()).not.toContain("Back to thread");
   });
 });
+
+/**
+ * A done row carries no tint (t3o-36): completion is a check in place of the
+ * stage dot, so the rail reads down its left edge without colour doing the
+ * work. #1 is the done row in the fixture; #2 and #3 are not.
+ */
+describe("BoardPlansPanel done rows", () => {
+  /** The row buttons, in order — one per plan, sliced by their shared frame. */
+  const rows = (html: string) =>
+    Array.from(html.matchAll(/<button class="flex w-full items-center.*?<\/button>/g), (m) => m[0]);
+
+  it("gives every row the same card background and the same stage pill fill", () => {
+    const html = render();
+    expect(rows(html)).toHaveLength(4);
+    for (const row of rows(html)) {
+      // The row sits on the panel's muted fill, so it needs its own card
+      // background whether or not it is done — no tint either way.
+      expect(row).toContain("bg-card");
+      expect(row).not.toContain("bg-foreground/3");
+      // The stage pill: `bg-muted`, never the success tint.
+      expect(row).toContain("bg-muted px-2");
+      expect(row).not.toContain("bg-success");
+    }
+  });
+
+  it("swaps the done row's stage dot for a filled check", () => {
+    const [first, second] = rows(render());
+    expect(first).toContain("lucide-check");
+    expect(first).toContain("bg-foreground");
+    expect(first).not.toContain("size-[7px]");
+    // A live, not-done row keeps its tone dot and grows no check.
+    expect(second).toContain("size-[7px]");
+    expect(second).not.toContain("lucide-check");
+  });
+});
