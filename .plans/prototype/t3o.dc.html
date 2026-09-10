@@ -4175,7 +4175,22 @@
                   "
                   style-hover="background:var(--accent)"
                 >
-                  {{ activeCard.title }}
+                  {{ activeCard.title }}<sc-if
+                    value="{{ activeCard.isDone }}"
+                    hint-placeholder-val="{{ false }}"
+                    ><svg
+                      width="21"
+                      height="21"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="var(--fg)"
+                      stroke-width="3.2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      style="flex: none; margin-left: 9px; vertical-align: -3px"
+                    >
+                      <path d="m5 13 4 4L19 7"></path></svg
+                  ></sc-if>
                 </h2>
               </sc-if>
               <sc-if value="{{ mergeConflict }}" hint-placeholder-val="{{ false }}">
@@ -4986,9 +5001,40 @@
                             style="{{ p.style }}"
                             style-hover="border-color:color-mix(in srgb,var(--fg) 20%,transparent)"
                           >
-                            <span
-                              style="width:7px;height:7px;flex:none;border-radius:99px;background:{{ p.dot }}"
-                            ></span>
+                            <sc-if value="{{ p.notDone }}" hint-placeholder-val="{{ true }}">
+                              <span
+                                style="width:7px;height:7px;flex:none;border-radius:99px;background:{{ p.dot }}"
+                              ></span>
+                            </sc-if>
+                            <sc-if value="{{ p.done }}" hint-placeholder-val="{{ false }}">
+                              <span
+                                title="Merged — this plan is done"
+                                style="
+                                  display: inline-flex;
+                                  align-items: center;
+                                  justify-content: center;
+                                  width: 17px;
+                                  height: 17px;
+                                  flex: none;
+                                  margin: 0 -5px 0 -5px;
+                                  border-radius: 99px;
+                                  background: var(--fg);
+                                "
+                              >
+                                <svg
+                                  width="11"
+                                  height="11"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="var(--card)"
+                                  stroke-width="3.4"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                >
+                                  <path d="m5 13 4 4L19 7"></path>
+                                </svg>
+                              </span>
+                            </sc-if>
                             <span
                               style="
                                 font: 600 11px var(--font-sans);
@@ -6940,6 +6986,24 @@
                                     >{{ a.what }}</a
                                   >
                                   · {{ a.when }}</span
+                                >
+                              </sc-if>
+                              <sc-if value="{{ a.grouped }}" hint-placeholder-val="{{ false }}">
+                                <span
+                                  style="
+                                    font: 400 12.5px/1.5 var(--font-sans);
+                                    color: var(--muted-fg);
+                                  "
+                                  ><span style="color: var(--fg); font-weight: 500"
+                                    >{{ a.who }}</span
+                                  >
+                                  {{ a.what }} · {{ a.when }} ·
+                                  <a
+                                    href="#"
+                                    onClick="{{ a.toggleGroup }}"
+                                    style="font-weight: 500; white-space: nowrap"
+                                    >{{ a.groupLabel }}</a
+                                  ></span
                                 >
                               </sc-if>
                             </div>
@@ -11748,10 +11812,13 @@
               key: active.key,
               tags: (active.tags || []).map((t) => ({ name: t, style: this.typeStyle(t) })),
               statusName: stage.name,
+              isDone: active.status === "done",
               statusStyle:
-                "display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 7px;border-radius:6px;font:500 11px var(--font-sans);background:color-mix(in srgb," +
-                stage.dot +
-                " 14%,transparent);color:var(--fg)",
+                active.status === "done"
+                  ? "display:inline-flex;align-items:center;gap:4px;height:16px;padding:0 5px;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;background:color-mix(in srgb,var(--success) 16%,transparent);color:var(--success-fg)"
+                  : "display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 7px;border-radius:6px;font:500 11px var(--font-sans);background:color-mix(in srgb," +
+                    stage.dot +
+                    " 14%,transparent);color:var(--fg)",
               title: active.title,
               hasDeps: active.depKeys.length > 0,
               noDeps: active.depKeys.length === 0,
@@ -11951,6 +12018,14 @@
                     live: active.tstate === "working",
                   });
                 if (idx > 2)
+                  ["3h ago", "3h ago", "3h ago", "2h ago", "2h ago", "2h ago"].forEach((t) =>
+                    rows.push({
+                      who: "Claude Opus 4.8",
+                      what: "asked for your input on planning",
+                      when: t,
+                    }),
+                  );
+                if (idx > 2)
                   rows.push({
                     who: "Claude Opus 4.8",
                     what: "drafted the plan",
@@ -11971,16 +12046,71 @@
                   what: "moved to " + stage.name.toLowerCase(),
                   when: "40m ago",
                 });
-                const all = rows.map((r) => ({
+                const flat = rows.map((r) => ({
                   ...r,
                   live: !!r.live,
                   dot: !r.live,
                   isLink: !!r.isLink,
                   plain: !r.isLink,
+                  grouped: false,
                 }));
+                const openGroups = this.state.activityGroups || {};
+                const setGroup = (key, val) => (e) => {
+                  if (e && e.preventDefault) e.preventDefault();
+                  this.setState((s) => {
+                    const g = { ...(s.activityGroups || {}) };
+                    if (val) g[key] = true;
+                    else delete g[key];
+                    return { activityGroups: g };
+                  });
+                };
+                const all = [];
+                for (let i = 0; i < flat.length; ) {
+                  const r = flat[i];
+                  let j = i + 1;
+                  while (
+                    j < flat.length &&
+                    !r.live &&
+                    !flat[j].live &&
+                    flat[j].who === r.who &&
+                    flat[j].what === r.what
+                  )
+                    j++;
+                  const n = j - i;
+                  const key = active.id + ":" + i;
+                  if (n < 3) {
+                    for (let k = i; k < j; k++) all.push(flat[k]);
+                  } else if (!openGroups[key]) {
+                    all.push({
+                      ...flat[j - 1],
+                      plain: false,
+                      isLink: false,
+                      grouped: true,
+                      dot: true,
+                      groupLabel: "+" + (n - 1) + " more",
+                      toggleGroup: setGroup(key, true),
+                    });
+                  } else {
+                    for (let k = i; k < j; k++) {
+                      const row = { ...flat[k] };
+                      if (k === j - 1) {
+                        row.plain = false;
+                        row.isLink = false;
+                        row.grouped = true;
+                        row.dot = true;
+                        row.groupLabel = "show less";
+                        row.toggleGroup = setGroup(key, false);
+                      }
+                      all.push(row);
+                    }
+                  }
+                  i = j;
+                }
                 this._actTotal = all.length;
                 this._actOpen = this.state.activityExpanded === active.id;
-                this._actHidden = this._actOpen ? 0 : Math.max(0, all.length - 5);
+                const anyGroupOpen = all.some((r) => r.grouped && r.groupLabel === "show less");
+                this._actHidden =
+                  this._actOpen || anyGroupOpen ? 0 : Math.max(0, all.length - 5);
                 return this._actHidden ? all.slice(-5) : all;
               })(),
               activityMoreVisible: !!this._actHidden,
@@ -12653,18 +12783,16 @@
                   : "",
                 working: !!th && th.state === "working",
                 waiting: !!th && th.state === "waiting",
+                done,
+                notDone: !done,
                 statusStyle:
-                  "display:inline-flex;align-items:center;height:20px;padding:0 8px;flex:none;border-radius:6px;font:500 11px var(--font-sans);border:1px solid var(--border);background:" +
-                  (done ? "color-mix(in srgb,var(--success) 12%,transparent)" : "var(--muted)") +
-                  ";color:var(--muted-fg)",
+                  "display:inline-flex;align-items:center;height:20px;padding:0 8px;flex:none;border-radius:6px;font:500 11px var(--font-sans);border:1px solid var(--border);background:var(--muted);color:var(--muted-fg)",
                 style:
                   "display:flex;align-items:center;gap:11px;padding:10px 12px;width:100%;text-align:left;border:1px solid " +
                   (th && th.state === "waiting"
                     ? "color-mix(in srgb,var(--attention) 50%,transparent)"
                     : "var(--border)") +
-                  ";border-radius:10px;background:" +
-                  (done ? "color-mix(in srgb,var(--fg) 3%,var(--card))" : "var(--card)") +
-                  ";cursor:pointer;box-shadow:var(--shadow-xs)",
+                  ";border-radius:10px;background:var(--card);cursor:pointer;box-shadow:var(--shadow-xs)",
               };
             });
             cardGraph = this.graphVm(active.key, (pc) => openPlan(pc));
@@ -12802,9 +12930,7 @@
                 (hasThreadPane ? "height:86vh" : "max-height:86vh") +
                 ";border-radius:16px;border:1px solid color-mix(in srgb,var(--fg) 10%,transparent)") +
               ";display:flex;flex-direction:column;" +
-              (active && active.status === "done"
-                ? "--card:color-mix(in srgb,#84cc16 5%,var(--popover));"
-                : "") +
+
               "background:var(--card);box-shadow:var(--shadow-pop);overflow:hidden;animation:t3pop 180ms cubic-bezier(.2,.8,.2,1)",
             cardBodyStyle: hasThreadPane
               ? "display:grid;grid-template-columns:minmax(0,1fr) 336px;min-height:0;flex:1;margin-top:12px;border-top:1px solid var(--border)"
