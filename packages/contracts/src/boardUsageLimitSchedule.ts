@@ -128,3 +128,46 @@ export function applyBoardUsageLimitJitter(delayMs: number, random: number): num
   const offset = Math.round((random * 2 - 1) * BOARD_USAGE_LIMIT_JITTER_MS);
   return Math.max(0, Math.round(delayMs) + offset);
 }
+
+/**
+ * The auto-merge retry ladder (T3O-38, D5): 3, 3, 5, 5, 10, 20, 40 minutes.
+ *
+ * One initial attempt plus seven retries — 8 attempts over ~86 minutes — then
+ * the ladder stops and the card says so and waits for a human. Shaped exactly
+ * like `BOARD_RETRY_DELAYS_MS`: charged at the refusal, delivered later by the
+ * existing 30s supervisor sweep, and jittered through
+ * `applyBoardUsageLimitJitter` so ten cards arriving together do not hammer
+ * one forge in lockstep.
+ *
+ * Front-loaded because the common refusal is "required checks have not passed"
+ * on a CI run that finishes in single-digit minutes, and stretched at the tail
+ * because a merge still refused after half an hour is usually waiting on
+ * something slower than a build.
+ */
+export const BOARD_AUTO_MERGE_RETRY_DELAYS_MS = [
+  3 * MINUTE,
+  3 * MINUTE,
+  5 * MINUTE,
+  5 * MINUTE,
+  10 * MINUTE,
+  20 * MINUTE,
+  40 * MINUTE,
+] as const;
+
+/** How many merge attempts an armed card gets before the ladder stops: the
+    first attempt plus one per rung above. */
+export const BOARD_AUTO_MERGE_MAX_ATTEMPTS = BOARD_AUTO_MERGE_RETRY_DELAYS_MS.length + 1;
+
+/**
+ * How long to wait after the `attempt`-th refusal (1-based), or `null` once
+ * the ladder is spent.
+ *
+ * Returning null rather than clamping to the last rung is the whole point:
+ * this ladder ENDS, and the end is a state the card shows ("Merge needs you")
+ * rather than a wait that never resolves.
+ */
+export function boardAutoMergeRetryDelayMs(attempt: number): number | null {
+  const index = Math.floor(attempt) - 1;
+  if (index < 0) return BOARD_AUTO_MERGE_RETRY_DELAYS_MS[0] as number;
+  return (BOARD_AUTO_MERGE_RETRY_DELAYS_MS[index] as number | undefined) ?? null;
+}

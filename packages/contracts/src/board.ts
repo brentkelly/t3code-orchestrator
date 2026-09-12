@@ -952,6 +952,91 @@ export function isEmptyBoardCardReviewOverrides(
   );
 }
 
+/**
+ * Why an armed card's merge was refused, in the one dimension the board acts
+ * on (T3O-38, D4/D6).
+ *
+ * A small ENUM, not just the forge's prose, so a later feature can add a
+ * handler for one classification without rebuilding the classification. Only
+ * `soft` retries; every other value stops the ladder where it stands and hands
+ * the card to a human.
+ *
+ * - `soft` — the refusal plausibly clears itself: checks still running, a
+ *   merge state the forge has not finished computing, or a probe this build
+ *   could not read at all. Unrecognised ALWAYS degrades to here, so a provider
+ *   we cannot classify costs a few extra retries and never a wrong verdict.
+ * - `checks-failed` — a required check reported failure. More CI will not
+ *   happen without a new commit, so waiting is waiting for nothing.
+ * - `approval-required` — every check is green and the forge still says no: a
+ *   missing review, a protection rule, a required conversation. A decision the
+ *   board does not have.
+ * - `behind` — the branch is behind its base and the repository requires a
+ *   linear/up-to-date history. Needs a rebase, not a retry.
+ * - `other` — a structural refusal the board recognises and knows is
+ *   permanent (a closed pull request, a base that no longer matches).
+ */
+export const BOARD_CARD_AUTO_MERGE_CLASSIFICATIONS = [
+  "soft",
+  "checks-failed",
+  "approval-required",
+  "behind",
+  "other",
+] as const;
+export const BoardCardAutoMergeClassification = Schema.Literals(
+  BOARD_CARD_AUTO_MERGE_CLASSIFICATIONS,
+);
+export type BoardCardAutoMergeClassification = typeof BoardCardAutoMergeClassification.Type;
+
+/** Whether a classification keeps the ladder climbing. The ONE definition,
+    shared by the reactor that charges a rung and every surface that decides
+    between "held" and "needs you". */
+export function isBoardCardAutoMergeSoft(
+  classification: BoardCardAutoMergeClassification,
+): boolean {
+  return classification === "soft";
+}
+
+/**
+ * An armed card whose merge the forge refused (T3O-38, D4).
+ *
+ * On the card aggregate rather than in memory, and rather than borrowed from
+ * step state. In memory it would be wiped by a restart, putting the card back
+ * to sitting in the merge column unexplained — which is the complaint this
+ * card exists to fix. On step state it would fabricate a step row with no step
+ * and no thread behind it, corrupting slot accounting, recovery and boot
+ * reconciliation, all of which read that row.
+ */
+export const BoardCardAutoMergeHold = Schema.Struct({
+  /** The forge's own words. Shown verbatim in the modal banner and the pill's
+      tooltip, so the user reads the forge's reason and not a paraphrase. */
+  reason: TrimmedNonEmptyString,
+  classification: BoardCardAutoMergeClassification,
+  /** One line of structured colour off the probe — "3 of 5 checks green ·
+      ci/build and ci/e2e still running" — or null when the probe said nothing
+      the board could summarise. */
+  detail: Schema.NullOr(TrimmedNonEmptyString),
+  /** Which attempt produced this hold, 1-based, of
+      `BOARD_AUTO_MERGE_MAX_ATTEMPTS`. */
+  attempt: PositiveInt,
+  /** When the hold STARTED — preserved across rungs, so the board pill's
+      elapsed clock measures the whole wait rather than restarting each retry. */
+  heldSince: IsoDateTime,
+  /** When the next attempt is due, or null once the ladder has stopped and
+      only a human can revive it. */
+  retryAt: Schema.NullOr(IsoDateTime),
+  /** The head commit the probe described. A DIFFERENT sha means new commits
+      and therefore new CI, which resets the ladder (D9). */
+  headSha: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardCardAutoMergeHold = typeof BoardCardAutoMergeHold.Type;
+
+/** Whether a hold has rungs left. An exhausted hold is KEPT, never cleared —
+    the card must go on saying why it stopped — so "gave up" is exactly
+    `retryAt === null`. */
+export function boardCardAutoMergeGaveUp(hold: BoardCardAutoMergeHold | null): boolean {
+  return hold !== null && hold.retryAt === null;
+}
+
 // ── Card aggregate ─────────────────────────────────────────────────────
 // Declared ahead of `BoardCard` (which carries `sourcePlanId`) — the plan
 // structs themselves live with the rest of the plan vocabulary below.
@@ -1160,6 +1245,37 @@ export const BoardCard = Schema.Struct({
       `auto_start INTEGER NOT NULL DEFAULT 0`, so a from-empty replay of a log
       written before this spec equals a table rehydration. */
   autoStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Whether this card merges its own pull request as soon as the forge
+      accepts it (T3O-38, D3), instead of parking in the merge stage until
+      somebody clicks Merge.
+
+      One of THREE arming conditions, not the only one — read it through
+      `boardCardAutoMergeArmed`, never directly, or a sub-board child and a
+      board whose merge stage arms everything will both read as unarmed.
+
+      Offerable on any live, top-level card that has not reached the done-role
+      stage; deliberately NOT pinned to one stage the way `autoStart` is,
+      because the useful moment to arm it is before going to bed, whatever
+      column the card is in. Unlike `autoStart` it is never SPENT: a card
+      dragged back out of Done and merged again is still armed, which is the
+      honest reading of a flag that says "always merge this one".
+
+      Decoding default `false`, matching migration 043's
+      `auto_merge INTEGER NOT NULL DEFAULT 0`, so a from-empty replay of a log
+      written before this spec equals a table rehydration. */
+  autoMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** The forge's last refusal of an armed merge, and where the retry ladder
+      stands (T3O-38, D4); null when nothing is held — which is every card that
+      has never been refused, and every card whose hold has been cleared by one
+      of D10's triggers.
+
+      Decodes to null on every event payload written before this spec, so a
+      from-empty replay of an older log matches the table-rehydrated model —
+      the guarantee `modelOverrides` makes, with migration 043's
+      `auto_merge_hold` column defaulting to NULL to the same end. */
+  autoMergeHold: Schema.NullOr(BoardCardAutoMergeHold).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -2439,6 +2555,57 @@ export function boardCardAutoStartDue(input: {
   );
 }
 
+/**
+ * Whether this card's merge runs itself (T3O-38, D1) — ONE predicate for all
+ * THREE arming conditions, shared by the reactor that merges, the decider that
+ * clears a hold, and every surface that draws a chip.
+ *
+ * Shared for the reason `unmetBoardCardDependencies` is: the flag, the refusal
+ * and the chip must never disagree about the same card. Two auto-merge paths
+ * with different refusal behaviour is the kind of divergence that rots, and
+ * the sub-board case is the MORE exposed of the two — a held child blocks its
+ * whole split.
+ *
+ * A sub-board child is armed unconditionally (t3o-28 D3, unchanged): the
+ * initiating act was Begin build on the parent, and a child parked at the
+ * merge stage strands every sibling whose dependency it holds.
+ */
+export function boardCardAutoMergeArmed(input: {
+  readonly board: BoardState;
+  readonly card: Pick<BoardCard, "parentCardId" | "archivedAt" | "autoMerge">;
+  /** The merge-role stage's resolved execution config, when the caller has the
+      settings in hand. Omitted by a caller that does not — which reads as the
+      board-wide default being off, the conservative direction. */
+  readonly boardWide?: boolean | undefined;
+}): boolean {
+  if (input.card.archivedAt !== null) return false;
+  if (input.card.parentCardId !== null) return true;
+  if (input.card.autoMerge) return true;
+  return input.boardWide === true;
+}
+
+/**
+ * Whether the per-card auto-merge toggle may be OFFERED, and whether the
+ * decider may accept `autoMerge: true` (T3O-38, D3).
+ *
+ * Deliberately wider than `boardCardCanArmAutoStart`: any live, top-level card
+ * that has not reached the done-role stage. The useful moment to arm this is
+ * "before I go to bed", and a control that is only offered in one column is
+ * one the user has to come back to press — which is the complaint.
+ *
+ * Refused past the done-role stage, where there is nothing left to merge, and
+ * refused for a sub-board child, which is armed unconditionally and would be
+ * offered a switch that cannot turn anything off.
+ */
+export function boardCardCanArmAutoMerge(input: {
+  readonly board: BoardState;
+  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt">;
+}): boolean {
+  if (input.card.archivedAt !== null || input.card.parentCardId !== null) return false;
+  const done = boardStageWithRole(input.board, "done");
+  return done === null || input.card.stage !== done.stageId;
+}
+
 /** A sub-board plan card may occupy the materialisation floor or anything
     after it (t3o-23, D3) — draggable back out of Building to the floor
     (reverse states), never into ideation stages. Falls back to the
@@ -3501,6 +3668,13 @@ export const BoardCardUpdateCommand = Schema.Struct({
       nothing left to wait for would store a flag no path can ever act on.
       `false` is always accepted: a reverse state must never be refused. */
   autoStart: Schema.optional(Schema.Boolean),
+  /** Arm or disarm the card's auto-merge (T3O-38, D3). Absent leaves it
+      unchanged. `true` is REFUSED unless `boardCardCanArmAutoMerge` holds — a
+      sub-board child is armed unconditionally and a card already in Done has
+      nothing to merge. `false` is always accepted, and CLEARS any hold: a
+      reverse state must never be refused, and a hold about a merge that is no
+      longer going to happen is a stale label. */
+  autoMerge: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -4044,6 +4218,25 @@ export const BoardCardRecordNoteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardRecordNoteCommand = typeof BoardCardRecordNoteCommand.Type;
+
+/**
+ * Record — or clear — an armed card's auto-merge hold (T3O-38, D4).
+ *
+ * Server-internal: only the supervisor reactor has the forge's answer. The
+ * decider is a no-op when the value already matches what the card holds, so a
+ * re-probe that changes nothing lands no event and republishes no shell.
+ *
+ * `hold: null` is the clear, and every D10 trigger that is not already a card
+ * update goes through it.
+ */
+export const BoardCardRecordAutoMergeHoldCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-auto-merge-hold"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  hold: Schema.NullOr(BoardCardAutoMergeHold),
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordAutoMergeHoldCommand = typeof BoardCardRecordAutoMergeHoldCommand.Type;
 
 // Server-INTERNAL step-lifecycle commands (t3o-10, BOARD_INTERNAL_COMMANDS):
 // the supervisor reactor dispatches them as it drives a card's step through
@@ -4856,6 +5049,17 @@ export const BoardCardNoteRecordedPayload = Schema.Struct({
 });
 export type BoardCardNoteRecordedPayload = typeof BoardCardNoteRecordedPayload.Type;
 
+/** Carries the whole post-change card, like `board.card-pull-request-recorded`
+    — the shell delta mapping is a pure function of the event, and the hold
+    drives three shell fields. `hold: null` is the clear (T3O-38, D10). */
+export const BoardCardAutoMergeHoldRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  hold: Schema.NullOr(BoardCardAutoMergeHold),
+  card: BoardCard,
+});
+export type BoardCardAutoMergeHoldRecordedPayload =
+  typeof BoardCardAutoMergeHoldRecordedPayload.Type;
+
 // Step-lifecycle event payloads (t3o-10). The recipe-snapshot event carries
 // the full post-change `card` (like every worktree event), so the projector
 // upserts it and the shell delta stays a pure function of the event. The step
@@ -5380,6 +5584,30 @@ export const BoardCardShell = Schema.Struct({
       On the card aggregate like `scheduledStartAt`, so it rides every
       card-carrying delta for free and absent really does mean unarmed. */
   autoStart: Schema.optionalKey(Schema.Boolean),
+  /** When this card's auto-merge was first refused (T3O-38, D14), absent when
+      nothing is held — which is every card on a healthy board, and why these
+      three are KEY-optional: the shell is under a fixed per-card byte budget
+      asserted in `board.test.ts`.
+
+      The ELAPSED clock the board pill renders is measured from here, so a card
+      that has climbed five rungs still says how long the whole wait has been
+      rather than how long since the last retry. */
+  autoMergeHeldSince: Schema.optionalKey(IsoDateTime),
+  /** Whether the hold above has run out of rungs. Absent means it has not.
+      Picks the pill's LABEL and ICON — `Merge held · 12m` with a clock versus
+      `Merge needs you` with an alert glyph — and never its colour: both board
+      states are amber (D12). */
+  autoMergeGaveUp: Schema.optionalKey(Schema.Boolean),
+  /** Whether the card's merge runs itself by its OWN arming — a sub-board
+      child, or the per-card flag. Absent otherwise.
+
+      Deliberately not the full `boardCardAutoMergeArmed` reading: the third
+      arming condition is the board-wide merge-stage setting, which the SQL
+      snapshot producer cannot see and the client already holds, so the client
+      ORs it in. A shell field only one of the two producers could compute is
+      precisely the reconnect flicker `cardMetaShellFields.test.ts` exists to
+      catch. Draws the small grey `Auto` glyph, in the merge-role stage only. */
+  autoMergeArmed: Schema.optionalKey(Schema.Boolean),
   /** The card's linked pull request number, absent when it has none. Sourced
       from `BoardCard.pullRequest`, so — unlike `briefHasImage` / `planCount` —
       it is on the aggregate and every card-carrying delta asserts it; there is
@@ -5622,6 +5850,13 @@ export function makeBoardCardShell(input: {
       aggregate like `scheduledStartAt`; the key is omitted for an unarmed card
       to keep its shell byte-identical to a pre-auto-start payload. */
   readonly autoStart?: boolean | null | undefined;
+  /** The auto-merge hold's three shell facts (T3O-38, D14). On the card
+      aggregate like `autoStart`, so BOTH producers — the SQL snapshot query
+      and the JS delta derivation — must carry them or a held card's pill
+      would vanish on reconnect. `cardMetaShellFields.test.ts` pins the pair. */
+  readonly autoMergeHeldSince?: IsoDateTime | null | undefined;
+  readonly autoMergeGaveUp?: boolean | null | undefined;
+  readonly autoMergeArmed?: boolean | null | undefined;
   /** The card's review-loop summary (t3o-22, D7), or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -5690,6 +5925,12 @@ export function makeBoardCardShell(input: {
     // The arm (T3O-24, D8): omitted when unarmed — `false` and absent mean the
     // same thing, and only one of them is free.
     ...(input.autoStart === true ? { autoStart: true } : {}),
+    // The auto-merge hold (T3O-38, D14): three byte-cheap facts, each omitted
+    // when it has nothing to say, so a board that has never held a merge is
+    // byte-identical to a pre-T3O-38 payload.
+    ...(input.autoMergeHeldSince == null ? {} : { autoMergeHeldSince: input.autoMergeHeldSince }),
+    ...(input.autoMergeGaveUp === true ? { autoMergeGaveUp: true } : {}),
+    ...(input.autoMergeArmed === true ? { autoMergeArmed: true } : {}),
     // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -5762,6 +6003,15 @@ export function boardCardShellFromCard(
     parentCardId: card.parentCardId,
     scheduledStartAt: card.scheduledStartAt,
     autoStart: card.autoStart,
+    autoMergeHeldSince: card.autoMergeHold?.heldSince ?? null,
+    autoMergeGaveUp: boardCardAutoMergeGaveUp(card.autoMergeHold),
+    // The AGGREGATE half of the arm only (T3O-38, D14): a sub-board child or
+    // an explicit per-card flag. The board-wide merge-stage setting is ORed in
+    // CLIENT-side, where the settings already live — the SQL snapshot producer
+    // cannot see them, and a shell field only one of the two producers could
+    // compute is exactly the reconnect-flicker `cardMetaShellFields.test.ts`
+    // exists to catch.
+    autoMergeArmed: card.parentCardId !== null || card.autoMerge,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined
@@ -6120,6 +6370,8 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardReclaimWorktreeCommand,
   BoardCardRecordPullRequestCommand,
   BoardCardRecordNoteCommand,
+  // T3O-38: the auto-merge hold and its retry ladder.
+  BoardCardRecordAutoMergeHoldCommand,
   BoardCardSelectStepCommand,
   BoardCardAdmitStepCommand,
   BoardCardAwaitStepInputCommand,
@@ -6170,6 +6422,7 @@ export const BOARD_EVENT_TYPES = [
   "board.card-worktree-reclaimed",
   "board.card-pull-request-recorded",
   "board.card-note-recorded",
+  "board.card-auto-merge-hold-recorded",
   "board.card-step-selected",
   "board.card-step-admitted",
   "board.card-step-force-start-requested",
@@ -6372,6 +6625,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-note-recorded"),
       payload: BoardCardNoteRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-auto-merge-hold-recorded"),
+      payload: BoardCardAutoMergeHoldRecordedPayload,
     }),
     Schema.Struct({
       ...base,
@@ -7876,10 +8134,13 @@ export const DEFAULT_BOARD_MERGE_CONFLICT_PROMPT =
  * agent run this stage ever starts is the conflict-resolution step, and only
  * after a merge attempt has actually been refused for conflicts.
  *
- * Merging a TOP-LEVEL card is always a deliberate human click. A sub-board
- * child merges itself down on arrival (t3o-28 — the initiating act was Begin
- * build on the parent, and a child parked here strands every sibling that
- * depends on it); see `autoMergeChild` in the supervisor reactor.
+ * Merging a top-level card is a deliberate human click UNLESS the card is
+ * armed (T3O-38): a sub-board child is armed unconditionally (t3o-28 — the
+ * initiating act was Begin build on the parent, and a child parked here
+ * strands every sibling that depends on it), a card may be armed by its own
+ * kebab toggle, and `autoMerge` below arms every card that arrives here. All
+ * three read through `boardCardAutoMergeArmed`; see `autoMergeCard` in the
+ * supervisor reactor.
  */
 export const BoardStageExecutionMerge = Schema.Struct({
   kind: Schema.Literal("merge"),
@@ -7913,6 +8174,26 @@ export const BoardStageExecutionMerge = Schema.Struct({
   ),
   /** How the Merge button merges. */
   strategy: BoardMergeStrategy.pipe(Schema.withDecodingDefault(Effect.succeed("squash" as const))),
+  /** Merge every card that arrives here, without waiting for a click (T3O-38,
+      D2). Off by default.
+
+      Policy for what happens NEXT, never a sweep: switching it on does not
+      merge the cards already parked in this stage. Those may be parked
+      precisely because nobody wanted them merged, and eleven irreversible
+      forge operations from one toggle is not a default — it is an accident.
+      They keep their own Merge button, and their own per-card arm.
+
+      The adjacency guard still applies to this path: a card a human dragged
+      from Building straight onto this stage (skipping review) does not
+      auto-merge, exactly as a sub-board child does not today. A blanket
+      policy must not merge a diff no review round ever saw.
+
+      When it is on, the per-card toggle is hidden — two controls that can
+      disagree about one card is worse than one control. Per-card arms are
+      PRESERVED while it is on and become effective again when it goes off:
+      the flag is user intent, this is a default, and a default disappearing
+      must not silently erase intent. */
+  autoMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Delete the card's branch once it reaches Done with a MERGED pull request.
       On by default: a merged PR means the commits already live in the base
       branch, so the branch is genuinely spent. Never deletes for an unmerged

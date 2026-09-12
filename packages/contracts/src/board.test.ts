@@ -18,7 +18,11 @@ import {
   BOARD_CARD_SHELL_TITLE_MAX_BYTES,
   BOARD_LABEL_NAME_MAX_LENGTH,
   BOARD_SEED_STAGE_IDS,
+  boardCardAutoMergeArmed,
+  boardCardAutoMergeGaveUp,
   boardCardAutoStartDue,
+  boardCardCanArmAutoMerge,
+  isBoardCardAutoMergeSoft,
   boardCardCanArmAutoStart,
   boardStageBeforeBuild,
   boardModelSelectionOfOverride,
@@ -73,7 +77,7 @@ import {
   type BoardPlan,
   type BoardState,
 } from "./board.ts";
-import type { BoardCardWorktree } from "./board.ts";
+import type { BoardCardAutoMergeHold, BoardCardWorktree } from "./board.ts";
 import { OrchestrationShellSnapshot } from "./orchestration.ts";
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -102,8 +106,15 @@ const utf8Bytes = (value: unknown): number =>
  * per-card cost on reconnect, and unchanged). The ceiling moved only for a
  * worst case that cannot actually occur: a card cannot be scheduled and running
  * and queued and mid-review-round at the same instant.
+ *
+ * T3O-38 raised it to 1408 on the same terms, for the same kind of field. The
+ * auto-merge hold's three keys cost a held card ~64 bytes and every other card
+ * exactly zero (asserted below, and by the linear-growth test, which measures
+ * unheld cards — the real per-card cost on reconnect, and unchanged). The
+ * ceiling moved only for a worst case that cannot occur: a card whose merge is
+ * held has no live step, so it is not queued, not running and not conflicting.
  */
-const BOARD_CARD_SHELL_BYTE_BUDGET = 1344;
+const BOARD_CARD_SHELL_BYTE_BUDGET = 1408;
 
 /** Five UUID-length label ids: a card at exactly `BOARD_CARD_LABELS_MAX`,
     the worst case the shell must lay out for. */
@@ -151,6 +162,12 @@ const fullyPopulatedShell = {
   // Populated (T3O-24, D8) for the same reason: the budget is measured against
   // a card that IS armed, not only against the absent-key case.
   autoStart: true,
+  // Populated (T3O-38, D14) for the same reason: the budget is measured
+  // against a card whose merge is held, not only against the absent-key case
+  // every healthy card sends.
+  autoMergeHeldSince: "2026-01-01T00:00:00.000Z",
+  autoMergeGaveUp: true,
+  autoMergeArmed: true,
   roundCurrent: 3,
   roundMax: 5,
   stepLabel: "Adjudicating reviewer findings",
@@ -181,6 +198,8 @@ const typicalCard = (index: number): BoardCard => ({
   baseBranch: null,
   scheduledStartAt: null,
   autoStart: false,
+  autoMerge: false,
+  autoMergeHold: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",
@@ -261,6 +280,53 @@ describe("BoardCardShell payload discipline", () => {
     // On the card aggregate, so it rides every card-carrying delta and survives
     // an encode/decode round trip rather than needing a dedicated delta.
     expect(decodeShell(encodeShell(scheduled)).scheduledStartAt).toBe("2026-03-04T09:00:00.000Z");
+  });
+
+  it("costs an unheld card nothing and carries a held card's clock (T3O-38, D14)", () => {
+    // Same argument as the schedule above: the snapshot grows linearly with
+    // card count, so the COMMON card — the one whose merge is not held and
+    // which is not armed — must be byte-for-byte what it was before these
+    // three fields existed.
+    const unheld = encodeShell(boardCardShellFromCard(typicalCard(1))) as Record<string, unknown>;
+    expect("autoMergeHeldSince" in unheld).toBe(false);
+    expect("autoMergeGaveUp" in unheld).toBe(false);
+    expect("autoMergeArmed" in unheld).toBe(false);
+
+    const held = boardCardShellFromCard({
+      ...typicalCard(1),
+      autoMerge: true,
+      autoMergeHold: {
+        reason: "Required checks have not passed.",
+        classification: "soft",
+        detail: null,
+        attempt: 2,
+        heldSince: "2026-03-04T09:00:00.000Z",
+        retryAt: "2026-03-04T09:03:00.000Z",
+        headSha: "abc123",
+      },
+    });
+    expect(held.autoMergeHeldSince).toBe("2026-03-04T09:00:00.000Z");
+    expect(held.autoMergeArmed).toBe(true);
+    // Rungs remain, so the pill reads "held", not "needs you".
+    expect("autoMergeGaveUp" in held).toBe(false);
+    // On the card aggregate, so it survives an encode/decode round trip
+    // rather than needing a dedicated delta.
+    expect(decodeShell(encodeShell(held)).autoMergeHeldSince).toBe("2026-03-04T09:00:00.000Z");
+
+    const gaveUp = boardCardShellFromCard({
+      ...typicalCard(1),
+      autoMerge: true,
+      autoMergeHold: {
+        reason: "ci/build failed.",
+        classification: "checks-failed",
+        detail: "3 of 5 checks green",
+        attempt: 1,
+        heldSince: "2026-03-04T09:00:00.000Z",
+        retryAt: null,
+        headSha: "abc123",
+      },
+    });
+    expect(gaveUp.autoMergeGaveUp).toBe(true);
   });
 
   it("grows the shell snapshot linearly and modestly with card count", () => {
@@ -2180,6 +2246,108 @@ describe("auto-start (T3O-24)", () => {
           on(waiting({ ...armed, stage: BOARD_SEED_STAGE_IDS.building }), done),
         ),
       ).toBe(false);
+    });
+  });
+});
+
+describe("auto-merge (T3O-38)", () => {
+  const NOW = "2026-01-01T00:00:00.000Z";
+  const at = (stage: BoardCard["stage"], overrides: Partial<BoardCard> = {}): BoardCard => ({
+    ...typicalCard(1),
+    id: BoardCardId.make("card-merging"),
+    stage,
+    ...overrides,
+  });
+  const board = (card: BoardCard) => ({ ...EMPTY_BOARD_STATE, cards: [card] });
+
+  describe("boardCardAutoMergeArmed", () => {
+    it("arms a card whose own flag is set", () => {
+      const card = at(BOARD_SEED_STAGE_IDS.merge, { autoMerge: true });
+      expect(boardCardAutoMergeArmed({ board: board(card), card })).toBe(true);
+    });
+
+    it("arms a sub-board child unconditionally, flag or not", () => {
+      // t3o-28 D3, unchanged: the initiating act was Begin build on the
+      // parent, and a child parked here strands every sibling.
+      const child = at(BOARD_SEED_STAGE_IDS.merge, {
+        parentCardId: BoardCardId.make("card-parent"),
+      });
+      expect(boardCardAutoMergeArmed({ board: board(child), card: child })).toBe(true);
+    });
+
+    it("arms an unflagged card when the board-wide setting is on, and not otherwise", () => {
+      const card = at(BOARD_SEED_STAGE_IDS.merge);
+      expect(boardCardAutoMergeArmed({ board: board(card), card })).toBe(false);
+      expect(boardCardAutoMergeArmed({ board: board(card), card, boardWide: true })).toBe(true);
+    });
+
+    it("never arms an archived card, whatever is set", () => {
+      const card = at(BOARD_SEED_STAGE_IDS.merge, {
+        autoMerge: true,
+        parentCardId: BoardCardId.make("card-parent"),
+        archivedAt: NOW,
+      });
+      expect(boardCardAutoMergeArmed({ board: board(card), card, boardWide: true })).toBe(false);
+    });
+  });
+
+  describe("boardCardCanArmAutoMerge", () => {
+    it("offers the toggle in every live stage before Done", () => {
+      for (const stage of [
+        BOARD_SEED_STAGE_IDS.backlog,
+        BOARD_SEED_STAGE_IDS.sprint,
+        BOARD_SEED_STAGE_IDS.planning,
+        BOARD_SEED_STAGE_IDS.ready,
+        BOARD_SEED_STAGE_IDS.building,
+        BOARD_SEED_STAGE_IDS.review,
+        BOARD_SEED_STAGE_IDS.merge,
+      ]) {
+        const card = at(stage);
+        expect(boardCardCanArmAutoMerge({ board: board(card), card })).toBe(true);
+      }
+    });
+
+    it("refuses a card in Done, an archived card, and a sub-board child", () => {
+      const done = at(BOARD_SEED_STAGE_IDS.done);
+      expect(boardCardCanArmAutoMerge({ board: board(done), card: done })).toBe(false);
+      const archived = at(BOARD_SEED_STAGE_IDS.merge, { archivedAt: NOW });
+      expect(boardCardCanArmAutoMerge({ board: board(archived), card: archived })).toBe(false);
+      const child = at(BOARD_SEED_STAGE_IDS.merge, {
+        parentCardId: BoardCardId.make("card-parent"),
+      });
+      expect(boardCardCanArmAutoMerge({ board: board(child), card: child })).toBe(false);
+    });
+  });
+
+  describe("boardCardAutoMergeGaveUp", () => {
+    const hold = (retryAt: string | null): BoardCardAutoMergeHold => ({
+      reason: "Required checks have not passed.",
+      classification: "soft",
+      detail: null,
+      attempt: 3,
+      heldSince: NOW,
+      retryAt,
+      headSha: null,
+    });
+
+    it("is false while rungs remain and true once the ladder stopped", () => {
+      expect(boardCardAutoMergeGaveUp(null)).toBe(false);
+      expect(boardCardAutoMergeGaveUp(hold("2026-01-01T00:03:00.000Z"))).toBe(false);
+      expect(boardCardAutoMergeGaveUp(hold(null))).toBe(true);
+    });
+  });
+
+  describe("isBoardCardAutoMergeSoft", () => {
+    it("retries only `soft`; every named classification stops the ladder", () => {
+      expect(isBoardCardAutoMergeSoft("soft")).toBe(true);
+      for (const classification of [
+        "checks-failed",
+        "approval-required",
+        "behind",
+        "other",
+      ] as const) {
+        expect(isBoardCardAutoMergeSoft(classification)).toBe(false);
+      }
     });
   });
 });
