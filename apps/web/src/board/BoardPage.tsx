@@ -276,6 +276,10 @@ function EnvironmentBoard({
   const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const stageState = useMemo(() => stageStateOf(orderedStages), [orderedStages]);
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
+  // The merge-role stage, for the armed-and-quiet `Auto` glyph (T3O-38, D13):
+  // an armed card in Building looks normal because it is, so the glyph is
+  // offered only where the merge is actually imminent.
+  const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
   // The columns this SCOPE renders (t3o-25, D1): every stage on the root
   // board, the materialisation floor onward inside a sub-board. Stage
   // adjacency and ordering keep reading the FULL `stageState` — the stages a
@@ -1262,6 +1266,7 @@ function EnvironmentBoard({
               }
               key={stage.stageId}
               label={stage.label}
+              atMergeStage={stage.stageId === mergeStageId}
               onCardDragEnd={handleCardDragEnd}
               onCardReorder={handleCardReorder}
               onCardDragStart={handleCardDragStart}

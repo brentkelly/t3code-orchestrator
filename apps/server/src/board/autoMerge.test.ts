@@ -539,7 +539,9 @@ it.effect("an armed dependency merges itself and starts its armed dependent", ()
           gitBeforeDone.some(
             (args) => args[0] === "fetch" || (args[0] === "pull" && args[1] === "--ff-only"),
           ),
-          `the merged base branch was not synced before Done: ${JSON.stringify(gitBeforeDone)}`,
+          `the merged base branch was not synced before Done: ${gitBeforeDone
+            .map((args) => args.join(" "))
+            .join(" | ")}`,
         );
 
         // The engine double decides and projects a dispatched command but does

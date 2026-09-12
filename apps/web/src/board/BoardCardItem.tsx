@@ -48,6 +48,7 @@ import {
   type BoardTodoThreadState,
 } from "./boardCardProgressBlock";
 import { boardConflictFix } from "./boardConflictFix";
+import { boardAutoMergePill } from "./boardAutoMergeHold";
 import { boardCardAutoStartChip } from "./boardCardAutoStartChip";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
@@ -161,6 +162,7 @@ export function BoardCardContent({
   attention,
   childAttention,
   childRunning,
+  atMergeStage,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -195,6 +197,10 @@ export function BoardCardContent({
       parent that runs no step of its own. Absent on the surfaces that do not
       resolve it (the drag ghost, the archive sheet). */
   readonly childRunning?: number | undefined;
+  /** Whether this card is sitting in the merge-role stage (T3O-38, D13) —
+      the only place an armed card wears the grey `Auto` glyph. Absent on the
+      surfaces that do not resolve it (the drag ghost, the archive sheet). */
+  readonly atMergeStage?: boolean | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
@@ -273,6 +279,19 @@ export function BoardCardContent({
   const conflictFix = summary.muted
     ? null
     : boardConflictFix({ live: card.stepConflictFix, queued: card.queued });
+  // "This card's merge was refused and the board is retrying" (T3O-38, D13).
+  // Shares the conflict pill's slot and yields to it: a conflict fix RUNS and
+  // a hold WAITS, the server never records both, and a running agent is the
+  // more specific claim if they somehow collide.
+  const autoMergeHold =
+    conflictFix === null
+      ? boardAutoMergePill({
+          heldSince: card.autoMergeHeldSince,
+          gaveUp: card.autoMergeGaveUp,
+          done: summary.muted,
+          nowMs: Date.now(),
+        })
+      : null;
   // The card's scheduled start (T3O-19, D9/D14). Null on a done card and on
   // one whose time has already passed — the server clears the field within a
   // tick, and a pill for a moment that has gone is a stale label.
@@ -476,6 +495,48 @@ export function BoardCardContent({
             </span>
           </BoardHint>
         )}
+        {autoMergeHold === null ? null : (
+          // AMBER for both states (T3O-38, D12). `docs/t3o/status-colours.md`
+          // gives amber to "blocked or held", and both a retrying hold and an
+          // exhausted one are held; the board card has never carried red, and
+          // this does not give it one. The designer prototype painted the
+          // exhausted pill `--destructive` and is deliberately not followed —
+          // the distinction rides the LABEL and the ICON instead, which
+          // carries it without spending a colour.
+          //
+          // Static, no spinner: the board can show thirty cards at once, and
+          // the elapsed reading is minute-grained on purpose.
+          <BoardHint label={autoMergeHold.tooltip}>
+            <span
+              aria-label={autoMergeHold.tooltip}
+              className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-warning-foreground"
+            >
+              {autoMergeHold.icon === "alert" ? (
+                <TriangleAlertIcon className="size-3" />
+              ) : (
+                <ClockIcon className="size-3" />
+              )}
+              {autoMergeHold.label}
+            </span>
+          </BoardHint>
+        )}
+        {card.autoMergeArmed === true &&
+        autoMergeHold === null &&
+        !summary.muted &&
+        atMergeStage ? (
+          // Armed and quiet, in the merge stage only (D13): a small grey glyph
+          // and no pill. An armed card in Building looks normal because it IS
+          // normal — nothing is happening to it yet.
+          <BoardHint label="Merges itself as soon as the forge accepts it">
+            <span
+              aria-label="Auto-merge armed"
+              className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-muted-foreground"
+            >
+              <GitMergeIcon className="size-3" />
+              Auto
+            </span>
+          </BoardHint>
+        ) : null}
         {card.blocked ? (
           // Only the GATE lives up here (it starts at Ready, D18). A card
           // carries dependencies long before they gate it, and that count is
@@ -582,6 +643,7 @@ export function DraggableBoardCard({
   attention,
   childAttention,
   childRunning,
+  atMergeStage,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -600,6 +662,7 @@ export function DraggableBoardCard({
   readonly attention?: BoardCardAttention | null | undefined;
   readonly childAttention?: BoardCardChildAttention | undefined;
   readonly childRunning?: number | undefined;
+  readonly atMergeStage?: boolean | undefined;
 }) {
   return (
     // Keyboard path: the card is a focusable button-role element — Enter/Space
@@ -647,6 +710,7 @@ export function DraggableBoardCard({
         attention={attention}
         childAttention={childAttention}
         childRunning={childRunning}
+        atMergeStage={atMergeStage}
       />
     </div>
   );

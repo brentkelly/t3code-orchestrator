@@ -67,6 +67,10 @@ export interface BoardColumnDragProps {
 
 export interface BoardColumnProps extends BoardColumnDragProps {
   readonly stage: BoardStageId;
+  /** Whether this column IS the merge-role stage (T3O-38, D13). Only there
+      does an armed card wear the grey `Auto` glyph — everywhere else an armed
+      card is an ordinary card and should look like one. */
+  readonly atMergeStage?: boolean | undefined;
   /** The column's display label from the read-model stage list (D13). */
   readonly label: string;
   readonly cards: ReadonlyArray<BoardCardShell>;
@@ -146,6 +150,7 @@ function CollapsedColumn({
 
 function ExpandedColumn({
   stage,
+  atMergeStage,
   label,
   cards,
   labelsById,
@@ -265,6 +270,7 @@ function ExpandedColumn({
                   accentName={accentNameFor(card.projectId)}
                   parentKey={parentKeyFor(card.cardId)}
                   attention={attentionFor(card)}
+                  atMergeStage={atMergeStage === true}
                   childAttention={childAttentionFor(card)}
                   childRunning={childRunningFor(card)}
                   todos={todosFor(card.cardId)}

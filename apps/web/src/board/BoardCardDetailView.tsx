@@ -27,7 +27,9 @@
 import {
   DEFAULT_BOARD_REVIEW_ROUNDS,
   activeBoardCardThreadId,
+  BOARD_AUTO_MERGE_MAX_ATTEMPTS,
   boardCardArchiveNeedsConfirmation,
+  boardCardCanArmAutoMerge,
   boardCardDisplayPullRequest,
   boardCardHasLiveBranch,
   boardStageIndex,
@@ -72,6 +74,7 @@ import {
   CircleAlertIcon,
   ClockIcon,
   EllipsisVerticalIcon,
+  GitMergeIcon,
   GitPullRequestArrowIcon,
   GitPullRequestIcon,
   ExternalLinkIcon,
@@ -87,9 +90,10 @@ import {
   RefreshCcwIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
+  TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { Suspense, lazy, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { Dialog, DialogPopup } from "../components/ui/dialog";
@@ -129,6 +133,13 @@ import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPi
 import { BoardCardStepFailure } from "./BoardCardStepFailure";
 import { BoardCardStepPaused } from "./BoardCardStepPaused";
 import { type BoardConflictFixInfo } from "./boardConflictFix";
+import {
+  boardAutoMergeBanner,
+  boardAutoMergeCountdown,
+  boardAutoMergeHeaderChip,
+  boardAutoMergeToggleCopy,
+  type BoardAutoMergeBanner,
+} from "./boardAutoMergeHold";
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
@@ -460,6 +471,16 @@ export interface BoardCardDetailViewProps {
   /** Arm or disarm the card's auto-start (T3O-24). Absent hides the control
       entirely — the eager view is mounted by tests that pass no handler. */
   readonly onSetAutoStart?: ((next: boolean) => void) | undefined;
+  /** Arm or disarm the card's auto-merge (T3O-38, D3). Absent hides the
+      control entirely — the eager view is mounted by tests that pass no
+      handler. */
+  readonly onSetAutoMerge?: ((next: boolean) => void) | undefined;
+  /** Whether the merge-role stage's board-wide auto-merge setting is on
+      (T3O-38, D2/D3). It HIDES the per-card switch — two controls that can
+      disagree about one card is worse than one — and it is what makes the
+      header chip read `Auto-merge · board`, so a user who cannot find the
+      switch learns where the decision was actually made. */
+  readonly autoMergeFromBoardSetting?: boolean | undefined;
   /** Resolve an override's model slug to its display name for the header pill
       and tooltip (t3o-29, D7). Passed from the container, which holds the
       provider list; absent, the pill falls back to the raw slug. */
@@ -806,6 +827,78 @@ function ConflictBanner({
           View thread
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * The Merge button's `m:ss` countdown to the next auto-merge attempt
+ * (T3O-38, D13).
+ *
+ * Its OWN component, and the only per-second element in the product. Isolating
+ * it is the whole design: a one-second interval on the enclosing view would
+ * repaint the entire modal every second, and this repaints a span. The
+ * countdown exists only for the card open in the modal — the same carve-out
+ * the conflict banner already has, where the modal keeps its spinner and the
+ * board pill does not.
+ */
+function AutoMergeCountdown({ retryAt }: { readonly retryAt: string }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, []);
+  const label = boardAutoMergeCountdown(retryAt, nowMs);
+  if (label === null) return null;
+  return (
+    <>
+      <ClockIcon className="size-3.5" />
+      <span className="tabular-nums">{label}</span>
+    </>
+  );
+}
+
+/**
+ * The auto-merge hold banner (T3O-38, D12/D13).
+ *
+ * Tone splits amber → red exactly as `BoardCardStepFailure` has since t3o-30,
+ * and for the same reason: a wait the board will end by itself is amber and
+ * says so, and only a wait that has stopped until a human acts goes red. Red
+ * on a card counting down to its own next attempt would be the loudest thing
+ * on screen saying the opposite of the card's own pill.
+ *
+ * Static — no spinner. Nothing is running during a hold; that is the whole
+ * point of one.
+ */
+function AutoMergeBanner({ info }: { readonly info: BoardAutoMergeBanner }) {
+  const tone =
+    info.tone === "warning"
+      ? {
+          frame:
+            "border-amber-500/40 bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]",
+          icon: "text-amber-600 dark:text-amber-400",
+        }
+      : {
+          frame: "border-destructive/30 bg-destructive/10",
+          icon: "text-destructive",
+        };
+  return (
+    <div
+      className={cn(
+        "mx-3.5 mt-2.5 flex items-start gap-2.5 rounded-[10px] border py-2.5 pl-3 pr-2.5",
+        tone.frame,
+      )}
+    >
+      <TriangleAlertIcon aria-hidden="true" className={cn("mt-px size-3.5 shrink-0", tone.icon)} />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-[12.5px] font-medium text-foreground">{info.headline}</span>
+        {/* The forge's own words, verbatim: the user reads the forge's reason
+            rather than a paraphrase of it. */}
+        <span className="text-[11.5px] leading-[1.45] text-pretty text-muted-foreground">
+          {info.reason}
+        </span>
+        <span className="text-[11px] leading-[1.45] text-muted-foreground/80">{info.meta}</span>
+      </div>
     </div>
   );
 }
@@ -1161,6 +1254,28 @@ function ActionsSection({
           onToggle: props.onSetAutoStart,
         }
       : null;
+  // The auto-merge arm (T3O-38, D3). Offered on any live, top-level card that
+  // has not reached Done — deliberately wider than the auto-start arm, because
+  // the useful moment to set it is "before I go to bed", whatever column the
+  // card is in. HIDDEN when the board-wide setting is on, so the user never
+  // sees two controls that can disagree about one card.
+  const autoMerge =
+    props.onSetAutoMerge !== undefined &&
+    !props.autoMergeFromBoardSetting &&
+    boardCardCanArmAutoMerge({
+      board: { cards: [], stages: props.stages, nextCardNumberByProject: {} },
+      card,
+    })
+      ? {
+          armed: card.autoMerge,
+          copy: boardAutoMergeToggleCopy(card.autoMerge),
+          onToggle: props.onSetAutoMerge,
+        }
+      : null;
+  // The countdown rides the Merge button only while a rung is actually
+  // pending: an exhausted hold has nothing to count down to, and the button
+  // goes back to saying Merge.
+  const autoMergeRetryAt = card.autoMergeHold?.retryAt ?? null;
   // The caret beside the forward button (t3o-07, D8) — today at most one item.
   // An archived card gets none for the same reason it gets no forward button.
   const secondary =
@@ -1310,6 +1425,13 @@ function ActionsSection({
                 <>
                   <ArrowRightIcon className="size-3.5" />
                   {forward.label}
+                  {/* The hold's countdown (T3O-38, D13), and only on Merge:
+                      the button stays LIVE throughout a hold — nothing is
+                      running and clicking is the escape hatch — so this says
+                      when the board will try next, not that you cannot. */}
+                  {forward.kind === "merge" && autoMergeRetryAt !== null ? (
+                    <AutoMergeCountdown retryAt={autoMergeRetryAt} />
+                  ) : null}
                 </>
               )}
             </button>
@@ -1379,6 +1501,30 @@ function ActionsSection({
           <span className="flex min-w-0 flex-col">
             <span className="font-medium text-foreground">{autoStart.copy.label}</span>
             <span className="text-[11px] text-muted-foreground">{autoStart.copy.hint}</span>
+          </span>
+        </div>
+      ) : null}
+      {autoMerge !== null ? (
+        // The auto-merge arm (T3O-38, D3), styled as the auto-start row above
+        // and tinted with `--primary` for the same reason: a CHECKED CONTROL
+        // is UI state, the exemption `docs/t3o/status-colours.md` already
+        // grants. The status SURFACES for this feature — the board pill and
+        // the modal banner — carry the amber/red vocabulary instead.
+        <div
+          className={cn(
+            "flex items-center gap-2.5 rounded-lg border px-2.5 py-2 text-[12.5px]",
+            autoMerge.armed ? "border-primary/55 bg-primary/8" : "border-input bg-popover",
+          )}
+        >
+          <Switch
+            aria-label={autoMerge.copy.label}
+            checked={autoMerge.armed}
+            className="shrink-0"
+            onCheckedChange={(next) => autoMerge.onToggle(next)}
+          />
+          <span className="flex min-w-0 flex-col">
+            <span className="font-medium text-foreground">{autoMerge.copy.label}</span>
+            <span className="text-[11px] text-muted-foreground">{autoMerge.copy.hint}</span>
           </span>
         </div>
       ) : null}
@@ -1756,6 +1902,30 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
   const done = boardCardIsDone(props.stages, card.stage);
+  // The auto-merge header chip and hold banner (T3O-38, D13). Both read the
+  // card aggregate, which only the modal subscribes to — the board card's
+  // pill reads the three shell facts instead, and `boardAutoMergeHold` is the
+  // one place either set of words is written, so they cannot disagree.
+  const autoMergeChip = boardAutoMergeHeaderChip({
+    armed: card.autoMerge || card.parentCardId !== null || props.autoMergeFromBoardSetting === true,
+    fromBoardSetting: !card.autoMerge && props.autoMergeFromBoardSetting === true,
+  });
+  const hold = card.autoMergeHold;
+  // Minute-grained, off the render's clock, exactly as the board pill is: the
+  // one per-second element is the Merge button's countdown, which is its own
+  // isolated component.
+  const autoMergeBanner =
+    hold === null
+      ? null
+      : boardAutoMergeBanner({
+          reason: hold.reason,
+          detail: hold.detail,
+          attempt: hold.attempt,
+          maxAttempts: BOARD_AUTO_MERGE_MAX_ATTEMPTS,
+          heldSince: hold.heldSince,
+          retryAt: hold.retryAt,
+          nowMs: Date.now(),
+        });
   const wide = boardCardDetailIsWide(props.stages, card.stage, props.paneChoice);
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
@@ -1935,6 +2105,19 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             stageLabel={boardStageLabel(props.stages, card.stage)}
           />
         )}
+        {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
+            with the board-wide setting on the per-card switch is hidden, so a
+            user who goes looking for it needs to be told where the decision
+            actually lives. Neutral, like the queue chip below — an armed card
+            is not running, not done, and asking nothing of anyone. */}
+        {archived || done || autoMergeChip === null ? null : (
+          <BoardHint label={autoMergeChip.tooltip}>
+            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+              <GitMergeIcon className="size-2.5" />
+              {autoMergeChip.label}
+            </span>
+          </BoardHint>
+        )}
         {/* Queued for a build slot (t3o-33). Beside the stage badge, because
             "Building" alone is what made a queued card look mid-build. Neutral,
             not `--attention`: nothing is waiting on the user here — see
@@ -2066,6 +2249,11 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       {/* One insertion above the layout split covers both forms (T3O-9). Only
           the wide one offers `View thread`: the narrow layout has no thread
           pane to send anyone to. */}
+      {/* The hold banner (T3O-38). Mutually exclusive with the conflict
+          banner above by construction — the server clears the hold when a
+          conflict fix starts — and rendered after it so a card that somehow
+          carries both leads with the thing that is actually running. */}
+      {autoMergeBanner === null ? null : <AutoMergeBanner info={autoMergeBanner} />}
       {props.conflictFix === null ? null : (
         <ConflictBanner
           info={props.conflictFix}
