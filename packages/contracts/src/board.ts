@@ -8225,7 +8225,14 @@ export const BoardStageExecutionMerge = Schema.Struct({
       disagree about one card is worse than one control. Per-card arms are
       PRESERVED while it is on and become effective again when it goes off:
       the flag is user intent, this is a default, and a default disappearing
-      must not silently erase intent. */
+      must not silently erase intent.
+
+      Switching it OFF disarms every card that was armed by it alone, and a
+      hold on one of those is then a label about automation that no longer
+      runs. This is a settings write rather than a card command, so it cannot
+      clear those holds where the per-card disarm does (the decider); the
+      supervisor's auto-merge sweep clears them instead — see
+      `fireDueAutoMerges`. */
   autoMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Delete the card's branch once it reaches Done with a MERGED pull request.
       On by default: a merged PR means the commits already live in the base

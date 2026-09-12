@@ -589,6 +589,151 @@ it.effect("clears the hold when the card leaves the merge stage (D10)", () =>
   ),
 );
 
+it.effect("merges a card deferred as BLOCKED once its dependency lands (D8)", () =>
+  withGovernor(
+    setup({
+      cards: [
+        {
+          ...cardAtMerge({ autoMerge: true }),
+          blocked: true,
+          dependsOn: [BoardCardId.make("dep")],
+        },
+        makeBoardCard({ id: "dep", stage: BUILDING, orderKey: "b" }),
+      ],
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        const card = {
+          ...cardAtMerge({ autoMerge: true }),
+          blocked: true,
+          dependsOn: [BoardCardId.make("dep")],
+        };
+        yield* h.pumpDomain(cardMoved(card, REVIEW, MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+
+        // The dependency reaching Done re-flags the dependent, which is a
+        // plain `card-updated` carrying no auto-merge marker of any kind. The
+        // arrival recorded no hold, so nothing about the card says it was ever
+        // eligible — without the deferral the sweep has nothing to revisit and
+        // the card sits here until someone clicks Merge, which is the whole
+        // complaint.
+        const dep = (yield* h.board).cards.find((entry) => entry.id === BoardCardId.make("dep"));
+        assert.isDefined(dep);
+        yield* h.pumpDomain(
+          cardMoved({ ...dep!, stage: BOARD_SEED_STAGE_IDS.done }, BUILDING, DONE, 2),
+        );
+        const held = (yield* h.board).cards.find(
+          (entry) => entry.id === BoardCardId.make("card-one"),
+        );
+        assert.isDefined(held);
+        yield* h.pumpDomain({
+          type: "board.card-updated",
+          sequence: 3,
+          payload: { cardId: held!.id, card: { ...held!, blocked: false } },
+        } as never);
+
+        yield* h.reactor.fireAutoMerges;
+        yield* h.reactor.drain;
+        assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+      }),
+  ),
+);
+
+it.effect("leaves a deferred card alone while it is still blocked (D8)", () =>
+  withGovernor(
+    setup({
+      cards: [
+        {
+          ...cardAtMerge({ autoMerge: true }),
+          blocked: true,
+          dependsOn: [BoardCardId.make("dep")],
+        },
+        makeBoardCard({ id: "dep", stage: BUILDING, orderKey: "b" }),
+      ],
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        const card = {
+          ...cardAtMerge({ autoMerge: true }),
+          blocked: true,
+          dependsOn: [BoardCardId.make("dep")],
+        };
+        yield* h.pumpDomain(cardMoved(card, REVIEW, MERGE, 1));
+        // The deferral is a wait on the DEPENDENCY, not a rung: no clock
+        // advance may turn it into an attempt.
+        yield* TestClock.adjust(Duration.hours(2));
+        yield* h.reactor.drain;
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.strictEqual(holdOf(yield* h.board), null);
+        assert.strictEqual(stageOf(yield* h.board), MERGE);
+      }),
+  ),
+);
+
+it.effect("clears a hold held solely by the BOARD-WIDE setting when it goes off (D10)", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge()],
+      boardWideAutoMerge: true,
+      mergeFailure: "Required status check 'test' has not passed.",
+      mergeState: probe({ passed: 1, pending: 1 }),
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge(), REVIEW, MERGE, 1));
+        assert.notStrictEqual(holdOf(yield* h.board), null);
+
+        // The board-wide setting is not a card command, so switching it off
+        // touches no card and the decider's per-card hold-clear never runs.
+        // The sweep then skips the now-unarmed card for ever while the pill
+        // goes on saying "the board is retrying — nothing is needed from you".
+        h.setBoardSettings(
+          settingsWith({
+            building: [codexStep],
+            globalMaxConcurrent: 3,
+            merge: { autoMerge: false },
+          }),
+        );
+        yield* h.reactor.fireAutoMerges;
+        yield* h.reactor.drain;
+        assert.strictEqual(holdOf(yield* h.board), null);
+        // Cleared, not merged: disarming stops the automation.
+        assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        assert.strictEqual(stageOf(yield* h.board), MERGE);
+      }),
+  ),
+);
+
+it.effect("keeps the hold when the card has its OWN arm as well (D2/D10)", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge({ autoMerge: true })],
+      boardWideAutoMerge: true,
+      mergeFailure: "Required status check 'test' has not passed.",
+      mergeState: probe({ passed: 1, pending: 1 }),
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        assert.notStrictEqual(holdOf(yield* h.board), null);
+        // Per-card arms are PRESERVED while the board-wide default is on and
+        // become effective again when it goes off — so this card is still
+        // armed, still retrying, and its hold is still true.
+        h.setBoardSettings(
+          settingsWith({
+            building: [codexStep],
+            globalMaxConcurrent: 3,
+            merge: { autoMerge: false },
+          }),
+        );
+        yield* h.reactor.fireAutoMerges;
+        yield* h.reactor.drain;
+        assert.notStrictEqual(holdOf(yield* h.board), null);
+      }),
+  ),
+);
+
 it.effect("a human Merge click resets the ladder to rung 0 (D10/D11)", () =>
   withGovernor(
     setup({

@@ -468,6 +468,9 @@ export type Harness = {
       `rev-parse refs/heads/<ref>` answers from now on. Every unset ref answers
       the stub's historic "main", so existing fixtures never read stale. */
   readonly setBaseTip: (ref: string, tip: string) => void;
+  /** Replace the board settings the reactor reads from now on — what flipping
+      a switch in the Settings pane does. */
+  readonly setBoardSettings: (settings: BoardSettings) => void;
   /** Every `git` argv the reactor ran, in order. A test asserting that a
       remote-only base was MATERIALISED (T3O-5, D7) has nowhere else to read it:
       `git branch develop origin/develop` leaves no trace on the card. */
@@ -823,11 +826,16 @@ export function withGovernor(
     // no model (t3o-30, D1), and a stub without it made that read throw into the
     // reactor's catch-all — so every board-default path resolved to the
     // compiled-in pair no matter what the test set.
+    // Mutable, so a test can flip a board setting mid-run the way the Settings
+    // pane does — the reactor re-reads `getSettings` on every pass, and a
+    // static stub could not reach the behaviour that only happens when a
+    // setting CHANGES under a card.
+    let boardSettings = input.settings;
     const settingsStub = {
-      getSettings: Effect.succeed({
-        board: input.settings,
+      getSettings: Effect.sync(() => ({
+        board: boardSettings,
         textGenerationModelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
-      }),
+      })),
     } as unknown as ServerSettingsService["Service"];
 
     // Every worktree the reactor removed, so a test can assert that a card
@@ -1083,6 +1091,7 @@ export function withGovernor(
           removedWorktrees: Ref.get(removedWorktrees),
           settledThreads: Ref.get(settled),
           setBaseTip: (ref, tip) => void baseTips.set(ref, tip),
+          setBoardSettings: (settings) => void (boardSettings = settings),
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),
           setUsageVerdict: (threadId, verdict) => void usageVerdicts.set(threadId, verdict),
         });

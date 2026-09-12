@@ -2483,12 +2483,37 @@ const make = Effect.gen(function* () {
    * — never against the forge's prose — and either climbs a retry ladder or
    * stops loudly with the reason on the card.
    */
+  /**
+   * Cards whose auto-merge was deferred because they were BLOCKED when their
+   * turn came (T3O-38, D8).
+   *
+   * Eligibility to auto-merge is decided once, at the moment the card arrives
+   * — an ordinary forward step into the merge stage, or a human arming a card
+   * already parked there. A blocked card is skipped rather than merged, and
+   * nothing about the card afterwards records that it was ever eligible, so
+   * without this set the sweep has nothing to go on: it would either never ask
+   * again (the card strands until someone clicks Merge) or have to merge every
+   * armed card parked here, which is exactly the bulk-merge D2 forbids.
+   *
+   * In-memory deliberately, following `mergeAwaitingConflictFix`. After a
+   * restart the set is empty, so the card falls back to waiting for a click —
+   * the conservative direction, and never a merge nobody asked for.
+   */
+  const autoMergeDeferredUntilUnblocked = new Set<string>();
+
   const autoMergeCard = Effect.fn("board-supervisor-autoMergeCard")(function* (card: BoardCard) {
     // A blocked card is skipped silently (D8): it already wears the amber
     // blocked callout naming the unmet dependency, and a second amber pill
     // making a different claim about the same card is worse than nothing. No
-    // attempt, no rung charged. The sweep is its own unblock trigger.
-    if (card.blocked) return;
+    // attempt, no rung charged — but the skip is REMEMBERED, or the sweep
+    // would never revisit a card it recorded no hold for and the dependency
+    // landing overnight would leave the card parked anyway, which is the exact
+    // complaint this feature exists to answer.
+    if (card.blocked) {
+      autoMergeDeferredUntilUnblocked.add(String(card.id));
+      return;
+    }
+    autoMergeDeferredUntilUnblocked.delete(String(card.id));
     const outcome = yield* mergeCardPullRequest(card.id);
     yield* recordAutoMergeOutcome(card.id, outcome, { resetLadder: false });
   });
@@ -5512,25 +5537,57 @@ const make = Effect.gen(function* () {
    * A HARD hold is never polled (D9): its `retryAt` is null, so it simply
    * never comes due. Its two revival paths are a human clicking Merge and the
    * card leaving and re-entering the merge stage.
+   *
+   * It carries two more errands, both about a card whose hold is no longer the
+   * whole story:
+   *
+   *  - the card DEFERRED as blocked, which has no hold at all and is waiting
+   *    on its dependency rather than on a rung;
+   *  - the held card that is no longer armed, whose hold the sweep CLEARS —
+   *    the board-wide setting going off disarms cards without touching them,
+   *    so nothing else would.
    */
   const fireDueAutoMerges = Effect.fn("board-supervisor-fireDueAutoMerges")(function* () {
     const board = yield* readBoard;
     const mergeStage = boardStageWithRole(board, "merge");
     if (mergeStage === null) return;
+    // Read once for the whole pass rather than per card: the arm is the same
+    // question for every card here, and the sweep runs every 30s.
+    const exec = resolveBoardStageExecution(yield* boardSettings, mergeStage.stageId);
+    const boardWide = isBoardMergeStageExecution(exec) ? exec.autoMerge : false;
     const nowMs = yield* detectorNowMs;
     for (const card of board.cards) {
+      const deferred = autoMergeDeferredUntilUnblocked.has(String(card.id));
       const hold = card.autoMergeHold;
-      if (hold === null || hold.retryAt === null) continue;
-      if (card.archivedAt !== null || card.stage !== mergeStage.stageId) continue;
-      const dueMs = Date.parse(hold.retryAt);
-      if (!Number.isFinite(dueMs) || nowMs < dueMs) continue;
-      // Still armed, and nothing else running on the card — a conflict fix in
-      // flight owns the merge, and a second attempt underneath it would race
-      // the branch it is rewriting. The pull request is NOT pre-checked here:
+      if (hold === null && !deferred) continue;
+      if (card.archivedAt !== null || card.stage !== mergeStage.stageId) {
+        autoMergeDeferredUntilUnblocked.delete(String(card.id));
+        continue;
+      }
+      // A hold on a card that is no longer ARMED is a label about automation
+      // that is switched off, and "the board is retrying" is then a lie (D10).
+      // The per-card disarm clears its own hold in the decider; the board-wide
+      // setting is not a card command and cannot, so this is where that clear
+      // lands — for an exhausted hold too, exactly as the per-card disarm
+      // clears one. Checked BEFORE the rung is due, or the stale pill would
+      // sit there for up to the forty minutes of the last rung.
+      if (!boardCardAutoMergeArmed({ board, card, boardWide })) {
+        autoMergeDeferredUntilUnblocked.delete(String(card.id));
+        yield* clearAutoMergeHold(card);
+        continue;
+      }
+      // A HARD hold is never polled (D9): its `retryAt` is null, so it simply
+      // never comes due. A deferred card with no hold has no rung to wait for
+      // — its wait is the dependency, and `autoMergeCard` re-checks that.
+      const dueMs = hold?.retryAt == null ? null : Date.parse(hold.retryAt);
+      const rungDue = dueMs !== null && Number.isFinite(dueMs) && nowMs >= dueMs;
+      if (!rungDue && !(deferred && hold === null)) continue;
+      // Nothing else running on the card — a conflict fix in flight owns the
+      // merge, and a second attempt underneath it would race the branch it is
+      // rewriting. The pull request is NOT pre-checked here:
       // `mergeCardPullRequest` re-resolves it, and a card whose link went
       // missing should record the hard hold that says so rather than retry in
       // silence for ever.
-      if (!(yield* cardAutoMergeArmed(card))) continue;
       const liveStep = boardCardStepState(board, card.id);
       if (liveStep !== null && !isBoardTerminalStepStatus(liveStep.status)) continue;
       if (hasLiveStageThread(card, card.stage)) continue;

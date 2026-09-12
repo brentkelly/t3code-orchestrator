@@ -29,7 +29,8 @@ tell where the decision came from.
 
 Switching it on does **not** merge the cards already sitting in Ready for merge. Those may be parked
 precisely because you did not want them merged, and a merge cannot be undone. They keep their Merge
-button. Switching it back off restores each card's own switch exactly as you left it.
+button. Switching it back off restores each card's own switch exactly as you left it, and any card
+that was only being retried because of the board-wide setting drops its hold with it.
 
 A card you dragged straight from Building onto Ready for merge, skipping review, does not
 auto-merge under the board-wide setting. Its diff has never been reviewed. You can still arm that
@@ -69,7 +70,8 @@ branch moved — drops its hold on the way out.
 - The board re-checks every thirty seconds, so a retry lands within about half a minute of its time.
 - A card that is blocked by an unfinished dependency is skipped silently. It already says it is
   blocked; a second pill making a different claim would only be confusing. It merges on the next
-  check after the dependency lands.
+  check after the dependency lands — unless the server restarted in between, in which case it waits
+  for a click, because a merge nobody watched start is not one the board will guess at.
 - Holds survive a restart. A card mid-ladder when the server stops picks up where it left off.
 - Pushing a new commit resets the attempts, because new commits mean new CI.
 - Reading the _reason_ a merge was refused needs GitHub or Forgejo. On other providers the board
