@@ -34,7 +34,7 @@ Resolve the calling `cwd` to its **main repository root** (worktree-aware, e.g. 
 `git rev-parse --git-common-dir`), then exact-match that root against gitenv keys.
 Cache the cwd→root resolution per directory.
 
-Rationale (locked): board worktrees live at `<T3 home>/worktrees/…`, _outside_ the
+Rationale (locked): board worktrees live at `<T3 home>/worktrees/…`, *outside* the
 project directory, so the originally proposed raw prefix match on cwd would silently
 miss every board build.
 

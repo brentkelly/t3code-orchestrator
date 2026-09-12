@@ -81,12 +81,12 @@ navigation.
 
 ## Files
 
-| File                                                     | Change                                                  |
-| -------------------------------------------------------- | ------------------------------------------------------- |
-| `apps/web/src/board/BoardPage.tsx`                       | scope prop; filtering; header slot                      |
-| `apps/web/src/board/BoardCardItem.tsx`                   | stacked-card affordance opens the scope                 |
-| `apps/web/src/board/boardUiStore.ts`                     | scoped collapse keys                                    |
-| board route files                                        | `/board/<parentCardId>` route + redirect rule           |
-| `apps/web/src/board/BoardCardCreateDialog.tsx`           | child preset + sibling-scoped deps                      |
-| `apps/web/src/board/BoardArchivedCardsSheet.tsx`, search | parent badges                                           |
-| Tests                                                    | scope filtering, redirect, create preset, collapse keys |
+| File | Change |
+| --- | --- |
+| `apps/web/src/board/BoardPage.tsx` | scope prop; filtering; header slot |
+| `apps/web/src/board/BoardCardItem.tsx` | stacked-card affordance opens the scope |
+| `apps/web/src/board/boardUiStore.ts` | scoped collapse keys |
+| board route files | `/board/<parentCardId>` route + redirect rule |
+| `apps/web/src/board/BoardCardCreateDialog.tsx` | child preset + sibling-scoped deps |
+| `apps/web/src/board/BoardArchivedCardsSheet.tsx`, search | parent badges |
+| Tests | scope filtering, redirect, create preset, collapse keys |

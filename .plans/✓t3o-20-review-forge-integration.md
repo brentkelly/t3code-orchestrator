@@ -21,8 +21,8 @@ that the loop picks up on the next round. The PR is the review's surface and its
 medium; git is the substrate, not a local mirror of it.
 
 The deterministic machine t3o-16 built stays exactly as it is. Convergence still reads the typed
-JSON payload the review phase emits — the PR is where the _humans and agents talk_, the payload is
-where the _executor decides_. The agent does both: it posts to the PR **and** emits the payload.
+JSON payload the review phase emits — the PR is where the *humans and agents talk*, the payload is
+where the *executor decides*. The agent does both: it posts to the PR **and** emits the payload.
 
 ## Goal
 
@@ -74,7 +74,7 @@ GitHub remote blocks with a clear reason rather than silently degrading to the l
   separately-considered later feature.
 - Convergence derived from PR thread state. Convergence stays on the JSON payload (locked
   decision). The PR is not the source of truth for loop exit.
-- Human comments _creating brand-new findings_ mid-loop beyond what the next `review` round
+- Human comments *creating brand-new findings* mid-loop beyond what the next `review` round
   naturally re-derives (see D5 — v1 reads human replies on existing threads; net-new human
   findings ride the next fresh review).
 
@@ -157,7 +157,7 @@ PR actions are additional side effects the agent performs; they do not feed the 
 At the top of each round's `review` phase (round > 1), the agent reads the PR's review threads,
 including human comments, via the forge CLI, and folds any unresolved human-raised concern into
 that round's findings (same payload, same severities). This delivers "I comment and the agent
-picks it up." Human _replies on an existing finding thread_ are visible to `triage`/`adjudicate`
+picks it up." Human *replies on an existing finding thread* are visible to `triage`/`adjudicate`
 in the same round because they read the thread before acting. Net-new human findings only enter
 the gate through a `review` round (they must, or they can't affect convergence) — acceptable
 because the loop always ends on a `review` pass.
@@ -237,16 +237,16 @@ covering **human PR comments** as untrusted data under review.
 
 ## Layer-by-layer change list
 
-| Layer        | File                                                                                  | Change                                                                                                                                                                                             |
-| ------------ | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Contracts    | `packages/contracts/src/board.ts`                                                     | Rewrite the three `DEFAULT_BOARD_*_PHASE_PROMPT` strings (above); add `commentId?` to `BoardReviewFinding` (D3); add `pushed` + `pullRequest` to `BoardCardWorktree` (D6), all decoding-defaulted. |
-| Envelope     | `packages/contracts/src/boardEnvelope.ts`                                             | Add `BOARD_REVIEW_UNTRUSTED_INPUT`; prepend it in `boardReviewPhaseProtocol`; rewrite each phase's protocol to describe PR actions (D7).                                                           |
-| PR lifecycle | `apps/server/src/board/worktree.ts` (+ a new `reviewPr.ts` if cleaner)                | Push branch + `createChangeRequest` at review-stage entry; record PR identity; block on failure (D1/D6/D8).                                                                                        |
-| Reactor      | `apps/server/src/board/supervisorReactor.ts`                                          | Call the PR-ensure step before the first `review@1` spawn (stage-entry path ~`:882`); dispatch the record-PR command; block-with-reason on failure.                                                |
-| Executor     | `apps/server/src/board/reviewLoopExecutor.ts`                                         | **Unchanged** (D4) — documents that convergence stays on the payload.                                                                                                                              |
-| Provider     | `apps/server/src/sourceControl/*`                                                     | v1: no new verb (agents post via CLI, D2). Confirm GitHub-origin detection is reachable from the board (uses existing discovery).                                                                  |
-| Web          | `apps/web/src/board/BoardCardDetailView.tsx`                                          | Render the PR link; keep the findings section; optionally cross-link a finding to its comment.                                                                                                     |
-| Tests        | `board.test.ts`, `boardEnvelope.test.ts`, `reviewLoopExecutor.test.ts`, reactor tests | Update prompt-text assertions; add protocol assertions; add PR-ensure/block-on-failure reactor tests.                                                                                              |
+| Layer | File | Change |
+|---|---|---|
+| Contracts | `packages/contracts/src/board.ts` | Rewrite the three `DEFAULT_BOARD_*_PHASE_PROMPT` strings (above); add `commentId?` to `BoardReviewFinding` (D3); add `pushed` + `pullRequest` to `BoardCardWorktree` (D6), all decoding-defaulted. |
+| Envelope | `packages/contracts/src/boardEnvelope.ts` | Add `BOARD_REVIEW_UNTRUSTED_INPUT`; prepend it in `boardReviewPhaseProtocol`; rewrite each phase's protocol to describe PR actions (D7). |
+| PR lifecycle | `apps/server/src/board/worktree.ts` (+ a new `reviewPr.ts` if cleaner) | Push branch + `createChangeRequest` at review-stage entry; record PR identity; block on failure (D1/D6/D8). |
+| Reactor | `apps/server/src/board/supervisorReactor.ts` | Call the PR-ensure step before the first `review@1` spawn (stage-entry path ~`:882`); dispatch the record-PR command; block-with-reason on failure. |
+| Executor | `apps/server/src/board/reviewLoopExecutor.ts` | **Unchanged** (D4) — documents that convergence stays on the payload. |
+| Provider | `apps/server/src/sourceControl/*` | v1: no new verb (agents post via CLI, D2). Confirm GitHub-origin detection is reachable from the board (uses existing discovery). |
+| Web | `apps/web/src/board/BoardCardDetailView.tsx` | Render the PR link; keep the findings section; optionally cross-link a finding to its comment. |
+| Tests | `board.test.ts`, `boardEnvelope.test.ts`, `reviewLoopExecutor.test.ts`, reactor tests | Update prompt-text assertions; add protocol assertions; add PR-ensure/block-on-failure reactor tests. |
 
 ## Open questions
 
@@ -271,7 +271,7 @@ covering **human PR comments** as untrusted data under review.
   `repo` scope — sufficient for opening PRs and posting review comments (`read:org` is reported
   missing but is not needed for either). D1's precondition check can reuse the existing
   `gitHubAuthStatus.ts` probe rather than inventing its own.
-- **Q3:** Should a review stage on a non-GitHub project be _blocked at settings time_ (can't enable
+- **Q3:** Should a review stage on a non-GitHub project be *blocked at settings time* (can't enable
   auto-execute) rather than blocked per-card at runtime? Better UX; small settings-validation add.
 - **Q4:** PR reuse — if a card re-enters review after changes, reuse the open PR (push new commits)
   vs. open a new one. Default: reuse while the PR is open.

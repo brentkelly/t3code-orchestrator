@@ -313,7 +313,9 @@ export interface BootstrapCredentialServiceShape {
   readonly issueDesktopBootstrap: (
     input: IssueDesktopBootstrapInput,
   ) => Effect.Effect<BootstrapCredential>;
-  readonly issueOneTimeToken: (input: IssueOneTimeTokenInput) => Effect.Effect<BootstrapCredential>;
+  readonly issueOneTimeToken: (
+    input: IssueOneTimeTokenInput,
+  ) => Effect.Effect<BootstrapCredential>;
   readonly consume: (
     presented: PresentedBootstrapCredential,
   ) => Effect.Effect<ConsumedBootstrapCredential, BootstrapCredentialError>;

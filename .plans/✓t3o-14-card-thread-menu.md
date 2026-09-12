@@ -12,7 +12,7 @@ The card modal's thread pane offers exactly one action: "Adopt a thread"
 the empty-state copy literally says so. It exists now, and t3o-15 generalises it to any stage.
 
 So the pane is left claiming the board cannot start a thread, while the board starts threads by
-itself on every stage entry, and a human who wants a _second_ thread — or wants to restart one they
+itself on every stage entry, and a human who wants a *second* thread — or wants to restart one they
 deleted — has no way to ask for one.
 
 ## What this spec used to be
@@ -102,7 +102,7 @@ Client-side: `threadEnvironment.create`, then the existing `boardEnvironment.lin
 
 ## Files
 
-| File                                         | Change                                         |
-| -------------------------------------------- | ---------------------------------------------- |
+| File | Change |
+| --- | --- |
 | `apps/web/src/board/BoardCardThreadPane.tsx` | the `+` dropdown; rewrite the empty-state copy |
-| `apps/web/src/board/BoardCardDetail.tsx`     | wire the two new actions                       |
+| `apps/web/src/board/BoardCardDetail.tsx` | wire the two new actions |

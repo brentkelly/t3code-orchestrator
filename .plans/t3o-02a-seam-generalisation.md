@@ -14,7 +14,7 @@ entry per registry, a union member per event), so the core diff grows with every
 **The rule going forward: predicates, spreads, and re-exports only in core.** A core seam is a
 conditional dispatch on a board predicate, a spread of a board-owned registry, a single injected
 factory call, or a re-export. Everything else lives in board-owned code. A diff between upstream's
-repo and ours, excluding board-owned files, should show _only_ the surgical seams — and that diff
+repo and ours, excluding board-owned files, should show *only* the surgical seams — and that diff
 should be **frozen**: t3o-03's seven commands and seven events must add zero lines to it.
 
 ## The `board.` prefix rule (new, load-bearing)
@@ -22,7 +22,7 @@ should be **frozen**: t3o-03's seven commands and seven events must add zero lin
 The predicates that make generic seams possible key on naming:
 
 - Every board command `type` starts with `board.` — `BoardCommand = Extract<OrchestrationCommand,
-{ type: `board.${string}` }>`.
+  { type: `board.${string}` }>`.
 - Every board event `type` starts with `board.`.
 - Every board shell-stream delta `kind` starts with `card-` (revisit if non-card board deltas ever
   appear).
@@ -57,7 +57,7 @@ New files or naturally board-scoped; upstream will never touch them:
 - `"card"` in `OrchestrationAggregateKind` and in `commandToAggregateRef`'s return-type annotation
   (plus its `BoardCardId` import) in `OrchestrationEngine.ts` — same D9 class. Keep as-is.
 - `OrchestrationReadModel.board` (optional `BoardState`) and `OrchestrationShellSnapshot.cards`
-  (optional array) — single fields whose _shape_ grows inside board-owned `BoardState`, never at
+  (optional array) — single fields whose *shape* grows inside board-owned `BoardState`, never at
   the seam. Keep as-is.
 - `export * from "./board.ts"` in `packages/contracts/src/index.ts` and
   `packages/client-runtime/src/state/shell.ts` — re-exports, frozen. Keep as-is.
@@ -78,7 +78,7 @@ Under t3o-03 these alone would grow ~15–20 lines. Generalise all four:
 3. **`OrchestrationEvent` union** — replace the inline 5-line member with one injected factory
    call: `...makeBoardOrchestrationEvents(EventBaseFields),`. `board.ts` cannot import
    `EventBaseFields` (orchestration.ts imports board.ts — a module cycle with TDZ failure at
-   load), so the seam _injects_ the base fields into a board-owned factory that returns the event
+   load), so the seam *injects* the base fields into a board-owned factory that returns the event
    struct members. Upstream base-field changes then flow into board events automatically.
 4. **`OrchestrationShellStreamEvent` union** — replace the two named members with
    `...BOARD_SHELL_STREAM_EVENTS,`.
@@ -88,33 +88,29 @@ After this, adding a board command/event touches only `board.ts`.
 ### 🔴 Must refactor — server (enumeration → predicate/spread)
 
 **`apps/server/src/orchestration/decider.ts`**
-
 - Currently: `case "board.card.create": return yield* decideBoardCommand(...)` at the switch head.
-- Should be: inside upstream's existing `default` block, _before_ `command satisfies never`:
+- Should be: inside upstream's existing `default` block, *before* `command satisfies never`:
   ```ts
   // T3o: board commands are decided in the board module.
-  if (isBoardCommand(command)) return yield * decideBoardCommand({ command, readModel });
+  if (isBoardCommand(command)) return yield* decideBoardCommand({ command, readModel });
   ```
 - Why it stays exhaustive: the type guard narrows, so after the board branch returns, `command`
   excludes board members and upstream's `satisfies never` still fails the build when upstream adds
   an unhandled command.
 
 **`apps/server/src/orchestration/projector.ts`**
-
 - Currently: `case "board.card-created": return projectBoardEvent(nextBase, event)`.
 - Should be: predicate before the (permissive) `default` return:
   `if (isBoardEvent(event)) return projectBoardEvent(nextBase, event);`
 
 **`apps/server/src/orchestration/Layers/OrchestrationEngine.ts`**
-
 - Currently: inline `case "board.card.create": return { aggregateKind: "card", ... }`.
 - Should be: `if (isBoardCommand(command)) return boardCommandAggregateRef(command);` before the
   default (the ref-building logic moves to `board/`). After the guard, board commands are excluded
   from the default branch, so upstream's `command.threadId` access still typechecks. The widened
   return-type annotation stays (frozen seam, see above).
 
-**`apps/server/src/orchestration/Layers/ProjectionPipeline.ts`** _(already half-done)_
-
+**`apps/server/src/orchestration/Layers/ProjectionPipeline.ts`** *(already half-done)*
 - The projector list already spreads `...makeBoardProjectors(sql)` — keep.
 - Remaining: remove the `boardCards: BOARD_CARDS_PROJECTOR_NAME` entry from
   `ORCHESTRATION_PROJECTOR_NAMES` (it grows per projector) and instead widen the
@@ -123,8 +119,7 @@ After this, adding a board command/event touches only `board.ts`.
   swaps a per-projector seam for a once-only type widening — t3o-03+ adds more projectors
   (`board_plans`, …) with zero pipeline edits.
 
-**`apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`** _(scope clarified)_
-
+**`apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`** *(scope clarified)*
 - In scope: replace the two inline method wraps with one spread of a board-owned factory, placed
   after the base methods in the returned object literal so board-wrapped versions override:
   ```ts
@@ -137,7 +132,6 @@ After this, adding a board command/event touches only `board.ts`.
   split point; do not attempt one here.
 
 **`apps/server/src/ws.ts`**
-
 - Currently: `case "board.card-created": return Effect.succeed(boardCardShellStreamEvent(event))`.
 - Should be: at the top of the `default` branch (before the `aggregateKind !== "thread"` check —
   board events would otherwise be swallowed by it):
@@ -148,7 +142,6 @@ After this, adding a board command/event touches only `board.ts`.
 ### 🔴 Must refactor — persistence registry
 
 **`apps/server/src/persistence/Migrations.ts`**
-
 - Currently: `import Migration0900 …` + named `[900, "BoardCards", Migration0900]` entry — grows
   per migration.
 - Should be: one import of a board-owned registry (e.g. `apps/server/src/board/migrations.ts`
@@ -161,7 +154,6 @@ After this, adding a board command/event touches only `board.ts`.
 ### 🔴 Must refactor — client runtime (correcting the first draft's misaudit)
 
 **`packages/client-runtime/src/state/shellReducer.ts`**
-
 - The first draft claimed this "already uses a predicate" — **it does not**; it enumerates
   `case "card-upserted": case "card-removed":` delegating to the board reducer.
 - Convert for consistency: predicate before the (permissive, forward-compatible) `default`:
