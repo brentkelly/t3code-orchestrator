@@ -1043,7 +1043,7 @@ export const make = Effect.gen(function* () {
           upstreamHeadIsDefault &&
           !headContext.isCrossRepository
         ) {
-          return { latest: null, headContext };
+          return { latest: null, headContext, askedForge: false };
         }
         // Only skip when the branch is untracked as well: anything carrying an
         // upstream keeps the old behaviour.
@@ -1052,10 +1052,10 @@ export const make = Effect.gen(function* () {
           details.upstreamRef === null &&
           (yield* isUnpublishedBranch(cwd, headContext))
         ) {
-          return { latest: null, headContext };
+          return { latest: null, headContext, askedForge: false };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
-        return { latest, headContext };
+        return { latest, headContext, askedForge: true };
       });
     },
     {
@@ -1063,7 +1063,15 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit, key) => {
         if (Exit.isSuccess(exit)) {
           prLookupFailureStreakByKey.delete(key);
-          return PR_LOOKUP_CACHE_TTL;
+          // T3o: a skip that never reached the forge is not cached (T3O-45).
+          // The TTL exists to ration hosting-provider API calls, and a skip
+          // spends none — it is a statement about local git state that a single
+          // `git push` falsifies. Holding one for the full TTL means a branch
+          // pushed moments after its last lookup reads as "no pull request" for
+          // two minutes, which is long enough for every trigger a card has to
+          // fire and record nothing. Re-running it costs a handful of local
+          // ref reads; a published branch still caches for the full TTL.
+          return exit.value.askedForge ? PR_LOOKUP_CACHE_TTL : Duration.zero;
         }
         return nextPrLookupFailureTtl(key);
       },

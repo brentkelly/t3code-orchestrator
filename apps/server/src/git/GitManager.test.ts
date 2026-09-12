@@ -1379,6 +1379,62 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  // T3o (T3O-45): the skip an unpublished branch takes never reaches the forge,
+  // so it must not occupy the forge cache. An agent that pushes and opens a pull
+  // request seconds after the last lookup would otherwise keep reading "no pull
+  // request" for the full TTL, and a board card whose only refresh triggers fire
+  // inside that window never records its pull request at all.
+  it.effect("an unpublished branch's skipped PR lookup is dropped once the branch is pushed", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "board/pushed-after-skip"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 331,
+                title: "Opened moments after the skip",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/331",
+                baseRefName: "main",
+                headRefName: "board/pushed-after-skip",
+                state: "OPEN",
+                updatedAt: "2026-04-07T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const beforePush = yield* manager.findBranchPullRequest({
+        cwd: repoDir,
+        branch: "board/pushed-after-skip",
+      });
+
+      expect(beforePush).toBeNull();
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
+
+      yield* runGit(repoDir, ["push", "-u", "origin", "board/pushed-after-skip"]);
+
+      // Same cache key as the skipped lookup — nothing about the key changes on
+      // a push — so finding the pull request proves the skip was not retained.
+      const afterPush = yield* manager.findBranchPullRequest({
+        cwd: repoDir,
+        branch: "board/pushed-after-skip",
+      });
+
+      expect(afterPush?.number).toBe(331);
+      expect(afterPush?.state).toBe("open");
+    }),
+  );
+
   it.effect("branch PR lookup propagates provider failures", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
