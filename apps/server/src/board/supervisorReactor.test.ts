@@ -79,6 +79,8 @@ const card: BoardCard = {
   baseBranch: null,
   scheduledStartAt: null,
   autoStart: false,
+  autoMerge: false,
+  autoMergeHold: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",

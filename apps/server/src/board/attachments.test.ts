@@ -53,6 +53,8 @@ const card = (attachments: BoardCard["attachments"] = []): BoardCard => ({
   baseBranch: null,
   scheduledStartAt: null,
   autoStart: false,
+  autoMerge: false,
+  autoMergeHold: null,
   worktree: null,
   pullRequest: null,
   pullRequestHistory: [],

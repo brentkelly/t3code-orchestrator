@@ -65,6 +65,7 @@ import {
   makeBoardCardShell,
   ProviderInstanceId,
   BoardCardAttachment,
+  BoardCardAutoMergeHold,
   sortBoardCardAttachments,
   sortBoardCardThreadLinks,
   type BoardCardDetail,
@@ -198,6 +199,15 @@ const BoardCardDbRow = Schema.Struct({
       clears it inside the move that leaves the pre-build stage) — indistinguish-
       able on purpose, which is what makes replay equal rehydration (T3O-24). */
   autoStart: Schema.Int,
+  /** 0 for every row written before migration 043 and for every card that has
+      never been armed to merge itself — indistinguishable on purpose, which is
+      what makes replay equal rehydration (T3O-38). Unlike `auto_start` this
+      arm is never spent, so it also survives the card reaching Done. */
+  autoMerge: Schema.Int,
+  /** NULL for every row written before migration 043, for every card whose
+      armed merge has never been refused, and for every card whose hold has
+      been cleared — indistinguishable on purpose (T3O-38, D4/D10). */
+  autoMergeHold: Schema.NullOr(Schema.fromJsonString(BoardCardAutoMergeHold)),
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -585,6 +595,13 @@ const BoardCardShellDbRow = Schema.Struct({
       aggregate like `parentCardId`, so this snapshot and the JS delta path both
       carry it — or an armed card's chip would vanish on reconnect. */
   autoStart: Schema.Int,
+  /** The card's auto-merge hold, flattened to the three facts the shell
+      carries (T3O-38, D14): when the hold started, whether its ladder is
+      spent, and whether the card's own arming is set. Derived in SQL here and
+      in JS on the delta path; `cardMetaShellFields.test.ts` pins the pair. */
+  autoMergeHeldSince: Schema.NullOr(IsoDateTime),
+  autoMergeGaveUp: Schema.Int,
+  autoMergeArmed: Schema.Int,
   /** The review-summary CACHE (t3o-22, D7); NULL for a card with no review
       history. Its `outcome` is provisional — `resolveBoardCardReviewOutcome`
       settles it against the card's live step at assembly. */
@@ -643,6 +660,8 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     baseBranch: card.baseBranch,
     scheduledStartAt: card.scheduledStartAt,
     autoStart: card.autoStart ? 1 : 0,
+    autoMerge: card.autoMerge ? 1 : 0,
+    autoMergeHold: card.autoMergeHold,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -692,6 +711,8 @@ function rowToBoardCard(
     baseBranch: row.baseBranch,
     scheduledStartAt: row.scheduledStartAt,
     autoStart: row.autoStart !== 0,
+    autoMerge: row.autoMerge !== 0,
+    autoMergeHold: row.autoMergeHold,
     blocked: row.blocked !== 0,
     threadLinks,
     attachments,
@@ -753,6 +774,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_branch,
         scheduled_start_at,
         auto_start,
+        auto_merge,
+        auto_merge_hold,
         blocked,
         archived_at,
         created_at,
@@ -782,6 +805,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.baseBranch},
         ${row.scheduledStartAt},
         ${row.autoStart},
+        ${row.autoMerge},
+        ${row.autoMergeHold},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -811,6 +836,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_branch = excluded.base_branch,
         scheduled_start_at = excluded.scheduled_start_at,
         auto_start = excluded.auto_start,
+        auto_merge = excluded.auto_merge,
+        auto_merge_hold = excluded.auto_merge_hold,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -850,6 +877,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
+        auto_merge AS "autoMerge",
+        auto_merge_hold AS "autoMergeHold",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -941,6 +970,27 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         parent_card_id AS "parentCardId",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
+        -- The SECOND producer of the auto-merge shell trio (T3O-38, D14). The
+        -- delta path derives the same three in JS off the card aggregate's
+        -- autoMergeHold / autoMerge / parentCardId; these derive them in SQL
+        -- off the same columns, and the two must agree or a held card's pill
+        -- would appear
+        -- after an edit and vanish on reconnect (cardMetaShellFields.test.ts
+        -- asserts the pair).
+        json_extract(auto_merge_hold, '$.heldSince') AS "autoMergeHeldSince",
+        -- Gave up is exactly "a hold with no next rung": an exhausted hold is
+        -- KEPT (D10) so the card goes on saying why it stopped.
+        CASE
+          WHEN auto_merge_hold IS NOT NULL
+            AND json_extract(auto_merge_hold, '$.retryAt') IS NULL THEN 1
+          ELSE 0
+        END AS "autoMergeGaveUp",
+        -- The AGGREGATE half of the arm only: the board-wide merge-stage
+        -- setting is ORed in client-side, because this query cannot see
+        -- settings and a field only one producer could compute would be the
+        -- very flicker the pair test exists to prevent.
+        CASE WHEN auto_merge <> 0 OR parent_card_id IS NOT NULL THEN 1 ELSE 0 END
+          AS "autoMergeArmed",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -986,6 +1036,27 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         parent_card_id AS "parentCardId",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
+        -- The SECOND producer of the auto-merge shell trio (T3O-38, D14). The
+        -- delta path derives the same three in JS off the card aggregate's
+        -- autoMergeHold / autoMerge / parentCardId; these derive them in SQL
+        -- off the same columns, and the two must agree or a held card's pill
+        -- would appear
+        -- after an edit and vanish on reconnect (cardMetaShellFields.test.ts
+        -- asserts the pair).
+        json_extract(auto_merge_hold, '$.heldSince') AS "autoMergeHeldSince",
+        -- Gave up is exactly "a hold with no next rung": an exhausted hold is
+        -- KEPT (D10) so the card goes on saying why it stopped.
+        CASE
+          WHEN auto_merge_hold IS NOT NULL
+            AND json_extract(auto_merge_hold, '$.retryAt') IS NULL THEN 1
+          ELSE 0
+        END AS "autoMergeGaveUp",
+        -- The AGGREGATE half of the arm only: the board-wide merge-stage
+        -- setting is ORed in client-side, because this query cannot see
+        -- settings and a field only one producer could compute would be the
+        -- very flicker the pair test exists to prevent.
+        CASE WHEN auto_merge <> 0 OR parent_card_id IS NOT NULL THEN 1 ELSE 0 END
+          AS "autoMergeArmed",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1079,6 +1150,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
+        auto_merge AS "autoMerge",
+        auto_merge_hold AS "autoMergeHold",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -2759,6 +2832,11 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         return;
 
       case "board.card-reordered":
+      // The auto-merge hold (T3O-38, D4) rides `board_cards` too, and writes
+      // NO rail row of its own: eight rungs would be eight rows saying the
+      // same thing. The reactor rails the refusal ONCE, through
+      // `card-merge-refused`, at the moment the ladder actually stops.
+      case "board.card-auto-merge-hold-recorded":
       // Worktree lifecycle (t3o-09): every payload carries the whole card, so
       // the persisted projection is the same idempotent upsert — the worktree
       // column rides `board_cards` with the rest of the aggregate.
@@ -3376,6 +3454,9 @@ export function withBoardShellCards(
           parentCardId: row.parentCardId,
           scheduledStartAt: row.scheduledStartAt,
           autoStart: row.autoStart !== 0,
+          autoMergeHeldSince: row.autoMergeHeldSince,
+          autoMergeGaveUp: row.autoMergeGaveUp !== 0,
+          autoMergeArmed: row.autoMergeArmed !== 0,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
           // it here as well would give the snapshot and the `card-review`
@@ -3468,6 +3549,9 @@ export function withBoardArchivedShellCards(
             parentCardId: row.parentCardId,
             scheduledStartAt: row.scheduledStartAt,
             autoStart: row.autoStart !== 0,
+            autoMergeHeldSince: row.autoMergeHeldSince,
+            autoMergeGaveUp: row.autoMergeGaveUp !== 0,
+            autoMergeArmed: row.autoMergeArmed !== 0,
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),

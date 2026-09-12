@@ -37,6 +37,8 @@ import {
   boardCardHasLiveBranch,
   isBoardCardBaseBranchShape,
   isEmptyBoardCardModelOverrides,
+  boardCardAutoMergeHoldsEqual,
+  boardCardCanArmAutoMerge,
   boardCardCanArmAutoStart,
   boardStageBeforeBuild,
   boardSubBoardFloorStage,
@@ -1279,7 +1281,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.modelOverrides === undefined &&
         command.baseBranch === undefined &&
         command.scheduledStartAt === undefined &&
-        command.autoStart === undefined
+        command.autoStart === undefined &&
+        command.autoMerge === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -1391,6 +1394,27 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                       : `Card '${card.key}' has no unmet dependencies to wait for, so it cannot be armed to start when they finish.`,
                 );
 
+      // The auto-merge arm (T3O-38, D3). Refused only where it could never
+      // act — a sub-board child (armed unconditionally, so a switch there
+      // would be a control that turns nothing off) and a card already in Done
+      // — through the same predicate the kebab menu gates on, so the control
+      // and this refusal can never disagree.
+      const autoMerge =
+        command.autoMerge === undefined
+          ? card.autoMerge
+          : command.autoMerge === false
+            ? // Disarming is always accepted. A reverse state that can be
+              // refused is not a reverse state.
+              false
+            : boardCardCanArmAutoMerge({ board, card })
+              ? true
+              : yield* invariant(
+                  command,
+                  card.parentCardId !== null
+                    ? `Card '${card.key}' is a sub-board child; it already merges itself down on arrival, so it cannot arm an auto-merge of its own.`
+                    : `Card '${card.key}' has already reached '${boardStageWithRole(board, "done")?.label ?? "Done"}', so there is nothing left for an auto-merge to do.`,
+                );
+
       const nextCard: BoardCard = {
         ...card,
         title: command.title ?? card.title,
@@ -1418,6 +1442,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         scheduledStartAt:
           command.scheduledStartAt === undefined ? card.scheduledStartAt : command.scheduledStartAt,
         autoStart,
+        autoMerge,
+        // Disarming clears the hold (T3O-38, D10): a hold explains a merge
+        // that is no longer going to happen by itself, and a card parked with
+        // an amber pill nobody can act on is the stale label this codebase
+        // refuses to ship. Re-arming therefore restarts the ladder at rung 0,
+        // which is how an exhausted ladder is restarted by hand.
+        autoMergeHold: command.autoMerge === false ? null : card.autoMergeHold,
         updatedAt: command.createdAt,
       };
       return {
@@ -1443,6 +1474,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           // between render and click only on an edit that named the field, so
           // an unrelated edit never costs a board scan.
           ...(command.autoStart === undefined ? {} : { autoStart: command.autoStart }),
+          // Says the edit TOUCHED the arm, not what it is (T3O-38, D3). The
+          // supervisor merges a card parked at the merge stage the instant its
+          // arm goes on, and only on an edit that named the field — an
+          // unrelated title edit must never fire a merge.
+          ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
           // Fold the review summary onto the event when the edit could change
           // it (t3o-22, D7), so a pure override edit updates the card face live
           // — the same reason the step-completion path folds it. Only when the
@@ -2899,6 +2935,35 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           transition,
           card: nextCard,
         },
+      };
+    }
+
+    case "board.card.record-auto-merge-hold": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      // No-op guard at the decider, not just at the caller (T3O-38, D4), for
+      // the same reason `record-pull-request` has one: the sweep re-probes a
+      // held card every rung and the overwhelming majority of those answers
+      // are the hold the card already carries. Landing an event for each would
+      // bloat the log and republish a shell delta per tick for no change.
+      if (boardCardAutoMergeHoldsEqual(card.autoMergeHold, command.hold)) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' already records this auto-merge hold; nothing to record.`,
+        );
+      }
+      const nextCard: BoardCard = {
+        ...card,
+        autoMergeHold: command.hold,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-auto-merge-hold-recorded",
+        payload: { cardId: command.cardId, hold: command.hold, card: nextCard },
       };
     }
 

@@ -1030,6 +1030,30 @@ export const BoardCardAutoMergeHold = Schema.Struct({
 });
 export type BoardCardAutoMergeHold = typeof BoardCardAutoMergeHold.Type;
 
+/**
+ * Whether two holds describe the same state — every field, including
+ * `retryAt`, because moving to the next rung IS the change worth recording.
+ *
+ * Unlike `boardCardPullRequestsEqual` nothing here is excluded from the
+ * comparison: there is no per-probe field that moves on its own, so any
+ * difference is a real one and a probe that finds nothing new lands no event.
+ */
+export function boardCardAutoMergeHoldsEqual(
+  left: BoardCardAutoMergeHold | null,
+  right: BoardCardAutoMergeHold | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.reason === right.reason &&
+    left.classification === right.classification &&
+    left.detail === right.detail &&
+    left.attempt === right.attempt &&
+    left.heldSince === right.heldSince &&
+    left.retryAt === right.retryAt &&
+    left.headSha === right.headSha
+  );
+}
+
 /** Whether a hold has rungs left. An exhausted hold is KEPT, never cleared —
     the card must go on saying why it stopped — so "gave up" is exactly
     `retryAt === null`. */
@@ -4721,6 +4745,15 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       check an armed card for a dependency that landed between render and click
       without re-scanning the board on every unrelated title edit. */
   autoStart: Schema.optional(Schema.Boolean),
+  /** Whether this edit armed or disarmed auto-merge (T3O-38, D3), on exactly
+      the same terms: absent means the edit did not touch it.
+
+      Load-bearing for the same reason. Arming a card that is ALREADY parked at
+      the merge stage fires the merge immediately — it is morally the Merge
+      click, and a control that visibly does nothing to the card in front of
+      you is the complaint this feature exists to answer — so the supervisor
+      must be able to tell that edit from a title change on the same card. */
+  autoMerge: Schema.optional(Schema.Boolean),
   /** The card face's review summary AFTER this edit (t3o-22, D7), folded by
       the decider when the edit could change it (a round budget or a stop). It
       rides the `card-upserted` shell delta this event produces, so a pure

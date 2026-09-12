@@ -191,6 +191,11 @@ export const makeBoardCard = (input: {
   readonly scheduledStartAt?: string | null;
   /** The card's auto-start arm (T3O-24). Absent is unarmed. */
   readonly autoStart?: boolean;
+  /** The per-card auto-merge arm (T3O-38, D3). */
+  readonly autoMerge?: boolean;
+  /** A recorded auto-merge hold (T3O-38, D4) — the state a refused armed
+      merge leaves behind. */
+  readonly autoMergeHold?: BoardCard["autoMergeHold"];
   /** The cards this one waits on (t3o-13). Absent is nothing. */
   readonly dependsOn?: ReadonlyArray<string>;
   /** The sub-board parent this card is a child of (t3o-23). Absent is
@@ -222,6 +227,8 @@ export const makeBoardCard = (input: {
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],
   autoStart: input.autoStart ?? false,
+  autoMerge: input.autoMerge ?? false,
+  autoMergeHold: input.autoMergeHold ?? null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],

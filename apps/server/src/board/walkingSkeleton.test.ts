@@ -105,6 +105,8 @@ const expectedCard = {
   baseBranch: null,
   scheduledStartAt: null,
   autoStart: false,
+  autoMerge: false,
+  autoMergeHold: null,
   worktree: null,
   pullRequest: null,
   pullRequestHistory: [],
