@@ -44,6 +44,21 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   spinner, because a board shows thirty cards at once and one more continuously animating element
   per card is a cost the fact does not justify; the card modal's banner, being one element in an
   open modal, keeps its spinner.
+- **One notice per card, and it is ranked.** The card face has room for a single status word, and it
+  shipped with two slots — `boardCardAttention`'s chip on the left, the merge pills and the
+  dependency gate on the right — with nothing stopping both from filling. A card whose auto-merge
+  ladder ran out wore `Needs a human` beside `Merge needs you`: the same claim twice, in the same
+  amber, and together wider than the 268px column, so the second chip hung off the card's right edge.
+  `boardCardNotice` ranks them into one slot, most specific first — a pending question (answerable in
+  one click, the same carve-out it gets everywhere else), then `Conflicts`, then the auto-merge hold,
+  then the rest of the attention chip, then the dependency gate. The gate is last because it is the
+  one notice whose fact survives elsewhere on the card: the meta row's chain icon carries the count at
+  every stage. This is deliberately not a comparison of tones — amber-versus-violet says how loud a
+  notice is, not which fact the human needs, and `Merge needs you` beating `Needs a human` is a
+  ranking between two ambers. The winner truncates rather than pushing, so a long label clips inside
+  its card instead of overflowing the column. The neutral informational pills — a queue position, a
+  scheduled start, the auto-start arm, the grey `Auto` glyph — keep their own right-hand slot, because
+  they assert that nothing is needed from the human, which is the opposite claim.
 - **A card waiting on a provider is amber, and so is the header pill (T3O-22).** A usage limit is
   the same fact as blocked, one level up: nobody is working, the board cannot make it work, and it
   is waiting on something outside itself. All four readings of `stalled` — waiting to resume on a
