@@ -7,6 +7,7 @@ import type { BoardStageColumns } from "@t3tools/client-runtime/state/shell";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardCardNavStep,
   boardCardStepForKey,
   isBoardTextEntryTarget,
   resolveBoardCardNeighbours,
@@ -171,5 +172,35 @@ describe("isBoardTextEntryTarget", () => {
 
   it("reads a contenteditable region as a caret", () => {
     expect(isBoardTextEntryTarget(element("div", true))).toBe(true);
+  });
+});
+
+describe("boardCardNavStep", () => {
+  const target = { key: "T3O-1", title: "A card" };
+  const both = { prev: target, next: target };
+
+  it("takes the step a live keystroke asks for", () => {
+    expect(boardCardNavStep(both, keyEvent({ key: "ArrowRight" }), null)).toBe(1);
+    expect(boardCardNavStep(both, keyEvent({ key: "k" }), null)).toBe(-1);
+  });
+
+  it("does nothing at the top of a column, where the left rail is absent too", () => {
+    const atTop = { prev: null, next: target };
+    expect(boardCardNavStep(atTop, keyEvent({ key: "ArrowLeft" }), null)).toBeNull();
+    expect(boardCardNavStep(atTop, keyEvent({ key: "ArrowRight" }), null)).toBe(1);
+  });
+
+  it("does nothing at the bottom of a column", () => {
+    const atBottom = { prev: target, next: null };
+    expect(boardCardNavStep(atBottom, keyEvent({ key: "ArrowRight" }), null)).toBeNull();
+    expect(boardCardNavStep(atBottom, keyEvent({ key: "ArrowLeft" }), null)).toBe(-1);
+  });
+
+  it("does nothing with no navigation at all — an archived or filtered-out card", () => {
+    expect(boardCardNavStep(null, keyEvent({ key: "ArrowRight" }), null)).toBeNull();
+  });
+
+  it("still stands down for a text caret even with both neighbours present", () => {
+    expect(boardCardNavStep(both, keyEvent({ key: "j" }), element("textarea"))).toBeNull();
   });
 });

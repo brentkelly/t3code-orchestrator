@@ -12,18 +12,9 @@ import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
 import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
-import { boardCardStepForKey, type BoardCardStep } from "./boardCardNav";
+import { boardCardNavStep, type BoardCardNav, type BoardCardNavTarget } from "./boardCardNav";
 
-export interface BoardCardNavTarget {
-  readonly key: string;
-  readonly title: string;
-}
-
-export interface BoardCardNav {
-  readonly prev: BoardCardNavTarget | null;
-  readonly next: BoardCardNavTarget | null;
-  readonly onStep: (direction: BoardCardStep) => void;
-}
+export type { BoardCardNav, BoardCardNavTarget };
 
 /**
  * Binds ←/→/J/K on the sheet element itself (D3) — never on `document`.
@@ -49,9 +40,8 @@ export function useBoardCardNavKeys(sheet: HTMLElement | null, nav: BoardCardNav
     const onKeyDown = (event: KeyboardEvent) => {
       const current = navRef.current;
       if (current === null) return;
-      const step = boardCardStepForKey(event, sheet.ownerDocument.activeElement);
+      const step = boardCardNavStep(current, event, sheet.ownerDocument.activeElement);
       if (step === null) return;
-      if (step === -1 ? current.prev === null : current.next === null) return;
       event.preventDefault();
       event.stopPropagation();
       current.onStep(step);

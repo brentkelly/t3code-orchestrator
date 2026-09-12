@@ -122,3 +122,35 @@ export function boardCardStepForKey(
       return null;
   }
 }
+
+/** What a rail needs to name its target card: nothing more than the sheet
+    already shows on the card's own face. */
+export interface BoardCardNavTarget {
+  readonly key: string;
+  readonly title: string;
+}
+
+export interface BoardCardNav {
+  readonly prev: BoardCardNavTarget | null;
+  readonly next: BoardCardNavTarget | null;
+  readonly onStep: (direction: BoardCardStep) => void;
+}
+
+/**
+ * The step a keystroke should actually take, given what is open: null when the
+ * keystroke asks for nothing, and null again when it asks for a card that is
+ * not there — the end of a column, where the rail is absent too.
+ *
+ * This is the whole decision the sheet's key handler makes; it takes the
+ * keystroke no further than that, so the handler is four lines of DOM.
+ */
+export function boardCardNavStep(
+  nav: Pick<BoardCardNav, "prev" | "next"> | null,
+  event: BoardCardNavKeyEvent,
+  activeElement: Element | null,
+): BoardCardStep | null {
+  if (nav === null) return null;
+  const step = boardCardStepForKey(event, activeElement);
+  if (step === null) return null;
+  return (step === -1 ? nav.prev : nav.next) === null ? null : step;
+}
