@@ -44,6 +44,7 @@ import {
     30s supervisor tick, so advancing the clock is the whole of the drive. */
 const RUNG_ONE = Duration.minutes(4);
 
+const READY = String(BOARD_SEED_STAGE_IDS.ready);
 const REVIEW = String(BOARD_SEED_STAGE_IDS.review);
 const BUILDING = String(BOARD_SEED_STAGE_IDS.building);
 const MERGE = String(BOARD_SEED_STAGE_IDS.merge);
@@ -492,6 +493,66 @@ it.effect("a human Merge click resets the ladder to rung 0 (D10/D11)", () =>
         assert.strictEqual(outcome.outcome, "refused");
         yield* h.reactor.drain;
         assert.strictEqual(holdOf(yield* h.board)?.attempt, 1);
+      }),
+  ),
+);
+
+// ── The whole point: an unattended dependency clears itself (D15) ──────────
+
+it.effect("an armed dependency merges itself and starts its armed dependent", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          cardAtMerge({ autoMerge: true }),
+          makeBoardCard({
+            id: "dependent",
+            stage: READY,
+            orderKey: "n",
+            autoStart: true,
+            dependsOn: ["card-one"],
+          }),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        // The card this whole feature exists for: you arm the dependency, go
+        // to bed, and the chain resolves without you. Before T3O-38 the
+        // dependency parked at Merge waiting for a click and the dependent
+        // was still sitting in Ready in the morning.
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+
+        // D15, pinned through the REAL merge path rather than by mocking the
+        // ordering. Read BEFORE the Done arrival is delivered: the local base
+        // branch has already been fast-forwarded by the time the card reaches
+        // Done, so anything the Done arrival starts — the armed dependent —
+        // cuts from history that already contains the dependency's commits.
+        // Break that ordering and you silently produce agents that cannot see
+        // the code they depend on.
+        const gitBeforeDone = yield* h.gitInvocations;
+        assert.isTrue(
+          gitBeforeDone.some(
+            (args) => args[0] === "fetch" || (args[0] === "pull" && args[1] === "--ff-only"),
+          ),
+          `the merged base branch was not synced before Done: ${JSON.stringify(gitBeforeDone)}`,
+        );
+
+        // The engine double decides and projects a dispatched command but does
+        // not feed its event back into the domain queue, so the Done arrival
+        // is handed over here — exactly as the auto-start suite does. In
+        // production the reactor's own dispatch loops back through the
+        // projection pipeline.
+        const merged = (yield* h.board).cards.find(
+          (card) => card.id === BoardCardId.make("card-one"),
+        );
+        assert.isDefined(merged);
+        yield* h.pumpDomain(cardMoved(merged!, MERGE, DONE, 2));
+        assert.strictEqual(stageOf(yield* h.board, "dependent"), BUILDING);
       }),
   ),
 );
