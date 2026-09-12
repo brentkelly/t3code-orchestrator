@@ -506,6 +506,59 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
     }),
   );
 
+  // The auto-merge arm and its hold (T3O-38): two columns migration 043 adds,
+  // whose decoding defaults must match the column defaults or a from-empty
+  // replay of a log written before this spec diverges from a rehydration.
+  it.effect("persists the auto-merge arm and hold, and replays them identically", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-card-create-auto-merge"),
+        cardId: BoardCardId.make("card-auto-merge"),
+        projectId,
+        title: "A card that merges itself",
+        orderKey: "y",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-card-arm-auto-merge"),
+        cardId: BoardCardId.make("card-auto-merge"),
+        autoMerge: true,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "board.card.record-auto-merge-hold",
+        commandId: CommandId.make("cmd-card-hold-auto-merge"),
+        cardId: BoardCardId.make("card-auto-merge"),
+        hold: {
+          reason: "Required status check 'test' has not passed.",
+          classification: "soft",
+          detail: "3 of 5 checks green",
+          attempt: 2,
+          heldSince: createdAt,
+          retryAt: "2026-01-01T00:03:00.000Z",
+          headSha: "sha-one",
+        },
+        createdAt,
+      });
+
+      const rehydrated = yield* snapshotQuery.getCommandReadModel();
+      const rehydratedCard = rehydrated.board?.cards.find((card) => card.id === "card-auto-merge");
+      assert.isTrue(rehydratedCard?.autoMerge);
+      assert.strictEqual(rehydratedCard?.autoMergeHold?.attempt, 2);
+
+      const events: OrchestrationEvent[] = Array.from(
+        yield* Stream.runCollect(engine.readEvents(0)),
+      );
+      let replayed = createEmptyReadModel(createdAt);
+      for (const event of events) replayed = yield* projectEvent(replayed, event);
+      assert.deepStrictEqual(replayed.board, rehydrated.board);
+    }),
+  );
+
   // Runs against the same store as the test above: project-board and card-1
   // already exist here by design.
   it.effect("rejects a duplicate card id", () =>

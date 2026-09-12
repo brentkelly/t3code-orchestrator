@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import { classifyBoardAutoMergeRefusal } from "../board/autoMergeClassification.ts";
 import {
   forgejoMergeState,
   parseForgejoChecks,
@@ -133,5 +134,69 @@ describe("forgejoMergeState (T3O-38, D7)", () => {
       forgejoMergeState({ mergeable: null, headSha: null, checks: NO_CHECKS, checksReadable: true })
         .mergeable,
     ).toBe("unknown");
+  });
+});
+
+describe("Forgejo, end to end: probe → classification (T3O-38, criterion 10)", () => {
+  /** What the two `fgj` calls answer, run through the real parsers and the
+      real classifier — the composition is what the board actually does, and
+      testing the halves separately would not prove the whole. */
+  const classify = (input: { readonly pr: string; readonly runs: string }) => {
+    const { mergeable, headSha } = parseForgejoPullRequestMergeability(input.pr);
+    return classifyBoardAutoMergeRefusal(
+      forgejoMergeState({
+        mergeable,
+        headSha,
+        checks: parseForgejoChecks(input.runs, headSha),
+        checksReadable: true,
+      }),
+    );
+  };
+
+  const pullRequest = (mergeable: boolean) =>
+    JSON.stringify({ mergeable, head: { ref: "board/t3o-1", sha: "aaa" } });
+
+  it("reads a check that is still running as SOFT and retries", () => {
+    const verdict = classify({
+      pr: pullRequest(false),
+      runs: JSON.stringify([
+        { name: "build", head_sha: "aaa", status: "success" },
+        { name: "e2e", head_sha: "aaa", status: "running" },
+      ]),
+    });
+    expect(verdict.classification).toBe("soft");
+    expect(verdict.detail).toBe("1 of 2 checks green · e2e still running");
+    expect(verdict.headSha).toBe("aaa");
+  });
+
+  it("reads a FAILED check as hard and stops the ladder", () => {
+    const verdict = classify({
+      pr: pullRequest(false),
+      runs: JSON.stringify([
+        { name: "build", head_sha: "aaa", status: "success" },
+        { name: "lint", head_sha: "aaa", status: "failure" },
+      ]),
+    });
+    expect(verdict.classification).toBe("checks-failed");
+    expect(verdict.detail).toBe("1 of 2 checks green · lint failed");
+  });
+
+  it("reads every-check-green-and-still-refused as an approval", () => {
+    const verdict = classify({
+      pr: pullRequest(false),
+      runs: JSON.stringify([{ name: "build", head_sha: "aaa", status: "success" }]),
+    });
+    expect(verdict.classification).toBe("approval-required");
+  });
+
+  it("stays SOFT when the run listing could not be read at all", () => {
+    // An instance without Actions, or an `fgj` whose output this build cannot
+    // parse. Claiming every check is green when we never saw one would stop
+    // the ladder on the first refusal.
+    const { mergeable, headSha } = parseForgejoPullRequestMergeability(pullRequest(false));
+    const verdict = classifyBoardAutoMergeRefusal(
+      forgejoMergeState({ mergeable, headSha, checks: NO_CHECKS, checksReadable: false }),
+    );
+    expect(verdict.classification).toBe("soft");
   });
 });

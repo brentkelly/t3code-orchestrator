@@ -17,8 +17,10 @@
 import {
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
+  ProviderInstanceId,
   type BoardCard,
   type BoardCardAutoMergeHold,
+  type BoardCardStepState,
   type BoardState,
   type ChangeRequestMergeState,
   type OrchestrationCommand,
@@ -34,6 +36,7 @@ import {
   cardMoved,
   codexStep,
   makeBoardCard,
+  NOW,
   readyWorktree,
   settingsWith,
   withGovernor,
@@ -94,6 +97,52 @@ const probe = (input: {
     headSha: input.headSha ?? "sha-one",
   };
 };
+
+/** A converged review round's settled step, carrying the tip its round
+    started from (t3o-24, D1). Recorded anywhere but "main" — which is what
+    the harness's git stub answers — it is STALE. */
+const settledReviewStep = (tip: string): BoardCardStepState => ({
+  cardId: BoardCardId.make("card-one"),
+  stepId: "review@1",
+  stepLabel: "Review · round 1",
+  stageLabel: "Code review",
+  attempt: 1,
+  stallCount: 0,
+  stageEntryRecoveries: 0,
+  humanTurnAt: null,
+  lastNudgeAt: null,
+  baseTipAtRoundStart: tip,
+  lastError: null,
+  awaitingReason: "question" as const,
+  stalledReason: "gave-up" as const,
+  retryAt: null,
+  prompt: "review it",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5-codex",
+  mode: "build",
+  runtimeMode: "auto",
+  humanInLoop: false,
+  maxAttempts: 3,
+  timeoutMs: 600_000,
+  threadId: null,
+  status: "succeeded",
+  slotHeld: false,
+  forceStart: false,
+  startedAt: null,
+  updatedAt: NOW,
+});
+
+/** That round's recorded completion, so a re-entry into review plans the sync
+    step rather than re-running round 1. */
+const convergedRound = {
+  cardId: BoardCardId.make("card-one"),
+  stepId: "review@1",
+  outcome: "succeeded",
+  summary: "clean",
+  payload: JSON.stringify({ reviewedSha: "sha-reviewed", findings: [] }),
+  threadId: null,
+  completedAt: NOW,
+} as const;
 
 const setup = (input: {
   readonly cards: ReadonlyArray<BoardCard>;
@@ -416,6 +465,73 @@ it.effect("climbs the ladder on the SAME head sha, recording it each rung (D9)",
         yield* h.reactor.drain;
         assert.strictEqual(holdOf(yield* h.board)?.attempt, 2);
         assert.strictEqual(holdOf(yield* h.board)?.headSha, "sha-one");
+      }),
+  ),
+);
+
+it.effect("sends a CONFLICT to the conflict-fix step, never to the ladder (D8)", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge({ autoMerge: true })],
+      mergeFailure: "merge conflict between base and head",
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        // The existing one-shot fix owns this, and its success finishes the
+        // merge. A hold would be describing something that is happening.
+        assert.strictEqual(holdOf(yield* h.board), null);
+        // And the ladder never drives it: no probe, no retry.
+        assert.deepStrictEqual(yield* h.mergeStateProbes, []);
+        yield* TestClock.adjust(Duration.hours(2));
+        yield* h.reactor.drain;
+        assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        // The stage's conflict-resolution step was requested.
+        assert.isTrue(
+          (yield* h.commands).some((command) => command.type === "board.card.start-stage-thread"),
+        );
+      }),
+  ),
+);
+
+it.effect("records NO hold when a stale base sends the card back to review (D8)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          makeBoardCard({ id: "card-parent", stage: BUILDING, orderKey: "a" }),
+          {
+            ...cardAtMerge(),
+            parentCardId: BoardCardId.make("card-parent"),
+          },
+        ],
+        // A converged review round whose recorded cut point is BEHIND the
+        // base's live tip (the git stub answers "main"), which is what
+        // `resolveBaseStale` measures.
+        stepStates: [settledReviewStep("sha-before-sibling-merged")],
+        stepCompletions: [convergedRound],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(
+          cardMoved(
+            { ...cardAtMerge(), parentCardId: BoardCardId.make("card-parent") },
+            REVIEW,
+            MERGE,
+            1,
+          ),
+        );
+        // The card walks back through review for a sync-base step and one gate
+        // round; a "Merge held" pill on a card sitting in review is a lie.
+        assert.strictEqual(stageOf(yield* h.board), REVIEW);
+        assert.strictEqual(holdOf(yield* h.board), null);
+        // Nothing merged, and nothing probed: this is not a refusal.
+        assert.deepStrictEqual(yield* h.mergeAttempts, []);
+        assert.deepStrictEqual(yield* h.mergeStateProbes, []);
       }),
   ),
 );
