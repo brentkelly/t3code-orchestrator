@@ -156,6 +156,10 @@ export function deriveBoardReviewLoop(
   maxRounds: number,
   /** The card's stop-after-round, if it set one (t3o-22, D5). */
   stopAfterRound: number | null = null,
+  /** The card's run-through-round, if a human asked a settled loop for one
+      more pass (T3O-39, D13). Without it the pane reports `converged` while
+      the executor is dispatching round N+1. */
+  runThroughRound: number | null = null,
 ): BoardReviewLoop {
   const byStep = new Map<string, BoardStepCompletion>();
   let highestRound = 0;
@@ -175,6 +179,7 @@ export function deriveBoardReviewLoop(
     completions,
     maxRounds,
     stopAfterRound,
+    runThroughRound,
   });
   const unreadable = unreadableStepId === null ? null : parseReviewStepId(unreadableStepId);
 

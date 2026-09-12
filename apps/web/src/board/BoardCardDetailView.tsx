@@ -33,7 +33,9 @@ import {
   boardStageIndex,
   boardNextStageId,
   boardStagesInOrder,
+  boardStageById,
   boardStageWithRole,
+  effectiveBoardStageRole,
   liveBoardCardDependents,
   parseReviewStepId,
   sortBoardCardThreadLinks,
@@ -85,6 +87,7 @@ import {
   SquareIcon,
   PlayIcon,
   RefreshCcwIcon,
+  RotateCcwIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
   XIcon,
@@ -332,7 +335,9 @@ export interface BoardCardDetailViewProps {
   readonly reviewRoundsStarted?: number | undefined;
   /** Whether the executor is driving the card (running or queued for a slot). */
   readonly reviewStepActive?: boolean | undefined;
-  readonly onResumeReview?: ((rounds: number) => void) | undefined;
+  /** Run one more review round from the pane's "Run round N+1" (T3O-39, D6).
+      The same RPC the rail button calls, so the two cannot disagree. */
+  readonly onResumeReview?: (() => void) | undefined;
   /** Reopen a review round whose recorded payload cannot be read (T3O-14). */
   readonly onReopenReviewStep?: ((stepId: string) => void) | undefined;
   readonly onSetReviewRounds?: ((rounds: number) => void) | undefined;
@@ -409,6 +414,16 @@ export interface BoardCardDetailViewProps {
   /** Open the card's pull request from Building and route it past Code review
       (t3o-07). Absent hides the caret entirely. */
   readonly onSubmitForMerge?: (() => void) | undefined;
+  /** Run one more review round on a settled loop (T3O-39) — "Another review
+      round" at Code review and Ready for merge, "Request review" on a card
+      that has never had one. Absent hides the button entirely. */
+  readonly onRequestReviewRound?: (() => void) | undefined;
+  /** Whether ANY step is live on the card — running, queued, or parked
+      (stalled / awaiting input / paused). One step at a time is a decider
+      invariant, so "Another review round" is disabled rather than hidden while
+      one is, and a merge-conflict fix is never superseded mid-rebase
+      (T3O-39, D9). */
+  readonly stepLive?: boolean | undefined;
   /** Open the pull request externally, and refresh its state while we are at
       it — clicking through is a moment the user is about to learn whether the
       card's link is stale, so it may as well not be. */
@@ -1179,6 +1194,7 @@ function ActionsSection({
             props.detail.stepCompletions,
             props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS,
             props.reviewOverrides?.stopAfterRound ?? null,
+            props.reviewOverrides?.runThroughRound ?? null,
           )
         : null;
   const onStopAfterRound = props.onStopAfterRound;
@@ -1189,6 +1205,51 @@ function ActionsSection({
           round: reviewLoop.currentRound,
           pending: props.reviewOverrides?.stopAfterRound === reviewLoop.currentRound,
           onToggle: onStopAfterRound,
+        };
+  // "Another review round" / "Request review" (T3O-39, D7/D8/D9).
+  //
+  // Offered wherever it can act and nowhere else: the board needs a review-role
+  // stage to run a loop in, and the card has to be sitting at review or merge.
+  // Done is excluded deliberately (D12) — leaving it retires the card's pull
+  // request and raises the floor, which is a bigger operation than "review this
+  // branch once more" and must not hide behind the same button.
+  //
+  // Nothing else is consulted. NOT `pullRequestState`, NOT `conflictFix`, and
+  // NOT the Merge button's `disabled`: on a card whose base has drifted another
+  // review round is the REMEDY, since a round starting on a stale base plans
+  // its rebase first.
+  const stageRole = (() => {
+    const state = stageStateOf(props.stages);
+    const stage = boardStageById(state, card.stage);
+    return stage === null ? null : effectiveBoardStageRole(stage);
+  })();
+  const reviewRound =
+    archived ||
+    props.onRequestReviewRound === undefined ||
+    boardStageWithRole(stageStateOf(props.stages), "review") === null ||
+    (stageRole !== "review" && stageRole !== "merge")
+      ? null
+      : {
+          // Read off the card's own history: there is no workflow entity here,
+          // so "does this card's path include review" is what it has actually
+          // run. A card that reached Ready for merge through "Submit for merge
+          // — no review" gets round 1, which is the same verb with an empty
+          // ledger, not a second feature.
+          label: hasBoardReviewSteps(props.detail.stepCompletions)
+            ? "Another review round"
+            : "Request review",
+          // Disabled, never hidden: the reason is the point, and a button that
+          // vanishes while a conflict fix runs looks like the feature is gone.
+          disabled: props.stepLive === true,
+          hint:
+            props.stepLive === true
+              ? "A step is already running on this card"
+              : stageRole === "merge"
+                ? "Pull this card back to Code review and run one more round"
+                : hasBoardReviewSteps(props.detail.stepCompletions)
+                  ? "Run one more review round on this branch"
+                  : "Move this card to Code review and run the first review round",
+          onRequest: props.onRequestReviewRound,
         };
   // A merge from this card is mid-flight: the button holds its spot but shows a
   // spinner and refuses further clicks until the round trip settles.
@@ -1206,6 +1267,7 @@ function ActionsSection({
     autoStart === null &&
     humanInLoop === null &&
     displayed === null &&
+    reviewRound === null &&
     stopRound === null
   ) {
     return null;
@@ -1322,6 +1384,26 @@ function ActionsSection({
           ) : null}
         </div>
       ) : null}
+      {/* Between the forward button and View PR, giving the approved mockup's
+          order: Merge → Another review round → View PR, all three full width.
+          Styled off its shipped sibling below rather than the prototype's
+          inline CSS, which differs only by a rounding. */}
+      {reviewRound === null ? null : (
+        <BoardHint label={reviewRound.hint}>
+          <button
+            className={cn(
+              "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent",
+              reviewRound.disabled && "cursor-not-allowed opacity-50",
+            )}
+            disabled={reviewRound.disabled}
+            onClick={() => reviewRound.onRequest()}
+            type="button"
+          >
+            <RotateCcwIcon className="size-3.5" />
+            {reviewRound.label}
+          </button>
+        </BoardHint>
+      )}
       {/* The card's pull request, at EVERY stage rather than only where the
           Merge button lives: a card in Done is exactly when you want to find
           the change that closed it. Only the number rides the card shell, so

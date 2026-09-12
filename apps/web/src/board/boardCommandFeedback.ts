@@ -6,6 +6,7 @@
  */
 import type {
   BoardMergeCardPullRequestResult,
+  BoardRequestReviewRoundResult,
   BoardSubmitCardForMergeResult,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -96,5 +97,37 @@ export function describeBoardSubmitOutcome(result: BoardSubmitCardForMergeResult
       return "This card no longer exists.";
     case "failed":
       return "The submission could not be started. See the server log for details.";
+  }
+}
+
+/**
+ * The sentence "Another review round" / "Request review" leaves on the card
+ * (T3O-39).
+ *
+ * `started` says the round outright rather than returning null: unlike a merge
+ * or a submit, the card may not visibly move — a loop that converged in place
+ * is already on the review stage — so without the sentence the click has no
+ * acknowledgement at all.
+ */
+export function describeBoardReviewRoundOutcome(
+  result: BoardRequestReviewRoundResult,
+): string | null {
+  switch (result.outcome) {
+    case "started":
+      return result.round === 1
+        ? "Review round 1 is starting on this branch."
+        : `Review round ${result.round} is starting on this branch.`;
+    case "no-review-stage":
+      return "This board has no review stage to run a round in.";
+    case "wrong-stage":
+      return "Another review round can only be asked for from the review or merge stage.";
+    case "step-running":
+      return "Something is already running on this card. Wait for it to finish, then try again.";
+    case "no-branch":
+      return "This card has no branch to review.";
+    case "unknown-card":
+      return "This card no longer exists.";
+    case "failed":
+      return "The review round could not be started. See the server log for details.";
   }
 }

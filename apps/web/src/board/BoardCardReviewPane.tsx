@@ -11,7 +11,6 @@
  * Lazy, like the plan pane — a card that never reaches review pays nothing.
  */
 import {
-  BOARD_REVIEW_MAX_ROUNDS,
   BOARD_REVIEW_PHASE_IDS,
   boardReviewRoundsStarted,
   isBoardReviewLoopHeld,
@@ -707,10 +706,11 @@ export function BoardCardReviewPane({
       for a concurrency slot. The `−` floor needs it because the decider counts
       a live step of ANY status, and the ledger alone cannot see one. */
   readonly stepActive?: boolean | undefined;
-  /** Resume a held loop at `round`. Distinct from `onSetRounds`: resuming must
-      never shrink a budget the user already raised, and must clear the stop it
+  /** Run one more review round (T3O-39, D6). Distinct from `onSetRounds`: the
+      round it buys is resolved server-side from the ledger, so resuming can
+      neither shrink a budget the user already raised nor leave the stop it
       would otherwise terminate on again. */
-  readonly onResume?: ((round: number) => void) | undefined;
+  readonly onResume?: (() => void) | undefined;
   /** Set the card's round budget. Absent leaves the loop read-only — the pane
       still reports a stalled loop, it just cannot offer to restart it. */
   readonly onSetRounds?: ((rounds: number) => void) | undefined;
@@ -731,7 +731,12 @@ export function BoardCardReviewPane({
       to hand off to. */
   readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
 }) {
-  const loop = deriveBoardReviewLoop(completions, maxRounds, overrides?.stopAfterRound ?? null);
+  const loop = deriveBoardReviewLoop(
+    completions,
+    maxRounds,
+    overrides?.stopAfterRound ?? null,
+    overrides?.runThroughRound ?? null,
+  );
   // Which FUTURE round's settings drawer is open. Separate from `openRound`,
   // which expands a round that has run: a round with history is something to
   // read, one without is something to configure.
@@ -874,17 +879,13 @@ export function BoardCardReviewPane({
                     −
                   </button>
                 </BoardHint>
-                <BoardHint
-                  label={
-                    loop.maxRounds >= BOARD_REVIEW_MAX_ROUNDS
-                      ? `${BOARD_REVIEW_MAX_ROUNDS} rounds is the ceiling`
-                      : `Allow ${loop.maxRounds + 1} rounds`
-                  }
-                >
+                {/* No ceiling (T3O-39, D4): denying a user a round they are
+                    deliberately asking for buys nothing, and the board-wide
+                    stage setting was never capped either. */}
+                <BoardHint label={`Allow ${loop.maxRounds + 1} rounds`}>
                   <button
                     aria-label="Add a round"
-                    className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/45"
-                    disabled={loop.maxRounds >= BOARD_REVIEW_MAX_ROUNDS}
+                    className="inline-flex h-5 w-[19px] items-center justify-center rounded-[5px] text-[13px] font-medium text-foreground"
                     onClick={() => onSetRounds(loop.maxRounds + 1)}
                     type="button"
                   >
@@ -912,18 +913,7 @@ export function BoardCardReviewPane({
             round={loop.currentRound}
           />
         ) : held ? (
-          <NoConvergenceBlock
-            loop={loop}
-            onAdvance={onAdvance}
-            onRunAnotherRound={
-              // Gated at the ceiling exactly as the `+` button is: at 10 rounds
-              // `onResume(11)` is a write the decider refuses, so the button
-              // must not offer it as a live affordance.
-              onResume === undefined || loop.currentRound + 1 > BOARD_REVIEW_MAX_ROUNDS
-                ? undefined
-                : () => onResume(loop.currentRound + 1)
-            }
-          />
+          <NoConvergenceBlock loop={loop} onAdvance={onAdvance} onRunAnotherRound={onResume} />
         ) : null}
         {loop.rounds.toReversed().map((round) => (
           <Round
