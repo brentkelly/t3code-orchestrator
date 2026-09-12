@@ -91,6 +91,8 @@ import {
 } from "lucide-react";
 import { Suspense, lazy, useMemo, useState } from "react";
 
+import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
+import { useBoardUiStore } from "./boardUiStore";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogPopup } from "../components/ui/dialog";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
@@ -522,6 +524,10 @@ export interface BoardCardDetailViewProps {
       still passes this: the row reads its `lock` and renders the padlock, so a
       user is told WHY rather than shown a control that has quietly vanished. */
   readonly onSetProject?: ((projectId: ProjectId) => void) | undefined;
+  /** Step to the previous/next card in this card's column (T3O-37). Null when
+      the sheet has no board behind it to step through — the archived-card
+      sheet, or a card the board's live filters are currently hiding. */
+  readonly nav?: BoardCardNav | null | undefined;
 }
 
 export interface BoardCardDetailPanelProps extends BoardCardDetailViewProps {
@@ -1883,8 +1889,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
   return (
     <>
-      {/* Identity row: key, the card's labels, its stage. */}
-      <div className="flex shrink-0 items-center gap-[9px] px-4 pt-4">
+      {/* Identity row: key, the card's labels, its stage. `relative z-10` lifts
+          it (and the × / ⋯ / fullscreen buttons it carries) above the nav
+          rails' band, which would otherwise sit over them (T3O-37, D8). */}
+      <div className="relative z-10 flex shrink-0 items-center gap-[9px] px-4 pt-4">
         <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">{card.key}</span>
         {props.parentCard != null ? (
           // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
@@ -2358,7 +2366,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 }
 
 export function BoardCardDetailView(props: BoardCardDetailViewProps) {
-  const [maximised, setMaximised] = useState(false);
+  // Fullscreen is the one piece of sheet state that must OUTLIVE a step to the
+  // next card (T3O-37, D5): the sheet remounts per card id, which is what gives
+  // every other per-card view state its reset for free, but being thrown out of
+  // fullscreen mid-read is not a reset anybody asked for. The store names the
+  // card it belongs to — the step hands it over, and a card that opens any
+  // other way opens windowed because it does not match. The board clears it on
+  // close.
+  const cardId = props.detail.card.id;
+  const maximised = useBoardUiStore((state) => state.detailMaximisedCardId === cardId);
+  const setMaximisedCardId = useBoardUiStore((state) => state.setDetailMaximisedCardId);
   const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(null);
   const wide = boardCardDetailIsWide(props.stages, props.detail.card.stage, paneChoice);
   return (
@@ -2368,12 +2385,17 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
         if (!open) props.onClose();
       }}
     >
-      <BoardCardDetailPopup cardId={props.detail.card.id} maximised={wide && maximised} wide={wide}>
+      <BoardCardDetailPopup
+        cardId={cardId}
+        maximised={wide && maximised}
+        nav={props.nav}
+        wide={wide}
+      >
         <BoardCardDetailPanel
           {...props}
           maximised={maximised}
           onSelectPane={setPaneChoice}
-          onToggleMaximised={() => setMaximised((current) => !current)}
+          onToggleMaximised={() => setMaximisedCardId(maximised ? null : cardId)}
           paneChoice={paneChoice}
         />
       </BoardCardDetailPopup>
@@ -2389,28 +2411,42 @@ export function BoardCardDetailPopup({
   cardId,
   wide = false,
   maximised = false,
+  nav = null,
   children,
 }: {
   readonly cardId: BoardCardId | null;
   readonly wide?: boolean;
   readonly maximised?: boolean;
+  /** Step to the card before/after this one in its column (T3O-37). The
+      loading frame takes it too, so stepping never blinks the chevrons out
+      while the next card's detail subscription opens. */
+  readonly nav?: BoardCardNav | null | undefined;
   readonly children: React.ReactNode;
 }) {
+  const [sheet, setSheet] = useState<HTMLElement | null>(null);
+  useBoardCardNavKeys(sheet, nav);
   return (
     <DialogPopup
       aria-labelledby={CARD_TITLE_ID}
       className={cn(
-        "overflow-hidden p-0",
+        // `group/sheet` is what the nav rails watch: they reveal on hover of
+        // the whole sheet, not of their own invisible band.
+        "group/sheet overflow-hidden p-0",
         maximised
           ? "fixed inset-0 h-screen max-h-none w-screen max-w-none rounded-none border-0"
           : wide
             ? "h-[86vh] max-h-[86vh] w-[min(1220px,100%)] max-w-[1220px]"
             : "max-h-[86vh] w-[min(760px,100%)] max-w-[760px]",
       )}
+      ref={setSheet}
       showCloseButton={false}
       {...(cardId === null ? {} : { "data-board-card-detail": cardId })}
     >
       {children}
+      {/* Last in the DOM so Tab reaches Close and the composer first; the
+          stacking that keeps the header's buttons hit-testable over a rail is
+          the explicit z-index on each, not source order (D8). */}
+      <BoardCardNavRails nav={nav} />
     </DialogPopup>
   );
 }

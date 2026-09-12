@@ -77,10 +77,23 @@ interface BoardUiStore extends BoardUiState {
       (T3O-34, D8). Transient — it is a measurement of this client's live
       layout, not a preference, so it is deliberately outside `partialize`. */
   sidebarHostsModeTabs: boolean;
+  /** The card whose sheet is currently in fullscreen, or null (T3O-37, D5).
+      Transient, and deliberately outside `partialize` for the same reason as
+      the field above: it belongs to the sheet that is open right now, not to
+      the client. It lives here rather than in the sheet only so that stepping
+      to the next card — which remounts the sheet on purpose, to reset
+      everything else — does not throw the reader out of fullscreen; a step
+      hands the flag to the card it steps to. Naming the card rather than
+      holding a bare boolean is what keeps fullscreen from leaking into a card
+      the user never maximised: every OTHER way a card opens (a deep link, a
+      sub-board drill, clicking a different card) leaves this id behind, and a
+      sheet is fullscreen only while it matches. The board clears it on close. */
+  detailMaximisedCardId: string | null;
   recordModeLocation: (mode: WorkspaceMode, href: string) => void;
   setColumnCollapsed: (stageKey: string, collapsed: boolean) => void;
   setUtilityMenuCollapsed: (collapsed: boolean) => void;
   setSidebarHostsModeTabs: (hosting: boolean) => void;
+  setDetailMaximisedCardId: (cardId: string | null) => void;
 }
 
 /** The first column starts collapsed to a rail (D13): it is the one column that
@@ -145,6 +158,7 @@ export const useBoardUiStore = create<BoardUiStore>()(
       collapsedByStage: {},
       utilityMenuCollapsed: false,
       sidebarHostsModeTabs: false,
+      detailMaximisedCardId: null,
       recordModeLocation: (mode, href) =>
         set((state) => {
           // The mounting surface fixes `mode`, but the router location updates
@@ -177,6 +191,10 @@ export const useBoardUiStore = create<BoardUiStore>()(
       setSidebarHostsModeTabs: (hosting) =>
         set((state) =>
           state.sidebarHostsModeTabs === hosting ? state : { sidebarHostsModeTabs: hosting },
+        ),
+      setDetailMaximisedCardId: (cardId) =>
+        set((state) =>
+          state.detailMaximisedCardId === cardId ? state : { detailMaximisedCardId: cardId },
         ),
     }),
     {

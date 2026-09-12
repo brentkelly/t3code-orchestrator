@@ -70,6 +70,12 @@ import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
 import { countBoardColumnCards, filterBoardColumnsByQuery } from "./boardCardFilter";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { BoardCardDetail } from "./BoardCardDetail";
+import {
+  boardCardMaximisedAfterStep,
+  resolveBoardCardNeighbours,
+  type BoardCardStep,
+} from "./boardCardNav";
+import type { BoardCardNav } from "./BoardCardNavRails";
 import { useBoardAttentionSettle } from "./boardAttentionSettle";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
@@ -205,10 +211,11 @@ function EnvironmentBoard({
   /** Update the current route's search params in place — the scope (the
       path) never changes here, only the selection/filter state riding it. */
   const patchSearch = useCallback(
-    (updater: (previous: BoardSearch) => BoardSearch) => {
+    (updater: (previous: BoardSearch) => BoardSearch, options?: { readonly replace?: boolean }) => {
       void navigate({
         to: ".",
         search: (previous: BoardSearch) => updater(previous),
+        replace: options?.replace === true,
       });
     },
     [navigate],
@@ -253,6 +260,7 @@ function EnvironmentBoard({
 
   const collapsedByStage = useBoardUiStore((state) => state.collapsedByStage);
   const setColumnCollapsed = useBoardUiStore((state) => state.setColumnCollapsed);
+  const setDetailMaximisedCardId = useBoardUiStore((state) => state.setDetailMaximisedCardId);
 
   // The user-defined stage list drives column order and labels (D13); falls
   // back to the compiled seeds until the first shell snapshot arrives.
@@ -903,6 +911,50 @@ function EnvironmentBoard({
       return rest;
     });
   }, [patchSearch]);
+  // Fullscreen rides the store so it survives a STEP between cards (T3O-37,
+  // D5), and the store names the card it belongs to, so a card that opens any
+  // other way opens windowed whether or not it passed through "no card open"
+  // on the way in. This effect only has to forget the card once the sheet is
+  // gone, so that re-opening that same card later starts windowed too.
+  useEffect(() => {
+    if (selectedCardId === null) setDetailMaximisedCardId(null);
+  }, [selectedCardId, setDetailMaximisedCardId]);
+  // ── Stepping between cards (T3O-37) ────────────────────────────────
+  // The sibling list is `visibleColumns` itself — the very array each column
+  // renders — so what you step through is exactly what the board is currently
+  // showing: same scope, same project, same "Stalled only", same search box.
+  // There is no second filter here to drift from the first. A card that is not
+  // in it (a deep link, or one the query is hiding) resolves to index -1, and
+  // both the rails and the shortcuts go quiet rather than guessing.
+  const neighbours = useMemo(
+    () => resolveBoardCardNeighbours(visibleColumns, selectedCardId),
+    [selectedCardId, visibleColumns],
+  );
+  const stepCard = useCallback(
+    (direction: BoardCardStep) => {
+      const target = direction === -1 ? neighbours.prev : neighbours.next;
+      if (target === null) return;
+      // A step is the one card change that carries fullscreen with it (D5).
+      // Read non-reactively: the board does not re-render when the sheet above
+      // it is maximised.
+      const store = useBoardUiStore.getState();
+      store.setDetailMaximisedCardId(
+        boardCardMaximisedAfterStep(store.detailMaximisedCardId, selectedCardId, target.cardId),
+      );
+      // `replace`, not push (D4): reading ten cards in a row must not bury the
+      // board under ten history entries. Back closes the sheet to where the
+      // reading started. Clicking a card on the board still pushes.
+      patchSearch((previous) => ({ ...previous, card: target.cardId }), { replace: true });
+    },
+    [neighbours, patchSearch, selectedCardId],
+  );
+  const cardNav = useMemo<BoardCardNav | null>(() => {
+    if (neighbours.prev === null && neighbours.next === null) return null;
+    const target = (card: BoardCardShell | null) =>
+      card === null ? null : { key: card.key, title: card.title };
+    return { prev: target(neighbours.prev), next: target(neighbours.next), onStep: stepCard };
+  }, [neighbours, stepCard]);
+
   /** The stack affordance on a split parent's face (t3o-25, AC2): clicking it
       drills into that parent's sub-board. */
   const handleOpenSubBoard = useCallback(
@@ -1280,12 +1332,26 @@ function EnvironmentBoard({
         </div>
       </div>
       {/* The card opens as a centred modal over the board (t3o-06), not a
-          rail beside it — so it never squeezes the columns. */}
+          rail beside it — so it never squeezes the columns.
+
+          `key` is what gives every per-card view state its reset on a step
+          (T3O-37, D5) — and stepping does NOT replay the sheet's open
+          transition, despite remounting the Dialog with it. Base UI only
+          animates a popup that goes from closed to open: `useTransitionStatus`
+          seeds `mounted` from `open`, so a Root that mounts already open never
+          reaches the `'starting'` status, and `data-starting-style` — which is
+          the sole hook for the backdrop's fade and the popup's scale in
+          `dialog-styles.ts` — is never written. This sheet is only ever
+          mounted open, so that has always been true of opening a card too; a
+          step swaps the sheet's contents in one commit and the frame under it
+          does not flinch. Hoisting the Dialog above the key would buy nothing
+          and cost the reset. */}
       {selectedCardId !== null ? (
         <BoardCardDetail
           cardId={BoardCardId.make(selectedCardId)}
           environmentId={environmentId}
           key={selectedCardId}
+          nav={cardNav}
           onClose={handleCloseDetail}
           onOpenSubBoard={openSubBoard}
         />

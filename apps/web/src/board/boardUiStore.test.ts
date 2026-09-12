@@ -20,6 +20,7 @@ function resetStore() {
     collapsedByStage: {},
     utilityMenuCollapsed: false,
     sidebarHostsModeTabs: false,
+    detailMaximisedCardId: null,
   });
 }
 
@@ -198,6 +199,40 @@ describe("sidebarHostsModeTabs", () => {
     // the migration does not read it at all.
     expect(
       "sidebarHostsModeTabs" in migratePersistedBoardUiState({ sidebarHostsModeTabs: true }),
+    ).toBe(false);
+  });
+});
+
+describe("detailMaximisedCardId", () => {
+  const maximisedCardId = () => useBoardUiStore.getState().detailMaximisedCardId;
+
+  it("holds the open sheet's fullscreen across a step to the next card (T3O-37)", () => {
+    // The sheet remounts per card id, which is what resets every other
+    // per-card view state; fullscreen lives out here precisely so that remount
+    // does not throw the reader back into a window mid-read. A step hands the
+    // flag to the card it steps to.
+    //
+    // The field names the card it belongs to rather than being a bare "the
+    // sheet is fullscreen" boolean, which is what keeps the openings that
+    // never pass through "no card open" — a sub-board drill carrying a card
+    // argument, a deep link followed while a card is still open — from
+    // inheriting fullscreen. Which card may take the flag is decided by
+    // `boardCardMaximisedAfterStep`, and tested there; the store only has to
+    // hold whatever it is handed.
+    resetStore();
+    useBoardUiStore.getState().setDetailMaximisedCardId("card-a");
+    expect(maximisedCardId()).toBe("card-a");
+    useBoardUiStore.getState().setDetailMaximisedCardId("card-b");
+    expect(maximisedCardId()).toBe("card-b");
+    useBoardUiStore.getState().setDetailMaximisedCardId(null);
+    expect(maximisedCardId()).toBe(null);
+  });
+
+  it("is transient: it belongs to the open card, not to the client", () => {
+    // A reload must not reopen the next card you happen to click in
+    // fullscreen, so the migration ignores the field entirely.
+    expect(
+      "detailMaximisedCardId" in migratePersistedBoardUiState({ detailMaximisedCardId: "card-a" }),
     ).toBe(false);
   });
 });

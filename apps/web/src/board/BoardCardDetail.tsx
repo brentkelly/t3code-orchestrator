@@ -90,6 +90,7 @@ import {
   type BoardDetailDependency,
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
+import type { BoardCardNav } from "./BoardCardNavRails";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
 import { boardCardProjectOptions } from "./BoardCardProjectSelect";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
@@ -103,7 +104,15 @@ import { readLocalApi } from "../localApi";
 
 /** The modal frame, empty, while `board.subscribeCard` opens — same sheet, so
     nothing jumps when the detail lands. */
-function LoadingModal({ onClose, wide }: { readonly onClose: () => void; readonly wide: boolean }) {
+function LoadingModal({
+  nav,
+  onClose,
+  wide,
+}: {
+  readonly nav: BoardCardNav | null;
+  readonly onClose: () => void;
+  readonly wide: boolean;
+}) {
   return (
     <Dialog
       open
@@ -111,7 +120,9 @@ function LoadingModal({ onClose, wide }: { readonly onClose: () => void; readonl
         if (!open) onClose();
       }}
     >
-      <BoardCardDetailPopup cardId={null} wide={wide}>
+      {/* The empty frame takes the rails too, so stepping never blinks the
+          chevrons out while the next card's subscription opens (T3O-37). */}
+      <BoardCardDetailPopup cardId={null} nav={nav} wide={wide}>
         <div className="flex items-center gap-2 px-4 py-16">
           <span className="flex-1 text-center text-sm text-muted-foreground">Loading card…</span>
         </div>
@@ -125,11 +136,15 @@ const EMPTY_SHELL_CARDS: ReadonlyArray<BoardCardShell> = [];
 export function BoardCardDetail({
   environmentId,
   cardId,
+  nav = null,
   onClose,
   onOpenSubBoard,
 }: {
   readonly environmentId: EnvironmentId;
   readonly cardId: BoardCardId;
+  /** Step to the card before/after this one in its column (T3O-37), or null
+      when the board has no visible neighbours to step to. */
+  readonly nav?: BoardCardNav | null | undefined;
   readonly onClose: () => void;
   /** Navigate into a parent's sub-board (t3o-25), optionally with a card's
       sheet open there — wired to the child sheet's "part of" chip and the
@@ -554,6 +569,7 @@ export function BoardCardDetail({
     // the detail will need — no jump from sheet to working surface.
     return (
       <LoadingModal
+        nav={nav}
         onClose={onClose}
         wide={cardShell !== undefined && boardCardHasThreadPane(stages, cardShell.stage)}
       />
@@ -824,6 +840,7 @@ export function BoardCardDetail({
 
   return (
     <BoardCardDetailView
+      nav={nav}
       adoptableThreads={adoptableThreads}
       stageRestart={stageRestart}
       stepFailure={stepFailure}
