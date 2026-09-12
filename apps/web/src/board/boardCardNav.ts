@@ -1,12 +1,14 @@
 /**
  * Card-to-card navigation in the detail sheet (T3O-37): the pure half.
  *
- * With a card open you can step to the card before or after it **in the same
- * column**, in board order, without closing the sheet. The sibling list is the
+ * With a card open you can step to the card before or after it **on the whole
+ * board**, in board order, without closing the sheet. The sibling list is the
  * board's own `visibleColumns` — scope-, project-, stalled- and query-filtered
- * — so what you step through is exactly what the column is currently showing,
- * with no second filter to drift from the first. Stepping never wraps and
- * never crosses into another column.
+ * — read in stage order, so what you step through is exactly what the board is
+ * currently showing, with no second filter to drift from the first. Stepping
+ * runs off the bottom of one column into the top of the next (T3O-44) and back
+ * again, and never wraps: only the first card of the first stage has no
+ * previous, only the last card of the last stage has no next.
  *
  * Everything here is a pure function over data the caller already has: the
  * rails component and `BoardPage` own the React and the routing.
@@ -15,52 +17,51 @@ import type { BoardCardShell, BoardStageId } from "@t3tools/contracts";
 import type { BoardStageColumns } from "@t3tools/client-runtime/state/shell";
 
 export interface BoardCardNeighbours {
-  /** The stage whose column holds the open card, or null when it holds none. */
+  /** The stage whose column holds the open card. Null — and both neighbours
+      null with it — when the board is not showing that card at all. */
   readonly stage: BoardStageId | null;
-  /** Index within that column, or -1 when the open card is not visible. */
-  readonly index: number;
-  /** Length of the open card's column; 0 when it is not visible. */
-  readonly total: number;
   readonly prev: BoardCardShell | null;
   readonly next: BoardCardShell | null;
 }
 
-const NO_NEIGHBOURS: BoardCardNeighbours = {
-  stage: null,
-  index: -1,
-  total: 0,
-  prev: null,
-  next: null,
-};
+const NO_NEIGHBOURS: BoardCardNeighbours = { stage: null, prev: null, next: null };
 
 /**
- * Neighbours of `cardId` within its own column of `columns`, in board order.
+ * Neighbours of `cardId` across `columns`, read in `stageOrder`.
+ *
+ * `stageOrder` is the ordered list of stages the board is RENDERING, which is
+ * what makes the step follow the columns left to right: a `BoardStageColumns`
+ * is keyed by stage id with no order of its own, and a sub-board renders only
+ * the stages from its materialisation floor onward. A stage missing from
+ * `stageOrder`, or holding no cards, is simply not stepped through.
  *
  * A card that is not in `columns` at all — a deep link, or a card the search
  * box or the "Stalled only" filter is currently hiding — resolves to
- * `index: -1` with both neighbours null, which is how the rails and the
+ * `stage: null` with both neighbours null, which is how the rails and the
  * shortcuts go quiet rather than guessing at a list the user cannot see.
  */
 export function resolveBoardCardNeighbours(
   columns: BoardStageColumns,
+  stageOrder: ReadonlyArray<BoardStageId>,
   cardId: string | null,
 ): BoardCardNeighbours {
   if (cardId === null) return NO_NEIGHBOURS;
-  for (const [stage, cards] of Object.entries(columns)) {
-    const index = cards.findIndex((card) => card.cardId === cardId);
-    if (index === -1) continue;
-    return {
-      stage: stage as BoardStageId,
-      index,
-      total: cards.length,
-      prev: index > 0 ? (cards[index - 1] ?? null) : null,
-      next: index < cards.length - 1 ? (cards[index + 1] ?? null) : null,
-    };
+  // One walk, holding the card before the open one and stopping at the card
+  // after it: the two cards the rails need are the only reason to walk at all,
+  // so a board of any size is half a pass and no allocation.
+  let previous: BoardCardShell | null = null;
+  let stage: BoardStageId | null = null;
+  for (const stageId of stageOrder) {
+    for (const card of columns[stageId] ?? []) {
+      if (stage !== null) return { stage, prev: previous, next: card };
+      if (card.cardId === cardId) stage = stageId;
+      else previous = card;
+    }
   }
-  return NO_NEIGHBOURS;
+  return stage === null ? NO_NEIGHBOURS : { stage, prev: previous, next: null };
 }
 
-/** -1 steps to the previous card in the column, 1 to the next. */
+/** -1 steps to the previous card in board order, 1 to the next. */
 export type BoardCardStep = -1 | 1;
 
 /**
@@ -123,11 +124,37 @@ export function boardCardStepForKey(
   }
 }
 
-/** What a rail needs to name its target card: nothing more than the sheet
-    already shows on the card's own face. */
+/** What a rail needs to name its target card: the card's own face, plus the
+    column it sits in when the step is about to leave this one. */
 export interface BoardCardNavTarget {
   readonly key: string;
   readonly title: string;
+  /** The target's stage label when the step CROSSES stages, null when it stays
+      in this column. A step out of a column is the one thing about stepping a
+      user cannot see coming from behind the sheet, so the rail says it. */
+  readonly stageLabel: string | null;
+}
+
+/**
+ * One rail's target (T3O-44): the neighbour card as the rail names it, or null
+ * when there is no card that way.
+ *
+ * `fromStage` is the open card's stage and `stageLabels` maps stage id to the
+ * label the columns are headed with, so an unlabelled stage — one the board is
+ * not rendering, which a neighbour never is — degrades to naming the card
+ * alone rather than inventing a column name.
+ */
+export function boardCardNavTarget(
+  card: Pick<BoardCardShell, "key" | "title" | "stage"> | null,
+  fromStage: BoardStageId | null,
+  stageLabels: ReadonlyMap<string, string>,
+): BoardCardNavTarget | null {
+  if (card === null) return null;
+  return {
+    key: card.key,
+    title: card.title,
+    stageLabel: card.stage === fromStage ? null : (stageLabels.get(card.stage) ?? null),
+  };
 }
 
 export interface BoardCardNav {
@@ -139,7 +166,7 @@ export interface BoardCardNav {
 /**
  * The step a keystroke should actually take, given what is open: null when the
  * keystroke asks for nothing, and null again when it asks for a card that is
- * not there — the end of a column, where the rail is absent too.
+ * not there — the end of the board, where the rail is absent too.
  *
  * This is the whole decision the sheet's key handler makes; it takes the
  * keystroke no further than that, so the handler is four lines of DOM.

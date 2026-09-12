@@ -4,7 +4,8 @@
  * is pure and lives in `boardCardNav.ts`.
  *
  * A rail renders only when a card exists in that direction, so "nothing there"
- * reads as an absent control rather than a dead one.
+ * reads as an absent control rather than a dead one — which, since stepping
+ * spans stages (T3O-44), is only at the two ends of the board.
  */
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef } from "react";
@@ -67,7 +68,10 @@ function BoardCardNavRail(props: {
   readonly target: BoardCardNavTarget;
   readonly onStep: () => void;
 }) {
-  const label = `${props.target.key} · ${props.target.title}  ( ${props.side === "left" ? "← or K" : "→ or J"} )`;
+  // Naming the column only when the step leaves this one keeps the common case
+  // — the next card down — reading as short as it did (T3O-44).
+  const stage = props.target.stageLabel === null ? "" : ` in ${props.target.stageLabel}`;
+  const label = `${props.target.key} · ${props.target.title}${stage}  ( ${props.side === "left" ? "← or K" : "→ or J"} )`;
   return (
     // The 46px band is decoration only (D6): were it hit-testable it would be a
     // dead strip down each edge of the sheet, over message text on the left and
@@ -105,7 +109,8 @@ function BoardCardNavRail(props: {
 }
 
 /** Both overlay rails. Renders nothing at all for a direction with no card —
-    at the top of a column there is no left rail, and `←`/`K` do nothing. */
+    at the very start of the board there is no left rail, and `←`/`K` do
+    nothing. */
 export function BoardCardNavRails({ nav }: { readonly nav: BoardCardNav | null }): ReactNode {
   if (nav === null) return null;
   return (

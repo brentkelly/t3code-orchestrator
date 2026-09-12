@@ -144,8 +144,8 @@ export function BoardCardDetail({
 }: {
   readonly environmentId: EnvironmentId;
   readonly cardId: BoardCardId;
-  /** Step to the card before/after this one in its column (T3O-37), or null
-      when the board has no visible neighbours to step to. */
+  /** Step to the card before/after this one on the board (T3O-37, T3O-44), or
+      null when the board has no visible neighbours to step to. */
   readonly nav?: BoardCardNav | null | undefined;
   readonly onClose: () => void;
   /** Navigate into a parent's sub-board (t3o-25), optionally with a card's
