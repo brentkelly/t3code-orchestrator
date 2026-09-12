@@ -34,6 +34,7 @@ import {
   BoardCardWorktreeProvisioningPayload,
   BoardCardWorktreeReadyPayload,
   BoardCardWorktreeReclaimedPayload,
+  BoardCardAutoMergeHoldRecordedPayload,
   BoardCardPullRequestRecordedPayload,
   BoardCardStepSelectedPayload,
   BoardCardStepAdmittedPayload,
@@ -146,6 +147,9 @@ const decodeBoardCardWorktreeReclaimedPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardPullRequestRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardPullRequestRecordedPayload,
 );
+const decodeBoardCardAutoMergeHoldRecordedPayload = Schema.decodeUnknownEffect(
+  BoardCardAutoMergeHoldRecordedPayload,
+);
 const decodeBoardStageCreatedPayload = Schema.decodeUnknownEffect(BoardStageCreatedPayload);
 const decodeBoardStageRenamedPayload = Schema.decodeUnknownEffect(BoardStageRenamedPayload);
 const decodeBoardStageReorderedPayload = Schema.decodeUnknownEffect(BoardStageReorderedPayload);
@@ -245,8 +249,11 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     scheduledStartAt: payload.scheduledStartAt ?? null,
     // A card is never born armed (T3O-24, D2): the arm is a human delegating
     // the D18 build gate on a card they can already see waiting, and there is
-    // no create-command field to set it with.
+    // no create-command field to set it with. Nor born auto-merging (T3O-38,
+    // D3), for the same reason — and with nothing merged, nothing held.
     autoStart: false,
+    autoMerge: false,
+    autoMergeHold: null,
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
     worktree: null,
@@ -772,6 +779,15 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    // The auto-merge hold (T3O-38, D4) is on the card aggregate, so the event
+    // carries the whole post-change card exactly like the pull-request record
+    // above and the upsert is the whole of the fold.
+    case "board.card-auto-merge-hold-recorded":
+      return decodeBoardCardAutoMergeHoldRecordedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     // Reporting only — it changes no card field, so the read model is
     // unchanged and a replay that includes it lands exactly where a replay
     // without it would.
@@ -964,6 +980,10 @@ export function boardShellStreamEvent(
     // the card aggregate — so this delta carries the real value like any other
     // card field, with no absent-means-preserve dance.
     case "board.card-pull-request-recorded":
+    // The auto-merge hold drives three shell fields (T3O-38, D14) and rides
+    // the card aggregate, so this delta carries the real values like any
+    // other card field.
+    case "board.card-auto-merge-hold-recorded":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,

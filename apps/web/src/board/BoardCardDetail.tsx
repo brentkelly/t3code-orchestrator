@@ -25,6 +25,7 @@ import {
   boardCardProjectLock,
   boardStallIsWaiting,
   boardStageWithRole,
+  isBoardMergeStageExecution,
   resolveBoardProjectAccent,
   isBoardCardBaseRetargeted,
   resolveBoardCardEffectiveBase,
@@ -684,6 +685,17 @@ export function BoardCardDetail({
   // from the same settings the executor reads, so the bar and the real loop can
   // never disagree on the cap.
   const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
+  // The board-wide auto-merge default (T3O-38, D2/D3). Resolved off the
+  // MERGE-ROLE stage, not off a stage literally named "Ready for merge": the
+  // role is what the server reads, and keying on the name would silently
+  // disagree with it on a renamed pipeline.
+  const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
+  const mergeExecution =
+    mergeStageId === null ? null : resolveBoardStageExecution(boardSettings, mergeStageId);
+  const boardWideAutoMerge =
+    mergeExecution !== null && isBoardMergeStageExecution(mergeExecution)
+      ? mergeExecution.autoMerge
+      : false;
   /**
    * The rounds this card's loop has RECORDED — the budget's floor.
    *
@@ -1112,6 +1124,10 @@ export function BoardCardDetail({
       onSetAutoStart={(autoStart) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, autoStart } }))
       }
+      onSetAutoMerge={(autoMerge) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, autoMerge } }))
+      }
+      autoMergeFromBoardSetting={boardWideAutoMerge}
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running for this note's purpose: a queued step has
       // already been selected onto the run row, so its model and authority are

@@ -279,6 +279,30 @@ export const make = Effect.gen(function* () {
               }),
           ),
         ),
+    // T3o: the structured refusal probe (T3O-38, D7).
+    changeRequestMergeState: (input) =>
+      forgejo
+        .pullRequestMergeState({
+          cwd: input.cwd,
+          ...(input.context ? { context: input.context } : {}),
+          reference: input.reference,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "forgejo",
+                operation: "changeRequestMergeState",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.reference,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        ),
     checkoutChangeRequest: (input) =>
       forgejo
         .checkoutPullRequest({

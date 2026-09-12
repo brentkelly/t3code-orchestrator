@@ -39,7 +39,10 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { ServerActivation } from "../serverActivation.ts";
 import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
-import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
+import {
+  BoardPullRequestGateway,
+  BoardPullRequestGatewayError,
+} from "./BoardPullRequestGateway.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
 import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
 import { projectBoardEvent } from "./projector.ts";
@@ -79,6 +82,8 @@ const card: BoardCard = {
   baseBranch: null,
   scheduledStartAt: null,
   autoStart: false,
+  autoMerge: false,
+  autoMergeHold: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",
@@ -268,6 +273,13 @@ function reconcileCommandObjects(input: {
         BoardPullRequestGateway.of({
           find: () => Effect.succeed(null),
           merge: () => Effect.void,
+          mergeState: () =>
+            Effect.fail(
+              new BoardPullRequestGatewayError({
+                operation: "mergeState",
+                detail: "No provider is registered.",
+              }),
+            ),
         }),
       ),
       BoardStepSlotsLive,

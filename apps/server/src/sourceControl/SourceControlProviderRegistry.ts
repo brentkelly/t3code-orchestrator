@@ -123,6 +123,17 @@ function unsupportedProvider(
         reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
         detail: `No ${kind} source control provider is registered.`,
       }),
+    // T3o (T3O-38, D7): an unsupported probe is not a failure the board
+    // reports — the caller reads it as "unclassifiable" and falls back to the
+    // plain retry ladder.
+    changeRequestMergeState: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "changeRequestMergeState",
+        cwd: input.cwd,
+        reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
+        detail: `No ${kind} source control provider is registered.`,
+      }),
     checkoutChangeRequest: (input) =>
       new SourceControlProviderError({
         provider: kind,
@@ -203,6 +214,11 @@ function bindProviderContext(
       }),
     mergeChangeRequest: (input) =>
       provider.mergeChangeRequest({
+        ...input,
+        context: input.context ?? context,
+      }),
+    changeRequestMergeState: (input) =>
+      provider.changeRequestMergeState({
         ...input,
         context: input.context ?? context,
       }),

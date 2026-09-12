@@ -8,11 +8,23 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as DateTime from "effect/DateTime";
 
-import { NonNegativeInt, type ChangeRequestMergeStrategy, type VcsError } from "@t3tools/contracts";
+import {
+  NonNegativeInt,
+  type ChangeRequestChecks,
+  type ChangeRequestMergeState,
+  type ChangeRequestMergeStrategy,
+  type VcsError,
+} from "@t3tools/contracts";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+// T3o: the structured refusal probe (T3O-38, D7).
+import {
+  forgejoMergeState,
+  parseForgejoChecks,
+  parseForgejoPullRequestMergeability,
+} from "./forgejoMergeState.ts";
 import {
   decodeForgejoPullRequestJson,
   decodeForgejoPullRequestListJson,
@@ -31,6 +43,24 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  * badge on a card that has one.
  */
 const LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+// T3o (T3O-38, D7): how many recent workflow runs the refusal probe reads.
+// The listing is repository-wide and filtered by head sha here, so the limit
+// only has to cover "the runs for the branch we are about to merge"; twenty is
+// several pushes' worth and keeps the call small.
+const ACTIONS_RUN_LIST_LIMIT = 20;
+
+/** No check evidence at all — what the probe reports when the run listing
+    could not be read. Paired with `checksReadable: false`, which is what keeps
+    it from being classified as "all green and still refused". */
+const EMPTY_FORGEJO_CHECKS: ChangeRequestChecks = {
+  total: 0,
+  passed: 0,
+  pending: 0,
+  failed: 0,
+  failing: [],
+  running: [],
+};
 
 /**
  * `fgj pr create` has no `--body-file`, so the body travels as one argv entry — and Linux caps a
@@ -432,6 +462,13 @@ export class ForgejoCli extends Context.Service<
       readonly strategy: ChangeRequestMergeStrategy;
     }) => Effect.Effect<void, ForgejoCliError>;
 
+    /** T3o: the structured refusal probe (T3O-38, D7). */
+    readonly pullRequestMergeState: (input: {
+      readonly cwd: string;
+      readonly context?: ForgejoContext;
+      readonly reference: string;
+    }) => Effect.Effect<ChangeRequestMergeState, ForgejoCliError>;
+
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly context?: ForgejoContext;
@@ -729,6 +766,47 @@ export const make = Effect.gen(function* () {
             state: after.state,
           });
         }
+      }),
+    // T3o: the structured refusal probe (T3O-38, D7). Two calls, because
+    // Forgejo splits the answer: the pull request carries `mergeable` and its
+    // head sha, the checks live with Forgejo Actions.
+    pullRequestMergeState: (input) =>
+      Effect.gen(function* () {
+        const remote = yield* requireRemote(input);
+        const reference = normalizeForgejoPullRequestReference(input.reference);
+        const viewed = yield* executePullRequest({
+          cwd: input.cwd,
+          reference,
+          args: ["pr", "view", reference, "--json", ...targetArgs(remote)],
+        });
+        const { mergeable, headSha, behind } = parseForgejoPullRequestMergeability(viewed.stdout);
+
+        // Best-effort, and the ONE place where "we could not look" must not
+        // read as "there is nothing to wait for": an instance without Actions,
+        // or an `fgj` whose listing we cannot parse, leaves the state
+        // `unknown`, which retries. Claiming every check is green when we
+        // never saw one would stop the ladder on the first refusal.
+        const runs = yield* execute({
+          cwd: input.cwd,
+          args: [
+            "actions",
+            "run",
+            "list",
+            "--json",
+            "-L",
+            String(ACTIONS_RUN_LIST_LIMIT),
+            ...targetArgs(remote),
+          ],
+          maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+        }).pipe(Effect.catchCause(() => Effect.succeed(null)));
+
+        return forgejoMergeState({
+          mergeable,
+          headSha,
+          behind,
+          checks: runs === null ? EMPTY_FORGEJO_CHECKS : parseForgejoChecks(runs.stdout, headSha),
+          checksReadable: runs !== null,
+        });
       }),
     getRepositoryCloneUrls: (input) =>
       viewRepository({

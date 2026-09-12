@@ -30,6 +30,7 @@ import {
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import { parseGitHubMergeState } from "../sourceControl/gitHubMergeState.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -580,6 +581,19 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["pr", "merge", input.reference, `--${input.strategy}`],
         }).pipe(Effect.asVoid),
+      // T3o (T3O-38, D7): the refusal probe. Parsed through the real parser
+      // so a stubbed `gh` body is read exactly as a live one would be.
+      pullRequestMergeState: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "pr",
+            "view",
+            input.reference,
+            "--json",
+            "mergeStateStatus,statusCheckRollup,headRefOid",
+          ],
+        }).pipe(Effect.map((result) => parseGitHubMergeState(result.stdout))),
     },
     ghCalls,
   };

@@ -18,8 +18,10 @@ import {
   deriveBoardCardChildAttention,
   deriveBoardCardChildRunning,
   deriveBoardCardThreadState,
+  isBoardMergeStageExecution,
   isBoardProjectHidden,
   resolveBoardProjectAccent,
+  resolveBoardStageExecution,
   type BoardCardShell,
   type ProviderInstanceId,
   type BoardCardThreadShell,
@@ -284,6 +286,10 @@ function EnvironmentBoard({
   const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const stageState = useMemo(() => stageStateOf(orderedStages), [orderedStages]);
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
+  // The merge-role stage, for the armed-and-quiet `Auto` glyph (T3O-38, D13):
+  // an armed card in Building looks normal because it is, so the glyph is
+  // offered only where the merge is actually imminent.
+  const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
   // The columns this SCOPE renders (t3o-25, D1): every stage on the root
   // board, the materialisation floor onward inside a sub-board. Stage
   // adjacency and ordering keep reading the FULL `stageState` — the stages a
@@ -314,6 +320,16 @@ function EnvironmentBoard({
     (projectId: ProjectId) => resolveBoardProjectAccent(boardSettings, projectId),
     [boardSettings],
   );
+
+  // The board-wide arm (T3O-38, D2) — the third arming condition, and the one
+  // the card shell cannot carry, since the SQL snapshot producer cannot see
+  // settings. ORed into the glyph in the column exactly as `BoardCardDetail`
+  // ORs it into the modal chip.
+  const boardWideAutoMerge = useMemo(() => {
+    if (mergeStageId === null) return false;
+    const execution = resolveBoardStageExecution(boardSettings, mergeStageId);
+    return isBoardMergeStageExecution(execution) ? execution.autoMerge : false;
+  }, [boardSettings, mergeStageId]);
 
   const allProjects = useMemo(
     () => Option.getOrNull(shellState.snapshot)?.projects ?? [],
@@ -1314,6 +1330,8 @@ function EnvironmentBoard({
               }
               key={stage.stageId}
               label={stage.label}
+              atMergeStage={stage.stageId === mergeStageId}
+              autoMergeBoardWide={boardWideAutoMerge}
               onCardDragEnd={handleCardDragEnd}
               onCardReorder={handleCardReorder}
               onCardDragStart={handleCardDragStart}

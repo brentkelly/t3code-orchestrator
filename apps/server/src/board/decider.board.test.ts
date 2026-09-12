@@ -65,6 +65,8 @@ function makeCard(
     baseBranch: null,
     scheduledStartAt: null,
     autoStart: false,
+    autoMerge: false,
+    autoMergeHold: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -1921,6 +1923,24 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           commandId: CommandId.make("cmd-record"),
           cardId: BoardCardId.make("card-provisioning"),
           path: "/tmp/worktrees/card-provisioning",
+          createdAt: NOW,
+        },
+        // The card starts with no hold, so recording one is a real change and
+        // clears the decider's no-op guard. It writes one card field and can
+        // emit no move.
+        "board.card.record-auto-merge-hold": {
+          type: "board.card.record-auto-merge-hold",
+          commandId: CommandId.make("cmd-record-auto-merge-hold"),
+          cardId: BoardCardId.make("card-ready"),
+          hold: {
+            reason: "Required checks have not passed.",
+            classification: "soft",
+            detail: null,
+            attempt: 1,
+            heldSince: NOW,
+            retryAt: NOW,
+            headSha: null,
+          },
           createdAt: NOW,
         },
         // Reporting only: it writes an activity row and touches no card field,
@@ -3858,6 +3878,177 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           boardWith(waiting({ autoStart: true })),
         );
         assert.include(String(error), "until its dependency is done");
+      }),
+    );
+  });
+
+  // ── Auto-merge (T3O-38) ───────────────────────────────────────────────────
+
+  describe("auto-merge (T3O-38, D3/D4/D10)", () => {
+    const HOLD = {
+      reason: "Required status check 'test' has not passed.",
+      classification: "soft",
+      detail: "3 of 5 checks green",
+      attempt: 2,
+      heldSince: NOW,
+      retryAt: NOW,
+      headSha: "sha-one",
+    } as const;
+
+    const at = (stage: string, overrides: Partial<BoardCard> = {}) =>
+      makeCard({ id: "card-1", stage, ...overrides });
+
+    const boardWith = (card: BoardCard) => makeReadModel({ board: seededBoard([card]) });
+
+    const arm = (autoMerge: boolean) =>
+      ({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-arm-merge"),
+        cardId: BoardCardId.make("card-1"),
+        autoMerge,
+        createdAt: NOW,
+      }) satisfies BoardCommand;
+
+    const recordHold = (hold: BoardCard["autoMergeHold"]) =>
+      ({
+        type: "board.card.record-auto-merge-hold",
+        commandId: CommandId.make("cmd-hold"),
+        cardId: BoardCardId.make("card-1"),
+        hold,
+        createdAt: NOW,
+      }) satisfies BoardCommand;
+
+    it.effect("records the arm and says the edit touched it", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(arm(true), boardWith(at("building")));
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        assert.isTrue(event.payload.card.autoMerge);
+        // The marker the supervisor reads before firing a merge on a card
+        // already parked at the merge stage; without it a title edit and an
+        // arm look the same, and one of them must never merge anything.
+        assert.strictEqual(event.payload.autoMerge, true);
+      }),
+    );
+
+    it.effect("an arm on its own is a real change, not an empty update", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(arm(true), boardWith(at("backlog")));
+        assert.strictEqual(event.type, "board.card-updated");
+      }),
+    );
+
+    it.effect("arms a card in any stage before Done — the arm is not one column's", () =>
+      Effect.gen(function* () {
+        for (const stage of [
+          "backlog",
+          "sprint",
+          "planning",
+          "ready",
+          "building",
+          "review",
+          "merge",
+        ]) {
+          const event = yield* decide(arm(true), boardWith(at(stage)));
+          assert.strictEqual(event.type, "board.card-updated", stage);
+        }
+      }),
+    );
+
+    it.effect("refuses a card already in Done, which has nothing left to merge", () =>
+      Effect.gen(function* () {
+        const error = yield* decideFail(arm(true), boardWith(at("done")));
+        assert.include(String(error), "nothing left for an auto-merge to do");
+      }),
+    );
+
+    it.effect("refuses a sub-board child, which already merges itself down", () =>
+      Effect.gen(function* () {
+        const child = at("merge", { parentCardId: BoardCardId.make("card-parent") });
+        const error = yield* decideFail(arm(true), boardWith(child));
+        assert.include(String(error), "sub-board child");
+      }),
+    );
+
+    it.effect("disarming is always accepted — a reverse state cannot be refused", () =>
+      Effect.gen(function* () {
+        // Even in Done, where ARMING is refused: a card must always be able to
+        // say no.
+        const event = yield* decide(
+          arm(false),
+          boardWith(at("done", { autoMerge: true, autoMergeHold: HOLD })),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        assert.isFalse(event.payload.card.autoMerge);
+        // …and it CLEARS the hold (D10): a hold explains a merge that is no
+        // longer going to happen by itself.
+        assert.strictEqual(event.payload.card.autoMergeHold, null);
+      }),
+    );
+
+    it.effect("leaves the hold alone on an edit that did not touch the arm", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          {
+            type: "board.card.update",
+            commandId: CommandId.make("cmd-title"),
+            cardId: BoardCardId.make("card-1"),
+            title: "Renamed",
+            createdAt: NOW,
+          } satisfies BoardCommand,
+          boardWith(at("merge", { autoMerge: true, autoMergeHold: HOLD })),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        assert.deepStrictEqual(event.payload.card.autoMergeHold, HOLD);
+        assert.isFalse("autoMerge" in event.payload);
+      }),
+    );
+
+    it.effect("records a hold and clears it back to null", () =>
+      Effect.gen(function* () {
+        const recorded = yield* decide(recordHold(HOLD), boardWith(at("merge")));
+        assert.strictEqual(recorded.type, "board.card-auto-merge-hold-recorded");
+        if (recorded.type !== "board.card-auto-merge-hold-recorded") return;
+        assert.deepStrictEqual(recorded.payload.card.autoMergeHold, HOLD);
+
+        const cleared = yield* decide(
+          recordHold(null),
+          boardWith(at("merge", { autoMergeHold: HOLD })),
+        );
+        assert.strictEqual(cleared.type, "board.card-auto-merge-hold-recorded");
+        if (cleared.type !== "board.card-auto-merge-hold-recorded") return;
+        assert.strictEqual(cleared.payload.card.autoMergeHold, null);
+      }),
+    );
+
+    it.effect("refuses a hold that changes nothing, so a re-probe lands no event", () =>
+      Effect.gen(function* () {
+        // The sweep re-probes a held card every rung and the overwhelming
+        // majority of those answers are the hold the card already carries.
+        const error = yield* decideFail(
+          recordHold(HOLD),
+          boardWith(at("merge", { autoMergeHold: HOLD })),
+        );
+        assert.include(String(error), "already records this auto-merge hold");
+        // …and clearing a card that has no hold is equally a no-op.
+        const second = yield* decideFail(recordHold(null), boardWith(at("merge")));
+        assert.include(String(second), "already records this auto-merge hold");
+      }),
+    );
+
+    it.effect("records the NEXT rung as a real change", () =>
+      Effect.gen(function* () {
+        // `retryAt` moving IS the change worth recording: nothing here is
+        // excluded from the comparison the way `checkedAt` is on a PR link.
+        const event = yield* decide(
+          recordHold({ ...HOLD, attempt: 3, retryAt: "2026-01-01T00:10:00.000Z" }),
+          boardWith(at("merge", { autoMergeHold: HOLD })),
+        );
+        assert.strictEqual(event.type, "board.card-auto-merge-hold-recorded");
+        if (event.type !== "board.card-auto-merge-hold-recorded") return;
+        assert.strictEqual(event.payload.card.autoMergeHold?.attempt, 3);
       }),
     );
   });

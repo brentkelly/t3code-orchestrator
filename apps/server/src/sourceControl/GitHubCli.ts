@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import {
   TrimmedNonEmptyString,
   // T3o: the board merge path (t3o-16).
+  type ChangeRequestMergeState,
   type ChangeRequestMergeStrategy,
   type SourceControlRepositoryVisibility,
   type VcsError,
@@ -18,6 +19,8 @@ import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
 } from "./gitHubPullRequests.ts";
+// T3o: the structured refusal probe (T3O-38, D7).
+import { parseGitHubMergeState } from "./gitHubMergeState.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -309,6 +312,11 @@ export class GitHubCli extends Context.Service<
       readonly reference: string;
       readonly strategy: ChangeRequestMergeStrategy;
     }) => Effect.Effect<void, GitHubCliError>;
+    // T3o: the structured refusal probe (T3O-38, D7).
+    readonly pullRequestMergeState: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<ChangeRequestMergeState, GitHubCliError>;
   }
 >()("t3/sourceControl/GitHubCli") {}
 
@@ -560,6 +568,21 @@ export const make = Effect.gen(function* () {
               ),
         ),
       ),
+    // T3o: the structured refusal probe (T3O-38, D7). One `gh pr view` for
+    // the three facts the board's classifier needs, parsed leniently — see
+    // `parseGitHubMergeState` for why an unreadable answer degrades to
+    // "unknown" rather than failing.
+    pullRequestMergeState: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "view",
+          input.reference,
+          "--json",
+          "mergeStateStatus,statusCheckRollup,headRefOid",
+        ],
+      }).pipe(Effect.map((result) => parseGitHubMergeState(result.stdout))),
   });
 });
 

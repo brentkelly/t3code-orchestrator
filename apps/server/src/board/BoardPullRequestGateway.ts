@@ -1,13 +1,13 @@
 /**
  * The board's narrow window onto the forge: resolve a branch's pull request,
- * and merge one.
+ * merge one, and ask why a merge was refused.
  *
- * Deliberately NOT a direct `GitManager` dependency. The board needs two
+ * Deliberately NOT a direct `GitManager` dependency. The board needs three
  * operations out of a service that exposes stacked git actions, commit-message
  * generation, PR-thread preparation and more; taking the whole thing would
  * couple the supervisor reactor's type graph to all of it, and would let any
  * future board code reach for git operations the board has no business
- * performing. Two methods, one seam, and the reactor is testable against a
+ * performing. Three methods, one seam, and the reactor is testable against a
  * stub instead of a real git checkout.
  *
  * The error type is flattened to one shape carrying the forge's own words,
@@ -19,7 +19,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type { ChangeRequestMergeStrategy, VcsStatusChangeRequest } from "@t3tools/contracts";
+import type {
+  ChangeRequestMergeState,
+  ChangeRequestMergeStrategy,
+  VcsStatusChangeRequest,
+} from "@t3tools/contracts";
 
 import * as GitManager from "../git/GitManager.ts";
 
@@ -70,6 +74,19 @@ export class BoardPullRequestGateway extends Context.Service<
       readonly number: number;
       readonly strategy: ChangeRequestMergeStrategy;
     }) => Effect.Effect<void, BoardPullRequestGatewayError>;
+    /**
+     * T3o: why the forge refused (T3O-38, D7) — asked only AFTER a refusal,
+     * so the happy path stays one call.
+     *
+     * A FAILURE is an error rather than a null answer, and the caller reads
+     * that error as "unclassifiable" and retries: on an unsupported provider
+     * this fails every time, which is exactly the plain ladder those
+     * providers are meant to get.
+     */
+    readonly mergeState: (input: {
+      readonly cwd: string;
+      readonly number: number;
+    }) => Effect.Effect<ChangeRequestMergeState, BoardPullRequestGatewayError>;
   }
 >()("t3/board/BoardPullRequestGateway") {}
 
@@ -103,6 +120,17 @@ export const layer: Layer.Layer<BoardPullRequestGateway, never, GitManager.GitMa
               Effect.fail(
                 new BoardPullRequestGatewayError({
                   operation: "merge",
+                  detail: failureDetail(error),
+                }),
+              ),
+            ),
+          ),
+        mergeState: (input) =>
+          gitManager.pullRequestMergeState(input).pipe(
+            Effect.catch((error: unknown) =>
+              Effect.fail(
+                new BoardPullRequestGatewayError({
+                  operation: "mergeState",
                   detail: failureDetail(error),
                 }),
               ),

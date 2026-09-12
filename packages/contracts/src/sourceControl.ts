@@ -44,6 +44,68 @@ export const ChangeRequest = Schema.Struct({
 });
 export type ChangeRequest = typeof ChangeRequest.Type;
 
+/**
+ * T3o: the machine-readable answer to "why did that merge get refused?"
+ * (T3O-38, D6/D7).
+ *
+ * A provider-neutral projection of the forge's own merge state, deliberately
+ * NOT the forge's prose: the board classifies a refusal into "wait, this
+ * clears itself" and "stop, a human is needed", and that decision must not be
+ * made by matching error strings, which every provider rewrites.
+ *
+ * Every field is what the forge said at the moment of the probe. `mergeable`
+ * is tri-state because "we do not know yet" is a real and common answer —
+ * a forge that is still computing mergeability has said nothing, and reading
+ * that as "no" would stop a ladder that should keep waiting.
+ */
+export const ChangeRequestMergeability = Schema.Literals(["mergeable", "blocked", "unknown"]);
+export type ChangeRequestMergeability = typeof ChangeRequestMergeability.Type;
+
+/** The rollup of a change request's required checks at one instant. */
+export const ChangeRequestChecks = Schema.Struct({
+  total: Schema.Int,
+  passed: Schema.Int,
+  pending: Schema.Int,
+  failed: Schema.Int,
+  /** The names of the checks counted in `failed`, for the card's detail line.
+      Bounded by the caller; never the whole log. */
+  failing: Schema.Array(Schema.String),
+  /** The names of the checks counted in `pending`, same contract. */
+  running: Schema.Array(Schema.String),
+});
+export type ChangeRequestChecks = typeof ChangeRequestChecks.Type;
+
+/**
+ * Why the forge is blocking, when it says so in a way the board can act on.
+ *
+ * Narrow on purpose: only the reasons that change what the board DOES. A
+ * branch that is behind needs a rebase, a draft needs a human to mark it
+ * ready, and a conflict has its own resolution path already. Everything else
+ * — a missing approval, a protection rule, a required conversation — is
+ * `other`, because the board's answer to all of them is the same: stop and
+ * hand the card to a person.
+ */
+export const ChangeRequestMergeBlockReason = Schema.Literals([
+  "behind",
+  "draft",
+  "conflict",
+  "other",
+]);
+export type ChangeRequestMergeBlockReason = typeof ChangeRequestMergeBlockReason.Type;
+
+export const ChangeRequestMergeState = Schema.Struct({
+  mergeable: ChangeRequestMergeability,
+  /** Null when the forge is not blocking, or is blocking for a reason this
+      provider could not name. */
+  blockedReason: Schema.NullOr(ChangeRequestMergeBlockReason),
+  checks: ChangeRequestChecks,
+  /** The head commit the checks above describe. A new SHA means new CI, which
+      is what resets the board's retry ladder (T3O-38, D9). Null when the
+      provider could not report one. */
+  headSha: Schema.NullOr(Schema.String),
+});
+export type ChangeRequestMergeState = typeof ChangeRequestMergeState.Type;
+
 export const SourceControlRepositoryCloneUrls = Schema.Struct({
   nameWithOwner: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,

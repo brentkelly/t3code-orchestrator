@@ -864,6 +864,10 @@ function StageAccordionRow(props: {
           // design and cannot be otherwise. What the reader wants at a glance
           // is what the Merge button will do and whether branches get tidied.
           { text: exec.strategy, tone: "quiet" as const },
+          // Auto-merge earns the "auto" tone the other stages use for
+          // auto-execute: it is the one thing about this stage that runs
+          // without a click, and the row above says so out loud.
+          ...(exec.autoMerge ? [{ text: "Auto-merge", tone: "auto" as const }] : []),
           ...(exec.deleteBranchOnDone ? [{ text: "Delete branch", tone: "quiet" as const }] : []),
         ]
       : [
@@ -997,9 +1001,11 @@ function StageAccordionRow(props: {
  * The merge-role stage's body.
  *
  * Deliberately short, and deliberately WITHOUT an "Auto execute" row: nothing
- * in this stage runs on entry. Merging is always a human click, and the only
- * agent this stage ever starts is the conflict-resolution step — started by a
- * merge that was refused for conflicts, never by a card arriving here.
+ * in this stage RUNS on entry. The only agent this stage ever starts is the
+ * conflict-resolution step — started by a merge that was refused for
+ * conflicts, never by a card arriving here. Auto-merge below is a forge
+ * operation, not an agent run, which is why it gets its own row rather than
+ * folding into the auto-execute one every other stage has.
  */
 function MergeStageBody(props: {
   stage: BoardStageDefinition;
@@ -1034,6 +1040,13 @@ function MergeStageBody(props: {
           <option value="rebase">Rebase and merge</option>
         </select>
       </div>
+      <ToggleRow
+        label="Auto-merge when ready"
+        hint="Merges every card that arrives here as soon as the forge accepts it, retrying a check that is still running. Cards already waiting here keep their Merge button — this is the policy for what arrives next. Leaving it off is what means “ask me before merging”; individual cards can still be armed from their own menu."
+        checked={exec.autoMerge}
+        ariaLabel="Auto-merge when ready"
+        onChange={(checked) => set({ autoMerge: checked })}
+      />
       <ToggleRow
         label="Auto delete branch when card done"
         hint="Deletes the remote branch once a card reaches Done with its pull request merged. The local branch waits for a worktree that still has it checked out."

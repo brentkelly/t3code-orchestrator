@@ -18,6 +18,7 @@ import {
   type BoardSettings,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type ChangeRequestMergeState,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -582,6 +583,37 @@ const mergeRefusedNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
     (command) => command.type === "board.card.record-note" && command.kind === "card-merge-refused",
   );
 
+/** Every auto-merge hold the reactor recorded (T3O-38, D4), in order. */
+const autoMergeHolds = (commands: ReadonlyArray<OrchestrationCommand>) =>
+  commands.flatMap((command) =>
+    command.type === "board.card.record-auto-merge-hold" ? [command.hold] : [],
+  );
+
+/** A probe answer: `checks` counts, and whether the forge is blocking. */
+const probeState = (input: {
+  readonly passed?: number;
+  readonly pending?: number;
+  readonly failed?: number;
+  readonly mergeable?: "mergeable" | "blocked" | "unknown";
+}): ChangeRequestMergeState => {
+  const passed = input.passed ?? 0;
+  const pending = input.pending ?? 0;
+  const failed = input.failed ?? 0;
+  return {
+    mergeable: input.mergeable ?? "blocked",
+    blockedReason: null,
+    checks: {
+      total: passed + pending + failed,
+      passed,
+      pending,
+      failed,
+      failing: failed > 0 ? ["ci/test"] : [],
+      running: pending > 0 ? ["ci/build"] : [],
+    },
+    headSha: "sha-one",
+  };
+};
+
 it.effect("merges a child that reaches the merge stage and lands it in Done", () =>
   withGovernor(
     {
@@ -681,17 +713,53 @@ it.effect("stops at a merge the forge REFUSES, and says so on the card", () =>
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
       pullRequest: openPr,
       mergeFailure: "Required status check 'test' is failing.",
+      // The probe says a required check FAILED, so more CI will not happen
+      // without a new commit and there is nothing to wait for.
+      mergeState: probeState({ passed: 2, failed: 1 }),
     },
     (h) =>
       Effect.gen(function* () {
         yield* h.pumpDomain(childReachedMerge("card-one", 1));
-        // A policy block needs a human (the merge spec's rule, unchanged): the
-        // card holds at merge and the reason is on the activity rail rather
-        // than in a server log nobody is reading.
+        // A failed check needs a human: the card holds at merge with the
+        // ladder STOPPED, and the reason is on the activity rail rather than
+        // in a server log nobody is reading.
         assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
+        const holds = autoMergeHolds(yield* h.commands);
+        assert.strictEqual(holds.length, 1);
+        assert.strictEqual(holds[0]?.classification, "checks-failed");
+        assert.strictEqual(holds[0]?.retryAt, null);
         const notes = mergeRefusedNotes(yield* h.commands);
         assert.strictEqual(notes.length, 1);
         assert.include(String((notes[0] as { readonly detail: string }).detail), "status check");
+      }),
+  ),
+);
+
+it.effect("retries a merge refused for a check that is STILL RUNNING (T3O-38)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childAtMerge("card-one")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      pullRequest: openPr,
+      mergeFailure: "Required status check 'test' has not passed.",
+      mergeState: probeState({ passed: 2, pending: 1 }),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(childReachedMerge("card-one", 1));
+        // The stranding bug: this is the refusal that used to record a note
+        // and stop for ever, holding the whole split on a check that was
+        // still running when the review loop converged.
+        const holds = autoMergeHolds(yield* h.commands);
+        assert.strictEqual(holds.length, 1);
+        assert.strictEqual(holds[0]?.classification, "soft");
+        assert.strictEqual(holds[0]?.attempt, 1);
+        assert.notStrictEqual(holds[0]?.retryAt, null);
+        // Nothing on the rail yet: a wait that is still going is not news.
+        assert.deepStrictEqual(mergeRefusedNotes(yield* h.commands), []);
       }),
   ),
 );
@@ -1189,6 +1257,7 @@ it.effect("a restart the forge refuses on POLICY spawns no agent and says why", 
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
         pullRequest: openPr,
         mergeFailure: "Required status check 'test' is failing.",
+        mergeState: probeState({ passed: 2, failed: 1 }),
       },
       (h) =>
         Effect.gen(function* () {

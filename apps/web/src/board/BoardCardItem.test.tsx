@@ -363,6 +363,142 @@ describe("BoardCardContent (D7)", () => {
     expect(html).not.toContain("Conflicts");
   });
 
+  it("wears an amber `Merge held` pill with its elapsed clock (T3O-38, D12)", () => {
+    const held = shell("merge", {
+      autoMergeArmed: true,
+      autoMergeHeldSince: new Date(Date.now() - 12 * 60_000).toISOString(),
+    });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={held}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(held)}
+        atMergeStage
+      />,
+    );
+    expect(html).toContain("Merge held · 12m");
+    // Amber, the held vocabulary, and the SAME amber as the exhausted state
+    // below — the board card has never carried red.
+    expect(html).toContain("text-warning-foreground");
+    expect(html).not.toContain("destructive");
+    // Not an attention state: nothing is waiting on the human, so the
+    // left-hand ranked chip slot is untouched.
+    expect(html).not.toContain("Needs a human");
+    // The armed glyph yields to the pill — one slot, and the pill is the more
+    // specific claim.
+    expect(html).not.toContain(">Auto<");
+  });
+
+  it("swaps the label and the glyph, NOT the colour, once it gives up (T3O-38, D12)", () => {
+    const gaveUp = shell("merge", {
+      autoMergeArmed: true,
+      autoMergeHeldSince: new Date(Date.now() - 90 * 60_000).toISOString(),
+      autoMergeGaveUp: true,
+    });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={gaveUp}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(gaveUp)}
+        atMergeStage
+      />,
+    );
+    expect(html).toContain("Merge needs you");
+    expect(html).toContain("text-warning-foreground");
+    // The prototype painted this one `--destructive`; deliberately not
+    // followed — the distinction rides the words and the glyph instead.
+    expect(html).not.toContain("destructive");
+  });
+
+  it("yields the pill slot to a running conflict fix (T3O-38)", () => {
+    // A conflict fix RUNS and a hold WAITS; the server never records both,
+    // and a running agent is the more specific claim if they collide.
+    const both = shell("merge", {
+      stepConflictFix: true,
+      autoMergeHeldSince: new Date(Date.now() - 5 * 60_000).toISOString(),
+    });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={both}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(both)}
+        atMergeStage
+      />,
+    );
+    expect(html).toContain("Conflicts");
+    expect(html).not.toContain("Merge held");
+  });
+
+  it("shows a quiet `Auto` glyph in the merge column, and nothing earlier (T3O-38, D13)", () => {
+    const armed = shell("merge", { autoMergeArmed: true });
+    const atMerge = renderToStaticMarkup(
+      <BoardCardContent
+        card={armed}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(armed)}
+        atMergeStage
+      />,
+    );
+    expect(atMerge).toContain("Auto");
+    // Grey, not amber: nothing is held and nothing is wrong.
+    expect(atMerge).toContain("text-muted-foreground");
+
+    // An armed card in Building looks normal because it IS normal.
+    const building = shell("building", { autoMergeArmed: true });
+    const earlier = renderToStaticMarkup(
+      <BoardCardContent
+        card={building}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(building)}
+      />,
+    );
+    expect(earlier).not.toContain("Auto-merge armed");
+  });
+
+  it("wears the glyph when the BOARD-WIDE setting is what arms the card (T3O-38, D2)", () => {
+    // The shell's `autoMergeArmed` is the card's OWN arming only — the SQL
+    // snapshot producer cannot see settings — so a board whose merge stage
+    // auto-merges everything left the column silent while the modal's chip
+    // said the card was armed.
+    const plain = shell("merge", {});
+    const boardWide = renderToStaticMarkup(
+      <BoardCardContent
+        card={plain}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(plain)}
+        atMergeStage
+        autoMergeBoardWide
+      />,
+    );
+    expect(boardWide).toContain("Auto-merge armed");
+
+    // Still the merge column only: the board-wide arm does not light up a card
+    // that is nowhere near merging.
+    const earlier = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building", {})}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(plain)}
+        autoMergeBoardWide
+      />,
+    );
+    expect(earlier).not.toContain("Auto-merge armed");
+  });
+
   it("keeps the working dot lit while the executor step is running, even when no thread is mid-turn", () => {
     // A Code-review card mid-loop: the executor's step is admitted and running,
     // but between one phase's thread completing and the next spinning up, no

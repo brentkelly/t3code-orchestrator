@@ -308,6 +308,24 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    // T3o: the structured refusal probe (T3O-38, D7).
+    changeRequestMergeState: (input) =>
+      github.pullRequestMergeState(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "changeRequestMergeState",
+              command: error.command,
+              cwd: input.cwd,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                input.reference,
+              ),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     checkoutChangeRequest: (input) =>
       github.checkoutPullRequest(input).pipe(
         Effect.mapError(
