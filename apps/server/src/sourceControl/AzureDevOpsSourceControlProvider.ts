@@ -217,6 +217,16 @@ export const make = Effect.gen(function* () {
         reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
         detail: "Merging a change request from the board is supported for GitHub only.",
       }),
+    // T3o (T3O-38, D7): no merge here, so nothing to classify. The board
+    // reads this as "unclassifiable" and falls back to the plain retry ladder.
+    changeRequestMergeState: (input) =>
+      new SourceControlProviderError({
+        provider: "azure-devops",
+        operation: "changeRequestMergeState",
+        cwd: input.cwd,
+        reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
+        detail: "Reading a change request's merge state is supported for GitHub and Forgejo only.",
+      }),
     checkoutChangeRequest: (input) =>
       azure
         .checkoutPullRequest({

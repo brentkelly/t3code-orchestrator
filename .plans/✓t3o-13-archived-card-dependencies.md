@@ -15,7 +15,7 @@ spec.
 1. **`Unknown task` on `unknown card`.** `listBoardCardShellRows`
    (`apps/server/src/board/projection.ts:411`) filters `WHERE archived_at IS NULL` — correct
    per D15, the archive must not ride the live shell — but `BoardCardDetail.tsx:107` resolves
-   dependency chips *from that shell*. An archived dependency resolves to nothing and renders
+   dependency chips _from that shell_. An archived dependency resolves to nothing and renders
    as `Unknown task` / `unknown card`.
 
 2. **Permanent block.** `unmetBoardCardDependencies` (`packages/contracts/src/board.ts:549`)
@@ -25,7 +25,7 @@ spec.
 
 3. **No archive view.** `board.card.unarchive` exists end-to-end and the detail modal already
    renders **Restore card** for an archived card (`BoardCardDetailView.tsx:594`) — but there is
-   no way to *find* an archived card, so the button is unreachable.
+   no way to _find_ an archived card, so the button is unreachable.
 
 ## Goal
 
@@ -51,7 +51,7 @@ undoable from the board.
 - Any change to thread archiving or the Settings → Archived threads panel.
 - Auto-archive / `archiveAfterDays` (D10's Phase-2 archiver, untouched).
 - Cascading archive of dependents.
-- An agent-facing archive tool — see *Assumption* below.
+- An agent-facing archive tool — see _Assumption_ below.
 
 ## Locked decisions
 
@@ -67,14 +67,14 @@ export function unmetBoardCardDependencies(input: {
 }): ReadonlyArray<BoardCardId> {
   return input.dependsOn.filter((dependencyId) => {
     const dependency = input.cards.find((card) => card.id === dependencyId);
-    if (dependency === undefined) return true;          // genuinely missing → still unmet
-    if (dependency.archivedAt !== null) return false;   // archived → no longer gates
+    if (dependency === undefined) return true; // genuinely missing → still unmet
+    if (dependency.archivedAt !== null) return false; // archived → no longer gates
     return dependency.stage !== "done";
   });
 }
 ```
 
-*Rationale.* Archiving means "this work is not happening" — a gate on work that will never
+_Rationale._ Archiving means "this work is not happening" — a gate on work that will never
 arrive is not a gate, it is a deadlock. Keeping the edge makes unarchive a true inverse: restore
 the card and the gate returns by itself, with no restoration bookkeeping and no lost data.
 
@@ -108,7 +108,7 @@ Archiving a done card cannot affect any dependent (done already satisfies the ga
 satisfying it once archived), and a card nothing depends on has nothing to warn about — both
 stay a single click. Archived dependents are not counted: they are not affected and not visible.
 
-Dependents are counted regardless of *their* stage. A dependent already past Ready is not harmed,
+Dependents are counted regardless of _their_ stage. A dependent already past Ready is not harmed,
 but "what pointed at this card" is exactly the question the modal answers.
 
 ### D4 — Resolved `dependencies` and `dependents` ride `BoardCardDetail`
@@ -169,7 +169,7 @@ This is supported and safe:
 - The projector already maps `board.card-updated` → `upsertCard` and → a `card-upserted` shell
   delta, so every client's board updates live with no new projector or reducer code.
 
-Blocked is not transitive (the gate reads only *direct* dependencies' stage), so there is no
+Blocked is not transitive (the gate reads only _direct_ dependencies' stage), so there is no
 cascade — one level of dependents is complete.
 
 `decideBoardCommand`'s return type widens to
@@ -181,7 +181,7 @@ Both derivations run against the post-change card set — the archived card subs
 ### D6 — Migration 012 recomputes stale `blocked`
 
 Databases already carry cards flagged `blocked = 1` because of an archived dependency. The gate
-itself is derived live at move time, so those cards are no longer *stuck* once D1 lands — but the
+itself is derived live at move time, so those cards are no longer _stuck_ once D1 lands — but the
 badge lies until the card's next move or dependency edit.
 
 `apps/server/src/board/migrations/012_BoardCardsRecomputeBlocked.ts` recomputes `blocked` for
@@ -202,8 +202,8 @@ persisting across sessions, so `boardUiStore` stays as it is.
 Rejected: rendering archived cards inline in their stage columns behind a "show archived" toggle.
 That means merging a second snapshot source into `BoardStageColumns`, which is fed by the live
 shell stream through `applyBoardCardPlacements` / `mergeBoardStageColumns` / optimistic drag
-reconciliation — the one piece of board code whose header warns it decides *when* to dispatch and
-never *what number* to store. The sheet leaves all of it untouched.
+reconciliation — the one piece of board code whose header warns it decides _when_ to dispatch and
+never _what number_ to store. The sheet leaves all of it untouched.
 
 Data reuses the existing archive-page seam rather than inventing an RPC:
 
@@ -230,7 +230,7 @@ own detail modal if they are today.
 
 An `AlertDialog` (`components/ui/alert-dialog.tsx`):
 
-- Title names the act: *Archive `<KEY>`?*
+- Title names the act: _Archive `<KEY>`?_
 - Body: "`<n>` card(s) depend on this card." then the list — key + title per dependent, capped at
   10 with a `+N more` line.
 - Explains the consequence in one line: archiving keeps the links but stops this card blocking

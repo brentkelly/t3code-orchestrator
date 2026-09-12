@@ -52,15 +52,15 @@ Planning spawns a thread and stops. **No** recipe snapshot, **no** `stepStates` 
 governor slot, **no** worktree, **no** timeout, **no** `board_complete_step` contract, **no**
 recovery escalation.
 
-*Why:* every one of those is wrong for an interview. A grill session is human-paced and can
-last hours — it would hold a `BoardStepSlots` slot meant for bounding concurrent *builds*.
+_Why:_ every one of those is wrong for an interview. A grill session is human-paced and can
+last hours — it would hold a `BoardStepSlots` slot meant for bounding concurrent _builds_.
 `schedule()` skips any card without a ready worktree (`supervisorReactor.ts:452`), so a
 planning step would force a branch + worktree onto cards that may never be built. And a turn
 that ends without `board_complete_step` is treated as death (`threadIsAlive`,
 `supervisorReactor.ts:97`) — which is exactly what an interview does between every question,
 so the supervisor would nudge and then escalate a perfectly healthy conversation.
 
-*Rejected:* generalising `beginCardBuild` to any stage with a recipe. Same code path, three
+_Rejected:_ generalising `beginCardBuild` to any stage with a recipe. Same code path, three
 subsystems that all have to be special-cased off for it. Cheaper to not enter them.
 
 ### D2 — The prompt lives in settings, not in a skill
@@ -71,8 +71,8 @@ from `BoardSettings.pipeline.planning[0]`. `Settings → Board → Pipeline`
 textarea, provider-instance picker and model picker — Planning's list is just empty and
 unexecuted today. Nothing new is built for the editing surface.
 
-*Why not a `/t3o-plan` skill:* a slash-command skill must physically exist in the repository the
-thread opens on. A skill shipped in *this* fork would be a no-op for a card on any other
+_Why not a `/t3o-plan` skill:_ a slash-command skill must physically exist in the repository the
+thread opens on. A skill shipped in _this_ fork would be a no-op for a card on any other
 project, and for Codex/Cursor/Grok threads regardless of project. Settings text works
 everywhere and the user can edit it, which a hidden skill file cannot claim.
 
@@ -105,7 +105,7 @@ so it can never show "No steps" for a stage that spawns anyway.
 ### D3 — A planning envelope, mirroring `composeStepPrompt`
 
 `composePlanningPrompt` wraps the settings text the way `composeStepPrompt`
-(`supervisor.ts:composeStepPrompt`) wraps a build step, but with the *planning* contract:
+(`supervisor.ts:composeStepPrompt`) wraps a build step, but with the _planning_ contract:
 
 ```
 You are planning card <KEY> — "<title>".
@@ -133,10 +133,10 @@ would fail on a missing `stepId`. `providerQuestionMechanism` is reused unchange
 The thread is bootstrapped on the project's normal workspace — `worktreePath: null`,
 `branch: null` — with **`runtimeMode: "approval-required"`** and **`interactionMode: "plan"`**.
 
-*Why no worktree:* planning is a conversation about a card that may never be built; provisioning
+_Why no worktree:_ planning is a conversation about a card that may never be built; provisioning
 a branch and worktree for it is cost and a new pre-start failure mode.
 
-*Why `approval-required` and not `full-access`* (corrected during review): plan mode alone is not
+_Why `approval-required` and not `full-access`_ (corrected during review): plan mode alone is not
 a containment boundary. `interactionMode: "plan"` maps to the Claude SDK's
 `setPermissionMode("plan")` (`ClaudeAdapter.ts:4339`) and is genuinely enforced there — but on
 Codex, which is `DEFAULT_BOARD_PROVIDER_INSTANCE_ID`, plan mode is prompt text only, while
@@ -151,7 +151,7 @@ under plan mode. Both modes are stated once, as `BOARD_PLANNING_THREAD_RUNTIME_M
 `BOARD_PLANNING_THREAD_INTERACTION_MODE` in contracts, and shared by the supervisor and the client
 so the two spawns cannot diverge.
 
-**The trade, stated plainly.** The agent reads *subject to approval*, and the thread parks on its
+**The trade, stated plainly.** The agent reads _subject to approval_, and the thread parks on its
 first tool call rather than exploring straight away: `approval-required` also carries
 `approvalPolicy: "untrusted"` on Codex, which gates commands and not just writes, and on Claude
 `canUseTool` short-circuits to `allow` only under `full-access`, so every tool — including the
@@ -160,14 +160,14 @@ first tool call rather than exploring straight away: `approval-required` also ca
 That is defensible for an interview you were going to sit in on anyway, and it is the price of not
 handing an auto-started agent write access to the shared checkout.
 
-*Rejected:* another `RuntimeMode` literal. None of the four expresses "read freely, never write" —
+_Rejected:_ another `RuntimeMode` literal. None of the four expresses "read freely, never write" —
 the two middle options both map to Codex's `workspace-write`. Getting that behaviour means
 narrowing the block to writes at the adapter level, which is a larger change than this stage
 warrants. **Open for the human:** if the parking is unwanted, the other lever is gating
 `full-access` on providers whose plan mode is genuinely enforced (Claude), keeping
 `approval-required` elsewhere.
 
-*To watch on the live run:* (a) the first exploration command surfaces as an approval prompt —
+_To watch on the live run:_ (a) the first exploration command surfaces as an approval prompt —
 confirm that reads as intended rather than as a stall; (b) `board_propose_plans` is not annotated
 read-only, so it too will prompt rather than running silently.
 
@@ -176,16 +176,16 @@ read-only, so it too will prompt rather than running silently.
 The spawn is skipped iff the card has **at least one non-tombstoned thread link, of any role**.
 The literal reading of "don't create one if there's already a thread assigned to the card".
 
-| card's links | spawn? |
-| --- | --- |
-| none | yes |
-| `build` (live) | no |
-| `linked` (live, manually adopted) | no |
-| `plan` (live) | no |
-| `plan` (tombstoned only) | yes |
+| card's links                      | spawn? |
+| --------------------------------- | ------ |
+| none                              | yes    |
+| `build` (live)                    | no     |
+| `linked` (live, manually adopted) | no     |
+| `plan` (live)                     | no     |
+| `plan` (tombstoned only)          | yes    |
 
 Consequence, accepted deliberately: a card dragged **back** from Building to Planning for
-rework does *not* get a fresh planning thread, because its build thread is still linked. The
+rework does _not_ get a fresh planning thread, because its build thread is still linked. The
 `+ → New thread — restart planning` menu item (D7) is the escape hatch.
 
 ### D6 — Trigger: moved into Planning **or** created into Planning
@@ -229,10 +229,10 @@ then the existing `boardEnvironment.linkThread` (`state/board.ts:482`), role `"l
 
 ### D8 — On-demand spawn shares a pure composer, not a new command
 
-*Revised during implementation.* The first draft added a board command + RPC
+_Revised during implementation._ The first draft added a board command + RPC
 (`board.card.start-stage-thread`) so the server owned prompt composition. That would have meant
 a new entry in the command union, the decider, the projector and the event log — for a
-*request* that changes no state. The cheaper answer with the same drift guarantee: put the
+_request_ that changes no state. The cheaper answer with the same drift guarantee: put the
 composition in `packages/contracts` as pure functions and let both callers use them, exactly as
 `resolveBoardRecipeForStage` is already documented to be "callable from the server, the client,
 and tests alike".
@@ -273,7 +273,7 @@ moment of the spawn. Editing the prompt and restarting always uses the new text.
    one (tombstoned links do not suppress).
 5. `board_create_card` with `stage: "planning"` produces a card that already has its planning
    thread when it appears on the board.
-6. Editing the Planning prompt at `Settings → Board → Pipeline` changes what the *next* card
+6. Editing the Planning prompt at `Settings → Board → Pipeline` changes what the _next_ card
    entering Planning is asked; a card already planning is unaffected.
 7. Clearing every Planning step in settings stops the auto-spawn and hides the restart menu item.
 8. The `+` menu in Planning offers all three items; in Building and Backlog it offers two, with
@@ -294,17 +294,17 @@ moment of the spawn. Editing the prompt and restarting always uses the new text.
 
 ## Files
 
-| File | Change |
-| --- | --- |
-| `packages/contracts/src/board.ts` | `DEFAULT_BOARD_PLANNING_STEP`; `DEFAULT_BOARD_PIPELINE` + `resolveBoardStageSteps` (per-stage defaulting); `resolveBoardPlanningStep` / `composeBoardPlanningPrompt` / `boardPlanningThreadTitle` / `BOARD_PLANNING_THREAD_*`; `providerQuestionMechanism` moved here |
-| `apps/web/src/components/settings/BoardSettingsPanel.tsx` | render through `resolveBoardStageSteps`; correct the "only Building is executed" copy |
-| `apps/web/src/board/boardCardThreadSpawn.test.ts` | new — locks the client spawn against the reactor's |
-| `apps/server/src/board/supervisor.ts` | re-exports `providerQuestionMechanism` from contracts |
-| `apps/server/src/board/supervisorReactor.ts` | `beginCardPlanning` + `spawnPlanningThread`; `board.card-created` in the event filter |
-| `apps/server/src/board/supervisorHarness.testkit.ts` | `planning` recipes, seeded thread links, `movedToPlanning` / `cardCreated` / `liveThreadLinks`; the engine double now materialises bootstrapped threads so `link-thread` is decided as in production |
-| `apps/server/src/board/planningStageSpawn.test.ts` | new — the D1/D5/D6/D18 acceptance suite |
-| `apps/web/src/board/BoardCardThreadAddMenu.tsx` | new — the `+` menu |
-| `apps/web/src/board/boardCardThreadSpawn.ts` | new — pure spawn-input builders |
-| `apps/web/src/board/BoardSearchAddPicker.tsx` | extract `BoardPickerSearchBody` so adopt reuses the same search |
-| `apps/web/src/board/BoardCardThreadPane.tsx` | the `+` menu; rewrite the stale adoption-only empty state |
-| `apps/web/src/board/BoardCardDetail.tsx` | wire the two new actions |
+| File                                                      | Change                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/board.ts`                         | `DEFAULT_BOARD_PLANNING_STEP`; `DEFAULT_BOARD_PIPELINE` + `resolveBoardStageSteps` (per-stage defaulting); `resolveBoardPlanningStep` / `composeBoardPlanningPrompt` / `boardPlanningThreadTitle` / `BOARD_PLANNING_THREAD_*`; `providerQuestionMechanism` moved here |
+| `apps/web/src/components/settings/BoardSettingsPanel.tsx` | render through `resolveBoardStageSteps`; correct the "only Building is executed" copy                                                                                                                                                                                 |
+| `apps/web/src/board/boardCardThreadSpawn.test.ts`         | new — locks the client spawn against the reactor's                                                                                                                                                                                                                    |
+| `apps/server/src/board/supervisor.ts`                     | re-exports `providerQuestionMechanism` from contracts                                                                                                                                                                                                                 |
+| `apps/server/src/board/supervisorReactor.ts`              | `beginCardPlanning` + `spawnPlanningThread`; `board.card-created` in the event filter                                                                                                                                                                                 |
+| `apps/server/src/board/supervisorHarness.testkit.ts`      | `planning` recipes, seeded thread links, `movedToPlanning` / `cardCreated` / `liveThreadLinks`; the engine double now materialises bootstrapped threads so `link-thread` is decided as in production                                                                  |
+| `apps/server/src/board/planningStageSpawn.test.ts`        | new — the D1/D5/D6/D18 acceptance suite                                                                                                                                                                                                                               |
+| `apps/web/src/board/BoardCardThreadAddMenu.tsx`           | new — the `+` menu                                                                                                                                                                                                                                                    |
+| `apps/web/src/board/boardCardThreadSpawn.ts`              | new — pure spawn-input builders                                                                                                                                                                                                                                       |
+| `apps/web/src/board/BoardSearchAddPicker.tsx`             | extract `BoardPickerSearchBody` so adopt reuses the same search                                                                                                                                                                                                       |
+| `apps/web/src/board/BoardCardThreadPane.tsx`              | the `+` menu; rewrite the stale adoption-only empty state                                                                                                                                                                                                             |
+| `apps/web/src/board/BoardCardDetail.tsx`                  | wire the two new actions                                                                                                                                                                                                                                              |

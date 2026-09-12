@@ -36,7 +36,7 @@ Applied in order:
 1. **Stage descending.** A card one round from merge outranks a card about to start building.
    Finishing beats starting; otherwise new work strangles nearly-done work and everything sits at
    90%.
-2. **Started before unstarted.** A card mid-stage waiting for a slot on a *different* provider
+2. **Started before unstarted.** A card mid-stage waiting for a slot on a _different_ provider
    outranks a card that has not begun. Without this, a board fills with half-done work — the
    starvation case created by per-step slot acquisition.
 3. **Drag order** (`orderKey`). This governs what starts next, which is what dragging is actually

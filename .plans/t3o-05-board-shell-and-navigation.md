@@ -67,7 +67,7 @@ let the optimistic state survive a rejected command.
 
 ### Rejected moves
 
-Moving a blocked card past Ready is rejected by the decider. The UI must show *why* — naming the
+Moving a blocked card past Ready is rejected by the decider. The UI must show _why_ — naming the
 unmet dependency — not just snap the card back. A silent snap-back reads as a bug.
 
 ## Performance notes

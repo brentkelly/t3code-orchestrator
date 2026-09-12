@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type {
   ChangeRequest,
+  ChangeRequestMergeState,
   ChangeRequestMergeStrategy,
   ChangeRequestState,
   SourceControlProviderError,
@@ -152,5 +153,26 @@ export class SourceControlProvider extends Context.Service<
       readonly reference: string;
       readonly strategy: ChangeRequestMergeStrategy;
     }) => Effect.Effect<void, SourceControlProviderError>;
+    /**
+     * T3o: why a merge was refused, in machine-readable form (T3O-38, D7).
+     *
+     * Asked only AFTER a refusal, so the happy path stays one forge call. The
+     * board classifies the answer into "wait, this clears itself" (checks
+     * still running) and "stop, a human is needed" (a check failed, an
+     * approval is missing, the branch is behind) — a decision that must not be
+     * made by matching `mergeChangeRequest`'s prose, which every provider
+     * rewrites and which this repository already refuses to build a catalogue
+     * of.
+     *
+     * Implemented for GitHub and Forgejo. Every other provider returns the
+     * registry's unsupported-operation error, which the board reads as
+     * "unclassifiable" and degrades to a soft refusal: those providers get
+     * exactly the plain retry ladder, and nothing breaks.
+     */
+    readonly changeRequestMergeState: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProviderContext;
+      readonly reference: string;
+    }) => Effect.Effect<ChangeRequestMergeState, SourceControlProviderError>;
   }
 >()("t3/sourceControl/SourceControlProvider") {}

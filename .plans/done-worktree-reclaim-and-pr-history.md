@@ -63,9 +63,9 @@ run `cleanupBranchOnDone`. That branch is replaced by a single
 2. **Delete the branches** — the existing `cleanupBranchOnDone`, unchanged and
    still gated on the merge stage's `deleteBranchOnDone`.
 
-The order is the point. `branchCleanup.ts:16` documents its own defeat — *"a card
+The order is the point. `branchCleanup.ts:16` documents its own defeat — _"a card
 at Done normally STILL HAS its worktree; the usual outcome is that the local
-branch is left alone"* — because `parseWorktreeBranches` sees the branch checked
+branch is left alone"_ — because `parseWorktreeBranches` sees the branch checked
 out and refuses. Reclaim first and that refusal never arises: worktree and local
 branch both go, in one move.
 
@@ -80,8 +80,8 @@ Nothing here may block or fail the card's move to Done.
 stays true: archive is the guaranteed cleanup point, and no worktree may outlive
 its card.
 
-So the setting only ever answers one question — *does the card also get reclaimed
-earlier, at Done?* — which is a boolean, not a three-value enum. Under an
+So the setting only ever answers one question — _does the card also get reclaimed
+earlier, at Done?_ — which is a boolean, not a three-value enum. Under an
 always-reclaiming archive, `keep` and `reclaim-on-archive` are the same
 behaviour, and one of them has to go.
 
@@ -89,18 +89,18 @@ behaviour, and one of them has to go.
 
 ```ts
 export const BoardLifecycleSettings = Schema.Struct({
-  reclaimWorktreeOnDone: Schema.Boolean,   // default true
-})
+  reclaimWorktreeOnDone: Schema.Boolean, // default true
+});
 ```
 
 `BoardWorktreeRetention`, `DEFAULT_BOARD_ARCHIVE_AFTER_DAYS` and `archiveAfterDays`
 are deleted outright, along with the settings-panel stepper whose description
-promises *"Cards auto-archive after this many days in Done"* — a promise nothing
+promises _"Cards auto-archive after this many days in Done"_ — a promise nothing
 has ever kept.
 
 This is the upgrade-safe reshape. Settings persist **sparsely**: a user who
 touched either field has `{"board":{"lifecycle":{"worktreeRetention":"keep"}}}`
-on disk. Renaming the field makes those stale keys *unknown*, and
+on disk. Renaming the field makes those stale keys _unknown_, and
 `Schema.Struct` drops unknown keys silently, so the user lands on the new
 default. Narrowing the existing `Schema.Literals` instead would have failed to
 decode that exact file.
@@ -148,7 +148,7 @@ repo.
 ### D4 — Re-provisioning a reclaimed worktree
 
 `decider.ts:1393` rejects `provision-worktree` unless the worktree is `failed`:
-*"only a failed worktree can be re-provisioned."* A reclaimed card dragged back
+_"only a failed worktree can be re-provisioned."_ A reclaimed card dragged back
 to Building therefore gets a rejected dispatch, `ensureWorktree` returns null,
 and the card wedges with no explanation. That is already true for unarchived
 cards today; reclaiming at Done makes it the common path.
@@ -156,14 +156,14 @@ cards today; reclaiming at Done makes it the common path.
 Admit `reclaimed` alongside `failed`. Two transitions with different meanings
 now share the command, and they must be distinguished:
 
-| from | meaning | `attempts` | `pullRequestFloor` |
-| --- | --- | --- | --- |
-| `failed` | retry of the current round | `+1` | unchanged |
-| `reclaimed` | a **new round** | reset to `1` | stamped |
+| from        | meaning                    | `attempts`   | `pullRequestFloor` |
+| ----------- | -------------------------- | ------------ | ------------------ |
+| `failed`    | retry of the current round | `+1`         | unchanged          |
+| `reclaimed` | a **new round**            | reset to `1` | stamped            |
 
 On the `reclaimed → provisioning` transition only:
 
-- `attempts` resets to 1, so the count keeps meaning "retries of *this*
+- `attempts` resets to 1, so the count keeps meaning "retries of _this_
   provision" rather than a lifetime tally.
 - The current `pullRequest`, if any, is appended to `pullRequestHistory` and
   `pullRequest` is set to null.
@@ -193,8 +193,8 @@ round two starts from round one rather than duplicating it.
 
 `resolveBoardCardBaseRef` cuts a sub-board plan card's branch from the parent
 card's `worktree.branch`. Once parents actually lose their local branch at Done,
-that ref can be gone, and the child fails with the generic *"git worktree add
-failed; retry the build."*
+that ref can be gone, and the child fails with the generic _"git worktree add
+failed; retry the build."_
 
 Add one rule to that pure function: if the parent's `pullRequest.state ===
 "merged"`, return the default branch instead. Correct by the same argument that
@@ -228,7 +228,7 @@ costs anything.
 
 **View PR** and the column-card `#N` badge both resolve to
 `current ?? most recent historical`. `BoardCardDetailView.tsx:641` keeps the link
-visible in Done deliberately — *"a card in Done is exactly when you want to find"*
+visible in Done deliberately — _"a card in Done is exactly when you want to find"_
 the PR — and round two nulling `pullRequest` would otherwise make round one's PR
 unreachable from the card entirely.
 

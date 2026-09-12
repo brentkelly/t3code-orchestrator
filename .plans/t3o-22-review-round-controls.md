@@ -8,8 +8,8 @@ prerequisites: [t3o-15, t3o-16]
 # Review round controls
 
 t3o-16 shipped the review loop with two exits and one behaviour. A round that closes clean has
-*converged*: the reviewer read the branch and found nothing blocking. A loop that burns its last
-round with criticals still open has *failed to converge*: nobody signed anything off, the code is
+_converged_: the reviewer read the branch and found nothing blocking. A loop that burns its last
+round with criticals still open has _failed to converge_: nobody signed anything off, the code is
 exactly as unreviewed as it was, and the loop simply ran out of budget. Today both return the same
 thing:
 
@@ -26,8 +26,8 @@ criticals it never resolved auto-graduates to Ready for merge, indistinguishable
 passed. That is the failure mode the loop exists to prevent.
 
 It is also a regression, not an oversight. t3o-16 D8 and acceptance criterion 7 both specify the
-opposite — *"Exhausting `rounds` completes the stage `blocked`, leaves the card in Code review, does
-not auto-advance, and leaves open findings visible"* — and the original implementation did that.
+opposite — _"Exhausting `rounds` completes the stage `blocked`, leaves the card in Code review, does
+not auto-advance, and leaves open findings visible"_ — and the original implementation did that.
 PR #40 conflated the two exits, flipped `autoAdvance` on, and rewrote the test to assert the
 inverse of the criterion it is still named after:
 
@@ -40,8 +40,8 @@ The Review pane already knows better: `deriveBoardReviewLoop` derives a distinct
 status and paints an amber pill for it. The pane is telling the truth about a card that has already
 left the column.
 
-Behind the defect sits a missing capability. When a loop stalls, the useful responses are *give it
-more rounds*, *give the reviewer a better model*, or *stop wasting rounds and let me look*. None
+Behind the defect sits a missing capability. When a loop stalls, the useful responses are _give it
+more rounds_, _give the reviewer a better model_, or _stop wasting rounds and let me look_. None
 exist: `rounds` is a board-wide stage setting, phase models are board-wide, and there is no way to
 halt a loop short of its cap. The card face says nothing either — `BoardCardShell` has carried
 `roundCurrent`, `roundMax`, `severity*` and `issues*` since t3o-04 and **no projector has ever
@@ -59,7 +59,7 @@ early stop are controls on the run, not settings you have to go change for the w
 **In.** The cap's terminal outcome; per-card review overrides (round budget, per-round review model,
 stop-after-round) with their command, decider, projector, migration and reactor re-plan path; the
 card-face review summary the shell has always had fields for; the pane's no-convergence block, round
-stepper and future-round settings drawer; the detail pane's *Stop after this round* button.
+stepper and future-round settings drawer; the detail pane's _Stop after this round_ button.
 
 **Out.** The convergence rule itself — the loop still converges when a round's **review** raises no
 blocking finding, so a fixed critical is always confirmed by a fresh pass. (The prototype settles a
@@ -76,9 +76,9 @@ through. That restores t3o-16 AC7 and needs nothing else: `advanceStage` is alre
 `succeeded`, so the card stays in Code review with its findings and its worktree intact.
 
 `autoAdvance` keeps its `true` default. Its meaning narrows to what it should always have meant —
-*advance on convergence* — and the doc comment at `board.ts:3981`, which currently names the round
+_advance on convergence_ — and the doc comment at `board.ts:3981`, which currently names the round
 cap as one of the exits that advances, is corrected to say the opposite. A user who wants a stalled
-loop to graduate anyway does it with the pane's explicit *Advance* button (D8), which is a decision
+loop to graduate anyway does it with the pane's explicit _Advance_ button (D8), which is a decision
 someone made rather than a default nobody saw.
 
 **No new `BoardStepOutcome` literal.** The cap and a malformed payload both terminate `blocked`,
@@ -134,13 +134,13 @@ The distinction matters exactly where it is dangerous. Round 4's review is dispa
 a worktree; no completion exists for it yet. Flooring on completions alone would let `−` drop the
 budget to 3 while that agent is mid-turn, leaving a live step the executor's walk will never reach —
 its completion lands against a round beyond the cap, and the loop is wedged with an orphaned run
-holding a concurrency slot. Flooring on *started* refuses that write outright.
+holding a concurrency slot. Flooring on _started_ refuses that write outright.
 
 It is enforced in the **decider**, not merely greyed out in the UI: the client is not the guard, and
 a stale pane must not be able to strand a running round.
 
 Raising the budget and "run another round" are the same intent, so they are the same write: the
-pane's *Run round N+1* button sets `rounds = N + 1`. There is no separate resume command.
+pane's _Run round N+1_ button sets `rounds = N + 1`. There is no separate resume command.
 
 `deriveBoardReviewLoop` already takes `maxRounds` as an argument and already renders rounds recorded
 beyond a since-lowered cap as skipped history, so the client side of a shrinking budget needs no new
@@ -151,10 +151,10 @@ logic — only the effective value passed in.
 The executor's `resolvePhaseModel` gains the round number. The override applies **when
 `phase === "review"`**; triage and adjudicate keep their configured per-phase models.
 
-The override exists to escalate the *reviewer* when a loop will not converge — a sharper pair of
+The override exists to escalate the _reviewer_ when a loop will not converge — a sharper pair of
 eyes on the same branch. Re-modelling the triager is a different decision (it changes who is writing
 the code), and silently bundling it into one dropdown would make "put round 4 on Opus" mean more
-than it says. The drawer is labelled *Review model for round N* accordingly, and its default option
+than it says. The drawer is labelled _Review model for round N_ accordingly, and its default option
 reads `Same as round N-1` — meaning "inherit", stored as no entry at all rather than a copied value,
 so changing the stage setting still moves un-overridden rounds with it.
 
@@ -167,7 +167,7 @@ two from the completions (a loop that held at round 3 of 6 stopped; one that hel
 
 A number rather than a boolean because it is self-superseding: extending the budget to round 5 while
 `stopAfterRound` is 3 is a contradiction the decider resolves by clearing the stop, and a bare
-boolean gives it nothing to compare. It also lets the button read *Stopping after round 3* instead
+boolean gives it nothing to compare. It also lets the button read _Stopping after round 3_ instead
 of an ambiguous toggle state.
 
 ### D6 — Re-planning on card update stays generic
@@ -199,7 +199,7 @@ It fills the shell's long-dormant `roundCurrent` / `roundMax` / `severity*` / `i
 adds one new optional key:
 
 ```ts
-reviewOutcome: "running" | "converged" | "round-cap" | "stopped" | "unreadable"
+reviewOutcome: "running" | "converged" | "round-cap" | "stopped" | "unreadable";
 ```
 
 `boardCardSummary`'s `review` case already emits `round`, `severity` and `issues` items, and
@@ -214,8 +214,8 @@ about round 5.
 Above the round list, when the loop ended `round-cap` or `stopped`:
 
 - an amber-bordered panel headed **Round limit reached without convergence**;
-- the count line — *All N rounds ran and round N still closed with K unsettled issues. The loop
-  stops here and will not hand the task to Ready for merge on its own.*;
+- the count line — _All N rounds ran and round N still closed with K unsettled issues. The loop
+  stops here and will not hand the task to Ready for merge on its own._;
 - **Run round N+1** (primary — writes `rounds = N + 1`) and **Advance to `<next stage>`** (an
   ordinary `board.card.move`, gated like every other transition).
 
@@ -228,13 +228,13 @@ Every one of these is a `board.card.update` carrying `reviewOverrides`; no new c
 
 ### D9 — What each state looks like
 
-| Loop state | Card face | Pane pill | Pane body |
-| --- | --- | --- | --- |
-| running | pips, current filled | accent | phase progress |
-| converged | pips, `Settled` | emerald | — |
-| round-cap | **all pips amber**, `NO CONVERGENCE` | amber | no-convergence block |
-| stopped | all pips amber, `STOPPED` | amber | held block, *Run round N+1* |
-| unreadable | pips amber, `UNREADABLE` | destructive | existing halt note |
+| Loop state | Card face                            | Pane pill   | Pane body                   |
+| ---------- | ------------------------------------ | ----------- | --------------------------- |
+| running    | pips, current filled                 | accent      | phase progress              |
+| converged  | pips, `Settled`                      | emerald     | —                           |
+| round-cap  | **all pips amber**, `NO CONVERGENCE` | amber       | no-convergence block        |
+| stopped    | all pips amber, `STOPPED`            | amber       | held block, _Run round N+1_ |
+| unreadable | pips amber, `UNREADABLE`             | destructive | existing halt note          |
 
 ## Acceptance criteria
 
@@ -250,7 +250,7 @@ Every one of these is a `board.card.update` carrying `reviewOverrides`; no new c
 5. Lowering the budget below a round that has already **started** is **rejected by the decider**,
    not merely disabled in the UI — including when that round is still in flight with no completion
    recorded, so a running round can never be stranded beyond the cap.
-6. *Run round N+1* on a settled-at-cap card causes the reactor to plan and spawn `review@N+1`
+6. _Run round N+1_ on a settled-at-cap card causes the reactor to plan and spawn `review@N+1`
    without any stage move, and the pane returns to `running`.
 7. A round override set on round 4 makes `review@4` run on the overridden model; `triage@4` and
    `adjudicate@4` run on their **configured per-phase** models.
@@ -273,22 +273,22 @@ Every one of these is a `board.card.update` carrying `reviewOverrides`; no new c
 
 - A real card is driven to its cap, held, extended by two rounds with the reviewer escalated to a
   stronger model, and converges — with the pane and the card face agreeing at every step.
-- A loop is stopped mid-run with *Stop after this round* and does not start the next round.
+- A loop is stopped mid-run with _Stop after this round_ and does not start the next round.
 
 ## Files
 
-| File | Change |
-| --- | --- |
-| `apps/server/src/board/reviewLoopExecutor.ts` | cap → `blocked` (D1); stop-after-round check (D5); round-scoped review model (D4) |
-| `apps/server/src/board/supervisorReactor.ts` | generic re-plan tail on `board.card-updated` (D6) |
-| `apps/server/src/board/decider.ts` | validate `reviewOverrides` on update — budget floor, stop/budget reconciliation (D3/D5) |
-| `apps/server/src/board/projector.ts` | maintain `review_summary` (D7); apply `reviewOverrides` to the aggregate |
-| `apps/server/src/board/projection.ts` | `review_summary` on both shell producers (D7) |
-| `apps/server/src/board/migrations/025_BoardCardsReviewOverrides.ts` | **new** — `review_overrides`, `review_summary` columns |
-| `packages/contracts/src/board.ts` | `BoardCardReviewOverrides`; card field; `reviewOverrides` on the update command; `reviewOutcome` shell key; `effectiveReviewRounds`; corrected `autoAdvance` comment |
-| `packages/client-runtime/src/operations/boardCommands.ts` | carry `reviewOverrides` through `updateBoardCard` |
-| `apps/web/src/board/boardReviewLoop.ts` | `"stopped"` status; effective-budget input |
-| `apps/web/src/board/BoardCardReviewPane.tsx` | no-convergence block, round stepper, future-round drawer (D8) |
-| `apps/web/src/board/BoardCardDetailView.tsx` | *Stop after this round* button (D8) |
-| `apps/web/src/board/boardCardSummary.ts` | emit the `reviewOutcome` item from the review case (D7) |
-| `apps/web/src/board/BoardCardSummaryRow.tsx` | `NO CONVERGENCE` chip and amber pip tint (D7/D9) |
+| File                                                                | Change                                                                                                                                                               |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/board/reviewLoopExecutor.ts`                       | cap → `blocked` (D1); stop-after-round check (D5); round-scoped review model (D4)                                                                                    |
+| `apps/server/src/board/supervisorReactor.ts`                        | generic re-plan tail on `board.card-updated` (D6)                                                                                                                    |
+| `apps/server/src/board/decider.ts`                                  | validate `reviewOverrides` on update — budget floor, stop/budget reconciliation (D3/D5)                                                                              |
+| `apps/server/src/board/projector.ts`                                | maintain `review_summary` (D7); apply `reviewOverrides` to the aggregate                                                                                             |
+| `apps/server/src/board/projection.ts`                               | `review_summary` on both shell producers (D7)                                                                                                                        |
+| `apps/server/src/board/migrations/025_BoardCardsReviewOverrides.ts` | **new** — `review_overrides`, `review_summary` columns                                                                                                               |
+| `packages/contracts/src/board.ts`                                   | `BoardCardReviewOverrides`; card field; `reviewOverrides` on the update command; `reviewOutcome` shell key; `effectiveReviewRounds`; corrected `autoAdvance` comment |
+| `packages/client-runtime/src/operations/boardCommands.ts`           | carry `reviewOverrides` through `updateBoardCard`                                                                                                                    |
+| `apps/web/src/board/boardReviewLoop.ts`                             | `"stopped"` status; effective-budget input                                                                                                                           |
+| `apps/web/src/board/BoardCardReviewPane.tsx`                        | no-convergence block, round stepper, future-round drawer (D8)                                                                                                        |
+| `apps/web/src/board/BoardCardDetailView.tsx`                        | _Stop after this round_ button (D8)                                                                                                                                  |
+| `apps/web/src/board/boardCardSummary.ts`                            | emit the `reviewOutcome` item from the review case (D7)                                                                                                              |
+| `apps/web/src/board/BoardCardSummaryRow.tsx`                        | `NO CONVERGENCE` chip and amber pip tint (D7/D9)                                                                                                                     |

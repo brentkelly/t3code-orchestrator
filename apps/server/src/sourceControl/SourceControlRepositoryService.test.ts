@@ -40,6 +40,7 @@ function makeProvider(
     getDefaultBranch: () => Effect.succeed(null),
     checkoutChangeRequest: () => unsupported("checkoutChangeRequest"),
     mergeChangeRequest: () => unsupported("mergeChangeRequest"),
+    changeRequestMergeState: () => unsupported("changeRequestMergeState"),
     ...overrides,
   };
 }

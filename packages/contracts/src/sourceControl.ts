@@ -75,8 +75,29 @@ export const ChangeRequestChecks = Schema.Struct({
 });
 export type ChangeRequestChecks = typeof ChangeRequestChecks.Type;
 
+/**
+ * Why the forge is blocking, when it says so in a way the board can act on.
+ *
+ * Narrow on purpose: only the reasons that change what the board DOES. A
+ * branch that is behind needs a rebase, a draft needs a human to mark it
+ * ready, and a conflict has its own resolution path already. Everything else
+ * — a missing approval, a protection rule, a required conversation — is
+ * `other`, because the board's answer to all of them is the same: stop and
+ * hand the card to a person.
+ */
+export const ChangeRequestMergeBlockReason = Schema.Literals([
+  "behind",
+  "draft",
+  "conflict",
+  "other",
+]);
+export type ChangeRequestMergeBlockReason = typeof ChangeRequestMergeBlockReason.Type;
+
 export const ChangeRequestMergeState = Schema.Struct({
   mergeable: ChangeRequestMergeability,
+  /** Null when the forge is not blocking, or is blocking for a reason this
+      provider could not name. */
+  blockedReason: Schema.NullOr(ChangeRequestMergeBlockReason),
   checks: ChangeRequestChecks,
   /** The head commit the checks above describe. A new SHA means new CI, which
       is what resets the board's retry ladder (T3O-38, D9). Null when the

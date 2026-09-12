@@ -8,17 +8,17 @@ card reaches a new `merge`-role stage with the PR still open — a primary
 **Merge** button that merges the PR on the forge and advances the card to Done.
 When a card lands in Done with a merged PR, its branch is cleaned up.
 
-This is the follow-up `t3o-20` explicitly deferred: *"The server-side card→PR
-link (D6) and settings-time GitHub gating are DEFERRED to a follow-up."*
+This is the follow-up `t3o-20` explicitly deferred: _"The server-side card→PR
+link (D6) and settings-time GitHub gating are DEFERRED to a follow-up."_
 
 ## Why nothing shows today
 
 `BoardCardShell.prNumber` exists (`contracts/src/board.ts:2461`) and the badge
 that renders it exists (`BoardCardSummaryRow.tsx:256`), but **no producer ever
 sets it**: `makeBoardCardShell` hardcodes `hasPr: false` and omits `prNumber`
-with the comment *"post-MVP review pipeline: key-optional and deliberately
-absent until their producing specs land"* (`board.ts:2656`). There is no PR
-column in any of the 21 board migrations. The review agent is *told* to open a
+with the comment _"post-MVP review pipeline: key-optional and deliberately
+absent until their producing specs land"_ (`board.ts:2656`). There is no PR
+column in any of the 21 board migrations. The review agent is _told_ to open a
 PR (`board.ts:3577`) but reports nothing back. This spec is the producer.
 
 ## Scope
@@ -53,8 +53,9 @@ PR (`board.ts:3577`) but reports nothing back. This spec is the producer.
   Everything a refusal does is unchanged: a conflict starts the resolution
   step, a policy block stops and hands the card to a human, and because no
   click is watching, the reason is recorded on the card's activity rail.
+
 - Any **periodic** PR polling. Refresh is event-driven only (D2).
-- Merge on GitLab / Bitbucket / Azure DevOps. PR *lookup* is provider-agnostic
+- Merge on GitLab / Bitbucket / Azure DevOps. PR _lookup_ is provider-agnostic
   and works on all of them; `mergeChangeRequest` is GitHub-only in v1, matching
   t3o-20's GitHub-mandatory precedent. Other providers return the registry's
   standard unsupported-operation error.
@@ -90,7 +91,7 @@ precedent exactly (`board.ts:644`):
   `withDecodingDefault(null)` so a from-empty replay of a pre-this-spec log
   matches table rehydration.
 - `BoardCardPullRequest = { number, url, state: "open"|"closed"|"merged",
-  headBranch, baseRef, updatedAt }`.
+headBranch, baseRef, updatedAt }`.
 - Migration **022_BoardCardsPullRequest** — additive and guarded, adding a
   `pull_request TEXT` column defaulting NULL, exactly like
   `011_BoardCardsWorktree`.
@@ -113,13 +114,13 @@ of the 5,000/hour budget for no benefit.
 Refresh triggers, all of which are moments where the answer can have changed or
 is about to be read:
 
-| Trigger | Why |
-| --- | --- |
+| Trigger                        | Why                                                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | Each review-loop step boundary | Natural heartbeat while the PR must be open anyway; catches an early external merge/close mid-review |
-| Card moved between stages | Includes the entry to Done that gates branch deletion |
-| Card detail opened | The Merge button is fresh at the moment it becomes visible |
-| **View PR** clicked | Cheap, cache-guarded |
-| After a merge attempt | Records the new state either way |
+| Card moved between stages      | Includes the entry to Done that gates branch deletion                                                |
+| Card detail opened             | The Merge button is fresh at the moment it becomes visible                                           |
+| **View PR** clicked            | Cheap, cache-guarded                                                                                 |
+| After a merge attempt          | Records the new state either way                                                                     |
 
 A `board.card.refreshPullRequest` RPC serves the client-initiated triggers. The
 2-minute cache means a burst of these costs one forge call.
@@ -162,18 +163,18 @@ every other role-held config behaves.
 Shown **only** when the card is in the merge-role stage. Rendered by
 `boardStagePrimaryAction` (`boardStageActions.ts`), which already special-cases
 a role to change the primary button's label and emphasis — `"Begin build"` for
-the build role (`:68-70`). Add the merge case, so the button is the *existing*
+the build role (`:68-70`). Add the merge case, so the button is the _existing_
 `<ArrowRightIcon /> {label}` emphasised control (`BoardCardDetailView.tsx:568`)
 with the label `Merge`. This is exactly the blue `→ Merge` in the prototype
 screenshot.
 
 State table for the primary button in the merge-role stage:
 
-| PR state | Button |
-| --- | --- |
-| `open` | **Merge** — blue, enabled |
-| `open`, conflict step running | **Merge** — disabled, tooltip "Resolving conflicts…" |
-| `merged` / `closed` / no PR | Falls back to the ordinary **Move to Done** (plain, not blue) |
+| PR state                      | Button                                                        |
+| ----------------------------- | ------------------------------------------------------------- |
+| `open`                        | **Merge** — blue, enabled                                     |
+| `open`, conflict step running | **Merge** — disabled, tooltip "Resolving conflicts…"          |
+| `merged` / `closed` / no PR   | Falls back to the ordinary **Move to Done** (plain, not blue) |
 
 The fallback matters: a card is never stranded, cards that never had a PR behave
 exactly as they do today, and merging on GitHub yourself still leaves a path
@@ -207,7 +208,7 @@ retry: the block needs a human, so the next attempt should be a human's.
 button with a "Resolving conflicts…" note while it runs. Modelled as a step, not
 a bare thread, because the step machine is what gives it a concurrency slot, a
 timeout, stall detection, attempt limits, an activity-rail entry — and, decisive
-here, `board_complete_step` is the *only* channel an agent has to report "I've
+here, `board_complete_step` is the _only_ channel an agent has to report "I've
 achieved that". A bare thread ending cannot distinguish "fixed it" from "gave
 up".
 
@@ -273,7 +274,7 @@ stage move.
    does.
 4. No PR lookup is ever issued on a timer. Lookups occur only on the D2
    triggers, and never for a card with no worktree or an unpushed branch.
-5. "Ready for merge" resolves to role `merge` on a fresh board *and* on a board
+5. "Ready for merge" resolves to role `merge` on a fresh board _and_ on a board
    whose `board_stages` row predates this spec.
 6. In the merge stage with an open PR, the primary button is a blue **Merge**.
    With a merged, closed or absent PR it is a plain **Move to Done**.

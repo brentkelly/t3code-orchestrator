@@ -61,7 +61,7 @@ Registered against the `review` role in t3o-15's executor registry. That registr
 place in the codebase that knows this stage differs, alongside the settings panel choosing which card
 to render.
 
-*Explicitly forbidden:* `if (stage.role === "review")` in the supervisor reactor, the decider, the
+_Explicitly forbidden:_ `if (stage.role === "review")` in the supervisor reactor, the decider, the
 projector, the MCP handlers or the board UI. The reactor keeps driving threads, slots, worktrees,
 death detection, recovery and auto-advance exactly as it does for a one-step stage; it only ever asks
 `planNext` what to run.
@@ -105,11 +105,11 @@ round N:
 - It is the terminating condition the repository's own `pullrequest` skill uses — the loop ends when
   a review round raises no new blocking findings — and that loop is what this ports.
 - Adjudicate answers a narrower question ("did this claimed fix hold?"). It cannot see problems the
-  fix *introduced*; only the next review can.
+  fix _introduced_; only the next review can.
 - It makes the clean case free: a good build runs `review` once, finds nothing, and the stage
   completes. One agent invocation, not three.
 
-**No inner loop.** If adjudicate finds a fix did not hold, it does *not* bounce back to triage. Its
+**No inner loop.** If adjudicate finds a fix did not hold, it does _not_ bounce back to triage. Its
 verdicts ride into the next round's review as context and the unresolved item resurfaces there
 naturally. One linear pass per round; the only repetition is the round itself.
 
@@ -156,10 +156,10 @@ The reviewer diffs the card's branch against `worktree.baseRefName` — which al
 card, and already resolves to the parent's integration branch for a sub-board plan card (D12), so
 stacked branches work with no extra design.
 
-*Why not a PR:* nothing in the board creates or pushes one. `externalRef` exists but its only writer
+_Why not a PR:_ nothing in the board creates or pushes one. `externalRef` exists but its only writer
 is an agent calling `board_update_card`. Beyond that: `git diff` needs no credentials, works for
 Codex / Cursor / Grok threads that have no `gh` auth (D5's provider neutrality), and catching
-problems *before* a PR exists is more useful than duplicating what forge review bots already do.
+problems _before_ a PR exists is more useful than duplicating what forge review bots already do.
 
 The consequence, accepted: findings live on the card rather than as inline PR comments, so the card
 detail view has to render them (D9).
@@ -177,10 +177,10 @@ The executor stays pure: it puts both SHAs in the prompt, and the agent runs the
 
 ### D8 — Rounds and attempts are different counters
 
-| | Counts | Owner | On exhaustion |
-| --- | --- | --- | --- |
-| `maxAttempts` | retries of a phase whose **thread died** | the reactor's recovery ladder (D13) | escalate to human |
-| `rounds` | repeats of a sequence that **completed without converging** | `ReviewLoopExecutor` | complete the stage `blocked` |
+|               | Counts                                                      | Owner                               | On exhaustion                |
+| ------------- | ----------------------------------------------------------- | ----------------------------------- | ---------------------------- |
+| `maxAttempts` | retries of a phase whose **thread died**                    | the reactor's recovery ladder (D13) | escalate to human            |
+| `rounds`      | repeats of a sequence that **completed without converging** | `ReviewLoopExecutor`                | complete the stage `blocked` |
 
 `round` lives in t3o-15's `runState`, stamped by the executor. Both are bounded and both end at a
 human; conflating them would give 3 attempts × N rounds × 3 phases of ambiguity on the card.
@@ -250,9 +250,9 @@ This is the UI half of D6 — with no PR, the board is the only place findings c
 
 ## Files
 
-| File | Change |
-| --- | --- |
-| `apps/server/src/board/reviewLoopExecutor.ts` | **new** — the entire loop; registered against the `review` role |
-| `packages/contracts/src/board.ts` | `kind: "review"` member of `BoardStageExecution`; the three payload schemas; compiled-in phase ids, labels and default prompts |
-| `apps/web/src/components/settings/BoardSettingsPanel.tsx` | the bespoke review card |
-| `apps/web/src/board/BoardCardDetailView.tsx` | the findings panel |
+| File                                                      | Change                                                                                                                         |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/server/src/board/reviewLoopExecutor.ts`             | **new** — the entire loop; registered against the `review` role                                                                |
+| `packages/contracts/src/board.ts`                         | `kind: "review"` member of `BoardStageExecution`; the three payload schemas; compiled-in phase ids, labels and default prompts |
+| `apps/web/src/components/settings/BoardSettingsPanel.tsx` | the bespoke review card                                                                                                        |
+| `apps/web/src/board/BoardCardDetailView.tsx`              | the findings panel                                                                                                             |
