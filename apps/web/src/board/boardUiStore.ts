@@ -77,10 +77,18 @@ interface BoardUiStore extends BoardUiState {
       (T3O-34, D8). Transient — it is a measurement of this client's live
       layout, not a preference, so it is deliberately outside `partialize`. */
   sidebarHostsModeTabs: boolean;
+  /** Whether the open card sheet is in fullscreen (T3O-37, D5). Transient, and
+      deliberately outside `partialize` for the same reason as the field above:
+      it belongs to the sheet that is open right now, not to the client. It
+      lives here rather than in the sheet only so that stepping to the next card
+      — which remounts the sheet on purpose, to reset everything else — does not
+      throw the reader out of fullscreen. The board clears it on close. */
+  detailMaximised: boolean;
   recordModeLocation: (mode: WorkspaceMode, href: string) => void;
   setColumnCollapsed: (stageKey: string, collapsed: boolean) => void;
   setUtilityMenuCollapsed: (collapsed: boolean) => void;
   setSidebarHostsModeTabs: (hosting: boolean) => void;
+  setDetailMaximised: (maximised: boolean) => void;
 }
 
 /** The first column starts collapsed to a rail (D13): it is the one column that
@@ -145,6 +153,7 @@ export const useBoardUiStore = create<BoardUiStore>()(
       collapsedByStage: {},
       utilityMenuCollapsed: false,
       sidebarHostsModeTabs: false,
+      detailMaximised: false,
       recordModeLocation: (mode, href) =>
         set((state) => {
           // The mounting surface fixes `mode`, but the router location updates
@@ -177,6 +186,10 @@ export const useBoardUiStore = create<BoardUiStore>()(
       setSidebarHostsModeTabs: (hosting) =>
         set((state) =>
           state.sidebarHostsModeTabs === hosting ? state : { sidebarHostsModeTabs: hosting },
+        ),
+      setDetailMaximised: (maximised) =>
+        set((state) =>
+          state.detailMaximised === maximised ? state : { detailMaximised: maximised },
         ),
     }),
     {

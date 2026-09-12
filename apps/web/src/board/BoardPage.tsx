@@ -70,6 +70,8 @@ import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
 import { countBoardColumnCards, filterBoardColumnsByQuery } from "./boardCardFilter";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { BoardCardDetail } from "./BoardCardDetail";
+import { resolveBoardCardNeighbours, type BoardCardStep } from "./boardCardNav";
+import type { BoardCardNav } from "./BoardCardNavRails";
 import { useBoardAttentionSettle } from "./boardAttentionSettle";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
@@ -205,10 +207,11 @@ function EnvironmentBoard({
   /** Update the current route's search params in place — the scope (the
       path) never changes here, only the selection/filter state riding it. */
   const patchSearch = useCallback(
-    (updater: (previous: BoardSearch) => BoardSearch) => {
+    (updater: (previous: BoardSearch) => BoardSearch, options?: { readonly replace?: boolean }) => {
       void navigate({
         to: ".",
         search: (previous: BoardSearch) => updater(previous),
+        replace: options?.replace === true,
       });
     },
     [navigate],
@@ -253,6 +256,7 @@ function EnvironmentBoard({
 
   const collapsedByStage = useBoardUiStore((state) => state.collapsedByStage);
   const setColumnCollapsed = useBoardUiStore((state) => state.setColumnCollapsed);
+  const setDetailMaximised = useBoardUiStore((state) => state.setDetailMaximised);
 
   // The user-defined stage list drives column order and labels (D13); falls
   // back to the compiled seeds until the first shell snapshot arrives.
@@ -898,11 +902,43 @@ function EnvironmentBoard({
     [patchSearch],
   );
   const handleCloseDetail = useCallback(() => {
+    // Fullscreen rides the store so it survives a step between cards (T3O-37,
+    // D5); closing is where it ends, so the next card you open opens windowed.
+    setDetailMaximised(false);
     patchSearch((previous) => {
       const { card: _card, ...rest } = previous;
       return rest;
     });
-  }, [patchSearch]);
+  }, [patchSearch, setDetailMaximised]);
+  // ── Stepping between cards (T3O-37) ────────────────────────────────
+  // The sibling list is `visibleColumns` itself — the very array each column
+  // renders — so what you step through is exactly what the board is currently
+  // showing: same scope, same project, same "Stalled only", same search box.
+  // There is no second filter here to drift from the first. A card that is not
+  // in it (a deep link, or one the query is hiding) resolves to index -1, and
+  // both the rails and the shortcuts go quiet rather than guessing.
+  const neighbours = useMemo(
+    () => resolveBoardCardNeighbours(visibleColumns, selectedCardId),
+    [selectedCardId, visibleColumns],
+  );
+  const stepCard = useCallback(
+    (direction: BoardCardStep) => {
+      const target = direction === -1 ? neighbours.prev : neighbours.next;
+      if (target === null) return;
+      // `replace`, not push (D4): reading ten cards in a row must not bury the
+      // board under ten history entries. Back closes the sheet to where the
+      // reading started. Clicking a card on the board still pushes.
+      patchSearch((previous) => ({ ...previous, card: target.cardId }), { replace: true });
+    },
+    [neighbours, patchSearch],
+  );
+  const cardNav = useMemo<BoardCardNav | null>(() => {
+    if (neighbours.prev === null && neighbours.next === null) return null;
+    const target = (card: BoardCardShell | null) =>
+      card === null ? null : { key: card.key, title: card.title };
+    return { prev: target(neighbours.prev), next: target(neighbours.next), onStep: stepCard };
+  }, [neighbours, stepCard]);
+
   /** The stack affordance on a split parent's face (t3o-25, AC2): clicking it
       drills into that parent's sub-board. */
   const handleOpenSubBoard = useCallback(
@@ -1286,6 +1322,7 @@ function EnvironmentBoard({
           cardId={BoardCardId.make(selectedCardId)}
           environmentId={environmentId}
           key={selectedCardId}
+          nav={cardNav}
           onClose={handleCloseDetail}
           onOpenSubBoard={openSubBoard}
         />
