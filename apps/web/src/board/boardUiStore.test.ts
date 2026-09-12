@@ -211,6 +211,14 @@ describe("detailMaximisedCardId", () => {
     // per-card view state; fullscreen lives out here precisely so that remount
     // does not throw the reader back into a window mid-read. A step hands the
     // flag to the card it steps to.
+    //
+    // The field names the card it belongs to rather than being a bare "the
+    // sheet is fullscreen" boolean, which is what keeps the openings that
+    // never pass through "no card open" — a sub-board drill carrying a card
+    // argument, a deep link followed while a card is still open — from
+    // inheriting fullscreen. Which card may take the flag is decided by
+    // `boardCardMaximisedAfterStep`, and tested there; the store only has to
+    // hold whatever it is handed.
     resetStore();
     useBoardUiStore.getState().setDetailMaximisedCardId("card-a");
     expect(maximisedCardId()).toBe("card-a");
@@ -218,18 +226,6 @@ describe("detailMaximisedCardId", () => {
     expect(maximisedCardId()).toBe("card-b");
     useBoardUiStore.getState().setDetailMaximisedCardId(null);
     expect(maximisedCardId()).toBe(null);
-  });
-
-  it("does not follow a card that opens any other way (T3O-37)", () => {
-    // The flag names the card it belongs to rather than being a bare "the
-    // sheet is fullscreen" boolean, so the cases that never pass through "no
-    // card open" — a sub-board drill carrying a card argument, a deep link
-    // followed while a card is still open — cannot inherit fullscreen from a
-    // card the user maximised earlier.
-    resetStore();
-    useBoardUiStore.getState().setDetailMaximisedCardId("card-a");
-    expect(maximisedCardId() === "card-b").toBe(false);
-    expect(maximisedCardId() === "card-a").toBe(true);
   });
 
   it("is transient: it belongs to the open card, not to the client", () => {

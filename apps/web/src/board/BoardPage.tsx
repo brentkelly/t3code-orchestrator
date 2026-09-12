@@ -1332,7 +1332,20 @@ function EnvironmentBoard({
         </div>
       </div>
       {/* The card opens as a centred modal over the board (t3o-06), not a
-          rail beside it — so it never squeezes the columns. */}
+          rail beside it — so it never squeezes the columns.
+
+          `key` is what gives every per-card view state its reset on a step
+          (T3O-37, D5) — and stepping does NOT replay the sheet's open
+          transition, despite remounting the Dialog with it. Base UI only
+          animates a popup that goes from closed to open: `useTransitionStatus`
+          seeds `mounted` from `open`, so a Root that mounts already open never
+          reaches the `'starting'` status, and `data-starting-style` — which is
+          the sole hook for the backdrop's fade and the popup's scale in
+          `dialog-styles.ts` — is never written. This sheet is only ever
+          mounted open, so that has always been true of opening a card too; a
+          step swaps the sheet's contents in one commit and the frame under it
+          does not flinch. Hoisting the Dialog above the key would buy nothing
+          and cost the reset. */}
       {selectedCardId !== null ? (
         <BoardCardDetail
           cardId={BoardCardId.make(selectedCardId)}
