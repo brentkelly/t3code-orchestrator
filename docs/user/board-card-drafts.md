@@ -43,4 +43,5 @@ restored after a reload has no retry: if it will not attach, remove it and attac
 Each attachment is held for a day from when it finished uploading — carrying on typing does not
 extend it — after which the draft comes back without that file and says so.
 
-See also [Board card attachments](./board-attachments.md).
+See also [Board card attachments](./board-attachments.md) and
+[Creating a card from the keyboard](./board-create-card-shortcut.md).
