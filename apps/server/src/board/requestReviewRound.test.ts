@@ -271,10 +271,14 @@ it.effect("D10: the request writes an activity note naming the round", () =>
         const notes = (yield* decided).filter(
           (event) =>
             event.type === "board.card-note-recorded" &&
-            JSON.stringify(event).includes("card-review-round-requested"),
+            event.payload.kind === "card-review-round-requested",
         );
         assert.strictEqual(notes.length, 1);
-        assert.include(JSON.stringify(notes[0]), "review round 2");
+        const [note] = notes;
+        assert.strictEqual(
+          note?.type === "board.card-note-recorded" ? note.payload.detail : null,
+          "Requested review round 2 on this branch.",
+        );
       }),
   ),
 );
