@@ -269,6 +269,26 @@ describe("boardReviewLoopWalk", () => {
     assert.strictEqual(capped.status, "round-cap");
     assert.strictEqual(capped.currentRound, 2);
   });
+
+  it("T3O-39: a requested round outranks the convergence exit", () => {
+    // The control: the same completions converge with nothing asked for.
+    assert.strictEqual(walk([review(1, [])], 5).status, "converged");
+    // Asked for, round 2 is what the loop owes — and the pane must say so,
+    // or it reports `converged` while the executor dispatches the round.
+    const requested = walk([review(1, [])], 5, null, 2);
+    assert.strictEqual(requested.status, "running");
+    assert.deepStrictEqual(requested.next, { phase: "review", round: 2 });
+    // Self-clearing: once round 2 has run, the loop converges normally.
+    assert.strictEqual(walk([review(1, []), review(2, [])], 5, null, 2).status, "converged");
+  });
+
+  it("T3O-39: a recorded sync still gates a requested round", () => {
+    // The sync's own gate round comes first: the request is satisfied by the
+    // round that follows the rebase, and reviewing the diff against a base it
+    // is no longer built on is not the pass that was asked for.
+    const stale = walk([review(1, []), completion("sync@1", { rebasedSha: "s" })], 5, null, 2);
+    assert.deepStrictEqual(stale.next, { phase: "review", round: 2 });
+  });
 });
 
 describe("deriveBoardCardReviewSummary", () => {
@@ -292,6 +312,39 @@ describe("deriveBoardCardReviewSummary", () => {
       }),
       null,
     );
+  });
+
+  it("T3O-39: a requested round keeps the cache off `converged`", () => {
+    const converged = deriveBoardCardReviewSummary({
+      completions: [review(1, [])],
+      maxRounds: 5,
+      stopAfterRound: null,
+      runThroughRound: null,
+    });
+    assert.strictEqual(converged?.outcome, "converged");
+    // With the round asked for the cache reports the loop as still going, so
+    // the column card cannot render a pass over a round that is dispatching.
+    const requested = deriveBoardCardReviewSummary({
+      completions: [review(1, [])],
+      maxRounds: 5,
+      stopAfterRound: null,
+      runThroughRound: 2,
+    });
+    assert.strictEqual(requested?.outcome, "running");
+  });
+
+  it("T3O-39: the walk bound comes from the ledger, not a compiled-in ceiling", () => {
+    // Eleven clean-then-blocking rounds: the old bound of 10 truncated the
+    // walk here and reported `round-cap` on a loop that had simply run long.
+    const long = Array.from({ length: 11 }, (_, index) => unconverged(index + 1)).flat();
+    const summary = deriveBoardCardReviewSummary({
+      completions: long,
+      maxRounds: null,
+      stopAfterRound: null,
+      runThroughRound: null,
+    });
+    assert.strictEqual(summary?.outcome, "running");
+    assert.strictEqual(summary?.roundCurrent, 11);
   });
 
   it("never reports round-cap for a loop the caller's budget merely bounds", () => {
@@ -591,6 +644,39 @@ describe("replay equals rehydration for a pre-t3o-22 log", () => {
     // this spec genuinely HAD no base branch, so replaying its payload must
     // reach null — "follow the project default" — rather than any branch name.
     assert.strictEqual(decodeBoardCard(legacy).baseBranch, null);
+  });
+
+  it("T3O-39: decodes a card written with the older overrides struct", () => {
+    // `runThroughRound` needs no migration: every field of the struct carries
+    // a decoding default, so a card whose recorded overrides predate this
+    // spec replays to exactly what a rehydrated row reads.
+    const withOldOverrides = {
+      id: "card-1",
+      key: "T3-1",
+      cardNumber: 1,
+      projectId: "project-1",
+      labels: [],
+      stage: "review",
+      orderKey: "m",
+      title: "Card",
+      briefRef: null,
+      dependsOn: [],
+      parentCardId: null,
+      threadLinks: [],
+      attachments: [],
+      externalRef: null,
+      blocked: false,
+      archivedAt: null,
+      createdAt: "2026-08-27T00:00:00.000Z",
+      updatedAt: "2026-08-27T00:00:00.000Z",
+      reviewOverrides: { rounds: 5, stopAfterRound: 2, roundModels: {} },
+    };
+    const decoded = decodeBoardCard(withOldOverrides);
+    assert.strictEqual(decoded.reviewOverrides?.runThroughRound, null);
+    // And the fields it DID carry are untouched: a decoding default must not
+    // rewrite the card's own settings.
+    assert.strictEqual(decoded.reviewOverrides?.rounds, 5);
+    assert.strictEqual(decoded.reviewOverrides?.stopAfterRound, 2);
   });
 });
 

@@ -830,6 +830,101 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
   });
 });
 
+describe("another review round after convergence (T3O-39, D1/D2/D3)", () => {
+  const cleanRound = (round: number) => completion(`review@${round}`, reviewPayload([]));
+
+  it("D3: a converged loop with the round requested plans it instead of completing", () => {
+    // The control: nothing asked for, so the loop converges exactly as before.
+    expect(plan([cleanRound(1)])).toEqual({ kind: "complete", outcome: "succeeded" });
+
+    const requested = plan([cleanRound(1)], undefined, overrides({ runThroughRound: 2 }));
+    expect(requested.kind).toBe("run");
+    if (requested.kind !== "run") return;
+    expect(requested.stepId).toBe("review@2");
+    // A review phase starts a round, so it re-records the base tip.
+    expect(requested.recordBaseTip).toBe(true);
+  });
+
+  it("D1: the request is self-clearing — once the round has RUN the loop converges", () => {
+    expect(
+      plan([cleanRound(1), cleanRound(2)], undefined, overrides({ runThroughRound: 2 })),
+    ).toEqual({ kind: "complete", outcome: "succeeded" });
+    // And a request for a round that has ALREADY run is inert, which is what
+    // makes the field history rather than state anyone has to clear.
+    expect(plan([cleanRound(1)], undefined, overrides({ runThroughRound: 1 }))).toEqual({
+      kind: "complete",
+      outcome: "succeeded",
+    });
+  });
+
+  it("D2: the request floors the budget, so a spent loop can still run one more", () => {
+    // Converged at 1 of 1: without the budget floor the walk would break on
+    // the cap before it ever reached the convergence arm, and the request
+    // would be inert.
+    const spent = plan(
+      [cleanRound(1)],
+      reviewExec({ rounds: 1 }),
+      overrides({ runThroughRound: 2 }),
+    );
+    expect(spent.kind === "run" && spent.stepId).toBe("review@2");
+    // And the floor is exactly one round: round 2 running clean holds the loop
+    // rather than buying a round 3 nobody asked for.
+    expect(
+      plan(
+        [cleanRound(1), cleanRound(2)],
+        reviewExec({ rounds: 1 }),
+        overrides({ runThroughRound: 2 }),
+      ),
+    ).toEqual({ kind: "complete", outcome: "succeeded" });
+  });
+
+  it("D2: a loop with budget left simply re-enters the loop it was already in", () => {
+    // Converged at 1 of 5, round 2 requested and blocking: the budget was
+    // always 5, so the loop carries on normally rather than stopping at 2.
+    const carriesOn = plan(
+      [
+        cleanRound(1),
+        completion("review@2", reviewPayload([finding("critical")])),
+        completion("triage@2", { fixedSha: "s", dispositions: [] }),
+        completion("adjudicate@2", { verdicts: [] }),
+      ],
+      reviewExec({ rounds: 5 }),
+      overrides({ runThroughRound: 2 }),
+    );
+    expect(carriesOn.kind === "run" && carriesOn.stepId).toBe("review@3");
+  });
+
+  it("D3: a stale base plans its sync FIRST — the request never jumps the rebase gate", () => {
+    // Order matters: reviewing the diff against a base it is no longer built
+    // on is not the pass that was asked for, and the gate round the rebase
+    // owes satisfies the request anyway.
+    const stale = plan([cleanRound(1)], undefined, overrides({ runThroughRound: 2 }), null, true);
+    expect(stale.kind === "run" && stale.stepId).toBe("sync@1");
+  });
+
+  it("D11: the requested round runs on a round override set before the request", () => {
+    const opusRound: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-opus-5",
+    };
+    const requested = plan(
+      [cleanRound(1)],
+      undefined,
+      overrides({ runThroughRound: 2, roundModels: { "2": opusRound } }),
+    );
+    expect(requested.kind === "run" && requested.model).toEqual(opusRound);
+    // Triage keeps its configured per-phase model: escalating the reviewer and
+    // re-modelling the author are different decisions (t3o-22, D4).
+    const atTriage = plan(
+      [cleanRound(1), completion("review@2", reviewPayload([finding("critical")]))],
+      undefined,
+      overrides({ runThroughRound: 2, roundModels: { "2": opusRound } }),
+    );
+    expect(atTriage.kind === "run" && atTriage.stepId).toBe("triage@2");
+    expect(atTriage.kind === "run" && atTriage.model).toEqual(globalModel);
+  });
+});
+
 describe("sync-base and the gate round (t3o-24, D2/D3)", () => {
   const cleanRound = (round: number) => [completion(`review@${round}`, reviewPayload([]))];
   const syncDone = (round: number) => completion(`sync@${round}`, { rebasedSha: "sha-rebased" });

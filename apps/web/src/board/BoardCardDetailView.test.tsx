@@ -244,6 +244,16 @@ function selectedTab(html: string): string | null {
   return null;
 }
 
+/** The rail's "Another review round" / "Request review" button, as rendered —
+    so a test can ask whether it is DEAD without reading the whole panel. */
+function reviewRoundButton(html: string): string {
+  for (const match of html.matchAll(/<button[^>]*>(?:(?!<button)[\s\S])*?<\/button>/g)) {
+    const [tag] = match;
+    if (tag.includes("Another review round") || tag.includes("Request review")) return tag;
+  }
+  return "";
+}
+
 describe("BoardCardDetailPanel", () => {
   it("renders an archived card whose project is not on disk, with a Restore action", () => {
     const html = renderToStaticMarkup(
@@ -317,6 +327,144 @@ describe("BoardCardDetailPanel", () => {
       />,
     );
     expect(backlog).toContain(">Review</button>");
+  });
+
+  // ── "Another review round" / "Request review" (T3O-39) ──────────────────
+
+  /** A converged round 1 on the ledger — what makes a card read as one that
+      has been through review. */
+  const reviewed = [
+    {
+      cardId,
+      stepId: "review@1",
+      outcome: "succeeded" as const,
+      summary: "reviewed",
+      payload: JSON.stringify({ reviewedSha: "sha1", findings: [] }),
+      threadId: null,
+      completedAt: NOW,
+    },
+  ];
+
+  it("offers another review round at Ready for merge, and a first one at Code review", () => {
+    const atMerge = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge }, null, {
+          stepCompletions: reviewed,
+        })}
+        onRequestReviewRound={noop}
+        projectName="P"
+      />,
+    );
+    expect(atMerge).toContain("Another review round");
+
+    // The brief&apos;s own sentence: a converged card that did not auto-advance
+    // gets the action beside the button that would move it on.
+    const atReview = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.review }, null, {
+          stepCompletions: reviewed,
+        })}
+        onRequestReviewRound={noop}
+        projectName="P"
+      />,
+    );
+    expect(atReview).toContain("Another review round");
+  });
+
+  it("reads `Request review` on a card that reached merge without one", () => {
+    // "Submit for merge — no review" leaves no review completions, so the same
+    // verb with an empty ledger runs round 1 — a label difference, not a
+    // second feature.
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge })}
+        onRequestReviewRound={noop}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Request review");
+    expect(html).not.toContain("Another review round");
+  });
+
+  it("is absent at every stage the round cannot run from, Done included", () => {
+    for (const stage of [
+      BOARD_SEED_STAGE_IDS.backlog,
+      BOARD_SEED_STAGE_IDS.sprint,
+      BOARD_SEED_STAGE_IDS.planning,
+      BOARD_SEED_STAGE_IDS.ready,
+      BOARD_SEED_STAGE_IDS.building,
+      // Leaving Done retires the card's pull request and raises the floor
+      // (D12): a bigger operation that must not hide behind this button.
+      BOARD_SEED_STAGE_IDS.done,
+    ]) {
+      const html = renderToStaticMarkup(
+        <BoardCardDetailPanel
+          {...baseProps}
+          detail={detail({ stage }, null, { stepCompletions: reviewed })}
+          onRequestReviewRound={noop}
+          projectName="P"
+        />,
+      );
+      expect(html).not.toContain("Another review round");
+      expect(html).not.toContain("Request review");
+    }
+  });
+
+  it("is absent on a board with no review-role stage to run the round in", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge }, null, {
+          stepCompletions: reviewed,
+        })}
+        onRequestReviewRound={noop}
+        projectName="P"
+        stages={BOARD_SEED_STAGES.filter((stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.review)}
+      />,
+    );
+    expect(html).not.toContain("Another review round");
+    expect(html).not.toContain("Request review");
+  });
+
+  it("survives a merge the conflicts have killed, and goes dead only while a step runs", () => {
+    // On a card whose base has drifted another review round is the REMEDY — a
+    // round starting on a stale base plans its rebase first — so the button is
+    // never gated on the pull request or on Merge being dead.
+    const conflicted = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        conflictFix={boardConflictFix({ live: false, baseRef: "t3o" })}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge }, null, {
+          stepCompletions: reviewed,
+        })}
+        onRequestReviewRound={noop}
+        projectName="P"
+      />,
+    );
+    expect(conflicted).toContain("Another review round");
+
+    // Live, the conflict fix is a step mid-rebase, and one step at a time is a
+    // decider invariant. Disabled with the reason, never hidden: a button that
+    // vanishes looks like the feature is gone.
+    const live = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        conflictFix={boardConflictFix({ live: true, baseRef: "t3o" })}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge }, null, {
+          stepCompletions: reviewed,
+        })}
+        onRequestReviewRound={noop}
+        projectName="P"
+        stepLive
+      />,
+    );
+    expect(reviewRoundButton(live)).toContain("Another review round");
+    expect(reviewRoundButton(live)).toContain("disabled");
+    // And it is live — not merely present — when nothing is running.
+    expect(reviewRoundButton(conflicted)).not.toContain("disabled");
   });
 
   it("banners the held merge under the title, with a way to the thread (T3O-9)", () => {

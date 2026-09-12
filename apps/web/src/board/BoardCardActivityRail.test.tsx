@@ -54,6 +54,24 @@ describe("BoardCardActivityRail", () => {
     expect(renderToStaticMarkup(<BoardCardActivityRail entries={[]} stages={stages} />)).toBe("");
   });
 
+  it("T3O-39: says WHY a card walked back to Code review", () => {
+    // `card-moved` says where, never why — so without this row a card jumping
+    // from Ready for merge back to Code review reads as a drag that silently
+    // snapped back.
+    const html = renderToStaticMarkup(
+      <BoardCardActivityRail
+        entries={[
+          entry({
+            kind: "card-review-round-requested",
+            payload: { detail: "Requested review round 6 on this branch." },
+          }),
+        ]}
+        stages={stages}
+      />,
+    );
+    expect(html).toContain("Requested review round 6 on this branch.");
+  });
+
   it("shows a run of repeated rows once, with a toggle for the rest", () => {
     const html = renderToStaticMarkup(
       <BoardCardActivityRail
