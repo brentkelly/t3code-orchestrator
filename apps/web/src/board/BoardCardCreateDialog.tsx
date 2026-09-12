@@ -39,6 +39,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogFooter, DialogPopup, DialogTitle } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
+import { Kbd } from "../components/ui/kbd";
 import {
   Select,
   SelectItem,
@@ -79,6 +80,7 @@ import {
   readBoardCardDraft,
   saveBoardCardDraft,
 } from "./boardCardDraftStore";
+import { boardCardCreateShortcutLabel, isBoardCardCreateShortcut } from "./boardCardCreateShortcut";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import { BoardLabelField } from "./BoardLabelField";
@@ -423,6 +425,8 @@ export function BoardCardCreateDialog({
     !briefAttachments.busy &&
     !briefAttachments.failed;
 
+  const submitShortcutLabel = useMemo(() => boardCardCreateShortcutLabel(), []);
+
   const submit = () => {
     if (projectId === null) return;
     const trimmedTitle = title.trim();
@@ -519,7 +523,30 @@ export function BoardCardCreateDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogPopup className="max-h-[86vh] w-[min(600px,100%)] max-w-[600px] overflow-hidden p-0">
+      {/* Mod+Enter creates the card from anywhere inside the dialog (T3O-43):
+          it used to be the title field's alone, which is the one field a user
+          has usually already left by the time they want to submit. Nested
+          popups (stage, project, schedule) portal out of this subtree, so
+          their own Enter handling is untouched. */}
+      <DialogPopup
+        className="max-h-[86vh] w-[min(600px,100%)] max-w-[600px] overflow-hidden p-0"
+        onKeyDown={(event) => {
+          if (
+            !isBoardCardCreateShortcut({
+              altKey: event.altKey,
+              ctrlKey: event.ctrlKey,
+              isComposing: event.nativeEvent.isComposing,
+              key: event.key,
+              metaKey: event.metaKey,
+              shiftKey: event.shiftKey,
+            })
+          )
+            return;
+          if (!canSubmit) return;
+          event.preventDefault();
+          submit();
+        }}
+      >
         {/* Identity row — the card modal's, with the stage the card will land
             in standing where the open card shows the stage it is in. */}
         <div className="flex shrink-0 items-center gap-[9px] px-4 pt-4 pr-11">
@@ -672,10 +699,6 @@ export function BoardCardCreateDialog({
                 autoFocus
                 className="text-[13.5px]"
                 onChange={(event) => setTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSubmit)
-                    submit();
-                }}
                 placeholder="What needs building?"
                 value={title}
               />
@@ -799,8 +822,20 @@ export function BoardCardCreateDialog({
               Cancel
             </Button>
           )}
-          <Button disabled={!canSubmit} onClick={submit} size="sm">
+          {/* The shortcut rides the button rather than a tooltip: it is the
+              one place a user is already looking when they wonder how to
+              submit without reaching for the mouse. */}
+          <Button
+            aria-keyshortcuts="Meta+Enter Control+Enter"
+            disabled={!canSubmit}
+            onClick={submit}
+            size="sm"
+          >
             Create card
+            {/* Nothing to press on a phone, where this dialog is a sheet. */}
+            <Kbd className="h-4 min-w-0 rounded-sm bg-primary-foreground/20 px-1 font-mono text-[10px] text-primary-foreground max-sm:hidden">
+              {submitShortcutLabel}
+            </Kbd>
           </Button>
         </DialogFooter>
       </DialogPopup>
