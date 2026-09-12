@@ -1319,6 +1319,7 @@ function ActionsSection({
     !props.canApproveSplit &&
     !blocked &&
     autoStart === null &&
+    autoMerge === null &&
     humanInLoop === null &&
     displayed === null &&
     stopRound === null

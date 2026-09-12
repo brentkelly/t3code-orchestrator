@@ -365,6 +365,112 @@ describe("BoardCardDetailPanel", () => {
     expect(html).not.toContain("Resolving conflicts");
   });
 
+  it("banners a retrying auto-merge hold in amber with the forge's own words (T3O-38)", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({
+          stage: BOARD_SEED_STAGE_IDS.merge,
+          autoMerge: true,
+          autoMergeHold: {
+            reason: "Required status check 'test' has not passed.",
+            classification: "soft",
+            detail: "3 of 5 checks green · ci/build still running",
+            attempt: 2,
+            heldSince: "2026-01-01T00:00:00.000Z",
+            retryAt: "2030-01-01T00:00:00.000Z",
+            headSha: "sha-one",
+          },
+        })}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Auto-merge is retrying");
+    // Verbatim: the user reads the forge's reason, not a paraphrase of it.
+    expect(html).toContain("Required status check &#x27;test&#x27; has not passed.");
+    expect(html).toContain("attempt 2 of 8");
+    expect(html).toContain("3 of 5 checks green");
+  });
+
+  it("turns the banner red once the ladder has stopped (T3O-38, D12)", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({
+          stage: BOARD_SEED_STAGE_IDS.merge,
+          autoMerge: true,
+          autoMergeHold: {
+            reason: "ci/test failed.",
+            classification: "checks-failed",
+            detail: null,
+            attempt: 1,
+            heldSince: "2026-01-01T00:00:00.000Z",
+            retryAt: null,
+            headSha: "sha-one",
+          },
+        })}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Auto-merge stopped");
+    // Amber while the board will end the wait itself, red once it will not —
+    // the treatment the stalled banner has had since t3o-30.
+    expect(html).toContain("border-destructive/30");
+    expect(html).not.toContain("Auto-merge is retrying");
+  });
+
+  it("shows no auto-merge banner on a card with no hold (T3O-38)", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge })}
+        projectName="P"
+      />,
+    );
+    expect(html).not.toContain("Auto-merge is retrying");
+    expect(html).not.toContain("Auto-merge stopped");
+  });
+
+  it("offers the per-card auto-merge switch, and HIDES it under the board setting (T3O-38, D3)", () => {
+    const withSwitch = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        onSetAutoMerge={() => {}}
+        projectName="P"
+      />,
+    );
+    // Offered wherever the card is, not pinned to one column: the useful
+    // moment to arm it is before going to bed.
+    expect(withSwitch).toContain("Auto-merge when ready");
+
+    const boardWide = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        autoMergeFromBoardSetting
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        onSetAutoMerge={() => {}}
+        projectName="P"
+      />,
+    );
+    // Two controls that can disagree about one card is worse than one, so the
+    // switch goes and the header says where the decision lives instead.
+    expect(boardWide).not.toContain("Auto-merge when ready");
+    expect(boardWide).toContain("Auto-merge · board");
+  });
+
+  it("does not offer the auto-merge switch on a card in Done (T3O-38, D3)", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.done })}
+        onSetAutoMerge={() => {}}
+        projectName="P"
+      />,
+    );
+    expect(html).not.toContain("Auto-merge when ready");
+  });
+
   it("renders an archived dependency as the card it is, not as an unknown id", () => {
     // The bug (t3o-13): the shell snapshot drops archived cards, so resolving
     // a dependency from it produced "Unknown task" on "unknown card".
