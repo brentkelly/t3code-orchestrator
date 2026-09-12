@@ -579,8 +579,12 @@ describe("BoardCardDetailPanel", () => {
     expect(html).not.toContain("Auto-merge stopped");
   });
 
-  it("offers the per-card auto-merge switch, and HIDES it under the board setting (T3O-38, D3)", () => {
-    const withSwitch = renderToStaticMarkup(
+  it("keeps the per-card auto-merge switch out of the action rail (T3O-42)", () => {
+    // It moved into the kebab, whose popup is a portal and therefore renders
+    // nothing here. The switch's own offered/hidden rules are covered against
+    // `boardAutoMergeArm` in boardAutoMergeHold.test.ts; what this asserts is
+    // that a card mid-build no longer carries it among the stage's actions.
+    const html = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
         detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
@@ -588,10 +592,14 @@ describe("BoardCardDetailPanel", () => {
         projectName="P"
       />,
     );
-    // Offered wherever the card is, not pinned to one column: the useful
-    // moment to arm it is before going to bed.
-    expect(withSwitch).toContain("Auto-merge when ready");
+    expect(html).not.toContain("Auto-merge when ready");
+    // The kebab is what holds it now, and it is rendered (closed) on every card.
+    expect(html).toContain("More actions");
+  });
 
+  it("names the source in the header when the board-wide setting owns it (T3O-38, D3)", () => {
+    // Two controls that can disagree about one card is worse than one, so the
+    // per-card switch goes and the header says where the decision lives.
     const boardWide = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
@@ -601,22 +609,7 @@ describe("BoardCardDetailPanel", () => {
         projectName="P"
       />,
     );
-    // Two controls that can disagree about one card is worse than one, so the
-    // switch goes and the header says where the decision lives instead.
-    expect(boardWide).not.toContain("Auto-merge when ready");
     expect(boardWide).toContain("Auto-merge · board");
-  });
-
-  it("does not offer the auto-merge switch on a card in Done (T3O-38, D3)", () => {
-    const html = renderToStaticMarkup(
-      <BoardCardDetailPanel
-        {...baseProps}
-        detail={detail({ stage: BOARD_SEED_STAGE_IDS.done })}
-        onSetAutoMerge={() => {}}
-        projectName="P"
-      />,
-    );
-    expect(html).not.toContain("Auto-merge when ready");
   });
 
   it("renders an archived dependency as the card it is, not as an unknown id", () => {

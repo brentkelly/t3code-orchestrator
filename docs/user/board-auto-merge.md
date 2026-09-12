@@ -10,9 +10,9 @@ the forge accepts it, and the cards depending on it start themselves off the bac
 
 ## Arming a card
 
-Open the card and turn on **Auto-merge when ready**. It is offered on any card that has not reached
-Done — before you go to bed is the useful moment to set it, whatever column the card is in, so the
-switch is not hidden away in one stage.
+Open the card, open the **⋮** menu beside its tabs, and turn on **Auto-merge when ready**. It is
+offered on any card that has not reached Done — before you go to bed is the useful moment to set it,
+whatever column the card is in, so the switch is not hidden away in one stage.
 
 Turning it on for a card that is _already_ waiting at Ready for merge merges it straight away. That
 is the same thing the Merge button does; the switch just also covers next time.
