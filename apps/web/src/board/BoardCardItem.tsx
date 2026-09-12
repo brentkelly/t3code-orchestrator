@@ -51,6 +51,7 @@ import { boardConflictFix } from "./boardConflictFix";
 import { boardAutoMergePill } from "./boardAutoMergeHold";
 import { boardCardAutoStartChip } from "./boardCardAutoStartChip";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
+import { boardCardNotice, type BoardCardNotice } from "./boardCardNotice";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
@@ -149,6 +150,69 @@ const TONE_CHIP: Record<BoardCardAttentionTone, string> = {
   attention: "text-attention-foreground",
   neutral: "text-muted-foreground",
 };
+
+/**
+ * The card header's ONE status notice (T3O-45), whichever source won the slot.
+ *
+ * Each kind keeps the glyph and the colour it has always had — the ranking
+ * decides WHICH notice shows, never how it reads — and the merge pills and the
+ * dependency gate stay amber (`docs/t3o/status-colours.md`: blocked or held).
+ *
+ * It truncates rather than pushing: the notice shares a 268px column with the
+ * key pill, a sub-board parent chip and the working dot, and `Merge held · 2d 3h`
+ * beside all three still does not fit. A clipped notice keeps its tooltip and
+ * its aria-label, so nothing is actually lost — the card hanging off the edge of
+ * its column was.
+ */
+function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
+  const view =
+    notice.kind === "attention"
+      ? {
+          icon: ATTENTION_ICON[notice.attention.reason],
+          label: notice.attention.label,
+          tooltip: notice.attention.tooltip,
+          tint: TONE_CHIP[notice.attention.tone],
+        }
+      : notice.kind === "conflicts"
+        ? {
+            icon: <GitMergeIcon className="size-3 shrink-0" />,
+            label: notice.fix.label,
+            tooltip: notice.fix.tooltip,
+            tint: "text-warning-foreground",
+          }
+        : notice.kind === "auto-merge"
+          ? {
+              icon:
+                notice.pill.icon === "alert" ? (
+                  <TriangleAlertIcon className="size-3 shrink-0" />
+                ) : (
+                  <ClockIcon className="size-3 shrink-0" />
+                ),
+              label: notice.pill.label,
+              tooltip: notice.pill.tooltip,
+              tint: "text-warning-foreground",
+            }
+          : {
+              icon: <LockIcon className="size-3 shrink-0" />,
+              label: "Blocked",
+              tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
+              tint: "text-warning-foreground",
+            };
+  return (
+    <BoardHint label={view.tooltip}>
+      <span
+        aria-label={view.tooltip}
+        className={cn(
+          "inline-flex min-w-0 items-center gap-1 text-[10.5px] font-semibold",
+          view.tint,
+        )}
+      >
+        {view.icon}
+        <span className="truncate">{view.label}</span>
+      </span>
+    </BoardHint>
+  );
+}
 
 export function BoardCardContent({
   card,
@@ -269,10 +333,10 @@ export function BoardCardContent({
     flag === null || (own !== null && own.reason === "review-held" && roundRowExplainsIt)
       ? null
       : {
+          reason: flag.reason,
           tone: flag.tone,
           label: inherited === null ? flag.label : boardCardChildAttentionLabel(inherited),
-          title: inherited === null ? flag.detail : `A child of this card: ${inherited.detail}`,
-          icon: ATTENTION_ICON[flag.reason],
+          tooltip: inherited === null ? flag.detail : `A child of this card: ${inherited.detail}`,
         };
   // A split parent wears the stack (t3o-25, AC1): the card reads as the top
   // sheet of a pile. Purely visual now — the drill-in affordance is the plan
@@ -287,18 +351,22 @@ export function BoardCardContent({
     ? null
     : boardConflictFix({ live: card.stepConflictFix, queued: card.queued });
   // "This card's merge was refused and the board is retrying" (T3O-38, D13).
-  // Shares the conflict pill's slot and yields to it: a conflict fix RUNS and
-  // a hold WAITS, the server never records both, and a running agent is the
-  // more specific claim if they somehow collide.
-  const autoMergeHold =
-    conflictFix === null
-      ? boardAutoMergePill({
-          heldSince: card.autoMergeHeldSince,
-          gaveUp: card.autoMergeGaveUp,
-          done: summary.muted,
-          nowMs: Date.now(),
-        })
-      : null;
+  const autoMergeHold = boardAutoMergePill({
+    heldSince: card.autoMergeHeldSince,
+    gaveUp: card.autoMergeGaveUp,
+    done: summary.muted,
+    nowMs: Date.now(),
+  });
+  // ONE notice for the whole header (T3O-45). Every one of these used to render
+  // on its own, so a card could wear `Needs a human` and `Merge needs you` at
+  // once — the same claim twice, and wider than the column.
+  const notice = boardCardNotice({
+    attention: chip,
+    conflictFix,
+    autoMergeHold,
+    blocked: card.blocked,
+    dependencyCount: card.dependencyCount,
+  });
   // The card's scheduled start (T3O-19, D9/D14). Null on a done card and on
   // one whose time has already passed — the server clears the field within a
   // tick, and a pill for a moment that has gone is a stale label.
@@ -407,23 +475,16 @@ export function BoardCardContent({
             />
           </BoardHint>
         )}
-        {chip === null ? null : (
-          // ONE chip, whatever the reason: the card face has room for a single
+        {notice === null ? null : (
+          // ONE notice, whatever the source: the card face has room for a single
           // status word, and rendering two was what let "Stalled" and "Input
-          // needed" fight for the same slot. `boardCardAttention` already
-          // ranked them, so the chip just says what won — and on a parent with
-          // no problem of its own, it names the child that has one.
-          <BoardHint label={chip.title}>
-            <span
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1 text-[10.5px] font-semibold",
-                TONE_CHIP[chip.tone],
-              )}
-            >
-              {chip.icon}
-              {chip.label}
-            </span>
-          </BoardHint>
+          // needed" fight for the same slot — and later let "Needs a human" and
+          // "Merge needs you" hang off the column's right edge together (T3O-45).
+          // `boardCardAttention` ranks the card's own reasons and
+          // `boardCardNotice` ranks across the sources, so the chip just says
+          // what won — and on a parent with no problem of its own, it names the
+          // child that has one.
+          <BoardCardNoticeChip notice={notice} />
         )}
         <span className="flex-1" />
         {scheduleLabel === null ? null : (
@@ -477,56 +538,9 @@ export function BoardCardContent({
             </span>
           </BoardHint>
         ) : null}
-        {conflictFix === null ? null : (
-          // Amber, and NO spinner (T3O-9). The card is both held and running at
-          // once, so the pill has to pick a vocabulary and it picks the held
-          // reading: its claim is that the MERGE is held, which is the same
-          // fact that disables the Merge button. The running half is not lost —
-          // the blue dot above is lit beside it — and dropping the mockup's
-          // spinner keeps a second continuously animating element off a board
-          // that can show thirty cards at once.
-          //
-          // It sits in the right-hand cluster, styled like `Blocked` rather
-          // than the prototype's tinted uppercase capsule: two amber held-chips
-          // side by side in different styling would read as two different kinds
-          // of thing. The LEFT slot is untouched — that belongs to
-          // `boardCardAttention`'s single ranked chip, and this is not an
-          // attention state, because nothing is waiting on the human.
-          <BoardHint label={conflictFix.tooltip}>
-            <span
-              aria-label={conflictFix.tooltip}
-              className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-warning-foreground"
-            >
-              <GitMergeIcon className="size-3" />
-              {conflictFix.label}
-            </span>
-          </BoardHint>
-        )}
-        {autoMergeHold === null ? null : (
-          // AMBER for both states (T3O-38, D12). `docs/t3o/status-colours.md`
-          // gives amber to "blocked or held", and both a retrying hold and an
-          // exhausted one are held; the board card has never carried red, and
-          // this does not give it one. The designer prototype painted the
-          // exhausted pill `--destructive` and is deliberately not followed —
-          // the distinction rides the LABEL and the ICON instead, which
-          // carries it without spending a colour.
-          //
-          // Static, no spinner: the board can show thirty cards at once, and
-          // the elapsed reading is minute-grained on purpose.
-          <BoardHint label={autoMergeHold.tooltip}>
-            <span
-              aria-label={autoMergeHold.tooltip}
-              className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-warning-foreground"
-            >
-              {autoMergeHold.icon === "alert" ? (
-                <TriangleAlertIcon className="size-3" />
-              ) : (
-                <ClockIcon className="size-3" />
-              )}
-              {autoMergeHold.label}
-            </span>
-          </BoardHint>
-        )}
+        {/* Keyed on the HOLD, not on which notice won it (T3O-45): a held card
+            whose slot went to a pending question is still held, and "merges
+            itself as soon as the forge accepts it" is not true of it. */}
         {(card.autoMergeArmed === true || autoMergeBoardWide === true) &&
         autoMergeHold === null &&
         !summary.muted &&
@@ -548,23 +562,6 @@ export function BoardCardContent({
             >
               <GitMergeIcon className="size-3" />
               Auto
-            </span>
-          </BoardHint>
-        ) : null}
-        {card.blocked ? (
-          // Only the GATE lives up here (it starts at Ready, D18). A card
-          // carries dependencies long before they gate it, and that count is
-          // now the meta row's chain icon — one place, every stage, and never
-          // mistaken for the warning-coloured gate.
-          <BoardHint
-            label={`Blocked by ${card.dependencyCount} ${card.dependencyCount === 1 ? "dependency" : "dependencies"}`}
-          >
-            <span
-              aria-label={`Blocked by ${card.dependencyCount} ${card.dependencyCount === 1 ? "dependency" : "dependencies"}`}
-              className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-warning-foreground"
-            >
-              <LockIcon className="size-3" />
-              Blocked
             </span>
           </BoardHint>
         ) : null}

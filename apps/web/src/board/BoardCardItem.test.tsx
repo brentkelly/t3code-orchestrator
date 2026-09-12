@@ -414,6 +414,83 @@ describe("BoardCardContent (D7)", () => {
     expect(html).not.toContain("destructive");
   });
 
+  it("wears ONE notice when the merge gave up on a card whose step also parked (T3O-45)", () => {
+    // The bug, exactly as photographed: a merge-stage card whose step settled
+    // without moving it on AND whose auto-merge ladder ran out wore
+    // `Needs a human` beside `Merge needs you` — the same claim twice, in the
+    // same amber, and together wider than the 268px column, so the second chip
+    // hung off the card's right edge.
+    const both = shell("merge", {
+      held: true,
+      autoMergeArmed: true,
+      autoMergeHeldSince: new Date(Date.now() - 90 * 60_000).toISOString(),
+      autoMergeGaveUp: true,
+    });
+    // The card really does have both facts — otherwise this asserts nothing.
+    expect(attentionOf(both)?.label).toBe("Needs a human");
+
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={both}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(both)}
+        atMergeStage
+      />,
+    );
+    // The merge names the cause; the generic chip is what it says with less
+    // information, so it loses the slot rather than stacking beside it.
+    expect(html).toContain("Merge needs you");
+    expect(html).not.toContain("Needs a human");
+  });
+
+  it("gives a pending question the notice slot over a held merge (T3O-45)", () => {
+    // One click from being answered. The merge pill is the more specific fact
+    // about the MERGE, but it is not the one the human can act on.
+    const asking = shell("merge", {
+      awaitingInput: true,
+      autoMergeArmed: true,
+      autoMergeHeldSince: new Date(Date.now() - 90 * 60_000).toISOString(),
+      autoMergeGaveUp: true,
+    });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={asking}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(asking)}
+        atMergeStage
+      />,
+    );
+    expect(html).toContain("Input needed");
+    expect(html).not.toContain("Merge needs you");
+    // Losing the slot does not turn the hold into good news: the quiet `Auto`
+    // glyph keys off the hold itself, not off which notice won.
+    expect(html).not.toContain(">Auto<");
+  });
+
+  it("shows the dependency gate only when nothing else claims the notice slot (T3O-45)", () => {
+    // The gate ranks last because it is the one notice whose fact survives
+    // elsewhere on the card: the meta row's chain icon carries the count at
+    // every stage.
+    const parked = shell("building", { blocked: true, dependencyCount: 2, held: true });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={parked}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(parked)}
+      />,
+    );
+    expect(html).toContain("Needs a human");
+    expect(html).not.toContain(">Blocked<");
+    // Nothing is lost: the count and its tooltip are still down in the meta row.
+    expect(html).toContain("Depends on 2 cards");
+  });
+
   it("yields the pill slot to a running conflict fix (T3O-38)", () => {
     // A conflict fix RUNS and a hold WAITS; the server never records both,
     // and a running agent is the more specific claim if they collide.
