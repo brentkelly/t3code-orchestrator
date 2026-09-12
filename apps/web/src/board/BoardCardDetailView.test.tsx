@@ -24,6 +24,8 @@ import {
   type BoardLabel,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
+import { Menu } from "../components/ui/menu";
+import { boardAutoMergeToggleCopy } from "./boardAutoMergeHold";
 import { boardConflictFix } from "./boardConflictFix";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -36,6 +38,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const {
+  BoardCardAutoMergeMenuItem,
   BoardCardDetailPanel,
   boardCardIsDone,
   initialBoardCardPane,
@@ -579,8 +582,8 @@ describe("BoardCardDetailPanel", () => {
     expect(html).not.toContain("Auto-merge stopped");
   });
 
-  it("offers the per-card auto-merge switch, and HIDES it under the board setting (T3O-38, D3)", () => {
-    const withSwitch = renderToStaticMarkup(
+  it("moves the per-card auto-merge switch out of the action rail and into the kebab (T3O-42)", () => {
+    const html = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
         detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
@@ -588,10 +591,34 @@ describe("BoardCardDetailPanel", () => {
         projectName="P"
       />,
     );
-    // Offered wherever the card is, not pinned to one column: the useful
-    // moment to arm it is before going to bed.
-    expect(withSwitch).toContain("Auto-merge when ready");
+    // Gone from the stage's own actions, where it competed with the buttons a
+    // user reaches for on every pass through a card...
+    expect(html).not.toContain("Auto-merge when ready");
+    expect(html).toContain("More actions");
+    // ...and present in the kebab. The popup is a portal and renders nothing
+    // on the server, so the row is rendered directly, the way
+    // `BoardCardThreadAddMenuBody` is. Which cards get one at all is pinned
+    // against `boardAutoMergeArm` in boardAutoMergeHold.test.ts.
+    const copy = boardAutoMergeToggleCopy(false);
+    const item = renderToStaticMarkup(
+      // A Base UI menu part needs its root's context; nothing else about the
+      // root renders.
+      <Menu>
+        <BoardCardAutoMergeMenuItem arm={{ armed: false, copy }} onToggle={() => {}} />
+      </Menu>,
+    );
+    expect(item).toContain(copy.label);
+    expect(item).toContain(copy.hint);
+    // Nothing to render when the card gets no arm, so the kebab keeps its
+    // narrow shape.
+    expect(
+      renderToStaticMarkup(<BoardCardAutoMergeMenuItem arm={null} onToggle={() => {}} />),
+    ).toBe("");
+  });
 
+  it("names the source in the header when the board-wide setting owns it (T3O-38, D3)", () => {
+    // Two controls that can disagree about one card is worse than one, so the
+    // per-card switch goes and the header says where the decision lives.
     const boardWide = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
@@ -601,22 +628,7 @@ describe("BoardCardDetailPanel", () => {
         projectName="P"
       />,
     );
-    // Two controls that can disagree about one card is worse than one, so the
-    // switch goes and the header says where the decision lives instead.
-    expect(boardWide).not.toContain("Auto-merge when ready");
     expect(boardWide).toContain("Auto-merge · board");
-  });
-
-  it("does not offer the auto-merge switch on a card in Done (T3O-38, D3)", () => {
-    const html = renderToStaticMarkup(
-      <BoardCardDetailPanel
-        {...baseProps}
-        detail={detail({ stage: BOARD_SEED_STAGE_IDS.done })}
-        onSetAutoMerge={() => {}}
-        projectName="P"
-      />,
-    );
-    expect(html).not.toContain("Auto-merge when ready");
   });
 
   it("renders an archived dependency as the card it is, not as an unknown id", () => {

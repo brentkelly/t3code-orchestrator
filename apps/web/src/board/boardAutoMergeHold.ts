@@ -19,6 +19,8 @@
  * put until a human acts.
  */
 
+import { boardCardCanArmAutoMerge, type BoardCard, type BoardState } from "@t3tools/contracts";
+
 /** `12m`, `1h 5m`, `2d 3h`. Coarse on purpose: this is an elapsed figure a
     human glances at, and a ticking seconds reading on thirty board cards is a
     continuously repainting animation. */
@@ -133,6 +135,39 @@ export function boardAutoMergeCountdown(retryAtIso: string | null, nowMs: number
   const seconds = Math.max(0, Math.round((atMs - nowMs) / 1000));
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+export interface BoardAutoMergeArm {
+  readonly armed: boolean;
+  readonly copy: BoardAutoMergeToggleCopy;
+}
+
+/**
+ * The kebab's auto-merge switch, or null when this card gets none (T3O-38,
+ * D3; moved into the kebab by T3O-42).
+ *
+ * Three facts decide it, and the order matters: the container has to have
+ * given the view a way to set it, the board-wide setting has to be off — two
+ * controls that can disagree about one card is worse than one — and the card
+ * itself has to be one the decider would accept an arming for, which is the
+ * same predicate it enforces on the way in, so the control and the refusal
+ * can never disagree.
+ */
+export function boardAutoMergeArm(input: {
+  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt" | "autoMerge">;
+  readonly stages: BoardState["stages"];
+  /** Whether the container handed the view an `onSetAutoMerge`. */
+  readonly canSet: boolean;
+  /** Settings → Board → Pipeline → Ready for merge merges every card. */
+  readonly fromBoardSetting: boolean;
+}): BoardAutoMergeArm | null {
+  if (!input.canSet || input.fromBoardSetting) return null;
+  const canArm = boardCardCanArmAutoMerge({
+    board: { cards: [], stages: input.stages, nextCardNumberByProject: {} },
+    card: input.card,
+  });
+  if (!canArm) return null;
+  return { armed: input.card.autoMerge, copy: boardAutoMergeToggleCopy(input.card.autoMerge) };
 }
 
 export interface BoardAutoMergeToggleCopy {

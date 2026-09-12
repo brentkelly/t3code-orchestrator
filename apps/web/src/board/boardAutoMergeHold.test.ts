@@ -1,6 +1,8 @@
+import { BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS, BoardCardId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardAutoMergeArm,
   boardAutoMergeBanner,
   boardAutoMergeCountdown,
   boardAutoMergeElapsedLabel,
@@ -143,5 +145,74 @@ describe("boardAutoMergeToggleCopy", () => {
   it("states the consequence of leaving it OFF, which is the whole point", () => {
     expect(boardAutoMergeToggleCopy(false).hint).toContain("until you come back");
     expect(boardAutoMergeToggleCopy(true).hint).toContain("as soon as the forge accepts");
+  });
+});
+
+describe("boardAutoMergeArm (T3O-38, D3; T3O-42)", () => {
+  const armCard = (overrides?: {
+    readonly stage?: (typeof BOARD_SEED_STAGE_IDS)[keyof typeof BOARD_SEED_STAGE_IDS];
+    readonly autoMerge?: boolean;
+    readonly parentCardId?: string | null;
+    readonly archivedAt?: string | null;
+  }) => ({
+    stage: overrides?.stage ?? BOARD_SEED_STAGE_IDS.building,
+    autoMerge: overrides?.autoMerge ?? false,
+    parentCardId: overrides?.parentCardId == null ? null : BoardCardId.make(overrides.parentCardId),
+    archivedAt: overrides?.archivedAt ?? null,
+  });
+  const arm = (
+    card: ReturnType<typeof armCard>,
+    options?: { readonly canSet?: boolean; readonly fromBoardSetting?: boolean },
+  ) =>
+    boardAutoMergeArm({
+      card,
+      stages: BOARD_SEED_STAGES,
+      canSet: options?.canSet ?? true,
+      fromBoardSetting: options?.fromBoardSetting ?? false,
+    });
+
+  it("offers the switch in every live stage before Done, wherever the card sits", () => {
+    // Deliberately wider than the auto-start arm: the useful moment to set it
+    // is "before I go to bed", whatever column the card is in.
+    for (const stage of [
+      BOARD_SEED_STAGE_IDS.backlog,
+      BOARD_SEED_STAGE_IDS.sprint,
+      BOARD_SEED_STAGE_IDS.planning,
+      BOARD_SEED_STAGE_IDS.ready,
+      BOARD_SEED_STAGE_IDS.building,
+      BOARD_SEED_STAGE_IDS.review,
+      BOARD_SEED_STAGE_IDS.merge,
+    ]) {
+      expect(arm(armCard({ stage }))).not.toBeNull();
+    }
+  });
+
+  it("reports the card's own arming, and the copy that matches it", () => {
+    expect(arm(armCard({ autoMerge: false }))).toEqual({
+      armed: false,
+      copy: boardAutoMergeToggleCopy(false),
+    });
+    expect(arm(armCard({ autoMerge: true }))).toEqual({
+      armed: true,
+      copy: boardAutoMergeToggleCopy(true),
+    });
+  });
+
+  it("hides the switch under the board-wide setting", () => {
+    // Two controls that can disagree about one card is worse than one; the
+    // header chip names where the decision actually lives instead.
+    expect(arm(armCard({ autoMerge: true }), { fromBoardSetting: true })).toBeNull();
+  });
+
+  it("hides the switch when the container gave the view no way to set it", () => {
+    expect(arm(armCard(), { canSet: false })).toBeNull();
+  });
+
+  it("hides the switch on a done card, an archived card and a sub-board child", () => {
+    // The same predicate the decider enforces on the way in, so the control
+    // and the refusal can never disagree.
+    expect(arm(armCard({ stage: BOARD_SEED_STAGE_IDS.done }))).toBeNull();
+    expect(arm(armCard({ archivedAt: "2026-03-04T09:00:00.000Z" }))).toBeNull();
+    expect(arm(armCard({ parentCardId: "card-parent" }))).toBeNull();
   });
 });

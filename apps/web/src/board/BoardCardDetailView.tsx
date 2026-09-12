@@ -29,7 +29,6 @@ import {
   activeBoardCardThreadId,
   BOARD_AUTO_MERGE_MAX_ATTEMPTS,
   boardCardArchiveNeedsConfirmation,
-  boardCardCanArmAutoMerge,
   boardCardDisplayPullRequest,
   boardCardHasLiveBranch,
   boardStageIndex,
@@ -102,7 +101,14 @@ import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./Boa
 import { useBoardUiStore } from "./boardUiStore";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogPopup } from "../components/ui/dialog";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "../components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import {
   boardCardModelOverrideSummary,
@@ -139,10 +145,11 @@ import { BoardCardStepFailure } from "./BoardCardStepFailure";
 import { BoardCardStepPaused } from "./BoardCardStepPaused";
 import { type BoardConflictFixInfo } from "./boardConflictFix";
 import {
+  boardAutoMergeArm,
   boardAutoMergeBanner,
   boardAutoMergeCountdown,
   boardAutoMergeHeaderChip,
-  boardAutoMergeToggleCopy,
+  type BoardAutoMergeArm,
   type BoardAutoMergeBanner,
 } from "./boardAutoMergeHold";
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
@@ -1275,24 +1282,6 @@ function ActionsSection({
           onToggle: props.onSetAutoStart,
         }
       : null;
-  // The auto-merge arm (T3O-38, D3). Offered on any live, top-level card that
-  // has not reached Done — deliberately wider than the auto-start arm, because
-  // the useful moment to set it is "before I go to bed", whatever column the
-  // card is in. HIDDEN when the board-wide setting is on, so the user never
-  // sees two controls that can disagree about one card.
-  const autoMerge =
-    props.onSetAutoMerge !== undefined &&
-    !props.autoMergeFromBoardSetting &&
-    boardCardCanArmAutoMerge({
-      board: { cards: [], stages: props.stages, nextCardNumberByProject: {} },
-      card,
-    })
-      ? {
-          armed: card.autoMerge,
-          copy: boardAutoMergeToggleCopy(card.autoMerge),
-          onToggle: props.onSetAutoMerge,
-        }
-      : null;
   // The countdown rides the Merge button only while a rung is actually
   // pending: an exhausted hold has nothing to count down to, and the button
   // goes back to saying Merge.
@@ -1386,7 +1375,6 @@ function ActionsSection({
     !props.canApproveSplit &&
     !blocked &&
     autoStart === null &&
-    autoMerge === null &&
     humanInLoop === null &&
     displayed === null &&
     reviewRound === null &&
@@ -1592,30 +1580,6 @@ function ActionsSection({
           <span className="flex min-w-0 flex-col">
             <span className="font-medium text-foreground">{autoStart.copy.label}</span>
             <span className="text-[11px] text-muted-foreground">{autoStart.copy.hint}</span>
-          </span>
-        </div>
-      ) : null}
-      {autoMerge !== null ? (
-        // The auto-merge arm (T3O-38, D3), styled as the auto-start row above
-        // and tinted with `--primary` for the same reason: a CHECKED CONTROL
-        // is UI state, the exemption `docs/t3o/status-colours.md` already
-        // grants. The status SURFACES for this feature — the board pill and
-        // the modal banner — carry the amber/red vocabulary instead.
-        <div
-          className={cn(
-            "flex items-center gap-2.5 rounded-lg border px-2.5 py-2 text-[12.5px]",
-            autoMerge.armed ? "border-primary/55 bg-primary/8" : "border-input bg-popover",
-          )}
-        >
-          <Switch
-            aria-label={autoMerge.copy.label}
-            checked={autoMerge.armed}
-            className="shrink-0"
-            onCheckedChange={(next) => autoMerge.onToggle(next)}
-          />
-          <span className="flex min-w-0 flex-col">
-            <span className="font-medium text-foreground">{autoMerge.copy.label}</span>
-            <span className="text-[11px] text-muted-foreground">{autoMerge.copy.hint}</span>
           </span>
         </div>
       ) : null}
@@ -1989,6 +1953,44 @@ function PaneTabs({
   );
 }
 
+/**
+ * The kebab's auto-merge arm (T3O-38, D3; T3O-42), exported so it can be
+ * rendered on its own: the kebab popup is a portal, and a portal renders
+ * nothing on the server, so a static-markup test can never reach it through
+ * the trigger (same reason `BoardCardThreadAddMenuBody` is exported).
+ *
+ * A card mid-build already has a rail full of things to click and this is a
+ * set-once decision, so it lives here rather than competing with the stage's
+ * own actions. A CheckboxItem, not a MenuItem: Base UI leaves the menu open
+ * on a checkbox click, so the user sees the switch move and can read what
+ * they just chose before dismissing it.
+ */
+export function BoardCardAutoMergeMenuItem(props: {
+  readonly arm: BoardAutoMergeArm | null;
+  readonly onToggle: ((next: boolean) => void) | undefined;
+}) {
+  const { arm, onToggle } = props;
+  if (arm === null || onToggle === undefined) return null;
+  return (
+    <>
+      <MenuCheckboxItem
+        checked={arm.armed}
+        onCheckedChange={(next) => onToggle(next)}
+        variant="switch"
+      >
+        <span className="flex items-start gap-2 py-0.5">
+          <GitMergeIcon className="mt-px size-4 shrink-0 text-muted-foreground" />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span>{arm.copy.label}</span>
+            <span className="text-[11px] text-muted-foreground leading-snug">{arm.copy.hint}</span>
+          </span>
+        </span>
+      </MenuCheckboxItem>
+      <MenuSeparator />
+    </>
+  );
+}
+
 export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
@@ -2002,6 +2004,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     fromBoardSetting: !card.autoMerge && props.autoMergeFromBoardSetting === true,
   });
   const hold = card.autoMergeHold;
+  // The per-card auto-merge switch (T3O-38, D3), which lives in the KEBAB
+  // (T3O-42): it is armed once and rarely, and the card's action rail already
+  // carries everything a user reaches for on the way through a stage.
+  const autoMergeArm = boardAutoMergeArm({
+    card,
+    stages: props.stages,
+    canSet: props.onSetAutoMerge !== undefined,
+    fromBoardSetting: props.autoMergeFromBoardSetting === true,
+  });
+  const onSetAutoMerge = props.onSetAutoMerge;
   // Minute-grained, off the render's clock, exactly as the board pill is: the
   // one per-second element is the Merge button's countdown, which is its own
   // isolated component.
@@ -2256,7 +2268,11 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           >
             <EllipsisVerticalIcon className="size-[15px]" />
           </MenuTrigger>
-          <MenuPopup align="end" className="min-w-42">
+          {/* `min-w-*`, never a fixed width: the Models row below sizes itself
+              to a mono override summary that can run long, and a hard box
+              would crowd it. */}
+          <MenuPopup align="end" className={autoMergeArm === null ? "min-w-42" : "min-w-68"}>
+            <BoardCardAutoMergeMenuItem arm={autoMergeArm} onToggle={onSetAutoMerge} />
             {/* Opening the overrides CLOSES this menu (t3o-29, D7): the popover
                 contains a model picker that is itself a popover, and selecting
                 from it is an outside-pointerdown on any menu still holding it
