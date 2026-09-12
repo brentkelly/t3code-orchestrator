@@ -38,3 +38,29 @@ the menu.
 
 Collapsing the menu also hides the app-update indicator that shares it. If an update finishes
 downloading while the menu is collapsed, T3 Code still tells you.
+
+## Stepping between cards
+
+Reading through a column no longer means closing a card to open the one under it. With a card open,
+hover the card and a round chevron fades in at each edge. Select it to move to the card before or
+after this one in the same column. The chevron's tooltip names where it goes, so you know before you
+go there.
+
+The **→** and **←** arrow keys do the same thing, and so do **J** and **K** if you would rather not
+leave the home row. The shortcuts stand down wherever a cursor is already sitting — the title, the
+brief, the message box, any search box — so the arrow keys keep moving that cursor, and typing a
+`j` types a `j`. A card with a message box takes the cursor there as it opens, so select the card
+somewhere outside that box to hand the shortcuts back. The chevrons are always available.
+
+Stepping stays inside the column. At the top of a column there is no chevron on the left, and at the
+bottom there is none on the right; getting to the next column means going back to the board. It also
+follows whatever the board is currently showing: if you have scoped the board to one project, typed
+in the filter box, or turned on **Stalled only**, you step through the cards that survived that
+filter and no others.
+
+Each step gives you the next card fresh — its own panes, its own message box. Fullscreen is the
+exception and stays on until you close the card. The board behind the sheet follows along too, so
+closing the card leaves you looking at the one you were just reading.
+
+Going back closes the card and returns you to the board, however many cards you stepped through to
+get there.

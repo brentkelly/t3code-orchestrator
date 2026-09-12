@@ -20,6 +20,7 @@ function resetStore() {
     collapsedByStage: {},
     utilityMenuCollapsed: false,
     sidebarHostsModeTabs: false,
+    detailMaximised: false,
   });
 }
 
@@ -199,5 +200,26 @@ describe("sidebarHostsModeTabs", () => {
     expect(
       "sidebarHostsModeTabs" in migratePersistedBoardUiState({ sidebarHostsModeTabs: true }),
     ).toBe(false);
+  });
+});
+
+describe("detailMaximised", () => {
+  it("holds the open sheet's fullscreen across a step to the next card (T3O-37)", () => {
+    // The sheet remounts per card id, which is what resets every other
+    // per-card view state; fullscreen lives out here precisely so that remount
+    // does not throw the reader back into a window mid-read.
+    resetStore();
+    useBoardUiStore.getState().setDetailMaximised(true);
+    expect(useBoardUiStore.getState().detailMaximised).toBe(true);
+    useBoardUiStore.getState().setDetailMaximised(false);
+    expect(useBoardUiStore.getState().detailMaximised).toBe(false);
+  });
+
+  it("is transient: it belongs to the open card, not to the client", () => {
+    // A reload must not reopen the next card you happen to click in
+    // fullscreen, so the migration ignores the field entirely.
+    expect("detailMaximised" in migratePersistedBoardUiState({ detailMaximised: true })).toBe(
+      false,
+    );
   });
 });

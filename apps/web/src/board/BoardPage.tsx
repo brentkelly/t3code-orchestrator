@@ -902,14 +902,19 @@ function EnvironmentBoard({
     [patchSearch],
   );
   const handleCloseDetail = useCallback(() => {
-    // Fullscreen rides the store so it survives a step between cards (T3O-37,
-    // D5); closing is where it ends, so the next card you open opens windowed.
-    setDetailMaximised(false);
     patchSearch((previous) => {
       const { card: _card, ...rest } = previous;
       return rest;
     });
-  }, [patchSearch, setDetailMaximised]);
+  }, [patchSearch]);
+  // Fullscreen rides the store so it survives a STEP between cards (T3O-37,
+  // D5), which means something has to end it. Tying that to "no card is open"
+  // rather than to the close button covers every way the sheet goes away —
+  // Escape, clicking the open card again, the card being archived out from
+  // under it — so the next card can never open unexpectedly full-screen.
+  useEffect(() => {
+    if (selectedCardId === null) setDetailMaximised(false);
+  }, [selectedCardId, setDetailMaximised]);
   // ── Stepping between cards (T3O-37) ────────────────────────────────
   // The sibling list is `visibleColumns` itself — the very array each column
   // renders — so what you step through is exactly what the board is currently
