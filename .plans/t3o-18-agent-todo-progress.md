@@ -16,30 +16,30 @@ Meanwhile the board has a card Activity log that no UI renders (`BoardCardDetail
 `:738` are literal placeholders) and whose only writer is an agent tool that asks the model to
 narrate its own work in prose.
 
-Both problems have the same shape: the board is asking agents to *tell* it things it could simply
-*observe*. This spec inverts that. Todo lists become an observed, cached, card-visible fact; the
+Both problems have the same shape: the board is asking agents to _tell_ it things it could simply
+_observe_. This spec inverts that. Todo lists become an observed, cached, card-visible fact; the
 Activity rail becomes a deterministic projection of the board's own event log; and the two
 agent-driven activity tools are deleted.
 
 ## What already exists (so that none of it is rebuilt)
 
-| Thing | Where | Status |
-| --- | --- | --- |
-| Cross-provider todo normalisation | `providerRuntime.ts:216`, `ClaudeAdapter.ts:2147`, `CodexAdapter.ts:1068`, `CursorAdapter.ts:643` | Done, untouched |
-| Durable per-revision record | thread activity `kind: "turn.plan.updated"` with the full plan (`ProviderRuntimeIngestion.ts:483`) | Done, untouched |
-| Live in-chat plan chip, one per turn | `session-logic.ts:618 deriveTurnPlans` | Done, untouched |
-| Sidebar live step indicator | `ThreadPlanProgressService`, `Sidebar.tsx:1197` | Done, untouched |
-| A runtime event stream the board already consumes | `supervisorReactor.ts:903` | Extended by one case |
-| Card ↔ thread links, many per card | `board_card_thread_links` (migration 003) | Done, untouched |
-| Card activity table | `board_card_activity` (migration 008) | Repurposed |
+| Thing                                             | Where                                                                                              | Status               |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------------------- |
+| Cross-provider todo normalisation                 | `providerRuntime.ts:216`, `ClaudeAdapter.ts:2147`, `CodexAdapter.ts:1068`, `CursorAdapter.ts:643`  | Done, untouched      |
+| Durable per-revision record                       | thread activity `kind: "turn.plan.updated"` with the full plan (`ProviderRuntimeIngestion.ts:483`) | Done, untouched      |
+| Live in-chat plan chip, one per turn              | `session-logic.ts:618 deriveTurnPlans`                                                             | Done, untouched      |
+| Sidebar live step indicator                       | `ThreadPlanProgressService`, `Sidebar.tsx:1197`                                                    | Done, untouched      |
+| A runtime event stream the board already consumes | `supervisorReactor.ts:903`                                                                         | Extended by one case |
+| Card ↔ thread links, many per card                | `board_card_thread_links` (migration 003)                                                          | Done, untouched      |
+| Card activity table                               | `board_card_activity` (migration 008)                                                              | Repurposed           |
 
 ## The three concepts, kept apart
 
-| Concept | Owner | Lifetime | Surface |
-| --- | --- | --- | --- |
-| **Todos** | a thread | the current list, retained past turn settle | card strip, modal strip |
-| **Activity** | a card | append-only milestones | Activity rail |
-| **Steps** (`BoardStep`) | a card's recipe | unchanged | unchanged |
+| Concept                 | Owner           | Lifetime                                    | Surface                 |
+| ----------------------- | --------------- | ------------------------------------------- | ----------------------- |
+| **Todos**               | a thread        | the current list, retained past turn settle | card strip, modal strip |
+| **Activity**            | a card          | append-only milestones                      | Activity rail           |
+| **Steps** (`BoardStep`) | a card's recipe | unchanged                                   | unchanged               |
 
 Naming discipline is part of the spec. `planTotal` / `planDone` / `PlanPips` remain reserved for
 D12 sub-board plan cards; `projection_thread_proposed_plans` remains plan-mode. Four meanings of
@@ -103,7 +103,7 @@ board_thread_todos
   INDEX (card_id)
 ```
 
-`done_count` / `total_count` are the *true* counts before capping (D4), so `2/47` stays honest even
+`done_count` / `total_count` are the _true_ counts before capping (D4), so `2/47` stays honest even
 when only 30 pips are stored.
 
 Rows are swept when the thread's link is tombstoned, when the thread is deleted, and when the card
@@ -125,15 +125,15 @@ constraint on the implementation, not a preference.
 
 `BoardCardShell` is under a fixed 1280-byte budget asserted at 1,000 cards, and under a structural
 test that every field serialises to a scalar apart from the single bounded `labelIds` array
-(`board.test.ts:48`, `:143`). Its own comment: *"If a change pushes past this, it added real bytes
-to every card on every reconnect, and the right fix is almost never raising the number."*
+(`board.test.ts:48`, `:143`). Its own comment: _"If a change pushes past this, it added real bytes
+to every card on every reconnect, and the right fix is almost never raising the number."_
 
-More decisively, `board.ts:1670` records that card deltas *"are a pure function of the card event
-and cannot carry live thread state"* — which is precisely what a todo summary and a thread-priority
+More decisively, `board.ts:1670` records that card deltas _"are a pure function of the card event
+and cannot carry live thread state"_ — which is precisely what a todo summary and a thread-priority
 rule are. Denormalising onto the card shell would fight the architecture head-on.
 
 So the data rides the shell snapshot as its own array, following the `boardLabels` precedent
-(`orchestration.ts:487` — *"rides the shell ONCE … never denormalised per card"*):
+(`orchestration.ts:487` — _"rides the shell ONCE … never denormalised per card"_):
 
 ```ts
 boardCardThreads: Schema.optional(Schema.Array(BoardCardThreadShell))
@@ -183,7 +183,7 @@ anyway).
 - **Storage:** the board cache retains the last list for a live-linked thread regardless of
   completion or thread state. It changes only when a new `turn.plan.updated` arrives, or when the
   row is swept.
-- **Render:** the card *strip* hides itself when the winning list is complete **and** its thread is
+- **Render:** the card _strip_ hides itself when the winning list is complete **and** its thread is
   stopped. The expanded thread panel and the modal always show what is stored.
 
 That split is what lets a card show `5/5` at the moment the agent succeeds, and lets a stale card
@@ -204,7 +204,7 @@ either resets constantly or, worse, carries an elapsed time onto a different tas
 ### D7 — Card badges aggregate across all live threads; the strip picks its own winner
 
 `deriveBoardCardThreadState` (`board.ts:1722`) takes exactly one thread — `activeBoardCardThreadId`,
-defined as the most recently *linked* live link. A card whose *older* thread is awaiting input
+defined as the most recently _linked_ live link. A card whose _older_ thread is awaiting input
 therefore shows no "Input needed" badge at all today. That is a shipped bug and this spec fixes it.
 
 - `awaitingInput` becomes an **OR across every live-linked thread**.
@@ -219,13 +219,13 @@ The **todo strip picks its winner independently**: awaiting input → running �
 thread shells the rule reads.
 
 The badge and the strip are allowed to reflect different threads. That is correct: the badge answers
-"does this card need me", which is a question about *any* thread; the strip answers "what is being
-worked on", which is a question about *one*.
+"does this card need me", which is a question about _any_ thread; the strip answers "what is being
+worked on", which is a question about _one_.
 
 ### D8 — One progress block per card, in a pure function
 
-`boardCardSummary` is provably shell-only — `boardCardSummary.test.ts:3` asserts it *"renders its
-documented variant from `BoardCardShell` fields ALONE (D7)"*, and that guarantee is what
+`boardCardSummary` is provably shell-only — `boardCardSummary.test.ts:3` asserts it _"renders its
+documented variant from `BoardCardShell` fields ALONE (D7)"_, and that guarantee is what
 structurally prevents the column view from ever reaching for `subscribeCard`. Todos need
 thread-joined data, so they cannot live inside it and its signature is not widened.
 
@@ -284,11 +284,11 @@ reactor.
 The dispatcher stamps the actor onto the event envelope, because the transport already knows who
 called:
 
-| Origin | Actor |
-| --- | --- |
-| Board RPC from the web client | `{ kind: "human", name }` |
-| MCP board toolkit | `{ kind: "agent", providerInstanceId, threadId }` |
-| Supervisor reactor / internal commands | `{ kind: "system" }` |
+| Origin                                 | Actor                                             |
+| -------------------------------------- | ------------------------------------------------- |
+| Board RPC from the web client          | `{ kind: "human", name }`                         |
+| MCP board toolkit                      | `{ kind: "agent", providerInstanceId, threadId }` |
+| Supervisor reactor / internal commands | `{ kind: "system" }`                              |
 
 No command schema changes, and no caller can misreport itself. `BOARD_CLIENT_COMMANDS` vs
 `BOARD_INTERNAL_COMMANDS` (`board.ts:1223`) already draws half this line.
@@ -322,14 +322,14 @@ addition later if it earns its place.
 
 Removed: `board_report_progress`, `board_request_input`, `BoardCardReportProgressCommand`,
 `BoardCardRequestInputCommand`, `board.card-progress-reported`, `board.card-input-requested` as an
-*agent-originated* command, and the `progress` / `input-requested` activity kinds.
+_agent-originated_ command, and the `progress` / `input-requested` activity kinds.
 
 - **Progress notes.** The agent's narration is already durable in its transcript, and its intent is
   now on the card as the todo strip. Nothing renders progress notes today, so nothing regresses
-  visually. The tool description told models to *"call it often"*, which was buying tokens for a
+  visually. The tool description told models to _"call it often"_, which was buying tokens for a
   log with no reader.
-- **Input requests.** The tool's own description admits its gap: *"you should still ask the same
-  question through your normal question mechanism so your thread waits for the reply."* An agent
+- **Input requests.** The tool's own description admits its gap: _"you should still ask the same
+  question through your normal question mechanism so your thread waits for the reply."_ An agent
   that asks normally and skips the tool leaves the board blind — today's actual failure mode.
 
 `handleInputRequested` (`supervisorReactor.ts:765`) moves the step to `awaiting-input`, which is
@@ -356,7 +356,7 @@ roughly twenty lines.
 
 No `Todo list updated` divider per revision. `deriveTurnPlans` (`session-logic.ts:618`) already
 renders one chip per turn showing the latest snapshot, anchored where planning began, with the
-explicit note *"plans rewrite constantly; the row must not churn"*. Fifteen dividers per turn is the
+explicit note _"plans rewrite constantly; the row must not churn"_. Fifteen dividers per turn is the
 shape t3code deliberately rejected. Confirmed with the designer.
 
 ### D16 — t3o-18 owns the stall-signal migration; t3o-17 is not amended
@@ -386,9 +386,9 @@ specific item finished, where a prose note asserts only that the model still had
 
 #### The envelope asks for a list, and the nudge asks again
 
-t3o-17 D2 argues that the envelope instruction is *"load-bearing, not a nicety"* — without an
+t3o-17 D2 argues that the envelope instruction is _"load-bearing, not a nicety"_ — without an
 observable progress signal, D1 degrades to today's behaviour with a higher ceiling, which is
-*"strictly worse"*. That argument survives the substitution intact, so the requirement is **kept and
+_"strictly worse"_. That argument survives the substitution intact, so the requirement is **kept and
 re-pointed rather than deleted**. A short step, or a provider in a mode that produces no plan, emits
 no `turn.plan.updated` at all; assuming agents always keep a list would reopen exactly the hole
 t3o-17 identified.
@@ -407,7 +407,7 @@ why it can be relied on where an unrewarded reporting call could not.
 by the reactor from `board_thread_todos` and passed in — the same pattern t3o-17 D2 establishes for
 `progressedSinceLastNudge`, so the function stays pure with no git and no SQL. When a nudged thread
 has no list, the nudge explicitly asks it to write one and work through it. This is the conditional
-the initial envelope cannot express: at step start no turn has run, so *no* thread has a list yet,
+the initial envelope cannot express: at step start no turn has run, so _no_ thread has a list yet,
 and only recovery time knows the difference.
 
 An agent that produces a list and then freezes it still stalls correctly — absence of a list and a
@@ -431,7 +431,7 @@ renders on the card like any other — the honest outcome, and the common one on
    the expanded panel still shows `5/5`.
 7. Reordering or inserting a todo does not reset the current item's elapsed time; rewording the
    in-progress item does.
-8. A card whose *older* linked thread awaits input shows "Input needed".
+8. A card whose _older_ linked thread awaits input shows "Input needed".
 9. A card whose non-active linked thread is running shows the running dot.
 10. The badge and the todo strip may reflect different threads without either being wrong.
 11. `boardCardProgressBlock` returns exactly one block, with subcards outranking review outranking
@@ -466,19 +466,19 @@ renders on the card like any other — the honest outcome, and the common one on
 
 ## Files
 
-| File | Change |
-| --- | --- |
-| `apps/server/src/board/migrations/014_BoardThreadTodos.ts` | new cache table + `card_id` index |
-| `apps/server/src/board/migrations/015_BoardCardActivityStructured.ts` | structured kind, typed payload, actor columns on `board_card_activity`; drop the `progress` / `input-requested` rows |
-| `apps/server/src/board/supervisorReactor.ts` | capture `turn.plan.updated`; re-source input-requested from `user-input.requested`; sweep on link/thread/card removal |
-| `apps/server/src/board/projector.ts` | write curated activity rows from the events it already projects |
-| `apps/server/src/board/projection.ts` | read `board_thread_todos` for the shell; boot sweep of orphans |
-| `apps/server/src/board/rpc.ts` | stamp the human actor at the dispatch boundary |
-| `apps/server/src/mcp/toolkits/board/tools.ts` / `handlers.ts` | delete the two tools; add todo summaries to `board_get_card_context`; stamp the agent actor |
-| `packages/contracts/src/board.ts` | `BoardCardThreadShell`; structured activity kinds + actor; aggregate `deriveBoardCardThreadState`; delete the two commands and their payloads; item/text caps |
-| `packages/contracts/src/orchestration.ts` | `boardCardThreads` on `OrchestrationShellSnapshot` + its shell stream delta |
-| `apps/web/src/board/boardCardProgressBlock.ts` | new pure precedence function |
-| `apps/web/src/board/BoardCardItem.tsx` / `BoardCardSummaryRow.tsx` | todo strip, pip row, thread chip and expanded rows |
-| `apps/web/src/board/BoardCardDetailView.tsx` | Activity rail in place of the two placeholders |
-| `apps/web/src/board/BoardCardThreadPane.tsx` | per-tab counts and the sticky todos strip |
-| `apps/server/src/board/supervisor.ts` | re-point the stall reset signal to todo advance; swap the unattended postamble line; `recoveryDecision` gains `hasTodoList` (D16) |
+| File                                                                  | Change                                                                                                                                                        |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/board/migrations/014_BoardThreadTodos.ts`            | new cache table + `card_id` index                                                                                                                             |
+| `apps/server/src/board/migrations/015_BoardCardActivityStructured.ts` | structured kind, typed payload, actor columns on `board_card_activity`; drop the `progress` / `input-requested` rows                                          |
+| `apps/server/src/board/supervisorReactor.ts`                          | capture `turn.plan.updated`; re-source input-requested from `user-input.requested`; sweep on link/thread/card removal                                         |
+| `apps/server/src/board/projector.ts`                                  | write curated activity rows from the events it already projects                                                                                               |
+| `apps/server/src/board/projection.ts`                                 | read `board_thread_todos` for the shell; boot sweep of orphans                                                                                                |
+| `apps/server/src/board/rpc.ts`                                        | stamp the human actor at the dispatch boundary                                                                                                                |
+| `apps/server/src/mcp/toolkits/board/tools.ts` / `handlers.ts`         | delete the two tools; add todo summaries to `board_get_card_context`; stamp the agent actor                                                                   |
+| `packages/contracts/src/board.ts`                                     | `BoardCardThreadShell`; structured activity kinds + actor; aggregate `deriveBoardCardThreadState`; delete the two commands and their payloads; item/text caps |
+| `packages/contracts/src/orchestration.ts`                             | `boardCardThreads` on `OrchestrationShellSnapshot` + its shell stream delta                                                                                   |
+| `apps/web/src/board/boardCardProgressBlock.ts`                        | new pure precedence function                                                                                                                                  |
+| `apps/web/src/board/BoardCardItem.tsx` / `BoardCardSummaryRow.tsx`    | todo strip, pip row, thread chip and expanded rows                                                                                                            |
+| `apps/web/src/board/BoardCardDetailView.tsx`                          | Activity rail in place of the two placeholders                                                                                                                |
+| `apps/web/src/board/BoardCardThreadPane.tsx`                          | per-tab counts and the sticky todos strip                                                                                                                     |
+| `apps/server/src/board/supervisor.ts`                                 | re-point the stall reset signal to todo advance; swap the unattended postamble line; `recoveryDecision` gains `hasTodoList` (D16)                             |

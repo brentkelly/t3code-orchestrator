@@ -18,7 +18,7 @@ A native settings tab, and the typed recipe that D10 promised would be data rath
 ## Seam inventory
 
 Six one-line appends plus new files. Checked against `t3o-02a`: five are **frozen** (one entry per
-settings *page*, and the board has exactly one), but the sixth was an enumeration and is corrected
+settings _page_, and the board has exactly one), but the sixth was an enumeration and is corrected
 below.
 
 **Server** (`packages/contracts/src/settings.ts`) — frozen:
@@ -37,11 +37,11 @@ automatically. `BoardSettings` itself lives in `packages/contracts/src/board.ts`
 5. `SETTINGS_SECTION_ICONS` (`SettingsSidebarNav.tsx`).
 6. `SETTINGS_NAV_ITEMS`.
 
-If the board ever needs a *second* settings page, generalise all four to spreads of one board-owned
+If the board ever needs a _second_ settings page, generalise all four to spreads of one board-owned
 nav registry rather than appending a second entry to each.
 
 **Searchable-setting index — must be a spread, not entries.** `SETTINGS_SEARCH_ITEMS`
-(`apps/web/src/components/settings/settingsSearch.ts:37`) carries one entry *per setting*, and the
+(`apps/web/src/components/settings/settingsSearch.ts:37`) carries one entry _per setting_, and the
 board contributes many (key prefix, accent, recipe steps, concurrency, archive window, worktree
 retention). Enumerating them in a core file is exactly what `t3o-02a` forbids. It is an array
 literal, so spread a board-owned registry: `...BOARD_SETTINGS_SEARCH_ITEMS,`. New board settings

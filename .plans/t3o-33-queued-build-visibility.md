@@ -34,7 +34,7 @@ by itself — and lets you override either half of that (start now, or move to t
 - Mobile. There is no board in `apps/mobile`.
 - The agent cap setting. `board.concurrency.globalMaxConcurrent` already exists and is already
   exposed in `BoardSettingsPanel`.
-- Any change to how the governor *chooses* which queued step runs next.
+- Any change to how the governor _chooses_ which queued step runs next.
 
 ## Key decisions
 
@@ -49,11 +49,11 @@ Replace it with `boardBuildQueue(cards, stages)` taking **every card shell in th
 filtering on `queued`, sorting stage-desc → orderKey → cardId, returning
 `Map<cardId, { position, total, ahead, startsNext }>`.
 
-*Why not the server:* a position is a view over the whole queue, so one card moving renumbers every
+_Why not the server:_ a position is a view over the whole queue, so one card moving renumbers every
 other queued card — a per-card `queuePosition` on the shell would force the projection to re-emit N
 shells per delta. That breaks the performance rule for a number the client can already compute.
 
-*The one divergence:* the `started` tiebreak needs step completions, which are detail-only. It only
+_The one divergence:_ the `started` tiebreak needs step completions, which are detail-only. It only
 separates two queued steps at the same stage where one is a re-run, and buying it costs a wire
 field. The function documents the divergence in a comment rather than hiding it.
 
@@ -100,7 +100,7 @@ Nothing today admits a step past the ceiling; `BoardStepSlots.acquire` is the on
 ### D4 — `Move to front` never lies
 
 It reorders through the existing `board.card.reorder`, giving the card an orderKey below the global
-minimum among queued cards. But orderKey is the governor's *last* tiebreak, so a card behind one on
+minimum among queued cards. But orderKey is the governor's _last_ tiebreak, so a card behind one on
 a later stage cannot overtake it by reordering at all.
 
 So: compute the projected orderKey, re-derive the position with it, and **offer the button only
@@ -110,7 +110,7 @@ than an absent one.
 ### D5 — Queued stays neutral, not violet
 
 **This is a deliberate divergence from the mockup and needs a look.** `docs/t3o/status-colours.md`
-locks violet (`--attention`) to *waiting on a human*. A queued card is waiting on a machine and
+locks violet (`--attention`) to _waiting on a human_. A queued card is waiting on a machine and
 needs nothing from anyone — it starts by itself. Painting it violet puts an "answer me" colour on a
 card with no question, which is the exact misread that doc exists to prevent.
 
@@ -124,7 +124,7 @@ The mockup shows the strip inside a `Build` tab. That tab does not exist for a q
 is spawned, so there is no build thread and the modal opens on the planning conversation.
 
 The strip therefore renders at pane level, above whatever thread is selected, so it is visible on
-every tab. The brief's *"replace the build-thread summary text for `state === queued`"* item is
+every tab. The brief's _"replace the build-thread summary text for `state === queued`"_ item is
 dropped for the same reason — there is no build thread to summarise.
 
 Strip copy: **Queued #2 for build.** `No agent has picked this up yet.` + inline `Start now`.
@@ -136,13 +136,13 @@ precedence in meaning; the queue banner explains the other half of why nothing i
 
 ## Surfaces
 
-| Surface | Change |
-| --- | --- |
-| Board card (`BoardCardItem.tsx`) | Pill keeps its place; its `BoardHint` carries the full detail string. |
-| Modal header (`BoardCardDetailView.tsx`) | `Queued #n` pill in the identity row beside the stage badge, detail as tooltip. |
-| Modal right rail | Banner above the dependency block: clock + bold `Queued #2 for build`, one muted detail line, `Start now` / `Move to front`. |
-| Thread pane | Pane-level strip + inline `Start now`. |
-| Drop toast (`BoardPage.tsx`) | Reuses the new global derivation, so the announced position matches the card. |
+| Surface                                  | Change                                                                                                                       |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Board card (`BoardCardItem.tsx`)         | Pill keeps its place; its `BoardHint` carries the full detail string.                                                        |
+| Modal header (`BoardCardDetailView.tsx`) | `Queued #n` pill in the identity row beside the stage badge, detail as tooltip.                                              |
+| Modal right rail                         | Banner above the dependency block: clock + bold `Queued #2 for build`, one muted detail line, `Start now` / `Move to front`. |
+| Thread pane                              | Pane-level strip + inline `Start now`.                                                                                       |
+| Drop toast (`BoardPage.tsx`)             | Reuses the new global derivation, so the announced position matches the card.                                                |
 
 ## Acceptance
 
@@ -154,7 +154,7 @@ precedence in meaning; the queue banner explains the other half of why nothing i
    and the slot is released exactly once when it settles (no leak).
 4. `Move to front` reorders the card and every other queued card's label updates; the button is
    absent at position 1 and absent whenever the reorder could not improve the position.
-5. A card that is queued *and* dependency-blocked shows both banners, queue above blocked.
+5. A card that is queued _and_ dependency-blocked shows both banners, queue above blocked.
 6. Force-starting past the cap renders `4 agents running (limit 3)` rather than `4 of 3`.
 7. No new field crosses the wire.
 

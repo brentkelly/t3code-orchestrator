@@ -7,14 +7,14 @@ prerequisites: [t3o-07, t3o-10, t3o-11, t3o-12, t3o-13]
 
 # Stage pipeline
 
-`Settings → Board → Pipeline` lets a user build an ordered list of *steps* inside each of eight
+`Settings → Board → Pipeline` lets a user build an ordered list of _steps_ inside each of eight
 fixed stages. Nothing uses it. The only step anyone has ever had is `DEFAULT_BOARD_BUILD_STEP`; the
 only multi-step recipe in the repository is a test fixture (`supervisor.test.ts:87`). Seven of the
 eight stages render an editor whose output is never executed.
 
 Worse, the feature it models is the wrong one. A stage's steps duplicate what stages already are —
 `Planning → Building → Code review` is the pipeline, and expressing "plan then build" as two steps
-*inside* Building rebuilds the board one level down. Code review is not a step list either; it is a
+_inside_ Building rebuilds the board one level down. Code review is not a step list either; it is a
 **loop** whose phases must be hardcoded, not user-assembled (t3o-16). Splitting a large feature into
 parts is a **sub-board** (D12), a card-level structure that has nothing to do with settings.
 
@@ -59,7 +59,7 @@ are compiled in so zero configuration works, and **the resolved config is frozen
 stage entry** so editing settings mid-flight cannot corrupt a running card.
 
 **D4 survives intact.** The board still orchestrates and an agent still executes one step at a time,
-completing only via `board_complete_step`. Only the *authorship* of the step list changes.
+completing only via `board_complete_step`. Only the _authorship_ of the step list changes.
 
 **D18 is relaxed.** Building → Code review stops being the single hardcoded board-driven crossing and
 becomes a per-stage `Auto advance` setting (D8).
@@ -73,10 +73,10 @@ becomes a per-stage `Auto advance` setting (D8).
 The array goes; the machine does not. `stepStates`, `stepCompletions`, `board_complete_step`,
 `BoardStepSlots`, `selectNextStep` and the recovery/escalation ladder are all retained unchanged.
 
-*Why:* they are the unit of "one agent run" and t3o-16's review loop needs every one of them — three
+_Why:_ they are the unit of "one agent run" and t3o-16's review loop needs every one of them — three
 prompts, three models, a completion contract between each. Removing the machine would leave an
 auto-executing stage with no timeout, no attempt cap and no death detection: a thread that ends its
-turn without completing is *currently* treated as failure, and losing that makes a stalled build
+turn without completing is _currently_ treated as failure, and losing that makes a stalled build
 look finished.
 
 Vocabulary stays "step". It is still accurate — one agent run, of which a normal stage has exactly
@@ -95,33 +95,33 @@ prompts, and not worth churning.
 Stage definitions become a board aggregate: `BoardState.stages`, with create / rename / reorder /
 delete commands and events, a `board_stages` table, and a board-ledger migration.
 
-*Why not settings:* `decideBoardCommand({ command, readModel })` (`decider.ts:396`) has no settings
+_Why not settings:_ `decideBoardCommand({ command, readModel })` (`decider.ts:396`) has no settings
 and no SQL client (D8). It validates every transition with `boardStageIndex` /
 `areBoardStagesAdjacent` off the compiled-in array. A user-editable stage list must therefore reach
 the decider, and there are only two routes:
 
-| | Upstream files touched |
-| --- | --- |
-| Read-model aggregate | **one word** — `"stage"` into `OrchestrationAggregateKind` (`orchestration.ts:1088`) |
+|                                  | Upstream files touched                                                                                               |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Read-model aggregate             | **one word** — `"stage"` into `OrchestrationAggregateKind` (`orchestration.ts:1088`)                                 |
 | Settings passed into the decider | `orchestration/decider.ts` signature + pass-through, `OrchestrationEngine.ts:162`, every upstream call site and test |
 
-The aggregate is the *less* invasive option on a fork, and it is the path labels already walked in
+The aggregate is the _less_ invasive option on a fork, and it is the path labels already walked in
 t3o-06a — `"label"` joined that same union for the same reason. It also makes stage mutation
 transactional with card moves: "refuse to delete a stage that still holds cards" is an ordinary
 decider invariant rather than a best-effort check in an RPC handler.
 
-**Settings still own what a stage *does* (D4). The read model owns what a stage *is*.** The decider
+**Settings still own what a stage _does_ (D4). The read model owns what a stage _is_.** The decider
 never branches on a prompt; only the reactor does, and the reactor has settings in hand.
 
 ### D3 — Three roles: `build`, `review`, `done`
 
 A stage carries an optional role. Exactly one stage holds each of the three; the rest carry none.
 
-| Role | Anchors |
-| --- | --- |
-| `build` | worktree/branch entry point; dependency blocking from here onward; the per-card human-in-the-loop toggle; `Auto advance` default |
-| `review` | t3o-16's bespoke settings card and review loop |
-| `done` | dependency satisfaction (`unmetBoardCardDependencies`); `archiveAfterDays`; `worktreeRetention` |
+| Role     | Anchors                                                                                                                          |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `build`  | worktree/branch entry point; dependency blocking from here onward; the per-card human-in-the-loop toggle; `Auto advance` default |
+| `review` | t3o-16's bespoke settings card and review loop                                                                                   |
+| `done`   | dependency satisfaction (`unmetBoardCardDependencies`); `archiveAfterDays`; `worktreeRetention`                                  |
 
 **Ordering invariant:** `build` before `review`; `done` last. Custom stages may sit anywhere else —
 before, between or after. Enforced in the decider on create and reorder.
@@ -222,24 +222,24 @@ Every other stage ships with `Auto execute` off.
 
 Two orthogonal settings, each owning a coherent set of consequences.
 
-| **Mode** | worktree + branch | sandbox | concurrency slot |
-| --- | --- | --- | --- |
-| `plan` (default) | none | read-only | none |
-| `build` | created / reused | write | held |
+| **Mode**         | worktree + branch | sandbox   | concurrency slot |
+| ---------------- | ----------------- | --------- | ---------------- |
+| `plan` (default) | none              | read-only | none             |
+| `build`          | created / reused  | write     | held             |
 
-| **Human in the loop** | prompt envelope | turn ends without `board_complete_step` | timeout / attempts | drop |
-| --- | --- | --- | --- | --- |
-| on | question-friendly | waiting | not enforced | left alone |
-| off (unattended) | `/unattended` preamble | dead → recovered | enforced | auto-resume |
+| **Human in the loop** | prompt envelope        | turn ends without `board_complete_step` | timeout / attempts | drop        |
+| --------------------- | ---------------------- | --------------------------------------- | ------------------ | ----------- |
+| on                    | question-friendly      | waiting                                 | not enforced       | left alone  |
+| off (unattended)      | `/unattended` preamble | dead → recovered                        | enforced           | auto-resume |
 
-*Why the slot follows Mode and not human-in-the-loop:* a human-in-the-loop **build** is still a real
+_Why the slot follows Mode and not human-in-the-loop:_ a human-in-the-loop **build** is still a real
 build, holding a worktree and a provider, and must count against the ceiling — otherwise flipping a
 toggle silently breaches `globalMaxConcurrent`. t3o-14's original objection (an hours-long interview
 must not hold a slot meant for bounding concurrent builds) is fully satisfied by Mode: a planning
 stage is `plan` mode, so it holds nothing.
 
-`composeStepPrompt` currently hardcodes the unattended stance — *"`board_complete_step` is the ONLY
-way to complete"* and *"never end a turn with an unanswered question in prose"* (`supervisor.ts:85-88`).
+`composeStepPrompt` currently hardcodes the unattended stance — _"`board_complete_step` is the ONLY
+way to complete"_ and _"never end a turn with an unanswered question in prose"_ (`supervisor.ts:85-88`).
 Both are wrong under human-in-the-loop. The postamble branches on the toggle; the unattended branch
 is the `/unattended` rules text.
 
@@ -260,7 +260,7 @@ The default comes from the Build stage's **two** settings:
 - card has a plan → `humanInLoopWithPlan` (default false)
 - card has no plan → `humanInLoopWithoutPlan` (default true)
 
-*Why two settings rather than a hidden rule:* "you cannot reach Build without planning first" is
+_Why two settings rather than a hidden rule:_ "you cannot reach Build without planning first" is
 deleted outright — a one-line bug fix from a pasted screenshot does not need a plan. But an
 unplanned card has no brief for an agent to work from, so the sensible default is a conversation.
 Expressing that as two visible settings puts the behaviour in the UI instead of in code.
@@ -277,7 +277,7 @@ A card entering an auto-executing stage for the first time starts a run with the
 **Re-entering that stage starts a clean conversational thread with no prompt injected**, human in
 the loop, regardless of the stage's settings.
 
-*Why:* a card dragged back to Build has already satisfied the build prompt. Re-firing it would have
+_Why:_ a card dragged back to Build has already satisfied the build prompt. Re-firing it would have
 the agent redo work nobody asked for; only the human knows why the card came back, so the human
 opens the conversation. Once they have explained it, flipping the toggle to unattended sends the
 `/unattended` preamble and supervision resumes on the same thread (D5).
@@ -304,12 +304,12 @@ restart after this ships would spawn a thread for every one of them.
 On a **successful** completion of an **unattended** run, if the stage's `autoAdvance` is on, the
 card moves to the next stage in order.
 
-*Why per-stage and not build-only:* auto-execute makes a card *do* something on arrival, but nothing
-makes it *arrive*. A user who adds "End-user testing" with a prompt would find that nothing ever
+_Why per-stage and not build-only:_ auto-execute makes a card _do_ something on arrival, but nothing
+makes it _arrive_. A user who adds "End-user testing" with a prompt would find that nothing ever
 lands there, because only Building advances and it advances to a hardcoded `"review"`. Without
 auto-advance the feature does not compose.
 
-*Why "next in order" and not "the review-role stage":* inserting a stage between Build and Review
+_Why "next in order" and not "the review-role stage":_ inserting a stage between Build and Review
 must not be skipped. Same name-decoupling applied everywhere else in this spec.
 
 Never on `blocked` or `failed`; never for a human-in-the-loop run (there is no completion signal to
@@ -323,7 +323,7 @@ trigger on). `stay` remains right for a conversational stage — which is D18's 
 **Delete** — refused if the stage holds **any** card, archived included. Refused outright for the
 three role-holders. The error names the count.
 
-*Rejected:* relocating cards to a neighbour (invisible data movement, and the destination may be a
+_Rejected:_ relocating cards to a neighbour (invisible data movement, and the destination may be a
 different Mode, so a card could land somewhere expecting a worktree it does not have); cascade
 archiving (destructive). This is why **t3o-13 is a prerequisite**: `listBoardCardShellRows` filters
 `WHERE archived_at IS NULL` (`projection.ts:411`), so without an archive view the error is a dead
@@ -332,7 +332,7 @@ end — "move 3 archived cards out first", with no way to see them.
 **Reorder** — allowed subject to the D3 ordering invariant, and **refused in either direction across
 the `build` boundary while the stage holds cards**.
 
-*Why:* crossing that boundary changes the answer to "is this card subject to dependency blocking?",
+_Why:_ crossing that boundary changes the answer to "is this card subject to dependency blocking?",
 and `blocked` is a stored column re-derived at each move (`decider.ts:274`) — a stale flag renders a
 badge the decider disagrees with, the class of bug t3o-13 exists to fix. Refusing the move removes
 the hazard instead of handling it. Symmetric in both directions because the reverse crossing needs
@@ -355,8 +355,8 @@ arrived, so creation and dragging follow an identical path.
 It also serves the flow this spec is built around: create a card directly in Build, paste a
 screenshot, no plan → human-in-the-loop defaults on → a conversation starts immediately.
 
-**Required guard:** the create dialog states when the chosen stage auto-executes — *"Building runs
-automatically — creating here starts an agent."* Without it this is a footgun.
+**Required guard:** the create dialog states when the chosen stage auto-executes — _"Building runs
+automatically — creating here starts an agent."_ Without it this is a footgun.
 
 ### D11 — Dependency blocking is unconditional from `build` onward
 
@@ -394,7 +394,7 @@ stage rather than for the literal `"backlog"`.
 No settings migration, no lenient decoder, no legacy union, no additive-only table changes. There
 are no installs beyond one dev server, and its database may be recreated.
 
-Worth recording *why* this would otherwise matter: `loadSettingsFromDisk` decodes `settings.json` as
+Worth recording _why_ this would otherwise matter: `loadSettingsFromDisk` decodes `settings.json` as
 one unit and, on any decode failure, logs a warning and returns `DEFAULT_SERVER_SETTINGS` — the
 **entire** file (`serverSettings.ts:296-304`). A shape change that cannot decode the old file
 silently discards every unrelated setting: provider instances, model defaults, all of it. If this
@@ -409,7 +409,7 @@ projector and the board UI.
 
 So the reactor keeps everything generic — stage-entry detection, worktree provisioning, slot
 acquisition, thread spawn, `sendTurn`, death detection, the recovery ladder, auto-advance — and
-delegates exactly one question to a **stage executor**: *what runs next, or are we done?*
+delegates exactly one question to a **stage executor**: _what runs next, or are we done?_
 
 ```
 BoardStageExecutor.planNext({ card, config, completions, runState })
@@ -428,10 +428,10 @@ holding the entire review loop — phases, rounds, convergence — inside itself
 Resolution is a **registry keyed by stage role**, consulted in exactly one place. Combined with the
 settings union in D4, the whole codebase branches on stage kind in precisely two spots:
 
-| Branch point | Owner |
-| --- | --- |
-| Which settings card to render | `BoardSettingsPanel` |
-| Which executor to run | the executor registry |
+| Branch point                  | Owner                 |
+| ----------------------------- | --------------------- |
+| Which settings card to render | `BoardSettingsPanel`  |
+| Which executor to run         | the executor registry |
 
 Reactor, decider, projector, MCP toolkit and board UI stay uniform.
 
@@ -440,7 +440,7 @@ Two boundaries this fixes by construction:
 - **The slot belongs to Mode, not the executor** (D5). A multi-phase executor holds one slot for its
   whole run rather than re-acquiring per phase — a half-finished loop never stalls behind newer work,
   at the cost of a longer-held slot.
-- **The executor never sees a diff or a repository.** It returns a prompt; the *agent* runs `git` in
+- **The executor never sees a diff or a repository.** It returns a prompt; the _agent_ runs `git` in
   its worktree. Git stays out of the decision path entirely, which is what keeps `planNext` pure.
 
 `runState` carries the `round` the executor stamps, which is also what keeps rounds and
@@ -506,7 +506,7 @@ Everything else grows in board-owned files:
 19. `SimpleStageExecutor.planNext` is unit-tested with no reactor, no database and no git.
 20. No code outside the executor registry branches on stage role, kind or id to decide **what to
     execute**; the only stage-kind branch in the web app is the settings card choosing which panel to
-    render. Role-based *policy* that this spec mandates is expected and is not a violation —
+    render. Role-based _policy_ that this spec mandates is expected and is not a violation —
     specifically the `build`-role scoping of the per-card human-in-the-loop toggle (D6) and the
     Mode-driven worktree and slot decisions (D5). The rule is about execution shape, not about
     whether the word "role" appears.
@@ -522,20 +522,20 @@ Everything else grows in board-owned files:
 
 ## Files
 
-| File | Change |
-| --- | --- |
-| `packages/contracts/src/orchestration.ts` | `"stage"` into `OrchestrationAggregateKind` (the only upstream edit) |
-| `packages/contracts/src/board.ts` | `BoardStageId`, `BoardStageDefinition`, `BoardStageRole`, seeds, ordering invariant; `BoardStageExecution` replaces `BoardStep`/`BoardPipeline`; stage CRUD commands + events; `BoardCard.humanInLoop`; delete the recipe-snapshot family; role-key the dependency/lifecycle helpers |
-| `apps/server/src/board/decider.ts` | stage CRUD invariants; role-keyed gates; `blocked` derivation from the `build` role |
-| `apps/server/src/board/projector.ts` / `projection.ts` | `stages` slice; run-row config columns; drop `recipe_snapshot` |
-| `apps/server/src/board/supervisor.ts` | `composeStepPrompt` branches on human-in-the-loop; `/unattended` postamble |
-| `apps/server/src/board/stageExecutor.ts` | **new** — `BoardStageExecutor`, `SimpleStageExecutor`, the role-keyed registry (D15) |
-| `apps/server/src/board/supervisorReactor.ts` | generic auto-kickoff; first-entry vs re-entry; Mode-driven worktree/slot; auto-advance to next in order; mid-run toggle turn; `board.card-created` in the event filter; `start-stage-thread` |
-| `apps/server/src/board/migrations/014_…` onward | `board_stages`; run-row columns; drop `recipe_snapshot` |
-| `apps/server/src/board/rpc.ts` | stage CRUD + `startStageThread` RPCs |
-| `packages/client-runtime/src/state/board.ts` | stage CRUD + `startStageThread` environment commands |
-| `apps/web/src/components/settings/BoardSettingsPanel.tsx` | stage cards replace the step editor; `ProviderModelPicker`; stage CRUD + reorder |
-| `apps/web/src/board/boardStages.ts` | deleted — labels come from the read model |
-| `apps/web/src/board/BoardPage.tsx`, `boardCardSummary.ts`, `boardStageActions.ts`, `boardUiStore.ts` | dynamic columns; switches become lookups |
-| `apps/web/src/board/BoardCardCreateDialog.tsx` | any-stage creation + auto-execute warning |
-| `apps/web/src/board/BoardCardDetailView.tsx` | per-card human-in-the-loop toggle on Build |
+| File                                                                                                 | Change                                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/contracts/src/orchestration.ts`                                                            | `"stage"` into `OrchestrationAggregateKind` (the only upstream edit)                                                                                                                                                                                                                 |
+| `packages/contracts/src/board.ts`                                                                    | `BoardStageId`, `BoardStageDefinition`, `BoardStageRole`, seeds, ordering invariant; `BoardStageExecution` replaces `BoardStep`/`BoardPipeline`; stage CRUD commands + events; `BoardCard.humanInLoop`; delete the recipe-snapshot family; role-key the dependency/lifecycle helpers |
+| `apps/server/src/board/decider.ts`                                                                   | stage CRUD invariants; role-keyed gates; `blocked` derivation from the `build` role                                                                                                                                                                                                  |
+| `apps/server/src/board/projector.ts` / `projection.ts`                                               | `stages` slice; run-row config columns; drop `recipe_snapshot`                                                                                                                                                                                                                       |
+| `apps/server/src/board/supervisor.ts`                                                                | `composeStepPrompt` branches on human-in-the-loop; `/unattended` postamble                                                                                                                                                                                                           |
+| `apps/server/src/board/stageExecutor.ts`                                                             | **new** — `BoardStageExecutor`, `SimpleStageExecutor`, the role-keyed registry (D15)                                                                                                                                                                                                 |
+| `apps/server/src/board/supervisorReactor.ts`                                                         | generic auto-kickoff; first-entry vs re-entry; Mode-driven worktree/slot; auto-advance to next in order; mid-run toggle turn; `board.card-created` in the event filter; `start-stage-thread`                                                                                         |
+| `apps/server/src/board/migrations/014_…` onward                                                      | `board_stages`; run-row columns; drop `recipe_snapshot`                                                                                                                                                                                                                              |
+| `apps/server/src/board/rpc.ts`                                                                       | stage CRUD + `startStageThread` RPCs                                                                                                                                                                                                                                                 |
+| `packages/client-runtime/src/state/board.ts`                                                         | stage CRUD + `startStageThread` environment commands                                                                                                                                                                                                                                 |
+| `apps/web/src/components/settings/BoardSettingsPanel.tsx`                                            | stage cards replace the step editor; `ProviderModelPicker`; stage CRUD + reorder                                                                                                                                                                                                     |
+| `apps/web/src/board/boardStages.ts`                                                                  | deleted — labels come from the read model                                                                                                                                                                                                                                            |
+| `apps/web/src/board/BoardPage.tsx`, `boardCardSummary.ts`, `boardStageActions.ts`, `boardUiStore.ts` | dynamic columns; switches become lookups                                                                                                                                                                                                                                             |
+| `apps/web/src/board/BoardCardCreateDialog.tsx`                                                       | any-stage creation + auto-execute warning                                                                                                                                                                                                                                            |
+| `apps/web/src/board/BoardCardDetailView.tsx`                                                         | per-card human-in-the-loop toggle on Build                                                                                                                                                                                                                                           |

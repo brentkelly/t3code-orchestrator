@@ -7,7 +7,7 @@ prerequisites: [t3o-08, t3o-13, t3o-15, t3o-16]
 
 # Sub-boards — split approval and child-card materialisation
 
-D12 promised that a planning agent could *propose* a split, a human could approve it, and the
+D12 promised that a planning agent could _propose_ a split, a human could approve it, and the
 approval would materialise real plan cards stacked on an integration branch. Everything around that
 promise shipped; the promise itself never did. What exists today:
 
@@ -98,7 +98,7 @@ The decider handles `board.plans.approve` by emitting, in order:
 3. One `board.plans-approved` carrying `{ cardId, childCardIds, approvedAt }` — the activity-rail
    row ("approved the split into N plan cards") and the reactor's trigger for D5.
 
-*Why ordinary events:* every existing consumer — SQL projector, in-memory projector, shell deltas,
+_Why ordinary events:_ every existing consumer — SQL projector, in-memory projector, shell deltas,
 activity rail, auto-kickoff filter — handles the children with **zero new cases**. Children created
 into a non-auto-executing stage spawn nothing (t3o-15 D7's trigger only fires on auto-executing
 stages), so materialisation starts no threads.
@@ -146,7 +146,7 @@ move model. The observation that collapses it: the derivation only ever takes tw
 
 - **At approval** the parent moves into the **build-role stage** (the `board.card-moved` in D2's
   sequence — user-originated, so t3o-03's "no non-human path into Building" test stays satisfiable
-  in letter and spirit: the human clicked Approve). The parent building *through its children* sits
+  in letter and spirit: the human clicked Approve). The parent building _through its children_ sits
   in the Building column wearing its pips.
 - **While any child is unfinished** — not deleted, not archived, not in the done-role stage — the
   parent refuses `board.card.move` in any direction, override included: "Card 'X' advances through
@@ -166,13 +166,13 @@ A parent whose children are all finished is an ordinary card again — draggable
 deletable. If every child is deleted outright the parent unfreezes where it stands and the human
 decides what it means.
 
-The advance is deliberately *next in order*, not "the review-role stage": a user stage inserted
+The advance is deliberately _next in order_, not "the review-role stage": a user stage inserted
 between Build and Review must not be skipped (the same reasoning as t3o-15 D8).
 
 ### D5 — The integration branch exists from approval, as a branch without a worktree
 
 Children cut their branches from `parent.worktree.branch` (`resolveBoardCardBaseRef`), and their
-PRs target it on the forge — so the branch must exist locally *and* remotely before the first
+PRs target it on the forge — so the branch must exist locally _and_ remotely before the first
 child builds. But the parent runs no agent until its final review, and a worktree costs a setup
 script and gigabytes (D6). Worse, a branch checked out in a parent worktree cannot be
 fast-forwarded by the existing post-merge sync (`pullMergedBaseBranch` fetches `base:base`, which
@@ -188,8 +188,8 @@ null, no worktree has ever been provisioned. On `board.plans-approved` the react
    the retry path);
 3. **pushes it to the primary remote** so child PRs have a target;
 4. dispatches a new internal command `board.card.record-integration-branch { cardId, branch,
-   baseRefName }` → event → worktree slice `{ branch, baseRefName, path: null, status:
-   "branch-only", attempts: 1 }`.
+baseRefName }` → event → worktree slice `{ branch, baseRefName, path: null, status:
+"branch-only", attempts: 1 }`.
 
 Failures in 1–2 report through the existing `fail-worktree` path so the card says why and retry is
 possible; a failed **push** records an activity note but does not fail the slice — a local-only
@@ -198,7 +198,7 @@ review step with the forge CLI's own words (the t3o-20 stance).
 
 Because nothing has the branch checked out, each child merge fast-forwards the local integration
 branch via the existing `pullMergedBaseBranch` (called with the merged PR's `baseRef`, which for a
-child *is* the integration branch — verify the call site passes the PR's base, not the project
+child _is_ the integration branch — verify the call site passes the PR's base, not the project
 default). Later children therefore cut from a base containing every merged sibling.
 
 The provisioning state machine extends by one arc: `branch-only` joins `failed` / `reclaimed` as a
@@ -332,19 +332,19 @@ per the table below.
 
 ## Files
 
-| File | Change |
-| --- | --- |
-| `packages/contracts/src/board.ts` | `board.plans.approve` + `board.card.record-integration-branch` commands; `board.plans-approved` + `board.card-integration-branch-recorded` events; `branch-only` status; `BoardCard.sourcePlanId`; shell `parentCardId` + widened `card-plans` delta; `boardSubBoardFloorStage`, `boardCardChildren`, `boardCardUnfinishedChildren`; detail `children` |
-| `apps/server/src/board/decider.ts` | approve validation + materialisation events; floor-based plan-card restriction; parent freeze/delete/archive/propose/write guards; integration-branch record |
-| `apps/server/src/board/projector.ts` | new event cases; parent `card-plans` deltas on child transitions |
-| `apps/server/src/board/projection.ts` | `source_plan_id` column; brief-by-pointer resolution; detail `children` |
-| `apps/server/src/board/migrations/027_BoardCardsSourcePlan.ts` | nullable `source_plan_id` |
-| `apps/server/src/board/supervisorReactor.ts` | `plans-approved` handler (branch create/push/record); `beginStageRun` live-children guard; child-transition watcher advancing the parent |
-| `apps/server/src/board/worktree.ts` | branch-only aware provisioning/reclaim edges (attach path already exists) |
-| `packages/client-runtime/src/operations/boardCommands.ts`, `state/board.ts` | `approvePlans` command + atom; `card-plans` delta fields |
-| `apps/web/src/board/BoardCardPlanPane.tsx` | Approve split + confirm; per-plan child chips |
-| `apps/web/src/board/BoardCardSummaryRow.tsx`, `BoardCardItem.tsx` | parent-chip on children (pips already exist) |
-| Tests | decider approve/guards/floor; projector counts + replay; reactor branch + advance (harness); summary/pips; walking skeleton extension |
+| File                                                                        | Change                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/contracts/src/board.ts`                                           | `board.plans.approve` + `board.card.record-integration-branch` commands; `board.plans-approved` + `board.card-integration-branch-recorded` events; `branch-only` status; `BoardCard.sourcePlanId`; shell `parentCardId` + widened `card-plans` delta; `boardSubBoardFloorStage`, `boardCardChildren`, `boardCardUnfinishedChildren`; detail `children` |
+| `apps/server/src/board/decider.ts`                                          | approve validation + materialisation events; floor-based plan-card restriction; parent freeze/delete/archive/propose/write guards; integration-branch record                                                                                                                                                                                           |
+| `apps/server/src/board/projector.ts`                                        | new event cases; parent `card-plans` deltas on child transitions                                                                                                                                                                                                                                                                                       |
+| `apps/server/src/board/projection.ts`                                       | `source_plan_id` column; brief-by-pointer resolution; detail `children`                                                                                                                                                                                                                                                                                |
+| `apps/server/src/board/migrations/027_BoardCardsSourcePlan.ts`              | nullable `source_plan_id`                                                                                                                                                                                                                                                                                                                              |
+| `apps/server/src/board/supervisorReactor.ts`                                | `plans-approved` handler (branch create/push/record); `beginStageRun` live-children guard; child-transition watcher advancing the parent                                                                                                                                                                                                               |
+| `apps/server/src/board/worktree.ts`                                         | branch-only aware provisioning/reclaim edges (attach path already exists)                                                                                                                                                                                                                                                                              |
+| `packages/client-runtime/src/operations/boardCommands.ts`, `state/board.ts` | `approvePlans` command + atom; `card-plans` delta fields                                                                                                                                                                                                                                                                                               |
+| `apps/web/src/board/BoardCardPlanPane.tsx`                                  | Approve split + confirm; per-plan child chips                                                                                                                                                                                                                                                                                                          |
+| `apps/web/src/board/BoardCardSummaryRow.tsx`, `BoardCardItem.tsx`           | parent-chip on children (pips already exist)                                                                                                                                                                                                                                                                                                           |
+| Tests                                                                       | decider approve/guards/floor; projector counts + replay; reactor branch + advance (harness); summary/pips; walking skeleton extension                                                                                                                                                                                                                  |
 
 ## Verification
 

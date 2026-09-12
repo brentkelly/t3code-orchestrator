@@ -26,7 +26,7 @@ therefore spawned at `full-access`, which each adapter maps to a fully unrestric
 No allow/deny list narrows it — nothing in the board path constrains which commands a turn may
 run. So a board agent reading a hostile diff has unrestricted shell on the user's machine, and the
 user never chose that and cannot see it. **That is a security defect, not an unattended-mode
-trade-off.** Running unattended is a reason to need a *policy*, not a reason to assume the most
+trade-off.** Running unattended is a reason to need a _policy_, not a reason to assume the most
 dangerous one.
 
 Reasoning effort has the same shape of problem, less severely: `BoardModelSelection` is
@@ -59,7 +59,7 @@ The user owns the authority decision. The board honours it. No stage forces an a
 
 **Out**
 
-- Changing what each `RuntimeMode` *means* at the adapter level. The four modes and their
+- Changing what each `RuntimeMode` _means_ at the adapter level. The four modes and their
   adapter mappings are existing behaviour; this plan only stops hardcoding which one is used.
 - Per-command allow/deny lists for board agents. A finer-grained policy than `RuntimeMode` is a
   separate concern.
@@ -88,11 +88,11 @@ All additive and `withDecodingDefault`, so existing sparse `settings.json` decod
 
 ### D2 — Defaults
 
-| Stage / mode | Default access | Why |
-|---|---|---|
-| `build` mode (Building, custom worktree stages) | **`auto`** | The user's call. Writes in its own isolated worktree without prompting for every edit, without handing over unrestricted shell. |
-| Code review phases | **`auto`** | Same posture as build; the review loop runs in the card's worktree. See the caveat below. |
-| `plan` mode (Planning) | `approval-required` | Unchanged. Planning runs in the **shared project root** with no worktree, so the least-privileged posture is what keeps a planning agent from dirtying the real checkout — this is an existing invariant worth preserving. |
+| Stage / mode                                    | Default access      | Why                                                                                                                                                                                                                        |
+| ----------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build` mode (Building, custom worktree stages) | **`auto`**          | The user's call. Writes in its own isolated worktree without prompting for every edit, without handing over unrestricted shell.                                                                                            |
+| Code review phases                              | **`auto`**          | Same posture as build; the review loop runs in the card's worktree. See the caveat below.                                                                                                                                  |
+| `plan` mode (Planning)                          | `approval-required` | Unchanged. Planning runs in the **shared project root** with no worktree, so the least-privileged posture is what keeps a planning agent from dirtying the real checkout — this is an existing invariant worth preserving. |
 
 `resolveBoardStageExecution` (`board.ts:3728`) is the single resolution point; it currently FORCES
 `mode`/`humanInLoop` invariants. It gains the access-level default in the same place, so the
@@ -133,12 +133,12 @@ the exact pattern to copy.
   map at `ChatComposer.tsx:230-254`. It renders a `ComposerSelectControl` with the mode's icon +
   label, and a `SelectPopup` where each option shows an icon, a label and a one-line description:
 
-  | value | label | icon | description |
-  |---|---|---|---|
-  | `approval-required` | Supervised | `LockIcon` | Ask before commands and file changes. |
-  | `auto-accept-edits` | Auto-accept edits | `PenLineIcon` | Auto-approve edits, ask before other actions. |
-  | `auto` | Auto | `SparklesIcon` | Supported providers approve routine actions; others still ask. |
-  | `full-access` | Full access | `LockOpenIcon` | Allow commands and edits without prompts. |
+  | value               | label             | icon           | description                                                    |
+  | ------------------- | ----------------- | -------------- | -------------------------------------------------------------- |
+  | `approval-required` | Supervised        | `LockIcon`     | Ask before commands and file changes.                          |
+  | `auto-accept-edits` | Auto-accept edits | `PenLineIcon`  | Auto-approve edits, ask before other actions.                  |
+  | `auto`              | Auto              | `SparklesIcon` | Supported providers approve routine actions; others still ask. |
+  | `full-access`       | Full access       | `LockOpenIcon` | Allow commands and edits without prompts.                      |
 
   **Extract, don't rebuild.** `runtimeModeConfig` and the select are currently private to
   `ChatComposer.tsx`. Lift them into a shared `chat/AccessLevelPicker.tsx` exporting both the
@@ -167,15 +167,15 @@ posture it entered with, and a settings edit mid-flight cannot change a live age
 
 ## Layer-by-layer change list
 
-| Layer | File | Change |
-|---|---|---|
-| Contracts | `packages/contracts/src/board.ts` | `options` on `BoardModelSelection`; `runtimeMode` on `BoardStageExecutionSimple`, `BoardStageExecutionReview`, `BoardReviewPhaseExecution`; `runtimeMode` on `BoardCardStepState`; defaults per D2 applied in `resolveBoardStageExecution`. |
-| Web (extract) | `apps/web/src/components/chat/AccessLevelPicker.tsx` | Lift `runtimeModeConfig` + the access select out of `ChatComposer.tsx:230-386` into a shared component; `ComposerFooterModeControls` consumes it. Retire the duplicate labels in `CompactComposerControlsMenu.tsx`. |
-| Web | `apps/web/src/components/settings/BoardPipelineSection.tsx` | `ModelRow` → a three-control row (model · reasoning · access) used by `SimpleStageBody` and each review phase; unattended-stall warning. |
-| Web | `apps/web/src/components/settings/BoardSettingsPanel.logic.ts` | `setBoardStageExecution` already field-merges a `Partial`; confirm the new fields thread through. |
-| Server | `apps/server/src/board/supervisorReactor.ts` | Read `runtimeMode` from the run row instead of deriving from `mode` (D4). |
-| Server | `apps/server/src/board/reviewLoopExecutor.ts` | Carry each phase's `runtimeMode` + model options onto the plan, as it already carries `model`/`timeoutMs`. |
-| Tests | board contracts + reactor tests | Default-resolution tests; a test asserting no code path forces `full-access`. |
+| Layer         | File                                                           | Change                                                                                                                                                                                                                                      |
+| ------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Contracts     | `packages/contracts/src/board.ts`                              | `options` on `BoardModelSelection`; `runtimeMode` on `BoardStageExecutionSimple`, `BoardStageExecutionReview`, `BoardReviewPhaseExecution`; `runtimeMode` on `BoardCardStepState`; defaults per D2 applied in `resolveBoardStageExecution`. |
+| Web (extract) | `apps/web/src/components/chat/AccessLevelPicker.tsx`           | Lift `runtimeModeConfig` + the access select out of `ChatComposer.tsx:230-386` into a shared component; `ComposerFooterModeControls` consumes it. Retire the duplicate labels in `CompactComposerControlsMenu.tsx`.                         |
+| Web           | `apps/web/src/components/settings/BoardPipelineSection.tsx`    | `ModelRow` → a three-control row (model · reasoning · access) used by `SimpleStageBody` and each review phase; unattended-stall warning.                                                                                                    |
+| Web           | `apps/web/src/components/settings/BoardSettingsPanel.logic.ts` | `setBoardStageExecution` already field-merges a `Partial`; confirm the new fields thread through.                                                                                                                                           |
+| Server        | `apps/server/src/board/supervisorReactor.ts`                   | Read `runtimeMode` from the run row instead of deriving from `mode` (D4).                                                                                                                                                                   |
+| Server        | `apps/server/src/board/reviewLoopExecutor.ts`                  | Carry each phase's `runtimeMode` + model options onto the plan, as it already carries `model`/`timeoutMs`.                                                                                                                                  |
+| Tests         | board contracts + reactor tests                                | Default-resolution tests; a test asserting no code path forces `full-access`.                                                                                                                                                               |
 
 ## Open questions
 

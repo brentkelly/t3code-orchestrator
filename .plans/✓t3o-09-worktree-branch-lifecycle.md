@@ -35,7 +35,7 @@ Two consequences to handle explicitly:
 - **Read-only sandbox support varies by provider.** The recipe's planning step must be validated
   against the assigned provider instance at stage entry, and refuse with a clear message rather than
   silently running a writable agent in the project root.
-- Multiple cards may plan concurrently in the same project root. That is safe *only* because they
+- Multiple cards may plan concurrently in the same project root. That is safe _only_ because they
   are read-only, so this is an invariant to assert, not an assumption to hold loosely.
 
 ## Building entry

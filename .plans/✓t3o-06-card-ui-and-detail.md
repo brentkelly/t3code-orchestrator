@@ -21,15 +21,15 @@ changes with the stage it is in**, because what matters about a piece of work ch
 
 Every variant renders only from `BoardCardShell` fields.
 
-| Stage | Card shows |
-| --- | --- |
-| Backlog / Sprint | key pill (project colour), label chips, title |
-| Planning | + planning-thread activity indicator |
-| Ready | + blocked flag with dependency count, attachment count |
-| Building | + plan progress pips and `2/6 plans` when a parent; queued flag and queue position; thread state |
-| Code review | + `#PR`, `Round 3 of 5` with round pips, current step label (`TRIAGING`), `1 / 2 / 1` severity triple, and `7 fixed · 4 rejected · 1 open · 1 disputed` |
-| Ready for merge | + PR state and check summary |
-| Done | collapsed presentation; muted |
+| Stage            | Card shows                                                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backlog / Sprint | key pill (project colour), label chips, title                                                                                                           |
+| Planning         | + planning-thread activity indicator                                                                                                                    |
+| Ready            | + blocked flag with dependency count, attachment count                                                                                                  |
+| Building         | + plan progress pips and `2/6 plans` when a parent; queued flag and queue position; thread state                                                        |
+| Code review      | + `#PR`, `Round 3 of 5` with round pips, current step label (`TRIAGING`), `1 / 2 / 1` severity triple, and `7 fixed · 4 rejected · 1 open · 1 disputed` |
+| Ready for merge  | + PR state and check summary                                                                                                                            |
+| Done             | collapsed presentation; muted                                                                                                                           |
 
 States that apply anywhere:
 
@@ -59,7 +59,7 @@ Sections, ordered by stage relevance:
 - **Threads** — the card's linked threads with role and state, deep-linking into the Threads view.
   Tombstoned links render as struck-through with the role preserved.
 - **Adoption** — an add-thread control opening a searchable picker over unlinked threads in the same
-  project, assigning a role on link. This is the *only* adoption entry point.
+  project, assigning a role on link. This is the _only_ adoption entry point.
 - **Plan** — rendered when a plan body exists.
 - **Review** — round accordion with per-round steps, notes and the issue ledger (populated by the
   post-MVP review pipeline; the pane is built to accept it).
@@ -87,7 +87,7 @@ columns.
 ## Verification
 
 - Each stage renders its documented summary variant from shell data alone — assert the detail
-  subscription is *not* opened by the column view.
+  subscription is _not_ opened by the column view.
 - Adoption links a thread and it appears with its role after reload; unlink reverses it.
 - Deleting an adopted thread leaves a tombstone, not a gap.
 - An archived card's detail renders with no project on disk.

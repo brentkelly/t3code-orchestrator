@@ -62,17 +62,17 @@ rows can only list.
 
 Every field the panel needs is already on the client:
 
-| Needed | Source |
-| --- | --- |
-| order, titles, `#N`, edges | `detail.plans` (ordinal order, `dependsOn` by plan id) |
-| plan ↔ child pairing | `detail.children[].sourcePlanId` |
-| live stage, `blocked`, `prNumber` | the child's `BoardCardShell` |
+| Needed                                    | Source                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------------ |
+| order, titles, `#N`, edges                | `detail.plans` (ordinal order, `dependsOn` by plan id)                   |
+| plan ↔ child pairing                      | `detail.children[].sourcePlanId`                                         |
+| live stage, `blocked`, `prNumber`         | the child's `BoardCardShell`                                             |
 | working / input-needed / queued / stalled | shell `stepRunning`, `threadState`, `awaitingInput`, `queued`, `stalled` |
-| integration branch | `detail.card.worktree.branch` |
+| integration branch                        | `detail.card.worktree.branch`                                            |
 
 The shells are the decisive part. `BoardCardDetail.tsx` already reads
 `snapshot.cards`, which is the **unscoped** shell list — children carry
-`parentCardId` and are filtered out of the root board's *columns* by
+`parentCardId` and are filtered out of the root board's _columns_ by
 `filterBoardColumnsByScope`, not out of the snapshot. That is how
 `deriveBoardCardPlanProgress` computes a parent's plan pips on the root board
 today. So the panel is a pure function over data in hand, and this spec adds
@@ -202,15 +202,15 @@ one it is guarding.
 
 ## Files
 
-| File | Change |
-| --- | --- |
-| `apps/web/src/board/boardPlanRows.ts` | **new** — `deriveBoardPlanRows` (plans + children + shells + stages → rows, blockers, live state) and `boardPlanGraphLayout` (waves, nodes, edge paths). Pure, no React |
-| `apps/web/src/board/boardPlanRows.test.ts` | **new** — ordering, blocker resolution, archived/deleted rows, wave layout, cycle termination |
-| `apps/web/src/board/BoardPlanGraph.tsx` | **new** — the SVG chart over `boardPlanGraphLayout` |
-| `apps/web/src/board/BoardPlansPanel.tsx` | **new** — header (chart toggle, Board), chart, rows, final-review footer |
-| `apps/web/src/board/BoardPlansPanel.test.tsx` | **new** — the rows, the footer copy, the three child states |
-| `apps/web/src/board/BoardCardDetailView.tsx` | the `plan` pane renders `BoardPlansPanel` when live children exist, `BoardCardPlanPane` otherwise; tab label becomes the count |
-| `apps/web/src/board/BoardCardDetail.tsx` | pass the children's shells and the integration branch through to the view |
-| `apps/web/src/board/BoardCardDetailView.test.tsx` | which pane a parent gets, and the tab label |
-| `apps/web/src/board/BoardSubBoardHeader.tsx` | the **Dependency chart** toggle |
-| `apps/web/src/board/BoardPage.tsx` | sub-board: chart and final-review footer between the header row and the columns |
+| File                                              | Change                                                                                                                                                                  |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/board/boardPlanRows.ts`             | **new** — `deriveBoardPlanRows` (plans + children + shells + stages → rows, blockers, live state) and `boardPlanGraphLayout` (waves, nodes, edge paths). Pure, no React |
+| `apps/web/src/board/boardPlanRows.test.ts`        | **new** — ordering, blocker resolution, archived/deleted rows, wave layout, cycle termination                                                                           |
+| `apps/web/src/board/BoardPlanGraph.tsx`           | **new** — the SVG chart over `boardPlanGraphLayout`                                                                                                                     |
+| `apps/web/src/board/BoardPlansPanel.tsx`          | **new** — header (chart toggle, Board), chart, rows, final-review footer                                                                                                |
+| `apps/web/src/board/BoardPlansPanel.test.tsx`     | **new** — the rows, the footer copy, the three child states                                                                                                             |
+| `apps/web/src/board/BoardCardDetailView.tsx`      | the `plan` pane renders `BoardPlansPanel` when live children exist, `BoardCardPlanPane` otherwise; tab label becomes the count                                          |
+| `apps/web/src/board/BoardCardDetail.tsx`          | pass the children's shells and the integration branch through to the view                                                                                               |
+| `apps/web/src/board/BoardCardDetailView.test.tsx` | which pane a parent gets, and the tab label                                                                                                                             |
+| `apps/web/src/board/BoardSubBoardHeader.tsx`      | the **Dependency chart** toggle                                                                                                                                         |
+| `apps/web/src/board/BoardPage.tsx`                | sub-board: chart and final-review footer between the header row and the columns                                                                                         |

@@ -2439,13 +2439,19 @@ const make = Effect.gen(function* () {
     });
   });
 
-  /** Write — or clear — a card's auto-merge hold. The decider is a no-op when
-      the value has not moved, so a re-probe that finds nothing new is free. */
+  /**
+   * Write — or clear — a card's auto-merge hold.
+   *
+   * `dispatchOptional`, because a refusal here is the decider's no-op guard
+   * doing its job, not a fault: the sweep re-probes a held card every rung and
+   * a probe that finds nothing new lands no event. The plain helper would
+   * turn the healthy path into a stream of warnings about nothing.
+   */
   const recordAutoMergeHold = Effect.fn("board-supervisor-recordAutoMergeHold")(function* (
     cardId: BoardCardId,
     hold: BoardCardAutoMergeHold | null,
   ) {
-    yield* dispatch({
+    yield* dispatchOptional({
       type: "board.card.record-auto-merge-hold",
       commandId: yield* commandId("auto-merge-hold"),
       cardId,
@@ -6230,7 +6236,13 @@ const make = Effect.gen(function* () {
     // to ship. Covers the human drag and the stale-base return alike. Read off
     // the freshly moved card, because the merge above may have advanced it to
     // Done — where the clear is equally right.
-    if (boardStageWithRole(board, "merge")?.stageId !== event.payload.toStage) {
+    if (
+      card.autoMergeHold !== null &&
+      boardStageWithRole(board, "merge")?.stageId !== event.payload.toStage
+    ) {
+      // Gated on the payload card ALREADY carrying a hold, so an ordinary
+      // card's every move costs nothing. Re-read before clearing, because the
+      // merge above may have cleared it a moment ago.
       const moved = (yield* readCard(card.id)) ?? card;
       yield* clearAutoMergeHold(moved);
     }

@@ -19,7 +19,7 @@ tables. This is the spec every other Phase 1 and Phase 2 spec builds on.
 - **D14** — T3o generates keys; `externalRef` exists from day one.
 - **D15** — archive after 7 days in Done (setting); events stay in the log.
 - **D12** — stage set is fixed; sub-board plan cards use the Ready-onward subset. The sub-board
-  *behaviour* is post-MVP but the schema must not preclude it.
+  _behaviour_ is post-MVP but the schema must not preclude it.
 
 ## Stages
 
