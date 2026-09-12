@@ -154,3 +154,23 @@ export function boardCardNavStep(
   if (step === null) return null;
   return (step === -1 ? nav.prev : nav.next) === null ? null : step;
 }
+
+/**
+ * Which card should be fullscreen after a step from `fromCardId` to
+ * `toCardId`, given which card is fullscreen now (T3O-37, D5).
+ *
+ * Fullscreen belongs to the card the user maximised, and a step is the one
+ * transition that hands it over — being thrown back into a window mid-read is
+ * not a reset anybody asked for. Every OTHER way a card opens (a deep link, a
+ * sub-board drill, clicking a different card) simply never calls this, so the
+ * stored id stays on the card it was left on and the newly opened card, not
+ * matching it, opens windowed.
+ */
+export function boardCardMaximisedAfterStep(
+  maximisedCardId: string | null,
+  fromCardId: string | null,
+  toCardId: string,
+): string | null {
+  if (maximisedCardId === null || maximisedCardId !== fromCardId) return maximisedCardId;
+  return toCardId;
+}

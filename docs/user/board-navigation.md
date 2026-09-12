@@ -59,8 +59,9 @@ in the filter box, or turned on **Stalled only**, you step through the cards tha
 filter and no others.
 
 Each step gives you the next card fresh — its own panes, its own message box. Fullscreen is the
-exception and stays on until you close the card. The board behind the sheet follows along too, so
-closing the card leaves you looking at the one you were just reading.
+exception: it follows you from card to card as you step, and ends when you close the card. Opening a
+card any other way — from the board, from a link — starts it windowed. The board behind the sheet
+follows along too, so closing the card leaves you looking at the one you were just reading.
 
 Going back closes the card and returns you to the board, however many cards you stepped through to
 get there.

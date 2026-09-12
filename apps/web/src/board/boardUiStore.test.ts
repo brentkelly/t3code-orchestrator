@@ -20,7 +20,7 @@ function resetStore() {
     collapsedByStage: {},
     utilityMenuCollapsed: false,
     sidebarHostsModeTabs: false,
-    detailMaximised: false,
+    detailMaximisedCardId: null,
   });
 }
 
@@ -203,23 +203,40 @@ describe("sidebarHostsModeTabs", () => {
   });
 });
 
-describe("detailMaximised", () => {
+describe("detailMaximisedCardId", () => {
+  const maximisedCardId = () => useBoardUiStore.getState().detailMaximisedCardId;
+
   it("holds the open sheet's fullscreen across a step to the next card (T3O-37)", () => {
     // The sheet remounts per card id, which is what resets every other
     // per-card view state; fullscreen lives out here precisely so that remount
-    // does not throw the reader back into a window mid-read.
+    // does not throw the reader back into a window mid-read. A step hands the
+    // flag to the card it steps to.
     resetStore();
-    useBoardUiStore.getState().setDetailMaximised(true);
-    expect(useBoardUiStore.getState().detailMaximised).toBe(true);
-    useBoardUiStore.getState().setDetailMaximised(false);
-    expect(useBoardUiStore.getState().detailMaximised).toBe(false);
+    useBoardUiStore.getState().setDetailMaximisedCardId("card-a");
+    expect(maximisedCardId()).toBe("card-a");
+    useBoardUiStore.getState().setDetailMaximisedCardId("card-b");
+    expect(maximisedCardId()).toBe("card-b");
+    useBoardUiStore.getState().setDetailMaximisedCardId(null);
+    expect(maximisedCardId()).toBe(null);
+  });
+
+  it("does not follow a card that opens any other way (T3O-37)", () => {
+    // The flag names the card it belongs to rather than being a bare "the
+    // sheet is fullscreen" boolean, so the cases that never pass through "no
+    // card open" — a sub-board drill carrying a card argument, a deep link
+    // followed while a card is still open — cannot inherit fullscreen from a
+    // card the user maximised earlier.
+    resetStore();
+    useBoardUiStore.getState().setDetailMaximisedCardId("card-a");
+    expect(maximisedCardId() === "card-b").toBe(false);
+    expect(maximisedCardId() === "card-a").toBe(true);
   });
 
   it("is transient: it belongs to the open card, not to the client", () => {
     // A reload must not reopen the next card you happen to click in
     // fullscreen, so the migration ignores the field entirely.
-    expect("detailMaximised" in migratePersistedBoardUiState({ detailMaximised: true })).toBe(
-      false,
-    );
+    expect(
+      "detailMaximisedCardId" in migratePersistedBoardUiState({ detailMaximisedCardId: "card-a" }),
+    ).toBe(false);
   });
 });

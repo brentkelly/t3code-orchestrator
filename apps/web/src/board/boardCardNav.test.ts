@@ -7,6 +7,7 @@ import type { BoardStageColumns } from "@t3tools/client-runtime/state/shell";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardCardMaximisedAfterStep,
   boardCardNavStep,
   boardCardStepForKey,
   isBoardTextEntryTarget,
@@ -202,5 +203,27 @@ describe("boardCardNavStep", () => {
 
   it("still stands down for a text caret even with both neighbours present", () => {
     expect(boardCardNavStep(both, keyEvent({ key: "j" }), element("textarea"))).toBeNull();
+  });
+});
+
+describe("boardCardMaximisedAfterStep", () => {
+  it("carries fullscreen to the card the step lands on", () => {
+    expect(boardCardMaximisedAfterStep("a", "a", "b")).toBe("b");
+  });
+
+  it("leaves a windowed sheet windowed", () => {
+    expect(boardCardMaximisedAfterStep(null, "a", "b")).toBeNull();
+  });
+
+  it("does not hand fullscreen to a card stepped to from a DIFFERENT card", () => {
+    // The flag belongs to card "a" — the one the user actually maximised —
+    // and a step between two other cards must not steal it. This is the leak
+    // a bare "the sheet is fullscreen" boolean could not express: it would
+    // have opened every card of that walk full-screen.
+    expect(boardCardMaximisedAfterStep("a", "b", "c")).toBe("a");
+  });
+
+  it("does not adopt a step taken with no card open", () => {
+    expect(boardCardMaximisedAfterStep("a", null, "b")).toBe("a");
   });
 });

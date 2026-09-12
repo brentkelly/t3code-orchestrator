@@ -70,7 +70,11 @@ import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
 import { countBoardColumnCards, filterBoardColumnsByQuery } from "./boardCardFilter";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { BoardCardDetail } from "./BoardCardDetail";
-import { resolveBoardCardNeighbours, type BoardCardStep } from "./boardCardNav";
+import {
+  boardCardMaximisedAfterStep,
+  resolveBoardCardNeighbours,
+  type BoardCardStep,
+} from "./boardCardNav";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { useBoardAttentionSettle } from "./boardAttentionSettle";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
@@ -256,7 +260,7 @@ function EnvironmentBoard({
 
   const collapsedByStage = useBoardUiStore((state) => state.collapsedByStage);
   const setColumnCollapsed = useBoardUiStore((state) => state.setColumnCollapsed);
-  const setDetailMaximised = useBoardUiStore((state) => state.setDetailMaximised);
+  const setDetailMaximisedCardId = useBoardUiStore((state) => state.setDetailMaximisedCardId);
 
   // The user-defined stage list drives column order and labels (D13); falls
   // back to the compiled seeds until the first shell snapshot arrives.
@@ -908,13 +912,13 @@ function EnvironmentBoard({
     });
   }, [patchSearch]);
   // Fullscreen rides the store so it survives a STEP between cards (T3O-37,
-  // D5), which means something has to end it. Tying that to "no card is open"
-  // rather than to the close button covers every way the sheet goes away —
-  // Escape, clicking the open card again, the card being archived out from
-  // under it — so the next card can never open unexpectedly full-screen.
+  // D5), and the store names the card it belongs to, so a card that opens any
+  // other way opens windowed whether or not it passed through "no card open"
+  // on the way in. This effect only has to forget the card once the sheet is
+  // gone, so that re-opening that same card later starts windowed too.
   useEffect(() => {
-    if (selectedCardId === null) setDetailMaximised(false);
-  }, [selectedCardId, setDetailMaximised]);
+    if (selectedCardId === null) setDetailMaximisedCardId(null);
+  }, [selectedCardId, setDetailMaximisedCardId]);
   // ── Stepping between cards (T3O-37) ────────────────────────────────
   // The sibling list is `visibleColumns` itself — the very array each column
   // renders — so what you step through is exactly what the board is currently
@@ -930,12 +934,19 @@ function EnvironmentBoard({
     (direction: BoardCardStep) => {
       const target = direction === -1 ? neighbours.prev : neighbours.next;
       if (target === null) return;
+      // A step is the one card change that carries fullscreen with it (D5).
+      // Read non-reactively: the board does not re-render when the sheet above
+      // it is maximised.
+      const store = useBoardUiStore.getState();
+      store.setDetailMaximisedCardId(
+        boardCardMaximisedAfterStep(store.detailMaximisedCardId, selectedCardId, target.cardId),
+      );
       // `replace`, not push (D4): reading ten cards in a row must not bury the
       // board under ten history entries. Back closes the sheet to where the
       // reading started. Clicking a card on the board still pushes.
       patchSearch((previous) => ({ ...previous, card: target.cardId }), { replace: true });
     },
-    [neighbours, patchSearch],
+    [neighbours, patchSearch, selectedCardId],
   );
   const cardNav = useMemo<BoardCardNav | null>(() => {
     if (neighbours.prev === null && neighbours.next === null) return null;

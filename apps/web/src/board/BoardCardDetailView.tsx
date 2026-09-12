@@ -2369,10 +2369,13 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
   // Fullscreen is the one piece of sheet state that must OUTLIVE a step to the
   // next card (T3O-37, D5): the sheet remounts per card id, which is what gives
   // every other per-card view state its reset for free, but being thrown out of
-  // fullscreen mid-read is not a reset anybody asked for. The board clears it
-  // on close.
-  const maximised = useBoardUiStore((state) => state.detailMaximised);
-  const setMaximised = useBoardUiStore((state) => state.setDetailMaximised);
+  // fullscreen mid-read is not a reset anybody asked for. The store names the
+  // card it belongs to — the step hands it over, and a card that opens any
+  // other way opens windowed because it does not match. The board clears it on
+  // close.
+  const cardId = props.detail.card.id;
+  const maximised = useBoardUiStore((state) => state.detailMaximisedCardId === cardId);
+  const setMaximisedCardId = useBoardUiStore((state) => state.setDetailMaximisedCardId);
   const [paneChoice, setPaneChoice] = useState<BoardCardPane | null>(null);
   const wide = boardCardDetailIsWide(props.stages, props.detail.card.stage, paneChoice);
   return (
@@ -2383,7 +2386,7 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
       }}
     >
       <BoardCardDetailPopup
-        cardId={props.detail.card.id}
+        cardId={cardId}
         maximised={wide && maximised}
         nav={props.nav}
         wide={wide}
@@ -2392,7 +2395,7 @@ export function BoardCardDetailView(props: BoardCardDetailViewProps) {
           {...props}
           maximised={maximised}
           onSelectPane={setPaneChoice}
-          onToggleMaximised={() => setMaximised(!maximised)}
+          onToggleMaximised={() => setMaximisedCardId(maximised ? null : cardId)}
           paneChoice={paneChoice}
         />
       </BoardCardDetailPopup>
