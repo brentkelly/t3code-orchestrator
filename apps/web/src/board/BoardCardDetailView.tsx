@@ -560,7 +560,7 @@ export interface BoardCardDetailViewProps {
       still passes this: the row reads its `lock` and renders the padlock, so a
       user is told WHY rather than shown a control that has quietly vanished. */
   readonly onSetProject?: ((projectId: ProjectId) => void) | undefined;
-  /** Step to the previous/next card in this card's column (T3O-37). Null when
+  /** Step to the previous/next card on the board (T3O-37, T3O-44). Null when
       the sheet has no board behind it to step through — the archived-card
       sheet, or a card the board's live filters are currently hiding. */
   readonly nav?: BoardCardNav | null | undefined;
@@ -2690,7 +2690,7 @@ export function BoardCardDetailPopup({
   readonly cardId: BoardCardId | null;
   readonly wide?: boolean;
   readonly maximised?: boolean;
-  /** Step to the card before/after this one in its column (T3O-37). The
+  /** Step to the card before/after this one on the board (T3O-37). The
       loading frame takes it too, so stepping never blinks the chevrons out
       while the next card's detail subscription opens. */
   readonly nav?: BoardCardNav | null | undefined;

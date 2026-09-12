@@ -41,10 +41,9 @@ downloading while the menu is collapsed, T3 Code still tells you.
 
 ## Stepping between cards
 
-Reading through a column no longer means closing a card to open the one under it. With a card open,
+Reading through the board no longer means closing a card to open the next one. With a card open,
 hover the card and a round chevron fades in at each edge. Select it to move to the card before or
-after this one in the same column. The chevron's tooltip names where it goes, so you know before you
-go there.
+after this one. The chevron's tooltip names where it goes, so you know before you go there.
 
 The **→** and **←** arrow keys do the same thing, and so do **J** and **K** if you would rather not
 leave the home row. The shortcuts stand down wherever a cursor is already sitting — the title, the
@@ -52,11 +51,20 @@ brief, the message box, any search box — so the arrow keys keep moving that cu
 `j` types a `j`. A card with a message box takes the cursor there as it opens, so select the card
 somewhere outside that box to hand the shortcuts back. The chevrons are always available.
 
-Stepping stays inside the column. At the top of a column there is no chevron on the left, and at the
-bottom there is none on the right; getting to the next column means going back to the board. It also
-follows whatever the board is currently showing: if you have scoped the board to one project, typed
-in the filter box, or turned on **Stalled only**, you step through the cards that survived that
-filter and no others.
+Stepping runs the length of the board, not the length of one column. Step past the last card in
+**Backlog** and you land on the first card in **Sprint**; step back from there and you return to
+where you were. Columns holding nothing are passed straight over. The only card with no chevron on
+the left is the very first card on the board, and the only one with no chevron on the right is the
+very last card in **Done** — everywhere else, both are there.
+
+When the step is about to leave the column you are in, the chevron's tooltip names the column it is
+taking you to, so a jump between columns is never a surprise. The column opens up behind the sheet
+if it was collapsed, and the board scrolls across to it, so closing the card leaves you looking at
+where you ended up.
+
+Stepping follows whatever the board is currently showing: if you have scoped the board to one
+project, typed in the filter box, or turned on **Stalled only**, you step through the cards that
+survived that filter and no others. Inside a sub-board you step through that sub-board's columns.
 
 Each step gives you the next card fresh — its own panes, its own message box. Fullscreen is the
 exception: it follows you from card to card as you step, and ends when you close the card. Opening a

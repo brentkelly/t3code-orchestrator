@@ -74,6 +74,7 @@ import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { BoardCardDetail } from "./BoardCardDetail";
 import {
   boardCardMaximisedAfterStep,
+  boardCardNavTarget,
   resolveBoardCardNeighbours,
   type BoardCardStep,
 } from "./boardCardNav";
@@ -942,9 +943,19 @@ function EnvironmentBoard({
   // There is no second filter here to drift from the first. A card that is not
   // in it (a deep link, or one the query is hiding) resolves to index -1, and
   // both the rails and the shortcuts go quiet rather than guessing.
+  //
+  // Read in `renderedStages` order, so a step runs off the bottom of one
+  // column into the top of the next (T3O-44): the columns are the list, not
+  // one column. `renderedStages` and not the full stage list — a sub-board
+  // steps through the columns it actually draws.
+  const stageOrder = useMemo(() => renderedStages.map((stage) => stage.stageId), [renderedStages]);
+  const stageLabels = useMemo(
+    () => new Map(renderedStages.map((stage) => [stage.stageId, stage.label] as const)),
+    [renderedStages],
+  );
   const neighbours = useMemo(
-    () => resolveBoardCardNeighbours(visibleColumns, selectedCardId),
-    [selectedCardId, visibleColumns],
+    () => resolveBoardCardNeighbours(visibleColumns, stageOrder, selectedCardId),
+    [selectedCardId, stageOrder, visibleColumns],
   );
   const stepCard = useCallback(
     (direction: BoardCardStep) => {
@@ -966,10 +977,12 @@ function EnvironmentBoard({
   );
   const cardNav = useMemo<BoardCardNav | null>(() => {
     if (neighbours.prev === null && neighbours.next === null) return null;
-    const target = (card: BoardCardShell | null) =>
-      card === null ? null : { key: card.key, title: card.title };
-    return { prev: target(neighbours.prev), next: target(neighbours.next), onStep: stepCard };
-  }, [neighbours, stepCard]);
+    return {
+      prev: boardCardNavTarget(neighbours.prev, neighbours.stage, stageLabels),
+      next: boardCardNavTarget(neighbours.next, neighbours.stage, stageLabels),
+      onStep: stepCard,
+    };
+  }, [neighbours, stageLabels, stepCard]);
 
   /** The stack affordance on a split parent's face (t3o-25, AC2): clicking it
       drills into that parent's sub-board. */
