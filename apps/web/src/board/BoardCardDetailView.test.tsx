@@ -24,6 +24,8 @@ import {
   type BoardLabel,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
+import { Menu } from "../components/ui/menu";
+import { boardAutoMergeToggleCopy } from "./boardAutoMergeHold";
 import { boardConflictFix } from "./boardConflictFix";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -36,6 +38,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const {
+  BoardCardAutoMergeMenuItem,
   BoardCardDetailPanel,
   boardCardIsDone,
   initialBoardCardPane,
@@ -579,11 +582,7 @@ describe("BoardCardDetailPanel", () => {
     expect(html).not.toContain("Auto-merge stopped");
   });
 
-  it("keeps the per-card auto-merge switch out of the action rail (T3O-42)", () => {
-    // It moved into the kebab, whose popup is a portal and therefore renders
-    // nothing here. The switch's own offered/hidden rules are covered against
-    // `boardAutoMergeArm` in boardAutoMergeHold.test.ts; what this asserts is
-    // that a card mid-build no longer carries it among the stage's actions.
+  it("moves the per-card auto-merge switch out of the action rail and into the kebab (T3O-42)", () => {
     const html = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
@@ -592,9 +591,29 @@ describe("BoardCardDetailPanel", () => {
         projectName="P"
       />,
     );
+    // Gone from the stage's own actions, where it competed with the buttons a
+    // user reaches for on every pass through a card...
     expect(html).not.toContain("Auto-merge when ready");
-    // The kebab is what holds it now, and it is rendered (closed) on every card.
     expect(html).toContain("More actions");
+    // ...and present in the kebab. The popup is a portal and renders nothing
+    // on the server, so the row is rendered directly, the way
+    // `BoardCardThreadAddMenuBody` is. Which cards get one at all is pinned
+    // against `boardAutoMergeArm` in boardAutoMergeHold.test.ts.
+    const copy = boardAutoMergeToggleCopy(false);
+    const item = renderToStaticMarkup(
+      // A Base UI menu part needs its root's context; nothing else about the
+      // root renders.
+      <Menu>
+        <BoardCardAutoMergeMenuItem arm={{ armed: false, copy }} onToggle={() => {}} />
+      </Menu>,
+    );
+    expect(item).toContain(copy.label);
+    expect(item).toContain(copy.hint);
+    // Nothing to render when the card gets no arm, so the kebab keeps its
+    // narrow shape.
+    expect(
+      renderToStaticMarkup(<BoardCardAutoMergeMenuItem arm={null} onToggle={() => {}} />),
+    ).toBe("");
   });
 
   it("names the source in the header when the board-wide setting owns it (T3O-38, D3)", () => {

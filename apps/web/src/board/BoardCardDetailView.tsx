@@ -149,6 +149,7 @@ import {
   boardAutoMergeBanner,
   boardAutoMergeCountdown,
   boardAutoMergeHeaderChip,
+  type BoardAutoMergeArm,
   type BoardAutoMergeBanner,
 } from "./boardAutoMergeHold";
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
@@ -1952,6 +1953,44 @@ function PaneTabs({
   );
 }
 
+/**
+ * The kebab's auto-merge arm (T3O-38, D3; T3O-42), exported so it can be
+ * rendered on its own: the kebab popup is a portal, and a portal renders
+ * nothing on the server, so a static-markup test can never reach it through
+ * the trigger (same reason `BoardCardThreadAddMenuBody` is exported).
+ *
+ * A card mid-build already has a rail full of things to click and this is a
+ * set-once decision, so it lives here rather than competing with the stage's
+ * own actions. A CheckboxItem, not a MenuItem: Base UI leaves the menu open
+ * on a checkbox click, so the user sees the switch move and can read what
+ * they just chose before dismissing it.
+ */
+export function BoardCardAutoMergeMenuItem(props: {
+  readonly arm: BoardAutoMergeArm | null;
+  readonly onToggle: ((next: boolean) => void) | undefined;
+}) {
+  const { arm, onToggle } = props;
+  if (arm === null || onToggle === undefined) return null;
+  return (
+    <>
+      <MenuCheckboxItem
+        checked={arm.armed}
+        onCheckedChange={(next) => onToggle(next)}
+        variant="switch"
+      >
+        <span className="flex items-start gap-2 py-0.5">
+          <GitMergeIcon className="mt-px size-4 shrink-0 text-muted-foreground" />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span>{arm.copy.label}</span>
+            <span className="text-[11px] text-muted-foreground leading-snug">{arm.copy.hint}</span>
+          </span>
+        </span>
+      </MenuCheckboxItem>
+      <MenuSeparator />
+    </>
+  );
+}
+
 export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
@@ -2229,35 +2268,11 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           >
             <EllipsisVerticalIcon className="size-[15px]" />
           </MenuTrigger>
-          <MenuPopup align="end" className={autoMergeArm === null ? "min-w-42" : "w-68"}>
-            {/* The auto-merge arm (T3O-38, D3; T3O-42). A card in the middle of
-                a build already has a rail full of things to click, and this is
-                a set-once decision — the kebab is where the prototype put it
-                and where it stops competing with the stage's own actions.
-
-                A CheckboxItem, not a MenuItem: Base UI leaves the menu open on
-                a checkbox click, so the user sees the switch move and can read
-                what they just chose before dismissing it. */}
-            {autoMergeArm !== null && onSetAutoMerge !== undefined ? (
-              <>
-                <MenuCheckboxItem
-                  checked={autoMergeArm.armed}
-                  onCheckedChange={(next) => onSetAutoMerge(next)}
-                  variant="switch"
-                >
-                  <span className="flex items-start gap-2 py-0.5">
-                    <GitMergeIcon className="mt-px size-4 shrink-0 text-muted-foreground" />
-                    <span className="flex min-w-0 flex-col gap-0.5">
-                      <span>{autoMergeArm.copy.label}</span>
-                      <span className="text-[11px] text-muted-foreground leading-snug">
-                        {autoMergeArm.copy.hint}
-                      </span>
-                    </span>
-                  </span>
-                </MenuCheckboxItem>
-                <MenuSeparator />
-              </>
-            ) : null}
+          {/* `min-w-*`, never a fixed width: the Models row below sizes itself
+              to a mono override summary that can run long, and a hard box
+              would crowd it. */}
+          <MenuPopup align="end" className={autoMergeArm === null ? "min-w-42" : "min-w-68"}>
+            <BoardCardAutoMergeMenuItem arm={autoMergeArm} onToggle={onSetAutoMerge} />
             {/* Opening the overrides CLOSES this menu (t3o-29, D7): the popover
                 contains a model picker that is itself a popover, and selecting
                 from it is an outside-pointerdown on any menu still holding it
