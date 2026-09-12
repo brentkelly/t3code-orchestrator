@@ -163,6 +163,7 @@ export function BoardCardContent({
   childAttention,
   childRunning,
   atMergeStage,
+  autoMergeBoardWide,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -201,6 +202,12 @@ export function BoardCardContent({
       the only place an armed card wears the grey `Auto` glyph. Absent on the
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
   readonly atMergeStage?: boolean | undefined;
+  /** The board-wide merge-stage default (T3O-38, D2), ORed into the glyph the
+      way `BoardCardDetailView` ORs it into the modal chip. The shell's
+      `autoMergeArmed` is the card's OWN arming only — the SQL snapshot
+      producer cannot see settings — so without this the column stays silent
+      about a board every one of whose cards merges itself. */
+  readonly autoMergeBoardWide?: boolean | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
@@ -520,13 +527,20 @@ export function BoardCardContent({
             </span>
           </BoardHint>
         )}
-        {card.autoMergeArmed === true &&
+        {(card.autoMergeArmed === true || autoMergeBoardWide === true) &&
         autoMergeHold === null &&
         !summary.muted &&
         atMergeStage ? (
           // Armed and quiet, in the merge stage only (D13): a small grey glyph
           // and no pill. An armed card in Building looks normal because it IS
           // normal — nothing is happening to it yet.
+          //
+          // The board-wide arm counts here, exactly as `BoardCardDetailView`
+          // ORs it into the modal's `Auto-merge · board` chip. Both read the
+          // setting rather than the card's arrival history — neither surface
+          // can see whether a card was already parked here when the setting
+          // went on (D2) — and the two answering "does this merge itself?"
+          // differently is worse than the shared imprecision.
           <BoardHint label="Merges itself as soon as the forge accepts it">
             <span
               aria-label="Auto-merge armed"
@@ -644,6 +658,7 @@ export function DraggableBoardCard({
   childAttention,
   childRunning,
   atMergeStage,
+  autoMergeBoardWide,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -663,6 +678,7 @@ export function DraggableBoardCard({
   readonly childAttention?: BoardCardChildAttention | undefined;
   readonly childRunning?: number | undefined;
   readonly atMergeStage?: boolean | undefined;
+  readonly autoMergeBoardWide?: boolean | undefined;
 }) {
   return (
     // Keyboard path: the card is a focusable button-role element — Enter/Space
@@ -711,6 +727,7 @@ export function DraggableBoardCard({
         childAttention={childAttention}
         childRunning={childRunning}
         atMergeStage={atMergeStage}
+        autoMergeBoardWide={autoMergeBoardWide}
       />
     </div>
   );

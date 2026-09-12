@@ -779,7 +779,7 @@ export const make = Effect.gen(function* () {
           reference,
           args: ["pr", "view", reference, "--json", ...targetArgs(remote)],
         });
-        const { mergeable, headSha } = parseForgejoPullRequestMergeability(viewed.stdout);
+        const { mergeable, headSha, behind } = parseForgejoPullRequestMergeability(viewed.stdout);
 
         // Best-effort, and the ONE place where "we could not look" must not
         // read as "there is nothing to wait for": an instance without Actions,
@@ -803,6 +803,7 @@ export const make = Effect.gen(function* () {
         return forgejoMergeState({
           mergeable,
           headSha,
+          behind,
           checks: runs === null ? EMPTY_FORGEJO_CHECKS : parseForgejoChecks(runs.stdout, headSha),
           checksReadable: runs !== null,
         });

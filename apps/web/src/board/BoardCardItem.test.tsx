@@ -465,6 +465,40 @@ describe("BoardCardContent (D7)", () => {
     expect(earlier).not.toContain("Auto-merge armed");
   });
 
+  it("wears the glyph when the BOARD-WIDE setting is what arms the card (T3O-38, D2)", () => {
+    // The shell's `autoMergeArmed` is the card's OWN arming only — the SQL
+    // snapshot producer cannot see settings — so a board whose merge stage
+    // auto-merges everything left the column silent while the modal's chip
+    // said the card was armed.
+    const plain = shell("merge", {});
+    const boardWide = renderToStaticMarkup(
+      <BoardCardContent
+        card={plain}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(plain)}
+        atMergeStage
+        autoMergeBoardWide
+      />,
+    );
+    expect(boardWide).toContain("Auto-merge armed");
+
+    // Still the merge column only: the board-wide arm does not light up a card
+    // that is nowhere near merging.
+    const earlier = renderToStaticMarkup(
+      <BoardCardContent
+        card={shell("building", {})}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(plain)}
+        autoMergeBoardWide
+      />,
+    );
+    expect(earlier).not.toContain("Auto-merge armed");
+  });
+
   it("keeps the working dot lit while the executor step is running, even when no thread is mid-turn", () => {
     // A Code-review card mid-loop: the executor's step is admitted and running,
     // but between one phase's thread completing and the next spinning up, no

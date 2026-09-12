@@ -42,25 +42,36 @@ function parseJson(raw: string): unknown {
 }
 
 /**
- * The head sha and mergeability off `fgj pr view --json` (Gitea's raw
- * `PullRequest`).
+ * The head sha, mergeability and behind-ness off `fgj pr view --json` (Gitea's
+ * raw `PullRequest`).
  *
  * `mergeable` absent is `unknown`, not `false`: Gitea omits it while it is
  * still computing, and reading "we have not worked it out" as "no" would stop
  * a ladder that should keep waiting.
+ *
+ * `behind` is read STRUCTURALLY rather than from a field, because Gitea has no
+ * equivalent of GitHub's `BEHIND` status: `merge_base` is the common ancestor
+ * and `base.sha` is the base branch's current tip (Gitea resolves it per
+ * request), so the two differing is the definition of the head lacking base
+ * commits. Either one unreadable leaves it `null` — an unnamed block is then
+ * classified by the checks, which is where this started.
  */
 export function parseForgejoPullRequestMergeability(raw: string): {
   readonly mergeable: boolean | null;
   readonly headSha: string | null;
+  readonly behind: boolean | null;
 } {
   const body = asRecord(parseJson(raw));
-  if (body === null) return { mergeable: null, headSha: null };
+  if (body === null) return { mergeable: null, headSha: null, behind: null };
   const head = asRecord(body["head"]);
   const sha = text(head?.["sha"]);
   const mergeable = body["mergeable"];
+  const mergeBase = text(body["merge_base"]) || text(body["mergeBase"]);
+  const baseSha = text(asRecord(body["base"])?.["sha"]);
   return {
     mergeable: typeof mergeable === "boolean" ? mergeable : null,
     headSha: sha.length > 0 ? sha : null,
+    behind: mergeBase.length > 0 && baseSha.length > 0 ? mergeBase !== baseSha : null,
   };
 }
 
@@ -136,6 +147,9 @@ export function forgejoMergeState(input: {
   readonly headSha: string | null;
   readonly checks: ChangeRequestChecks;
   readonly checksReadable: boolean;
+  /** Whether the head lacks base commits, from `merge_base` versus `base.sha`;
+      null when either was unreadable. */
+  readonly behind?: boolean | null | undefined;
 }): ChangeRequestMergeState {
   const mergeable =
     input.mergeable === true
@@ -145,10 +159,13 @@ export function forgejoMergeState(input: {
         : ("unknown" as const);
   return {
     mergeable,
-    // Forgejo does not name its block the way GitHub's `mergeStateStatus`
-    // does. Left null rather than guessed: an unnamed block is classified by
-    // the checks, and a wrong name would send the card down the wrong path.
-    blockedReason: null,
+    // Forgejo does not NAME its block the way GitHub's `mergeStateStatus`
+    // does, so only the one reason that can be established from the struct
+    // itself is reported — the head missing base commits. Everything else
+    // stays null rather than guessed: an unnamed block is classified by the
+    // checks, and a wrong name would send the card down the wrong path (and,
+    // via the stored classification, the wrong remediation).
+    blockedReason: input.behind === true ? ("behind" as const) : null,
     checks: input.checks,
     headSha: input.headSha,
   };

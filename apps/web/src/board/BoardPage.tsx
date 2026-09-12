@@ -18,8 +18,10 @@ import {
   deriveBoardCardChildAttention,
   deriveBoardCardChildRunning,
   deriveBoardCardThreadState,
+  isBoardMergeStageExecution,
   isBoardProjectHidden,
   resolveBoardProjectAccent,
+  resolveBoardStageExecution,
   type BoardCardShell,
   type ProviderInstanceId,
   type BoardCardThreadShell,
@@ -310,6 +312,16 @@ function EnvironmentBoard({
     (projectId: ProjectId) => resolveBoardProjectAccent(boardSettings, projectId),
     [boardSettings],
   );
+
+  // The board-wide arm (T3O-38, D2) — the third arming condition, and the one
+  // the card shell cannot carry, since the SQL snapshot producer cannot see
+  // settings. ORed into the glyph in the column exactly as `BoardCardDetail`
+  // ORs it into the modal chip.
+  const boardWideAutoMerge = useMemo(() => {
+    if (mergeStageId === null) return false;
+    const execution = resolveBoardStageExecution(boardSettings, mergeStageId);
+    return isBoardMergeStageExecution(execution) ? execution.autoMerge : false;
+  }, [boardSettings, mergeStageId]);
 
   const allProjects = useMemo(
     () => Option.getOrNull(shellState.snapshot)?.projects ?? [],
@@ -1267,6 +1279,7 @@ function EnvironmentBoard({
               key={stage.stageId}
               label={stage.label}
               atMergeStage={stage.stageId === mergeStageId}
+              autoMergeBoardWide={boardWideAutoMerge}
               onCardDragEnd={handleCardDragEnd}
               onCardReorder={handleCardReorder}
               onCardDragStart={handleCardDragStart}
