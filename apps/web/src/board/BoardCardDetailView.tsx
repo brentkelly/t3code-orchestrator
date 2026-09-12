@@ -1392,8 +1392,10 @@ function ActionsSection({
         <BoardHint label={reviewRound.hint}>
           <button
             className={cn(
-              "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent",
-              reviewRound.disabled && "cursor-not-allowed opacity-50",
+              "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs",
+              // :hover still matches a disabled button, so the accent has to be
+              // gated rather than relying on `disabled` to suppress it.
+              reviewRound.disabled ? "cursor-not-allowed opacity-50" : "hover:bg-accent",
             )}
             disabled={reviewRound.disabled}
             onClick={() => reviewRound.onRequest()}
