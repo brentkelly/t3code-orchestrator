@@ -47,7 +47,7 @@ commands; nothing writes projected tables directly).
 `OrchestrationEventStore` (×2), `OrchestrationCommandReceipts` and `orchestration.ts`. Those are the
 same once-only D9-class widenings `t3o-02a` blessed for `BoardCardId` — frozen, never growing per
 feature — but it is four or five more lines of core diff and the seam inventory must record them.
-Every _other_ part of this spec adds zero core lines.
+Every *other* part of this spec adds zero core lines.
 
 ## Commands and events
 
@@ -73,13 +73,13 @@ catalogue size and skip colours already in use, so two labels created back to ba
 
 A card holding a deleted label is the obvious failure. Three options; take the third:
 
-1. _Cascade-remove the label from every card_ — a bulk write from a single command, and the card
+1. *Cascade-remove the label from every card* — a bulk write from a single command, and the card
    silently loses information the user did not ask to lose.
-2. _Refuse to delete a label in use_ — safe, but leaves no way to retire a label without hand-editing
+2. *Refuse to delete a label in use* — safe, but leaves no way to retire a label without hand-editing
    every card that carries it.
 3. **Tombstone the label** — `deletedAt` set, the label leaves the picker, cards keep the reference
    and render it muted. This is the same choice `t3o-03` made for thread links, for the same reason:
-   _"a Code Review card whose round-2 triage thread vanished must say so, not silently renumber."_
+   *"a Code Review card whose round-2 triage thread vanished must say so, not silently renumber."*
 
 Deleting is therefore reversible, and a card's history stays honest. Add an undelete path — a
 one-way door is a bug (`AGENTS.md`, reverse states).
@@ -102,7 +102,7 @@ Instead:
   all of it to render any card.
 - Catalogue changes stream as their own shell delta, following the `card-upserted` / `card-removed`
   pattern. Note that `t3o-02a`'s prefix rule says board shell deltas use a `card-` prefix and
-  flags exactly this case — _"revisit if non-card board deltas ever appear"_. They have. Widen the
+  flags exactly this case — *"revisit if non-card board deltas ever appear"*. They have. Widen the
   `isBoardShellStreamEvent` predicate deliberately and update the rule in `docs/t3o/seams.md`;
   do not quietly add a `card-`-prefixed kind that is not about a card.
 
@@ -158,7 +158,7 @@ This corrects three things:
   on all eight, and for non-Backlog columns it composes create + move, which `t3o-06` is replacing
   with a `stage` on the create command anyway.
 
-A card still _reaches_ later stages the only way it ever could: by being moved, under D18's
+A card still *reaches* later stages the only way it ever could: by being moved, under D18's
 human gate.
 
 ## Out of scope

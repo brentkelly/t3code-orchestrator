@@ -75,11 +75,11 @@ split". Amber reads as a distinct, human-actionable gate.
 
 ## Files
 
-| File                                                  | Change                                                      |
-| ----------------------------------------------------- | ----------------------------------------------------------- |
-| `packages/contracts/src/board.ts`                     | `boardCardPendingSplit`, `boardCardShellPendingSplit`       |
-| `apps/server/src/board/decider.ts`                    | forward-move gate on `board.card.move`                      |
-| `apps/web/src/board/BoardCardDetailView.tsx`          | Approve-split button replaces the forward action            |
-| `apps/web/src/board/BoardCardItem.tsx`                | amber "Needs approval" tint + chip                          |
-| `apps/web/src/board/BoardColumn.tsx`, `BoardPage.tsx` | thread `pendingSplitFor` from the derivation                |
-| Tests                                                 | decider gate matrix; contracts predicate + shell derivation |
+| File | Change |
+| --- | --- |
+| `packages/contracts/src/board.ts` | `boardCardPendingSplit`, `boardCardShellPendingSplit` |
+| `apps/server/src/board/decider.ts` | forward-move gate on `board.card.move` |
+| `apps/web/src/board/BoardCardDetailView.tsx` | Approve-split button replaces the forward action |
+| `apps/web/src/board/BoardCardItem.tsx` | amber "Needs approval" tint + chip |
+| `apps/web/src/board/BoardColumn.tsx`, `BoardPage.tsx` | thread `pendingSplitFor` from the derivation |
+| Tests | decider gate matrix; contracts predicate + shell derivation |

@@ -59,24 +59,24 @@ as it actually is.
 
 ## Measured facts
 
-| Metric                                   | Value                                                     |
-| ---------------------------------------- | --------------------------------------------------------- |
-| Upstream commits merge-base..v0.0.38     | 595                                                       |
-| Upstream files changed                   | 1,591                                                     |
-| Fork files changed since merge-base      | 347                                                       |
-| Files changed on both sides              | 38                                                        |
-| Content conflicts                        | 18 files, 27 hunks (+11 in `routeTree.gen.ts`)            |
-| `.plans` rename/delete conflicts         | 32 (upstream deleted `.plans/*`; fork archived them)      |
-| `T3o:` markers on upstream files         | 87 (doc says 62)                                          |
-| Upstream files with unmarked fork edits  | 34                                                        |
-| Merge-caused type errors                 | 3                                                         |
-| Pre-existing type errors on the fork tip | 10 (server 8, web 2), all fork-owned                      |
-| Merge-caused test failures               | 2 (server 1, web 1)                                       |
-| Pre-existing test failures               | 0 (7,519 pass across 14 packages)                         |
-| Merge-caused lint errors                 | 61, one new upstream rule, all in `apps/web/src/board`    |
-| Upstream migrations added (own lineage)  | 039–043; `Migrations.ts` and `Sqlite.ts` did not conflict |
-| Lockfile                                 | `pnpm install` after merge: no change                     |
-| Full test wall time, sequential          | ~5 min (server ~3.5 min)                                  |
+| Metric                                                        | Value                                                  |
+| ------------------------------------------------------------- | ------------------------------------------------------ |
+| Upstream commits merge-base..v0.0.38                          | 595                                                    |
+| Upstream files changed                                        | 1,591                                                  |
+| Fork files changed since merge-base                           | 347                                                    |
+| Files changed on both sides                                   | 38                                                     |
+| Content conflicts                                             | 18 files, 27 hunks (+11 in `routeTree.gen.ts`)         |
+| `.plans` rename/delete conflicts                              | 32 (upstream deleted `.plans/*`; fork archived them)   |
+| `T3o:` markers on upstream files                              | 87 (doc says 62)                                       |
+| Upstream files with unmarked fork edits                       | 34                                                     |
+| Merge-caused type errors                                      | 3                                                      |
+| Pre-existing type errors on the fork tip                      | 10 (server 8, web 2), all fork-owned                   |
+| Merge-caused test failures                                    | 2 (server 1, web 1)                                    |
+| Pre-existing test failures                                    | 0 (7,519 pass across 14 packages)                      |
+| Merge-caused lint errors                                      | 61, one new upstream rule, all in `apps/web/src/board` |
+| Upstream migrations added (own lineage)                       | 039–043; `Migrations.ts` and `Sqlite.ts` did not conflict |
+| Lockfile                                                      | `pnpm install` after merge: no change                  |
+| Full test wall time, sequential                               | ~5 min (server ~3.5 min)                               |
 
 ## Phase 0 — pre-merge cleanup on `t3o` (one small PR, before the sync)
 
@@ -115,26 +115,26 @@ Then each content conflict. "Seam" means the fork's `T3o:` marker + delegating l
 always upstream's code with the seam re-inserted. Non-seam rows are the unmarked edits and need
 the fork's logic re-applied by hand.
 
-| File                                             | Hunks | Resolution                                                                                                                                                                                                                                                                     | Seam?  |
-| ------------------------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
-| `AGENTS.md`                                      | 1     | Upstream rewrote "Pull requests" and added "Plans and work artifacts". Re-add the two `T3o:` PR-target bullets under the new section; see Phase 3 for the plans-policy override.                                                                                               | yes    |
-| `orchestration/Layers/OrchestrationEngine.ts`    | 1     | Upstream import `OrchestrationClientOrigin` + fork's `BoardCardId/BoardLabelId/BoardStageId` import.                                                                                                                                                                           | yes    |
-| `orchestration/decider.ts`                       | 1     | Upstream `threadHasQueuedTurnStart` import + board decider import.                                                                                                                                                                                                             | yes    |
-| `server.ts`                                      | 3     | (1) imports: both. (2) `ThreadSettlementReactor.layer` **and** `SupervisorReactorLive` provideMerge. (3) upstream's `Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive)` then fork's `BoardGitLayerLive` in place of `GitLayerLive`.               | (3) no |
-| `serverSettings.ts`                              | 1     | Keep both: fork's `INDIVISIBLE_SETTINGS_KEYS` / `INDIVISIBLE_ENTRY_SETTINGS_KEYS` / `stripDefaultSettingsMapEntries` and upstream's `PERSISTED_SERVER_SETTINGS_DEFAULTS`. Add a marker.                                                                                        | no     |
-| `sourceControl/GitHubCli.ts`                     | 2     | Keep both: fork `allowNonZeroExit` and upstream `stdin` / `maxOutputBytes` on `execute` input and its spread.                                                                                                                                                                  | no     |
-| `ws.ts`                                          | 3     | (1) imports: both, keep `coalesceShellWindow` (still used). (2) upstream `dispatchFromClient` / analytics block + fork `boardSupervisor`. (3) upstream's rewritten archive body; re-insert `yield* boardStampActor(normalizedCommand)` right after `normalizeDispatchCommand`. | yes    |
-| `web/components/AppSidebarLayout.tsx`            | 1     | Upstream's `<ProjectProjectionRetention />` and `onDoubleClick={resetSidebarWidth}` inside the fork's `isOnBoard ? null : (...)`. Add a marker.                                                                                                                                | no     |
-| `web/components/ChatView.tsx`                    | 2     | Upstream replaced `<header>` with `<WorkspacePageHeader>` and dropped `changeRequestState` from `ChatHeader`. Keep fork's `chrome === "embedded" ? null : (...)` around the new element, with `<BoardModeTabs>` as its first child.                                            | partly |
-| `web/components/NoActiveThreadState.tsx`         | 2     | Upstream `WorkspacePageHeader`; put `<BoardModeTabs className="mr-2" mode="threads" />` inside it. Drop the fork's now-unused `cn` / inset imports.                                                                                                                            | yes    |
-| `web/components/chat/ChatComposer.tsx`           | 1     | Upstream's lucide import list minus `LucideIcon, LockIcon, LockOpenIcon, PenLineIcon, SparklesIcon` (the runtime-mode picker now lives in fork's `AccessLevelPicker.tsx`; upstream still has it inline).                                                                       | no     |
-| `web/components/settings/settingsSearch.ts`      | 1     | Upstream imports + fork's `BOARD_SETTINGS_SEARCH_ITEMS` import. Other three seams auto-merged.                                                                                                                                                                                 | yes    |
-| `web/components/settings/settingsSearch.test.ts` | 1     | Keep both; the fork's `"work"` assertion then fails, fixed in Phase 2.                                                                                                                                                                                                         | no     |
-| `web/src/index.css`                              | 1     | Upstream restructured the glass block. Keep only the fork's `.board-card-done` rules at the same `@layer` position. The `--font-sans` DM Sans change auto-merged.                                                                                                              | yes    |
-| `web/src/routeTree.gen.ts`                       | 11    | Take upstream, then **regenerate** (no `tsr` CLI; `@tanstack/router-generator` from the pnpm store, script kept at `/tmp/gen-routes.mjs` on the trial worktree, or run `vp run dev:web` once). Expect +63 lines: `board`, `board_.$parentCardId`, `settings.board`.            | n/a    |
-| `contracts/src/orchestration.ts`                 | 1     | `import { DEFAULT_RUNTIME_MODE, ProviderOptionSelections, RuntimeMode } from "./model.ts"` + upstream's `ThreadEnvMode` from `environment.ts`.                                                                                                                                 | no     |
-| `contracts/src/rpc.ts`                           | 1     | Upstream attachment imports + `BOARD_RPCS, BOARD_WS_METHODS`.                                                                                                                                                                                                                  | yes    |
-| `contracts/src/settings.ts`                      | 1     | Upstream preview / providerInstance imports + `BoardSettings, BoardSettingsPatch`.                                                                                                                                                                                             | yes    |
+| File                                            | Hunks | Resolution                                                                                                                                                                                     | Seam? |
+| ----------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `AGENTS.md`                                     | 1     | Upstream rewrote "Pull requests" and added "Plans and work artifacts". Re-add the two `T3o:` PR-target bullets under the new section; see Phase 3 for the plans-policy override.                | yes   |
+| `orchestration/Layers/OrchestrationEngine.ts`   | 1     | Upstream import `OrchestrationClientOrigin` + fork's `BoardCardId/BoardLabelId/BoardStageId` import.                                                                                            | yes   |
+| `orchestration/decider.ts`                      | 1     | Upstream `threadHasQueuedTurnStart` import + board decider import.                                                                                                                             | yes   |
+| `server.ts`                                     | 3     | (1) imports: both. (2) `ThreadSettlementReactor.layer` **and** `SupervisorReactorLive` provideMerge. (3) upstream's `Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive)` then fork's `BoardGitLayerLive` in place of `GitLayerLive`. | (3) no |
+| `serverSettings.ts`                             | 1     | Keep both: fork's `INDIVISIBLE_SETTINGS_KEYS` / `INDIVISIBLE_ENTRY_SETTINGS_KEYS` / `stripDefaultSettingsMapEntries` and upstream's `PERSISTED_SERVER_SETTINGS_DEFAULTS`. Add a marker.         | no    |
+| `sourceControl/GitHubCli.ts`                    | 2     | Keep both: fork `allowNonZeroExit` and upstream `stdin` / `maxOutputBytes` on `execute` input and its spread.                                                                                   | no    |
+| `ws.ts`                                         | 3     | (1) imports: both, keep `coalesceShellWindow` (still used). (2) upstream `dispatchFromClient` / analytics block + fork `boardSupervisor`. (3) upstream's rewritten archive body; re-insert `yield* boardStampActor(normalizedCommand)` right after `normalizeDispatchCommand`. | yes   |
+| `web/components/AppSidebarLayout.tsx`           | 1     | Upstream's `<ProjectProjectionRetention />` and `onDoubleClick={resetSidebarWidth}` inside the fork's `isOnBoard ? null : (...)`. Add a marker.                                                 | no    |
+| `web/components/ChatView.tsx`                   | 2     | Upstream replaced `<header>` with `<WorkspacePageHeader>` and dropped `changeRequestState` from `ChatHeader`. Keep fork's `chrome === "embedded" ? null : (...)` around the new element, with `<BoardModeTabs>` as its first child. | partly |
+| `web/components/NoActiveThreadState.tsx`        | 2     | Upstream `WorkspacePageHeader`; put `<BoardModeTabs className="mr-2" mode="threads" />` inside it. Drop the fork's now-unused `cn` / inset imports.                                              | yes   |
+| `web/components/chat/ChatComposer.tsx`          | 1     | Upstream's lucide import list minus `LucideIcon, LockIcon, LockOpenIcon, PenLineIcon, SparklesIcon` (the runtime-mode picker now lives in fork's `AccessLevelPicker.tsx`; upstream still has it inline). | no    |
+| `web/components/settings/settingsSearch.ts`     | 1     | Upstream imports + fork's `BOARD_SETTINGS_SEARCH_ITEMS` import. Other three seams auto-merged.                                                                                                 | yes   |
+| `web/components/settings/settingsSearch.test.ts`| 1     | Keep both; the fork's `"work"` assertion then fails, fixed in Phase 2.                                                                                                                         | no    |
+| `web/src/index.css`                             | 1     | Upstream restructured the glass block. Keep only the fork's `.board-card-done` rules at the same `@layer` position. The `--font-sans` DM Sans change auto-merged.                                | yes   |
+| `web/src/routeTree.gen.ts`                      | 11    | Take upstream, then **regenerate** (no `tsr` CLI; `@tanstack/router-generator` from the pnpm store, script kept at `/tmp/gen-routes.mjs` on the trial worktree, or run `vp run dev:web` once). Expect +63 lines: `board`, `board_.$parentCardId`, `settings.board`. | n/a   |
+| `contracts/src/orchestration.ts`                | 1     | `import { DEFAULT_RUNTIME_MODE, ProviderOptionSelections, RuntimeMode } from "./model.ts"` + upstream's `ThreadEnvMode` from `environment.ts`.                                                  | no    |
+| `contracts/src/rpc.ts`                          | 1     | Upstream attachment imports + `BOARD_RPCS, BOARD_WS_METHODS`.                                                                                                                                  | yes   |
+| `contracts/src/settings.ts`                     | 1     | Upstream preview / providerInstance imports + `BoardSettings, BoardSettingsPatch`.                                                                                                             | yes   |
 
 After resolving: `rg -n "T3o:"` must show the same 87 markers as before the merge (row for row
 against `git grep -c "T3o:" t3o`). Commit the merge before any fix-ups so the merge commit is a

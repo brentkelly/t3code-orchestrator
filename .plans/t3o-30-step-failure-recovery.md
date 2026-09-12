@@ -41,7 +41,7 @@ restart affordance on a stalled non-auto-executing stage.
 
 **Out.** Retrying a failed spawn onto a different model (D2). Pre-flight validation that a
 stage's provider instance is installed and enabled — worth doing, but it is a settings-time
-check and a different change. Any change to the recovery ladder for a step whose turn _did_
+check and a different change. Any change to the recovery ladder for a step whose turn *did*
 start. Mobile, which has no board.
 
 ## Design decisions
@@ -66,7 +66,7 @@ which is what makes this safe to ship without a migration.
 
 The consequence the settings UI must carry: "nothing picked" is now two situations, not one. A
 row with a default to inherit names it — `Claude Opus 5 (default)` — and drops the required-field
-warning; a row with nothing to inherit keeps the warning it had. A review _phase_ names the
+warning; a row with nothing to inherit keeps the warning it had. A review *phase* names the
 review stage's model when the stage has one, because that is the nearer answer and saying
 "default" would be a lie the user cannot check.
 

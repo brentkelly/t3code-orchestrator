@@ -65,7 +65,7 @@ path, so any linked thread — build, planning, every review round — can `cat`
 bash. Attachments added after a thread spawned appear on its next call with no extra work.
 
 **K4 — One deliberate push: images on the first turn of build and planning spawns.** A card
-that is "a screenshot plus 'fix this'" needs the model to _see_ the image on turn one, and
+that is "a screenshot plus 'fix this'" needs the model to *see* the image on turn one, and
 most providers cannot pull an image into vision. So `spawnStepThread` for a build-mode or
 plan-mode step passes the card's image attachments (first 8, upstream's per-turn cap) on
 `thread.turn.start`. Mechanism: stage a fresh `pending-` copy of each image and pass it as an
@@ -118,7 +118,7 @@ Server (`apps/server/src/board/`, new files where possible):
   upsert/delete, shell `attachmentCount`, detail `attachments`.
 - `migrations/032_BoardCardAttachments.ts`, appended to `BOARD_MIGRATIONS`.
 - `rpc.ts` — `board.card.attach { cardId, pendingAttachmentId, name, mimeType, sizeBytes,
-type }` and `board.card.detach { cardId, attachmentId }`.
+  type }` and `board.card.detach { cardId, attachmentId }`.
 - `supervisorReactor.ts` `spawnStepThread` — replace the hardcoded `attachments: []` at the
   build/plan admit sites with the K4 staged images; `sendTurn` stays `[]`.
 - `mcp/toolkits/board/handlers.ts` — `board_get_card_context` gains `attachments`.
@@ -170,7 +170,8 @@ Docs: `docs/user/` (attach files to a card; threads can read them), `docs/t3o/se
    is rejected.
 4. `board_get_card_context` from a linked thread lists every attachment with an absolute path
    that `cat` can read; an attachment added after the thread spawned appears on the next call.
-5. A build-mode or plan-mode spawn's first `thread.turn.start` carries the card's images (max 8) as `ChatAttachment`s and the thread's message shows them; a review-round spawn carries
+5. A build-mode or plan-mode spawn's first `thread.turn.start` carries the card's images (max
+   8) as `ChatAttachment`s and the thread's message shows them; a review-round spawn carries
    none. Decider/reactor tests cover both.
 6. Removing an attachment deletes the file, drops it from the manifest, and decrements
    `attachmentCount`; deleting the card removes the folder.

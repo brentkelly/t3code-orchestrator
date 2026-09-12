@@ -7,8 +7,8 @@ prerequisites: [t3o-15, t3o-16, t3o-17, t3o-18]
 
 # Step terminology — stop rendering steps where a stage has none
 
-Every stage but Code review runs exactly one step, and that step's id _is_ the stage id and
-its label _is_ the stage label (`board.ts:759`). So the envelope renders a tautology into
+Every stage but Code review runs exactly one step, and that step's id *is* the stage id and
+its label *is* the stage label (`board.ts:759`). So the envelope renders a tautology into
 every Planning and Building system prompt:
 
 ```
@@ -16,9 +16,9 @@ Stage: planning. Step: Planning.
 ```
 
 Worse, that redundant line is load-bearing by accident. The decider rejects any `stepId` that
-is not the card's live step (`decider.ts:1224` — _"complete the step you were assigned"_), but
+is not the card's live step (`decider.ts:1224` — *"complete the step you were assigned"*), but
 nothing ever tells the agent what it was assigned: the preamble prints `stepLabel`, not the id,
-and `board_get_card_context.steps` returns _prior completions_ only. Non-review stages complete
+and `board_get_card_context.steps` returns *prior completions* only. Non-review stages complete
 at all because the preamble happens to print `Stage: planning.` and seeded stage ids happen to
 be slugs, so the agent infers `stepId = "planning"`. Code review works reliably for the opposite
 reason: its protocol injects the literal string (`boardEnvelope.ts:157`).
@@ -62,7 +62,7 @@ loop; tomorrow any sequence stage) keeps the full vocabulary and is told its `st
 
 **D1 — "Step" survives as the noun; the defect is rendering it where there is none.**
 The runtime is already multi-step-generic: `board_card_steps` is keyed `(card_id, step_id)`,
-`BoardStageExecutor.planNext` answers _"what runs next, or are we done?"_ with the reactor never
+`BoardStageExecutor.planNext` answers *"what runs next, or are we done?"* with the reactor never
 learning how many steps exist (`stageExecutor.ts:104`), `BoardStageRunState.completedStepIds` is
 an array, and `ReviewLoopExecutor` already drives 3 phases × N rounds through that seam. Adding
 sequence stages later needs a third `BoardStageExecution` member, a `SequenceExecutor`, settings
@@ -82,7 +82,7 @@ Omitted means "my live step", resolved from `board_card_step_state.thread_id`
 vocabulary at all, and the "pre-complete a future step" attack `decider.ts:1220` guards against
 becomes structurally impossible rather than merely validated. Thread-scoping is what makes a
 retry safe: if the board has advanced past the caller's step, no live step matches that thread,
-so the call is rejected with the recorded outcome instead of silently completing the _next_
+so the call is rejected with the recorded outcome instead of silently completing the *next*
 stage's step. Stages that run several steps state the `stepId` in the prompt and pass it back.
 
 **D4 — The signal is a nullable step identity, not a boolean, and not an array.**
@@ -103,8 +103,8 @@ the run row supplies it without a board read and gives `stepLabel`'s three exist
 `BoardCardActivityRail.tsx:144`) their fallback.
 
 **D6 — The envelope owns the `stepId` instruction; the review protocol keeps the payload shape.**
-Today `boardEnvelope.ts:157,165,172` each say _"Complete this step by calling board_complete_step
-with stepId …"_. Once the envelope states it for every stepped stage, those three sentences are
+Today `boardEnvelope.ts:157,165,172` each say *"Complete this step by calling board_complete_step
+with stepId …"*. Once the envelope states it for every stepped stage, those three sentences are
 duplicates and are stripped. The protocol keeps what is genuinely phase-specific: the payload
 schema, the severity vocabulary, the diff scope.
 
@@ -131,25 +131,25 @@ Preamble, stepped: `Stage: Code review. Step: Review · round 1.`
 
 Postamble — the step clause appears only when there is a step:
 
-|               | unstepped                                                                                                                                                 | stepped                                                                                                |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| human-in-loop | `When the work is done, call board_complete_step.`                                                                                                        | `… call board_complete_step with stepId "review@1".`                                                   |
-| unattended    | `When the work is done, call board_complete_step — that is the ONLY way to finish; ending your turn any other way is treated as a failure and recovered.` | `When this step is finished, call board_complete_step with stepId "review@1" — that is the ONLY way …` |
+| | unstepped | stepped |
+|---|---|---|
+| human-in-loop | `When the work is done, call board_complete_step.` | `… call board_complete_step with stepId "review@1".` |
+| unattended | `When the work is done, call board_complete_step — that is the ONLY way to finish; ending your turn any other way is treated as a failure and recovered.` | `When this step is finished, call board_complete_step with stepId "review@1" — that is the ONLY way …` |
 
-Todo-list line: _"… without it a working **agent** looks the same as a stalled one"_ (was "a
+Todo-list line: *"… without it a working **agent** looks the same as a stalled one"* (was "a
 working step").
 
-Move guard, one wording for both: _"Never move the card between stages yourself; finish your
-work and the board or a human moves the card on."_
+Move guard, one wording for both: *"Never move the card between stages yourself; finish your
+work and the board or a human moves the card on."*
 
-`board_complete_step` description gains: _"Omit `stepId` — the board resolves your assigned work
+`board_complete_step` description gains: *"Omit `stepId` — the board resolves your assigned work
 from your thread. Pass one only if your prompt explicitly gave you a stepId (stages that run
-several steps, such as the code review loop, always do); pass exactly that string."_
+several steps, such as the code review loop, always do); pass exactly that string."*
 
-`board_get_card_context`: _"Call this first when you start a step"_ → _"when you start work"_.
+`board_get_card_context`: *"Call this first when you start a step"* → *"when you start work"*.
 
-Settings copy (`BoardPipelineSection.tsx:713`): _"Each stage runs a single agent step."_ →
-_"Each stage runs one agent, except code review, which runs a review loop."_
+Settings copy (`BoardPipelineSection.tsx:713`): *"Each stage runs a single agent step."* →
+*"Each stage runs one agent, except code review, which runs a review loop."*
 
 Drive-by: `handlers.ts:406` still points agents at `board_report_progress`, deleted by t3o-18.
 

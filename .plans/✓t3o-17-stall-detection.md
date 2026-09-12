@@ -36,7 +36,7 @@ phases × attempts is deep, and every level of it is silent.
 
 ## Goal
 
-Cap _consecutive stalls_ rather than total nudges, make giving up visible, and stop a parked card
+Cap *consecutive stalls* rather than total nudges, make giving up visible, and stop a parked card
 holding capacity.
 
 ## Scope
@@ -61,9 +61,9 @@ holding capacity.
 
 `BoardCardStepState` carries both:
 
-|              | Counts                                               | Gated by      | Resets           |
-| ------------ | ---------------------------------------------------- | ------------- | ---------------- |
-| `attempt`    | every invocation of this step this stage entry       | D5's ceiling  | on stage entry   |
+| | Counts | Gated by | Resets |
+| --- | --- | --- | --- |
+| `attempt` | every invocation of this step this stage entry | D5's ceiling | on stage entry |
 | `stallCount` | **consecutive** stalls with no progress between them | `maxAttempts` | on progress (D2) |
 
 `recoveryDecision` switches to comparing `stallCount` against `maxAttempts`. `attempt` stays for
@@ -73,7 +73,7 @@ Two counters rather than redefining one, because both facts are worth knowing: "
 twice in a row" is the escalation trigger, "this step has been invoked eleven times" is what tells a
 human the card is a swamp even though it keeps inching forward.
 
-**Default `maxAttempts` rises from 3 to 5.** Safe only because of the reset: five _unproductive_
+**Default `maxAttempts` rises from 3 to 5.** Safe only because of the reset: five *unproductive*
 consecutive stops is a wedged agent, where five cumulative nudges was often just a long job.
 
 ### D2 — Progress is an explicit signal, not an inference
@@ -96,18 +96,18 @@ never fires and D1 degrades to today's behaviour with a higher ceiling — stric
 unattended postamble (t3o-15 D5) gains a line instructing periodic `board_report_progress` calls on
 long work.
 
-_Rejected:_ inferring progress from token output or tool calls. Both are noise — a wedged agent
-emits plenty of tokens. The point is to detect _work_, and a progress report or a commit is the
+*Rejected:* inferring progress from token output or tool calls. Both are noise — a wedged agent
+emits plenty of tokens. The point is to detect *work*, and a progress report or a commit is the
 agent asserting it did some.
 
 ### D3 — `stalled` is its own status
 
 `BOARD_STEP_STATUSES` gains `stalled`, distinct from `awaiting-input`.
 
-| Status           | Means                                                                  |
-| ---------------- | ---------------------------------------------------------------------- |
-| `awaiting-input` | the agent asked a question; the work is healthy and paused             |
-| `stalled`        | recovery gave up; nobody is working and nobody will until a human acts |
+| Status | Means |
+| --- | --- |
+| `awaiting-input` | the agent asked a question; the work is healthy and paused |
+| `stalled` | recovery gave up; nobody is working and nobody will until a human acts |
 
 The escalation path sets `stalled` and still asks its question, so the human gets both the signal and
 the choice. The card renders it distinctly — this is the "loud" half — and the board offers a way to
@@ -135,7 +135,7 @@ Per-stage setting `maxInvocationsPerStageEntry` (compiled default 20). When a st
 `attempt` count across all its steps crosses it, the stage stops and escalates as `stalled`,
 whatever the per-step ladder says.
 
-_Why a second ceiling:_ the per-step ladder bounds one step. t3o-16's loop multiplies — rounds ×
+*Why a second ceiling:* the per-step ladder bounds one step. t3o-16's loop multiplies — rounds ×
 phases × attempts — and each level is individually reasonable while the product is not. A card can
 consume dozens of agent invocations, and a slot throughout, without a human being asked anything.
 This is the backstop that makes the compound bound observable.
@@ -165,11 +165,11 @@ It is deliberately generous. It is a runaway detector, not a budget.
 
 ## Files
 
-| File                                                | Change                                                                                                                                     |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `packages/contracts/src/board.ts`                   | `stallCount`, `lastNudgeAt` on `BoardCardStepState`; `stalled` in `BOARD_STEP_STATUSES`; `maxInvocationsPerStageEntry` on the stage config |
-| `apps/server/src/board/supervisor.ts`               | `recoveryDecision` gates on `stallCount` + `progressedSinceLastNudge`; unattended postamble asks for progress reports                      |
-| `apps/server/src/board/supervisorReactor.ts`        | resolve the progress signal; set `stalled`; release the slot; enforce the ceiling                                                          |
-| `apps/server/src/board/decider.ts` / `projector.ts` | the new status and counters                                                                                                                |
-| `apps/server/src/board/migrations/`                 | step-state columns                                                                                                                         |
-| `apps/web/src/board/`                               | stalled treatment on the card and a way to find stalled cards                                                                              |
+| File | Change |
+| --- | --- |
+| `packages/contracts/src/board.ts` | `stallCount`, `lastNudgeAt` on `BoardCardStepState`; `stalled` in `BOARD_STEP_STATUSES`; `maxInvocationsPerStageEntry` on the stage config |
+| `apps/server/src/board/supervisor.ts` | `recoveryDecision` gates on `stallCount` + `progressedSinceLastNudge`; unattended postamble asks for progress reports |
+| `apps/server/src/board/supervisorReactor.ts` | resolve the progress signal; set `stalled`; release the slot; enforce the ceiling |
+| `apps/server/src/board/decider.ts` / `projector.ts` | the new status and counters |
+| `apps/server/src/board/migrations/` | step-state columns |
+| `apps/web/src/board/` | stalled treatment on the card and a way to find stalled cards |

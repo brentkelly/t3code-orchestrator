@@ -26,8 +26,8 @@ exists to make the next twelve months of upstream merges cheap.
 ### Git topology
 
 1. Add the `upstream` remote.
-2. Create `t3o` from current `main`. _(done)_
-3. Set `t3o` as the GitHub default branch. _(manual — the repo PAT lacks `administration` scope)_
+2. Create `t3o` from current `main`. *(done)*
+3. Set `t3o` as the GitHub default branch. *(manual — the repo PAT lacks `administration` scope)*
 4. Optional: branch protection on `main`, fast-forward only. Convention plus `t3o` being the default
    branch already covers this; add it if a stray commit ever lands.
 
@@ -35,7 +35,7 @@ exists to make the next twelve months of upstream merges cheap.
 
 **No automation during MVP.** A scheduled workflow automates something that happens three or four
 times before the MVP is proved, and it is machinery built to defend a bet that has not been placed
-yet. The value we actually want from upstream merges during MVP is _information_ — how bad are the
+yet. The value we actually want from upstream merges during MVP is *information* — how bad are the
 conflicts — and that comes from doing it by hand and writing down the answer (`t3o-02`).
 
 Record the runbook in `docs/t3o/seams.md` instead:

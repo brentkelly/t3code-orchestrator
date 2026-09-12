@@ -50,7 +50,7 @@ role-holder was deleted simply renders one row.
 The **storage** is keyed by stage id, not by role:
 
 ```ts
-BoardCardModelOverrides = Record<BoardStageId, BoardCardStageModelOverride>;
+BoardCardModelOverrides = Record<BoardStageId, BoardCardStageModelOverride>
 ```
 
 Two rows is a judgement about what is worth putting in a popover; it is not a claim about the
@@ -122,9 +122,9 @@ child that must run the workspace default sets that model explicitly.
 Because there are now three levels a card can be inheriting from, the row's default option says
 which one:
 
-| The card is inheriting   | Default option reads     |
-| ------------------------ | ------------------------ |
-| the workspace setting    | `Sonnet 4.7 (default)`   |
+| The card is inheriting | Default option reads |
+| --- | --- |
+| the workspace setting | `Sonnet 4.7 (default)` |
 | a parent card's override | `Opus 4.8 (from T3O-41)` |
 
 This is what makes D4's consequence legible rather than mysterious: a child showing
@@ -154,12 +154,12 @@ Per the prototype (`.plans/prototype/t3o.dc.html`), which is the UI reference fo
 - The kebab gains a **Models** item above `Archive card`, separated by a rule, with the current
   state summarised right-aligned on the item: `Default`, `Build`, `Review`, or `Build · Review`.
 - Selecting it **closes the menu** and opens a ~328px popover anchored to the same trigger,
-  headed _Models for this card_ with the sub-line _Overrides the workspace defaults from Settings
-  for this card only_, and a **Reset** button shown only when something is set.
+  headed *Models for this card* with the sub-line *Overrides the workspace defaults from Settings
+  for this card only*, and a **Reset** button shown only when something is set.
 - Each row is a `ModelRow` (`components/settings/BoardModelRow.tsx`) — the same control the
   pipeline settings and the round drawer use, giving model, reasoning/traits and access in one
-  row for free — under a label and note: **Build** _Runs the plan in the worktree_, **Review**
-  _Adversarial review rounds_.
+  row for free — under a label and note: **Build** *Runs the plan in the worktree*, **Review**
+  *Adversarial review rounds*.
 - The card header shows a small pill **only when an override is set**, summarising it
   (`Build sonnet-4.7`, or `Custom models` when both are), with both stages' resolved values in
   its tooltip. It opens the same popover.
@@ -175,19 +175,19 @@ invisible from the card. It costs nothing on a card that has not set one.
 
 ## Layer-by-layer change list
 
-| Layer     | File                                                               | Change                                                                                                                                                                                                                                                                |
-| --------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Contracts | `packages/contracts/src/board.ts`                                  | Generalise `BoardReviewRoundOverride` → `BoardCardStageModelOverride` (alias retained); `BoardCardModelOverrides`; `modelOverrides` on `BoardCard` (decoding-default null) and on the update command; a `resolveBoardCardStageModel` helper owning D3/D4's precedence |
-| Migration | `apps/server/src/board/migrations/029_BoardCardsModelOverrides.ts` | **new** — guarded additive `model_overrides TEXT` on `board_cards`, NULL-defaulting exactly as 025                                                                                                                                                                    |
-| Server    | `apps/server/src/board/projection.ts`                              | `model_overrides` on the row schema, the insert, and both shell producers                                                                                                                                                                                             |
-| Server    | `apps/server/src/board/projector.ts`                               | Carry `modelOverrides` on the aggregate (null seed at :197)                                                                                                                                                                                                           |
-| Server    | `apps/server/src/board/decider.ts`                                 | Accept `modelOverrides` on `board.card.update`, merging as `reviewOverrides` does (:1006); reject an entry for an unknown stage id                                                                                                                                    |
-| Server    | `apps/server/src/board/supervisorReactor.ts`                       | Resolve the card's (or parent's) override ahead of `exec.model`/`exec.runtimeMode` at the three `resolveBoardStageModelSelection` sites (:1196, :1471, :1621)                                                                                                         |
-| Server    | `apps/server/src/board/reviewLoopExecutor.ts`                      | One fallback arm each in `resolvePhaseModel` / `resolvePhaseRuntimeMode` (D3)                                                                                                                                                                                         |
-| Client    | `packages/client-runtime/src/operations/boardCommands.ts`          | Carry `modelOverrides` through `updateBoardCard`                                                                                                                                                                                                                      |
-| Web       | `apps/web/src/board/BoardCardModelsPopover.tsx`                    | **new** — the two-row popover, reset, and the inheritance-source labelling (D5)                                                                                                                                                                                       |
-| Web       | `apps/web/src/board/BoardCardDetailView.tsx`                       | Kebab item + summary, popover state, header pill (:1099)                                                                                                                                                                                                              |
-| Web       | `apps/web/src/components/settings/BoardModelRow.tsx`               | Allow the default-option label to name its source (D5)                                                                                                                                                                                                                |
+| Layer | File | Change |
+| --- | --- | --- |
+| Contracts | `packages/contracts/src/board.ts` | Generalise `BoardReviewRoundOverride` → `BoardCardStageModelOverride` (alias retained); `BoardCardModelOverrides`; `modelOverrides` on `BoardCard` (decoding-default null) and on the update command; a `resolveBoardCardStageModel` helper owning D3/D4's precedence |
+| Migration | `apps/server/src/board/migrations/029_BoardCardsModelOverrides.ts` | **new** — guarded additive `model_overrides TEXT` on `board_cards`, NULL-defaulting exactly as 025 |
+| Server | `apps/server/src/board/projection.ts` | `model_overrides` on the row schema, the insert, and both shell producers |
+| Server | `apps/server/src/board/projector.ts` | Carry `modelOverrides` on the aggregate (null seed at :197) |
+| Server | `apps/server/src/board/decider.ts` | Accept `modelOverrides` on `board.card.update`, merging as `reviewOverrides` does (:1006); reject an entry for an unknown stage id |
+| Server | `apps/server/src/board/supervisorReactor.ts` | Resolve the card's (or parent's) override ahead of `exec.model`/`exec.runtimeMode` at the three `resolveBoardStageModelSelection` sites (:1196, :1471, :1621) |
+| Server | `apps/server/src/board/reviewLoopExecutor.ts` | One fallback arm each in `resolvePhaseModel` / `resolvePhaseRuntimeMode` (D3) |
+| Client | `packages/client-runtime/src/operations/boardCommands.ts` | Carry `modelOverrides` through `updateBoardCard` |
+| Web | `apps/web/src/board/BoardCardModelsPopover.tsx` | **new** — the two-row popover, reset, and the inheritance-source labelling (D5) |
+| Web | `apps/web/src/board/BoardCardDetailView.tsx` | Kebab item + summary, popover state, header pill (:1099) |
+| Web | `apps/web/src/components/settings/BoardModelRow.tsx` | Allow the default-option label to name its source (D5) |
 
 ## Acceptance criteria
 

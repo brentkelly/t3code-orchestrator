@@ -55,7 +55,7 @@ Every step prompt is composed as **preamble + body + postamble**:
   `board_get_card_context` for more. Short by design; the pull path exists so this stays small.
 - **Body** — the recipe's `promptTemplate` (later, a wrapped user skill).
 - **Postamble** — the completion contract: call `board_complete_step` when done; if you need a human
-  decision, ask through _this provider's_ question mechanism; **never end a turn with an unanswered
+  decision, ask through *this provider's* question mechanism; **never end a turn with an unanswered
   question in prose** — that is treated as a failure.
 
 The question-mechanism wording is **per provider instance**. The board assigned the step, so it
@@ -89,7 +89,7 @@ step and asks whether its thread still exists and is alive. Outcomes: still runn
 watching; gone → recovery; completed while we were down → advance.
 
 `ProviderSessionReaper` already stops idle sessions with no active turn and no live background work.
-That is _aligned_ with the board — it cleans up between steps — but it also means "the thread I
+That is *aligned* with the board — it cleans up between steps — but it also means "the thread I
 spawned is gone" is a routine path, not an exception. Handle it as normal control flow.
 
 ## Human gates

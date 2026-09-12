@@ -56,7 +56,7 @@ more than the conclusion when a future change pressures it.
 `apps/web` is a private Vite SPA with file-based TanStack routing and a single `index.html`. The
 server serves exactly one bundle (`apps/server/src/config.ts`, `../../web/dist`) and desktop loads
 that same bundle over `t3code://`. There is no extension point. A sibling app under `apps/` could
-only _replace_ web, not layer over it.
+only *replace* web, not layer over it.
 
 **Decision:** board code lives in its own package; `apps/web` receives roughly four hook points (a
 route, a tab in the shell, a lazy import, a settings entry). Desktop inherits the board for free.
@@ -67,15 +67,15 @@ Rejected alternatives: JSON files in the repo via `projects.writeFile` (no push,
 atomicity), and a sidecar service (unreachable over T3 Connect, which only proxies the T3 server).
 
 **Decision:** board commands and events join T3's own orchestration engine. Board commands ride the
-existing `orchestration.dispatchCommand`; board _shell_ data rides the existing
+existing `orchestration.dispatchCommand`; board *shell* data rides the existing
 `orchestration.subscribeShell`. This inherits ordering, idempotent retries, crash consistency,
 replay, and the entire remote-connection story at no cost.
 
 **Seam size — measured, not estimated.** `t3o-02` landed **39 markers across 15 upstream files**.
-The original estimate of ~20 across ~8 was low: introducing a new _aggregate kind_ (D9) means every
+The original estimate of ~20 across ~8 was low: introducing a new *aggregate kind* (D9) means every
 `ProjectId | ThreadId` union in the persistence layer needs `BoardCardId` too — `OrchestrationEngine`,
 `OrchestrationEventStore`, `OrchestrationCommandReceipts` and `ProjectionSnapshotQuery` were all
-missed in planning. Every one is still a union append or a wrapped call; the _shape_ held even though
+missed in planning. Every one is still a union append or a wrapped call; the *shape* held even though
 the count did not.
 
 **The bet is validated.** First upstream merge: 20 commits, 101 files, ~9.2k insertions → **one
@@ -143,12 +143,12 @@ must be in the in-memory read model.
 
 **Decision:**
 
-| State                                     | In read model?           | Why                                           |
-| ----------------------------------------- | ------------------------ | --------------------------------------------- |
-| card stage, order key, blocked, links     | yes                      | gates transitions                             |
-| plan status, `dependsOn`, `locked`, order | yes                      | gates approval, blocking, parent auto-advance |
-| plan body (markdown)                      | no                       | nothing branches on it                        |
-| review issue ledger                       | no (summary counts only) | card summary needs counts, not bodies         |
+| State | In read model? | Why |
+| --- | --- | --- |
+| card stage, order key, blocked, links | yes | gates transitions |
+| plan status, `dependsOn`, `locked`, order | yes | gates approval, blocking, parent auto-advance |
+| plan body (markdown) | no | nothing branches on it |
+| review issue ledger | no (summary counts only) | card summary needs counts, not bodies |
 
 Bodies live in projected tables (`board_plans`), following the existing
 `projection_thread_proposed_plans` and `checkpoint_diff_blobs` precedents. Writes always go
@@ -167,7 +167,7 @@ Deleted threads leave **tombstones** on the card rather than vanishing.
 ### D10 — Fixed stages, configurable steps
 
 Stages are the product: `Backlog → Sprint → Planning → Ready → Building → Code review →
-Ready for merge → Done`. What varies between users is the _steps within_ a stage and who runs them.
+Ready for merge → Done`. What varies between users is the *steps within* a stage and who runs them.
 
 **Decision:** the recipe (per-step prompt, provider instance, model, timeout, max attempts) is typed
 data in `ServerSettings.board`, edited from a new Settings → Board tab, with defaults compiled in so
@@ -189,7 +189,7 @@ step boundary** — nothing in flight is wasted and the worktree is always left 
 
 ### D12 — Sub-boards are stacked branches, depth 1
 
-**Decision:** the planning agent _proposes_ a split; the human approves it at the existing
+**Decision:** the planning agent *proposes* a split; the human approves it at the existing
 "Approve plan" gate, which materialises the plan cards and the integration branch. Plan cards are
 real cards with fewer columns (Ready onward). They branch off `feat/x` and their PRs target it. The
 parent's own Code Review is the final `feat/x → main` review, gated until every plan is Done. The
@@ -208,7 +208,7 @@ round runs on the rebased diff before merge, so the reviewed diff is the merged 
 **Decision:** every human gate ends with the agent asking a real question in its thread, which puts
 the thread into T3's existing pending-user-input state and flows through `AgentAwarenessRelay` →
 relay → APNs to the phone. The card renders "Input needed" and deep-links to the thread. Card
-buttons remain, but resolve the _same_ gate — a gate reachable only from the board is a gate you
+buttons remain, but resolve the *same* gate — a gate reachable only from the board is a gate you
 cannot clear from bed.
 
 Repeated step failure is also a question: retry, switch provider, or take it manually. Recovery
@@ -269,14 +269,14 @@ a human act unless listed below.
 
 **Human-gated transitions** (a click, a drag, or an answered thread question):
 
-| From → To                     | Action                                                 |
-| ----------------------------- | ------------------------------------------------------ |
-| Backlog → Sprint              | Add to sprint                                          |
-| Sprint → Planning             | Begin planning _(starts the planning thread on entry)_ |
-| Planning → Ready              | Approve plan                                           |
-| **Ready → Building**          | **Begin build — never automatic**                      |
-| Code review → Ready for merge | Approve review                                         |
-| Ready for merge → Done        | Merge                                                  |
+| From → To | Action |
+| --- | --- |
+| Backlog → Sprint | Add to sprint |
+| Sprint → Planning | Begin planning *(starts the planning thread on entry)* |
+| Planning → Ready | Approve plan |
+| **Ready → Building** | **Begin build — never automatic** |
+| Code review → Ready for merge | Approve review |
+| Ready for merge → Done | Merge |
 
 **Board-driven transitions** (the only ones):
 
@@ -289,7 +289,7 @@ up a dozen features without a single build starting. Planning is cheap, reversib
 (D6); building costs a worktree, an install, and real tokens. **Nothing crosses that line without
 you.**
 
-Note that "Begin build" means _commit this card to the build queue_, not _start now_ — the governor
+Note that "Begin build" means *commit this card to the build queue*, not *start now* — the governor
 may hold it as `queued` in Building (D11). Queued is still a state you chose.
 
 ---
@@ -318,22 +318,22 @@ paid off, not before.
 
 ## Build order
 
-| #   | Spec                                   | Phase | Prerequisites |
-| --- | -------------------------------------- | ----- | ------------- |
-| 01  | `t3o-01-fork-foundation.md`            | 0     | —             |
-| 02  | `t3o-02-walking-skeleton.md`           | 0     | 01            |
-| 02a | `t3o-02a-seam-generalisation.md`       | 0     | 02            |
-| 03  | `t3o-03-board-domain-model.md`         | 1     | 02a           |
-| 04  | `t3o-04-board-rpc-and-client-state.md` | 1     | 03            |
-| 05  | `t3o-05-board-shell-and-navigation.md` | 1     | 04            |
-| 06a | `t3o-06a-card-labels.md`               | 1     | 05            |
-| 06  | `t3o-06-card-ui-and-detail.md`         | 1     | 06a           |
-| 07  | `t3o-07-settings-board-tab.md`         | 1     | 03            |
-| 08  | `t3o-08-mcp-board-toolkit.md`          | 2     | 03, 06a       |
-| 09  | `t3o-09-worktree-branch-lifecycle.md`  | 2     | 03            |
-| 10  | `t3o-10-supervisor-reactor.md`         | 2     | 08, 09        |
-| 11  | `t3o-11-concurrency-governor.md`       | 2     | 10            |
-| 12  | `t3o-12-building-stage-automation.md`  | 2     | 06, 07, 11    |
+| # | Spec | Phase | Prerequisites |
+| --- | --- | --- | --- |
+| 01 | `t3o-01-fork-foundation.md` | 0 | — |
+| 02 | `t3o-02-walking-skeleton.md` | 0 | 01 |
+| 02a | `t3o-02a-seam-generalisation.md` | 0 | 02 |
+| 03 | `t3o-03-board-domain-model.md` | 1 | 02a |
+| 04 | `t3o-04-board-rpc-and-client-state.md` | 1 | 03 |
+| 05 | `t3o-05-board-shell-and-navigation.md` | 1 | 04 |
+| 06a | `t3o-06a-card-labels.md` | 1 | 05 |
+| 06 | `t3o-06-card-ui-and-detail.md` | 1 | 06a |
+| 07 | `t3o-07-settings-board-tab.md` | 1 | 03 |
+| 08 | `t3o-08-mcp-board-toolkit.md` | 2 | 03, 06a |
+| 09 | `t3o-09-worktree-branch-lifecycle.md` | 2 | 03 |
+| 10 | `t3o-10-supervisor-reactor.md` | 2 | 08, 09 |
+| 11 | `t3o-11-concurrency-governor.md` | 2 | 10 |
+| 12 | `t3o-12-building-stage-automation.md` | 2 | 06, 07, 11 |
 
 Waves, once prerequisites are honoured:
 
@@ -346,10 +346,10 @@ Waves, once prerequisites are honoured:
 
 **02 is deliberately first and deliberately thin.** It lands every seam end-to-end with a trivial
 board command before any volume is built on top. Pull upstream once or twice against it. If the
-seam estimate is wrong, that is discovered in week one with nothing invested. _(Done — the estimate
-was low on count and right on shape; see D2.)_
+seam estimate is wrong, that is discovered in week one with nothing invested. *(Done — the estimate
+was low on count and right on shape; see D2.)*
 
-**02a exists because 02 taught us the seams were the wrong shape.** They _enumerated_ — a case per
+**02a exists because 02 taught us the seams were the wrong shape.** They *enumerated* — a case per
 command in three files, an entry per projector in a fourth — so the core would have changed every
 time the board grew. 02a converts them to predicate-delegation and registry-spread, which freezes the
 seam count. It runs while there is exactly one board command, because refactoring one enumeration is
