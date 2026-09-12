@@ -40,6 +40,7 @@ function makeProvider(
     getDefaultBranch: () => Effect.succeed(null),
     checkoutChangeRequest: () => unsupported("checkoutChangeRequest"),
     mergeChangeRequest: () => unsupported("mergeChangeRequest"),
+    // T3o (T3O-38, D7): the structured refusal probe.
     changeRequestMergeState: () => unsupported("changeRequestMergeState"),
     ...overrides,
   };

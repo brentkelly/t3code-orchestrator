@@ -335,6 +335,21 @@ Brief attachments (`t3o-32`) added 6 markers: `contracts/assets.ts` 1, `AssetAcc
 claims member, mint case, resolve branch) and `ws.ts` +1 (6). The upload, storage, claim and
 manifest all live in board-owned files (`board/attachments.ts`, migration `032`).
 
+Auto-merge's structured refusal probe (`T3O-38`) added 12 markers across 9 upstream-owned files,
+all of them the same shape as the `t3o-16` merge path they sit beside:
+`contracts/sourceControl.ts` 1 (the `ChangeRequestMergeState` block),
+`SourceControlProvider.ts` 1 (`changeRequestMergeState` on the interface),
+`SourceControlProviderRegistry.ts` 1 (the unsupported stub + the context forward),
+`{AzureDevOps,Bitbucket,GitLab}SourceControlProvider.ts` 1 each (unsupported stubs),
+`GitHubSourceControlProvider.ts` 1, `GitHubCli.ts` 3 (interface member, import, `gh pr view`
+implementation), `git/GitManager.ts` 2, and the two test stubs
+(`GitManager.test.ts`, `SourceControlRepositoryService.test.ts`) 1 each. Everything the board
+actually DOES with the answer lives in fork-owned files: the parsers
+(`sourceControl/gitHubMergeState.ts`, `sourceControl/forgejoMergeState.ts` — both new), the
+classifier (`board/autoMergeClassification.ts`, new), the gateway seam
+(`board/BoardPullRequestGateway.ts`) and the reactor. Forgejo's two additions are in
+`ForgejoCli.ts` / `ForgejoSourceControlProvider.ts`, which are fork-owned already (`t3o-28`).
+
 Per-project GitHub token overrides (`t3o-34`, see [gitenv](./gitenv.md)) added 15 markers across 7
 upstream-owned files: `config.ts` 2 (import + `initGitenv` in `make`, which only `pair` still reaches),
 `cli/config.ts` 2 (import + `initGitenv` at the end of `resolveServerConfig`, the real server boot
