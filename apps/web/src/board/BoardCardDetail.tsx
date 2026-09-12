@@ -98,6 +98,7 @@ import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import {
   describeBoardCommandFailure,
   describeBoardMergeOutcome,
+  describeBoardReviewRoundOutcome,
   describeBoardSubmitOutcome,
 } from "./boardCommandFeedback";
 import { openPullRequestLink } from "../lib/openPullRequestLink";
@@ -200,6 +201,11 @@ export function BoardCardDetail({
   // Same reason as the two above: every refusal is a normal answer with its own
   // wording ("this card has no branch to push"), not a command failure.
   const submitCardForMerge = useAtomCommand(boardEnvironment.submitCardForMerge, {
+    reportFailure: false,
+  });
+  // "Another review round" / "Request review" (T3O-39). Same reason again:
+  // every refusal is a normal answer with its own wording.
+  const requestReviewRound = useAtomCommand(boardEnvironment.requestReviewRound, {
     reportFailure: false,
   });
   const createLabel = useAtomCommand(boardEnvironment.createLabel);
@@ -773,6 +779,30 @@ export function BoardCardDetail({
           : null,
   });
 
+  /** Whether ANY step is live on the card — running, queued, or parked
+      (stalled, awaiting input, paused). The decider's one-step-at-a-time
+      invariant reads exactly this set, so the button that is disabled by it
+      (T3O-39, D9) must read the same set and not just "running". */
+  const stepLive =
+    cardShell?.stepRunning === true ||
+    cardShell?.queued === true ||
+    cardShell?.stalled === true ||
+    (cardShell?.stepAwaiting ?? null) !== null;
+
+  /** "Another review round" / "Request review" (T3O-39, D6). One RPC behind
+      both the rail button and the pane's "Run round N+1": the server writes
+      the override, records why, and moves the card, in that order. */
+  const onRequestReviewRound = () => {
+    setFeedback(null);
+    void requestReviewRound({ environmentId, input: { cardId: card.id } }).then((result) => {
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+        return;
+      }
+      setFeedback(describeBoardReviewRoundOutcome(result.value));
+    });
+  };
+
   // Restart is a server command (D2): the reactor runs the stage's configured
   // prompt through the same envelope the automatic trigger uses, so the two
   // entry points cannot drift. Failure logs and stops (D4).
@@ -1035,6 +1065,8 @@ export function BoardCardDetail({
           setFeedback(describeBoardSubmitOutcome(result.value));
         });
       }}
+      onRequestReviewRound={onRequestReviewRound}
+      stepLive={stepLive}
       onOpenPullRequest={(url) => {
         // Refresh on the way out: clicking through is the moment the user is
         // about to see the real state on the forge, so the card should not
@@ -1146,15 +1178,11 @@ export function BoardCardDetail({
       onReopenReviewStep={(stepId) =>
         runCommand(reopenStep({ environmentId, input: { cardId: card.id, stepId } }))
       }
-      onResumeReview={(rounds) =>
-        // "Run round N+1" is a resume, so it says both halves outright: at
-        // least enough budget to reach that round (never LESS than the card
-        // already has), and no pending stop to terminate on again.
-        patchReviewOverrides({
-          rounds: Math.max(rounds, card.reviewOverrides?.rounds ?? rounds),
-          stopAfterRound: null,
-        })
-      }
+      // The pane's "Run round N+1" and the rail's "Another review round" are
+      // the same verb (T3O-39, D6), so they are the same call: the server
+      // resolves the round from the ledger, writes the override before it
+      // moves the card, and there is no client-side patch to keep in agreement.
+      onResumeReview={onRequestReviewRound}
       onSetReviewRoundModel={(round, model) =>
         patchReviewOverrides({
           roundModels: Object.fromEntries(

@@ -345,6 +345,16 @@ export function reviewLoopDecision(input: {
         }
         return runSync(round);
       }
+      // The one thing that outranks convergence (T3O-39, D3): a human asked
+      // this loop for another pass over the same branch, so a round that
+      // closed clean still owes it. LAST in this arm, deliberately — a stale
+      // base plans its sync first, because a round reviewing the diff against
+      // a base it is no longer built on is not the pass that was asked for
+      // (and the gate round that rebase owes satisfies the request anyway).
+      //
+      // Self-clearing: once round N has run, `N < N` is false and the loop
+      // converges here as it always did.
+      if (round < (overrides?.runThroughRound ?? 0)) continue;
       return { kind: "complete", outcome: "succeeded" };
     }
     // The user asked the loop to hold after this round (t3o-22, D5). Checked

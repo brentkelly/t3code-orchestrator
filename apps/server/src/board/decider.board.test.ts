@@ -17,7 +17,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  BOARD_REVIEW_MAX_ROUNDS,
   BOARD_SEED_STAGE_IDS,
   type BoardCard,
   type BoardCardStepState,
@@ -627,7 +626,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       type: "board.card.update",
       commandId: CommandId.make("cmd-rounds"),
       cardId: BoardCardId.make("card-a"),
-      reviewOverrides: { rounds, stopAfterRound: null, roundModels: {} },
+      reviewOverrides: { rounds, stopAfterRound: null, roundModels: {}, runThroughRound: null },
       createdAt: NOW,
     }) satisfies BoardCommand;
 
@@ -660,13 +659,88 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
-  it.effect("t3o-22 D3: rejects a budget above the ceiling", () =>
+  it.effect("T3O-39 D4: accepts a budget past the old ten-round ceiling", () =>
     Effect.gen(function* () {
-      const failure = yield* decideFail(
-        setRounds(BOARD_REVIEW_MAX_ROUNDS + 1),
-        reviewCardBoard({}),
+      // The ceiling is gone. A budget is a number a human typed into the
+      // stepper and can see; refusing it bought nothing.
+      const event = yield* decide(setRounds(42), reviewCardBoard({}));
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.card.reviewOverrides?.rounds, 42);
+    }),
+  );
+
+  const requestRound = (runThroughRound: number | null) =>
+    ({
+      type: "board.card.update",
+      commandId: CommandId.make("cmd-request-round"),
+      cardId: BoardCardId.make("card-a"),
+      reviewOverrides: { rounds: null, stopAfterRound: null, roundModels: {}, runThroughRound },
+      createdAt: NOW,
+    }) satisfies BoardCommand;
+
+  it.effect("T3O-39 D5: accepts a request for the round after the last one started", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(requestRound(3), reviewCardBoard({ completedRounds: 2 }));
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.card.reviewOverrides?.runThroughRound, 3);
+    }),
+  );
+
+  it.effect("T3O-39 D5: rejects a request booked more than one round ahead", () =>
+    Effect.gen(function* () {
+      // This clamp is what makes having no ceiling safe: without it one click
+      // would book rounds nobody asked for.
+      const failure = yield* decideFail(requestRound(9), reviewCardBoard({ completedRounds: 2 }));
+      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.include(String(failure), "only round 3 can be requested next");
+    }),
+  );
+
+  it.effect("T3O-39 D5: counts a round still IN FLIGHT when clamping", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        requestRound(4),
+        reviewCardBoard({ completedRounds: 2, liveStepId: "review@3" }),
       );
-      assert.include(String(failure), "exceeds the ceiling");
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.card.reviewOverrides?.runThroughRound, 4);
+    }),
+  );
+
+  it.effect("T3O-39 D5: asking for another round clears a pending stop", () =>
+    Effect.gen(function* () {
+      // The stop and the request are the same person's decisions; the request
+      // is the later one, so the executor must not terminate on the stop again.
+      const event = yield* decide(
+        {
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-request-over-stop"),
+          cardId: BoardCardId.make("card-a"),
+          reviewOverrides: {
+            rounds: null,
+            stopAfterRound: 2,
+            roundModels: {},
+            runThroughRound: 3,
+          },
+          createdAt: NOW,
+        },
+        reviewCardBoard({
+          completedRounds: 2,
+          overrides: {
+            rounds: null,
+            stopAfterRound: 2,
+            roundModels: {},
+            runThroughRound: null,
+          },
+        }),
+      );
+      assert.strictEqual(event.type, "board.card-updated");
+      if (event.type !== "board.card-updated") return;
+      assert.strictEqual(event.payload.card.reviewOverrides?.stopAfterRound, null);
+      assert.strictEqual(event.payload.card.reviewOverrides?.runThroughRound, 3);
     }),
   );
 
@@ -680,10 +754,12 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.card.update",
           commandId: CommandId.make("cmd-extend"),
           cardId: BoardCardId.make("card-a"),
-          reviewOverrides: { rounds: 3, stopAfterRound: 2, roundModels: {} },
+          reviewOverrides: { rounds: 3, stopAfterRound: 2, roundModels: {}, runThroughRound: null },
           createdAt: NOW,
         },
-        reviewCardBoard({ overrides: { rounds: 2, stopAfterRound: 2, roundModels: {} } }),
+        reviewCardBoard({
+          overrides: { rounds: 2, stopAfterRound: 2, roundModels: {}, runThroughRound: null },
+        }),
       );
       assert.strictEqual(event.type, "board.card-updated");
       if (event.type !== "board.card-updated") return;
@@ -759,11 +835,11 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.card.update",
           commandId: CommandId.make("cmd-resume"),
           cardId: BoardCardId.make("card-a"),
-          reviewOverrides: { rounds: 3, stopAfterRound: 2, roundModels: {} },
+          reviewOverrides: { rounds: 3, stopAfterRound: 2, roundModels: {}, runThroughRound: null },
           createdAt: NOW,
         },
         reviewCardBoard({
-          overrides: { rounds: 8, stopAfterRound: 2, roundModels: {} },
+          overrides: { rounds: 8, stopAfterRound: 2, roundModels: {}, runThroughRound: null },
           completedRounds: 2,
         }),
       );
@@ -781,7 +857,12 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.card.update",
           commandId: CommandId.make("cmd-stop"),
           cardId: BoardCardId.make("card-a"),
-          reviewOverrides: { rounds: null, stopAfterRound: 2, roundModels: {} },
+          reviewOverrides: {
+            rounds: null,
+            stopAfterRound: 2,
+            roundModels: {},
+            runThroughRound: null,
+          },
           createdAt: NOW,
         },
         reviewCardBoard({ completedRounds: 2 }),
@@ -804,7 +885,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           setRounds(3),
           reviewCardBoard({
             completedRounds: 2,
-            overrides: { rounds: 5, stopAfterRound: null, roundModels: {} },
+            overrides: { rounds: 5, stopAfterRound: null, roundModels: {}, runThroughRound: null },
           }),
         );
         assert.strictEqual(event.type, "board.card-updated");

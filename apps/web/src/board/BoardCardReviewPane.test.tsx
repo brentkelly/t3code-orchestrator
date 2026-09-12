@@ -248,6 +248,54 @@ describe("BoardCardReviewPane", () => {
     expect(html).not.toContain("Running now");
   });
 
+  // ── The round ceiling is gone (T3O-39, D4) ─────────────────────────────
+
+  /** A round that ran every phase and left its critical unresolved — a loop
+      that held rather than converged. */
+  const heldRound = (round: number) => [
+    completion(`review@${round}`, {
+      reviewedSha: `sha${round}`,
+      findings: [
+        { id: `f${round}`, severity: "critical", file: "a.ts", line: 1, title: "Boom", detail: "" },
+      ],
+    }),
+    completion(`triage@${round}`, { fixedSha: `fix${round}`, dispositions: [] }),
+    completion(`adjudicate@${round}`, { verdicts: [] }),
+  ];
+
+  it("lets the round stepper go past the old ten-round ceiling", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardReviewPane
+        completions={heldRound(1)}
+        live={false}
+        maxRounds={12}
+        onBackToThread={noop}
+        onSetRounds={noop}
+      />,
+    );
+    // Twelve segments, and the `+` is still live — it used to go dead at ten.
+    expect(html).toContain("R12");
+    expect(html).toContain("Round 2 of 12");
+    const addRound = html.slice(html.indexOf('aria-label="Add a round"'));
+    expect(addRound.slice(0, addRound.indexOf(">"))).not.toContain("disabled");
+  });
+
+  it("offers another round on a held loop however many have run", () => {
+    // The old gate refused `onResume` past round 10, so a loop that had run
+    // its tenth round could never be re-entered from the pane.
+    const html = renderToStaticMarkup(
+      <BoardCardReviewPane
+        completions={Array.from({ length: 10 }, (_, index) => heldRound(index + 1)).flat()}
+        live={false}
+        maxRounds={10}
+        onBackToThread={noop}
+        onResume={noop}
+      />,
+    );
+    expect(html).toContain("Round limit reached without convergence");
+    expect(html).toContain("Run round 11");
+  });
+
   // The guard for the fix above: ON the review stage the round still reads as
   // in progress, and the due phase still spins.
   it("still shows a live on-stage round as in progress, with its phase running", () => {

@@ -1082,7 +1082,12 @@ it.effect("PIPELINE 3: a child's converged review auto-merges it through to Done
           {
             ...childCard("card-one", "review"),
             worktree: childWorktree("card-one"),
-            reviewOverrides: { rounds: 1, stopAfterRound: null, roundModels: {} },
+            reviewOverrides: {
+              rounds: 1,
+              stopAfterRound: null,
+              roundModels: {},
+              runThroughRound: null,
+            },
           },
         ],
         stepStates: [runningReviewStep(BoardCardId.make("card-one"))],

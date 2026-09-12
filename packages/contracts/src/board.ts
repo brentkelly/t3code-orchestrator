@@ -761,12 +761,6 @@ export function isBoardCardPullRequestTerminal(pullRequest: BoardCardPullRequest
 
 // ── Per-card review-loop overrides (t3o-22) ────────────────────────────
 
-/** The ceiling on a review loop's round budget, wherever it is set. A cap on
-    the cap: the budget is a per-card control now, so nothing stops a stray
-    click from asking for a hundred rounds of a loop that holds a concurrency
-    slot for its whole run. */
-export const BOARD_REVIEW_MAX_ROUNDS = 10;
-
 /**
  * How a card's review loop stands (t3o-22, D7) — the vocabulary the column
  * card, the pane and the projection cache all speak.
@@ -900,9 +894,10 @@ export function isEmptyBoardCardModelOverrides(overrides: BoardCardModelOverride
 
 /**
  * A card's own review-loop settings (t3o-22, D2), overriding the board-wide
- * review stage config for THIS card's run. All three are the answers to a loop
- * that will not converge: give it more rounds, give the reviewer better eyes,
- * or stop burning rounds and let a human look.
+ * review stage config for THIS card's run. Each is an answer to a loop that
+ * did not end where the user wanted: give it more rounds, give the reviewer
+ * better eyes, stop burning rounds and let a human look — or, once it has
+ * settled, ask it for one more pass anyway (T3O-39, D1).
  *
  * Every field is inert when absent, so a card that never touched the pane runs
  * exactly the board's configured loop. Kept on the card rather than in a side
@@ -927,6 +922,25 @@ export const BoardCardReviewOverrides = Schema.Struct({
   roundModels: Schema.Record(Schema.String, BoardReviewRoundOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** Do not settle before this round has RUN (T3O-39, D1). The one thing that
+      outranks the convergence arm: a loop that closed clean still owes this
+      round, because a human asked for one more pass over the same branch.
+
+      A separate number from `rounds` because the two mean opposite things.
+      `rounds` is a CAP — "the loop stops early once a round closes clean" is
+      the point of it — so re-reading it as a target would destroy the exit
+      that means the code passed. This is a FLOOR on where the loop may settle,
+      and it floors the budget too (`effectiveBoardReviewRounds`), because the
+      walk breaks on the cap before it ever reaches the convergence arm.
+
+      Self-clearing: once round N has run, `N < N` is false and the loop
+      converges normally, so the value is history like a stale `roundModels`
+      key. The decider clamps a write to `roundsStarted + 1`, which is what
+      keeps every extra round one deliberate click now that there is no
+      ceiling. */
+  runThroughRound: Schema.NullOr(PositiveInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type BoardCardReviewOverrides = typeof BoardCardReviewOverrides.Type;
 
@@ -937,6 +951,7 @@ export const EMPTY_BOARD_CARD_REVIEW_OVERRIDES: BoardCardReviewOverrides = {
   rounds: null,
   stopAfterRound: null,
   roundModels: {},
+  runThroughRound: null,
 };
 
 /** True when the overrides say nothing at all, so the card can store `null`
@@ -948,6 +963,7 @@ export function isEmptyBoardCardReviewOverrides(
   return (
     overrides.rounds === null &&
     overrides.stopAfterRound === null &&
+    overrides.runThroughRound === null &&
     Object.keys(overrides.roundModels).length === 0
   );
 }
@@ -1883,6 +1899,11 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
       moved since its last review round started (t3o-24, D2) — without this
       row the interception reads as a drag that silently snapped back. */
   "card-base-stale",
+  /** A human asked a settled loop for one more review round (T3O-39, D10).
+      Same argument as `card-base-stale`: a card jumping from Ready for merge
+      back to Code review is a move that otherwise explains nothing, and
+      `card-moved` says where but never why. */
+  "card-review-round-requested",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -4216,6 +4237,10 @@ export const BoardCardNoteKind = Schema.Literals([
       gate round re-reviews the rebased diff. Without this row the interception
       is a drag that silently snaps back. */
   "card-base-stale",
+  /** A human asked for another review round on a loop that had already settled
+      (T3O-39, D10) — the only record of WHY the card walked back to Code
+      review, and of which round it bought. */
+  "card-review-round-requested",
 ]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
 
@@ -6761,6 +6786,13 @@ export const BOARD_WS_METHODS = {
       caller is a human waiting on an answer, and "there is nothing to push"
       is a refusal they need to read on the card. */
   submitCardForMerge: "board.submitCardForMerge",
+  /** Run one more review round on a card whose loop has already settled
+      (T3O-39, D6) — "Another review round", and "Request review" on a card
+      that never had one. An RPC rather than a card command because the
+      ORDERING is load-bearing: the override must be written before the card
+      moves, or the executor re-plans a converged loop, completes `succeeded`,
+      and bounces the card straight back to Ready for merge. */
+  requestReviewRound: "board.requestReviewRound",
   /** Claim a pending upload into the card's folder and record it on the brief
       (t3o-32, K2). An RPC, not a client command: the copy is a filesystem
       side effect that must land before the record does. */
@@ -6859,6 +6891,33 @@ export const BoardSubmitCardForMergeResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("failed") }),
 ]);
 export type BoardSubmitCardForMergeResult = typeof BoardSubmitCardForMergeResult.Type;
+
+/**
+ * What "Another review round" / "Request review" did (T3O-39, D6/D7).
+ *
+ * `started` names the round it bought, so the card can say "round 6 is
+ * running" rather than "done". Every other arm is a refusal the card shows,
+ * for the same reason the merge and submit results are values: a button that
+ * silently does nothing is what this whole card exists to fix.
+ */
+export const BoardRequestReviewRoundResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("started"), round: PositiveInt }),
+  /** The board has no review-role stage, so there is no loop to run. */
+  Schema.Struct({ outcome: Schema.Literal("no-review-stage") }),
+  /** The card is on neither the review-role nor the merge-role stage. The
+      button renders only there (D8), so this is a stale client. */
+  Schema.Struct({ outcome: Schema.Literal("wrong-stage") }),
+  /** A step is live on the card — including a merge-conflict fix, which must
+      not be superseded mid-rebase (D9). */
+  Schema.Struct({ outcome: Schema.Literal("step-running") }),
+  /** No worktree branch, so there is nothing to review. */
+  Schema.Struct({ outcome: Schema.Literal("no-branch") }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+  /** The attempt itself broke — a read-model hiccup, not a refusal with a
+      cause the user can act on. */
+  Schema.Struct({ outcome: Schema.Literal("failed") }),
+]);
+export type BoardRequestReviewRoundResult = typeof BoardRequestReviewRoundResult.Type;
 
 export const BoardSubscribeCardInput = Schema.Struct({
   cardId: BoardCardId,
@@ -7110,6 +7169,11 @@ export const BOARD_RPCS = [
     success: BoardMergeCardPullRequestResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.requestReviewRound, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardRequestReviewRoundResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.submitCardForMerge, {
     payload: BoardCardPullRequestActionInput,
     success: BoardSubmitCardForMergeResult,
@@ -7154,6 +7218,7 @@ export const BOARD_RPC_SCOPES = {
   // Submitting starts an agent that pushes a branch and opens a pull request,
   // and moves the card: the same mutation tier as merging.
   [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
   // Attaching writes a file and a board event; detaching deletes one. Both
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,
@@ -7620,6 +7685,11 @@ export function boardReviewLoopWalk(input: {
   readonly completions: ReadonlyArray<BoardStepCompletion>;
   readonly maxRounds: number;
   readonly stopAfterRound: number | null;
+  /** The card's `runThroughRound` (T3O-39, D1/D13). Required rather than
+      defaulted: this walk is the executor's mirror, and a reader that quietly
+      omitted it would report `converged` while the executor is dispatching the
+      round the user just asked for. */
+  readonly runThroughRound: number | null;
 }): BoardReviewLoopWalk {
   const done = new Map<string, BoardStepCompletion>();
   for (const completion of input.completions) {
@@ -7718,6 +7788,12 @@ export function boardReviewLoopWalk(input: {
     if (!blocking) {
       const sync = done.get(reviewStepId("sync", round));
       if (sync === undefined) {
+        // A round the user asked for outright (T3O-39, D3) outranks the
+        // convergence exit, mirroring the executor's arm — and placed LAST for
+        // the same reason it is there: the sync above owes a gate round
+        // anyway, and reviewing a diff against a base it is no longer built on
+        // is not the pass that was asked for.
+        if (round < (input.runThroughRound ?? 0)) continue;
         return { next: null, status: "converged", currentRound: round, unreadableStepId: null };
       }
       const broken = unreadableStep(sync);
@@ -7747,31 +7823,15 @@ export function deriveBoardCardReviewSummary(input: {
       bounds the walk — see below. */
   readonly maxRounds: number | null;
   readonly stopAfterRound: number | null;
+  /** The card's `runThroughRound` (T3O-39, D13), so the cache cannot report a
+      loop `converged` while the executor is planning the round the user asked
+      for. */
+  readonly runThroughRound: number | null;
 }): BoardCardReviewSummary | null {
   const reviewSteps = input.completions.filter(
     (completion) => parseReviewStepId(completion.stepId) !== null,
   );
   if (reviewSteps.length === 0) return null;
-  // The walk runs to the CEILING, never to `maxRounds`, and that is load-bearing.
-  //
-  // Bounding it by the caller's budget makes the cache report `round-cap` the
-  // instant the last recorded round's phases are in — which is true of every
-  // healthy multi-round loop for the whole gap between one round finishing and
-  // the next round's review landing, minutes to tens of minutes of a running
-  // card wearing the alarm. It is also unknowable from here: the projector
-  // cannot see the board's review settings, so any budget it invents is a
-  // guess, and a guess that can invert the verdict is worse than none.
-  //
-  // Run to the ceiling and the walk simply stops at the first round with no
-  // review completion, reporting `running` — provisionally. Whether that
-  // actually means "between rounds" or "the loop ended here" is settled by
-  // `resolveBoardCardReviewOutcome` against the card's live step, which is the
-  // one fact that answers it and the job that function exists for.
-  const walk = boardReviewLoopWalk({
-    completions: input.completions,
-    maxRounds: BOARD_REVIEW_MAX_ROUNDS,
-    stopAfterRound: input.stopAfterRound,
-  });
 
   const succeeded = new Map<string, BoardStepCompletion>();
   for (const completion of reviewSteps) {
@@ -7784,6 +7844,32 @@ export function deriveBoardCardReviewSummary(input: {
     const parsed = parseReviewStepId(completion.stepId);
     if (parsed?.phase === "review") highestRecorded = Math.max(highestRecorded, parsed.round);
   }
+  // The walk runs past the LEDGER, never to `maxRounds`, and that is
+  // load-bearing.
+  //
+  // Bounding it by the caller's budget makes the cache report `round-cap` the
+  // instant the last recorded round's phases are in — which is true of every
+  // healthy multi-round loop for the whole gap between one round finishing and
+  // the next round's review landing, minutes to tens of minutes of a running
+  // card wearing the alarm. It is also unknowable from here: the projector
+  // cannot see the board's review settings, so any budget it invents is a
+  // guess, and a guess that can invert the verdict is worse than none.
+  //
+  // The bound is the ledger's own last round plus one, which is where the walk
+  // stops anyway: it terminates at the first round with no review completion,
+  // reporting `running` — provisionally. (It was a compiled-in ceiling of 10
+  // until T3O-39 deleted that constant; a bound read off the completions is
+  // both more honest and immune to a loop that runs longer than any number
+  // anyone picks.) Whether `running` actually means "between rounds" or "the
+  // loop ended here" is settled by `resolveBoardCardReviewOutcome` against the
+  // card's live step, which is the one fact that answers it and the job that
+  // function exists for.
+  const walk = boardReviewLoopWalk({
+    completions: input.completions,
+    maxRounds: highestRecorded + 1,
+    stopAfterRound: input.stopAfterRound,
+    runThroughRound: input.runThroughRound,
+  });
   // The round the loop is ON, not the one it is waiting for. The ceiling walk
   // reports `lastRound + 1` for a held loop — a round that never started — and
   // letting that through made the card face render one pip more than the
@@ -7933,8 +8019,11 @@ export function boardReviewRoundsStarted(input: {
 
 /**
  * The round budget a card's loop actually runs to (t3o-22, D3): the card's own
- * override when it has one, else the review stage's setting — clamped so it can
- * neither drop below a round already started nor exceed the ceiling.
+ * override when it has one, else the review stage's setting — floored so it can
+ * never drop below a round already started, nor below a round the user has
+ * explicitly asked for (T3O-39, D2). There is no ceiling: denying a user a
+ * round they are deliberately asking for buys nothing, and the decider's clamp
+ * on `runThroughRound` keeps each extra round one click.
  *
  * Every reader goes through this. The executor plans against it, the decider
  * validates writes against it, and the pane renders it, so the three cannot
@@ -7946,8 +8035,14 @@ export function effectiveBoardReviewRounds(input: {
   readonly roundsStarted: number;
 }): number {
   const requested = input.overrides?.rounds ?? input.configured;
-  const floor = Math.max(1, input.roundsStarted);
-  return Math.min(BOARD_REVIEW_MAX_ROUNDS, Math.max(floor, requested));
+  // `runThroughRound` floors the budget as well as outranking the convergence
+  // arm (T3O-39, D2). One field must do both: the walk breaks on the cap
+  // before it ever reaches the arm, so a request the budget cannot reach would
+  // be inert. A card converged at 2 of 5 that asks for round 3 simply re-enters
+  // the loop it was already in; one converged at 5 of 5 gets round 6 and then
+  // holds, because nothing raised the ceiling past it.
+  const floor = Math.max(1, input.roundsStarted, input.overrides?.runThroughRound ?? 0);
+  return Math.max(floor, requested);
 }
 
 /** Default per-phase prompts (D2), ported from the `pullrequest-review` /

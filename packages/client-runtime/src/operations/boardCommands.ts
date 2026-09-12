@@ -113,6 +113,13 @@ export const mergeBoardCardPullRequest = (input: { readonly cardId: BoardCardId 
 export const submitBoardCardForMerge = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.submitCardForMerge, input);
 
+/** Run one more review round on a card whose loop has already settled
+    (T3O-39) — "Another review round", and "Request review" on a card that
+    never had one. An RPC for the ordering: the override has to be written
+    before the card moves, and the server owns that order. */
+export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.requestReviewRound, input);
+
 /** Claim a pending upload onto a card's brief (t3o-32): the server copies the
     file into the card's folder and records it, in that order. */
 export const attachBoardCardFile = (input: BoardAttachCardFileInput) =>

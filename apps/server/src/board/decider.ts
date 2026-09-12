@@ -44,7 +44,6 @@ import {
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterSubBoardFloor,
   boardCardPullRequestsEqual,
-  BOARD_REVIEW_MAX_ROUNDS,
   boardCardDeletableThreadIds,
   boardCardStepCompletions,
   boardStepPayloadDefect,
@@ -469,7 +468,7 @@ const validateBaseBranch = Effect.fn("validateBaseBranch")(function* (input: {
 /**
  * Validate and normalise a card's incoming review-loop overrides (t3o-22).
  *
- * Two rules, both here rather than in the pane, because the client is not the
+ * Three rules, all here rather than in the pane, because the client is not the
  * guard and a stale pane must never be able to strand a live run:
  *
  *  - **A round that has STARTED can never be removed** (D3). The floor is the
@@ -479,9 +478,14 @@ const validateBaseBranch = Effect.fn("validateBaseBranch")(function* (input: {
  *    lands beyond the cap, a walk that never reaches it again, and a wedged
  *    loop holding a concurrency slot.
  *  - **A stop cannot outlive a decision to buy more rounds** (D5). Raising the
- *    budget is the later expression of intent, so it clears a pending stop;
- *    otherwise the executor would keep terminating at the stopped round and the
- *    extra rounds could never run.
+ *    budget — or asking outright for the next round (T3O-39) — is the later
+ *    expression of intent, so it clears a pending stop; otherwise the executor
+ *    would keep terminating at the stopped round and the extra rounds could
+ *    never run.
+ *  - **Only the NEXT round can be requested** (T3O-39, D5). `runThroughRound`
+ *    is clamped to `roundsStarted + 1`, which is what makes deleting the round
+ *    ceiling safe: a budget is a number a human typed and can see, while a
+ *    request booked fifty rounds ahead is fifty runs nobody asked for.
  *
  * Setting a stop for a round the loop is already past is rejected rather than
  * silently dropped — nothing in the UI does it, so it is a caller bug worth
@@ -501,19 +505,23 @@ const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (
       stepState === null || isBoardTerminalStepStatus(stepState.status) ? null : stepState.stepId,
   });
 
-  if (proposed.rounds !== null) {
-    if (proposed.rounds < roundsStarted) {
-      return yield* invariant(
-        command,
-        `Cannot set the review budget to ${proposed.rounds} round(s) for card '${card.id}': round ${roundsStarted} has already started and cannot be removed.`,
-      );
-    }
-    if (proposed.rounds > BOARD_REVIEW_MAX_ROUNDS) {
-      return yield* invariant(
-        command,
-        `Review budget of ${proposed.rounds} rounds for card '${card.id}' exceeds the ceiling of ${BOARD_REVIEW_MAX_ROUNDS}.`,
-      );
-    }
+  if (proposed.rounds !== null && proposed.rounds < roundsStarted) {
+    return yield* invariant(
+      command,
+      `Cannot set the review budget to ${proposed.rounds} round(s) for card '${card.id}': round ${roundsStarted} has already started and cannot be removed.`,
+    );
+  }
+
+  // The clamp that makes having NO round ceiling safe (T3O-39, D5). A `rounds`
+  // of 50 is a number a human typed into a stepper and can see; a
+  // `runThroughRound` of 50 would be fifty rounds nobody asked for, booked by
+  // one click. Clamped to one past the highest round started, every extra
+  // round is one deliberate click.
+  if (proposed.runThroughRound !== null && proposed.runThroughRound > roundsStarted + 1) {
+    return yield* invariant(
+      command,
+      `Cannot ask card '${card.id}' to run through review round ${proposed.runThroughRound}: only round ${roundsStarted + 1} can be requested next.`,
+    );
   }
 
   // Does this write ask the loop to run PAST a pending stop?
@@ -534,10 +542,20 @@ const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (
     roundsChanged &&
     proposed.rounds !== null &&
     (proposed.stopAfterRound === null || proposed.rounds > proposed.stopAfterRound);
+  // Asking for another round is the same contradiction one rung along
+  // (T3O-39, D5): a request to RUN round N outranks a hold at round N-1 or
+  // later, because it is the more recent decision by the same person. Without
+  // this the executor would terminate on the stop again and the button would
+  // be inert.
+  const requestedRound =
+    proposed.runThroughRound !== null &&
+    proposed.runThroughRound !== (card.reviewOverrides?.runThroughRound ?? null) &&
+    (proposed.stopAfterRound === null || proposed.runThroughRound > proposed.stopAfterRound);
+  const supersedesStop = raisedRounds || requestedRound;
 
   if (
     proposed.stopAfterRound !== null &&
-    !raisedRounds &&
+    !supersedesStop &&
     proposed.stopAfterRound < roundsStarted
   ) {
     return yield* invariant(
@@ -548,7 +566,7 @@ const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (
 
   const normalised: BoardCardReviewOverrides = {
     ...proposed,
-    stopAfterRound: raisedRounds ? null : proposed.stopAfterRound,
+    stopAfterRound: supersedesStop ? null : proposed.stopAfterRound,
   };
   return isEmptyBoardCardReviewOverrides(normalised) ? null : normalised;
 });
@@ -713,6 +731,7 @@ function reviewSummaryAfter(input: {
       ],
       maxRounds: input.card.reviewOverrides?.rounds ?? null,
       stopAfterRound: input.card.reviewOverrides?.stopAfterRound ?? null,
+      runThroughRound: input.card.reviewOverrides?.runThroughRound ?? null,
     }) ?? undefined
   );
 }
@@ -1491,6 +1510,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                   completions: boardCardStepCompletions(board, command.cardId),
                   maxRounds: nextCard.reviewOverrides?.rounds ?? null,
                   stopAfterRound: nextCard.reviewOverrides?.stopAfterRound ?? null,
+                  runThroughRound: nextCard.reviewOverrides?.runThroughRound ?? null,
                 });
                 return summary === null ? {} : { reviewSummary: summary };
               })()),

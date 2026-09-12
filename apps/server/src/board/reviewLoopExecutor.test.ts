@@ -31,6 +31,7 @@ import {
   boardReviewLoopWalk,
   boardReviewRoundsStarted,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
+  effectiveBoardReviewRounds,
   ProviderInstanceId,
   isBoardReviewBlockingSeverity,
   parseReviewStepId,
@@ -129,6 +130,7 @@ const overrides = (patch: Partial<BoardCardReviewOverrides>): BoardCardReviewOve
   rounds: null,
   stopAfterRound: null,
   roundModels: {},
+  runThroughRound: null,
   ...patch,
 });
 
@@ -513,6 +515,9 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       readonly completions: ReadonlyArray<BoardStepCompletion>;
       readonly rounds: number;
       readonly stopAfterRound: number | null;
+      /** T3O-39: the card's request for one more round, which both copies of
+          the walk must honour identically. Omitted means none. */
+      readonly runThroughRound?: number | null;
     }> = [
       { name: "nothing run yet", completions: [], rounds: 5, stopAfterRound: null },
       {
@@ -619,20 +624,68 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
         rounds: 1,
         stopAfterRound: null,
       },
+      // T3O-39: a request for one more round must move BOTH copies off the
+      // convergence arm, or the pane reports `converged` while the executor
+      // dispatches round N+1.
+      {
+        name: "converged with budget left, one more round asked for",
+        completions: [completion("review@1", reviewPayload([]))],
+        rounds: 5,
+        stopAfterRound: null,
+        runThroughRound: 2,
+      },
+      {
+        name: "converged at the budget, one more round asked for",
+        completions: [completion("review@1", reviewPayload([]))],
+        rounds: 1,
+        stopAfterRound: null,
+        runThroughRound: 2,
+      },
+      {
+        name: "the requested round has now run and closed clean",
+        completions: [
+          completion("review@1", reviewPayload([])),
+          completion("review@2", reviewPayload([])),
+        ],
+        rounds: 1,
+        stopAfterRound: null,
+        runThroughRound: 2,
+      },
+      {
+        name: "a request the loop is already past is inert",
+        completions: [completion("review@3", reviewPayload([]))],
+        rounds: 5,
+        stopAfterRound: null,
+        runThroughRound: 2,
+      },
     ];
 
     for (const scenario of scenarios) {
+      const runThroughRound = scenario.runThroughRound ?? null;
+      const cardOverrides =
+        scenario.stopAfterRound === null && runThroughRound === null
+          ? null
+          : overrides({ stopAfterRound: scenario.stopAfterRound, runThroughRound });
       const executorPlan = plan(
         scenario.completions,
         reviewExec({ rounds: scenario.rounds }),
-        scenario.stopAfterRound === null
-          ? null
-          : overrides({ stopAfterRound: scenario.stopAfterRound }),
+        cardOverrides,
       );
       const contractsWalk = boardReviewLoopWalk({
         completions: scenario.completions,
-        maxRounds: scenario.rounds,
+        // The budget the executor actually runs to, resolved the same way the
+        // pane resolves the number it passes this walk — so `runThroughRound`
+        // flooring the budget (D2) is part of what the differential checks.
+        maxRounds: effectiveBoardReviewRounds({
+          configured: scenario.rounds,
+          overrides: cardOverrides,
+          roundsStarted: boardReviewRoundsStarted({
+            completions: scenario.completions,
+            liveStepId: null,
+          }),
+        }),
         stopAfterRound: scenario.stopAfterRound,
+        runThroughRound,
       });
 
       // converged ⇔ succeeded; every held/halted ending ⇔ blocked; and while
@@ -774,6 +827,101 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       },
     });
     expect(result.kind === "run" && result.stepId).toBe("review@1");
+  });
+});
+
+describe("another review round after convergence (T3O-39, D1/D2/D3)", () => {
+  const cleanRound = (round: number) => completion(`review@${round}`, reviewPayload([]));
+
+  it("D3: a converged loop with the round requested plans it instead of completing", () => {
+    // The control: nothing asked for, so the loop converges exactly as before.
+    expect(plan([cleanRound(1)])).toEqual({ kind: "complete", outcome: "succeeded" });
+
+    const requested = plan([cleanRound(1)], undefined, overrides({ runThroughRound: 2 }));
+    expect(requested.kind).toBe("run");
+    if (requested.kind !== "run") return;
+    expect(requested.stepId).toBe("review@2");
+    // A review phase starts a round, so it re-records the base tip.
+    expect(requested.recordBaseTip).toBe(true);
+  });
+
+  it("D1: the request is self-clearing — once the round has RUN the loop converges", () => {
+    expect(
+      plan([cleanRound(1), cleanRound(2)], undefined, overrides({ runThroughRound: 2 })),
+    ).toEqual({ kind: "complete", outcome: "succeeded" });
+    // And a request for a round that has ALREADY run is inert, which is what
+    // makes the field history rather than state anyone has to clear.
+    expect(plan([cleanRound(1)], undefined, overrides({ runThroughRound: 1 }))).toEqual({
+      kind: "complete",
+      outcome: "succeeded",
+    });
+  });
+
+  it("D2: the request floors the budget, so a spent loop can still run one more", () => {
+    // Converged at 1 of 1: without the budget floor the walk would break on
+    // the cap before it ever reached the convergence arm, and the request
+    // would be inert.
+    const spent = plan(
+      [cleanRound(1)],
+      reviewExec({ rounds: 1 }),
+      overrides({ runThroughRound: 2 }),
+    );
+    expect(spent.kind === "run" && spent.stepId).toBe("review@2");
+    // And the floor is exactly one round: round 2 running clean holds the loop
+    // rather than buying a round 3 nobody asked for.
+    expect(
+      plan(
+        [cleanRound(1), cleanRound(2)],
+        reviewExec({ rounds: 1 }),
+        overrides({ runThroughRound: 2 }),
+      ),
+    ).toEqual({ kind: "complete", outcome: "succeeded" });
+  });
+
+  it("D2: a loop with budget left simply re-enters the loop it was already in", () => {
+    // Converged at 1 of 5, round 2 requested and blocking: the budget was
+    // always 5, so the loop carries on normally rather than stopping at 2.
+    const carriesOn = plan(
+      [
+        cleanRound(1),
+        completion("review@2", reviewPayload([finding("critical")])),
+        completion("triage@2", { fixedSha: "s", dispositions: [] }),
+        completion("adjudicate@2", { verdicts: [] }),
+      ],
+      reviewExec({ rounds: 5 }),
+      overrides({ runThroughRound: 2 }),
+    );
+    expect(carriesOn.kind === "run" && carriesOn.stepId).toBe("review@3");
+  });
+
+  it("D3: a stale base plans its sync FIRST — the request never jumps the rebase gate", () => {
+    // Order matters: reviewing the diff against a base it is no longer built
+    // on is not the pass that was asked for, and the gate round the rebase
+    // owes satisfies the request anyway.
+    const stale = plan([cleanRound(1)], undefined, overrides({ runThroughRound: 2 }), null, true);
+    expect(stale.kind === "run" && stale.stepId).toBe("sync@1");
+  });
+
+  it("D11: the requested round runs on a round override set before the request", () => {
+    const opusRound: BoardModelSelection = {
+      instanceId: ProviderInstanceId.make("anthropic"),
+      model: "claude-opus-5",
+    };
+    const requested = plan(
+      [cleanRound(1)],
+      undefined,
+      overrides({ runThroughRound: 2, roundModels: { "2": opusRound } }),
+    );
+    expect(requested.kind === "run" && requested.model).toEqual(opusRound);
+    // Triage keeps its configured per-phase model: escalating the reviewer and
+    // re-modelling the author are different decisions (t3o-22, D4).
+    const atTriage = plan(
+      [cleanRound(1), completion("review@2", reviewPayload([finding("critical")]))],
+      undefined,
+      overrides({ runThroughRound: 2, roundModels: { "2": opusRound } }),
+    );
+    expect(atTriage.kind === "run" && atTriage.stepId).toBe("triage@2");
+    expect(atTriage.kind === "run" && atTriage.model).toEqual(globalModel);
   });
 });
 

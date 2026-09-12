@@ -2503,6 +2503,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         completions,
         maxRounds: card.reviewOverrides?.rounds ?? null,
         stopAfterRound: card.reviewOverrides?.stopAfterRound ?? null,
+        runThroughRound: card.reviewOverrides?.runThroughRound ?? null,
       });
       yield* queries.updateBoardCardReviewSummaryRow({ cardId: card.id, reviewSummary: summary });
     }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.reviewSummary:query")));

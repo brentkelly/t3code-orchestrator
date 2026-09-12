@@ -19,7 +19,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
-  BOARD_REVIEW_MAX_ROUNDS,
   boardReviewFindingResolution,
   boardReviewHeldLabel,
   boardReviewLoopWalk,
@@ -76,7 +75,8 @@ const walk = (
   completions: ReadonlyArray<BoardStepCompletion>,
   maxRounds: number,
   stopAfterRound: number | null = null,
-) => boardReviewLoopWalk({ completions, maxRounds, stopAfterRound });
+  runThroughRound: number | null = null,
+) => boardReviewLoopWalk({ completions, maxRounds, stopAfterRound, runThroughRound });
 
 describe("boardReviewLoopWalk", () => {
   it("reports the next phase while a round is unfinished", () => {
@@ -269,12 +269,37 @@ describe("boardReviewLoopWalk", () => {
     assert.strictEqual(capped.status, "round-cap");
     assert.strictEqual(capped.currentRound, 2);
   });
+
+  it("T3O-39: a requested round outranks the convergence exit", () => {
+    // The control: the same completions converge with nothing asked for.
+    assert.strictEqual(walk([review(1, [])], 5).status, "converged");
+    // Asked for, round 2 is what the loop owes — and the pane must say so,
+    // or it reports `converged` while the executor dispatches the round.
+    const requested = walk([review(1, [])], 5, null, 2);
+    assert.strictEqual(requested.status, "running");
+    assert.deepStrictEqual(requested.next, { phase: "review", round: 2 });
+    // Self-clearing: once round 2 has run, the loop converges normally.
+    assert.strictEqual(walk([review(1, []), review(2, [])], 5, null, 2).status, "converged");
+  });
+
+  it("T3O-39: a recorded sync still gates a requested round", () => {
+    // The sync's own gate round comes first: the request is satisfied by the
+    // round that follows the rebase, and reviewing the diff against a base it
+    // is no longer built on is not the pass that was asked for.
+    const stale = walk([review(1, []), completion("sync@1", { rebasedSha: "s" })], 5, null, 2);
+    assert.deepStrictEqual(stale.next, { phase: "review", round: 2 });
+  });
 });
 
 describe("deriveBoardCardReviewSummary", () => {
   it("is null for a card with no review history", () => {
     assert.strictEqual(
-      deriveBoardCardReviewSummary({ completions: [], maxRounds: 5, stopAfterRound: null }),
+      deriveBoardCardReviewSummary({
+        completions: [],
+        maxRounds: 5,
+        stopAfterRound: null,
+        runThroughRound: null,
+      }),
       null,
     );
     // A non-review step is not review history.
@@ -283,9 +308,43 @@ describe("deriveBoardCardReviewSummary", () => {
         completions: [completion("building", null)],
         maxRounds: 5,
         stopAfterRound: null,
+        runThroughRound: null,
       }),
       null,
     );
+  });
+
+  it("T3O-39: a requested round keeps the cache off `converged`", () => {
+    const converged = deriveBoardCardReviewSummary({
+      completions: [review(1, [])],
+      maxRounds: 5,
+      stopAfterRound: null,
+      runThroughRound: null,
+    });
+    assert.strictEqual(converged?.outcome, "converged");
+    // With the round asked for the cache reports the loop as still going, so
+    // the column card cannot render a pass over a round that is dispatching.
+    const requested = deriveBoardCardReviewSummary({
+      completions: [review(1, [])],
+      maxRounds: 5,
+      stopAfterRound: null,
+      runThroughRound: 2,
+    });
+    assert.strictEqual(requested?.outcome, "running");
+  });
+
+  it("T3O-39: the walk bound comes from the ledger, not a compiled-in ceiling", () => {
+    // Eleven clean-then-blocking rounds: the old bound of 10 truncated the
+    // walk here and reported `round-cap` on a loop that had simply run long.
+    const long = Array.from({ length: 11 }, (_, index) => unconverged(index + 1)).flat();
+    const summary = deriveBoardCardReviewSummary({
+      completions: long,
+      maxRounds: null,
+      stopAfterRound: null,
+      runThroughRound: null,
+    });
+    assert.strictEqual(summary?.outcome, "running");
+    assert.strictEqual(summary?.roundCurrent, 11);
   });
 
   it("never reports round-cap for a loop the caller's budget merely bounds", () => {
@@ -298,6 +357,7 @@ describe("deriveBoardCardReviewSummary", () => {
         completions: unconverged(1),
         maxRounds,
         stopAfterRound: null,
+        runThroughRound: null,
       });
       assert.strictEqual(summary?.outcome, "running", `maxRounds ${maxRounds}`);
     }
@@ -323,6 +383,7 @@ describe("deriveBoardCardReviewSummary", () => {
       ],
       maxRounds: 5,
       stopAfterRound: null,
+      runThroughRound: null,
     });
     assert.strictEqual(summary?.severityCritical, 1);
     assert.strictEqual(summary?.severityImprovement, 1);
@@ -351,6 +412,7 @@ describe("deriveBoardCardReviewSummary", () => {
       ],
       maxRounds: 5,
       stopAfterRound: null,
+      runThroughRound: null,
     });
     assert.strictEqual(doubled?.severityNitpick, 1);
     assert.strictEqual(doubled?.issuesFixed, 1);
@@ -365,6 +427,7 @@ describe("deriveBoardCardReviewSummary", () => {
       completions: [...unconverged(1), ...unconverged(2)],
       maxRounds: 2,
       stopAfterRound: null,
+      runThroughRound: null,
     });
     assert.strictEqual(capped?.roundCurrent, 2);
     assert.strictEqual(capped?.roundMax, 2);
@@ -376,6 +439,7 @@ describe("deriveBoardCardReviewSummary", () => {
       completions: [...unconverged(1), ...unconverged(2)],
       maxRounds: null,
       stopAfterRound: null,
+      runThroughRound: null,
     });
     assert.strictEqual(unknownBudget?.roundCurrent, 2);
     assert.strictEqual(unknownBudget?.roundMax, null);
@@ -388,6 +452,7 @@ describe("deriveBoardCardReviewSummary", () => {
       completions: [...unconverged(1), review(2, [finding("critical", "f2")])],
       maxRounds: 5,
       stopAfterRound: null,
+      runThroughRound: null,
     });
     assert.strictEqual(midRound?.roundCurrent, 2);
     assert.strictEqual(midRound?.roundMax, 5);
@@ -398,12 +463,14 @@ describe("deriveBoardCardReviewSummary", () => {
       completions: unconverged(1),
       maxRounds: 1,
       stopAfterRound: null,
+      runThroughRound: null,
     });
     assert.strictEqual(capped?.heldOutcome, "round-cap");
     const stopped = deriveBoardCardReviewSummary({
       completions: unconverged(1),
       maxRounds: 5,
       stopAfterRound: 1,
+      runThroughRound: null,
     });
     assert.strictEqual(stopped?.heldOutcome, "stopped");
   });
@@ -414,6 +481,7 @@ describe("resolveBoardCardReviewOutcome", () => {
     completions: unconverged(1),
     maxRounds: 5,
     stopAfterRound: null,
+    runThroughRound: null,
   })!;
 
   it("keeps a provisional `running` while the executor is driving the card (running or queued)", () => {
@@ -434,6 +502,7 @@ describe("resolveBoardCardReviewOutcome", () => {
       completions: [review(1, [finding("critical")])],
       maxRounds: 5,
       stopAfterRound: null,
+      runThroughRound: null,
     })!;
     assert.strictEqual(midRound.roundComplete, false);
     assert.strictEqual(
@@ -447,6 +516,7 @@ describe("resolveBoardCardReviewOutcome", () => {
       completions: [review(1, [])],
       maxRounds: 5,
       stopAfterRound: null,
+      runThroughRound: null,
     })!;
     assert.strictEqual(
       resolveBoardCardReviewOutcome({ summary: converged, stepActive: false }),
@@ -481,21 +551,23 @@ describe("boardReviewRoundsStarted / effectiveBoardReviewRounds", () => {
     assert.strictEqual(
       effectiveBoardReviewRounds({
         configured: 5,
-        overrides: { rounds: 1, stopAfterRound: null, roundModels: {} },
+        overrides: { rounds: 1, stopAfterRound: null, roundModels: {}, runThroughRound: null },
         roundsStarted: 3,
       }),
       3,
     );
   });
 
-  it("caps at the ceiling and defaults to the stage setting", () => {
+  it("has no ceiling and defaults to the stage setting", () => {
+    // T3O-39, D4: the round ceiling is gone. A budget a human typed into the
+    // stepper is a number they can see, and denying it bought nothing.
     assert.strictEqual(
       effectiveBoardReviewRounds({
         configured: 5,
-        overrides: { rounds: 99, stopAfterRound: null, roundModels: {} },
+        overrides: { rounds: 99, stopAfterRound: null, roundModels: {}, runThroughRound: null },
         roundsStarted: 0,
       }),
-      BOARD_REVIEW_MAX_ROUNDS,
+      99,
     );
     // No override → the stage setting governs, so raising it moves the card.
     assert.strictEqual(
@@ -572,6 +644,39 @@ describe("replay equals rehydration for a pre-t3o-22 log", () => {
     // this spec genuinely HAD no base branch, so replaying its payload must
     // reach null — "follow the project default" — rather than any branch name.
     assert.strictEqual(decodeBoardCard(legacy).baseBranch, null);
+  });
+
+  it("T3O-39: decodes a card written with the older overrides struct", () => {
+    // `runThroughRound` needs no migration: every field of the struct carries
+    // a decoding default, so a card whose recorded overrides predate this
+    // spec replays to exactly what a rehydrated row reads.
+    const withOldOverrides = {
+      id: "card-1",
+      key: "T3-1",
+      cardNumber: 1,
+      projectId: "project-1",
+      labels: [],
+      stage: "review",
+      orderKey: "m",
+      title: "Card",
+      briefRef: null,
+      dependsOn: [],
+      parentCardId: null,
+      threadLinks: [],
+      attachments: [],
+      externalRef: null,
+      blocked: false,
+      archivedAt: null,
+      createdAt: "2026-08-27T00:00:00.000Z",
+      updatedAt: "2026-08-27T00:00:00.000Z",
+      reviewOverrides: { rounds: 5, stopAfterRound: 2, roundModels: {} },
+    };
+    const decoded = decodeBoardCard(withOldOverrides);
+    assert.strictEqual(decoded.reviewOverrides?.runThroughRound, null);
+    // And the fields it DID carry are untouched: a decoding default must not
+    // rewrite the card's own settings.
+    assert.strictEqual(decoded.reviewOverrides?.rounds, 5);
+    assert.strictEqual(decoded.reviewOverrides?.stopAfterRound, 2);
   });
 });
 
@@ -685,6 +790,7 @@ describe("an unreadable loop is held (T3O-14)", () => {
       completions: [completion("review@1", undefined)],
       maxRounds: 5,
       stopAfterRound: null,
+      runThroughRound: null,
     });
     assert.strictEqual(broken.status, "unreadable");
     assert.strictEqual(broken.currentRound, 1);
@@ -693,6 +799,7 @@ describe("an unreadable loop is held (T3O-14)", () => {
       completions: [completion("review@1", undefined, "failed")],
       maxRounds: 5,
       stopAfterRound: null,
+      runThroughRound: null,
     });
     assert.strictEqual(reopened.status, "running");
     assert.deepStrictEqual(reopened.next, { phase: "review", round: 1 });
@@ -705,6 +812,7 @@ describe("an unreadable loop is held (T3O-14)", () => {
       ],
       maxRounds: 5,
       stopAfterRound: null,
+      runThroughRound: null,
     });
     assert.strictEqual(repaired.status, "running");
     assert.deepStrictEqual(repaired.next, { phase: "triage", round: 1 });

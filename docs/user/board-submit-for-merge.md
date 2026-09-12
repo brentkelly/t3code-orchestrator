@@ -26,6 +26,10 @@ later, so the agent writes it from what is actually on the branch rather than fr
 A card that already has an open pull request — one that ran review, came back to Building, and is
 being submitted again — keeps it. Nothing is duplicated.
 
+Skipping review is not a one-way door. A card that arrived at Ready for merge this way offers
+**Request review** in its action column, which sends it to Code review for a first round. See
+[Asking for another review round](board-another-review-round.md).
+
 ### When the caret appears
 
 Only when the choice means something: the card's build has stopped and is waiting on you, its next

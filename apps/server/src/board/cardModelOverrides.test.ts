@@ -210,7 +210,12 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
       const card: BoardCard = {
         ...makeBoardCard({ id: "card-1", stage: reviewStage, orderKey: "m" }),
         worktree: readyWorktree("card-1"),
-        reviewOverrides: { rounds: 1, stopAfterRound: null, roundModels: {} },
+        reviewOverrides: {
+          rounds: 1,
+          stopAfterRound: null,
+          roundModels: {},
+          runThroughRound: null,
+        },
         modelOverrides: { [reviewStage]: reviewOverride },
       };
       // One round, run in full, still carrying an unresolved critical: the

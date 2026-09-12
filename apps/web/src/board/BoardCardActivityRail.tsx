@@ -39,6 +39,7 @@ import {
   FolderSyncIcon,
   MoveRightIcon,
   PlusCircleIcon,
+  RotateCcwIcon,
   ScissorsIcon,
   TriangleAlertIcon,
   XIcon,
@@ -130,6 +131,11 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
     // amber rather than the blue that now means "running".
     case "card-base-stale":
       return <GitPullRequestIcon className={cn(className, "text-warning-foreground")} />;
+    // A round somebody asked for is work about to run, not work that stopped,
+    // so it stays neutral: the round itself will wear the running blue on the
+    // card face.
+    case "card-review-round-requested":
+      return <RotateCcwIcon className={className} />;
   }
 }
 
@@ -295,6 +301,12 @@ function activitySentence(
     case "card-base-stale":
       return payload.detail === undefined ? (
         <>held the merge while the base branch is rebased and re-reviewed</>
+      ) : (
+        <>{payload.detail}</>
+      );
+    case "card-review-round-requested":
+      return payload.detail === undefined ? (
+        <>asked for another review round</>
       ) : (
         <>{payload.detail}</>
       );

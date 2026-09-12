@@ -379,7 +379,15 @@ it.effect("t3o-22: a review loop that runs out of rounds does NOT advance the ca
     const types = yield* reconcileCommands({
       board: {
         cards: [
-          { ...reviewCard, reviewOverrides: { rounds: 1, stopAfterRound: null, roundModels: {} } },
+          {
+            ...reviewCard,
+            reviewOverrides: {
+              rounds: 1,
+              stopAfterRound: null,
+              roundModels: {},
+              runThroughRound: null,
+            },
+          },
         ],
         stepStates: [reviewStepState("adjudicate@1")],
         stepCompletions: unconvergedRound(1),
@@ -399,7 +407,15 @@ it.effect("t3o-22: a review loop that CONVERGES still advances the card", () =>
     const types = yield* reconcileCommands({
       board: {
         cards: [
-          { ...reviewCard, reviewOverrides: { rounds: 1, stopAfterRound: null, roundModels: {} } },
+          {
+            ...reviewCard,
+            reviewOverrides: {
+              rounds: 1,
+              stopAfterRound: null,
+              roundModels: {},
+              runThroughRound: null,
+            },
+          },
         ],
         stepStates: [reviewStepState("review@1")],
         // Same budget, same round count, no blocking finding: this one passed.
@@ -416,7 +432,15 @@ it.effect("t3o-22: a stopped loop holds even with budget remaining", () =>
     const types = yield* reconcileCommands({
       board: {
         cards: [
-          { ...reviewCard, reviewOverrides: { rounds: 5, stopAfterRound: 1, roundModels: {} } },
+          {
+            ...reviewCard,
+            reviewOverrides: {
+              rounds: 5,
+              stopAfterRound: 1,
+              roundModels: {},
+              runThroughRound: null,
+            },
+          },
         ],
         stepStates: [reviewStepState("adjudicate@1")],
         stepCompletions: unconvergedRound(1),
