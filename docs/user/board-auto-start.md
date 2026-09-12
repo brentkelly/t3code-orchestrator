@@ -41,6 +41,13 @@ it.
 
 To arm it again, turn the switch back on.
 
+## Together with auto-merge
+
+Arming a card only helps if the card it waits on actually reaches Done, and a card does not reach
+Done until its pull request is merged. If you want a chain to resolve overnight, arm the
+_dependency_ with [auto-merge when ready](board-auto-merge.md) as well — it merges itself, lands in
+Done, and this switch fires off the back of it.
+
 ## Together with a scheduled start
 
 The two stack, and neither knows about the other. A card that is armed **and**
