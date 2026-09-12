@@ -99,9 +99,10 @@ const supervisorCalls: {
   refresh: Array<string>;
   merge: Array<string>;
   submit: Array<string>;
+  requestRound: Array<string>;
   probe: Array<string>;
   setResumeAt: Array<string>;
-} = { refresh: [], merge: [], submit: [], probe: [], setResumeAt: [] };
+} = { refresh: [], merge: [], submit: [], requestRound: [], probe: [], setResumeAt: [] };
 
 const supervisorStub: SupervisorReactorShape = {
   start: () => Effect.void,
@@ -134,6 +135,11 @@ const supervisorStub: SupervisorReactorShape = {
     Effect.sync(() => {
       supervisorCalls.submit.push(String(cardId));
       return { outcome: "started" } as const;
+    }),
+  requestReviewRound: (cardId) =>
+    Effect.sync(() => {
+      supervisorCalls.requestRound.push(String(cardId));
+      return { outcome: "started", round: 2 } as const;
     }),
 };
 

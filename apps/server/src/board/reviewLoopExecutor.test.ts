@@ -31,6 +31,7 @@ import {
   boardReviewLoopWalk,
   boardReviewRoundsStarted,
   DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
+  effectiveBoardReviewRounds,
   ProviderInstanceId,
   isBoardReviewBlockingSeverity,
   parseReviewStepId,
@@ -129,6 +130,7 @@ const overrides = (patch: Partial<BoardCardReviewOverrides>): BoardCardReviewOve
   rounds: null,
   stopAfterRound: null,
   roundModels: {},
+  runThroughRound: null,
   ...patch,
 });
 
@@ -513,6 +515,9 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       readonly completions: ReadonlyArray<BoardStepCompletion>;
       readonly rounds: number;
       readonly stopAfterRound: number | null;
+      /** T3O-39: the card's request for one more round, which both copies of
+          the walk must honour identically. Omitted means none. */
+      readonly runThroughRound?: number | null;
     }> = [
       { name: "nothing run yet", completions: [], rounds: 5, stopAfterRound: null },
       {
@@ -619,20 +624,68 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
         rounds: 1,
         stopAfterRound: null,
       },
+      // T3O-39: a request for one more round must move BOTH copies off the
+      // convergence arm, or the pane reports `converged` while the executor
+      // dispatches round N+1.
+      {
+        name: "converged with budget left, one more round asked for",
+        completions: [completion("review@1", reviewPayload([]))],
+        rounds: 5,
+        stopAfterRound: null,
+        runThroughRound: 2,
+      },
+      {
+        name: "converged at the budget, one more round asked for",
+        completions: [completion("review@1", reviewPayload([]))],
+        rounds: 1,
+        stopAfterRound: null,
+        runThroughRound: 2,
+      },
+      {
+        name: "the requested round has now run and closed clean",
+        completions: [
+          completion("review@1", reviewPayload([])),
+          completion("review@2", reviewPayload([])),
+        ],
+        rounds: 1,
+        stopAfterRound: null,
+        runThroughRound: 2,
+      },
+      {
+        name: "a request the loop is already past is inert",
+        completions: [completion("review@3", reviewPayload([]))],
+        rounds: 5,
+        stopAfterRound: null,
+        runThroughRound: 2,
+      },
     ];
 
     for (const scenario of scenarios) {
+      const runThroughRound = scenario.runThroughRound ?? null;
+      const cardOverrides =
+        scenario.stopAfterRound === null && runThroughRound === null
+          ? null
+          : overrides({ stopAfterRound: scenario.stopAfterRound, runThroughRound });
       const executorPlan = plan(
         scenario.completions,
         reviewExec({ rounds: scenario.rounds }),
-        scenario.stopAfterRound === null
-          ? null
-          : overrides({ stopAfterRound: scenario.stopAfterRound }),
+        cardOverrides,
       );
       const contractsWalk = boardReviewLoopWalk({
         completions: scenario.completions,
-        maxRounds: scenario.rounds,
+        // The budget the executor actually runs to, resolved the same way the
+        // pane resolves the number it passes this walk — so `runThroughRound`
+        // flooring the budget (D2) is part of what the differential checks.
+        maxRounds: effectiveBoardReviewRounds({
+          configured: scenario.rounds,
+          overrides: cardOverrides,
+          roundsStarted: boardReviewRoundsStarted({
+            completions: scenario.completions,
+            liveStepId: null,
+          }),
+        }),
         stopAfterRound: scenario.stopAfterRound,
+        runThroughRound,
       });
 
       // converged ⇔ succeeded; every held/halted ending ⇔ blocked; and while

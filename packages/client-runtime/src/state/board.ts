@@ -88,6 +88,7 @@ import {
   reopenBoardCardStep,
   reorderBoardStage,
   startBoardStageThread,
+  requestBoardReviewRound,
   submitBoardCardForMerge,
   unarchiveBoardCard,
   undeleteBoardLabel,
@@ -1088,6 +1089,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
     submitCardForMerge: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:submit-card-for-merge",
       execute: (input: { readonly cardId: BoardCardId }) => submitBoardCardForMerge(input),
+    }),
+    /** Run one more review round on a settled loop (T3O-39). Resolves to the
+        round it bought, or the reason it was refused. */
+    requestReviewRound: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:request-review-round",
+      execute: (input: { readonly cardId: BoardCardId }) => requestBoardReviewRound(input),
     }),
     /** Attach a pending upload to a card's brief (t3o-32). Resolves with the
         stored record — the name may have been de-duplicated server-side. */

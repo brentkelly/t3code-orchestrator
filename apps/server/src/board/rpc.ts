@@ -225,6 +225,22 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
       ),
 
     /**
+     * Run one more review round on a settled loop (T3O-39, D6) — "Another
+     * review round", and "Request review" on a card that never had one. An
+     * RPC rather than a card command because the ordering is load-bearing:
+     * the `runThroughRound` override must be written before the card moves,
+     * or the executor re-plans a converged loop and bounces it straight back.
+     */
+    [BOARD_WS_METHODS.requestReviewRound]: (input: BoardCardPullRequestActionInput) =>
+      observeRpcEffect(
+        BOARD_WS_METHODS.requestReviewRound,
+        authorized(
+          BOARD_WS_METHODS.requestReviewRound,
+          deps.boardSupervisor.requestReviewRound(input.cardId),
+        ),
+      ),
+
+    /**
      * Attach a pending upload to the card's brief (t3o-32, K2). Copy first,
      * record second: the file lands in the card's folder, then the internal
      * `board.card.attach` command is dispatched; a refused dispatch deletes

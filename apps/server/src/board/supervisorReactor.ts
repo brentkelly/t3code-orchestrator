@@ -28,6 +28,7 @@ import {
   boardCardStepCompletions,
   boardCardUnfinishedChildren,
   boardCardStepState,
+  boardReviewRoundsStarted,
   boardRunLabel,
   boardSelectedStepLabel,
   boardNextStageId,
@@ -62,6 +63,7 @@ import {
   DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
   DEFAULT_BOARD_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
+  EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   EMPTY_BOARD_STATE,
   effectiveBoardStageRole,
   isBoardCardPullRequestTerminal,
@@ -190,6 +192,17 @@ export type BoardSubmitAttemptResult =
   | { readonly outcome: "unknown-card" }
   | { readonly outcome: "failed" };
 
+/** What "Another review round" / "Request review" did (T3O-39, D6/D7), for
+    the RPC to turn into a sentence on the card. */
+export type BoardRequestReviewRoundResult =
+  | { readonly outcome: "started"; readonly round: number }
+  | { readonly outcome: "no-review-stage" }
+  | { readonly outcome: "wrong-stage" }
+  | { readonly outcome: "step-running" }
+  | { readonly outcome: "no-branch" }
+  | { readonly outcome: "unknown-card" }
+  | { readonly outcome: "failed" };
+
 export interface SupervisorReactorShape {
   /** Reconcile persisted step state, then subscribe to board and thread
       events. Must run in a scope so worker fibers finalize on shutdown. */
@@ -233,6 +246,12 @@ export interface SupervisorReactorShape {
   /** Open the card's pull request from Building and route it past Code review
       ("Submit for merge — no review", t3o-07, D1). */
   readonly submitForMerge: (cardId: BoardCardId) => Effect.Effect<BoardSubmitAttemptResult>;
+  /** Run one more review round on a settled loop (T3O-39, D6) — "Another
+      review round" from Code review or Ready for merge, and "Request review"
+      on a card that has never had one. */
+  readonly requestReviewRound: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<BoardRequestReviewRoundResult>;
   /** Probe a limited provider NOW (T3O-22, D14) — the popover's "Resume now".
       Wakes exactly ONE card, matching the timed probe: waking the fleet at a
       moment the human picked is the same mistake as waking it at the reset
@@ -4295,6 +4314,124 @@ const make = Effect.gen(function* () {
     return { outcome: "started" } as const;
   });
 
+  /**
+   * "Another review round" / "Request review" (T3O-39, D6) — the one verb
+   * behind all three entry points: the rail button at Code review, the rail
+   * button at Ready for merge, and the Review pane's "Run round N+1".
+   *
+   * ORDERING is why this cannot be two client calls. Move first and the
+   * executor re-plans a converged loop, gets `complete/succeeded`, and
+   * `advanceStage` bounces the card straight back to Ready for merge — or
+   * `beginStageRun`'s `complete` arm opens an empty conversation. Either way
+   * the click looks broken. The override is written FIRST, here, where the
+   * server owns the order.
+   *
+   * Beyond that it dispatches nothing the reactor does not already handle:
+   *
+   * - a card already on the review stage needs the update alone —
+   *   `handleCardUpdated` → `replanSettledStage` fires on an edit whose settled
+   *   step succeeded, which is exactly a converged loop that did not
+   *   auto-advance;
+   * - a card at the merge stage needs the move — `handleCardMoved` →
+   *   `beginStageRun` → `planNext`.
+   *
+   * A card with no review completions at all resolves to round 1, which is
+   * `review@1`: "Request review" is the same verb with an empty ledger, not a
+   * second feature.
+   *
+   * Request-scoped and TOTAL, like merging and submitting: the caller is a
+   * human waiting on an answer, and every refusal is a sentence the card shows.
+   */
+  const requestReviewRound = Effect.fn("board-supervisor-requestReviewRound")(function* (
+    cardId: BoardCardId,
+  ) {
+    const card = yield* readCard(cardId);
+    if (card === null || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
+    const board = yield* readBoard;
+    const reviewStage = boardStageWithRole(board, "review");
+    // No loop to run. Refused up front rather than after a move nothing can
+    // execute.
+    if (reviewStage === null) return { outcome: "no-review-stage" } as const;
+    const stage = boardStageById(board, card.stage);
+    const role = stage === null ? null : effectiveBoardStageRole(stage);
+    // The stage gate (D8), enforced here and not only on the button. Done is
+    // deliberately excluded (D12): leaving the done-role stage retires the
+    // card's pull request into history and raises `pullRequestFloor`, so
+    // pulling a merged card back would orphan the pull request — a larger
+    // operation that must not hide behind this button.
+    if (role !== "review" && role !== "merge") return { outcome: "wrong-stage" } as const;
+    // Nothing to review.
+    if (card.worktree === null) return { outcome: "no-branch" } as const;
+    // One step at a time (D9), the decider's own invariant. This is also what
+    // keeps an armed merge-conflict fix from being superseded mid-rebase: a
+    // conflict fix IS a live step, so the button is disabled rather than
+    // killing a rebase someone is halfway through.
+    const live = boardCardStepState(board, card.id);
+    if (live !== null && !isBoardTerminalStepStatus(live.status)) {
+      return { outcome: "step-running" } as const;
+    }
+
+    // One past the highest round the loop has entered — the same number the
+    // decider clamps to, so the write it validates is the write it was sent.
+    const round =
+      boardReviewRoundsStarted({
+        completions: boardCardStepCompletions(board, card.id),
+        liveStepId: null,
+      }) + 1;
+
+    // A Merge click that hit a conflict leaves the merge ARMED, and a card must
+    // not walk back through review still armed — the stale-base return disarms
+    // for exactly this reason, and this is the same trip for a different cause.
+    disarmPendingMerge(card.id);
+
+    const landed = yield* dispatchLanded({
+      type: "board.card.update",
+      commandId: yield* commandId("request-review-round"),
+      cardId: card.id,
+      reviewOverrides: {
+        ...(card.reviewOverrides ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES),
+        runThroughRound: round,
+        // The request is the later decision, so it supersedes a pending hold.
+        // Said outright rather than left to the decider's reconciliation, so a
+        // reader of this call can see what the card ends up with.
+        stopAfterRound: null,
+      },
+      createdAt: yield* nowIso,
+    });
+    if (!landed) return { outcome: "failed" } as const;
+
+    // The only record of WHY (D10). `card-moved` says where, never why, and a
+    // card jumping from Ready for merge back to Code review with no account of
+    // itself reads as a drag that silently snapped back.
+    yield* dispatch({
+      type: "board.card.record-note",
+      commandId: yield* commandId("request-review-round-note"),
+      cardId: card.id,
+      kind: "card-review-round-requested",
+      detail:
+        round === 1
+          ? "Requested a first review round on this branch."
+          : `Requested review round ${round} on this branch.`,
+      createdAt: yield* nowIso,
+    });
+
+    // Skipped when the card is already there, which is what makes the
+    // converged-in-place case the same call: the update above is enough, and a
+    // move to the stage the card is on would be refused anyway.
+    if (card.stage !== reviewStage.stageId) {
+      yield* dispatch({
+        type: "board.card.move",
+        commandId: yield* commandId("request-review-round-move"),
+        cardId: card.id,
+        toStage: reviewStage.stageId,
+        override: true,
+        createdAt: yield* nowIso,
+      });
+    }
+    yield* schedule();
+    return { outcome: "started" as const, round };
+  });
+
   const handleTurnCompleted = Effect.fn("board-supervisor-handleTurnCompleted")(function* (
     /** Read by the caller, which needs the same board to decide whether this is
         even a board thread — see `handleTurnEnded`. */
@@ -6852,6 +6989,19 @@ const make = Effect.gen(function* () {
             providerInstanceId: input.providerInstanceId,
             cause: Cause.pretty(cause),
           }),
+        ),
+      ),
+    requestReviewRound: (cardId) =>
+      requestReviewRound(cardId).pipe(
+        Effect.catchCause((cause) =>
+          // Total for the same reason the other two are: an RPC handler owes
+          // the user a response, and a read-model hiccup must read as "the
+          // round did not start" rather than as an unhandled failure on a
+          // button click.
+          Effect.logWarning("board supervisor: review round request failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "failed" } as const)),
         ),
       ),
     submitForMerge: (cardId) =>
