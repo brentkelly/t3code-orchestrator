@@ -111,6 +111,7 @@ const supervisorStub: SupervisorReactorShape = {
   startArmed: Effect.void,
   fireRetries: Effect.void,
   fireProbes: Effect.void,
+  fireAutoMerges: Effect.void,
   probeProviderLimit: (providerInstanceId) =>
     Effect.sync(() => {
       supervisorCalls.probe.push(String(providerInstanceId));

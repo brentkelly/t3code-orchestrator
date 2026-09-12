@@ -63,6 +63,7 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import { detectPrTemplate } from "../sourceControl/PrTemplateDetection.ts";
 import type {
   ChangeRequest,
+  ChangeRequestMergeState,
   ChangeRequestMergeStrategy,
   VcsStatusChangeRequest,
 } from "@t3tools/contracts";
@@ -121,6 +122,14 @@ export class GitManager extends Context.Service<
       readonly number: number;
       readonly strategy: ChangeRequestMergeStrategy;
     }) => Effect.Effect<void, GitManagerServiceError>;
+    /** T3o: the structured refusal probe (T3O-38, D7) — asked only after a
+        merge has been refused, so the happy path stays one forge call. Reads
+        nothing from the PR lookup cache and writes nothing to it: this is a
+        live question about a merge that just failed. */
+    readonly pullRequestMergeState: (input: {
+      readonly cwd: string;
+      readonly number: number;
+    }) => Effect.Effect<ChangeRequestMergeState, GitManagerServiceError>;
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
@@ -2692,9 +2701,22 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.ensuring(bumpPrLookupEpoch(input.cwd).pipe(Effect.ignore)));
   });
 
+  // T3o: the structured refusal probe (T3O-38, D7).
+  const pullRequestMergeState = Effect.fn("pullRequestMergeState")(function* (input: {
+    readonly cwd: string;
+    readonly number: number;
+  }) {
+    const provider = yield* sourceControlProvider(input.cwd);
+    return yield* provider.changeRequestMergeState({
+      cwd: input.cwd,
+      reference: String(input.number),
+    });
+  });
+
   return GitManager.of({
     findBranchPullRequest,
     mergeBranchPullRequest,
+    pullRequestMergeState,
     localStatus,
     remoteStatus,
     status,

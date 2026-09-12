@@ -18,6 +18,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   boardBriefHasImage,
+  boardCardShellFromCard,
   CommandId,
   ProjectId,
   ProviderInstanceId,
@@ -602,3 +603,103 @@ it.layer(makeTestLayer("t3o-card-unscheduled-"))("no scheduled start (T3O-19)", 
     }),
   );
 });
+
+it.layer(makeTestLayer("t3o-card-auto-merge-"))(
+  "auto-merge hold, column to shell (T3O-38)",
+  (it) => {
+    const HELD_SINCE = "2026-03-04T09:00:00.000Z";
+    const RETRY_AT = "2026-03-04T09:03:00.000Z";
+
+    it.effect("carries the hold's three shell facts on the SNAPSHOT, not only on deltas", () =>
+      Effect.gen(function* () {
+        const engine = yield* seedCard();
+
+        // Nothing yet: an unheld, unarmed card is byte-for-byte what it was
+        // before these three keys existed, which is what keeps the per-card
+        // budget and the linear snapshot growth unchanged (D14).
+        const quiet = yield* shellCard;
+        assert.isFalse(quiet !== undefined && "autoMergeHeldSince" in quiet);
+        assert.isFalse(quiet !== undefined && "autoMergeGaveUp" in quiet);
+        assert.isFalse(quiet !== undefined && "autoMergeArmed" in quiet);
+
+        yield* engine.dispatch({
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-arm-auto-merge"),
+          cardId,
+          autoMerge: true,
+          createdAt,
+        });
+        assert.strictEqual((yield* shellCard)?.autoMergeArmed, true);
+
+        // A SOFT hold: the clock runs, the pill reads "held", and `gaveUp` stays
+        // absent because rungs remain.
+        yield* engine.dispatch({
+          type: "board.card.record-auto-merge-hold",
+          commandId: CommandId.make("cmd-hold-soft"),
+          cardId,
+          hold: {
+            reason: "Required status check 'test' has not passed.",
+            classification: "soft",
+            detail: "3 of 5 checks green",
+            attempt: 2,
+            heldSince: HELD_SINCE,
+            retryAt: RETRY_AT,
+            headSha: "sha-one",
+          },
+          createdAt,
+        });
+        const soft = yield* shellCard;
+        assert.strictEqual(soft?.autoMergeHeldSince, HELD_SINCE);
+        assert.isFalse(soft !== undefined && "autoMergeGaveUp" in soft);
+
+        // The ladder stops. `heldSince` is unchanged — the clock measures the
+        // whole wait — and the label flips.
+        yield* engine.dispatch({
+          type: "board.card.record-auto-merge-hold",
+          commandId: CommandId.make("cmd-hold-hard"),
+          cardId,
+          hold: {
+            reason: "ci/test failed.",
+            classification: "checks-failed",
+            detail: "3 of 5 checks green · ci/test failed",
+            attempt: 3,
+            heldSince: HELD_SINCE,
+            retryAt: null,
+            headSha: "sha-one",
+          },
+          createdAt,
+        });
+        const hard = yield* shellCard;
+        assert.strictEqual(hard?.autoMergeHeldSince, HELD_SINCE);
+        assert.strictEqual(hard?.autoMergeGaveUp, true);
+
+        // The pair, asserted directly: the SQL snapshot producer above against
+        // the JS delta producer over the same aggregate. A disagreement here is
+        // a pill that appears after an edit and vanishes on reconnect, which is
+        // the whole reason this file exists.
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const model = yield* snapshotQuery.getCommandReadModel();
+        const aggregate = model.board?.cards.find((entry) => entry.id === cardId);
+        assert.isDefined(aggregate);
+        const delta = boardCardShellFromCard(aggregate!);
+        assert.strictEqual(delta.autoMergeHeldSince, hard?.autoMergeHeldSince);
+        assert.strictEqual(delta.autoMergeGaveUp, hard?.autoMergeGaveUp);
+        assert.strictEqual(delta.autoMergeArmed, hard?.autoMergeArmed);
+
+        // Disarming clears the hold (D10) and, with it, both hold keys — the
+        // reverse state a one-way door would have missed.
+        yield* engine.dispatch({
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-disarm-auto-merge"),
+          cardId,
+          autoMerge: false,
+          createdAt,
+        });
+        const cleared = yield* shellCard;
+        assert.isFalse(cleared !== undefined && "autoMergeHeldSince" in cleared);
+        assert.isFalse(cleared !== undefined && "autoMergeGaveUp" in cleared);
+        assert.isFalse(cleared !== undefined && "autoMergeArmed" in cleared);
+      }),
+    );
+  },
+);

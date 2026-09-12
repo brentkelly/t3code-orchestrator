@@ -42,6 +42,7 @@ import {
   type BoardSettings,
   type BoardStageExecution,
   type BoardState,
+  type ChangeRequestMergeState,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -454,6 +455,8 @@ export type Harness = {
   readonly decided: Effect.Effect<ReadonlyArray<OrchestrationEvent>>;
   /** Every merge the reactor asked the forge for, in order. */
   readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
+  /** Every structured refusal probe the reactor made (T3O-38, D6). */
+  readonly mergeStateProbes: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every worktree path the reactor removed, in order. */
   readonly removedWorktrees: Effect.Effect<ReadonlyArray<string>>;
   /** Every thread that actually SETTLED, as opposed to every settle the reactor
@@ -540,6 +543,16 @@ export function withGovernor(
     /** What a merge attempt answers: `undefined` succeeds, a string is the
         forge's refusal detail (a conflict when it reads like one). */
     readonly mergeFailure?: string;
+    /** Per-ATTEMPT merge outcomes (T3O-38), consumed in order: `null`
+        succeeds, a string refuses with that detail. Once the script runs out,
+        `mergeFailure` governs — so a two-entry script followed by no
+        `mergeFailure` is "refused twice, then merged", which is the whole
+        retry-ladder story. */
+    readonly mergeOutcomes?: ReadonlyArray<string | null>;
+    /** What the structured refusal probe answers (T3O-38, D7). `undefined`
+        makes the probe FAIL, which is what an unsupported provider does and
+        what the reactor must read as "unclassifiable" — the plain ladder. */
+    readonly mergeState?: ChangeRequestMergeState;
     /** Make the stubbed `statusDetails` report uncommitted changes, so a test
         can drive the reclaim refusal — the case where the checkout holds work
         that exists nowhere else and must NOT be deleted to save disk. */
@@ -926,6 +939,9 @@ export function withGovernor(
     // Every merge attempt the reactor makes, so a test can assert that a
     // refusal did NOT silently retry and that a conflict fix did.
     const mergeAttempts = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
+    // Every refusal probe, so a test can assert the happy path costs ONE forge
+    // call and that a hard hold is never re-probed.
+    const mergeStateProbes = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     const pullRequestStub = BoardPullRequestGateway.of({
       find: () =>
         (input.onPullRequestLookup ?? Effect.void).pipe(
@@ -943,16 +959,29 @@ export function withGovernor(
           }),
         ),
       merge: (request) =>
-        Ref.update(mergeAttempts, (attempts) => [...attempts, { number: request.number }]).pipe(
-          Effect.andThen(
-            input.mergeFailure === undefined
+        Ref.updateAndGet(mergeAttempts, (attempts) => [
+          ...attempts,
+          { number: request.number },
+        ]).pipe(
+          Effect.andThen((attempts) => {
+            const scripted = input.mergeOutcomes?.[attempts.length - 1];
+            const detail = scripted === undefined ? input.mergeFailure : (scripted ?? undefined);
+            return detail === undefined
               ? Effect.void
-              : Effect.fail(
+              : Effect.fail(new BoardPullRequestGatewayError({ operation: "merge", detail }));
+          }),
+        ),
+      mergeState: (request) =>
+        Ref.update(mergeStateProbes, (probes) => [...probes, { number: request.number }]).pipe(
+          Effect.andThen(
+            input.mergeState === undefined
+              ? Effect.fail(
                   new BoardPullRequestGatewayError({
-                    operation: "merge",
-                    detail: input.mergeFailure,
+                    operation: "mergeState",
+                    detail: "No provider is registered.",
                   }),
-                ),
+                )
+              : Effect.succeed(input.mergeState),
           ),
         ),
     });
@@ -1050,6 +1079,7 @@ export function withGovernor(
           commands: Ref.get(commands),
           decided: Ref.get(decided),
           mergeAttempts: Ref.get(mergeAttempts),
+          mergeStateProbes: Ref.get(mergeStateProbes),
           removedWorktrees: Ref.get(removedWorktrees),
           settledThreads: Ref.get(settled),
           setBaseTip: (ref, tip) => void baseTips.set(ref, tip),
@@ -1233,6 +1263,20 @@ export const cardTitleUpdated = (card: BoardCard, sequence: number): Orchestrati
     type: "board.card-updated",
     sequence,
     payload: { cardId: card.id, card: { ...card, title: `${card.title} (edited)` } },
+  }) as unknown as OrchestrationEvent;
+
+/** An edit that TOUCHED the auto-merge arm (T3O-38, D3). The marker key is
+    what the reactor keys the fire-on-toggle on, so a helper that only set the
+    card's field would prove nothing. */
+export const cardAutoMergeUpdated = (
+  card: BoardCard,
+  autoMerge: boolean,
+  sequence: number,
+): OrchestrationEvent =>
+  ({
+    type: "board.card-updated",
+    sequence,
+    payload: { cardId: card.id, card: { ...card, autoMerge }, autoMerge },
   }) as unknown as OrchestrationEvent;
 
 export const cardArchived = (card: BoardCard, sequence: number): OrchestrationEvent =>
