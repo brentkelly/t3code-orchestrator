@@ -237,10 +237,12 @@ describe("Forgejo, end to end: probe → classification (T3O-38, criterion 10)",
   it("reads a check that is still running as SOFT and retries", () => {
     const verdict = classify({
       pr: pullRequest(false),
-      runs: JSON.stringify({ statuses: [
-        { context: "build", status: "success" },
-        { context: "e2e", status: "pending" },
-      ] }),
+      runs: JSON.stringify({
+        statuses: [
+          { context: "build", status: "success" },
+          { context: "e2e", status: "pending" },
+        ],
+      }),
     });
     expect(verdict.classification).toBe("soft");
     expect(verdict.detail).toBe("1 of 2 checks green · e2e still running");
@@ -250,10 +252,12 @@ describe("Forgejo, end to end: probe → classification (T3O-38, criterion 10)",
   it("reads a FAILED check as hard and stops the ladder", () => {
     const verdict = classify({
       pr: pullRequest(false),
-      runs: JSON.stringify({ statuses: [
-        { context: "build", status: "success" },
-        { context: "lint", status: "failure" },
-      ] }),
+      runs: JSON.stringify({
+        statuses: [
+          { context: "build", status: "success" },
+          { context: "lint", status: "failure" },
+        ],
+      }),
     });
     expect(verdict.classification).toBe("checks-failed");
     expect(verdict.detail).toBe("1 of 2 checks green · lint failed");

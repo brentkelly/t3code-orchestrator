@@ -587,11 +587,9 @@ export function boardCardThreadsShellEvents(deps: {
     boardMethods === null
       ? Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>)
       : boardMethods.boardCardThreads(cardId).pipe(
-          Effect.map(
-            (threads): ReadonlyArray<OrchestrationShellStreamEvent> => [
-              { kind: "card-threads" as const, sequence, cardId, threads },
-            ],
-          ),
+          Effect.map((threads): ReadonlyArray<OrchestrationShellStreamEvent> => [
+            { kind: "card-threads" as const, sequence, cardId, threads },
+          ]),
           Effect.catchCause(() =>
             Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>),
           ),

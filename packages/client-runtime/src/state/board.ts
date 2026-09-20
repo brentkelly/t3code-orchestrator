@@ -559,13 +559,14 @@ export function applyBoardShellStreamEvent(
       // reads column order and labels from it (D13). Create / rename / reorder
       // all arrive here; kept in canonical `compareBoardStages` order.
       const stages = snapshot.boardStages ?? [];
-      const nextStages = (
-        stages.some((existing) => existing.stageId === event.stage.stageId)
+      // Spread-then-sort: Hermes (mobile) has no `Array#toSorted`.
+      const nextStages = [
+        ...(stages.some((existing) => existing.stageId === event.stage.stageId)
           ? Arr.map(stages, (existing) =>
               existing.stageId === event.stage.stageId ? event.stage : existing,
             )
-          : Arr.append(stages, event.stage)
-      ).toSorted(compareBoardStages);
+          : Arr.append(stages, event.stage)),
+      ].sort(compareBoardStages);
       return { ...snapshot, boardStages: nextStages, snapshotSequence: event.sequence };
     }
     case "card-provider-limit-upserted": {

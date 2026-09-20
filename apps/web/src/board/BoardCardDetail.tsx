@@ -234,8 +234,8 @@ export function BoardCardDetail({
   // succession costs no forge calls at all.
   useEffect(() => {
     void refreshCardPullRequest({ environmentId, input: { cardId } });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the command atom
-    // is stable; re-running on its identity would defeat the once-per-open key.
+    // The command atom is stable, and is left out on purpose: re-running on its
+    // identity would defeat the once-per-open key.
   }, [environmentId, cardId]);
   const labelsById = useMemo(() => indexBoardLabels(catalogue), [catalogue]);
   const stageState = useMemo<BoardState>(

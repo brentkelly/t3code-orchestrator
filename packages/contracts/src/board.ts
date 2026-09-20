@@ -2357,9 +2357,11 @@ export function boardStallIsWaiting(
     so "does this card have a plan?" is `boardBuildHumanInLoopDefault`, not the
     length of this list. */
 export function boardCardPlans(board: BoardState, cardId: BoardCardId): ReadonlyArray<BoardPlan> {
+  // `filter` already copied, so the in-place sort is safe — and Hermes (mobile)
+  // has no `Array#toSorted`.
   return (board.plans ?? [])
     .filter((plan) => plan.cardId === cardId)
-    .toSorted((left, right) => left.ordinal - right.ordinal);
+    .sort((left, right) => left.ordinal - right.ordinal);
 }
 
 /**

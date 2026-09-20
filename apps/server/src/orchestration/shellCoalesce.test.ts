@@ -9,11 +9,7 @@
 import { ThreadId, type OrchestrationEvent } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 
-import {
-  coalesceShellWindow,
-  toShellWindowEvent,
-  type ShellWindowEvent,
-} from "./shellCoalesce.ts";
+import { coalesceShellWindow, toShellWindowEvent, type ShellWindowEvent } from "./shellCoalesce.ts";
 
 const event = (input: {
   readonly sequence: number;

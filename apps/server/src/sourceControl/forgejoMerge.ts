@@ -72,7 +72,9 @@ export function makeForgejoMergeSeams(
 
   /** The API path of the pull request a board reference names. */
   const pullPath = Effect.fn("forgejoMerge.pullPath")(function* (
-    input: Parameters<Provider["mergeChangeRequest"]>[0] | Parameters<Provider["changeRequestMergeState"]>[0],
+    input:
+      | Parameters<Provider["mergeChangeRequest"]>[0]
+      | Parameters<Provider["changeRequestMergeState"]>[0],
   ) {
     const number = forgejoPullRequestNumber(input.reference);
     if (number === null) {
