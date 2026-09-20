@@ -135,6 +135,14 @@ const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionStateRepository.upsert:query")),
     );
 
+  // Runtime projectors commit their cursors as one batch (upstream v0.0.42), so a
+  // batch can carry both kinds. Each row still goes to the database that owns
+  // its projector: a transaction spanning both files can tear between them, but
+  // every file then holds its own rows AND its own watermarks, so whichever side
+  // was lost simply replays.
+  const upsertMany: ProjectionStateRepositoryShape["upsertMany"] = (rows) =>
+    Effect.forEach(rows, upsert, { discard: true });
+
   const getByProjector: ProjectionStateRepositoryShape["getByProjector"] = (input) =>
     selectByProjector(input).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionStateRepository.getByProjector:query")),
@@ -155,6 +163,7 @@ const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
 
   return {
     upsert,
+    upsertMany,
     getByProjector,
     listAll,
     minLastAppliedSequence,

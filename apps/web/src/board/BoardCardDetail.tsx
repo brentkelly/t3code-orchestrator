@@ -101,8 +101,7 @@ import {
   describeBoardReviewRoundOutcome,
   describeBoardSubmitOutcome,
 } from "./boardCommandFeedback";
-import { openPullRequestLink } from "../lib/openPullRequestLink";
-import { readLocalApi } from "../localApi";
+import { useOpenLink } from "../browser/useOpenLink";
 
 /** The modal frame, empty, while `board.subscribeCard` opens — same sheet, so
     nothing jumps when the detail lands. */
@@ -192,6 +191,8 @@ export function BoardCardDetail({
   // Both PR actions report their own outcomes below — a merge the forge
   // refused is a normal answer with the forge's own wording, not a command
   // failure the generic toast could describe usefully.
+  // No thread beside the card to open a preview in, so this is the system browser.
+  const openLink = useOpenLink(null);
   const refreshCardPullRequest = useAtomCommand(boardEnvironment.refreshCardPullRequest, {
     reportFailure: false,
   });
@@ -1072,12 +1073,7 @@ export function BoardCardDetail({
         // about to see the real state on the forge, so the card should not
         // still be showing them a stale one when they come back.
         void refreshCardPullRequest({ environmentId, input: { cardId: card.id } });
-        const shell = readLocalApi()?.shell;
-        if (shell === undefined) {
-          setFeedback("Link opening is unavailable.");
-          return;
-        }
-        void openPullRequestLink(shell, url).catch((error: unknown) => {
+        void openLink(url).catch((error: unknown) => {
           setFeedback(error instanceof Error ? error.message : "Unable to open the pull request.");
         });
       }}

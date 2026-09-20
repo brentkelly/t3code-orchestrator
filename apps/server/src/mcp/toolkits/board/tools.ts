@@ -49,7 +49,7 @@ import * as ServerConfig from "../../../config.ts";
  * or an explicit "how to be adopted" note when an unlinked thread calls a
  * card-scoped tool. `code` lets a caller branch without parsing prose.
  */
-export class BoardToolError extends Schema.TaggedErrorClass<BoardToolError>()("BoardToolError", {
+export class BoardToolError extends Schema.TaggedError<BoardToolError>()("BoardToolError", {
   code: Schema.Literals([
     "thread-not-linked",
     "card-not-found",

@@ -7099,7 +7099,7 @@ export const BoardCardDetailStreamItem = Schema.Union([
 ]);
 export type BoardCardDetailStreamItem = typeof BoardCardDetailStreamItem.Type;
 
-export class BoardSubscribeCardError extends Schema.TaggedErrorClass<BoardSubscribeCardError>()(
+export class BoardSubscribeCardError extends Schema.TaggedError<BoardSubscribeCardError>()(
   "BoardSubscribeCardError",
   {
     message: TrimmedNonEmptyString,
@@ -7128,7 +7128,7 @@ export type BoardDetachCardFileInput = typeof BoardDetachCardFileInput.Type;
 
 /** Every way an attach or detach can go wrong is a message the chip shows;
     `code` lets the client tell "upload expired, re-attach" from the rest. */
-export class BoardCardAttachmentError extends Schema.TaggedErrorClass<BoardCardAttachmentError>()(
+export class BoardCardAttachmentError extends Schema.TaggedError<BoardCardAttachmentError>()(
   "BoardCardAttachmentError",
   {
     code: Schema.Literals(["upload-missing", "rejected", "storage", "internal"]),

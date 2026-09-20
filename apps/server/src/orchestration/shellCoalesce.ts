@@ -21,7 +21,47 @@
  */
 import { isBoardEvent, type OrchestrationEvent } from "@t3tools/contracts";
 
-export function shellCoalesceKey(event: OrchestrationEvent): string {
+type BoardEvent = Extract<OrchestrationEvent, { type: `board.${string}` }>;
+type StockEvent = Exclude<OrchestrationEvent, BoardEvent>;
+
+/**
+ * What the shell stream holds of one domain event while it waits in the
+ * coalescing window.
+ *
+ * Upstream keeps only the routing fields, because project and thread deltas are
+ * a refetch and a window full of streamed message bodies is memory held for
+ * nothing. The board cannot follow it all the way: a board delta is built from
+ * the event payload (see above), so a board event stays whole — it carries one
+ * card, not a transcript. A stock event is slimmed like upstream's, plus the one
+ * bit of its payload the board reads: whether it rewrote a linked thread's todo
+ * list (`boardCardThreadsShellEvents`).
+ */
+export type ShellWindowEvent =
+  | BoardEvent
+  | {
+      readonly type: StockEvent["type"];
+      readonly aggregateKind: StockEvent["aggregateKind"];
+      readonly aggregateId: StockEvent["aggregateId"];
+      readonly sequence: number;
+      readonly todosChanged: boolean;
+    };
+
+export function toShellWindowEvent(event: OrchestrationEvent): ShellWindowEvent {
+  if (isBoardEvent(event)) return event;
+  const { type, aggregateKind, aggregateId, sequence } = event;
+  return {
+    type,
+    aggregateKind,
+    aggregateId,
+    sequence,
+    // The projector WRITES `board_thread_todos` on exactly this event.
+    todosChanged:
+      event.type === "thread.activity-appended" &&
+      event.payload.activity.kind === "turn.plan.updated",
+  };
+}
+
+export function shellCoalesceKey(event: ShellWindowEvent): string {
   return isBoardEvent(event)
     ? `${event.aggregateKind}:${event.aggregateId}:${event.type}`
     : `${event.aggregateKind}:${event.aggregateId}`;
@@ -33,9 +73,9 @@ export function shellCoalesceKey(event: OrchestrationEvent): string {
  * increasing sequence and drops anything at or below its snapshot).
  */
 export function coalesceShellWindow(
-  events: ReadonlyArray<OrchestrationEvent>,
-): ReadonlyArray<OrchestrationEvent> {
-  const latest = new Map<string, OrchestrationEvent>();
+  events: ReadonlyArray<ShellWindowEvent>,
+): ReadonlyArray<ShellWindowEvent> {
+  const latest = new Map<string, ShellWindowEvent>();
   for (const event of events) {
     latest.set(shellCoalesceKey(event), event);
   }

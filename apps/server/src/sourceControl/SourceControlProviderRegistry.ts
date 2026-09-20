@@ -13,10 +13,9 @@ import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/source
 
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
-// T3o: Forgejo/Codeberg via the `fgj` CLI (t3o-28).
-import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
+import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
   probeSourceControlProvider,
@@ -44,6 +43,7 @@ export interface SourceControlProviderHandle {
 export class SourceControlProviderRegistry extends Context.Service<
   SourceControlProviderRegistry,
   {
+    readonly resolveLink: SourceControlProvider.ResolveSourceControlLink;
     readonly get: (
       kind: SourceControlProviderKind,
     ) => Effect.Effect<
@@ -181,6 +181,7 @@ function bindProviderContext(
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: provider.kind,
+    ...(provider.resolveLink ? { resolveLink: provider.resolveLink } : {}),
     listChangeRequests: (input) =>
       provider.listChangeRequests({
         ...input,
@@ -225,6 +226,7 @@ function bindProviderContext(
   });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWithProviders")(
   function* (registrations: ReadonlyArray<SourceControlProviderRegistration>) {
     const config = yield* ServerConfig;
@@ -306,6 +308,13 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       );
 
     return SourceControlProviderRegistry.of({
+      resolveLink: (input) => {
+        if (input.url.protocol !== "https:" || input.url.username || input.url.password) {
+          return undefined;
+        }
+        const kind = detectSourceControlProviderFromRemoteUrl(input.url.href)?.kind;
+        return kind ? providers.get(kind)?.resolveLink?.(input) : undefined;
+      },
       get,
       resolveHandle,
       resolve: (input) => resolveHandle(input).pipe(Effect.map((handle) => handle.provider)),
@@ -326,11 +335,11 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 export const make = Effect.gen(function* () {
   const github = yield* GitHubSourceControlProvider.make;
   const gitlab = yield* GitLabSourceControlProvider.make;
+  const forgejo = yield* ForgejoSourceControlProvider.make;
+  const forgejoDiscovery = yield* ForgejoSourceControlProvider.makeDiscovery;
   const bitbucket = yield* BitbucketSourceControlProvider.make;
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
   const azureDevOps = yield* AzureDevOpsSourceControlProvider.make;
-  // T3o: t3o-28.
-  const forgejo = yield* ForgejoSourceControlProvider.make;
   return yield* makeWithProviders([
     {
       kind: "github",
@@ -352,12 +361,7 @@ export const make = Effect.gen(function* () {
       provider: bitbucket,
       discovery: bitbucketDiscovery,
     },
-    // T3o: t3o-28.
-    {
-      kind: "forgejo",
-      provider: forgejo,
-      discovery: ForgejoSourceControlProvider.discovery,
-    },
+    { kind: "forgejo", provider: forgejo, discovery: forgejoDiscovery },
   ]);
 });
 

@@ -66,6 +66,35 @@ layer("board-aware projection state", (it) => {
     }),
   );
 
+  it.effect("splits a mixed batch so each watermark lands beside its own projector's rows", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionStateRepository;
+
+      // The runtime pipeline commits every projector's cursor as one batch.
+      yield* repository.upsertMany([
+        at("projection.batch-threads", 11),
+        at("projection.board-batch-cards", 11),
+      ]);
+      yield* repository.upsertMany([]);
+
+      assert.strictEqual(yield* countIn("main", "projection.batch-threads"), 1);
+      assert.strictEqual(yield* countIn("boards", "projection.batch-threads"), 0);
+      assert.strictEqual(yield* countIn("boards", "projection.board-batch-cards"), 1);
+      assert.strictEqual(yield* countIn("main", "projection.board-batch-cards"), 0);
+
+      // A second batch advances both in place rather than duplicating them.
+      yield* repository.upsertMany([
+        at("projection.batch-threads", 12),
+        at("projection.board-batch-cards", 12),
+      ]);
+      const board = yield* repository.getByProjector({
+        projector: "projection.board-batch-cards",
+      });
+      assert.strictEqual(Option.getOrThrow(board).lastAppliedSequence, 12);
+      assert.strictEqual(yield* countIn("boards", "projection.board-batch-cards"), 1);
+    }),
+  );
+
   it.effect("reads either watermark back, and upserts in place", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionStateRepository;

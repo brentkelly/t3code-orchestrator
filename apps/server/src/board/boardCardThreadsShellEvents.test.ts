@@ -11,6 +11,7 @@ import { ThreadId, type OrchestrationEvent } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
+import { toShellWindowEvent } from "../orchestration/shellCoalesce.ts";
 import { boardCardThreadsShellEvents } from "./rpc.ts";
 
 const cardId = "card-1";
@@ -34,10 +35,11 @@ const snapshotStub = {
 
 const mapper = boardCardThreadsShellEvents({ projectionSnapshotQuery: snapshotStub });
 
-/** Run the mapper on an event and collect its deltas — a plain Effect, yielded
+/** Run the mapper on an event as the shell window holds it (slimmed by
+    `toShellWindowEvent`) and collect its deltas — a plain Effect, yielded
     inside each `it.effect` (no manual runtime). */
 const run = (event: unknown) =>
-  mapper(event as OrchestrationEvent).pipe(Effect.map((deltas) => [...deltas]));
+  mapper(toShellWindowEvent(event as OrchestrationEvent)).pipe(Effect.map((deltas) => [...deltas]));
 
 const planUpdate = (kind: string): OrchestrationEvent =>
   ({

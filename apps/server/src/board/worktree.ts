@@ -237,7 +237,7 @@ export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(fu
  * (t3o-10) enforces the invariant; t3o-09 states it as this guard so the
  * reactor has one place to call and the invariant lives in code, not prose.
  */
-export class BoardWorktreeConcurrencyError extends Schema.TaggedErrorClass<BoardWorktreeConcurrencyError>()(
+export class BoardWorktreeConcurrencyError extends Schema.TaggedError<BoardWorktreeConcurrencyError>()(
   "BoardWorktreeConcurrencyError",
   {
     cardId: Schema.String,

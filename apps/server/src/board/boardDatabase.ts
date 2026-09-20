@@ -52,7 +52,7 @@ const quoted = (identifier: string): string => `"${identifier.replace(/"/g, '""'
  * the one in `main`. Relocation refuses rather than pick a side: either choice
  * destroys real data, and only a human knows which copy is the one they want.
  */
-export class BoardRelocationConflictError extends Schema.TaggedErrorClass<BoardRelocationConflictError>()(
+export class BoardRelocationConflictError extends Schema.TaggedError<BoardRelocationConflictError>()(
   "BoardRelocationConflictError",
   {
     mainTables: Schema.Array(Schema.String),

@@ -12,10 +12,23 @@ import type {
   SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
 
+export interface SourceControlLinkSubject {
+  readonly title: string;
+  readonly body: string | null;
+}
+
+/** Return undefined synchronously for unsupported URLs, without starting a lookup. */
+export type ResolveSourceControlLink = (input: {
+  readonly cwd: string;
+  readonly url: URL;
+}) => Effect.Effect<SourceControlLinkSubject, SourceControlProviderError> | undefined;
+
 export interface SourceControlProviderContext {
   readonly provider: SourceControlProviderInfo;
   readonly remoteName: string;
   readonly remoteUrl: string;
+  /** An explicit web authority can disambiguate Forgejo logins sharing an SSH alias. */
+  readonly requestedHost?: string;
 }
 
 export interface SourceControlRefSelector {
@@ -63,7 +76,7 @@ export function parseSourceControlOwnerRef(
   return owner && refName ? { owner, refName } : undefined;
 }
 
-export function normalizeSourceBranch(headSelector: string): string {
+function normalizeSourceBranch(headSelector: string): string {
   return parseSourceControlOwnerRef(headSelector)?.refName ?? headSelector.trim();
 }
 
@@ -85,6 +98,8 @@ export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   {
     readonly kind: SourceControlProviderKind;
+    /** Optional capability for issue and change-request subjects. */
+    readonly resolveLink?: ResolveSourceControlLink;
     readonly listChangeRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;
@@ -138,9 +153,9 @@ export class SourceControlProvider extends Context.Service<
      * (`listChangeRequests`) stay provider-agnostic, so a card on GitLab or
      * Bitbucket still shows its PR badge and link; only the merge is gated.
      *
-     * T3o: Forgejo also implements it — `fgj pr merge --merge-method` maps onto
-     * `ChangeRequestMergeStrategy` exactly, and one-click merge is the point of
-     * the board's Ready-for-merge stage (t3o-28).
+     * T3o: Forgejo also implements it (`forgejoMerge.ts`) — Gitea's merge
+     * styles map onto `ChangeRequestMergeStrategy` exactly, and one-click merge
+     * is the point of the board's Ready-for-merge stage.
      *
      * A refusal by the forge (failing checks, missing approvals, conflicts) is
      * a normal outcome here, not an exception in the caller's design: it comes

@@ -1,8 +1,11 @@
-import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
+import type {
+  RepositoryIdentity,
+  SourceControlProviderInfo,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
-  // T3o: "forgejo" (t3o-28).
-  readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "forgejo" | "change-request";
+  readonly icon: "github" | "gitlab" | "forgejo" | "azure-devops" | "bitbucket" | "change-request";
   readonly providerName: string;
   readonly shortName: string;
   readonly longName: string;
@@ -44,6 +47,17 @@ const GITLAB_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "https://gitlab.com/group/project/-/merge_requests/42",
 };
 
+const FORGEJO_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
+  icon: "forgejo",
+  providerName: "Forgejo",
+  shortName: "PR",
+  longName: "pull request",
+  pluralLongName: "pull requests",
+  providerLongName: "Forgejo pull request",
+  checkoutCommandExample: "tea pr checkout 123",
+  urlExample: "https://codeberg.org/owner/repo/pulls/42",
+};
+
 const AZURE_DEVOPS_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "azure-devops",
   providerName: "Azure DevOps",
@@ -65,18 +79,6 @@ const BITBUCKET_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "https://bitbucket.org/workspace/repo/pull-requests/42",
 };
 
-// T3o: Forgejo speaks GitHub's vocabulary, but `fgj` has no checkout subcommand, so no
-// checkout example is offered — T3o fetches `refs/pull/<n>/head` itself (t3o-28).
-const FORGEJO_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
-  icon: "forgejo",
-  providerName: "Forgejo",
-  shortName: "PR",
-  longName: "pull request",
-  pluralLongName: "pull requests",
-  providerLongName: "Forgejo pull request",
-  urlExample: "https://codeberg.org/owner/repo/pulls/42",
-};
-
 const GENERIC_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "change-request",
   providerName: "source control",
@@ -96,33 +98,21 @@ export function resolveChangeRequestPresentation(
       return GITHUB_CHANGE_REQUEST_PRESENTATION;
     case "gitlab":
       return GITLAB_CHANGE_REQUEST_PRESENTATION;
+    case "forgejo":
+      return FORGEJO_CHANGE_REQUEST_PRESENTATION;
     case "azure-devops":
       return AZURE_DEVOPS_CHANGE_REQUEST_PRESENTATION;
     case "bitbucket":
       return BITBUCKET_CHANGE_REQUEST_PRESENTATION;
-    // T3o: t3o-28.
-    case "forgejo":
-      return FORGEJO_CHANGE_REQUEST_PRESENTATION;
     case "unknown":
       return GENERIC_CHANGE_REQUEST_PRESENTATION;
   }
 }
 
-export function resolveChangeRequestPresentationForKind(
+function resolveChangeRequestPresentationForKind(
   kind: SourceControlProviderKind,
 ): ChangeRequestPresentation {
   return resolveChangeRequestPresentation({ kind, name: "", baseUrl: "" });
-}
-
-export function formatChangeRequestAction(
-  verb: "View" | "Create",
-  presentation: ChangeRequestPresentation,
-): string {
-  return `${verb} ${presentation.shortName}`;
-}
-
-export function formatCreateChangeRequestPhrase(presentation: ChangeRequestPresentation): string {
-  return `create ${presentation.shortName}`;
 }
 
 export function getChangeRequestTerminology(
@@ -214,18 +204,6 @@ function isBitbucketHost(host: string): boolean {
   return host === "bitbucket.org" || hasDnsLabel(host, "bitbucket");
 }
 
-// T3o: the free wins only. A Forgejo instance is usually named after the team that runs it
-// rather than after Forgejo, so most self-hosted installs stay `unknown` here and are claimed
-// later by `refineUnknownRemote` against `fgj auth status` (t3o-28).
-function isForgejoHost(host: string): boolean {
-  return (
-    host === "codeberg.org" ||
-    host.endsWith(".codeberg.org") ||
-    hasDnsLabel(host, "forgejo") ||
-    hasDnsLabel(host, "gitea")
-  );
-}
-
 export function detectSourceControlProviderFromRemoteUrl(
   remoteUrl: string,
 ): SourceControlProviderInfo | null {
@@ -234,6 +212,20 @@ export function detectSourceControlProviderFromRemoteUrl(
     return null;
   }
   const hostname = parseHostName(host);
+
+  if (
+    hostname === "codeberg.org" ||
+    hasDnsLabel(hostname, "forgejo") ||
+    hasDnsLabel(hostname, "gitea")
+  ) {
+    return {
+      kind: "forgejo",
+      name: "Forgejo",
+      baseUrl: /^https?:/iu.test(remoteUrl.trim())
+        ? new URL(remoteUrl.trim()).origin
+        : toBaseUrl(host),
+    };
+  }
 
   if (isGitHubHost(hostname)) {
     return {
@@ -267,18 +259,49 @@ export function detectSourceControlProviderFromRemoteUrl(
     };
   }
 
-  // T3o: t3o-28.
-  if (isForgejoHost(hostname)) {
-    return {
-      kind: "forgejo",
-      name: hostname === "codeberg.org" ? "Codeberg" : "Forgejo",
-      baseUrl: toBaseUrl(host),
-    };
-  }
-
   return {
     kind: "unknown",
     name: host,
     baseUrl: toBaseUrl(host),
   };
+}
+
+/**
+ * The provider-native repository selector. `displayName` is the full path below the host, which
+ * is what nested GitLab groups need; owner/name is the two-segment fallback for identities
+ * recorded before that field existed.
+ *
+ * Azure DevOps is the exception: `az repos pr list --repository` takes a repository name, and
+ * takes the organisation and project from the checkout it detects — so the recorded
+ * `org/project/_git/repo` path is refused outright and the whole repository reads as
+ * unavailable. Its name is the last segment, which is what this hands over.
+ *
+ * One function because everything downstream is keyed by what it answers: the rows' own
+ * `repository`, the per-repository cursors, and the detail and diff reads a row leads to.
+ */
+export function sourceControlRepositorySelector(
+  identity:
+    | Pick<RepositoryIdentity, "provider" | "displayName" | "owner" | "name">
+    | null
+    | undefined,
+): string | null {
+  if (!identity) return null;
+  if (identity.provider === "azure-devops") {
+    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");
+    return identity.name || segments.at(-1) || null;
+  }
+  if (identity.displayName) return identity.displayName;
+  return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
+}
+
+export function canonicalRepositoryKey(key: string): string {
+  return key
+    .replace(
+      /^(?:ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/u,
+      "dev.azure.com/$1/$2/_git/$3",
+    )
+    .replace(
+      /^([^.]+)\.visualstudio\.com\/(?:defaultcollection\/)?([^/]+)\/_git\/([^/]+)$/u,
+      "dev.azure.com/$1/$2/_git/$3",
+    );
 }

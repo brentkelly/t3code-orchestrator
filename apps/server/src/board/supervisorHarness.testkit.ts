@@ -264,6 +264,7 @@ const threadRow = (
   interactionMode: command.interactionMode,
   branch: command.branch,
   worktreePath: command.worktreePath,
+  pullRequests: [],
   latestTurn: null,
   createdAt: command.createdAt,
   updatedAt: command.createdAt,

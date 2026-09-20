@@ -1,7 +1,10 @@
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -18,11 +21,46 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
+  type NormalizedGitHubPullRequestRecord,
 } from "./gitHubPullRequests.ts";
 // T3o: the structured refusal probe (T3O-38, D7).
 import { parseGitHubMergeState } from "./gitHubMergeState.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Server-local credential scope; never put its value in RPC payloads or cache keys. */
+export const PinnedGitHubCredential = Context.Reference<{
+  readonly host: string;
+  readonly token: Redacted.Redacted<string>;
+  readonly credentialFingerprint: string;
+} | null>("t3/sourceControl/PinnedGitHubCredential", { defaultValue: () => null });
+
+function targetsVerifiedHost(args: ReadonlyArray<string>, host: string): boolean {
+  const hosts: Array<string | null> = [];
+  const repositoryHost = (repository: string | undefined) => {
+    if (repository === undefined) return null;
+    if (/^https?:\/\//i.test(repository)) {
+      try {
+        return new URL(repository).host.toLowerCase();
+      } catch {
+        return null;
+      }
+    }
+    const parts = repository.split("/");
+    return parts.length === 3 ? parts[0]!.toLowerCase() : null;
+  };
+  if (args[0] === "repo" && args[1] === "view") hosts.push(repositoryHost(args[2]));
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    if (arg === "--hostname") hosts.push(args[++index]?.toLowerCase() ?? null);
+    else if (arg.startsWith("--hostname=")) hosts.push(arg.slice(11).toLowerCase());
+    else if (arg === "--repo" || arg === "-R") hosts.push(repositoryHost(args[++index]));
+    else if (arg.startsWith("--repo=")) hosts.push(repositoryHost(arg.slice(7)));
+    else if (arg.startsWith("-R")) hosts.push(repositoryHost(arg.slice(2)));
+    else if (/^https?:\/\//i.test(arg)) hosts.push(repositoryHost(arg));
+  }
+  return hosts.length > 0 && hosts.every((target) => target === host);
+}
 
 const gitHubCliFailureFields = {
   command: Schema.Literal("gh"),
@@ -30,7 +68,7 @@ const gitHubCliFailureFields = {
   cause: Schema.Defect(),
 } as const;
 
-export class GitHubCliUnavailableError extends Schema.TaggedErrorClass<GitHubCliUnavailableError>()(
+export class GitHubCliUnavailableError extends Schema.TaggedError<GitHubCliUnavailableError>()(
   "GitHubCliUnavailableError",
   gitHubCliFailureFields,
 ) {
@@ -43,7 +81,7 @@ export class GitHubCliUnavailableError extends Schema.TaggedErrorClass<GitHubCli
   }
 }
 
-export class GitHubCliAuthenticationError extends Schema.TaggedErrorClass<GitHubCliAuthenticationError>()(
+export class GitHubCliAuthenticationError extends Schema.TaggedError<GitHubCliAuthenticationError>()(
   "GitHubCliAuthenticationError",
   gitHubCliFailureFields,
 ) {
@@ -56,7 +94,7 @@ export class GitHubCliAuthenticationError extends Schema.TaggedErrorClass<GitHub
   }
 }
 
-export class GitHubCliRateLimitError extends Schema.TaggedErrorClass<GitHubCliRateLimitError>()(
+export class GitHubCliRateLimitError extends Schema.TaggedError<GitHubCliRateLimitError>()(
   "GitHubCliRateLimitError",
   gitHubCliFailureFields,
 ) {
@@ -69,7 +107,7 @@ export class GitHubCliRateLimitError extends Schema.TaggedErrorClass<GitHubCliRa
   }
 }
 
-export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitHubPullRequestNotFoundError>()(
+export class GitHubPullRequestNotFoundError extends Schema.TaggedError<GitHubPullRequestNotFoundError>()(
   "GitHubPullRequestNotFoundError",
   gitHubCliFailureFields,
 ) {
@@ -100,7 +138,7 @@ export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitH
  * already use, which strips URL credentials and control characters and bounds
  * the length.
  */
-export class GitHubPullRequestMergeRefusedError extends Schema.TaggedErrorClass<GitHubPullRequestMergeRefusedError>()(
+export class GitHubPullRequestMergeRefusedError extends Schema.TaggedError<GitHubPullRequestMergeRefusedError>()(
   "GitHubPullRequestMergeRefusedError",
   { ...gitHubCliFailureFields, refusal: Schema.String, exitCode: Schema.Number },
 ) {
@@ -113,7 +151,7 @@ export class GitHubPullRequestMergeRefusedError extends Schema.TaggedErrorClass<
   }
 }
 
-export class GitHubCliCommandError extends Schema.TaggedErrorClass<GitHubCliCommandError>()(
+export class GitHubCliCommandError extends Schema.TaggedError<GitHubCliCommandError>()(
   "GitHubCliCommandError",
   gitHubCliFailureFields,
 ) {
@@ -132,7 +170,7 @@ const gitHubCliDecodeFields = {
   cause: Schema.Defect(),
 } as const;
 
-export class GitHubPullRequestListDecodeError extends Schema.TaggedErrorClass<GitHubPullRequestListDecodeError>()(
+export class GitHubPullRequestListDecodeError extends Schema.TaggedError<GitHubPullRequestListDecodeError>()(
   "GitHubPullRequestListDecodeError",
   gitHubCliDecodeFields,
 ) {
@@ -145,7 +183,7 @@ export class GitHubPullRequestListDecodeError extends Schema.TaggedErrorClass<Gi
   }
 }
 
-export class GitHubChangeRequestListDecodeError extends Schema.TaggedErrorClass<GitHubChangeRequestListDecodeError>()(
+export class GitHubChangeRequestListDecodeError extends Schema.TaggedError<GitHubChangeRequestListDecodeError>()(
   "GitHubChangeRequestListDecodeError",
   gitHubCliDecodeFields,
 ) {
@@ -158,7 +196,7 @@ export class GitHubChangeRequestListDecodeError extends Schema.TaggedErrorClass<
   }
 }
 
-export class GitHubPullRequestDecodeError extends Schema.TaggedErrorClass<GitHubPullRequestDecodeError>()(
+export class GitHubPullRequestDecodeError extends Schema.TaggedError<GitHubPullRequestDecodeError>()(
   "GitHubPullRequestDecodeError",
   gitHubCliDecodeFields,
 ) {
@@ -171,7 +209,7 @@ export class GitHubPullRequestDecodeError extends Schema.TaggedErrorClass<GitHub
   }
 }
 
-export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubRepositoryDecodeError>()(
+export class GitHubRepositoryDecodeError extends Schema.TaggedError<GitHubRepositoryDecodeError>()(
   "GitHubRepositoryDecodeError",
   gitHubCliDecodeFields,
 ) {
@@ -240,9 +278,21 @@ export interface GitHubPullRequestSummary {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state?: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
+  readonly updatedAt?: string;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+}
+
+function pullRequestSummary(input: NormalizedGitHubPullRequestRecord): GitHubPullRequestSummary {
+  const { updatedAt, ...summary } = input;
+  return {
+    ...summary,
+    ...(Option.isSome(updatedAt) ? { updatedAt: DateTime.formatIso(updatedAt.value) } : {}),
+  };
 }
 
 export interface GitHubRepositoryCloneUrls {
@@ -264,6 +314,7 @@ export class GitHubCli extends Context.Service<
       readonly allowNonZeroExit?: boolean;
       /** Piped to the child's stdin, for payloads that must never appear in argv. */
       readonly stdin?: string;
+      readonly env?: NodeJS.ProcessEnv;
       readonly maxOutputBytes?: number;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
@@ -376,23 +427,49 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
   };
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
-  const execute: GitHubCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "GitHubCli.execute",
-        command: "gh",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        // T3o: see `allowNonZeroExit`.
-        ...(input.allowNonZeroExit === true ? { allowNonZeroExit: true } : {}),
-        ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
-        ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
-      })
-      .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+  const execute: GitHubCli["Service"]["execute"] = Effect.fn("GitHubCli.execute")(
+    function* (input) {
+      const credential = yield* PinnedGitHubCredential;
+      if (credential !== null && !targetsVerifiedHost(input.args, credential.host)) {
+        return yield* new GitHubCliCommandError({
+          command: "gh",
+          cwd: input.cwd,
+          cause: new Error("The GitHub command does not target the verified credential's host."),
+        });
+      }
+      const token = credential === null ? undefined : Redacted.value(credential.token);
+      const env =
+        credential === null
+          ? input.env
+          : {
+              ...input.env,
+              GH_HOST: credential.host,
+              GH_TOKEN: token,
+              GITHUB_TOKEN: token,
+              GH_ENTERPRISE_TOKEN: token,
+              GITHUB_ENTERPRISE_TOKEN: token,
+              GH_DEBUG: "",
+            };
+      return yield* process
+        .run({
+          operation: "GitHubCli.execute",
+          command: "gh",
+          args: input.args,
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          // T3o: see `allowNonZeroExit`.
+          ...(input.allowNonZeroExit === true ? { allowNonZeroExit: true } : {}),
+          ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+          ...(env !== undefined ? { env } : {}),
+          ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
+        })
+        .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+    },
+  );
 
   return GitHubCli.of({
     execute,
@@ -409,7 +486,7 @@ export const make = Effect.gen(function* () {
           "--limit",
           String(input.limit ?? 1),
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -428,9 +505,7 @@ export const make = Effect.gen(function* () {
                     );
                   }
 
-                  return Effect.succeed(
-                    decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
-                  );
+                  return Effect.succeed(decoded.success.map(pullRequestSummary));
                 }),
               ),
         ),
@@ -443,7 +518,7 @@ export const make = Effect.gen(function* () {
           "view",
           input.reference,
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -460,9 +535,7 @@ export const make = Effect.gen(function* () {
                 );
               }
 
-              return Effect.succeed(
-                (({ updatedAt: _updatedAt, ...summary }) => summary)(decoded.success),
-              );
+              return Effect.succeed(pullRequestSummary(decoded.success));
             }),
           ),
         ),
