@@ -15,8 +15,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-// T3o-26: board tables live in an attached boards.sqlite, so this tool has to
-// attach it too or every `board_*` query fails with "no such table".
+// T3o: board tables live in an attached boards.sqlite (t3o-26), so this tool has
+// to attach it too or every `board_*` query fails with "no such table".
 import {
   attachBoardDatabase,
   BOARD_SCHEMA,

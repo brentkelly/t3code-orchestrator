@@ -847,7 +847,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
-  // t3o-34: the gitenv module is pointed at the state dir by this resolver — the
+  // T3o: (t3o-34) the gitenv module is pointed at the state dir by this resolver — the
   // path every `t3` server boot takes. A config built via `ServerConfig.layer`
   // would initialise it through `make` and hide a missing seam here, so this
   // deliberately goes through `resolveServerConfig` alone.

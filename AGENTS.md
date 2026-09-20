@@ -21,7 +21,7 @@ It is a supervisor, not a view.
 decisions with their rationale and rejected alternatives. Per-feature specs are the numbered
 `.plans/t3o-NN-*.md` files from `t3o-01` onwards; the build order and dependency waves are in the overview.
 
-**Status:** the board is built and in use. Upstream is synced to `v0.0.38` (`t3o-31`); the seam
+**Status:** the board is built and in use. Upstream is synced to `v0.0.42` (`T3O-46`); the seam
 inventory and sync runbook are in `docs/t3o/seams.md`.
 
 **Status colours are a fixed vocabulary.** Green means done and only done, blue means running,
