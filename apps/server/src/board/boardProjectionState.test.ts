@@ -70,28 +70,29 @@ layer("board-aware projection state", (it) => {
     Effect.gen(function* () {
       const repository = yield* ProjectionStateRepository;
 
-      // The runtime pipeline commits every projector's cursor as one batch.
+      // The runtime pipeline commits every projector's cursor as one batch. (Same
+      // two projectors as the tests around it: they share one database.)
       yield* repository.upsertMany([
-        at("projection.batch-threads", 11),
-        at("projection.board-batch-cards", 11),
+        at("projection.threads", 11),
+        at("projection.board-cards", 11),
       ]);
       yield* repository.upsertMany([]);
 
-      assert.strictEqual(yield* countIn("main", "projection.batch-threads"), 1);
-      assert.strictEqual(yield* countIn("boards", "projection.batch-threads"), 0);
-      assert.strictEqual(yield* countIn("boards", "projection.board-batch-cards"), 1);
-      assert.strictEqual(yield* countIn("main", "projection.board-batch-cards"), 0);
+      assert.strictEqual(yield* countIn("main", "projection.threads"), 1);
+      assert.strictEqual(yield* countIn("boards", "projection.threads"), 0);
+      assert.strictEqual(yield* countIn("boards", "projection.board-cards"), 1);
+      assert.strictEqual(yield* countIn("main", "projection.board-cards"), 0);
 
       // A second batch advances both in place rather than duplicating them.
       yield* repository.upsertMany([
-        at("projection.batch-threads", 12),
-        at("projection.board-batch-cards", 12),
+        at("projection.threads", 12),
+        at("projection.board-cards", 12),
       ]);
       const board = yield* repository.getByProjector({
-        projector: "projection.board-batch-cards",
+        projector: "projection.board-cards",
       });
       assert.strictEqual(Option.getOrThrow(board).lastAppliedSequence, 12);
-      assert.strictEqual(yield* countIn("boards", "projection.board-batch-cards"), 1);
+      assert.strictEqual(yield* countIn("boards", "projection.board-cards"), 1);
     }),
   );
 

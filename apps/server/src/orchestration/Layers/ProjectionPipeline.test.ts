@@ -100,7 +100,9 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-curs
         });
 
         yield* projectionPipeline.projectEvent(event).pipe(Effect.withTracer(counter.tracer));
-        assert.strictEqual(counter.count(), 2);
+        // T3o: three, not upstream's two — board cursors are a second batch, in
+        // `boards.projection_state` beside the rows they describe (t3o-26).
+        assert.strictEqual(counter.count(), 3);
         assert.deepEqual(
           yield* projectionState.listAll(),
           Object.values(ORCHESTRATION_PROJECTOR_NAMES)

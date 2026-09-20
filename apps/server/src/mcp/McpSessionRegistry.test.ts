@@ -78,9 +78,10 @@ it.effect("always grants pull-requests and gates browser and device access indep
         .resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""))
         .pipe(Effect.map((scope) => [...(scope?.capabilities ?? [])].sort()));
 
-    expect(yield* capabilitiesOf(withPreview)).toEqual(["preview", "pull-requests"]);
-    expect(yield* capabilitiesOf(withoutPreview)).toEqual(["pull-requests"]);
-    expect(yield* capabilitiesOf(withDevice)).toEqual(["device", "pull-requests"]);
+    // T3o: "board" is granted to every session alongside pull-requests (t3o-08, D3).
+    expect(yield* capabilitiesOf(withPreview)).toEqual(["board", "preview", "pull-requests"]);
+    expect(yield* capabilitiesOf(withoutPreview)).toEqual(["board", "pull-requests"]);
+    expect(yield* capabilitiesOf(withDevice)).toEqual(["board", "device", "pull-requests"]);
   }),
 );
 
