@@ -123,9 +123,14 @@ const supervisorStub: SupervisorReactorShape = {
     }),
   releaseThreads: Effect.void,
   drain: Effect.void,
-  refreshPullRequest: (cardId) =>
+  refreshPullRequest: (cardId, options) =>
     Effect.sync(() => {
-      supervisorCalls.refresh.push(String(cardId));
+      // T3o (T3O-48): the forced re-check is recorded distinctly, so a test can
+      // tell a human's "Check again" from the automatic on-open refresh.
+      supervisorCalls.refresh.push(
+        options?.force === true ? `${String(cardId)}:force` : String(cardId),
+      );
+      return { outcome: "none" as const };
     }),
   mergePullRequest: (cardId) =>
     Effect.sync(() => {
@@ -223,3 +228,51 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-test-"))("board.subscribeCard", (i
     }),
   );
 });
+
+// T3o (T3O-48): the forced re-check has to survive the wire. The automatic
+// triggers must stay on the cached path — a burst of card opens costing one
+// forge call is what makes the refresh free — and a human's "Check again" must
+// not be answered out of that same cache.
+it.layer(makeBoardRpcTestLayer("t3o-board-rpc-refresh-test-"))(
+  "board.refreshCardPullRequest",
+  (it) => {
+    it.effect("rejects a session without the orchestration read scope", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        const handlers = yield* makeHandlers([]);
+        const failure = yield* Effect.flip(
+          handlers["board.refreshCardPullRequest"]({ cardId, force: true }),
+        );
+        assert.strictEqual(failure._tag, "EnvironmentAuthorizationError");
+        assert.deepStrictEqual(supervisorCalls.refresh, []);
+      }),
+    );
+
+    it.effect("passes a human's force through, and omits it for the automatic refresh", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
+        supervisorCalls.refresh.length = 0;
+
+        yield* handlers["board.refreshCardPullRequest"]({ cardId });
+        yield* handlers["board.refreshCardPullRequest"]({ cardId, force: false });
+        yield* handlers["board.refreshCardPullRequest"]({ cardId, force: true });
+
+        assert.deepStrictEqual(supervisorCalls.refresh, [
+          String(cardId),
+          String(cardId),
+          `${String(cardId)}:force`,
+        ]);
+      }),
+    );
+
+    it.effect("returns the outcome rather than silence", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
+        const outcome = yield* handlers["board.refreshCardPullRequest"]({ cardId, force: true });
+        assert.deepStrictEqual(outcome, { outcome: "none" });
+      }),
+    );
+  },
+);

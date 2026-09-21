@@ -90,6 +90,8 @@ import {
   type BoardCard,
   type BoardCardId,
   type BoardCardPullRequest,
+  // T3o: the refresh answers rather than staying silent (T3O-48).
+  type BoardRefreshCardPullRequestResult,
   type BoardCardStepAwaitingReason,
   type BoardCardStepState,
   type BoardSettings,
@@ -252,8 +254,17 @@ export interface SupervisorReactorShape {
   readonly drain: Effect.Effect<void>;
   /** Re-resolve one card's pull request from the forge and record any change.
       The client-driven refresh triggers (card detail opened, View PR clicked)
-      call this through the board RPC. */
-  readonly refreshPullRequest: (cardId: BoardCardId) => Effect.Effect<void>;
+      call this through the board RPC.
+
+      T3o (T3O-48): `force` is a human's "Check again", which bypasses the
+      two-minute lookup cache and its failure backoff. It ANSWERS, too — the
+      automatic callers ignore the value, but a button whose result is silence
+      cannot tell "there is no pull request" from "the forge could not be
+      asked", which is the confusion this card was filed about. */
+  readonly refreshPullRequest: (
+    cardId: BoardCardId,
+    options?: { readonly force?: boolean },
+  ) => Effect.Effect<BoardRefreshCardPullRequestResult>;
   /** Merge a card's pull request and advance it (the Merge button). */
   readonly mergePullRequest: (cardId: BoardCardId) => Effect.Effect<BoardMergeAttemptResult>;
   /** Open the card's pull request from Building and route it past Code review
@@ -3756,8 +3767,20 @@ const make = Effect.gen(function* () {
    *     card's PR badge. "No PR" and "could not ask" are different answers and
    *     only the first is worth recording.
    */
+  /** T3o (T3O-48): the card's link, as the refresh RPC reports it. */
+  const boardRefreshOutcomeOf = (
+    pullRequest: BoardCardPullRequest | null,
+  ): BoardRefreshCardPullRequestResult =>
+    pullRequest === null ? { outcome: "none" } : { outcome: "linked", number: pullRequest.number };
+
   const refreshCardPullRequestLink = Effect.fn("board-supervisor-refreshCardPullRequestLink")(
-    function* (card: BoardCard) {
+    function* (
+      card: BoardCard,
+      /** T3o (T3O-48): a human's "Check again" bypasses the lookup cache and
+          its failure backoff. Every automatic caller omits it and keeps the
+          cheap cached path. */
+      options?: { readonly force?: boolean },
+    ) {
       const worktree = card.worktree;
       // No branch means nothing to look up — a card that never entered Building
       // has no worktree at all. But a RECLAIMED worktree still has its branch
@@ -3765,24 +3788,50 @@ const make = Effect.gen(function* () {
       // merged, so it must still be refreshable: falling back to the project
       // root keeps "the worktree was tidied away" from silently freezing the
       // card's link at whatever it last said.
-      if (worktree === null) return;
-      if (isBoardCardPullRequestTerminal(card.pullRequest)) return;
+      if (worktree === null) return { outcome: "no-branch" } as const;
+      // T3o (T3O-48): a merged pull request is the one state that can never
+      // change again, so the lookup is skipped — but the card HAS a link, and
+      // saying so is the whole point of answering.
+      if (isBoardCardPullRequestTerminal(card.pullRequest)) {
+        return boardRefreshOutcomeOf(card.pullRequest);
+      }
 
       const model = yield* snapshotQuery.getCommandReadModel();
       const cwd = worktree.path ?? projectCwd(model, card);
-      if (cwd === null) return;
+      if (cwd === null) return { outcome: "no-branch" } as const;
 
-      const found = yield* pullRequests.find({ cwd, branch: worktree.branch }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logDebug("board supervisor: pull request lookup failed; keeping last known", {
-            cardId: card.id,
-            branch: worktree.branch,
-            cause: Cause.pretty(cause),
-          }).pipe(Effect.as(undefined)),
-        ),
-      );
-      // `undefined` is the failure sentinel, `null` a real "there is no PR".
-      if (found === undefined) return;
+      // T3o (T3O-48): a failure carries the forge's own words out rather than
+      // only logging them. "We looked and there is none" and "we could not
+      // look" are different answers, and a refresh that cannot tell them apart
+      // is what this card was filed about. Recording is unchanged: neither
+      // branch below writes anything, so the card's last known link stands.
+      const found = yield* pullRequests
+        .find({
+          cwd,
+          branch: worktree.branch,
+          ...(options?.force === true ? { force: true } : {}),
+        })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logDebug("board supervisor: pull request lookup failed; keeping last known", {
+              cardId: card.id,
+              branch: worktree.branch,
+              detail: error.detail,
+            }).pipe(Effect.as({ failure: error.detail } as const)),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logDebug("board supervisor: pull request lookup died; keeping last known", {
+              cardId: card.id,
+              branch: worktree.branch,
+              cause: Cause.pretty(cause),
+            }).pipe(
+              Effect.as({ failure: "The pull request lookup failed unexpectedly." } as const),
+            ),
+          ),
+        );
+      if (found !== null && "failure" in found) {
+        return { outcome: "lookup-failed", detail: found.failure } as const;
+      }
 
       const next =
         found === null
@@ -3833,14 +3882,16 @@ const make = Effect.gen(function* () {
           state: next.state,
           floor: current.pullRequestFloor,
         });
-        return;
+        // T3o (T3O-48): the card's OWN link is the answer, not the retired
+        // round's number this lookup happened to resolve.
+        return boardRefreshOutcomeOf(current.pullRequest);
       }
       // The decider rejects a no-op too, but checking here keeps the common case
       // — a refresh that found exactly what we already knew — from generating a
       // rejected dispatch on every card open. It cannot close the window
       // entirely: two refreshes that overlap can both pass this and only one
       // can land, which is why the dispatch below tolerates the refusal.
-      if (boardCardPullRequestsEqual(current.pullRequest, next)) return;
+      if (boardCardPullRequestsEqual(current.pullRequest, next)) return boardRefreshOutcomeOf(next);
 
       yield* dispatchOptional({
         type: "board.card.record-pull-request",
@@ -3849,6 +3900,7 @@ const make = Effect.gen(function* () {
         pullRequest: next,
         createdAt: yield* nowIso,
       });
+      return boardRefreshOutcomeOf(next);
     },
   );
 
@@ -3876,14 +3928,18 @@ const make = Effect.gen(function* () {
         them; overriding with a stage they read EARLIER would be strictly
         staler, not fresher. */
     movedToStage?: BoardCard["stage"],
+    /** T3o (T3O-48): threaded through to the lookup. Only the RPC's "Check
+        again" passes it; every internal caller omits it. */
+    options?: { readonly force?: boolean },
   ) {
-    yield* refreshCardPullRequestLink(card);
+    const outcome = yield* refreshCardPullRequestLink(card, options);
     // Re-read for the pull request the refresh may have just recorded.
     const refreshed = yield* readCard(card.id);
-    if (refreshed === null) return;
+    if (refreshed === null) return outcome;
     yield* settleCardAtDone(
       movedToStage === undefined ? refreshed : { ...refreshed, stage: movedToStage },
     );
+    return outcome;
   });
 
   /** The card as the read model currently has it, or null if it is gone. */
@@ -7316,15 +7372,24 @@ const make = Effect.gen(function* () {
     // response, and a read-model hiccup must surface as "the merge did not
     // happen, here is why" rather than as an unhandled failure on a button
     // click.
-    refreshPullRequest: (cardId) =>
+    refreshPullRequest: (cardId, options) =>
       Effect.flatMap(readCard(cardId), (card) =>
-        card === null ? Effect.void : refreshCardPullRequest(card),
+        card === null
+          ? Effect.succeed({ outcome: "unknown-card" } as const)
+          : refreshCardPullRequest(card, undefined, options),
       ).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("board supervisor: pull request refresh failed", {
             cardId,
             cause: Cause.pretty(cause),
-          }),
+          }).pipe(
+            // T3o (T3O-48): TOTAL, like the merge beside it — the RPC owes the
+            // user an answer, and "the lookup broke" is one they can act on.
+            Effect.as({
+              outcome: "lookup-failed",
+              detail: "The pull request could not be looked up. See the server log for details.",
+            } as const),
+          ),
         ),
       ),
     mergePullRequest: (cardId) =>

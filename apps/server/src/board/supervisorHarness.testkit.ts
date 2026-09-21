@@ -457,6 +457,9 @@ export type Harness = {
   readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every structured refusal probe the reactor made (T3O-38, D6). */
   readonly mergeStateProbes: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
+  /** T3o (T3O-48): every pull request lookup, with whether it was FORCED — so a
+      test can tell a human's "Check again" from the automatic cached refresh. */
+  readonly pullRequestLookups: Effect.Effect<ReadonlyArray<{ readonly forced: boolean }>>;
   /** Every worktree path the reactor removed, in order. */
   readonly removedWorktrees: Effect.Effect<ReadonlyArray<string>>;
   /** Every thread that actually SETTLED, as opposed to every settle the reactor
@@ -537,6 +540,15 @@ export function withGovernor(
         "no pull request"; a `detail` string makes the lookup FAIL, which is a
         different answer the reactor must not confuse with "there is none". */
     readonly pullRequest?: VcsStatusChangeRequest | { readonly failWith: string } | null;
+    /** T3o (T3O-48): the same answer, read afresh on every lookup, for a test
+        whose point is that the answer CHANGED between two of them — a pull
+        request opened after the board was last told there was none. Takes
+        precedence over `pullRequest` when both are given. */
+    readonly pullRequestOf?: () =>
+      | VcsStatusChangeRequest
+      | { readonly failWith: string }
+      | null
+      | undefined;
     /** Run before every branch pull-request lookup answers. The lookup is the
         reactor's one forge round trip on the refresh path, so it is the window
         another trigger can record a link in — a test that wants to drive that
@@ -950,22 +962,29 @@ export function withGovernor(
     // Every refusal probe, so a test can assert the happy path costs ONE forge
     // call and that a hard hold is never re-probed.
     const mergeStateProbes = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
+    // T3o (T3O-48): see `pullRequestLookups`.
+    const pullRequestLookups = yield* Ref.make<ReadonlyArray<{ readonly forced: boolean }>>([]);
     const pullRequestStub = BoardPullRequestGateway.of({
-      find: () =>
-        (input.onPullRequestLookup ?? Effect.void).pipe(
-          Effect.andThen(() => {
-            const configured = input.pullRequest;
-            if (configured !== undefined && configured !== null && "failWith" in configured) {
-              return Effect.fail(
-                new BoardPullRequestGatewayError({
-                  operation: "find",
-                  detail: configured.failWith,
-                }),
-              );
-            }
-            return Effect.succeed(configured ?? null);
-          }),
-        ),
+      find: (request) =>
+        Ref.update(pullRequestLookups, (lookups) => [
+          ...lookups,
+          { forced: request.force === true },
+        ])
+          .pipe(Effect.andThen(input.onPullRequestLookup ?? Effect.void))
+          .pipe(
+            Effect.andThen(() => {
+              const configured = input.pullRequestOf?.() ?? input.pullRequest;
+              if (configured !== undefined && configured !== null && "failWith" in configured) {
+                return Effect.fail(
+                  new BoardPullRequestGatewayError({
+                    operation: "find",
+                    detail: configured.failWith,
+                  }),
+                );
+              }
+              return Effect.succeed(configured ?? null);
+            }),
+          ),
       merge: (request) =>
         Ref.updateAndGet(mergeAttempts, (attempts) => [
           ...attempts,
@@ -1088,6 +1107,7 @@ export function withGovernor(
           decided: Ref.get(decided),
           mergeAttempts: Ref.get(mergeAttempts),
           mergeStateProbes: Ref.get(mergeStateProbes),
+          pullRequestLookups: Ref.get(pullRequestLookups),
           removedWorktrees: Ref.get(removedWorktrees),
           settledThreads: Ref.get(settled),
           setBaseTip: (ref, tip) => void baseTips.set(ref, tip),

@@ -37,6 +37,8 @@ import {
   type BoardCardDetailStreamItem,
   type BoardCardId,
   type BoardCardPullRequestActionInput,
+  // T3o: the refresh's own payload (T3O-48).
+  type BoardRefreshCardPullRequestInput,
   type BoardProviderLimitActionInput,
   type BoardProviderLimitResumeAtInput,
   type BoardSubscribeCardInput,
@@ -143,20 +145,29 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
     /**
      * Re-resolve the card's pull request from the forge.
      *
-     * Fire-and-forget from the client's point of view: it returns void, and
-     * the refreshed link reaches the open card through the `subscribeCard`
-     * stream that is already re-emitting on every board event. A failed
-     * lookup is deliberately NOT an error here — the reactor keeps the last
-     * known link and logs, because a rate limit must leave a card's PR badge
-     * alone rather than blanking it or popping a toast at someone who only
-     * opened a card.
+     * The refreshed link reaches the open card through the `subscribeCard`
+     * stream that is already re-emitting on every board event, so the automatic
+     * callers (a card opening, View PR being clicked) ignore the answer
+     * entirely. A failed lookup is deliberately NOT an error — the reactor
+     * keeps the last known link and logs, because a rate limit must leave a
+     * card's PR badge alone rather than blanking it or popping a toast at
+     * someone who only opened a card.
+     *
+     * T3o (T3O-48): it does RETURN an answer now, and a human's "Check again"
+     * passes `force` to bypass the two-minute lookup cache and its failure
+     * backoff. A button whose result is silence cannot tell "this branch has no
+     * pull request" from "the forge could not be asked", and that confusion is
+     * what this card was filed about.
      */
-    [BOARD_WS_METHODS.refreshCardPullRequest]: (input: BoardCardPullRequestActionInput) =>
+    [BOARD_WS_METHODS.refreshCardPullRequest]: (input: BoardRefreshCardPullRequestInput) =>
       observeRpcEffect(
         BOARD_WS_METHODS.refreshCardPullRequest,
         authorized(
           BOARD_WS_METHODS.refreshCardPullRequest,
-          deps.boardSupervisor.refreshPullRequest(input.cardId),
+          deps.boardSupervisor.refreshPullRequest(
+            input.cardId,
+            input.force === true ? { force: true } : undefined,
+          ),
         ),
       ),
 

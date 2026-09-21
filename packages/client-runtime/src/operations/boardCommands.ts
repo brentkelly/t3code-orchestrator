@@ -101,8 +101,12 @@ function dispatch(command: ClientOrchestrationCommand) {
  * refresh fires whenever a card is opened, which has no business writing to
  * the durable event log every time.
  */
-export const refreshBoardCardPullRequest = (input: { readonly cardId: BoardCardId }) =>
-  request(BOARD_WS_METHODS.refreshCardPullRequest, input);
+export const refreshBoardCardPullRequest = (input: {
+  readonly cardId: BoardCardId;
+  /** T3o (T3O-48): a human's "Check again". Omitted by the automatic triggers,
+      which keep the cached lookup. */
+  readonly force?: boolean;
+}) => request(BOARD_WS_METHODS.refreshCardPullRequest, input);
 
 export const mergeBoardCardPullRequest = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.mergeCardPullRequest, input);
