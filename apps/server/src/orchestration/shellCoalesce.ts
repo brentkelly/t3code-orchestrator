@@ -77,7 +77,20 @@ export function coalesceShellWindow(
 ): ReadonlyArray<ShellWindowEvent> {
   const latest = new Map<string, ShellWindowEvent>();
   for (const event of events) {
-    latest.set(shellCoalesceKey(event), event);
+    const key = shellCoalesceKey(event);
+    const previous = latest.get(key);
+    // A stock survivor stands in for every event it collapsed, so the one bit
+    // of payload the board reads has to be carried forward: a
+    // `turn.plan.updated` followed in the same window by any other event for
+    // that thread would otherwise survive as `todosChanged: false` and skip
+    // the card's thread-todos refetch. Board events never merge — they
+    // collapse per TYPE, and a repeat of one type already carries its
+    // predecessor whole.
+    const merged =
+      previous !== undefined && !isBoardEvent(previous) && !isBoardEvent(event)
+        ? { ...event, todosChanged: event.todosChanged || previous.todosChanged }
+        : event;
+    latest.set(key, merged);
   }
   return Array.from(latest.values()).sort((left, right) => left.sequence - right.sequence);
 }

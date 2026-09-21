@@ -99,6 +99,8 @@ import {
   cleanupFailedUploadedAttachments,
   normalizeDispatchCommand,
 } from "./orchestration/Normalizer.ts";
+// T3o: which shell events may collapse into which is a rule of its own now that
+// board deltas are built from the event payload (t3o-18, D3).
 import {
   coalesceShellWindow,
   toShellWindowEvent,
@@ -852,8 +854,8 @@ const makeWsRpcLayer = (
       };
 
       /**
-       * The shell deltas one domain event implies. An ARRAY rather than a single
-       * Option because t3o-18 (D3) adds a second, orthogonal delta: a thread
+       * T3o: the shell deltas one domain event implies. An ARRAY rather than a
+       * single Option because t3o-18 (D3) adds a second, orthogonal delta: a thread
        * event both refreshes that thread's shell AND carries its card's todo
        * summaries, and neither may swallow the other.
        */

@@ -43,6 +43,25 @@ export function resolvePairExitTarget(authStatus: BoardAuthStatus): "/" | "/boar
   return authStatus === "hosted-static" ? THREADS_HOME_PATH : BOARD_HOME_PATH;
 }
 
+/**
+ * Where upstream's first-run wizard lets go of the user, when it has no
+ * project of its own to open.
+ *
+ * The wizard is the other moment onboarding ends, and it runs *after* the
+ * cold-start flag has been spent — the gate sends a fresh install to
+ * `/welcome`, so the one redirect this session had is already gone by the time
+ * the wizard closes. Left as upstream wrote it, setting T3o up for the first
+ * time is the one path that never sees the board. So it exits where pairing
+ * exits, hosted-static exemption and all.
+ *
+ * A wizard that DID set up a project still opens a thread in it, as upstream
+ * intends: the user asked for that project, and answering with the board would
+ * drop the thing they just made.
+ */
+export function resolveOnboardingExitTarget(authStatus: BoardAuthStatus): "/" | "/board" {
+  return resolvePairExitTarget(authStatus);
+}
+
 export interface ColdStartHomeRedirect {
   /**
    * True at most once per session: for the first *authenticated* resolution in

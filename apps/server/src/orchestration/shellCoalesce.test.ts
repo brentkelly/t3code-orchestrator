@@ -85,6 +85,33 @@ describe("coalesceShellWindow", () => {
     );
   });
 
+  it("carries a collapsed plan update's todo bit onto the survivor", () => {
+    const activity = (sequence: number, kind: string) =>
+      toShellWindowEvent({
+        sequence,
+        type: "thread.activity-appended",
+        aggregateKind: "thread",
+        aggregateId: "thread-1",
+        payload: { threadId: "thread-1", activity: { kind } },
+      } as unknown as OrchestrationEvent);
+
+    // A plan revision and the tool call that follows it land in one window.
+    // Without the merge the survivor says nothing changed and the card's
+    // thread-todos refetch is skipped, so the strip keeps the old plan.
+    const survivors = coalesceShellWindow([
+      activity(1, "turn.plan.updated"),
+      activity(2, "tool.completed"),
+    ]);
+
+    assert.strictEqual(survivors.length, 1);
+    const [survivor] = survivors;
+    assert.strictEqual(survivor?.sequence, 2);
+    assert.strictEqual(
+      survivor !== undefined && "todosChanged" in survivor && survivor.todosChanged,
+      true,
+    );
+  });
+
   it("returns survivors in ascending sequence order", () => {
     const survivors = coalesceShellWindow([
       cardEvent(5, "board.card-moved", "card-2"),

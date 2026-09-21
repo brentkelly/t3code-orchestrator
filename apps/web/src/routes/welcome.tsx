@@ -1,6 +1,8 @@
 import { createFileRoute, redirect, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
+// T3o: onboarding ends where pairing ends — the board (T3O-34, D2).
+import { resolveOnboardingExitTarget } from "../board/boardHomeRedirect";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -37,13 +39,18 @@ function WelcomeRouteView() {
           localAvailable={localAvailable}
           onDone={(projectRef) => {
             setDismissed(true);
+            // T3o: the wizard runs after the cold-start redirect has been
+            // spent, so its exit is the one path that would never see the
+            // board. A wizard that set up a project still opens a thread in
+            // it, as upstream intends.
+            const exit = resolveOnboardingExitTarget(authGateState.status);
             if (projectRef !== undefined) {
               void openNewThread(projectRef, { replace: true }).catch(() => {
-                void navigate({ to: "/", replace: true });
+                void navigate({ to: exit, replace: true });
               });
               return;
             }
-            void navigate({ to: "/", replace: true });
+            void navigate({ to: exit, replace: true });
           }}
         />
       ) : null}

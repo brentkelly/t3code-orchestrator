@@ -197,7 +197,11 @@ Then, before pushing:
 
 ```bash
 rg -n "T3o:"          # eyeball against the seam inventory below
+git diff --name-status vPREV vNEXT -- .github/workflows/   # new CI needs a decision
 ```
+
+New workflow files are the easiest thing in a sync to miss, because nothing fails when one starts
+firing on every PR — see "Inherited workflows".
 
 and run the normal checks for whatever the merge touched. Two things the root scripts hide
 (learned on the `v0.0.38` sync):
@@ -814,13 +818,19 @@ exactly the 17 seamed code files.)
 
 ---
 
-## Inherited workflows to disable
+## Inherited workflows
 
-These are upstream's CI, inherited by the fork. They are disabled **from the GitHub Actions UI**
-(Actions → the workflow → ⋯ → Disable workflow), **never by editing or deleting the YAML** — editing
-guarantees a conflict on every upstream CI change, for a file we do not otherwise care about.
+These are upstream's CI, inherited by the fork. They are switched off **from the GitHub Actions UI**
+(Actions → the workflow → ⋯ → Disable workflow) or with `gh workflow disable <file>`, **never by
+editing or deleting the YAML** — editing guarantees a conflict on every upstream CI change, for a
+file we do not otherwise care about. The YAML never says whether a workflow is on;
+`gh workflow list --all -R brentkelly/t3code-orchestrator` does. Pass `-R` explicitly: a bare
+`gh workflow list` in a worktree can resolve to the `upstream` remote and report pingdotgg's state.
 
-Recorded here so a future reader knows they were switched off deliberately, not left broken.
+Recorded here so a future reader knows what was switched off deliberately and what was not. The
+state below was read off the fork on the `v0.0.42` sync (2026-09-21).
+
+**Off — deliberately:**
 
 | Workflow                          | Why disabled                                                                                                                                                                                                                                       |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -830,17 +840,35 @@ Recorded here so a future reader knows they were switched off deliberately, not 
 | `mobile-showcase-screenshots.yml` | Captures marketing screenshots on simulators for upstream's showcase. Long, expensive, and irrelevant to a fork that ships no mobile UI.                                                                                                           |
 | `release.yml`                     | Publishes the `t3` CLI to NPM on tags and a 3-hourly nightly cron. T3o publishes nothing. Leaving this on means a recurring scheduled job whose only possible outcomes are failure or, given credentials, publishing over upstream's package.      |
 | `thread-transfer-report.yml`      | Posts an upstream-specific report after each CI run, aimed at upstream's own review process. Noise here.                                                                                                                                           |
-| `desktop-macos-preview.yml`       | (since `v0.0.38`) Builds a signed macOS preview on every PR through upstream\'s Apple credentials. None here.                                                                                                                                      |
-| `mobile-fingerprint-check.yml`    | (since `v0.0.38`) Expo native-fingerprint gate on every PR. Mobile is out of scope (D17).                                                                                                                                                          |
-| `web-preview.yml`                 | (since `v0.0.38`) Deploys a web preview per PR to upstream\'s hosting. Not ours.                                                                                                                                                                   |
+| `ci.yml`                          | The build, lint, typecheck and test gates. Off on the fork — every board card verifies in its own worktree instead, and no card has ever waited on a green check here. Turning it back on is a decision, not a repair.                             |
+| `pr-size.yml`, `pr-vouch.yml`     | Upstream's contribution gates, meaningless on a single-maintainer fork whose PRs are all its own.                                                                                                                                                  |
 
-**Kept on:** `ci.yml` (the actual build, lint, typecheck and test gates — we want these), plus
-`pr-size.yml`, `pr-vouch.yml` and `issue-labels.yml`, which are cheap, self-contained, and harmless
-if they never fire on a single-maintainer repo. Revisit if they turn out to be noisy.
-`publish-aur.yml` (since `v0.0.38`) is `workflow_call`-only and never fires on its own.
+**On — and should not be:**
 
-Disable with `gh workflow disable <file>`; `gh workflow list --all` shows what is actually off —
-the YAML never says.
+| Workflow                       | What it costs                                                                                                                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `desktop-macos-preview.yml`    | Triggers on every PR and skips inside the job (label-gated), so it is a queued runner per PR for a guaranteed no-op.                                                                                                      |
+| `web-preview.yml`              | Same: triggers per PR, skips inside.                                                                                                                                                                                      |
+| `mobile-fingerprint-check.yml` | Triggers per PR and does **not** always skip — one run on `board/t3o-38` sat for 24 hours before being cancelled. Mobile is out of scope (D17).                                                                           |
+| `cursor-hygiene-webhook.yml`   | (since `v0.0.42`) POSTs to Cursor's hygiene endpoint on every PR open/reopen/ready-for-review, every push to `main`, and every issue or discussion. Ran on PR #110 as a no-op because the secret is absent — off by luck. |
+
+**On — deliberately:** `issue-labels.yml`, which is cheap, self-contained and harmless.
+
+**Cannot fire on their own,** so they need nothing: `publish-aur.yml` (since `v0.0.38`),
+`release-desktop.yml` (since `v0.0.42`) — both `workflow_call`-only; `windows-tests.yml` (since
+`v0.0.42`) — `workflow_dispatch`-only; and `desktop-macos-preview-publish.yml` (since `v0.0.42`),
+which runs on `workflow_run` of `desktop-macos-preview.yml` and so dies with it.
+
+**Every sync adds more.** Upstream shipped four new workflow files between `v0.0.38` and `v0.0.42`
+and nobody noticed until review. Diff the directory as part of the sync:
+
+```bash
+git diff --name-status vPREV vNEXT -- .github/workflows/
+gh workflow list --all -R brentkelly/t3code-orchestrator   # what is actually on
+```
+
+A new file that triggers on `push`, `pull_request` or `schedule` needs a decision and a row above;
+`workflow_call` and `workflow_dispatch` need neither.
 
 ---
 
@@ -850,7 +878,8 @@ Things that cannot be done from the repo because the PAT in use lacks `administr
 here so the repo state is reproducible from the docs.
 
 - Default branch set to `t3o` (Settings → General → Default branch).
-- The six workflows above disabled (Actions → each workflow → ⋯ → Disable workflow).
+- Inherited workflows switched off (Actions → each workflow → ⋯ → Disable workflow). Which ones,
+  and which are still on that should not be, is in "Inherited workflows" above.
 - Optional: branch protection on `main`, restricting it to fast-forward pushes only. Convention plus
   `t3o` being the default branch already covers this in practice; add it if a stray commit ever
   actually lands.
