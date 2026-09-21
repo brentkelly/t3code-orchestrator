@@ -1380,9 +1380,22 @@ function ActionsSection({
   // The CURRENT round's pull request, not `displayed`: a card being worked on
   // again after coming back out of Done still links its retired round's PR
   // below, and that link is not something this round can merge.
+  //
+  // A card with no WORKTREE gets the notice too, with the branchless wording
+  // and no button — it is the same dead end one step further along, and the
+  // card face's `No PR` chip fires on the stage and `hasPr` alone (the shell
+  // carries no worktree, by payload discipline). Gating the notice on a branch
+  // and the chip on neither left exactly one card shape wearing a chip that
+  // points at a pane with nothing to say.
   const missingPullRequest =
-    !archived && stageRole === "merge" && pullRequest === null && card.worktree !== null
-      ? { branch: card.worktree.branch, onCheck: props.onCheckForPullRequest }
+    !archived && stageRole === "merge" && pullRequest === null
+      ? {
+          branch: card.worktree?.branch ?? null,
+          // Nothing to ask the forge about: `refreshCardPullRequest` answers
+          // `no-branch` for this card, so the button would only ever report
+          // what the sentence beside it already says.
+          onCheck: card.worktree === null ? undefined : props.onCheckForPullRequest,
+        }
       : null;
   // The per-card human-in-the-loop toggle shows only on the Build role (D6);
   // `props.humanInLoop` is non-null exactly then.
@@ -1422,8 +1435,14 @@ function ActionsSection({
           <div className="flex gap-[7px] text-[11.5px]/[1.45] text-muted-foreground">
             <GitPullRequestIcon className="mt-px size-3.5 shrink-0" />
             <span>
-              No pull request found for{" "}
-              <span className="font-medium text-foreground">{missingPullRequest.branch}</span>.
+              {missingPullRequest.branch === null ? (
+                "No pull request, and no branch to look one up on."
+              ) : (
+                <>
+                  No pull request found for{" "}
+                  <span className="font-medium text-foreground">{missingPullRequest.branch}</span>.
+                </>
+              )}
             </span>
           </div>
           {missingPullRequest.onCheck === undefined ? null : (

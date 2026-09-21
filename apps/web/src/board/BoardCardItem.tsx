@@ -201,8 +201,11 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                 // `docs/t3o/status-colours.md` gives amber to blocked or held.
                 icon: <GitPullRequestIcon className="size-3 shrink-0" />,
                 label: "No PR",
-                tooltip:
-                  "Ready to merge, but this card has no pull request — open it and check again",
+                // Not "…and check again": the re-check needs a branch, and a
+                // merge-stage card that never built one has none. The pane
+                // explains either way, so the tooltip points there and lets it
+                // say which of the two this card is.
+                tooltip: "Ready to merge, but this card has no pull request — open it to see why",
                 tint: "text-warning-foreground",
               }
             : {

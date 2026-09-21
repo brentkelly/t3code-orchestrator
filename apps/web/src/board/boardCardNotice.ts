@@ -116,6 +116,12 @@ export function boardCardNotice(input: {
  * still in flight, and a chip that appears for a second and vanishes is worse
  * than no chip. A card with no idle timestamp fails OPEN — there is no evidence
  * the stop is fresh — exactly as the attention chips do.
+ *
+ * Deliberately no branch condition. A merge-stage card that never built one is
+ * the same dead end one step further along, and the shell carries no worktree
+ * to test against anyway (D7 payload discipline). The detail pane's notice
+ * covers both shapes — the branch named, or saying there is none — so the chip
+ * always opens onto an explanation.
  */
 export function boardCardNoPullRequest(input: {
   /** The card is in the stage carrying the `merge` role. */

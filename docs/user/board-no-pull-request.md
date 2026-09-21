@@ -13,6 +13,11 @@ Done** is still there — but nothing is going to move it on by itself, which is
 Most often somebody closed the pull request on the forge, or the branch was opened by hand under a
 different name than the one the card holds.
 
+A card dragged to **Ready for merge** without ever being built has no branch either. It wears the
+same chip, and opening it says so — **No pull request, and no branch to look one up on.** There is
+no **Check again** on that card, because there is nothing to ask the forge about; send it back to
+Building if you want the work done, or move it to Done if it is finished elsewhere.
+
 Less often the forge could not be asked at all: a rate limit, a signed-out CLI, a network blip. T3
 Code deliberately does not blank a card's existing link when that happens — a card that already
 showed a pull request keeps showing it — but a card that never had one has nothing to fall back on

@@ -1399,6 +1399,24 @@ describe("BoardCardDetailPanel done marks", () => {
     expect(html).toContain("Move to Done");
   });
 
+  // T3o (T3O-48, review round 1): the card face's `No PR` chip fires on the
+  // stage and `hasPr` alone — the shell carries no worktree — so a merge-stage
+  // card that never built a branch wore the chip and opened onto a pane that
+  // said nothing. The notice covers it, minus the button it has nothing to ask.
+  it("says why a merge-stage card with no branch has no pull request", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge, worktree: null })}
+        onCheckForPullRequest={noop}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("No pull request, and no branch to look one up on.");
+    expect(html).not.toContain("Check again");
+    expect(html).toContain("Move to Done");
+  });
+
   it("spins Check again across the round trip rather than taking a second click", () => {
     const worktree = {
       branch: "board/t3-7",
