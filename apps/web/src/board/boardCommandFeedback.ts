@@ -6,6 +6,7 @@
  */
 import type {
   BoardMergeCardPullRequestResult,
+  BoardRefreshCardPullRequestResult,
   BoardRequestReviewRoundResult,
   BoardSubmitCardForMergeResult,
 } from "@t3tools/contracts";
@@ -62,6 +63,45 @@ export function describeBoardMergeOutcome(result: BoardMergeCardPullRequestResul
       return "Move the card to the merge stage before merging.";
     case "stale-base":
       return "The base branch moved since this card's last review round. The card went back to review to rebase and re-review before merging.";
+    case "unknown-card":
+      return "This card no longer exists.";
+  }
+}
+
+/**
+ * The sentence "Check again" leaves on the card (T3O-48).
+ *
+ * Every arm answers, including the happy one. Unlike a merge or a submit, a
+ * successful re-check may change nothing the eye can see — the card was at
+ * Ready for merge before and it is at Ready for merge now — so returning null
+ * would give the click no acknowledgement at all, which is the shape of the bug
+ * this whole card is about.
+ *
+ * `linked` is the exception that stays silent: the Merge button and the View PR
+ * link both appear, which says it better than a sentence would.
+ *
+ * `branch` is named rather than assumed known: the pane's notice says which
+ * branch it looked for, and the answer should be about the same one.
+ */
+export function describeBoardRefreshOutcome(
+  result: BoardRefreshCardPullRequestResult,
+  branch: string | null,
+): string | null {
+  const on = branch === null ? "" : ` for ${branch}`;
+  switch (result.outcome) {
+    case "linked":
+      return null;
+    case "none":
+      return `Still no pull request${on}.`;
+    // The forge's own words — a rate limit, a signed-out CLI, a network
+    // failure. This is the case the old fire-and-forget refresh could not
+    // express at all, and the one where retrying is worth anything.
+    case "lookup-failed":
+      return result.detail.length > 0
+        ? `Could not reach the forge: ${result.detail}`
+        : "Could not reach the forge.";
+    case "no-branch":
+      return "This card has no branch to look a pull request up for.";
     case "unknown-card":
       return "This card no longer exists.";
   }

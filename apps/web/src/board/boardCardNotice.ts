@@ -17,11 +17,17 @@
  *    strands the answer.
  * 2. **Conflicts.** A named cause with an agent already on it.
  * 3. **The auto-merge hold.** A named cause with a retry ladder behind it.
- * 4. **The rest of the attention chip** — `Needs a human`, `Stalled`, `Paused`,
+ * 4. **No pull request at the merge stage** (T3O-48). A card parked at Ready
+ *    for merge with no pull request goes nowhere on its own, and there is
+ *    nothing on the card face that says so — the bug that card was filed about
+ *    was a human staring at "Ready for merge" with no PR link, no Merge button
+ *    and no explanation. Below 2 and 3, which name a MORE specific cause on a
+ *    card that does have a pull request; above 5, which is the generic reading.
+ * 5. **The rest of the attention chip** — `Needs a human`, `Stalled`, `Paused`,
  *    `No convergence`, an approval. Every one of them is the generic reading of
  *    what 2 and 3 say precisely, which is why they lose to them rather than
  *    stacking beside them.
- * 5. **The dependency gate.** Last because it is the one notice whose fact
+ * 6. **The dependency gate.** Last because it is the one notice whose fact
  *    survives elsewhere on the card: the meta row's chain icon carries the count
  *    and names the dependencies in its tooltip at every stage.
  *
@@ -35,6 +41,7 @@
  * are not competing with any of this for the reader's attention, and they are
  * already mutually exclusive among themselves.
  */
+import { BOARD_ATTENTION_SETTLE_MS } from "@t3tools/contracts";
 import type { BoardCardAttentionReason, BoardCardAttentionTone } from "@t3tools/contracts";
 
 import type { BoardAutoMergePill } from "./boardAutoMergeHold";
@@ -56,6 +63,8 @@ export type BoardCardNotice =
   | { readonly kind: "attention"; readonly attention: BoardCardNoticeAttention }
   | { readonly kind: "conflicts"; readonly fix: BoardConflictFixInfo }
   | { readonly kind: "auto-merge"; readonly pill: BoardAutoMergePill }
+  /** T3o (T3O-48): parked at the merge role with nothing to merge. */
+  | { readonly kind: "no-pull-request" }
   | { readonly kind: "blocked"; readonly dependencyCount: number };
 
 /** The one notice a card header shows, or null when it has nothing to say. */
@@ -65,6 +74,14 @@ export function boardCardNotice(input: {
   readonly attention: BoardCardNoticeAttention | null;
   readonly conflictFix: BoardConflictFixInfo | null;
   readonly autoMergeHold: BoardAutoMergePill | null;
+  /** T3o (T3O-48): the card is at the merge-role stage and has no pull request.
+      Resolved by the card face from what it already holds — the stage, that
+      stage's role and the shell's `hasPr` — so this costs no new shell bytes.
+
+      The MERGE role only. A card in Code review with no pull request is also
+      wrong, but it has a running step and its own notices, and the window
+      before the build opens one is legitimate. */
+  readonly noPullRequestAtMerge: boolean;
   /** `BoardCardShell.blocked`: the dependency gate, which bites from the build
       role onward. */
   readonly blocked: boolean;
@@ -76,7 +93,50 @@ export function boardCardNotice(input: {
   // running agent is the more specific claim if they somehow collide.
   if (input.conflictFix !== null) return { kind: "conflicts", fix: input.conflictFix };
   if (input.autoMergeHold !== null) return { kind: "auto-merge", pill: input.autoMergeHold };
+  // Above the generic attention chip because it NAMES the thing that is wrong;
+  // below the two pills above because both of those describe a card that does
+  // have a pull request, and so are more specific still.
+  if (input.noPullRequestAtMerge) return { kind: "no-pull-request" };
   if (attention !== null) return { kind: "attention", attention };
   if (input.blocked) return { kind: "blocked", dependencyCount: input.dependencyCount };
   return null;
+}
+
+/**
+ * Whether a card is parked at the merge-role stage with no pull request
+ * (T3O-48) — the `no-pull-request` notice's one input.
+ *
+ * Pure, and derived entirely from what the card face already holds, so it costs
+ * no new shell bytes: the stage's role comes from the column the card is in and
+ * `hasPr` is already on the shell.
+ *
+ * The settle grace is the same one `boardCardAttention` applies to its two
+ * "Needs a human" chips, for the same reason and off the same timestamp: a card
+ * arriving at Ready for merge is briefly PR-less while the stage-move lookup is
+ * still in flight, and a chip that appears for a second and vanishes is worse
+ * than no chip. A card with no idle timestamp fails OPEN — there is no evidence
+ * the stop is fresh — exactly as the attention chips do.
+ */
+export function boardCardNoPullRequest(input: {
+  /** The card is in the stage carrying the `merge` role. */
+  readonly atMergeStage: boolean;
+  /** `BoardCardShell.hasPr`: true whatever the pull request's state, so a card
+      whose PR is already merged never wears this. */
+  readonly hasPr: boolean;
+  /** A Done card is finished and asking for nothing. */
+  readonly muted: boolean;
+  /** When the card's active thread last finished a turn, joined from the thread
+      shells the board already holds (`deriveBoardThreadIdleSince`). */
+  readonly threadIdleSince?: string | null | undefined;
+  /** Epoch millis to measure the grace against, passed in for the same reason
+      `boardCardAttention` takes it: so thirty cards share one clock. */
+  readonly now?: number | undefined;
+}): boolean {
+  if (!input.atMergeStage || input.hasPr || input.muted) return false;
+  const idleSince = input.threadIdleSince == null ? Number.NaN : Date.parse(input.threadIdleSince);
+  const settling =
+    input.now !== undefined &&
+    Number.isFinite(idleSince) &&
+    input.now - idleSince < BOARD_ATTENTION_SETTLE_MS;
+  return !settling;
 }

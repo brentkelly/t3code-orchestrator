@@ -99,6 +99,12 @@ export interface BoardColumnProps extends BoardColumnDragProps {
       (`deriveBoardCardChildRunning`) — what lights the working dot on a split
       parent, which runs no step of its own while its children build. */
   readonly childRunningFor: (card: BoardCardShell) => number | undefined;
+  /** T3o (T3O-48): whether the card is parked at the merge role with no pull
+      request (`boardCardNoPullRequest`). Resolved by the page for the same
+      reason `attentionFor` is: the settle grace it applies is keyed on when the
+      card's thread went quiet, which is a join across the thread shells only
+      the page holds. */
+  readonly noPullRequestFor: (card: BoardCardShell) => boolean;
   /** Thread todo lists for one card (t3o-18) — built once by the page and read
       per card, so the column adds no state of its own. */
   readonly todosFor: (cardId: string) => BoardCardTodoContext;
@@ -169,6 +175,7 @@ function ExpandedColumn({
   attentionFor,
   childAttentionFor,
   childRunningFor,
+  noPullRequestFor,
   draggedCardId,
   dragOverIndex,
   dragHeight,
@@ -280,6 +287,7 @@ function ExpandedColumn({
                   autoMergeBoardWide={autoMergeBoardWide === true}
                   childAttention={childAttentionFor(card)}
                   childRunning={childRunningFor(card)}
+                  noPullRequest={noPullRequestFor(card)}
                   todos={todosFor(card.cardId)}
                   onOpenSubBoard={
                     onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card)

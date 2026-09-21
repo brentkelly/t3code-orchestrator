@@ -80,6 +80,9 @@ import {
 } from "./boardCardNav";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { useBoardAttentionSettle } from "./boardAttentionSettle";
+// T3o: the card face's amber "No PR" chip (T3O-48).
+import { boardCardNoPullRequest } from "./boardCardNotice";
+import { boardCardSummary } from "./boardCardSummary";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
 import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
@@ -465,6 +468,22 @@ function EnvironmentBoard({
       });
     },
     [orderedStages, threadIdleSinceByCard, attentionNow],
+  );
+  // T3o (T3O-48): "this card is ready to merge and has nothing to merge" — the
+  // card face's amber `No PR` chip. Resolved here rather than in the column for
+  // the same reason `attentionFor` is: the settle grace is keyed on when the
+  // card's thread went quiet, which is a join across the thread shells only the
+  // page holds. Free otherwise — the stage and `hasPr` are already on the shell.
+  const noPullRequestFor = useCallback(
+    (card: BoardCardShell) =>
+      boardCardNoPullRequest({
+        atMergeStage: mergeStageId !== null && card.stage === mergeStageId,
+        hasPr: card.hasPr,
+        muted: boardCardSummary(card).muted,
+        threadIdleSince: threadIdleSinceByCard.get(String(card.cardId)),
+        now: attentionNow,
+      }),
+    [mergeStageId, threadIdleSinceByCard, attentionNow],
   );
   // …and the same question asked of each parent's CHILDREN, folded once for the
   // whole board rather than per card: a split parent builds through its
@@ -1344,6 +1363,7 @@ function EnvironmentBoard({
               key={stage.stageId}
               label={stage.label}
               atMergeStage={stage.stageId === mergeStageId}
+              noPullRequestFor={noPullRequestFor}
               autoMergeBoardWide={boardWideAutoMerge}
               onCardDragEnd={handleCardDragEnd}
               onCardReorder={handleCardReorder}
