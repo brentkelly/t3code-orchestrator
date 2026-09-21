@@ -655,6 +655,7 @@ const make = Effect.gen(function* () {
         commandId: yield* commandId("release-thread"),
         threadId,
         snapshotSequence: model.snapshotSequence,
+        settledAt: now,
       });
       if (landed) abandonedThreads.delete(String(threadId));
     }

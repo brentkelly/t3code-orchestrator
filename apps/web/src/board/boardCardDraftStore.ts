@@ -15,7 +15,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { createDebouncedStorage, createMemoryStorage } from "../lib/storage";
+import { createDeferredStorage, createMemoryStorage } from "../lib/storage";
 import {
   boardCardDraftContentEquals,
   boardCardDraftHasContent,
@@ -30,8 +30,10 @@ const BOARD_CARD_DRAFT_DEBOUNCE_MS = 700;
 
 /** Exported for the persistence round-trip test; the app writes through the
     store and reads through `readBoardCardDraft`. */
-export const boardCardDraftStorage = createDebouncedStorage(
+export const boardCardDraftStorage = createDeferredStorage<string>(
   typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
+  // `createJSONStorage` has already serialised the state by the time it gets here.
+  (value) => value,
   BOARD_CARD_DRAFT_DEBOUNCE_MS,
 );
 

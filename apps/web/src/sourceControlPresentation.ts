@@ -3,8 +3,6 @@ import type { ElementType } from "react";
 import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
 export {
   DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
-  formatChangeRequestAction,
-  formatCreateChangeRequestPhrase,
   getChangeRequestTerminology,
   resolveChangeRequestPresentation,
   type ChangeRequestPresentation,
@@ -15,13 +13,12 @@ import {
   resolveChangeRequestPresentation,
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
-// T3o: ForgejoIcon (t3o-28).
 import {
   AzureDevOpsIcon,
   BitbucketIcon,
-  ForgejoIcon,
   GitHubIcon,
   GitLabIcon,
+  ForgejoIcon,
 } from "./components/Icons";
 
 export interface SourceControlPresentation {
@@ -41,6 +38,12 @@ export function getSourceControlPresentation(
         terminology: getChangeRequestTerminology(provider),
         Icon: GitHubIcon,
       };
+    case "forgejo":
+      return {
+        providerName: provider?.name || presentation.providerName,
+        terminology: getChangeRequestTerminology(provider),
+        Icon: ForgejoIcon,
+      };
     case "gitlab":
       return {
         providerName: provider?.name || presentation.providerName,
@@ -58,13 +61,6 @@ export function getSourceControlPresentation(
         providerName: provider?.name || presentation.providerName,
         terminology: getChangeRequestTerminology(provider),
         Icon: BitbucketIcon,
-      };
-    // T3o: t3o-28.
-    case "forgejo":
-      return {
-        providerName: provider?.name || presentation.providerName,
-        terminology: getChangeRequestTerminology(provider),
-        Icon: ForgejoIcon,
       };
     case "change-request":
       return {

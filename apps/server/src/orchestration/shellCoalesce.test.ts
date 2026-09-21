@@ -6,17 +6,17 @@
  * so collapsing them per aggregate silently dropped the move and the client's
  * board column never updated.
  */
-import type { OrchestrationEvent } from "@t3tools/contracts";
+import { ThreadId, type OrchestrationEvent } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 
-import { coalesceShellWindow } from "./shellCoalesce.ts";
+import { coalesceShellWindow, toShellWindowEvent, type ShellWindowEvent } from "./shellCoalesce.ts";
 
 const event = (input: {
   readonly sequence: number;
   readonly type: string;
   readonly aggregateKind: string;
   readonly aggregateId: string;
-}): OrchestrationEvent => input as unknown as OrchestrationEvent;
+}): ShellWindowEvent => toShellWindowEvent(input as unknown as OrchestrationEvent);
 
 const cardEvent = (sequence: number, type: string, cardId = "card-1") =>
   event({ sequence, type, aggregateKind: "card", aggregateId: cardId });
@@ -85,6 +85,33 @@ describe("coalesceShellWindow", () => {
     );
   });
 
+  it("carries a collapsed plan update's todo bit onto the survivor", () => {
+    const activity = (sequence: number, kind: string) =>
+      toShellWindowEvent({
+        sequence,
+        type: "thread.activity-appended",
+        aggregateKind: "thread",
+        aggregateId: "thread-1",
+        payload: { threadId: "thread-1", activity: { kind } },
+      } as unknown as OrchestrationEvent);
+
+    // A plan revision and the tool call that follows it land in one window.
+    // Without the merge the survivor says nothing changed and the card's
+    // thread-todos refetch is skipped, so the strip keeps the old plan.
+    const survivors = coalesceShellWindow([
+      activity(1, "turn.plan.updated"),
+      activity(2, "tool.completed"),
+    ]);
+
+    assert.strictEqual(survivors.length, 1);
+    const [survivor] = survivors;
+    assert.strictEqual(survivor?.sequence, 2);
+    assert.strictEqual(
+      survivor !== undefined && "todosChanged" in survivor && survivor.todosChanged,
+      true,
+    );
+  });
+
   it("returns survivors in ascending sequence order", () => {
     const survivors = coalesceShellWindow([
       cardEvent(5, "board.card-moved", "card-2"),
@@ -96,5 +123,54 @@ describe("coalesceShellWindow", () => {
       survivors.map((survivor) => survivor.sequence),
       [1, 5, 9],
     );
+  });
+});
+
+describe("toShellWindowEvent", () => {
+  it("keeps a board event whole, because its delta is built from the payload", () => {
+    const moved = {
+      sequence: 7,
+      type: "board.card-moved",
+      aggregateKind: "card",
+      aggregateId: "card-1",
+      payload: { cardId: "card-1", toStage: "building" },
+    } as unknown as OrchestrationEvent;
+
+    assert.strictEqual<unknown>(toShellWindowEvent(moved), moved);
+  });
+
+  it("drops a thread event's body so a streaming burst holds no transcript", () => {
+    const sent = {
+      sequence: 8,
+      type: "thread.message-sent",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      payload: { threadId: "thread-1", text: "a very long assistant message" },
+    } as unknown as OrchestrationEvent;
+
+    assert.deepStrictEqual(toShellWindowEvent(sent), {
+      sequence: 8,
+      type: "thread.message-sent",
+      aggregateKind: "thread",
+      aggregateId: ThreadId.make("thread-1"),
+      todosChanged: false,
+    });
+  });
+
+  it("remembers that a plan update rewrote the thread's todo list", () => {
+    const activity = (kind: string) =>
+      ({
+        sequence: 9,
+        type: "thread.activity-appended",
+        aggregateKind: "thread",
+        aggregateId: "thread-1",
+        payload: { threadId: "thread-1", activity: { kind } },
+      }) as unknown as OrchestrationEvent;
+
+    const planUpdated = toShellWindowEvent(activity("turn.plan.updated"));
+    const toolCall = toShellWindowEvent(activity("tool.completed"));
+
+    assert.strictEqual("todosChanged" in planUpdated && planUpdated.todosChanged, true);
+    assert.strictEqual("todosChanged" in toolCall && toolCall.todosChanged, false);
   });
 });

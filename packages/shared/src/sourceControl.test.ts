@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  sourceControlRepositorySelector,
   detectSourceControlProviderFromRemoteUrl,
   getChangeRequestTerminologyForKind,
   isSshRemoteUrl,
@@ -28,19 +29,6 @@ describe("source control presentation", () => {
       shortLabel: "PR",
       singular: "pull request",
     });
-    // T3o: t3o-28.
-    expect(getChangeRequestTerminologyForKind("forgejo")).toEqual({
-      shortLabel: "PR",
-      singular: "pull request",
-    });
-  });
-
-  // T3o: `fgj` has no checkout subcommand, so no checkout example may be offered (t3o-28).
-  it("offers no checkout command for Forgejo", () => {
-    expect(
-      resolveChangeRequestPresentation({ kind: "forgejo", name: "Forgejo", baseUrl: "" })
-        .checkoutCommandExample,
-    ).toBeUndefined();
   });
 
   it("falls back to generic change request copy for unknown providers", () => {
@@ -69,6 +57,22 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
     ).toBe("bitbucket");
+  });
+
+  it("detects Forgejo and Gitea hosts while preserving HTTP origins", () => {
+    for (const host of ["codeberg.org", "forgejo.example.test", "gitea.example.test"]) {
+      expect(detectSourceControlProviderFromRemoteUrl(`http://${host}:3000/team/repo.git`)).toEqual(
+        {
+          kind: "forgejo",
+          name: "Forgejo",
+          baseUrl: `http://${host}:3000`,
+        },
+      );
+    }
+    expect(getChangeRequestTerminologyForKind("forgejo")).toEqual({
+      shortLabel: "PR",
+      singular: "pull request",
+    });
   });
 
   it("detects Azure DevOps SSH remotes", () => {
@@ -117,24 +121,6 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl("https://bitbucket.example.com/workspace/repo.git")
         ?.kind,
     ).toBe("bitbucket");
-    // T3o: t3o-28.
-    expect(
-      detectSourceControlProviderFromRemoteUrl("https://forgejo.example.com/owner/repo.git")?.kind,
-    ).toBe("forgejo");
-    expect(
-      detectSourceControlProviderFromRemoteUrl("https://gitea.example.com/owner/repo.git")?.kind,
-    ).toBe("forgejo");
-  });
-
-  // T3o: most self-hosted Forgejo installs are named after their team, so the hostname says
-  // nothing and the server claims them later from `fgj auth status` (t3o-28).
-  it("names Codeberg but leaves an unnamed Forgejo host unknown", () => {
-    const codeberg = detectSourceControlProviderFromRemoteUrl("git@codeberg.org:owner/repo.git");
-    expect(codeberg?.kind).toBe("forgejo");
-    expect(codeberg?.name).toBe("Codeberg");
-    expect(
-      detectSourceControlProviderFromRemoteUrl("https://git.example.com/owner/repo.git")?.kind,
-    ).toBe("unknown");
   });
 
   it("does not match provider names embedded in unrelated DNS labels", () => {
@@ -150,11 +136,6 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl(
         "https://notbitbucket.example.com/workspace/repo.git",
       )?.kind,
-    ).toBe("unknown");
-    // T3o: t3o-28.
-    expect(
-      detectSourceControlProviderFromRemoteUrl("https://notforgejo.example.com/owner/repo.git")
-        ?.kind,
     ).toBe("unknown");
   });
 
@@ -195,4 +176,35 @@ describe("isSshRemoteUrl", () => {
     expect(isSshRemoteUrl("")).toBe(false);
     expect(isSshRemoteUrl("deploy@github.com/project/repo")).toBe(false);
   });
+});
+
+it("names an Azure DevOps repository by its own name, not its project path", () => {
+  // `az repos pr list --repository` takes a name and detects the organisation and project from
+  // the checkout; the recorded `org/project/_git/repo` path is refused, and the repository then
+  // reads as unavailable on the page.
+  const selector = sourceControlRepositorySelector({
+    provider: "azure-devops",
+    displayName: "contoso/payments/_git/checkout",
+    owner: "contoso",
+    name: "checkout",
+  });
+  expect(selector).toBe("checkout");
+});
+
+it("falls back to the path's last segment where an Azure identity has no name", () => {
+  const selector = sourceControlRepositorySelector({
+    provider: "azure-devops",
+    displayName: "contoso/payments/_git/checkout",
+  });
+  expect(selector).toBe("checkout");
+});
+
+it("keeps a GitLab identity's whole path, because a nested group is part of the name", () => {
+  const selector = sourceControlRepositorySelector({
+    provider: "gitlab",
+    displayName: "group/subgroup/service",
+    owner: "group",
+    name: "service",
+  });
+  expect(selector).toBe("group/subgroup/service");
 });

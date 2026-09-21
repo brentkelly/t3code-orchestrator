@@ -23,8 +23,7 @@ import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { sortProviderInstanceEntries } from "../../providerInstances";
 import { cn } from "../../lib/utils";
 import { usePrimarySettings } from "../../hooks/useSettings";
-import { runtimeModeConfig } from "../chat/AccessLevelPicker";
-import { CompactComposerControlsMenu } from "../chat/CompactComposerControlsMenu";
+import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { ModelPickerContent } from "../chat/ModelPickerContent";
 import {
   buildTraitsTriggerDisplay,
@@ -34,6 +33,7 @@ import {
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
+import { BoardModelControlsMenu } from "./BoardModelControlsMenu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 
 export type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
@@ -94,7 +94,7 @@ function ModelControlsMenu(props: {
     return null;
   }
   return (
-    <CompactComposerControlsMenu
+    <BoardModelControlsMenu
       ariaLabel={props.ariaLabel}
       triggerLabel={<span className="truncate">{labels.join(" · ")}</span>}
       triggerVariant="outline"
@@ -281,7 +281,7 @@ export function ModelRow(props: {
               onRuntimeModeChange={props.onRuntimeModeChange}
             />
           ) : props.hideRuntimeMode === true ? null : (
-            <CompactComposerControlsMenu
+            <BoardModelControlsMenu
               ariaLabel={`${props.ariaLabel} settings`}
               triggerLabel={runtimeModeConfig[props.runtimeMode].label}
               triggerVariant="outline"

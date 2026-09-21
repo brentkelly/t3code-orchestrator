@@ -100,6 +100,7 @@ const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
       UNION ALL
       SELECT projector, last_applied_sequence AS "lastAppliedSequence", updated_at AS "updatedAt"
       FROM boards.projection_state
+      ORDER BY projector ASC
     `,
   });
 
@@ -135,6 +136,55 @@ const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionStateRepository.upsert:query")),
     );
 
+  const insertRows = (rows: ReadonlyArray<ProjectionState>) =>
+    sql.insert(
+      rows.map((row) => ({
+        projector: row.projector,
+        last_applied_sequence: row.lastAppliedSequence,
+        updated_at: row.updatedAt,
+      })),
+    );
+
+  const upsertManyMain = SqlSchema.void({
+    Request: Schema.Array(ProjectionState),
+    execute: (rows) =>
+      rows.length === 0
+        ? Effect.void
+        : sql`
+            INSERT INTO main.projection_state ${insertRows(rows)}
+            ON CONFLICT (projector) DO UPDATE SET
+              last_applied_sequence = excluded.last_applied_sequence,
+              updated_at = excluded.updated_at
+          `,
+  });
+
+  const upsertManyBoard = SqlSchema.void({
+    Request: Schema.Array(ProjectionState),
+    execute: (rows) =>
+      rows.length === 0
+        ? Effect.void
+        : sql`
+            INSERT INTO boards.projection_state ${insertRows(rows)}
+            ON CONFLICT (projector) DO UPDATE SET
+              last_applied_sequence = excluded.last_applied_sequence,
+              updated_at = excluded.updated_at
+          `,
+  });
+
+  // Runtime projectors commit their cursors as one batch (upstream v0.0.42), so a
+  // batch can carry both kinds. It is split by owner — one statement per
+  // database, not per row: a transaction spanning both files can tear between
+  // them, but every file then holds its own rows AND its own watermarks, so
+  // whichever side was lost simply replays.
+  const upsertMany: ProjectionStateRepositoryShape["upsertMany"] = (rows) =>
+    Effect.all(
+      [
+        upsertManyMain(rows.filter((row) => !isBoardProjectorName(row.projector))),
+        upsertManyBoard(rows.filter((row) => isBoardProjectorName(row.projector))),
+      ],
+      { discard: true },
+    ).pipe(Effect.mapError(toPersistenceSqlError("ProjectionStateRepository.upsertMany:query")));
+
   const getByProjector: ProjectionStateRepositoryShape["getByProjector"] = (input) =>
     selectByProjector(input).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionStateRepository.getByProjector:query")),
@@ -155,6 +205,7 @@ const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
 
   return {
     upsert,
+    upsertMany,
     getByProjector,
     listAll,
     minLastAppliedSequence,

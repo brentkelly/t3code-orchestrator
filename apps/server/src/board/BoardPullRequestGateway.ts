@@ -27,7 +27,7 @@ import type {
 
 import * as GitManager from "../git/GitManager.ts";
 
-export class BoardPullRequestGatewayError extends Schema.TaggedErrorClass<BoardPullRequestGatewayError>()(
+export class BoardPullRequestGatewayError extends Schema.TaggedError<BoardPullRequestGatewayError>()(
   "BoardPullRequestGatewayError",
   {
     operation: Schema.String,

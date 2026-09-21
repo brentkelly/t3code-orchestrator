@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   BOARD_HOME_PATH,
   createColdStartHomeRedirect,
+  resolveOnboardingExitTarget,
   resolvePairExitTarget,
 } from "./boardHomeRedirect";
 
@@ -89,5 +90,17 @@ describe("resolvePairExitTarget", () => {
     // to `string` makes this @ts-expect-error unused, and typecheck fails.
     // @ts-expect-error - "signed-in" is not a BoardAuthStatus
     expect(resolvePairExitTarget("signed-in")).toBe(BOARD_HOME_PATH);
+  });
+});
+
+describe("resolveOnboardingExitTarget", () => {
+  it("lands a finished first-run wizard on the board", () => {
+    // The wizard opens after the cold-start redirect has already been spent,
+    // so without this the one session that sets T3o up never sees the board.
+    expect(resolveOnboardingExitTarget("authenticated")).toBe(BOARD_HOME_PATH);
+  });
+
+  it("keeps the hosted static app on the threads surface (D3)", () => {
+    expect(resolveOnboardingExitTarget("hosted-static")).toBe("/");
   });
 });

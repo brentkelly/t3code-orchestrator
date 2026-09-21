@@ -102,7 +102,7 @@ import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
 import { BoardProviderUsagePill } from "./BoardProviderUsagePill";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
 import { projectAccent } from "./projectAccent";
-import type { BoardSearch } from "../routes/board";
+import { validateBoardSearch, type BoardSearch } from "../routes/board";
 
 const EMPTY_COLUMNS: BoardStageColumns = mergeBoardStageColumns([]);
 const EMPTY_CARDS: ReadonlyArray<BoardCardShell> = [];
@@ -219,7 +219,7 @@ function EnvironmentBoard({
     (updater: (previous: BoardSearch) => BoardSearch, options?: { readonly replace?: boolean }) => {
       void navigate({
         to: ".",
-        search: (previous: BoardSearch) => updater(previous),
+        search: (previous) => updater(validateBoardSearch(previous)),
         replace: options?.replace === true,
       });
     },
@@ -234,7 +234,7 @@ function EnvironmentBoard({
       void navigate({
         to: "/board/$parentCardId",
         params: { parentCardId },
-        search: (previous: BoardSearch) => ({
+        search: (previous) => ({
           ...(previous.project === undefined ? {} : { project: previous.project }),
           ...(cardId === undefined ? {} : { card: cardId }),
         }),
@@ -247,7 +247,7 @@ function EnvironmentBoard({
     (cardId?: string, options?: { readonly replace?: boolean }) => {
       void navigate({
         to: "/board",
-        search: (previous: BoardSearch) => ({
+        search: (previous) => ({
           ...(previous.project === undefined ? {} : { project: previous.project }),
           ...(cardId === undefined ? {} : { card: cardId }),
         }),

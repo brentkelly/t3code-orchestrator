@@ -1,881 +1,724 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Match from "effect/Match";
-import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import type * as DateTime from "effect/DateTime";
-
-import {
-  NonNegativeInt,
-  type ChangeRequestChecks,
-  type ChangeRequestMergeState,
-  type ChangeRequestMergeStrategy,
-  type VcsError,
-} from "@t3tools/contracts";
-import { sanitizeBranchFragment } from "@t3tools/shared/git";
-
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as Result from "effect/Result";
+import * as Clock from "effect/Clock";
+import * as FileSystem from "effect/FileSystem";
+import * as Semaphore from "effect/Semaphore";
+import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - fj storage paths use explicit Windows and POSIX layouts, independently of this process's platform.
+import * as NodePath from "node:path";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-// T3o: the structured refusal probe (T3O-38, D7).
-import {
-  forgejoMergeState,
-  parseForgejoChecks,
-  parseForgejoPullRequestMergeability,
-} from "./forgejoMergeState.ts";
-import {
-  decodeForgejoPullRequestJson,
-  decodeForgejoPullRequestListJson,
-} from "./forgejoPullRequests.ts";
-import { parseForgejoRemoteUrl, type ForgejoRemote } from "./forgejoRemote.ts";
-import { parseForgejoRepositoryView, type ForgejoRepositoryView } from "./forgejoRepositoryView.ts";
-import * as SourceControlProvider from "./SourceControlProvider.ts";
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import type { SourceControlProviderContext } from "./SourceControlProvider.ts";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+const encodeApiBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-/**
- * `fgj pr list` has no `--limit`, no head filter and no pagination, so a repository's whole
- * history comes back at roughly 10 KB per change request. A generous ceiling keeps a busy
- * repository readable; past it the output is refused rather than handed to the JSON decoder,
- * because a truncated body would fail to parse and read as "no change request found" — a blank
- * badge on a card that has one.
- */
-const LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-
-// T3o (T3O-38, D7): how many recent workflow runs the refusal probe reads.
-// The listing is repository-wide and filtered by head sha here, so the limit
-// only has to cover "the runs for the branch we are about to merge"; twenty is
-// several pushes' worth and keeps the call small.
-const ACTIONS_RUN_LIST_LIMIT = 20;
-
-/** No check evidence at all — what the probe reports when the run listing
-    could not be read. Paired with `checksReadable: false`, which is what keeps
-    it from being classified as "all green and still refused". */
-const EMPTY_FORGEJO_CHECKS: ChangeRequestChecks = {
-  total: 0,
-  passed: 0,
-  pending: 0,
-  failed: 0,
-  failing: [],
-  running: [],
-};
-
-/**
- * `fgj pr create` has no `--body-file`, so the body travels as one argv entry — and Linux caps a
- * single entry at 128 KiB (`MAX_ARG_STRLEN`). Past that the spawn fails with `E2BIG`, which reads
- * as "`fgj` is not on PATH" by the time it reaches the error mapping. The margin leaves room for
- * the rest of the command line.
- */
-const MAX_BODY_BYTES = 120 * 1024;
-
-const forgejoCliExecutionErrorContext = {
-  operation: Schema.Literal("execute"),
-  command: Schema.Literal("fgj"),
+export class ForgejoCliError extends Schema.TaggedError<ForgejoCliError>()("ForgejoCliError", {
+  command: Schema.Literals(["fj", "tea"]),
   cwd: Schema.String,
-  cause: Schema.Defect(),
-};
+  detail: Schema.String,
+  reason: Schema.optional(
+    Schema.Literals([
+      "missing-cli",
+      "authentication",
+      "forbidden",
+      "not-found",
+      "rate-limit",
+      "invalid-response",
+    ]),
+  ),
+  httpStatus: Schema.optional(Schema.Int),
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
-const forgejoCliDecodeErrorContext = {
-  command: Schema.Literal("fgj"),
-  cwd: Schema.String,
-  cause: Schema.Defect(),
-};
+export const ForgejoLoginSchema = Schema.Struct({
+  name: Schema.String,
+  url: Schema.String,
+  ssh_host: Schema.optional(Schema.String),
+  valid: Schema.optional(Schema.String),
+  user: Schema.String,
+  default: Schema.String,
+});
 
-export class ForgejoCliUnavailableError extends Schema.TaggedErrorClass<ForgejoCliUnavailableError>()(
-  "ForgejoCliUnavailableError",
-  forgejoCliExecutionErrorContext,
-) {
-  get detail(): string {
-    return "Forgejo CLI (`fgj`) is required but not available on PATH.";
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
-  }
+export function parseForgejoLogins(raw: string) {
+  const decoded = decodeJsonResult(Schema.Array(ForgejoLoginSchema))(raw);
+  return Result.isSuccess(decoded) ? decoded.success : [];
 }
 
-export class ForgejoCliAuthenticationError extends Schema.TaggedErrorClass<ForgejoCliAuthenticationError>()(
-  "ForgejoCliAuthenticationError",
-  forgejoCliExecutionErrorContext,
-) {
-  get detail(): string {
-    return "Forgejo CLI is not authenticated for this host. Run `fgj auth login` and retry.";
-  }
+export const ForgejoKeysSchema = Schema.Struct({
+  hosts: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      type: Schema.Literals(["Application", "OAuth"]),
+      token: Schema.String,
+    }),
+  ),
+  aliases: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
 
-  override get message(): string {
-    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
-  }
-}
+const parseForgejoKeys = decodeJsonResult(ForgejoKeysSchema);
 
-export class ForgejoCliRateLimitError extends Schema.TaggedErrorClass<ForgejoCliRateLimitError>()(
-  "ForgejoCliRateLimitError",
-  forgejoCliExecutionErrorContext,
-) {
-  get detail(): string {
-    return "Forgejo API rate limit exceeded.";
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
-  }
-}
-
-export class ForgejoPullRequestNotFoundError extends Schema.TaggedErrorClass<ForgejoPullRequestNotFoundError>()(
-  "ForgejoPullRequestNotFoundError",
-  {
-    ...forgejoCliExecutionErrorContext,
-    reference: Schema.String,
-  },
-) {
-  get detail(): string {
-    return `Pull request ${this.reference} was not found. Check the PR number or URL and try again.`;
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
-  }
-
-  static fromVcsError(
-    context: {
-      readonly operation: "execute";
-      readonly command: "fgj";
-      readonly cwd: string;
-      readonly reference: string;
-    },
-    error: VcsError,
-  ): ForgejoCliError {
-    if (error._tag === "VcsProcessExitError" && error.failureKind === "not-found") {
-      return new ForgejoPullRequestNotFoundError({ ...context, cause: error });
-    }
-
-    return ForgejoCliCommandError.fromVcsError(
-      { operation: context.operation, command: context.command, cwd: context.cwd },
-      error,
+/** Matches fj's directories::ProjectDirs, including its pre-0.6 organization name. */
+function forgejoKeysPaths(input: {
+  readonly platform: string;
+  readonly home: string;
+  readonly dataHome?: string;
+  readonly appData?: string;
+}) {
+  if (input.platform === "darwin")
+    return ["forgejo-cli", "Cyborus"].map((organization) =>
+      NodePath.join(
+        input.home,
+        "Library",
+        "Application Support",
+        `${organization}.forgejo-cli`,
+        "keys.json",
+      ),
     );
-  }
+  if (input.platform === "win32")
+    return ["forgejo-cli", "Cyborus"].map((organization) =>
+      NodePath.win32.join(
+        input.appData || NodePath.win32.join(input.home, "AppData", "Roaming"),
+        organization,
+        "forgejo-cli",
+        "data",
+        "keys.json",
+      ),
+    );
+  return [
+    NodePath.join(
+      input.dataHome && NodePath.isAbsolute(input.dataHome)
+        ? input.dataHome
+        : NodePath.join(input.home, ".local", "share"),
+      "forgejo-cli",
+      "keys.json",
+    ),
+  ];
 }
 
-export class ForgejoCliCommandError extends Schema.TaggedErrorClass<ForgejoCliCommandError>()(
-  "ForgejoCliCommandError",
-  forgejoCliExecutionErrorContext,
-) {
-  get detail(): string {
-    return "Forgejo CLI command failed.";
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
-  }
-
-  static fromVcsError(
-    context: {
-      readonly operation: "execute";
-      readonly command: "fgj";
-      readonly cwd: string;
-    },
-    error: VcsError,
-  ): ForgejoCliError {
-    return Match.valueTags(error, {
-      VcsProcessSpawnError: (cause) => new ForgejoCliUnavailableError({ ...context, cause }),
-      VcsProcessExitError: (cause) => {
-        switch (cause.failureKind) {
-          case "authentication":
-            return new ForgejoCliAuthenticationError({ ...context, cause });
-          case "rate-limited":
-            return new ForgejoCliRateLimitError({ ...context, cause });
-          case "not-found":
-          case "command-failed":
-          case undefined:
-            return new ForgejoCliCommandError({ ...context, cause });
-        }
-      },
-      VcsProcessTimeoutError: (cause) => new ForgejoCliCommandError({ ...context, cause }),
-      VcsProcessStdinWriteError: (cause) => new ForgejoCliCommandError({ ...context, cause }),
-      VcsProcessOutputReadError: (cause) => new ForgejoCliCommandError({ ...context, cause }),
-      VcsProcessOutputLimitError: (cause) => new ForgejoCliCommandError({ ...context, cause }),
-      VcsProcessMissingExitCodeError: (cause) => new ForgejoCliCommandError({ ...context, cause }),
-      VcsRepositoryDetectionError: (cause) => new ForgejoCliCommandError({ ...context, cause }),
-      VcsUnsupportedOperationError: (cause) => new ForgejoCliCommandError({ ...context, cause }),
-    });
-  }
+export interface ForgejoRepositoryInput {
+  readonly cwd: string;
+  readonly context?: SourceControlProviderContext;
+  readonly repository?: string;
+  readonly reference?: string;
+  readonly host?: string;
 }
 
-/**
- * No Forgejo remote to address. `fgj` would otherwise fall back to its own inference, which
- * fails inside a linked git worktree and defaults to codeberg.org outside one — both of which
- * report a confusing error about a host nobody asked for.
- */
-export class ForgejoRemoteContextError extends Schema.TaggedErrorClass<ForgejoRemoteContextError>()(
-  "ForgejoRemoteContextError",
-  {
-    command: Schema.Literal("fgj"),
-    cwd: Schema.String,
-    remoteUrl: Schema.optional(Schema.String),
-  },
-) {
-  get detail(): string {
-    return "No Forgejo remote was found for this repository, so there is no owner/name and host to address.";
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in resolveRemote: ${this.detail}`;
-  }
+export interface ForgejoRepository {
+  readonly command?: "fj" | "tea";
+  readonly login: string;
+  readonly repository: string;
+  readonly baseUrl: string;
 }
 
-/**
- * The list came back cut short. Raised instead of decoding, so the caller sees a repository too
- * large to list rather than an empty result that looks like "no pull request for this branch".
- */
-export class ForgejoOutputTruncatedError extends Schema.TaggedErrorClass<ForgejoOutputTruncatedError>()(
-  "ForgejoOutputTruncatedError",
-  {
-    operation: Schema.Literal("listPullRequests"),
-    command: Schema.Literal("fgj"),
-    cwd: Schema.String,
-    maxOutputBytes: NonNegativeInt,
-  },
-) {
-  get detail(): string {
-    return "Forgejo returned more pull request data than can be read at once. `fgj` cannot limit or paginate `pr list`.";
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
-  }
+export interface ForgejoApiInput extends ForgejoRepositoryInput {
+  readonly path: string;
+  readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  readonly body?: unknown;
 }
-
-export class ForgejoPullRequestListDecodeError extends Schema.TaggedErrorClass<ForgejoPullRequestListDecodeError>()(
-  "ForgejoPullRequestListDecodeError",
-  {
-    ...forgejoCliDecodeErrorContext,
-    operation: Schema.Literal("listPullRequests"),
-  },
-) {
-  get detail(): string {
-    return "Forgejo CLI returned invalid PR list JSON.";
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
-  }
-}
-
-export class ForgejoPullRequestDecodeError extends Schema.TaggedErrorClass<ForgejoPullRequestDecodeError>()(
-  "ForgejoPullRequestDecodeError",
-  {
-    ...forgejoCliDecodeErrorContext,
-    operation: Schema.Literal("getPullRequest"),
-    reference: Schema.String,
-  },
-) {
-  get detail(): string {
-    return "Forgejo CLI returned invalid pull request JSON.";
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
-  }
-}
-
-export class ForgejoRepositoryDecodeError extends Schema.TaggedErrorClass<ForgejoRepositoryDecodeError>()(
-  "ForgejoRepositoryDecodeError",
-  {
-    command: Schema.Literal("fgj"),
-    cwd: Schema.String,
-    operation: Schema.Literals(["getRepositoryCloneUrls", "getDefaultBranch"]),
-    repository: Schema.String,
-    missingField: Schema.String,
-  },
-) {
-  get detail(): string {
-    return `Forgejo CLI did not report ${this.missingField} for ${this.repository}.`;
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
-  }
-}
-
-/**
- * `fgj pr merge` said it merged and the host says otherwise.
- *
- * `fgj` v0.4.0 prints "Pull request #N merged successfully" and exits 0 without reading what the
- * API answered — verified live against a closed-unmerged pull request and against one that does
- * not exist. So the merge is not believed on its word: the change request is read back, and this
- * is what a card sees when the merge did not happen.
- */
-export class ForgejoMergeNotAppliedError extends Schema.TaggedErrorClass<ForgejoMergeNotAppliedError>()(
-  "ForgejoMergeNotAppliedError",
-  {
-    operation: Schema.Literal("mergePullRequest"),
-    command: Schema.Literal("fgj"),
-    cwd: Schema.String,
-    reference: Schema.String,
-    state: Schema.Literals(["open", "closed", "merged"]),
-  },
-) {
-  get detail(): string {
-    return `Forgejo did not merge pull request ${this.reference}; it is still ${this.state}. Open it on the host to see what it is waiting on.`;
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in ${this.operation}: ${this.detail}`;
-  }
-}
-
-export class ForgejoPullRequestBodyReadError extends Schema.TaggedErrorClass<ForgejoPullRequestBodyReadError>()(
-  "ForgejoPullRequestBodyReadError",
-  {
-    command: Schema.Literal("fgj"),
-    cwd: Schema.String,
-    bodyFile: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
-  get detail(): string {
-    return "Failed to read the pull request body file.";
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in createPullRequest: ${this.detail}`;
-  }
-}
-
-export class ForgejoPullRequestBodyTooLargeError extends Schema.TaggedErrorClass<ForgejoPullRequestBodyTooLargeError>()(
-  "ForgejoPullRequestBodyTooLargeError",
-  {
-    command: Schema.Literal("fgj"),
-    cwd: Schema.String,
-    bodyBytes: NonNegativeInt,
-    maxBodyBytes: NonNegativeInt,
-  },
-) {
-  get detail(): string {
-    return `The pull request body is ${this.bodyBytes} bytes, over the ${this.maxBodyBytes} \`fgj\` can take. \`fgj pr create\` has no --body-file, so the body must fit on the command line.`;
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in createPullRequest: ${this.detail}`;
-  }
-}
-
-export class ForgejoCheckoutError extends Schema.TaggedErrorClass<ForgejoCheckoutError>()(
-  "ForgejoCheckoutError",
-  {
-    command: Schema.Literal("fgj"),
-    cwd: Schema.String,
-    reference: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
-  get detail(): string {
-    return "Failed to check out the pull request branch.";
-  }
-
-  override get message(): string {
-    return `Forgejo CLI failed in checkoutPullRequest: ${this.detail}`;
-  }
-}
-
-export const ForgejoCliError = Schema.Union([
-  ForgejoCliUnavailableError,
-  ForgejoCliAuthenticationError,
-  ForgejoCliRateLimitError,
-  ForgejoPullRequestNotFoundError,
-  ForgejoCliCommandError,
-  ForgejoRemoteContextError,
-  ForgejoOutputTruncatedError,
-  ForgejoPullRequestListDecodeError,
-  ForgejoPullRequestDecodeError,
-  ForgejoRepositoryDecodeError,
-  ForgejoMergeNotAppliedError,
-  ForgejoPullRequestBodyReadError,
-  ForgejoPullRequestBodyTooLargeError,
-  ForgejoCheckoutError,
-]);
-export type ForgejoCliError = typeof ForgejoCliError.Type;
-export const isForgejoCliError = Schema.is(ForgejoCliError);
-
-export interface ForgejoPullRequestSummary {
-  readonly number: number;
-  readonly title: string;
-  readonly url: string;
-  readonly baseRefName: string;
-  readonly headRefName: string;
-  readonly state: "open" | "closed" | "merged";
-  readonly updatedAt?: Option.Option<DateTime.Utc>;
-  readonly isCrossRepository?: boolean;
-  readonly headRepositoryNameWithOwner?: string | null;
-  readonly headRepositoryOwnerLogin?: string | null;
-}
-
-export interface ForgejoRepositoryCloneUrls {
-  readonly nameWithOwner: string;
-  readonly url: string;
-  readonly sshUrl: string;
-}
-
-type ForgejoContext = SourceControlProvider.SourceControlProviderContext | undefined;
 
 export class ForgejoCli extends Context.Service<
   ForgejoCli,
   {
     readonly execute: (input: {
+      readonly command?: "fj" | "tea";
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
+      readonly stdin?: string;
       readonly timeoutMs?: number;
       readonly maxOutputBytes?: number;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, ForgejoCliError>;
-
-    readonly listPullRequests: (input: {
+    readonly listLogins?: (input: {
       readonly cwd: string;
-      readonly context?: ForgejoContext;
-      readonly headSelector: string;
-      readonly source?: SourceControlProvider.SourceControlRefSelector;
-      readonly state: "open" | "closed" | "merged" | "all";
-      readonly limit?: number;
-    }) => Effect.Effect<ReadonlyArray<ForgejoPullRequestSummary>, ForgejoCliError>;
-
-    readonly getPullRequest: (input: {
+      readonly command: "fj" | "tea";
+      readonly remoteUrl?: string;
+    }) => Effect.Effect<ReturnType<typeof parseForgejoLogins>, ForgejoCliError>;
+    readonly getAccount?: (input: {
       readonly cwd: string;
-      readonly context?: ForgejoContext;
-      readonly reference: string;
-    }) => Effect.Effect<ForgejoPullRequestSummary, ForgejoCliError>;
-
-    readonly createPullRequest: (input: {
-      readonly cwd: string;
-      readonly context?: ForgejoContext;
-      readonly baseBranch: string;
-      readonly headSelector: string;
-      readonly source?: SourceControlProvider.SourceControlRefSelector;
-      readonly target?: SourceControlProvider.SourceControlRefSelector;
-      readonly title: string;
-      readonly bodyFile: string;
-    }) => Effect.Effect<void, ForgejoCliError>;
-
-    readonly mergePullRequest: (input: {
-      readonly cwd: string;
-      readonly context?: ForgejoContext;
-      readonly reference: string;
-      readonly strategy: ChangeRequestMergeStrategy;
-    }) => Effect.Effect<void, ForgejoCliError>;
-
-    /** T3o: the structured refusal probe (T3O-38, D7). */
-    readonly pullRequestMergeState: (input: {
-      readonly cwd: string;
-      readonly context?: ForgejoContext;
-      readonly reference: string;
-    }) => Effect.Effect<ChangeRequestMergeState, ForgejoCliError>;
-
-    readonly getRepositoryCloneUrls: (input: {
-      readonly cwd: string;
-      readonly context?: ForgejoContext;
-      readonly repository: string;
-    }) => Effect.Effect<ForgejoRepositoryCloneUrls, ForgejoCliError>;
-
-    readonly getDefaultBranch: (input: {
-      readonly cwd: string;
-      readonly context?: ForgejoContext;
-    }) => Effect.Effect<string | null, ForgejoCliError>;
-
-    readonly checkoutPullRequest: (input: {
-      readonly cwd: string;
-      readonly context?: ForgejoContext;
-      readonly reference: string;
-      readonly force?: boolean;
-    }) => Effect.Effect<void, ForgejoCliError>;
+      readonly baseUrl: string;
+    }) => Effect.Effect<string, ForgejoCliError>;
+    readonly resolveRepository: (
+      input: ForgejoRepositoryInput,
+    ) => Effect.Effect<ForgejoRepository, ForgejoCliError>;
+    readonly api: (
+      input: ForgejoApiInput,
+    ) => Effect.Effect<VcsProcess.VcsProcessOutput, ForgejoCliError>;
   }
 >()("t3/sourceControl/ForgejoCli") {}
 
-/** `#12`, `12`, or the URL Forgejo writes: `https://host/owner/name/pulls/12`. */
-export function normalizeForgejoPullRequestReference(reference: string): string {
-  const trimmed = reference.trim().replace(/^#/u, "");
-  const urlMatch = /(?:pulls|pull)\/(\d+)(?:\D.*)?$/iu.exec(trimmed);
-  return urlMatch?.[1] ?? trimmed;
-}
-
-function forgejoStateArg(state: "open" | "closed" | "merged" | "all"): string {
-  // `fgj pr list -s` knows open, closed and all only. Forgejo files a merged PR under `closed`
-  // and marks it `merged`, so the merged filter is a closed listing narrowed after decoding.
-  switch (state) {
-    case "open":
-      return "open";
-    case "closed":
-    case "merged":
-      return "closed";
-    case "all":
-      return "all";
+export function parseForgejoRemote(value: string) {
+  if (/^(?:https?|ssh):\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      return {
+        host: url.host.toLowerCase(),
+        hostname: url.hostname.toLowerCase(),
+        ssh: url.protocol === "ssh:",
+        path: url.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/, ""),
+      };
+    } catch {
+      return null;
+    }
   }
+  // SCP remotes may omit the username; URL treats these as a custom scheme.
+  const ssh = /^(?:[^@/]+@)?([^:/]+):([^/].*)$/.exec(value);
+  return ssh?.[1] && ssh[2]
+    ? {
+        host: ssh[1].toLowerCase(),
+        hostname: ssh[1].toLowerCase(),
+        ssh: true,
+        path: ssh[2].replace(/\.git$/, ""),
+      }
+    : null;
 }
 
-function toSummaryWithOptionalUpdatedAt(
-  record: {
-    readonly updatedAt: Option.Option<DateTime.Utc>;
-  } & Omit<ForgejoPullRequestSummary, "updatedAt">,
-): ForgejoPullRequestSummary {
-  const { updatedAt, ...summary } = record;
-  return Option.isSome(updatedAt) ? { ...summary, updatedAt } : summary;
-}
-
-/**
- * The local branch a checked-out pull request lands on. A same-repository PR keeps its own head
- * branch name; a fork's branch is namespaced, because two forks can offer `main`.
- */
-export function forgejoCheckoutBranchName(input: {
-  readonly number: number;
-  readonly headRefName: string;
-  readonly isCrossRepository: boolean;
-}): string {
-  return input.isCrossRepository
-    ? `t3code/pr-${input.number}/${sanitizeBranchFragment(input.headRefName)}`
-    : input.headRefName;
+export function matchForgejoLogin(
+  logins: ReturnType<typeof parseForgejoLogins>,
+  remote: NonNullable<ReturnType<typeof parseForgejoRemote>>,
+  requestedHost?: string,
+  hostOnly = false,
+) {
+  const matches = [
+    ...new Map(
+      logins
+        .filter((login) => {
+          const url = parseForgejoRemote(login.url);
+          if (!url) return false;
+          if (requestedHost !== undefined && url.host !== requestedHost.toLowerCase()) return false;
+          return remote.ssh
+            ? login.ssh_host?.toLowerCase() === remote.host ||
+                login.ssh_host?.toLowerCase() === remote.hostname ||
+                url.hostname === remote.hostname
+            : url.host === remote.host &&
+                ((hostOnly && !remote.path) ||
+                  !url.path ||
+                  remote.path === url.path ||
+                  remote.path.startsWith(`${url.path}/`));
+        })
+        .map((login) => [login.name, login]),
+    ).values(),
+  ];
+  return matches.length === 1
+    ? matches[0]
+    : new Set(matches.map((login) => login.url)).size === 1
+      ? matches.find((login) => login.default === "true")
+      : undefined;
 }
 
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
   const fileSystem = yield* FileSystem.FileSystem;
-  const git = yield* GitVcsDriver.GitVcsDriver;
-
-  /**
-   * Both flags, always. `fgj` recognises only a `.git` directory, so inside a linked git worktree
-   * — which is where every board card runs — it cannot find the repository or the host on its
-   * own.
-   */
-  const requireRemote = (input: {
-    readonly cwd: string;
-    readonly context?: ForgejoContext;
-  }): Effect.Effect<ForgejoRemote, ForgejoCliError> => {
-    const remoteUrl = input.context?.remoteUrl;
-    const remote = remoteUrl === undefined ? null : parseForgejoRemoteUrl(remoteUrl);
-    return remote === null
-      ? Effect.fail(
-          new ForgejoRemoteContextError({
-            command: "fgj",
-            cwd: input.cwd,
-            ...(remoteUrl === undefined
-              ? {}
-              : {
-                  remoteUrl: SourceControlProvider.transportSafeSourceControlErrorValue(remoteUrl),
-                }),
-          }),
-        )
-      : Effect.succeed(remote);
-  };
-
-  const targetArgs = (remote: ForgejoRemote): ReadonlyArray<string> => [
-    "-R",
-    remote.nameWithOwner,
-    "--hostname",
-    remote.host,
-  ];
-
-  const run = (
-    input: Parameters<ForgejoCli["Service"]["execute"]>[0],
-    mapError: (error: VcsError) => ForgejoCliError,
-  ) =>
+  const httpClient = yield* HttpClient.HttpClient;
+  const authLock = yield* Semaphore.make(1);
+  const authenticated = new Map<string, { token: string; time: number }>();
+  const execute: ForgejoCli["Service"]["execute"] = (input) =>
     process
       .run({
+        ...input,
         operation: "ForgejoCli.execute",
-        command: "fgj",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+        command: input.command ?? "tea",
+        timeoutMs: input.timeoutMs ?? 30_000,
       })
-      .pipe(Effect.mapError(mapError));
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ForgejoCliError({
+              command: input.command ?? "tea",
+              cwd: input.cwd,
+              ...(input.command === "fj" ? {} : { cause }),
+              ...(cause._tag === "VcsProcessSpawnError"
+                ? { reason: "missing-cli" as const }
+                : cause._tag === "VcsProcessExitError" && cause.failureKind === "authentication"
+                  ? { reason: "authentication" as const }
+                  : {}),
+              detail:
+                cause._tag === "VcsProcessSpawnError"
+                  ? "Install Forgejo CLI (`fj` 0.6 or later) or Gitea CLI (`tea` 0.16 or later) and retry."
+                  : cause._tag === "VcsProcessExitError" && cause.failureKind === "authentication"
+                    ? "Authenticate this server with `fj auth login`, `fj auth add-token`, or `tea login add`."
+                    : "Forgejo CLI command failed.",
+            }),
+        ),
+      );
 
-  const execute: ForgejoCli["Service"]["execute"] = (input) =>
-    run(input, (error) =>
-      ForgejoCliCommandError.fromVcsError(
-        { operation: "execute", command: "fgj", cwd: input.cwd },
-        error,
-      ),
+  const readKeys = Effect.fn("ForgejoCli.readKeys")(function* (cwd: string) {
+    for (const path of forgejoKeysPaths({
+      platform: yield* HostProcessPlatform,
+      home: NodeOS.homedir(),
+      ...(globalThis.process.env.XDG_DATA_HOME
+        ? { dataHome: globalThis.process.env.XDG_DATA_HOME }
+        : {}),
+      ...(globalThis.process.env.APPDATA ? { appData: globalThis.process.env.APPDATA } : {}),
+    })) {
+      const exists = yield* fileSystem.exists(path).pipe(
+        Effect.mapError(
+          () =>
+            new ForgejoCliError({
+              command: "fj",
+              cwd,
+              reason: "authentication",
+              detail: "Could not read fj authentication storage.",
+            }),
+        ),
+      );
+      if (!exists) continue;
+      const raw = yield* fileSystem.readFileString(path).pipe(
+        Effect.mapError(
+          () =>
+            new ForgejoCliError({
+              command: "fj",
+              cwd,
+              reason: "authentication",
+              detail: "Could not read fj authentication storage.",
+            }),
+        ),
+      );
+      const decoded = parseForgejoKeys(raw);
+      if (Result.isFailure(decoded))
+        return yield* new ForgejoCliError({
+          command: "fj",
+          cwd,
+          reason: "authentication",
+          detail: "fj authentication storage is invalid. Authenticate again with fj.",
+        });
+      return decoded.success;
+    }
+    const empty: typeof ForgejoKeysSchema.Type = { hosts: {}, aliases: {} };
+    return empty;
+  });
+
+  const publicLogins = (
+    keys: typeof ForgejoKeysSchema.Type,
+    remoteUrl?: string,
+  ): ReturnType<typeof parseForgejoLogins> => {
+    const remote = remoteUrl ? parseForgejoRemote(remoteUrl) : null;
+    return Object.keys(keys.hosts).flatMap((host) => {
+      const url = parseForgejoRemote(`https://${host}`);
+      // fj 0.6 drops URL mounts during whoami and OAuth renewal; tea supports them.
+      if (!url || url.path) return [];
+      // fj omits the scheme in storage. Only an explicit matching HTTP remote opts into HTTP.
+      const scheme =
+        remote && !remote.ssh && remote.host === url.host && /^http:\/\//i.test(remoteUrl ?? "")
+          ? "http"
+          : "https";
+      const login = { name: host, url: `${scheme}://${host}`, user: "", default: "false" };
+      const aliases = Object.entries(keys.aliases ?? {})
+        .filter(([, target]) => target === host)
+        .map(([alias]) => ({ ...login, ssh_host: alias }));
+      return aliases.length ? aliases : [login];
+    });
+  };
+
+  const listLogins: NonNullable<ForgejoCli["Service"]["listLogins"]> = Effect.fn(
+    "ForgejoCli.listLogins",
+  )(function* (input) {
+    if (input.command === "fj") {
+      const keys = yield* readKeys(input.cwd).pipe(Effect.result);
+      if (Result.isFailure(keys)) {
+        // Stale credentials from an uninstalled fj must not disable an available tea login.
+        const available = yield* execute({ command: "fj", cwd: input.cwd, args: ["version"] }).pipe(
+          Effect.result,
+        );
+        if (Result.isFailure(available) && available.failure.reason === "missing-cli") return [];
+        return yield* keys.failure;
+      }
+      return publicLogins(keys.success, input.remoteUrl);
+    }
+    return parseForgejoLogins(
+      (yield* execute({ cwd: input.cwd, args: ["login", "list", "--output", "json"] })).stdout,
     );
+  });
 
-  const executePullRequest = (input: {
-    readonly cwd: string;
-    readonly reference: string;
-    readonly args: ReadonlyArray<string>;
-  }) =>
-    run(input, (error) =>
-      ForgejoPullRequestNotFoundError.fromVcsError(
-        { operation: "execute", command: "fgj", cwd: input.cwd, reference: input.reference },
-        error,
-      ),
-    );
-
-  /**
-   * `fgj repo view` is the odd one out: a positional `owner/name`, no `-R`, and no `--json`.
-   * Without a host it falls back to `fgj`'s configured default, which is all a bare repository
-   * lookup can offer.
-   */
-  const viewRepository = (input: {
-    readonly cwd: string;
-    readonly host: string | null;
-    readonly repository: string;
-  }): Effect.Effect<ForgejoRepositoryView, ForgejoCliError> =>
-    execute({
-      cwd: input.cwd,
-      args: [
-        "repo",
-        "view",
-        input.repository,
-        ...(input.host === null ? [] : ["--hostname", input.host]),
-      ],
-    }).pipe(Effect.map((result) => parseForgejoRepositoryView(result.stdout)));
-
-  const optionalRemote = (context: ForgejoContext): ForgejoRemote | null =>
-    context?.remoteUrl === undefined ? null : parseForgejoRemoteUrl(context.remoteUrl);
-
-  const getPullRequest: ForgejoCli["Service"]["getPullRequest"] = (input) =>
-    Effect.gen(function* () {
-      const remote = yield* requireRemote(input);
-      const reference = normalizeForgejoPullRequestReference(input.reference);
-      const result = yield* executePullRequest({
-        cwd: input.cwd,
-        reference,
-        args: ["pr", "view", reference, "--json", ...targetArgs(remote)],
-      });
-      const decoded = decodeForgejoPullRequestJson(result.stdout.trim());
-      if (!Result.isSuccess(decoded)) {
-        return yield* new ForgejoPullRequestDecodeError({
-          operation: "getPullRequest",
-          command: "fgj",
+  const requestFj = Effect.fn("ForgejoCli.requestFj")(
+    function* (input: {
+      readonly cwd: string;
+      readonly baseUrl: string;
+      readonly token: string;
+      readonly path: string;
+      readonly method?: ForgejoApiInput["method"];
+      readonly body?: string;
+    }) {
+      const base = new URL(`${input.baseUrl}/api/v1/`);
+      const url = new URL(input.path, base);
+      if (
+        url.origin !== base.origin ||
+        !url.pathname.startsWith(base.pathname) ||
+        url.username ||
+        url.password
+      )
+        return yield* new ForgejoCliError({
+          command: "fj",
           cwd: input.cwd,
-          reference,
-          cause: decoded.failure,
+          detail: "Invalid Forgejo API path.",
+        });
+      let request = HttpClientRequest.make(input.method ?? "GET")(url.toString()).pipe(
+        HttpClientRequest.setHeader("Authorization", `token ${input.token}`),
+      );
+      if (input.body !== undefined)
+        request = request.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
+      const response = yield* httpClient
+        .execute(request)
+        .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+      const status = response.status;
+      const body =
+        status === 204 || status === 205
+          ? { text: "", truncated: false, invalidUtf8: false }
+          : yield* collectUint8StreamText({
+              stream: response.stream,
+              maxBytes: 8 * 1024 * 1024,
+            });
+      if (body.truncated || body.invalidUtf8)
+        return yield* new ForgejoCliError({
+          command: "fj",
+          cwd: input.cwd,
+          reason: "invalid-response",
+          detail: "Forgejo returned an oversized or invalid response.",
+        });
+      if (status < 200 || status >= 300) {
+        const detail =
+          status === 404
+            ? "Forgejo repository or pull request was not found."
+            : body.text
+              ? `Forgejo API request failed (HTTP ${status}): ${body.text}`
+              : `Forgejo API request failed (HTTP ${status}). Check this server's fj credentials and permissions.`;
+        return yield* new ForgejoCliError({
+          command: "fj",
+          cwd: input.cwd,
+          httpStatus: status,
+          ...(status === 401
+            ? { reason: "authentication" as const }
+            : status === 403
+              ? { reason: "forbidden" as const }
+              : status === 404
+                ? { reason: "not-found" as const }
+                : status === 429
+                  ? { reason: "rate-limit" as const }
+                  : {}),
+          detail,
         });
       }
-      return toSummaryWithOptionalUpdatedAt(decoded.success);
+      return {
+        exitCode: ChildProcessSpawner.ExitCode(0),
+        stdout: body.text,
+        stderr: `HTTP/1.1 ${status}\n${response.headers.link ? `link: ${response.headers.link}\n` : ""}`,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.timeout(30_000),
+        Effect.mapError((error) =>
+          error._tag === "ForgejoCliError"
+            ? error
+            : new ForgejoCliError({
+                command: "fj",
+                cwd: input.cwd,
+                detail: "Forgejo API request failed or timed out.",
+              }),
+        ),
+      ),
+  );
+
+  const authenticateFj = Effect.fn("ForgejoCli.authenticateFj")(function* (
+    cwd: string,
+    login: typeof ForgejoLoginSchema.Type,
+  ) {
+    const keys = yield* readKeys(cwd);
+    const token = keys.hosts[login.name]?.token;
+    const now = yield* Clock.currentTimeMillis;
+    const cached = authenticated.get(login.url);
+    if (token && cached?.token === token && now - cached.time < 30_000) return token;
+    yield* execute({ command: "fj", cwd, args: ["--host", login.url, "whoami"] });
+    // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
+    const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
+    if (!refreshed)
+      return yield* new ForgejoCliError({
+        command: "fj",
+        cwd,
+        reason: "authentication",
+        detail: "fj has no credentials for this server. Authenticate again with fj.",
+      });
+    authenticated.set(login.url, { token: refreshed, time: now });
+    return refreshed;
+  }, authLock.withPermits(1));
+
+  const getAccount: NonNullable<ForgejoCli["Service"]["getAccount"]> = Effect.fn(
+    "ForgejoCli.getAccount",
+  )(function* (input) {
+    const logins = yield* listLogins({ cwd: input.cwd, command: "fj", remoteUrl: input.baseUrl });
+    const login = logins.find(
+      (item) => item.url.replace(/\/+$/, "") === input.baseUrl.replace(/\/+$/, ""),
+    );
+    if (!login)
+      return yield* new ForgejoCliError({
+        command: "fj",
+        cwd: input.cwd,
+        reason: "authentication",
+        detail: "fj has no credentials for this server.",
+      });
+    const token = yield* authenticateFj(input.cwd, login);
+    const currentUser = yield* requestFj({
+      cwd: input.cwd,
+      baseUrl: login.url.replace(/\/+$/, ""),
+      token,
+      path: "user",
     });
+    const user = decodeJsonResult(Schema.Struct({ login: Schema.String }))(currentUser.stdout);
+    if (Result.isFailure(user) || !user.success.login.trim())
+      return yield* new ForgejoCliError({
+        command: "fj",
+        cwd: input.cwd,
+        reason: "invalid-response",
+        detail: "Forgejo returned an invalid account response.",
+      });
+    return user.success.login;
+  });
 
-  return ForgejoCli.of({
-    execute,
-    listPullRequests: (input) =>
-      Effect.gen(function* () {
-        const remote = yield* requireRemote(input);
-        const result = yield* execute({
+  const resolveTarget = Effect.fn("ForgejoCli.resolveTarget")(function* (
+    input: ForgejoRepositoryInput,
+    hostOnly = false,
+  ) {
+    const referenceRemote = input.reference ? parseForgejoRemote(input.reference) : null;
+    let remoteUrl = [input.reference, input.repository, input.context?.remoteUrl].find(
+      (value) => value && parseForgejoRemote(value),
+    );
+    let remote =
+      referenceRemote ??
+      (input.repository ? parseForgejoRemote(input.repository) : null) ??
+      (input.context ? parseForgejoRemote(input.context.remoteUrl) : null);
+    if (!remote && (!input.repository || input.host)) {
+      const result = yield* process
+        .run({
+          operation: "ForgejoCli.remote",
+          command: "git",
+          args: input.host ? ["remote", "-v"] : ["remote", "get-url", "origin"],
           cwd: input.cwd,
-          args: ["pr", "list", "--json", "-s", forgejoStateArg(input.state), ...targetArgs(remote)],
-          maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-        });
-
-        if (result.stdoutTruncated) {
-          return yield* new ForgejoOutputTruncatedError({
-            operation: "listPullRequests",
-            command: "fgj",
-            cwd: input.cwd,
-            maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-          });
-        }
-
-        const raw = result.stdout.trim();
-        if (raw.length === 0) {
-          return [];
-        }
-
-        const decoded = decodeForgejoPullRequestListJson(raw);
-        if (!Result.isSuccess(decoded)) {
-          return yield* new ForgejoPullRequestListDecodeError({
-            operation: "listPullRequests",
-            command: "fgj",
-            cwd: input.cwd,
-            cause: decoded.failure,
-          });
-        }
-
-        // `fgj` filters by state alone, so the head branch, the merged/closed split and the
-        // caller's limit are all applied here. That costs: `-s all`, which is what a branch's
-        // status check asks for, transfers and decodes every pull request the repository has ever
-        // had (~10 KB each), bounded only by the truncation guard above. `fgj pr list` offers no
-        // head, limit or pagination flag, so the fix is a REST-backed provider, not a better call.
-        const headRefName = SourceControlProvider.sourceBranch(input);
-        const matches = decoded.success.filter(
-          (record) =>
-            record.headRefName === headRefName &&
-            (input.state === "all" || input.state === record.state),
-        );
-        matches.sort((left, right) => right.number - left.number);
-        return matches.slice(0, input.limit ?? matches.length).map(toSummaryWithOptionalUpdatedAt);
-      }),
-    getPullRequest,
-    createPullRequest: (input) =>
-      Effect.gen(function* () {
-        const remote = yield* requireRemote(input);
-        // `fgj pr create` has no `--body-file`, so the body travels in argv. `VcsProcess` errors
-        // carry only the argument count, never argv, so it cannot leak into a persisted error.
-        const body = yield* fileSystem.readFileString(input.bodyFile).pipe(
+          allowNonZeroExit: true,
+        })
+        .pipe(
           Effect.mapError(
             (cause) =>
-              new ForgejoPullRequestBodyReadError({
-                command: "fgj",
+              new ForgejoCliError({
+                command: "tea",
                 cwd: input.cwd,
-                bodyFile: input.bodyFile,
+                detail: "Could not resolve the Forgejo repository remote.",
                 cause,
               }),
           ),
         );
-        const bodyBytes = Buffer.byteLength(body, "utf8");
-        if (bodyBytes > MAX_BODY_BYTES) {
-          return yield* new ForgejoPullRequestBodyTooLargeError({
-            command: "fgj",
-            cwd: input.cwd,
-            bodyBytes,
-            maxBodyBytes: MAX_BODY_BYTES,
-          });
-        }
-        yield* execute({
+      if (input.host) {
+        const matchingUrls = [
+          ...new Set(
+            result.stdout.split("\n").flatMap((line) => {
+              const url = /^\S+\s+(https?:\/\/\S+)\s+\(fetch\)$/.exec(line.trim())?.[1];
+              return url && parseForgejoRemote(url)?.host === input.host?.toLowerCase()
+                ? [url]
+                : [];
+            }),
+          ),
+        ];
+        const origins = [...new Set(matchingUrls.map((url) => new URL(url).origin))];
+        remoteUrl =
+          matchingUrls.length === 1
+            ? matchingUrls[0]
+            : origins.length === 1
+              ? origins[0]
+              : undefined;
+      } else {
+        remoteUrl = result.stdout.trim();
+      }
+      remote = remoteUrl ? parseForgejoRemote(remoteUrl) : null;
+    }
+    if (
+      input.host &&
+      !remote?.ssh &&
+      remote?.host !== input.host.toLowerCase() &&
+      remote?.hostname !== input.host.toLowerCase()
+    )
+      remote = {
+        host: input.host.toLowerCase(),
+        hostname: input.host.split(":")[0] ?? input.host,
+        ssh: false,
+        path: remote?.path ?? "",
+      };
+    const schemeRemoteUrl = remote?.ssh ? input.context?.provider.baseUrl : remoteUrl;
+    const fjLogins = yield* listLogins({
+      cwd: input.cwd,
+      command: "fj",
+      ...(schemeRemoteUrl ? { remoteUrl: schemeRemoteUrl } : {}),
+    });
+    const requestedHost = input.host ?? input.context?.requestedHost;
+    const matchHostOnly = hostOnly || (!!input.host && !remote?.path);
+    const selectLogin = (logins: ReturnType<typeof parseForgejoLogins>) =>
+      remote
+        ? matchForgejoLogin(logins, remote, remote.ssh ? requestedHost : undefined, matchHostOnly)
+        : (logins.find((item) => item.default === "true") ??
+          (new Set(logins.map((item) => item.name)).size === 1 ? logins[0] : undefined));
+    let login = selectLogin(fjLogins);
+    let command: "fj" | "tea" = "fj";
+    if (
+      !login &&
+      fjLogins.some(
+        (item) =>
+          !remote ||
+          matchForgejoLogin([item], remote, remote.ssh ? requestedHost : undefined, matchHostOnly),
+      )
+    ) {
+      const available = yield* execute({ command: "fj", cwd: input.cwd, args: ["version"] }).pipe(
+        Effect.result,
+      );
+      if (Result.isSuccess(available))
+        return yield* new ForgejoCliError({
+          command: "fj",
           cwd: input.cwd,
-          args: [
-            "pr",
-            "create",
-            ...targetArgs(remote),
-            "-B",
-            input.target?.refName ?? input.baseBranch,
-            "-H",
-            SourceControlProvider.sourceBranch(input),
-            "-t",
-            input.title,
-            "-b",
-            body,
-          ],
+          reason: "authentication",
+          detail: "Multiple fj logins match this repository. Specify its full server URL.",
         });
-      }),
-    mergePullRequest: (input) =>
-      Effect.gen(function* () {
-        const remote = yield* requireRemote(input);
-        const reference = normalizeForgejoPullRequestReference(input.reference);
-        yield* executePullRequest({
-          cwd: input.cwd,
-          reference,
-          args: ["pr", "merge", reference, "--merge-method", input.strategy, ...targetArgs(remote)],
-        });
-
-        // `fgj` reports success whatever the host answered, so the merge is confirmed rather than
-        // taken on its word. A card moved to Done on a merge that did not happen is wrong in the
-        // one direction that is hard to undo.
-        const after = yield* getPullRequest({ ...input, reference });
-        if (after.state !== "merged") {
-          return yield* new ForgejoMergeNotAppliedError({
-            operation: "mergePullRequest",
-            command: "fgj",
-            cwd: input.cwd,
-            reference,
-            state: after.state,
-          });
-        }
-      }),
-    // T3o: the structured refusal probe (T3O-38, D7). Two calls, because
-    // Forgejo splits the answer: the pull request carries `mergeable` and its
-    // head sha, the checks live with Forgejo Actions.
-    pullRequestMergeState: (input) =>
-      Effect.gen(function* () {
-        const remote = yield* requireRemote(input);
-        const reference = normalizeForgejoPullRequestReference(input.reference);
-        const viewed = yield* executePullRequest({
-          cwd: input.cwd,
-          reference,
-          args: ["pr", "view", reference, "--json", ...targetArgs(remote)],
-        });
-        const { mergeable, headSha, behind } = parseForgejoPullRequestMergeability(viewed.stdout);
-
-        // Best-effort, and the ONE place where "we could not look" must not
-        // read as "there is nothing to wait for": an instance without Actions,
-        // or an `fgj` whose listing we cannot parse, leaves the state
-        // `unknown`, which retries. Claiming every check is green when we
-        // never saw one would stop the ladder on the first refusal.
-        const runs = yield* execute({
-          cwd: input.cwd,
-          args: [
-            "actions",
-            "run",
-            "list",
-            "--json",
-            "-L",
-            String(ACTIONS_RUN_LIST_LIMIT),
-            ...targetArgs(remote),
-          ],
-          maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-        }).pipe(Effect.catchCause(() => Effect.succeed(null)));
-
-        return forgejoMergeState({
-          mergeable,
-          headSha,
-          behind,
-          checks: runs === null ? EMPTY_FORGEJO_CHECKS : parseForgejoChecks(runs.stdout, headSha),
-          checksReadable: runs !== null,
-        });
-      }),
-    getRepositoryCloneUrls: (input) =>
-      viewRepository({
+      if (available.failure.reason !== "missing-cli") return yield* available.failure;
+    }
+    if (login) {
+      const auth = yield* authenticateFj(input.cwd, login).pipe(Effect.result);
+      if (Result.isFailure(auth)) {
+        if (auth.failure.reason === "missing-cli") login = undefined;
+        else return yield* auth.failure;
+      }
+    }
+    if (!login) {
+      command = "tea";
+      login = selectLogin(yield* listLogins({ cwd: input.cwd, command: "tea" }));
+    }
+    if (!login)
+      return yield* new ForgejoCliError({
+        command: "tea",
         cwd: input.cwd,
-        host: optionalRemote(input.context)?.host ?? null,
-        repository: input.repository,
-      }).pipe(
-        Effect.flatMap((view) => {
-          const nameWithOwner = view.nameWithOwner ?? input.repository;
-          const url = view.httpsCloneUrl ?? view.url;
-          const sshUrl = view.sshCloneUrl;
-          if (url === null || sshUrl === null) {
-            return Effect.fail(
-              new ForgejoRepositoryDecodeError({
-                command: "fgj",
-                cwd: input.cwd,
-                operation: "getRepositoryCloneUrls",
-                repository: input.repository,
-                missingField: url === null ? "an HTTPS clone URL" : "an SSH clone URL",
-              }),
-            );
-          }
-          return Effect.succeed({ nameWithOwner, url, sshUrl });
-        }),
-      ),
-    getDefaultBranch: (input) =>
-      Effect.gen(function* () {
-        const remote = yield* requireRemote(input);
-        const view = yield* viewRepository({
-          cwd: input.cwd,
-          host: remote.host,
-          repository: remote.nameWithOwner,
-        });
-        return view.defaultBranch;
-      }),
-    checkoutPullRequest: (input) =>
-      Effect.gen(function* () {
-        const pullRequest = yield* getPullRequest(input);
-        // Forgejo publishes `refs/pull/<n>/head` exactly as GitHub does, which is the only way
-        // in: `fgj` has no checkout subcommand.
-        const localBranch = forgejoCheckoutBranchName({
-          number: pullRequest.number,
-          headRefName: pullRequest.headRefName,
-          isCrossRepository: pullRequest.isCrossRepository === true,
-        });
-        const localBranchNames = yield* git.listLocalBranchNames(input.cwd);
-        if (input.force === true || !localBranchNames.includes(localBranch)) {
-          yield* git.fetchPullRequestBranch({
-            cwd: input.cwd,
-            prNumber: pullRequest.number,
-            branch: localBranch,
-          });
-        }
-        yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
-      }).pipe(
-        Effect.mapError((cause) =>
-          isForgejoCliError(cause)
-            ? cause
-            : new ForgejoCheckoutError({
-                command: "fgj",
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.reference,
-                ),
-                cause,
-              }),
-        ),
-      ),
+        reason: "authentication",
+        detail:
+          "No matching Forgejo login. Use `fj auth login`, `fj auth add-token`, or `tea login add` for this server; choose a default when multiple tea accounts match.",
+      });
+    if (hostOnly)
+      return { command, login: login.name, repository: "", baseUrl: login.url.replace(/\/+$/, "") };
+    const path =
+      referenceRemote?.path ??
+      (input.repository && !parseForgejoRemote(input.repository)
+        ? input.repository
+        : remote?.path) ??
+      "";
+    const basePath = new URL(login.url).pathname.replace(/^\/+|\/+$/g, "");
+    const relativePath =
+      basePath && path.split("/").length > 2 && path.startsWith(`${basePath}/`)
+        ? path.slice(basePath.length + 1)
+        : path;
+    const repositoryPath = relativePath.replace(/\/pulls\/\d+.*$/, "").replace(/\.git$/, "");
+    if (command === "fj" && !repositoryPath.includes("/")) {
+      login = { ...login, user: yield* getAccount({ cwd: input.cwd, baseUrl: login.url }) };
+    }
+    const repository = repositoryPath.includes("/")
+      ? repositoryPath
+      : `${login.user}/${repositoryPath}`;
+    if (!/^[^/\s]+\/[^/\s]+$/.test(repository))
+      return yield* new ForgejoCliError({
+        command,
+        cwd: input.cwd,
+        detail: "Specify a Forgejo repository as owner/repository or its full server URL.",
+      });
+    return { command, login: login.name, repository, baseUrl: login.url.replace(/\/+$/, "") };
   });
+  const resolveRepository = (input: ForgejoRepositoryInput) => resolveTarget(input);
+  const api = Effect.fn("ForgejoCli.api")(function* (input: ForgejoApiInput) {
+    const repository = yield* resolveTarget(
+      input,
+      input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET"),
+    );
+    const stdin =
+      input.body === undefined
+        ? undefined
+        : yield* encodeApiBody(input.body).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ForgejoCliError({
+                  command: "tea",
+                  cwd: input.cwd,
+                  detail: "Could not encode the Forgejo request body.",
+                  cause,
+                }),
+            ),
+          );
+    let path = input.path.replace(/^\/+/, "");
+    if (input.repository && input.repository !== repository.repository) {
+      // Repository identities retain the server mount path; API routes do not.
+      const prefix = `repos/${input.repository.split("/").map(encodeURIComponent).join("/")}`;
+      if (path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`)) {
+        path = `repos/${repository.repository.split("/").map(encodeURIComponent).join("/")}${path.slice(prefix.length)}`;
+      }
+    }
+    if (repository.command === "fj") {
+      const token = (yield* readKeys(input.cwd)).hosts[repository.login]?.token;
+      if (!token)
+        return yield* new ForgejoCliError({
+          command: "fj",
+          cwd: input.cwd,
+          reason: "authentication",
+          detail: "fj has no credentials for this server.",
+        });
+      return yield* requestFj({
+        cwd: input.cwd,
+        baseUrl: repository.baseUrl,
+        token,
+        path,
+        ...(input.method === undefined ? {} : { method: input.method }),
+        ...(stdin === undefined ? {} : { body: stdin }),
+      });
+    }
+    const result = yield* execute({
+      cwd: input.cwd,
+      args: [
+        "api",
+        "--include",
+        "--login",
+        repository.login,
+        ...(repository.repository ? ["--repo", repository.repository] : []),
+        "--method",
+        input.method ?? "GET",
+        ...(input.body === undefined ? [] : ["--data", "@-"]),
+        `${repository.baseUrl}/api/v1/${path}`,
+      ],
+      ...(stdin === undefined ? {} : { stdin }),
+    });
+    // tea reports HTTP failures with exit code zero; use its response status.
+    const status = Number(/^HTTP\/\S+ (\d{3})/m.exec(result.stderr)?.[1]);
+    if (!status || status >= 400)
+      return yield* new ForgejoCliError({
+        command: "tea",
+        cwd: input.cwd,
+        ...(status ? { httpStatus: status } : {}),
+        ...(status === 401
+          ? { reason: "authentication" as const }
+          : status === 403
+            ? { reason: "forbidden" as const }
+            : status === 404
+              ? { reason: "not-found" as const }
+              : status === 429
+                ? { reason: "rate-limit" as const }
+                : {}),
+        detail:
+          status === 401 || status === 403
+            ? "Forgejo denied access. Check this server's `tea login` credentials and permissions."
+            : status === 404
+              ? "Forgejo repository or pull request was not found."
+              : status === 429
+                ? "Forgejo API rate limit exceeded."
+                : `Forgejo API request failed${status ? ` (HTTP ${status})` : " without an HTTP status"}.`,
+      });
+    return result;
+  });
+  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });
 });
 
 export const layer = Layer.effect(ForgejoCli, make);

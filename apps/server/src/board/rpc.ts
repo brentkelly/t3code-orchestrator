@@ -43,7 +43,6 @@ import {
   type BoardProviderLimitResumeAtInput,
   type BoardSubscribeCardInput,
   type OrchestrationCommand,
-  type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -65,6 +64,7 @@ import {
 import { observeRpcEffect, observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { ShellWindowEvent } from "../orchestration/shellCoalesce.ts";
 import type { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import {
   BOARD_HUMAN_ACTOR_FALLBACK_NAME,
@@ -591,18 +591,16 @@ export function boardActorStamp(deps: {
  */
 export function boardCardThreadsShellEvents(deps: {
   readonly projectionSnapshotQuery: ProjectionSnapshotQueryShape;
-}): (event: OrchestrationEvent) => Effect.Effect<ReadonlyArray<OrchestrationShellStreamEvent>> {
+}): (event: ShellWindowEvent) => Effect.Effect<ReadonlyArray<OrchestrationShellStreamEvent>> {
   const boardMethods = boardSnapshotQueryMethodsOf(deps.projectionSnapshotQuery);
 
   const forCard = (cardId: BoardCardId, sequence: number) =>
     boardMethods === null
       ? Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>)
       : boardMethods.boardCardThreads(cardId).pipe(
-          Effect.map(
-            (threads): ReadonlyArray<OrchestrationShellStreamEvent> => [
-              { kind: "card-threads" as const, sequence, cardId, threads },
-            ],
-          ),
+          Effect.map((threads): ReadonlyArray<OrchestrationShellStreamEvent> => [
+            { kind: "card-threads" as const, sequence, cardId, threads },
+          ]),
           Effect.catchCause(() =>
             Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>),
           ),
@@ -624,7 +622,7 @@ export function boardCardThreadsShellEvents(deps: {
       // stale summary. (Resolves via the still-live link.)
       if (event.type === "thread.deleted") {
         const cardId = yield* boardMethods
-          .boardCardIdForThread(ThreadId.make(String(event.payload.threadId)))
+          .boardCardIdForThread(ThreadId.make(event.aggregateId))
           .pipe(Effect.catchCause(() => Effect.succeed(null)));
         return cardId === null ? [] : yield* forCard(cardId, event.sequence);
       }
@@ -634,11 +632,11 @@ export function boardCardThreadsShellEvents(deps: {
       // (message deltas, session status, non-plan activities) would carry an
       // identical list and is skipped. This is the difference between one
       // refetch per plan revision and one per streamed message chunk on a live
-      // linked thread.
-      if (event.type !== "thread.activity-appended") return [];
-      if (event.payload.activity.kind !== "turn.plan.updated") return [];
+      // linked thread. The shell window keeps that one fact of the payload
+      // (`todosChanged`) and drops the rest.
+      if (isBoardEvent(event) || !event.todosChanged) return [];
       const cardId = yield* boardMethods
-        .boardCardIdForThread(ThreadId.make(String(event.payload.threadId)))
+        .boardCardIdForThread(ThreadId.make(event.aggregateId))
         .pipe(Effect.catchCause(() => Effect.succeed(null)));
       return cardId === null ? [] : yield* forCard(cardId, event.sequence);
     }).pipe(

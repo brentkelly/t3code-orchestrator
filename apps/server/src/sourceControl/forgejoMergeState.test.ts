@@ -3,8 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { classifyBoardAutoMergeRefusal } from "../board/autoMergeClassification.ts";
 import {
   forgejoMergeState,
-  parseForgejoChecks,
+  forgejoRefusalDetail,
+  parseForgejoCommitStatuses,
   parseForgejoPullRequestMergeability,
+  parseForgejoPullRequestMerged,
 } from "./forgejoMergeState.ts";
 
 const NO_CHECKS = {
@@ -60,59 +62,105 @@ describe("parseForgejoPullRequestMergeability (T3O-38, D7)", () => {
   });
 });
 
-describe("parseForgejoChecks (T3O-38, D7)", () => {
-  const runs = (entries: ReadonlyArray<Record<string, unknown>>) => JSON.stringify(entries);
+describe("parseForgejoCommitStatuses (T3O-38, D7)", () => {
+  const combined = (statuses: ReadonlyArray<Record<string, unknown>> | null) =>
+    JSON.stringify({ state: "pending", sha: "aaa", statuses });
 
-  it("counts only the runs for the head sha being merged", () => {
-    // The listing is repository-wide, so without the filter a card would be
-    // classified against somebody else's branch.
-    const checks = parseForgejoChecks(
-      runs([
-        { name: "build", head_sha: "aaa", status: "success" },
-        { name: "test", head_sha: "bbb", status: "failure" },
-      ]),
-      "aaa",
-    );
-    expect(checks).toMatchObject({ total: 1, passed: 1, failed: 0 });
-  });
-
-  it("splits runs into passed, running and failed, and names the first few", () => {
-    const checks = parseForgejoChecks(
-      runs([
-        { name: "build", head_sha: "aaa", status: "success" },
-        { name: "e2e", head_sha: "aaa", status: "running" },
-        { name: "lint", head_sha: "aaa", status: "failure" },
-        { name: "docs", head_sha: "aaa", status: "skipped" },
-      ]),
-      "aaa",
-    );
-    expect(checks).toEqual({
-      total: 4,
+  it("splits statuses into passed, running and failed, and names the first few", () => {
+    expect(
+      parseForgejoCommitStatuses(
+        combined([
+          { context: "build", status: "success" },
+          { context: "e2e", status: "pending" },
+          { context: "lint", status: "failure" },
+          { context: "docs", status: "warning" },
+          { context: "deploy", status: "error" },
+        ]),
+      ),
+    ).toEqual({
+      total: 5,
       passed: 2,
       pending: 1,
-      failed: 1,
-      failing: ["lint"],
+      failed: 2,
+      failing: ["lint", "deploy"],
       running: ["e2e"],
     });
   });
 
-  it("prefers `conclusion` where a version reports both", () => {
-    const checks = parseForgejoChecks(
-      runs([{ name: "build", head_sha: "aaa", status: "completed", conclusion: "failure" }]),
-      "aaa",
+  it("reads the GitHub-compatible `state` spelling too", () => {
+    expect(
+      parseForgejoCommitStatuses(combined([{ context: "build", state: "success" }])),
+    ).toMatchObject({ total: 1, passed: 1 });
+  });
+
+  it("bounds the named checks, because the text is persisted on the card", () => {
+    const failing = Array.from({ length: 9 }, (_, index) => ({
+      context: `check-${index}`,
+      status: "failure",
+    }));
+    const checks = parseForgejoCommitStatuses(combined(failing));
+    expect(checks?.failed).toBe(9);
+    expect(checks?.failing).toEqual(["check-0", "check-1", "check-2", "check-3"]);
+  });
+
+  it("reads a commit nobody reported on as READABLE and empty", () => {
+    // Gitea writes `"statuses": null` there. That is an answer — "no checks" —
+    // and must not be confused with a body that could not be read.
+    expect(parseForgejoCommitStatuses(combined(null))).toEqual(NO_CHECKS);
+    expect(parseForgejoCommitStatuses(combined([]))).toEqual(NO_CHECKS);
+  });
+
+  it("answers null — could not look — for anything that is not a combined status", () => {
+    for (const raw of ["", "not json", "[]", "{}", JSON.stringify({ statuses: "nope" })]) {
+      expect(parseForgejoCommitStatuses(raw)).toBeNull();
+    }
+  });
+});
+
+describe("parseForgejoPullRequestMerged", () => {
+  it("is true only for an explicit `merged: true`", () => {
+    expect(parseForgejoPullRequestMerged(JSON.stringify({ merged: true }))).toBe(true);
+    expect(parseForgejoPullRequestMerged(JSON.stringify({ merged: false }))).toBe(false);
+    expect(parseForgejoPullRequestMerged(JSON.stringify({ state: "closed" }))).toBe(false);
+    expect(parseForgejoPullRequestMerged("not json")).toBe(false);
+  });
+});
+
+describe("forgejoRefusalDetail", () => {
+  it("lifts the forge's own message out of the API error envelope", () => {
+    expect(
+      forgejoRefusalDetail(
+        'Forgejo API request failed (HTTP 405): {"message":"Please try again later","url":"https://codeberg.org/api/swagger"}',
+      ),
+    ).toBe("Please try again later");
+  });
+
+  it("renders a merge refusal from its status when no message came back", () => {
+    // tea's branch of `ForgejoCli.api` reports the status and nothing else.
+    expect(forgejoRefusalDetail("Forgejo API request failed (HTTP 405).", 405)).toContain(
+      "refused to merge the pull request",
     );
-    expect(checks).toMatchObject({ failed: 1, failing: ["build"] });
+    expect(forgejoRefusalDetail("Forgejo API request failed (HTTP 409).", 409)).toContain(
+      "conflicts with its base branch",
+    );
   });
 
-  it("accepts the wrapped listing shapes Gitea has used", () => {
-    const entry = { name: "build", head_sha: "aaa", status: "success" };
-    expect(parseForgejoChecks(JSON.stringify({ workflow_runs: [entry] }), "aaa").passed).toBe(1);
-    expect(parseForgejoChecks(JSON.stringify({ runs: [entry] }), "aaa").passed).toBe(1);
+  it("keeps the forge's message, and any non-refusal envelope, ahead of the status", () => {
+    expect(
+      forgejoRefusalDetail('Forgejo API request failed (HTTP 405): {"message":"Nope"}', 405),
+    ).toBe("Nope");
+    const server = "Forgejo API request failed (HTTP 500).";
+    expect(forgejoRefusalDetail(server, 500)).toBe(server);
   });
 
-  it("counts nothing when there is no head sha to filter by, or no readable body", () => {
-    expect(parseForgejoChecks(runs([{ name: "build", head_sha: "aaa" }]), null)).toEqual(NO_CHECKS);
-    expect(parseForgejoChecks("not json", "aaa")).toEqual(NO_CHECKS);
+  it("keeps the envelope when the forge sent nothing readable", () => {
+    for (const detail of [
+      "Forgejo API request failed (HTTP 405).",
+      "Forgejo API request failed (HTTP 500): {not json",
+      'Forgejo API request failed (HTTP 409): {"message":"  "}',
+    ]) {
+      expect(forgejoRefusalDetail(detail)).toBe(detail);
+    }
   });
 });
 
@@ -184,18 +232,19 @@ describe("forgejoMergeState (T3O-38, D7)", () => {
 });
 
 describe("Forgejo, end to end: probe → classification (T3O-38, criterion 10)", () => {
-  /** What the two `fgj` calls answer, run through the real parsers and the
+  /** What the two API reads answer, run through the real parsers and the
       real classifier — the composition is what the board actually does, and
       testing the halves separately would not prove the whole. */
   const classify = (input: { readonly pr: string; readonly runs: string }) => {
     const { mergeable, headSha, behind } = parseForgejoPullRequestMergeability(input.pr);
+    const checks = parseForgejoCommitStatuses(input.runs);
     return classifyBoardAutoMergeRefusal(
       forgejoMergeState({
         mergeable,
         headSha,
         behind,
-        checks: parseForgejoChecks(input.runs, headSha),
-        checksReadable: true,
+        checks: checks ?? NO_CHECKS,
+        checksReadable: checks !== null,
       }),
     );
   };
@@ -206,10 +255,12 @@ describe("Forgejo, end to end: probe → classification (T3O-38, criterion 10)",
   it("reads a check that is still running as SOFT and retries", () => {
     const verdict = classify({
       pr: pullRequest(false),
-      runs: JSON.stringify([
-        { name: "build", head_sha: "aaa", status: "success" },
-        { name: "e2e", head_sha: "aaa", status: "running" },
-      ]),
+      runs: JSON.stringify({
+        statuses: [
+          { context: "build", status: "success" },
+          { context: "e2e", status: "pending" },
+        ],
+      }),
     });
     expect(verdict.classification).toBe("soft");
     expect(verdict.detail).toBe("1 of 2 checks green · e2e still running");
@@ -219,10 +270,12 @@ describe("Forgejo, end to end: probe → classification (T3O-38, criterion 10)",
   it("reads a FAILED check as hard and stops the ladder", () => {
     const verdict = classify({
       pr: pullRequest(false),
-      runs: JSON.stringify([
-        { name: "build", head_sha: "aaa", status: "success" },
-        { name: "lint", head_sha: "aaa", status: "failure" },
-      ]),
+      runs: JSON.stringify({
+        statuses: [
+          { context: "build", status: "success" },
+          { context: "lint", status: "failure" },
+        ],
+      }),
     });
     expect(verdict.classification).toBe("checks-failed");
     expect(verdict.detail).toBe("1 of 2 checks green · lint failed");
@@ -231,7 +284,7 @@ describe("Forgejo, end to end: probe → classification (T3O-38, criterion 10)",
   it("reads every-check-green-and-still-refused as an approval", () => {
     const verdict = classify({
       pr: pullRequest(false),
-      runs: JSON.stringify([{ name: "build", head_sha: "aaa", status: "success" }]),
+      runs: JSON.stringify({ statuses: [{ context: "build", status: "success" }] }),
     });
     expect(verdict.classification).toBe("approval-required");
   });
@@ -248,19 +301,15 @@ describe("Forgejo, end to end: probe → classification (T3O-38, criterion 10)",
         base: { ref: "t3o", sha: "base-tip" },
         merge_base: "older-ancestor",
       }),
-      runs: JSON.stringify([{ name: "build", head_sha: "aaa", status: "success" }]),
+      runs: JSON.stringify({ statuses: [{ context: "build", status: "success" }] }),
     });
     expect(verdict.classification).toBe("behind");
   });
 
-  it("stays SOFT when the run listing could not be read at all", () => {
-    // An instance without Actions, or an `fgj` whose output this build cannot
-    // parse. Claiming every check is green when we never saw one would stop
-    // the ladder on the first refusal.
-    const { mergeable, headSha } = parseForgejoPullRequestMergeability(pullRequest(false));
-    const verdict = classifyBoardAutoMergeRefusal(
-      forgejoMergeState({ mergeable, headSha, checks: NO_CHECKS, checksReadable: false }),
-    );
-    expect(verdict.classification).toBe("soft");
+  it("stays SOFT when the statuses could not be read at all", () => {
+    // A status read that failed, or a body this build cannot parse. Claiming
+    // every check is green when we never saw one would stop the ladder on the
+    // first refusal.
+    expect(classify({ pr: pullRequest(false), runs: "not json" }).classification).toBe("soft");
   });
 });

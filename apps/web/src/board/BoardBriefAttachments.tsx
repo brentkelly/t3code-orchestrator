@@ -16,7 +16,12 @@
  * bytes land: the modal attaches immediately and answers "consumed", the
  * dialog keeps the row until Create and answers "keep".
  */
-import type { BoardCardAttachment, BoardCardId, EnvironmentId } from "@t3tools/contracts";
+import type {
+  AssetResource,
+  BoardCardAttachment,
+  BoardCardId,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import { FileIcon, PaperclipIcon, XIcon } from "lucide-react";
 import {
   useCallback,
@@ -28,7 +33,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { useAssetUrl } from "../assets/assetUrls";
+import { useAssetUrlState } from "../assets/assetUrls";
 import { cn, randomUUID } from "../lib/utils";
 import { usePreparedConnection } from "../state/session";
 import { BoardHint } from "./BoardHint";
@@ -367,6 +372,12 @@ export function boardBriefDropClass(active: boolean): string {
   return active ? "border-dashed border-primary bg-accent/70" : "border-dashed border-transparent";
 }
 
+/** A minted asset URL, or null while it loads or when minting failed. */
+function useBoardAssetUrl(environmentId: EnvironmentId, resource: AssetResource): string | null {
+  const state = useAssetUrlState(environmentId, resource);
+  return state._tag === "Success" ? state.url : null;
+}
+
 const THUMB_CLASS =
   "size-14 shrink-0 rounded-[9px] border border-border bg-muted bg-cover bg-center shadow-xs";
 
@@ -396,7 +407,7 @@ function PersistedImageThumb(props: {
   readonly attachment: BoardCardAttachment;
   readonly onDetach: ((attachmentId: BoardCardAttachment["id"]) => void) | null;
 }) {
-  const url = useAssetUrl(props.environmentId, {
+  const url = useBoardAssetUrl(props.environmentId, {
     _tag: "board-attachment",
     cardId: props.cardId,
     fileName: props.attachment.name,
@@ -471,7 +482,7 @@ function HydratedImageThumb(props: {
   readonly onRemove: (id: string) => void;
 }) {
   const { row } = props;
-  const url = useAssetUrl(props.environmentId, {
+  const url = useBoardAssetUrl(props.environmentId, {
     _tag: "attachment",
     attachmentId: row.upload.pendingAttachmentId,
     fileName: row.name,
@@ -627,7 +638,7 @@ function PersistedFileChip(props: {
   readonly attachment: BoardCardAttachment;
   readonly onDetach: ((attachmentId: BoardCardAttachment["id"]) => void) | null;
 }) {
-  const url = useAssetUrl(props.environmentId, {
+  const url = useBoardAssetUrl(props.environmentId, {
     _tag: "board-attachment",
     cardId: props.cardId,
     fileName: props.attachment.name,
