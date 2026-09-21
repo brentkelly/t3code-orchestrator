@@ -1075,7 +1075,8 @@ export function createBoardEnvironmentAtoms<R, ER>(
         lookup is cached for two minutes, so a burst costs one forge call. */
     refreshCardPullRequest: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:refresh-card-pull-request",
-      execute: (input: { readonly cardId: BoardCardId }) => refreshBoardCardPullRequest(input),
+      execute: (input: { readonly cardId: BoardCardId; readonly force?: boolean }) =>
+        refreshBoardCardPullRequest(input),
     }),
     /** Merge the card's pull request and advance it. Resolves to the outcome
         the button reports — merged, refused, conflict-being-resolved. */

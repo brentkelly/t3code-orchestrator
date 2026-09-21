@@ -825,7 +825,7 @@ const buildAppUnderTest = (options?: {
           // into this provide rather than added as its own pipe step — the
           // pipe is already at TypeScript's 20-argument ceiling.
           Layer.mock(SupervisorReactor)({
-            refreshPullRequest: () => Effect.void,
+            refreshPullRequest: () => Effect.succeed({ outcome: "none" as const }),
             mergePullRequest: () => Effect.succeed({ outcome: "no-pull-request" as const }),
           }),
         ),

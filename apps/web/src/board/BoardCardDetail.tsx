@@ -98,6 +98,8 @@ import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import {
   describeBoardCommandFailure,
   describeBoardMergeOutcome,
+  // T3o: the forced re-check's answer (T3O-48).
+  describeBoardRefreshOutcome,
   describeBoardReviewRoundOutcome,
   describeBoardSubmitOutcome,
 } from "./boardCommandFeedback";
@@ -222,6 +224,9 @@ export function BoardCardDetail({
   // fast-forward take several seconds — so the button can say "Merging…" and
   // refuse a second click that would re-enter a merge already in flight.
   const [merging, setMerging] = useState(false);
+  // T3o (T3O-48): set across the "Check again" round trip, so the button spins
+  // and a second click cannot re-enter a lookup already in flight.
+  const [checkingForPullRequest, setCheckingForPullRequest] = useState(false);
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
   // Refresh trigger: the card detail opening. One of the moments the answer
@@ -1043,6 +1048,25 @@ export function BoardCardDetail({
       conflictFix={conflictFix}
       stepHeld={stepHeld}
       merging={merging}
+      checkingForPullRequest={checkingForPullRequest}
+      onCheckForPullRequest={() => {
+        // T3o (T3O-48): `force`, so the answer is not the cached one that
+        // produced the empty state being questioned.
+        setFeedback(null);
+        setCheckingForPullRequest(true);
+        const branch = card.worktree?.branch ?? null;
+        void refreshCardPullRequest({
+          environmentId,
+          input: { cardId: card.id, force: true },
+        }).then((result) => {
+          setCheckingForPullRequest(false);
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+            return;
+          }
+          setFeedback(describeBoardRefreshOutcome(result.value, branch));
+        });
+      }}
       onMergePullRequest={() => {
         setFeedback(null);
         setMerging(true);

@@ -51,7 +51,12 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   amber, and together wider than the 268px column, so the second chip hung off the card's right edge.
   `boardCardNotice` ranks them into one slot, most specific first — a pending question (answerable in
   one click, the same carve-out it gets everywhere else), then `Conflicts`, then the auto-merge hold,
-  then the rest of the attention chip, then the dependency gate. The gate is last because it is the
+  then `No PR`, then the rest of the attention chip, then the dependency gate. `No PR` (T3O-48) is a
+  card parked at the merge-role stage with no pull request — amber, making exactly the claim
+  `Needs a human` makes and naming the cause, which is why it sits above it and below the two pills
+  that describe a card which does have a pull request. It waits out the same
+  `BOARD_ATTENTION_SETTLE_MS` grace the other two ambers do, because a card arriving at Ready for
+  merge is briefly PR-less while the stage-move lookup is still in flight. The gate is last because it is the
   one notice whose fact survives elsewhere on the card: the meta row's chain icon carries the count at
   every stage. This is deliberately not a comparison of tones — amber-versus-violet says how loud a
   notice is, not which fact the human needs, and `Merge needs you` beating `Needs a human` is a

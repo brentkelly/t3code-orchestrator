@@ -68,6 +68,16 @@ export class BoardPullRequestGateway extends Context.Service<
     readonly find: (input: {
       readonly cwd: string;
       readonly branch: string;
+      /** T3o (T3O-48): skip the cache and ask the forge now.
+       *
+       * The lookup is cached for two minutes per branch, with an exponential
+       * backoff on top for a branch that keeps failing. That is right for the
+       * automatic refresh, whose cost model depends on a burst of card opens
+       * costing one forge call — and wrong for a human pressing "Check again",
+       * who has just read "no pull request" and is asking whether it is still
+       * true. A button answered out of the cache that produced the answer
+       * being questioned is a button that does nothing. */
+      readonly force?: boolean;
     }) => Effect.Effect<VcsStatusChangeRequest | null, BoardPullRequestGatewayError>;
     readonly merge: (input: {
       readonly cwd: string;
@@ -104,16 +114,26 @@ export const layer: Layer.Layer<BoardPullRequestGateway, never, GitManager.GitMa
       const gitManager = yield* GitManager.GitManager;
       return BoardPullRequestGateway.of({
         find: (input) =>
-          gitManager.findBranchPullRequest(input).pipe(
-            Effect.catch((error: unknown) =>
-              Effect.fail(
-                new BoardPullRequestGatewayError({
-                  operation: "find",
-                  detail: failureDetail(error),
-                }),
+          // T3o (T3O-48): `invalidateStatus` bumps this checkout's PR-lookup
+          // epoch, which is part of the cache key — so it bypasses the TTL and
+          // the per-key failure backoff together, without either being reachable
+          // directly. Already on the service; no new upstream surface.
+          (input.force === true ? gitManager.invalidateStatus(input.cwd) : Effect.void)
+            .pipe(
+              Effect.andThen(
+                gitManager.findBranchPullRequest({ cwd: input.cwd, branch: input.branch }),
+              ),
+            )
+            .pipe(
+              Effect.catch((error: unknown) =>
+                Effect.fail(
+                  new BoardPullRequestGatewayError({
+                    operation: "find",
+                    detail: failureDetail(error),
+                  }),
+                ),
               ),
             ),
-          ),
         merge: (input) =>
           gitManager.mergeBranchPullRequest(input).pipe(
             Effect.catch((error: unknown) =>

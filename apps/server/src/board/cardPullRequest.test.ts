@@ -156,6 +156,165 @@ describe("card ↔ pull request link", () => {
     ),
   );
 
+  // T3o (T3O-48): the refresh used to return `Schema.Void`, so a card with no
+  // pull request and a refresh that found none looked exactly like a refresh
+  // that could not reach the forge. Those are different facts, only one is
+  // worth retrying, and the card that filed this bug sat at Ready for merge
+  // for hours with no way to tell which it was.
+  describe("what the refresh reports", () => {
+    it.effect("names the pull request it found", () =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const outcome = yield* h.reactor.refreshPullRequest(cardInMerge().id);
+            assert.deepEqual(outcome, { outcome: "linked", number: 284 });
+          }),
+      ),
+    );
+
+    it.effect("reports a branch the forge has no pull request for", () =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: null,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const outcome = yield* h.reactor.refreshPullRequest(cardInMerge().id);
+            assert.deepEqual(outcome, { outcome: "none" });
+          }),
+      ),
+    );
+
+    it.effect("reports a lookup failure in the forge's own words, keeping the link", () =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: { failWith: "GitHub API rate limit exceeded." },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const outcome = yield* h.reactor.refreshPullRequest(cardInMerge().id);
+            assert.deepEqual(outcome, {
+              outcome: "lookup-failed",
+              detail: "GitHub API rate limit exceeded.",
+            });
+            // Unchanged behaviour: a failure records nothing, so a rate limit
+            // cannot blank a card's badge.
+            assert.equal(recordedPullRequests(yield* h.commands).length, 0);
+          }),
+      ),
+    );
+
+    it.effect("reports a card with no worktree as having no branch to look up", () =>
+      withGovernor(
+        {
+          board: {
+            nextCardNumberByProject: {},
+            cards: [{ ...cardInMerge(), worktree: null }],
+          },
+          settings: settings(),
+          pullRequest: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const outcome = yield* h.reactor.refreshPullRequest(cardInMerge().id);
+            assert.deepEqual(outcome, { outcome: "no-branch" });
+            assert.deepEqual(yield* h.pullRequestLookups, []);
+          }),
+      ),
+    );
+
+    it.effect("reports an unknown card rather than pretending it looked", () =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const outcome = yield* h.reactor.refreshPullRequest(
+              "card-does-not-exist" as BoardCardId,
+            );
+            assert.deepEqual(outcome, { outcome: "unknown-card" });
+          }),
+      ),
+    );
+  });
+
+  // T3o (T3O-48): "Check again" is a human asking whether the answer they were
+  // just given is still true. Answering that out of the cache that produced it
+  // — or out of the failure backoff — is a button that does nothing.
+  describe("the forced re-check", () => {
+    it.effect("bypasses the cache when a human asks again", () =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: null,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(cardInMerge().id);
+            yield* h.reactor.refreshPullRequest(cardInMerge().id, { force: true });
+            assert.deepEqual(yield* h.pullRequestLookups, [{ forced: false }, { forced: true }]);
+          }),
+      ),
+    );
+
+    it.effect("leaves the automatic refresh on the cached path", () =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: null,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(cardInMerge().id);
+            yield* h.reactor.refreshPullRequest(cardInMerge().id);
+            assert.deepEqual(yield* h.pullRequestLookups, [{ forced: false }, { forced: false }]);
+          }),
+      ),
+    );
+
+    it.effect("finds the pull request a forced re-check turns up", () =>
+      Effect.gen(function* () {
+        // The shape this card was actually filed about: the board looked, was
+        // told there was no pull request, and the human can now make it look
+        // again and get a link.
+        let found: VcsStatusChangeRequest | null = null;
+        yield* withGovernor(
+          {
+            board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+            settings: settings(),
+            pullRequestOf: () => found,
+          },
+          (h) =>
+            Effect.gen(function* () {
+              assert.deepEqual(yield* h.reactor.refreshPullRequest(cardInMerge().id), {
+                outcome: "none",
+              });
+              found = openPr;
+              assert.deepEqual(
+                yield* h.reactor.refreshPullRequest(cardInMerge().id, { force: true }),
+                { outcome: "linked", number: 284 },
+              );
+              assert.equal((yield* h.board).cards[0]!.pullRequest?.number, 284);
+            }),
+        );
+      }),
+    );
+  });
+
   it.effect("records nothing when a second lookup finds the same pull request", () =>
     withGovernor(
       {
