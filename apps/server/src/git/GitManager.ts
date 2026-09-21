@@ -68,12 +68,7 @@ import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import { detectPrTemplate } from "../sourceControl/PrTemplateDetection.ts";
-import type {
-  ChangeRequest,
-  ChangeRequestMergeState,
-  ChangeRequestMergeStrategy,
-  VcsStatusChangeRequest,
-} from "@t3tools/contracts";
+import type { ChangeRequest } from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -125,27 +120,6 @@ export class GitManager extends Context.Service<
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
-    /** The PR open on a branch, from the shared PR lookup cache (see the
-        implementation for why this is a wrapper, not a second resolver). */
-    readonly findBranchPullRequest: (input: {
-      readonly cwd: string;
-      readonly branch: string;
-    }) => Effect.Effect<VcsStatusChangeRequest | null, GitManagerServiceError>;
-    /** Merge a pull request, then invalidate this checkout's PR lookup cache
-        so the follow-up refresh sees the new state. */
-    readonly mergeBranchPullRequest: (input: {
-      readonly cwd: string;
-      readonly number: number;
-      readonly strategy: ChangeRequestMergeStrategy;
-    }) => Effect.Effect<void, GitManagerServiceError>;
-    /** T3o: the structured refusal probe (T3O-38, D7) — asked only after a
-        merge has been refused, so the happy path stays one forge call. Reads
-        nothing from the PR lookup cache and writes nothing to it: this is a
-        live question about a merge that just failed. */
-    readonly pullRequestMergeState: (input: {
-      readonly cwd: string;
-      readonly number: number;
-    }) => Effect.Effect<ChangeRequestMergeState, GitManagerServiceError>;
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
@@ -2838,103 +2812,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  /**
-   * The pull request open on a named branch, for the board's card→PR link.
-   *
-   * Goes at `prLookupCache` rather than at `lookupStatusPr`, which is the
-   * status path's wrapper. That is deliberate and load-bearing: the board must
-   * be able to tell "we looked and there is no pull request" from "we could
-   * not look", because recording the first over an existing link blanks a
-   * card's PR badge on a transient forge blip. `lookupStatusPr` catches every
-   * failure into a last-known-or-null answer — correct for a status badge that
-   * only needs to render something, and fatal for a caller that PERSISTS the
-   * result. Reading the cache directly keeps the 2-minute success TTL, the
-   * per-branch exponential failure backoff and the `isUnpublishedBranch` skip,
-   * while leaving the error channel intact.
-   *
-   * `upstreamRef: null` is passed deliberately. It engages the
-   * `isUnpublishedBranch` guard, so a branch that exists only locally is never
-   * sent to the forge at all — which is exactly the board's "never look up a
-   * card whose branch was never pushed" rule, for free.
-   *
-   * Returns null ONLY for "there is no pull request". A failed lookup fails.
-   */
-  const findBranchPullRequest = Effect.fn("findBranchPullRequest")(function* (input: {
-    readonly cwd: string;
-    readonly branch: string;
-  }) {
-    // Normalized exactly as `remoteStatus` does before it reaches this cache.
-    // The epoch map is keyed by the normalized path (`bumpPrLookupEpoch` runs
-    // `normalizeStatusCacheKey` itself), so reading under a raw path would put
-    // the entry in a bucket no invalidation can ever reach — the post-merge
-    // refresh would keep answering `open` for the full TTL. (The entry is
-    // still the board's own: `upstreamRef` is part of the key and this path
-    // always passes null, so the status poll's entry for the same branch is a
-    // separate one. Sharing the EPOCH is what matters — that is what
-    // invalidation acts on.)
-    const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
-    // Upstream keys the lookup on the default branch as well: a head that IS the
-    // default branch only surfaces open PRs. Resolve it the way `remoteStatus`
-    // does so the board's entry carries the same semantics; an unresolvable
-    // default (no remote) falls back to the cache's main/master heuristic.
-    const remoteName = yield* gitCore
-      .resolvePrimaryRemoteName(cacheKey)
-      .pipe(Effect.orElseSucceed(() => null));
-    const defaultBranch =
-      remoteName === null
-        ? null
-        : yield* gitCore
-            .resolveDefaultBranchName(cacheKey, remoteName)
-            .pipe(Effect.orElseSucceed(() => null));
-    const details = { branch: input.branch, upstreamRef: null, defaultBranch };
-    const { latest } = yield* Cache.get(prLookupCache, prLookupCacheKey(cacheKey, details));
-    return latest === null ? null : toStatusPr(latest);
-  });
-
-  /**
-   * Merge a pull request through the provider abstraction.
-   *
-   * The PR lookup cache for this checkout is invalidated afterwards, so the
-   * refresh the board runs immediately after a merge sees the new state
-   * instead of a two-minute-old `open`. Bumped on FAILURE too: a merge that
-   * was refused because the PR had already been merged elsewhere must not
-   * leave the card believing it is still open.
-   *
-   * `bumpPrLookupEpoch` normalizes the path itself, and `findBranchPullRequest`
-   * reads under the same normalized key — the two must not drift, or the
-   * invalidation silently stops reaching the entry it exists to clear.
-   */
-  const mergeBranchPullRequest = Effect.fn("mergeBranchPullRequest")(function* (input: {
-    readonly cwd: string;
-    readonly number: number;
-    readonly strategy: ChangeRequestMergeStrategy;
-  }) {
-    const provider = yield* sourceControlProvider(input.cwd);
-    return yield* provider
-      .mergeChangeRequest({
-        cwd: input.cwd,
-        reference: String(input.number),
-        strategy: input.strategy,
-      })
-      .pipe(Effect.ensuring(bumpPrLookupEpoch(input.cwd).pipe(Effect.ignore)));
-  });
-
-  // T3o: the structured refusal probe (T3O-38, D7).
-  const pullRequestMergeState = Effect.fn("pullRequestMergeState")(function* (input: {
-    readonly cwd: string;
-    readonly number: number;
-  }) {
-    const provider = yield* sourceControlProvider(input.cwd);
-    return yield* provider.changeRequestMergeState({
-      cwd: input.cwd,
-      reference: String(input.number),
-    });
-  });
-
   return GitManager.of({
-    findBranchPullRequest,
-    mergeBranchPullRequest,
-    pullRequestMergeState,
     localStatus,
     remoteStatus,
     status,

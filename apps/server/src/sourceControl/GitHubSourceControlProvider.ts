@@ -396,57 +396,6 @@ export const make = Effect.gen(function* () {
               }),
           ),
         ),
-    mergeChangeRequest: (input) =>
-      github
-        .mergePullRequest({
-          cwd: input.cwd,
-          ...repositoryInput(repositoryOf(input.context)),
-          reference: input.reference,
-          strategy: input.strategy,
-        })
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "github",
-                operation: "mergeChangeRequest",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.reference,
-                ),
-                // `gh` prints the forge's own refusal here — failing checks,
-                // missing approvals, "not mergeable". That text is what the card
-                // shows, so the user reads GitHub's reason rather than ours.
-                detail: error.detail,
-                cause: error,
-              }),
-          ),
-        ),
-    // T3o: the structured refusal probe (T3O-38, D7).
-    changeRequestMergeState: (input) =>
-      github
-        .pullRequestMergeState({
-          cwd: input.cwd,
-          ...repositoryInput(repositoryOf(input.context)),
-          reference: input.reference,
-        })
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: "github",
-                operation: "changeRequestMergeState",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.reference,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
-          ),
-        ),
     checkoutChangeRequest: (input) =>
       github
         .checkoutPullRequest({

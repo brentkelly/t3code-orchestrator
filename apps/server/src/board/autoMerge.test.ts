@@ -22,10 +22,11 @@ import {
   type BoardCardAutoMergeHold,
   type BoardCardStepState,
   type BoardState,
-  type ChangeRequestMergeState,
   type OrchestrationCommand,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
+
+import type { BoardMergeState } from "./boardMergeState.ts";
 import { assert, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -77,9 +78,9 @@ const probe = (input: {
   readonly pending?: number;
   readonly failed?: number;
   readonly mergeable?: "mergeable" | "blocked" | "unknown";
-  readonly blockedReason?: ChangeRequestMergeState["blockedReason"];
+  readonly blockedReason?: BoardMergeState["blockedReason"];
   readonly headSha?: string;
-}): ChangeRequestMergeState => {
+}): BoardMergeState => {
   const passed = input.passed ?? 0;
   const pending = input.pending ?? 0;
   const failed = input.failed ?? 0;
@@ -149,7 +150,7 @@ const setup = (input: {
   readonly boardWideAutoMerge?: boolean;
   readonly mergeFailure?: string;
   readonly mergeOutcomes?: ReadonlyArray<string | null>;
-  readonly mergeState?: ChangeRequestMergeState;
+  readonly mergeState?: BoardMergeState;
 }) => ({
   board: { cards: input.cards, nextCardNumberByProject: {} },
   settings: settingsWith({
@@ -473,7 +474,11 @@ it.effect("sends a CONFLICT to the conflict-fix step, never to the ladder (D8)",
   withGovernor(
     setup({
       cards: [cardAtMerge({ autoMerge: true })],
-      mergeFailure: "merge conflict between base and head",
+      mergeFailure: "the host refused",
+      // T3o (T3O-47): a conflict is read off the host's structured merge state
+      // rather than out of the refusal's prose, which upstream's process layer
+      // no longer carries out of a subprocess.
+      mergeState: probe({ mergeable: "blocked", blockedReason: "conflict", passed: 1 }),
     }),
     (h) =>
       Effect.gen(function* () {
@@ -481,11 +486,12 @@ it.effect("sends a CONFLICT to the conflict-fix step, never to the ladder (D8)",
         // The existing one-shot fix owns this, and its success finishes the
         // merge. A hold would be describing something that is happening.
         assert.strictEqual(holdOf(yield* h.board), null);
-        // And the ladder never drives it: no probe, no retry.
-        assert.deepStrictEqual(yield* h.mergeStateProbes, []);
         yield* TestClock.adjust(Duration.hours(2));
         yield* h.reactor.drain;
         assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        // ONE probe: the one that identified the conflict. The ladder never
+        // drives it, so there is no second.
+        assert.strictEqual((yield* h.mergeStateProbes).length, 1);
         // The stage's conflict-resolution step was requested.
         assert.isTrue(
           (yield* h.commands).some((command) => command.type === "board.card.start-stage-thread"),

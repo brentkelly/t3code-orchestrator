@@ -31,7 +31,6 @@ import {
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
-import { parseGitHubMergeState } from "../sourceControl/gitHubMergeState.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -590,24 +589,6 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
         }).pipe(Effect.asVoid),
-      mergePullRequest: (input) =>
-        execute({
-          cwd: input.cwd,
-          args: ["pr", "merge", input.reference, `--${input.strategy}`],
-        }).pipe(Effect.asVoid),
-      // T3o (T3O-38, D7): the refusal probe. Parsed through the real parser
-      // so a stubbed `gh` body is read exactly as a live one would be.
-      pullRequestMergeState: (input) =>
-        execute({
-          cwd: input.cwd,
-          args: [
-            "pr",
-            "view",
-            input.reference,
-            "--json",
-            "mergeStateStatus,statusCheckRollup,headRefOid",
-          ],
-        }).pipe(Effect.map((result) => parseGitHubMergeState(result.stdout))),
     },
     ghCalls,
   };
@@ -1543,7 +1524,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const beforePush = yield* manager.findBranchPullRequest({
+      const beforePush = yield* manager.branchPullRequest({
         cwd: repoDir,
         branch: "board/pushed-after-skip",
       });
@@ -1551,11 +1532,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(beforePush).toBeNull();
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
 
-      yield* runGit(repoDir, ["push", "-u", "origin", "board/pushed-after-skip"]);
+      // Pushed WITHOUT `-u`, so no upstream is configured and the lookup key is
+      // byte-for-byte the skipped one. Finding the pull request under it is
+      // what proves the skip was not retained; a push that set an upstream
+      // would move to a different key and prove nothing.
+      yield* runGit(repoDir, ["push", "origin", "board/pushed-after-skip"]);
 
-      // Same cache key as the skipped lookup — nothing about the key changes on
-      // a push — so finding the pull request proves the skip was not retained.
-      const afterPush = yield* manager.findBranchPullRequest({
+      const afterPush = yield* manager.branchPullRequest({
         cwd: repoDir,
         branch: "board/pushed-after-skip",
       });

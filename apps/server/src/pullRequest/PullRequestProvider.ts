@@ -222,6 +222,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly autoMergeMethod?: PullRequestMergeMethod;
   /** Workflow runs on this head commit that still need a maintainer's approval. */
   readonly workflowApprovalsRequired?: number;
+  /** T3o: the head commit this detail describes (T3O-47) — see `PullRequestDetail.headSha`. */
+  readonly headSha?: string | null;
 }
 
 /** The conversation-shaped half of a detail, loaded after the core can already render. */

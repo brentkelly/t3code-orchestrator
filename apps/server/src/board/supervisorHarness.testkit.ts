@@ -42,7 +42,6 @@ import {
   type BoardSettings,
   type BoardStageExecution,
   type BoardState,
-  type ChangeRequestMergeState,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -51,6 +50,8 @@ import {
   type ProviderRuntimeEvent,
   type BoardUsageLimitMatch,
 } from "@t3tools/contracts";
+
+import type { BoardMergeState } from "./boardMergeState.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -568,7 +569,7 @@ export function withGovernor(
     /** What the structured refusal probe answers (T3O-38, D7). `undefined`
         makes the probe FAIL, which is what an unsupported provider does and
         what the reactor must read as "unclassifiable" — the plain ladder. */
-    readonly mergeState?: ChangeRequestMergeState;
+    readonly mergeState?: BoardMergeState;
     /** Make the stubbed `statusDetails` report uncommitted changes, so a test
         can drive the reclaim refusal — the case where the checkout holds work
         that exists nowhere else and must NOT be deleted to save disk. */

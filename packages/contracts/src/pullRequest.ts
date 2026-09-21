@@ -841,6 +841,9 @@ export const PullRequestDetail = Schema.Struct({
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
   /** GitHub Actions runs on this head commit that are waiting for a maintainer's approval. */
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
+  /** T3o: the head commit this detail describes (T3O-47). A new sha means new CI, which is what
+      resets the board's auto-merge retry ladder; absent where the host does not report one. */
+  headSha: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 

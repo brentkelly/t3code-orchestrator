@@ -34,7 +34,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 
-import { ChangeRequestMergeStrategy } from "./sourceControl.ts";
+import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -8275,17 +8275,18 @@ export const BoardStageExecutionReview = Schema.Struct({
 });
 export type BoardStageExecutionReview = typeof BoardStageExecutionReview.Type;
 
-/** How a pull request is merged. `gh pr merge` with no strategy flag prompts
-    interactively, which is unusable from a server, so one is always chosen.
-    Squash is the default: a card's branch is one unit of work.
+/** How a pull request is merged. A host merges with its own default when it
+    is asked for no strategy, which is not a choice a board should leave to the
+    repository, so one is always chosen. Squash is the default: a card's branch
+    is one unit of work.
 
     An ALIAS, not a second literal set: the value the settings card writes is
-    handed straight to `SourceControlProvider.mergeChangeRequest`, so two
-    independent definitions could drift into a config the provider cannot
-    accept. `sourceControl.ts` imports nothing from here, so the direction is
+    handed straight to `PullRequestService.runAction` as its `mergeMethod`, so
+    two independent definitions could drift into a config the host cannot
+    accept. `pullRequest.ts` imports nothing from here, so the direction is
     safe. */
-export const BoardMergeStrategy = ChangeRequestMergeStrategy;
-export type BoardMergeStrategy = ChangeRequestMergeStrategy;
+export const BoardMergeStrategy = PullRequestMergeMethod;
+export type BoardMergeStrategy = PullRequestMergeMethod;
 
 /**
  * The conflict-resolution prompt (intent only — the completion mechanics are

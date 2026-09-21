@@ -7,9 +7,12 @@
  * is only true if the command is accepted, decided into an event, and
  * projected back onto the card the reactor next reads.
  *
- * The forge itself is stubbed through `BoardPullRequestGateway` — the two-method
+ * The forge itself is stubbed through `BoardPullRequestGateway` — the three-method
  * seam the board sees — so a test can say "the lookup fails" or "the merge is
- * refused for conflicts" without a real repository or a real `gh`.
+ * refused for conflicts" without a real repository or a real `gh`. Since T3O-47
+ * WHY a merge was refused comes from the host's structured merge state rather
+ * than from the refusal's prose, so a refusal fixture is a `mergeState` and the
+ * failure text beside it only has to be a failure.
  */
 import { assert, it, describe } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -37,6 +40,7 @@ import {
   settingsWith,
   withGovernor,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardMergeState } from "./boardMergeState.ts";
 
 const openPr: VcsStatusChangeRequest = {
   number: 284,
@@ -45,6 +49,29 @@ const openPr: VcsStatusChangeRequest = {
   baseRef: "main",
   headRef: "board/card-1",
   state: "open",
+};
+
+/** A refused merge, as the host reports it afterwards (T3O-47). `mergeFailure`
+    only makes the merge fail; this is what the board reads to decide what to do
+    about it. */
+const refusal = (input: {
+  readonly blockedReason?: BoardMergeState["blockedReason"];
+  readonly failed?: number;
+}): BoardMergeState => {
+  const failed = input.failed ?? 0;
+  return {
+    mergeable: input.blockedReason === undefined ? "mergeable" : "blocked",
+    blockedReason: input.blockedReason ?? null,
+    checks: {
+      total: failed + 1,
+      passed: 1,
+      pending: 0,
+      failed,
+      failing: failed > 0 ? ["ci"] : [],
+      running: [],
+    },
+    headSha: "sha-one",
+  };
 };
 
 const settings = (merge?: Parameters<typeof settingsWith>[0]["merge"]) =>
@@ -571,17 +598,16 @@ describe("merging a card's pull request", () => {
         board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
         settings: settings(),
         pullRequest: openPr,
-        mergeFailure: "Pull request is not mergeable: required status check 'ci' is failing",
+        mergeFailure: "the host refused",
+        mergeState: refusal({ failed: 1 }),
       },
       (h) =>
         Effect.gen(function* () {
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "refused");
-          // The forge's own wording reaches the user rather than a paraphrase.
-          assert.include(
-            result.outcome === "refused" ? result.detail : "",
-            "required status check",
-          );
+          // The user reads WHY, derived from the same structured state the
+          // board branched on rather than from the refusal's prose.
+          assert.include(result.outcome === "refused" ? result.detail : "", "checks are failing");
           // A block only a human can clear: the card stays where it is, and
           // nothing tries again on its own.
           assert.deepStrictEqual(movesTo(yield* h.commands), []);
@@ -596,7 +622,8 @@ describe("merging a card's pull request", () => {
         board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
         settings: settings(),
         pullRequest: openPr,
-        mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
+        mergeFailure: "the host refused",
+        mergeState: refusal({ blockedReason: "conflict" }),
       },
       (h) =>
         Effect.gen(function* () {
@@ -651,7 +678,8 @@ describe("merging a card's pull request", () => {
           board: { nextCardNumberByProject: {}, cards: [archived] },
           settings: settings(),
           pullRequest: openPr,
-          mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
+          mergeFailure: "the host refused",
+          mergeState: refusal({ blockedReason: "conflict" }),
         },
         (h) =>
           Effect.gen(function* () {
@@ -689,7 +717,8 @@ describe("merging a card's pull request", () => {
           board: { nextCardNumberByProject: {}, cards: [held] },
           settings: settings(),
           pullRequest: openPr,
-          mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
+          mergeFailure: "the host refused",
+          mergeState: refusal({ blockedReason: "conflict" }),
           initialShells: new Map([["thread-human", { id: "thread-human" } as never]]),
         },
         (h) =>
@@ -710,21 +739,27 @@ describe("merging a card's pull request", () => {
     }),
   );
 
-  it.effect("treats GitHub's own conflict wording as a conflict", () =>
+  it.effect("does NOT read a probe it could not run as a conflict (T3O-47)", () =>
     withGovernor(
       {
         board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
         settings: settings(),
         pullRequest: openPr,
-        // What `gh` prints when the merge commit cannot be constructed. The
-        // word "conflict" does not appear, so this is the case a matcher keyed
-        // only on that word would misread as a policy block.
-        mergeFailure: "Pull request is not mergeable: the merge commit cannot be cleanly created",
+        // No `mergeState`, so the probe itself fails. The two mistakes are very
+        // asymmetric: reading an unknown refusal as a policy block costs the
+        // user a second click, while reading it as a conflict starts an agent
+        // to "fix" a branch with nothing wrong with it, and pushes the result.
+        mergeFailure: "the host refused",
       },
       (h) =>
         Effect.gen(function* () {
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
-          assert.equal(result.outcome, "conflict");
+          assert.equal(result.outcome, "refused");
+          assert.include(result.outcome === "refused" ? result.detail : "", "did not say why");
+          const started = (yield* h.commands).filter(
+            (command) => command.type === "board.card.start-stage-thread",
+          );
+          assert.deepStrictEqual(started, []);
         }),
     ),
   );
@@ -735,15 +770,17 @@ describe("merging a card's pull request", () => {
         board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
         settings: settings(),
         pullRequest: openPr,
-        // "not mergeable" is GitHub's wrapper for EVERY refusal. Reading it as
-        // a conflict would start an agent to merge base into a branch that has
-        // nothing wrong with it, and push the result.
-        mergeFailure: "Pull request is not mergeable: At least 1 approving review is required",
+        // Everything green and the host still says no: an approval, a
+        // protection rule, an unresolved conversation. Starting a conflict fix
+        // here would merge base into a branch that has nothing wrong with it.
+        mergeFailure: "the host refused",
+        mergeState: refusal({ blockedReason: "other" }),
       },
       (h) =>
         Effect.gen(function* () {
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "refused");
+          assert.include(result.outcome === "refused" ? result.detail : "", "review approval");
           const started = (yield* h.commands).filter(
             (command) => command.type === "board.card.start-stage-thread",
           );
@@ -819,7 +856,8 @@ describe("merging a card's pull request", () => {
           },
           settings: settings(),
           pullRequest: openPr,
-          mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
+          mergeFailure: "the host refused",
+          mergeState: refusal({ blockedReason: "conflict" }),
         },
         (h) =>
           Effect.gen(function* () {
@@ -911,7 +949,8 @@ describe("merging a card's pull request", () => {
           board: { nextCardNumberByProject: {}, cards: [card] },
           settings: settings(),
           pullRequest: openPr,
-          mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
+          mergeFailure: "the host refused",
+          mergeState: refusal({ blockedReason: "conflict" }),
           initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
         },
         (h) =>

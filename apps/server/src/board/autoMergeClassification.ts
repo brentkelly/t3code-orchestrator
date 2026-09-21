@@ -15,8 +15,9 @@ import {
   BOARD_AUTO_MERGE_MAX_ATTEMPTS,
   boardAutoMergeRetryDelayMs,
   type BoardCardAutoMergeClassification,
-  type ChangeRequestMergeState,
 } from "@t3tools/contracts";
+
+import type { BoardMergeState } from "./boardMergeState.ts";
 
 export interface BoardAutoMergeVerdict {
   readonly classification: BoardCardAutoMergeClassification;
@@ -35,7 +36,7 @@ function nameList(names: ReadonlyArray<string>): string {
 }
 
 /** "3 of 5 checks green · ci/build and ci/e2e still running", or null. */
-function describe(state: ChangeRequestMergeState): string | null {
+function describe(state: BoardMergeState): string | null {
   const { total, passed, failing, running } = state.checks;
   if (total === 0) return null;
   const head = `${passed} of ${total} check${total === 1 ? "" : "s"} green`;
@@ -52,9 +53,7 @@ function describe(state: ChangeRequestMergeState): string | null {
  * mean wait, and a block with everything green is the one case where "the
  * forge still says no" can only be a decision the board does not have.
  */
-export function classifyBoardAutoMergeRefusal(
-  state: ChangeRequestMergeState,
-): BoardAutoMergeVerdict {
+export function classifyBoardAutoMergeRefusal(state: BoardMergeState): BoardAutoMergeVerdict {
   const detail = describe(state);
   const headSha = state.headSha;
   const { pending, failed } = state.checks;

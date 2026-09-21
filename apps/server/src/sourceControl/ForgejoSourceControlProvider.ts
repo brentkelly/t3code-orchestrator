@@ -5,8 +5,6 @@ import * as Result from "effect/Result";
 import { SourceControlProviderError } from "@t3tools/contracts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
-// T3o: see the spread in `make`.
-import { makeForgejoMergeSeams } from "./forgejoMerge.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
   providerAuth,
@@ -230,8 +228,6 @@ export const make = Effect.gen(function* () {
   });
   return SourceControlProvider.SourceControlProvider.of({
     kind: "forgejo",
-    // T3o: the board's merge path and refusal probe (t3o-16, T3O-38).
-    ...makeForgejoMergeSeams(cli),
     listChangeRequests: (input) =>
       Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);

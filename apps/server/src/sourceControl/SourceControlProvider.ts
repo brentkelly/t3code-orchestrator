@@ -2,8 +2,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type {
   ChangeRequest,
-  ChangeRequestMergeState,
-  ChangeRequestMergeStrategy,
   ChangeRequestState,
   SourceControlProviderError,
   SourceControlProviderInfo,
@@ -143,51 +141,5 @@ export class SourceControlProvider extends Context.Service<
       readonly reference: string;
       readonly force?: boolean;
     }) => Effect.Effect<void, SourceControlProviderError>;
-    /**
-     * Integrate a change request into its base branch.
-     *
-     * Implemented for GitHub only in v1 — every other provider returns the
-     * registry's unsupported-operation error, which the board surfaces as a
-     * plain "merging is not supported for <provider>" rather than a failure
-     * that looks like the merge went wrong. Read operations
-     * (`listChangeRequests`) stay provider-agnostic, so a card on GitLab or
-     * Bitbucket still shows its PR badge and link; only the merge is gated.
-     *
-     * T3o: Forgejo also implements it (`forgejoMerge.ts`) — Gitea's merge
-     * styles map onto `ChangeRequestMergeStrategy` exactly, and one-click merge
-     * is the point of the board's Ready-for-merge stage.
-     *
-     * A refusal by the forge (failing checks, missing approvals, conflicts) is
-     * a normal outcome here, not an exception in the caller's design: it comes
-     * back as a `SourceControlProviderError` whose `detail` carries the forge's
-     * own words, which is what the board shows the user.
-     */
-    readonly mergeChangeRequest: (input: {
-      readonly cwd: string;
-      readonly context?: SourceControlProviderContext;
-      readonly reference: string;
-      readonly strategy: ChangeRequestMergeStrategy;
-    }) => Effect.Effect<void, SourceControlProviderError>;
-    /**
-     * T3o: why a merge was refused, in machine-readable form (T3O-38, D7).
-     *
-     * Asked only AFTER a refusal, so the happy path stays one forge call. The
-     * board classifies the answer into "wait, this clears itself" (checks
-     * still running) and "stop, a human is needed" (a check failed, an
-     * approval is missing, the branch is behind) — a decision that must not be
-     * made by matching `mergeChangeRequest`'s prose, which every provider
-     * rewrites and which this repository already refuses to build a catalogue
-     * of.
-     *
-     * Implemented for GitHub and Forgejo. Every other provider returns the
-     * registry's unsupported-operation error, which the board reads as
-     * "unclassifiable" and degrades to a soft refusal: those providers get
-     * exactly the plain retry ladder, and nothing breaks.
-     */
-    readonly changeRequestMergeState: (input: {
-      readonly cwd: string;
-      readonly context?: SourceControlProviderContext;
-      readonly reference: string;
-    }) => Effect.Effect<ChangeRequestMergeState, SourceControlProviderError>;
   }
 >()("t3/sourceControl/SourceControlProvider") {}
