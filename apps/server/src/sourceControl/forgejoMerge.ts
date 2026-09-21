@@ -64,7 +64,7 @@ export function makeForgejoMergeSeams(
           command: cause.command,
           reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
           detail: SourceControlProvider.transportSafeSourceControlErrorValue(
-            forgejoRefusalDetail(cause.detail),
+            forgejoRefusalDetail(cause.detail, cause.httpStatus),
           ),
           cause,
         }),

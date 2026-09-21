@@ -135,6 +135,24 @@ describe("forgejoRefusalDetail", () => {
     ).toBe("Please try again later");
   });
 
+  it("renders a merge refusal from its status when no message came back", () => {
+    // tea's branch of `ForgejoCli.api` reports the status and nothing else.
+    expect(forgejoRefusalDetail("Forgejo API request failed (HTTP 405).", 405)).toContain(
+      "refused to merge the pull request",
+    );
+    expect(forgejoRefusalDetail("Forgejo API request failed (HTTP 409).", 409)).toContain(
+      "conflicts with its base branch",
+    );
+  });
+
+  it("keeps the forge's message, and any non-refusal envelope, ahead of the status", () => {
+    expect(
+      forgejoRefusalDetail('Forgejo API request failed (HTTP 405): {"message":"Nope"}', 405),
+    ).toBe("Nope");
+    const server = "Forgejo API request failed (HTTP 500).";
+    expect(forgejoRefusalDetail(server, 500)).toBe(server);
+  });
+
   it("keeps the envelope when the forge sent nothing readable", () => {
     for (const detail of [
       "Forgejo API request failed (HTTP 405).",

@@ -366,6 +366,8 @@ import { NoActiveThreadState } from "./NoActiveThreadState";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 // T3o: Threads/Board mode tabs live in the board module.
 import { BoardModeTabs } from "../board/BoardModeTabs";
+// T3o: an embedded chat's stand-in for the composer context strip's controls host.
+import { BoardRestingComposerControlsStrip } from "../board/BoardRestingComposerControlsStrip";
 import {
   type EnvironmentOption,
   resolveEffectiveEnvMode,
@@ -3709,7 +3711,9 @@ export default function ChatView(props: ChatViewProps) {
   // can measure whether its relocated controls fit. The visible chrome remains
   // content-driven: Git/environment context or controls that actually fit.
   // T3o: an embedded chat (board card modal) hides the worktree/branch strip —
-  // the board owns those choices, so the controls would only mislead.
+  // the board owns those choices, so the controls would only mislead. The
+  // resting composer's relocated controls still need somewhere to go, so an
+  // embedded chat mounts `BoardRestingComposerControlsStrip` instead (T3O-46).
   const composerContextStripAllowed = chrome !== "embedded";
   const mountComposerContextStrip =
     composerContextStripAllowed &&
@@ -9795,6 +9799,17 @@ export default function ChatView(props: ChatViewProps) {
                                 availableEnvironments={logicalProjectEnvironments}
                                 composerControlsHostRef={setRestingComposerControlsHost}
                                 contextStripVisible={showComposerContextStrip}
+                              />
+                            </div>
+                          )}
+                          {/* T3o: an embedded chat has no context strip, so the
+                              resting composer's relocated controls need a host
+                              of their own (T3O-46). */}
+                          {chrome === "embedded" && (
+                            <div className="pointer-events-auto">
+                              <BoardRestingComposerControlsStrip
+                                hostRef={setRestingComposerControlsHost}
+                                visible={restingComposerControlsVisible}
                               />
                             </div>
                           )}

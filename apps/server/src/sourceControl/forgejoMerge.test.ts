@@ -108,6 +108,29 @@ describe("mergeChangeRequest", () => {
     }),
   );
 
+  it.effect("explains a refusal a tea-authenticated server reported as a bare status", () =>
+    Effect.gen(function* () {
+      // `ForgejoCli.api`'s tea branch has no response body to report, only the
+      // status — the card must still read as a refusal, not as a malfunction.
+      const { seams } = harness(
+        () =>
+          new ForgejoCli.ForgejoCliError({
+            command: "tea",
+            cwd: "/repo",
+            httpStatus: 405,
+            detail: "Forgejo API request failed (HTTP 405).",
+          }),
+      );
+
+      const error = yield* Effect.flip(
+        seams.mergeChangeRequest({ cwd: "/repo", reference: "41", strategy: "merge" }),
+      );
+
+      assert.include(error.detail, "refused to merge the pull request");
+      assert.notInclude(error.detail, "HTTP 405");
+    }),
+  );
+
   it.effect("fails when the API accepted the merge but the pull request is still open", () =>
     Effect.gen(function* () {
       const { seams } = harness((input) =>

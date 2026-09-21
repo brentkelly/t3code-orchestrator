@@ -82,18 +82,39 @@ export function parseForgejoPullRequestMerged(raw: string): boolean {
 }
 
 /**
+ * What a merge refusal means when the forge's own words never reached us.
+ *
+ * Only Gitea's two merge-refusal statuses are spelled out; every other failure
+ * keeps whatever `ForgejoCli.api` said, which for anything but a refused merge
+ * is the more informative of the two.
+ */
+const REFUSAL_WITHOUT_A_MESSAGE: Record<number, string> = {
+  405: "Forgejo refused to merge the pull request. It is most likely waiting on a review, a check, or a branch protection rule. Open it on the host to see which.",
+  409: "Forgejo could not merge the pull request. It most likely conflicts with its base branch.",
+};
+
+/**
  * The forge's own words out of an API failure, when it sent any.
  *
- * `ForgejoCli.api` reports an HTTP failure as `… (HTTP 405): <body>`, and the
- * body is Gitea's `{"message": "…"}`. For a merge that message IS the product —
- * it is what the card shows, and what tells a conflict apart from a failing
- * check — so it is lifted out of the envelope rather than shown as JSON.
+ * On a server whose credentials belong to `fj`, `ForgejoCli.api` reports an
+ * HTTP failure as `… (HTTP 405): <body>`, and the body is Gitea's
+ * `{"message": "…"}`. For a merge that message IS the product — it is what the
+ * card shows, and what tells a conflict apart from a failing check — so it is
+ * lifted out of the envelope rather than shown as JSON.
+ *
+ * Under `tea` there is no body to lift: that branch reports the status alone,
+ * and a bare `(HTTP 405).` on a card reads as a malfunction rather than as a
+ * refusal. So a refusal status with no message is rendered from the status.
+ * Nothing machine-readable is lost either way — the board classifies a refusal
+ * from `changeRequestMergeState`'s probe, never from this text.
  */
-export function forgejoRefusalDetail(detail: string): string {
+export function forgejoRefusalDetail(detail: string, httpStatus?: number | undefined): string {
   const start = detail.indexOf("{");
-  if (start < 0) return detail;
-  const message = text(asRecord(parseJson(detail.slice(start)))?.["message"]).trim();
-  return message.length > 0 ? message : detail;
+  if (start >= 0) {
+    const message = text(asRecord(parseJson(detail.slice(start)))?.["message"]).trim();
+    if (message.length > 0) return message;
+  }
+  return (httpStatus === undefined ? undefined : REFUSAL_WITHOUT_A_MESSAGE[httpStatus]) ?? detail;
 }
 
 /**
