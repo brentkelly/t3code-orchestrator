@@ -42,6 +42,9 @@ function makeRegistry(input: {
   }>;
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
+  /** T3o (T3O-48): a `gh` stub, for the tests that follow the bound provider
+      context all the way down to the arguments the CLI is handed. */
+  readonly github?: Partial<GitHubCli.GitHubCli["Service"]>;
 }) {
   const driver = {
     listRemotes: () =>
@@ -94,7 +97,7 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         // T3o: t3o-28.
         Layer.mock(ForgejoCli.ForgejoCli)({}),
-        Layer.mock(GitHubCli.GitHubCli)({}),
+        Layer.mock(GitHubCli.GitHubCli)(input.github ?? {}),
         Layer.mock(GitLabCli.GitLabCli)({}),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
@@ -295,6 +298,66 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "azure-devops");
+  }),
+);
+
+// T3o (T3O-48): the regression, end to end. `gh` resolves the base repository
+// for itself when none is named, and its rule PREFERS a remote called
+// `upstream` — so once this repository gained an upstream remote, every pull
+// request lookup asked pingdotgg/t3code, truthfully answered "no pull request",
+// and left a finished card sitting at Ready for merge with no PR link and no
+// Merge button. T3 Code acts on `origin`, always.
+it.effect("asks the origin repository even with an upstream remote configured", () =>
+  Effect.gen(function* () {
+    const seen: Array<ReadonlyArray<string>> = [];
+    const registry = yield* makeRegistry({
+      // Ordered as `git remote` lists them, with upstream ahead of origin in
+      // neither position load-bearing: the preference is by NAME, not by order.
+      remotes: [
+        { name: "upstream", url: "git@github.com:pingdotgg/t3code.git" },
+        { name: "origin", url: "git@github.com:brentkelly/t3code-orchestrator.git" },
+      ],
+      github: {
+        listOpenPullRequests: (cliInput) => {
+          seen.push([cliInput.repository?.host ?? "", cliInput.repository?.nameWithOwner ?? ""]);
+          return Effect.succeed([]);
+        },
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "board/t3o-46",
+      state: "open",
+    });
+
+    assert.strictEqual(provider.kind, "github");
+    assert.deepStrictEqual(seen, [["github.com", "brentkelly/t3code-orchestrator"]]);
+  }),
+);
+
+it.effect("still names a repository when upstream is the only remote", () =>
+  Effect.gen(function* () {
+    const seen: Array<ReadonlyArray<string>> = [];
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "upstream", url: "git@github.com:pingdotgg/t3code.git" }],
+      github: {
+        listOpenPullRequests: (cliInput) => {
+          seen.push([cliInput.repository?.host ?? "", cliInput.repository?.nameWithOwner ?? ""]);
+          return Effect.succeed([]);
+        },
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "board/t3o-46",
+      state: "open",
+    });
+
+    assert.deepStrictEqual(seen, [["github.com", "pingdotgg/t3code"]]);
   }),
 );
 
