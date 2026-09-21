@@ -9709,8 +9709,12 @@ export default function ChatView(props: ChatViewProps) {
                               supportsPullRequests ? activeProjectRepository : null
                             }
                             restingControlsHost={restingComposerControlsHost}
+                            // T3o: an embedded chat's host holds the controls alone, so
+                            // there is no Git/environment context for a leading separator
+                            // to separate them from (T3O-46).
                             restingControlsHaveLeadingContext={
-                              isGitRepo || showComposerEnvironmentIndicator
+                              composerContextStripAllowed &&
+                              (isGitRepo || showComposerEnvironmentIndicator)
                             }
                             onRestingControlsVisibilityChange={setRestingComposerControlsVisible}
                             getTimelineScrollableNode={getTimelineScrollableNode}
