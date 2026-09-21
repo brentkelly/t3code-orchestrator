@@ -345,3 +345,63 @@ it.effect(
       }
     }).pipe(Effect.scoped),
 );
+
+// T3o (T3O-48): the regression, end to end. `gh` resolves the base repository
+// for itself when none is named, and its rule PREFERS a remote called
+// `upstream` — so once this repository gained an upstream remote, every pull
+// request lookup asked pingdotgg/t3code, truthfully answered "no pull request",
+// and left a finished card sitting at Ready for merge with no PR link and no
+// Merge button. T3 Code acts on `origin`, always.
+it.effect("asks the origin repository even with an upstream remote configured", () =>
+  Effect.gen(function* () {
+    const seen: Array<ReadonlyArray<string>> = [];
+    const registry = yield* makeRegistry({
+      // Ordered as `git remote` lists them, with upstream ahead of origin in
+      // neither position load-bearing: the preference is by NAME, not by order.
+      remotes: [
+        { name: "upstream", url: "git@github.com:pingdotgg/t3code.git" },
+        { name: "origin", url: "git@github.com:brentkelly/t3code-orchestrator.git" },
+      ],
+      github: {
+        listOpenPullRequests: (cliInput) => {
+          seen.push([cliInput.repository?.host ?? "", cliInput.repository?.nameWithOwner ?? ""]);
+          return Effect.succeed([]);
+        },
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "board/t3o-46",
+      state: "open",
+    });
+
+    assert.strictEqual(provider.kind, "github");
+    assert.deepStrictEqual(seen, [["github.com", "brentkelly/t3code-orchestrator"]]);
+  }),
+);
+
+it.effect("still names a repository when upstream is the only remote", () =>
+  Effect.gen(function* () {
+    const seen: Array<ReadonlyArray<string>> = [];
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "upstream", url: "git@github.com:pingdotgg/t3code.git" }],
+      github: {
+        listOpenPullRequests: (cliInput) => {
+          seen.push([cliInput.repository?.host ?? "", cliInput.repository?.nameWithOwner ?? ""]);
+          return Effect.succeed([]);
+        },
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "board/t3o-46",
+      state: "open",
+    });
+
+    assert.deepStrictEqual(seen, [["github.com", "pingdotgg/t3code"]]);
+  }),
+);

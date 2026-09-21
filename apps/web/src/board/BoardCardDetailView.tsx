@@ -460,6 +460,14 @@ export interface BoardCardDetailViewProps {
       Merge button's "Merging…" spinner and disables it so the several-second
       round trip can't be re-entered by a second click. */
   readonly merging: boolean;
+  /** T3o (T3O-48): "Check again" — re-resolve the card's pull request from the
+      forge NOW, bypassing the two-minute lookup cache and its failure backoff.
+      Absent hides the control; the container reports the outcome through
+      `feedback`. */
+  readonly onCheckForPullRequest?: (() => void) | undefined;
+  /** Whether that re-check is in flight, so the button can spin and refuse a
+      second click across the round trip. */
+  readonly checkingForPullRequest?: boolean | undefined;
   readonly onArchiveToggle: () => void;
   /** Purge the card outright. Always behind `BoardDeleteConfirmDialog` — the
       server does not ask, so this must never be reachable without one. */
@@ -1364,6 +1372,31 @@ function ActionsSection({
   // A merge from this card is mid-flight: the button holds its spot but shows a
   // spinner and refuses further clicks until the round trip settles.
   const merging = forward?.kind === "merge" && props.merging;
+  // T3o (T3O-48): the card is at Ready for merge with nothing to merge. This is
+  // the bug the card was filed about — the pane offered "Move to Done" and said
+  // nothing at all about the missing pull request, so there was no way to tell a
+  // card whose PR had been merged elsewhere from one the board could not find.
+  //
+  // The CURRENT round's pull request, not `displayed`: a card being worked on
+  // again after coming back out of Done still links its retired round's PR
+  // below, and that link is not something this round can merge.
+  //
+  // A card with no WORKTREE gets the notice too, with the branchless wording
+  // and no button — it is the same dead end one step further along, and the
+  // card face's `No PR` chip fires on the stage and `hasPr` alone (the shell
+  // carries no worktree, by payload discipline). Gating the notice on a branch
+  // and the chip on neither left exactly one card shape wearing a chip that
+  // points at a pane with nothing to say.
+  const missingPullRequest =
+    !archived && stageRole === "merge" && pullRequest === null
+      ? {
+          branch: card.worktree?.branch ?? null,
+          // Nothing to ask the forge about: `refreshCardPullRequest` answers
+          // `no-branch` for this card, so the button would only ever report
+          // what the sentence beside it already says.
+          onCheck: card.worktree === null ? undefined : props.onCheckForPullRequest,
+        }
+      : null;
   // The per-card human-in-the-loop toggle shows only on the Build role (D6);
   // `props.humanInLoop` is non-null exactly then.
   const humanInLoop = archived ? null : props.humanInLoop;
@@ -1378,12 +1411,69 @@ function ActionsSection({
     humanInLoop === null &&
     displayed === null &&
     reviewRound === null &&
-    stopRound === null
+    stopRound === null &&
+    // T3o (T3O-48): a card with nothing but the missing-PR notice still needs
+    // the section, or the one thing it has to say has nowhere to render.
+    missingPullRequest === null
   ) {
     return null;
   }
   return (
     <div className="flex flex-col gap-2 p-3.5">
+      {/* T3o (T3O-48): the card is parked at Ready for merge with nothing to
+          merge, and until now the pane said nothing about it — it offered
+          "Move to Done" and left the human to guess whether the pull request
+          had been merged elsewhere or never found at all.
+
+          Deliberately NOT a status colour. `docs/t3o/status-colours.md` gives
+          amber to "blocked or held", which is the claim the CARD FACE's chip
+          makes at a glance; here the card is already open and the notice is
+          telling you what is true and what to press, not raising an alarm a
+          second time. */}
+      {missingPullRequest === null ? null : (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2.5">
+          <div className="flex gap-[7px] text-[11.5px]/[1.45] text-muted-foreground">
+            <GitPullRequestIcon className="mt-px size-3.5 shrink-0" />
+            <span>
+              {missingPullRequest.branch === null ? (
+                "No pull request, and no branch to look one up on."
+              ) : (
+                <>
+                  No pull request found for{" "}
+                  <span className="font-medium text-foreground">{missingPullRequest.branch}</span>.
+                </>
+              )}
+            </span>
+          </div>
+          {missingPullRequest.onCheck === undefined ? null : (
+            <BoardHint label="Ask the forge again, ignoring the cached answer">
+              <button
+                className={cn(
+                  "inline-flex h-[30px] items-center justify-center gap-[7px] self-start rounded-lg border border-input bg-popover px-2.5 text-[12.5px] font-medium text-foreground shadow-xs",
+                  props.checkingForPullRequest === true
+                    ? "cursor-wait opacity-60"
+                    : "hover:bg-accent",
+                )}
+                disabled={props.checkingForPullRequest === true}
+                onClick={() => missingPullRequest.onCheck?.()}
+                type="button"
+              >
+                {props.checkingForPullRequest === true ? (
+                  <>
+                    <span className="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/40 border-t-foreground" />
+                    Checking…
+                  </>
+                ) : (
+                  <>
+                    <RotateCcwIcon className="size-3" />
+                    Check again
+                  </>
+                )}
+              </button>
+            </BoardHint>
+          )}
+        </div>
+      )}
       {stopRound !== null ? (
         <BoardHint
           label={

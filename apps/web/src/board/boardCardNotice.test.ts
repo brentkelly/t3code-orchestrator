@@ -8,7 +8,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { BoardAutoMergePill } from "./boardAutoMergeHold";
 import type { BoardConflictFixInfo } from "./boardConflictFix";
-import { boardCardNotice, type BoardCardNoticeAttention } from "./boardCardNotice";
+import {
+  boardCardNoPullRequest,
+  boardCardNotice,
+  type BoardCardNoticeAttention,
+} from "./boardCardNotice";
 
 const attention = (
   overrides: Partial<BoardCardNoticeAttention> = {},
@@ -51,6 +55,7 @@ const notice = (input: Partial<Parameters<typeof boardCardNotice>[0]>) =>
     attention: null,
     conflictFix: null,
     autoMergeHold: null,
+    noPullRequestAtMerge: false,
     blocked: false,
     dependencyCount: 0,
     ...input,
@@ -122,5 +127,95 @@ describe("boardCardNotice", () => {
     });
     // Not blocked is not a notice, however many dependencies the card carries.
     expect(notice({ blocked: false, dependencyCount: 5 })).toBeNull();
+  });
+});
+
+// T3o (T3O-48): a card parked at Ready for merge with no pull request goes
+// nowhere on its own, and nothing on the card face said so — the bug was a
+// human staring at "Ready for merge" with no PR link and no Merge button.
+describe("the no-pull-request notice", () => {
+  it("names the missing pull request rather than the generic chip beside it", () => {
+    // `Needs a human` is exactly what `No PR` says with less information —
+    // the same relationship the merge pills have to it.
+    expect(notice({ attention: attention(), noPullRequestAtMerge: true })).toEqual({
+      kind: "no-pull-request",
+    });
+  });
+
+  it("yields to a conflict fix and to the auto-merge hold, which are more specific", () => {
+    // Both of those describe a card that HAS a pull request, so if either is
+    // standing, "no pull request" is not the thing to say.
+    expect(notice({ conflictFix: conflicts, noPullRequestAtMerge: true })).toEqual({
+      kind: "conflicts",
+      fix: conflicts,
+    });
+    expect(notice({ autoMergeHold: mergeRetrying, noPullRequestAtMerge: true })).toEqual({
+      kind: "auto-merge",
+      pill: mergeRetrying,
+    });
+  });
+
+  it("yields to a thread's pending question, which is one click from an answer", () => {
+    expect(notice({ attention: question, noPullRequestAtMerge: true })).toEqual({
+      kind: "attention",
+      attention: question,
+    });
+  });
+
+  it("outranks the dependency gate, whose fact survives on the meta row", () => {
+    expect(notice({ noPullRequestAtMerge: true, blocked: true, dependencyCount: 2 })).toEqual({
+      kind: "no-pull-request",
+    });
+  });
+});
+
+describe("boardCardNoPullRequest", () => {
+  const settled = { atMergeStage: true, hasPr: false };
+
+  it("flags a card parked at the merge stage with nothing to merge", () => {
+    expect(boardCardNoPullRequest(settled)).toBe(true);
+  });
+
+  it("says nothing at any other stage", () => {
+    // A card in Code review with no pull request is also wrong, but it has a
+    // running step and its own notices, and the window before the build opens
+    // one is legitimate.
+    expect(boardCardNoPullRequest({ ...settled, atMergeStage: false })).toBe(false);
+  });
+
+  it("says nothing once the card has a pull request, whatever its state", () => {
+    // `hasPr` is true for a merged PR too, which is the point: a card that
+    // merged and is waiting to be moved on has nothing missing.
+    expect(boardCardNoPullRequest({ ...settled, hasPr: true })).toBe(false);
+  });
+
+  it("waits out the settle grace a card that has only just stopped", () => {
+    // Arriving at Ready for merge leaves the card briefly PR-less while the
+    // stage-move lookup is still in flight. A chip that appears for a second
+    // and vanishes is worse than no chip.
+    const stoppedAt = "2026-09-21T12:00:00.000Z";
+    expect(
+      boardCardNoPullRequest({
+        ...settled,
+        threadIdleSince: stoppedAt,
+        now: Date.parse(stoppedAt) + 1_000,
+      }),
+    ).toBe(false);
+    expect(
+      boardCardNoPullRequest({
+        ...settled,
+        threadIdleSince: stoppedAt,
+        now: Date.parse(stoppedAt) + 6_000,
+      }),
+    ).toBe(true);
+  });
+
+  it("fails open when there is no evidence the stop was fresh", () => {
+    // Same rule the attention chips follow: a card whose thread has never
+    // finished a turn, or a caller with no clock, has nothing to wait out.
+    expect(boardCardNoPullRequest({ ...settled, now: Date.now() })).toBe(true);
+    expect(boardCardNoPullRequest({ ...settled, threadIdleSince: "2026-09-21T12:00:00Z" })).toBe(
+      true,
+    );
   });
 });

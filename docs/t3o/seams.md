@@ -453,6 +453,39 @@ classifier (`board/autoMergeClassification.ts`, new), the gateway seam
 `ForgejoCli.ts` / `ForgejoSourceControlProvider.ts` until the `v0.0.42` sync replaced those files
 with upstream's; they now live in fork-owned `sourceControl/forgejoMerge.ts`.
 
+Pinning `gh` to the project's origin repository (`T3O-48`) touched 2 upstream-owned files, all of
+it the same shape as the `t3o-16` merge path it sits beside. By the census metric
+(`git grep -c "T3o:"`): `GitHubCli.ts` 10 → 18 and `GitHubSourceControlProvider.ts` 1 → 3.
+
+`GitHubCli.ts` gains the import, the `repository` member on the service interface, and one marker
+per `gh` invocation — `pr list`, `pr view` (the lookup and the merge-state probe), `pr create`,
+`pr checkout`, `pr merge` and `repo view`. `GitHubSourceControlProvider.ts` gains the import, the
+context→repository derivation, and the non-open list path, which builds its own args and calls
+`execute` directly. The parser and both arg helpers are in the new fork-owned
+`sourceControl/githubRemote.ts`, which mirrors `forgejoRemote.ts`; `ForgejoCli.ts` already pinned
+its own repository and needed nothing.
+
+`repo view` is the odd one out, the same way it is for Forgejo: it takes the repository
+POSITIONALLY and has no `--repo` flag, so `gitHubRepositoryPositionalArgs` flattens the pair into
+the one argument the command accepts. Both forms are host-QUALIFIED (`github.com/owner/repo`),
+matching upstream's own `GitHubPullRequestCli.repositoryArgs`, so a GHES repository cannot collide
+with a same-named repository on github.com. An unresolved remote adds no argument at all, leaving
+every invocation byte-identical to what it was before.
+
+The bug this closed: `gh` resolves the base repository itself when no `--repo` is given, and its
+rule PREFERS a remote literally named `upstream`. This repository gained that remote during the
+`t3o-31` sync, so from then on every board pull request lookup asked `pingdotgg/t3code` and
+truthfully answered "no pull request" — and a Merge click would have merged upstream's PR of the
+same number. The rule the card settled: **T3 Code acts on the project's `origin` remote, always**,
+the same default as plain `git push`, with no `gh repo set-default` read and no fallback to gh's own
+guess. `SourceControlProviderRegistry.selectProviderContext` already resolves an origin-preferring
+context; only the GitHub provider was ignoring it.
+
+**Known debt, not fixed by that card.** Upstream's `RepositoryIdentityResolver.pickPrimaryRemote`
+prefers `upstream` over `origin` — the same bug class one level up. It drives upstream's own Pull
+Requests page rather than the board, so the board is unaffected today, but it will need an answer
+when `T3O-47` adopts `apps/server/src/pullRequest/`.
+
 Per-project GitHub token overrides (`t3o-34`, see [gitenv](./gitenv.md)) added 15 markers across 7
 upstream-owned files: `config.ts` 2 (import + `initGitenv` in `make`, which only `pair` still reaches),
 `cli/config.ts` 2 (import + `initGitenv` at the end of `resolveServerConfig`, the real server boot

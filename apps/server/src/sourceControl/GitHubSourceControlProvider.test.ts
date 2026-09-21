@@ -9,6 +9,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
+import * as SourceControlProvider from "./SourceControlProvider.ts";
 
 const processResult = (
   stdout: string,
@@ -479,3 +480,173 @@ for (const stage of ["read", "decode"] as const) {
     }),
   );
 }
+
+// T3o (T3O-48): the registry resolves an origin-preferring provider context and
+// binds it into every call; the provider's job is to turn its remote URL into
+// the repository each `gh` invocation names. Unpinned, `gh` picks the base
+// repository itself and prefers a remote called `upstream` — which is how a
+// fork's card reached Ready for merge with no PR link and no Merge button.
+const originContext: SourceControlProvider.SourceControlProviderContext = {
+  provider: { kind: "github", name: "GitHub", baseUrl: "https://github.com" },
+  remoteName: "origin",
+  remoteUrl: "git@github.com:brentkelly/t3code-orchestrator.git",
+};
+
+it.effect("passes the origin repository into every pull request lookup", () =>
+  Effect.gen(function* () {
+    const seen: Array<unknown> = [];
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        seen.push(input.repository);
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: originContext,
+      headSelector: "board/t3o-46",
+      state: "open",
+    });
+
+    assert.deepStrictEqual(seen, [
+      { host: "github.com", nameWithOwner: "brentkelly/t3code-orchestrator" },
+    ]);
+  }),
+);
+
+it.effect("names the origin repository on a non-open list, which builds its own args", () =>
+  Effect.gen(function* () {
+    const seen: Array<ReadonlyArray<string>> = [];
+    const provider = yield* makeProvider({
+      execute: (input) => {
+        seen.push(input.args);
+        return Effect.succeed(processResult("[]"));
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: originContext,
+      headSelector: "board/t3o-46",
+      state: "all",
+    });
+
+    assert.deepStrictEqual(seen[0]?.slice(0, 4), [
+      "pr",
+      "list",
+      "--repo",
+      "github.com/brentkelly/t3code-orchestrator",
+    ]);
+  }),
+);
+
+it.effect("passes the origin repository into a merge, so a fork never merges upstream's PR", () =>
+  Effect.gen(function* () {
+    const seen: Array<unknown> = [];
+    const provider = yield* makeProvider({
+      mergePullRequest: (input) => {
+        seen.push(input.repository);
+        return Effect.void;
+      },
+    });
+
+    yield* provider.mergeChangeRequest({
+      cwd: "/repo",
+      context: originContext,
+      reference: "108",
+      strategy: "squash",
+    });
+
+    assert.deepStrictEqual(seen, [
+      { host: "github.com", nameWithOwner: "brentkelly/t3code-orchestrator" },
+    ]);
+  }),
+);
+
+it.effect(
+  "passes the origin repository into create, checkout, view and the merge-state probe",
+  () =>
+    Effect.gen(function* () {
+      const seen: Array<unknown> = [];
+      const record = (input: { readonly repository?: unknown }) => {
+        seen.push(input.repository);
+      };
+      const provider = yield* makeProvider({
+        createPullRequest: (input) => Effect.sync(() => record(input)),
+        checkoutPullRequest: (input) => Effect.sync(() => record(input)),
+        getDefaultBranch: (input) => Effect.sync(() => record(input)).pipe(Effect.as(null)),
+        pullRequestMergeState: (input) =>
+          Effect.sync(() => record(input)).pipe(
+            Effect.as({
+              mergeable: "unknown" as const,
+              blockedReason: null,
+              checks: {
+                total: 0,
+                passed: 0,
+                pending: 0,
+                failed: 0,
+                failing: [],
+                running: [],
+              },
+              headSha: null,
+            }),
+          ),
+        getPullRequest: (input) =>
+          Effect.sync(() => record(input)).pipe(
+            Effect.as({
+              number: 110,
+              title: "Upgrade",
+              url: "https://github.com/brentkelly/t3code-orchestrator/pull/110",
+              baseRefName: "t3o",
+              headRefName: "board/t3o-46",
+              state: "open" as const,
+            }),
+          ),
+      });
+
+      yield* provider.createChangeRequest({
+        cwd: "/repo",
+        context: originContext,
+        baseRefName: "t3o",
+        headSelector: "board/t3o-46",
+        title: "Upgrade",
+        bodyFile: "/tmp/body.md",
+      });
+      yield* provider.checkoutChangeRequest({
+        cwd: "/repo",
+        context: originContext,
+        reference: "110",
+      });
+      yield* provider.getDefaultBranch({ cwd: "/repo", context: originContext });
+      yield* provider.changeRequestMergeState({
+        cwd: "/repo",
+        context: originContext,
+        reference: "110",
+      });
+      yield* provider.getChangeRequest({ cwd: "/repo", context: originContext, reference: "110" });
+
+      const repository = { host: "github.com", nameWithOwner: "brentkelly/t3code-orchestrator" };
+      assert.deepStrictEqual(seen, [repository, repository, repository, repository, repository]);
+    }),
+);
+
+it.effect("leaves a call unpinned when the registry resolved no context at all", () =>
+  Effect.gen(function* () {
+    const seen: Array<unknown> = [];
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        seen.push("repository" in input);
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "board/t3o-46",
+      state: "open",
+    });
+
+    assert.deepStrictEqual(seen, [false]);
+  }),
+);

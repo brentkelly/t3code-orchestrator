@@ -25,6 +25,12 @@ import {
 } from "./gitHubPullRequests.ts";
 // T3o: the structured refusal probe (T3O-38, D7).
 import { parseGitHubMergeState } from "./gitHubMergeState.ts";
+// T3o: every gh call names the project's origin repository (T3O-48).
+import {
+  gitHubRepositoryArgs,
+  gitHubRepositoryPositionalArgs,
+  type GitHubRemote,
+} from "./githubRemote.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -320,12 +326,19 @@ export class GitHubCli extends Context.Service<
 
     readonly listOpenPullRequests: (input: {
       readonly cwd: string;
+      /** T3o (T3O-48): the repository this invocation acts on, resolved from the
+        project's `origin` remote by `SourceControlProviderRegistry`. Without
+        it `gh` picks the base repository itself and PREFERS a remote named
+        `upstream`, so in a fork every lookup asks the wrong repository. Absent
+        means no flag at all — see `gitHubRepositoryArgs`. */
+      readonly repository?: GitHubRemote | null;
       readonly headSelector: string;
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
     readonly getPullRequest: (input: {
       readonly cwd: string;
+      readonly repository?: GitHubRemote | null;
       readonly reference: string;
     }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
 
@@ -342,6 +355,7 @@ export class GitHubCli extends Context.Service<
 
     readonly createPullRequest: (input: {
       readonly cwd: string;
+      readonly repository?: GitHubRemote | null;
       readonly baseBranch: string;
       readonly headSelector: string;
       readonly title: string;
@@ -350,22 +364,26 @@ export class GitHubCli extends Context.Service<
 
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
+      readonly repository?: GitHubRemote | null;
     }) => Effect.Effect<string | null, GitHubCliError>;
 
     readonly checkoutPullRequest: (input: {
       readonly cwd: string;
+      readonly repository?: GitHubRemote | null;
       readonly reference: string;
       readonly force?: boolean;
     }) => Effect.Effect<void, GitHubCliError>;
     // T3o: the board merge path (t3o-16).
     readonly mergePullRequest: (input: {
       readonly cwd: string;
+      readonly repository?: GitHubRemote | null;
       readonly reference: string;
       readonly strategy: ChangeRequestMergeStrategy;
     }) => Effect.Effect<void, GitHubCliError>;
     // T3o: the structured refusal probe (T3O-38, D7).
     readonly pullRequestMergeState: (input: {
       readonly cwd: string;
+      readonly repository?: GitHubRemote | null;
       readonly reference: string;
     }) => Effect.Effect<ChangeRequestMergeState, GitHubCliError>;
   }
@@ -479,6 +497,8 @@ export const make = Effect.gen(function* () {
         args: [
           "pr",
           "list",
+          // T3o: name the origin repository (T3O-48) — see `gitHubRepositoryArgs`.
+          ...gitHubRepositoryArgs(input.repository),
           "--head",
           input.headSelector,
           "--state",
@@ -517,6 +537,8 @@ export const make = Effect.gen(function* () {
           "pr",
           "view",
           input.reference,
+          // T3o: name the origin repository (T3O-48).
+          ...gitHubRepositoryArgs(input.repository),
           "--json",
           "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
@@ -575,6 +597,9 @@ export const make = Effect.gen(function* () {
         args: [
           "pr",
           "create",
+          // T3o: name the origin repository (T3O-48). Without it a fork's
+          // "Submit for merge" would open a pull request against UPSTREAM.
+          ...gitHubRepositoryArgs(input.repository),
           "--base",
           input.baseBranch,
           "--head",
@@ -588,7 +613,18 @@ export const make = Effect.gen(function* () {
     getDefaultBranch: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
+        // T3o: name the origin repository (T3O-48). `gh repo view` takes the
+        // repository POSITIONALLY and rejects `--repo`, so the flag pair is
+        // flattened to the one argument this command accepts.
+        args: [
+          "repo",
+          "view",
+          ...gitHubRepositoryPositionalArgs(input.repository),
+          "--json",
+          "defaultBranchRef",
+          "--jq",
+          ".defaultBranchRef.name",
+        ],
       }).pipe(
         Effect.map((value) => {
           const trimmed = value.stdout.trim();
@@ -598,7 +634,14 @@ export const make = Effect.gen(function* () {
     checkoutPullRequest: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
+        args: [
+          "pr",
+          "checkout",
+          input.reference,
+          // T3o: name the origin repository (T3O-48).
+          ...gitHubRepositoryArgs(input.repository),
+          ...(input.force ? ["--force"] : []),
+        ],
       }).pipe(Effect.asVoid),
     // T3o: the board merge path (t3o-16).
     // The strategy flag is always passed: `gh pr merge` with none prompts
@@ -613,7 +656,16 @@ export const make = Effect.gen(function* () {
     mergePullRequest: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["pr", "merge", input.reference, `--${input.strategy}`],
+        // T3o: name the origin repository (T3O-48). Unpinned, a Merge click on
+        // a fork would target the UPSTREAM repository's pull request of the
+        // same number.
+        args: [
+          "pr",
+          "merge",
+          input.reference,
+          ...gitHubRepositoryArgs(input.repository),
+          `--${input.strategy}`,
+        ],
         allowNonZeroExit: true,
       }).pipe(
         Effect.flatMap((result) =>
@@ -652,6 +704,8 @@ export const make = Effect.gen(function* () {
           "pr",
           "view",
           input.reference,
+          // T3o: name the origin repository (T3O-48).
+          ...gitHubRepositoryArgs(input.repository),
           "--json",
           "mergeStateStatus,statusCheckRollup,headRefOid",
         ],

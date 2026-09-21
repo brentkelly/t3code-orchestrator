@@ -930,4 +930,63 @@ describe("held review loop chip suppression", () => {
     expect(offHtml).toContain("border-amber-500/60");
     expect(offHtml).toContain("No convergence");
   });
+
+  // T3o (T3O-48): a card parked at Ready for merge with no pull request goes
+  // nowhere on its own, and the board face said nothing about it.
+  it("wears an amber `No PR` chip at the merge stage with nothing to merge", () => {
+    const parked = shell("merge");
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={parked}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(parked)}
+        atMergeStage
+        noPullRequest
+      />,
+    );
+    expect(html).toContain("No PR");
+    // Amber, the blocked-or-held vocabulary. Never red — the board card has
+    // never carried it.
+    expect(html).toContain("text-warning-foreground");
+    expect(html).not.toContain("destructive");
+  });
+
+  it("wears ONE notice when the card is also asking for a human (T3O-45, T3O-48)", () => {
+    // `Needs a human` is what `No PR` says with less information, so the
+    // specific one takes the single slot rather than stacking beside it.
+    const parked = shell("merge", { held: true });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={parked}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(parked)}
+        atMergeStage
+        noPullRequest
+      />,
+    );
+    expect(html).toContain("No PR");
+    expect(html).not.toContain("Needs a human");
+  });
+
+  it("wears no `No PR` chip on a card the page has not flagged", () => {
+    // The whole predicate — merge stage, no pull request, past the settle
+    // grace — lives on the page (`boardCardNoPullRequest`); the card face just
+    // renders what it is told, and a card with a pull request is never told.
+    const linked = shell("merge", { prNumber: 110 });
+    const html = renderToStaticMarkup(
+      <BoardCardContent
+        card={linked}
+        labelsById={emptyLabels}
+        queueSlot={undefined}
+        selected={false}
+        attention={attentionOf(linked)}
+        atMergeStage
+      />,
+    );
+    expect(html).not.toContain("No PR");
+  });
 });

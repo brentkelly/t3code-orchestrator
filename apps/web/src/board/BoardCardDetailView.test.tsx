@@ -1368,4 +1368,113 @@ describe("BoardCardDetailPanel done marks", () => {
   it("washes nothing: no surface-token override rides on a done card", () => {
     expect(panel(BOARD_SEED_STAGE_IDS.done)).not.toContain("board-card-done");
   });
+
+  // T3o (T3O-48): the bug as filed. A card finished its review, landed at
+  // Ready for merge, and the pane offered "Move to Done" and nothing else — no
+  // pull request link, no Merge button, and no word about why.
+  it("says a merge-stage card has no pull request, and offers a way to look again", () => {
+    const worktree = {
+      branch: "board/t3-7",
+      baseRefName: "t3o",
+      path: "/tmp/wt/t3-7",
+      status: "ready" as const,
+      attempts: 1,
+      lastError: null,
+      reclaimBlockedReason: null,
+    };
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge, worktree })}
+        onCheckForPullRequest={noop}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("No pull request found for");
+    // The branch by name: the answer the button gives names it too, so the two
+    // are unambiguously about the same lookup.
+    expect(html).toContain("board/t3-7");
+    expect(html).toContain("Check again");
+    // The card is never stranded — the way to Done survives beside the notice.
+    expect(html).toContain("Move to Done");
+  });
+
+  // T3o (T3O-48, review round 1): the card face's `No PR` chip fires on the
+  // stage and `hasPr` alone — the shell carries no worktree — so a merge-stage
+  // card that never built a branch wore the chip and opened onto a pane that
+  // said nothing. The notice covers it, minus the button it has nothing to ask.
+  it("says why a merge-stage card with no branch has no pull request", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge, worktree: null })}
+        onCheckForPullRequest={noop}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("No pull request, and no branch to look one up on.");
+    expect(html).not.toContain("Check again");
+    expect(html).toContain("Move to Done");
+  });
+
+  it("spins Check again across the round trip rather than taking a second click", () => {
+    const worktree = {
+      branch: "board/t3-7",
+      baseRefName: "t3o",
+      path: "/tmp/wt/t3-7",
+      status: "ready" as const,
+      attempts: 1,
+      lastError: null,
+      reclaimBlockedReason: null,
+    };
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        checkingForPullRequest
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.merge, worktree })}
+        onCheckForPullRequest={noop}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Checking…");
+    expect(html).not.toContain("Check again");
+  });
+
+  it("says nothing about a missing pull request once the card has one", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({
+          stage: BOARD_SEED_STAGE_IDS.merge,
+          pullRequest: {
+            number: 110,
+            url: "https://github.com/brentkelly/t3code-orchestrator/pull/110",
+            state: "open",
+            headBranch: "board/t3-7",
+            baseRef: "t3o",
+            checkedAt: NOW,
+          },
+        })}
+        onCheckForPullRequest={noop}
+        projectName="P"
+      />,
+    );
+    expect(html).not.toContain("No pull request found for");
+    expect(html).toContain("Merge PR #110");
+  });
+
+  it("says nothing about a missing pull request away from the merge stage", () => {
+    // A card in Code review with no pull request is also wrong, but it has a
+    // running step and its own notices, and the window before the build opens
+    // one is legitimate.
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.review })}
+        onCheckForPullRequest={noop}
+        projectName="P"
+      />,
+    );
+    expect(html).not.toContain("No pull request found for");
+  });
 });

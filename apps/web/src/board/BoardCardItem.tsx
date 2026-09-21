@@ -33,6 +33,7 @@ import type {
 import {
   ClockIcon,
   GitMergeIcon,
+  GitPullRequestIcon,
   LayersIcon,
   LockIcon,
   PauseIcon,
@@ -192,12 +193,27 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
               tooltip: notice.pill.tooltip,
               tint: "text-warning-foreground",
             }
-          : {
-              icon: <LockIcon className="size-3 shrink-0" />,
-              label: "Blocked",
-              tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
-              tint: "text-warning-foreground",
-            };
+          : notice.kind === "no-pull-request"
+            ? {
+                // T3o (T3O-48). Amber, making the same claim `Needs a human`
+                // does: nobody is working, the board cannot move this card on by
+                // itself, and it is waiting on something outside itself.
+                // `docs/t3o/status-colours.md` gives amber to blocked or held.
+                icon: <GitPullRequestIcon className="size-3 shrink-0" />,
+                label: "No PR",
+                // Not "…and check again": the re-check needs a branch, and a
+                // merge-stage card that never built one has none. The pane
+                // explains either way, so the tooltip points there and lets it
+                // say which of the two this card is.
+                tooltip: "Ready to merge, but this card has no pull request — open it to see why",
+                tint: "text-warning-foreground",
+              }
+            : {
+                icon: <LockIcon className="size-3 shrink-0" />,
+                label: "Blocked",
+                tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
+                tint: "text-warning-foreground",
+              };
   return (
     <BoardHint label={view.tooltip}>
       <span
@@ -226,6 +242,7 @@ export function BoardCardContent({
   attention,
   childAttention,
   childRunning,
+  noPullRequest,
   atMergeStage,
   autoMergeBoardWide,
 }: {
@@ -262,6 +279,11 @@ export function BoardCardContent({
       parent that runs no step of its own. Absent on the surfaces that do not
       resolve it (the drag ghost, the archive sheet). */
   readonly childRunning?: number | undefined;
+  /** T3o (T3O-48): the card is parked at the merge-role stage with no pull
+      request, already past the settle grace — `boardCardNoPullRequest`, resolved
+      by the board page. Absent on the surfaces that do not resolve it (the drag
+      ghost, the archive sheet), where the card renders as it always did. */
+  readonly noPullRequest?: boolean | undefined;
   /** Whether this card is sitting in the merge-role stage (T3O-38, D13) —
       the only place an armed card wears the grey `Auto` glyph. Absent on the
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
@@ -364,6 +386,9 @@ export function BoardCardContent({
     attention: chip,
     conflictFix,
     autoMergeHold,
+    // T3o (T3O-48): a Done card is asking for nothing, and the page's predicate
+    // already says so — the guard here just refuses to trust a stale prop.
+    noPullRequestAtMerge: noPullRequest === true && !summary.muted,
     blocked: card.blocked,
     dependencyCount: card.dependencyCount,
   });
@@ -654,6 +679,7 @@ export function DraggableBoardCard({
   attention,
   childAttention,
   childRunning,
+  noPullRequest,
   atMergeStage,
   autoMergeBoardWide,
 }: {
@@ -674,6 +700,8 @@ export function DraggableBoardCard({
   readonly attention?: BoardCardAttention | null | undefined;
   readonly childAttention?: BoardCardChildAttention | undefined;
   readonly childRunning?: number | undefined;
+  /** T3o (T3O-48): forwarded to the card face. */
+  readonly noPullRequest?: boolean | undefined;
   readonly atMergeStage?: boolean | undefined;
   readonly autoMergeBoardWide?: boolean | undefined;
 }) {
@@ -723,6 +751,7 @@ export function DraggableBoardCard({
         attention={attention}
         childAttention={childAttention}
         childRunning={childRunning}
+        noPullRequest={noPullRequest}
         atMergeStage={atMergeStage}
         autoMergeBoardWide={autoMergeBoardWide}
       />

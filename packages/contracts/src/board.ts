@@ -6777,6 +6777,8 @@ export const BOARD_WS_METHODS = {
       button being clicked), and both are cheap: the underlying lookup is
       cached for two minutes, so a burst of these costs one forge call. */
   refreshCardPullRequest: "board.refreshCardPullRequest",
+  // T3o (T3O-48): a human's "Check again" passes `force`, bypassing that cache
+  // and the failure backoff with it, and reads the outcome off the answer.
   /** Merge a card's pull request and advance the card. An RPC rather than a
       board command because the caller is a human waiting on an answer — the
       outcome decides whether they see "merged", the forge's refusal, or
@@ -6828,6 +6830,51 @@ export const BoardCardPullRequestActionInput = Schema.Struct({
   cardId: BoardCardId,
 });
 export type BoardCardPullRequestActionInput = typeof BoardCardPullRequestActionInput.Type;
+
+/**
+ * T3o (T3O-48): the refresh takes its OWN input, rather than widening the
+ * shared one above — merge, submit and requestReviewRound use that struct too,
+ * and none of them has any business carrying a `force` flag.
+ *
+ * `force` is a human pressing "Check again". The automatic refresh (a card
+ * opening, a stage move) stays cached, because its whole cost model depends on
+ * that: a burst of card opens must cost one forge call. A human who has just
+ * been told there is no pull request is asking a different question, and
+ * answering it out of a two-minute-old cache — or out of a failure backoff —
+ * is the button doing nothing.
+ */
+export const BoardRefreshCardPullRequestInput = Schema.Struct({
+  cardId: BoardCardId,
+  /** Omitted by every automatic caller, which keeps their payload
+      byte-identical to what it was before this key existed. */
+  force: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardRefreshCardPullRequestInput = typeof BoardRefreshCardPullRequestInput.Type;
+
+/**
+ * What a refresh found (T3O-48).
+ *
+ * It used to return `Schema.Void`, which is what produced this card: a card
+ * with no pull request and a refresh that could not tell the user whether that
+ * was "we looked and there is none" or "we could not reach the forge". Those
+ * are different facts and only the second is worth retrying.
+ *
+ * The automatic callers ignore the value entirely.
+ */
+export const BoardRefreshCardPullRequestResult = Schema.Union([
+  /** A pull request is linked — either newly found or already known. */
+  Schema.Struct({ outcome: Schema.Literal("linked"), number: PositiveInt }),
+  /** The forge answered, and this branch has no pull request. */
+  Schema.Struct({ outcome: Schema.Literal("none") }),
+  /** The forge could not be asked. `detail` is its own words, which is what
+      tells a rate limit apart from a signed-out CLI. The card's existing link,
+      if it has one, is deliberately left standing. */
+  Schema.Struct({ outcome: Schema.Literal("lookup-failed"), detail: Schema.String }),
+  /** No worktree branch to look a pull request up for. */
+  Schema.Struct({ outcome: Schema.Literal("no-branch") }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+]);
+export type BoardRefreshCardPullRequestResult = typeof BoardRefreshCardPullRequestResult.Type;
 
 /**
  * What a Merge click did. Every arm is a normal outcome the card reports, not
@@ -7162,8 +7209,9 @@ export const BOARD_RPCS = [
     stream: true,
   }),
   Rpc.make(BOARD_WS_METHODS.refreshCardPullRequest, {
-    payload: BoardCardPullRequestActionInput,
-    success: Schema.Void,
+    // T3o (T3O-48): its own payload, and an answer rather than silence.
+    payload: BoardRefreshCardPullRequestInput,
+    success: BoardRefreshCardPullRequestResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(BOARD_WS_METHODS.mergeCardPullRequest, {

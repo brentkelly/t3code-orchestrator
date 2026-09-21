@@ -596,3 +596,179 @@ describe("GitHubCli.mergePullRequest", () => {
     }).pipe(Effect.provide(layer)),
   );
 });
+
+// T3o (T3O-48): `gh` resolves the base repository itself when no repository is
+// named, and its rule PREFERS a remote called `upstream` — so in a fork every
+// unpinned call asks the wrong repository and truthfully answers "no pull
+// request". These pin the flag onto every invocation that takes one.
+describe("GitHubCli repository pinning", () => {
+  const repository = { host: "github.com", nameWithOwner: "brentkelly/t3code-orchestrator" };
+  const args = () => mockRun.mock.calls[0]?.[0]?.args ?? [];
+
+  it.effect("names the repository on a pull request lookup", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+      const github = yield* GitHubCli.GitHubCli;
+      yield* github.listOpenPullRequests({
+        cwd: "/repo",
+        repository,
+        headSelector: "board/t3o-46",
+      });
+      assert.deepStrictEqual(args().slice(0, 4), [
+        "pr",
+        "list",
+        "--repo",
+        "github.com/brentkelly/t3code-orchestrator",
+      ]);
+      assert.include(args(), "board/t3o-46");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("names the repository when viewing one pull request", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 110,
+              title: "Upgrade",
+              url: "https://github.com/brentkelly/t3code-orchestrator/pull/110",
+              baseRefName: "t3o",
+              headRefName: "board/t3o-46",
+              state: "OPEN",
+            }),
+          ),
+        ),
+      );
+      const github = yield* GitHubCli.GitHubCli;
+      yield* github.getPullRequest({ cwd: "/repo", repository, reference: "110" });
+      assert.deepStrictEqual(args().slice(0, 5), [
+        "pr",
+        "view",
+        "110",
+        "--repo",
+        "github.com/brentkelly/t3code-orchestrator",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("names the repository when opening a pull request", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      const github = yield* GitHubCli.GitHubCli;
+      yield* github.createPullRequest({
+        cwd: "/repo",
+        repository,
+        baseBranch: "t3o",
+        headSelector: "board/t3o-46",
+        title: "Upgrade",
+        bodyFile: "/tmp/body.md",
+      });
+      assert.deepStrictEqual(args().slice(0, 4), [
+        "pr",
+        "create",
+        "--repo",
+        "github.com/brentkelly/t3code-orchestrator",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("names the repository when checking a pull request out", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      const github = yield* GitHubCli.GitHubCli;
+      yield* github.checkoutPullRequest({
+        cwd: "/repo",
+        repository,
+        reference: "110",
+        force: true,
+      });
+      assert.deepStrictEqual(args(), [
+        "pr",
+        "checkout",
+        "110",
+        "--repo",
+        "github.com/brentkelly/t3code-orchestrator",
+        "--force",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("names the repository on a merge, so a fork never merges upstream's PR", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      const github = yield* GitHubCli.GitHubCli;
+      yield* github.mergePullRequest({
+        cwd: "/repo",
+        repository,
+        reference: "108",
+        strategy: "squash",
+      });
+      assert.deepStrictEqual(args(), [
+        "pr",
+        "merge",
+        "108",
+        "--repo",
+        "github.com/brentkelly/t3code-orchestrator",
+        "--squash",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("names the repository on the merge-state probe", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+      const github = yield* GitHubCli.GitHubCli;
+      yield* github.pullRequestMergeState({ cwd: "/repo", repository, reference: "110" });
+      assert.deepStrictEqual(args().slice(0, 5), [
+        "pr",
+        "view",
+        "110",
+        "--repo",
+        "github.com/brentkelly/t3code-orchestrator",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("names the repository POSITIONALLY on `repo view`, which has no --repo flag", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("t3o\n")));
+      const github = yield* GitHubCli.GitHubCli;
+      const branch = yield* github.getDefaultBranch({ cwd: "/repo", repository });
+      assert.strictEqual(branch, "t3o");
+      assert.deepStrictEqual(args(), [
+        "repo",
+        "view",
+        "github.com/brentkelly/t3code-orchestrator",
+        "--json",
+        "defaultBranchRef",
+        "--jq",
+        ".defaultBranchRef.name",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("qualifies an enterprise host rather than colliding with github.com", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+      const github = yield* GitHubCli.GitHubCli;
+      yield* github.listOpenPullRequests({
+        cwd: "/repo",
+        repository: { host: "ghe.example.test", nameWithOwner: "octocat/widgets" },
+        headSelector: "feature",
+      });
+      assert.include(args(), "ghe.example.test/octocat/widgets");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("leaves the arg vector untouched when no repository was resolved", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      const github = yield* GitHubCli.GitHubCli;
+      yield* github.mergePullRequest({ cwd: "/repo", reference: "108", strategy: "squash" });
+      assert.deepStrictEqual(args(), ["pr", "merge", "108", "--squash"]);
+      assert.notInclude(args(), "--repo");
+    }).pipe(Effect.provide(layer)),
+  );
+});

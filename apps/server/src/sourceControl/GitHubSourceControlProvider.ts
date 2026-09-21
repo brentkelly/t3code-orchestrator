@@ -10,6 +10,8 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "./GitHubCli.ts";
+// T3o: every gh call names the project's origin repository (T3O-48).
+import { gitHubRepositoryArgs, parseGitHubRemoteUrl, type GitHubRemote } from "./githubRemote.ts";
 import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 import { decodeGitHubPullRequestListJson } from "./gitHubPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -53,6 +55,27 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
   };
+}
+
+/**
+ * T3o (T3O-48): the repository every `gh` call in this provider acts on.
+ *
+ * `SourceControlProviderRegistry` binds a provider context resolved from the checkout's remotes,
+ * PREFERRING `origin` — the same remote plain `git push` would use. Reading it here is what stops
+ * `gh` resolving the base repository for itself, whose own rule prefers a remote named `upstream`
+ * and therefore asks the wrong repository in any fork.
+ *
+ * Null when the registry resolved no context (a checkout with no usable remote) or the URL does
+ * not parse; both leave the invocation unpinned, exactly as it was before.
+ */
+function repositoryOf(context: SourceControlProvider.SourceControlProviderContext | undefined) {
+  const remoteUrl = context?.remoteUrl;
+  return remoteUrl === undefined ? null : parseGitHubRemoteUrl(remoteUrl);
+}
+
+/** Spread into a `GitHubCli` input, so an unresolved remote omits the key entirely. */
+function repositoryInput(repository: GitHubRemote | null): { readonly repository?: GitHubRemote } {
+  return repository === null ? {} : { repository };
 }
 
 function parseGitHubAuth(input: SourceControlAuthProbeInput) {
@@ -126,6 +149,7 @@ export const make = Effect.gen(function* () {
         return github
           .listOpenPullRequests({
             cwd: input.cwd,
+            ...repositoryInput(repositoryOf(input.context)),
             headSelector: input.headSelector,
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
           })
@@ -155,6 +179,9 @@ export const make = Effect.gen(function* () {
           args: [
             "pr",
             "list",
+            // T3o: name the origin repository (T3O-48). This path builds its
+            // args and calls `execute` directly, so it pins itself.
+            ...gitHubRepositoryArgs(repositoryOf(input.context)),
             "--head",
             input.headSelector,
             "--state",
@@ -267,27 +294,34 @@ export const make = Effect.gen(function* () {
     },
     listChangeRequests,
     getChangeRequest: (input) =>
-      github.getPullRequest(input).pipe(
-        Effect.map(toChangeRequest),
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "github",
-              operation: "getChangeRequest",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+      github
+        .getPullRequest({
+          cwd: input.cwd,
+          ...repositoryInput(repositoryOf(input.context)),
+          reference: input.reference,
+        })
+        .pipe(
+          Effect.map(toChangeRequest),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "getChangeRequest",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.reference,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         ),
-      ),
     createChangeRequest: (input) =>
       github
         .createPullRequest({
           cwd: input.cwd,
+          ...repositoryInput(repositoryOf(input.context)),
           baseBranch: input.baseRefName,
           headSelector: input.headSelector,
           title: input.title,
@@ -344,73 +378,98 @@ export const make = Effect.gen(function* () {
         ),
       ),
     getDefaultBranch: (input) =>
-      github.getDefaultBranch(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "github",
-              operation: "getDefaultBranch",
-              command: error.command,
-              cwd: input.cwd,
-              detail: error.detail,
-              cause: error,
-            }),
+      github
+        .getDefaultBranch({
+          cwd: input.cwd,
+          ...repositoryInput(repositoryOf(input.context)),
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "getDefaultBranch",
+                command: error.command,
+                cwd: input.cwd,
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         ),
-      ),
     mergeChangeRequest: (input) =>
-      github.mergePullRequest(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "github",
-              operation: "mergeChangeRequest",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              // `gh` prints the forge's own refusal here — failing checks,
-              // missing approvals, "not mergeable". That text is what the card
-              // shows, so the user reads GitHub's reason rather than ours.
-              detail: error.detail,
-              cause: error,
-            }),
+      github
+        .mergePullRequest({
+          cwd: input.cwd,
+          ...repositoryInput(repositoryOf(input.context)),
+          reference: input.reference,
+          strategy: input.strategy,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "mergeChangeRequest",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.reference,
+                ),
+                // `gh` prints the forge's own refusal here — failing checks,
+                // missing approvals, "not mergeable". That text is what the card
+                // shows, so the user reads GitHub's reason rather than ours.
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         ),
-      ),
     // T3o: the structured refusal probe (T3O-38, D7).
     changeRequestMergeState: (input) =>
-      github.pullRequestMergeState(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "github",
-              operation: "changeRequestMergeState",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+      github
+        .pullRequestMergeState({
+          cwd: input.cwd,
+          ...repositoryInput(repositoryOf(input.context)),
+          reference: input.reference,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "changeRequestMergeState",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.reference,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         ),
-      ),
     checkoutChangeRequest: (input) =>
-      github.checkoutPullRequest(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "github",
-              operation: "checkoutChangeRequest",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+      github
+        .checkoutPullRequest({
+          cwd: input.cwd,
+          ...repositoryInput(repositoryOf(input.context)),
+          reference: input.reference,
+          ...(input.force === undefined ? {} : { force: input.force }),
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "checkoutChangeRequest",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.reference,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         ),
-      ),
   });
 });
