@@ -3744,6 +3744,12 @@ const make = Effect.gen(function* () {
   // recover. A still-pending question is the legitimate gate (D13), not death.
   // ── Card ↔ pull request ─────────────────────────────────────────────
 
+  /** T3o (T3O-48): the card's link, as the refresh RPC reports it. */
+  const boardRefreshOutcomeOf = (
+    pullRequest: BoardCardPullRequest | null,
+  ): BoardRefreshCardPullRequestResult =>
+    pullRequest === null ? { outcome: "none" } : { outcome: "linked", number: pullRequest.number };
+
   /**
    * Re-resolve the card's pull request from the forge and record it if it
    * moved.
@@ -3767,12 +3773,6 @@ const make = Effect.gen(function* () {
    *     card's PR badge. "No PR" and "could not ask" are different answers and
    *     only the first is worth recording.
    */
-  /** T3o (T3O-48): the card's link, as the refresh RPC reports it. */
-  const boardRefreshOutcomeOf = (
-    pullRequest: BoardCardPullRequest | null,
-  ): BoardRefreshCardPullRequestResult =>
-    pullRequest === null ? { outcome: "none" } : { outcome: "linked", number: pullRequest.number };
-
   const refreshCardPullRequestLink = Effect.fn("board-supervisor-refreshCardPullRequestLink")(
     function* (
       card: BoardCard,

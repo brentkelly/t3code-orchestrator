@@ -170,7 +170,7 @@ describe("the no-pull-request notice", () => {
 });
 
 describe("boardCardNoPullRequest", () => {
-  const settled = { atMergeStage: true, hasPr: false, muted: false };
+  const settled = { atMergeStage: true, hasPr: false };
 
   it("flags a card parked at the merge stage with nothing to merge", () => {
     expect(boardCardNoPullRequest(settled)).toBe(true);
@@ -187,10 +187,6 @@ describe("boardCardNoPullRequest", () => {
     // `hasPr` is true for a merged PR too, which is the point: a card that
     // merged and is waiting to be moved on has nothing missing.
     expect(boardCardNoPullRequest({ ...settled, hasPr: true })).toBe(false);
-  });
-
-  it("says nothing on a Done card, which is asking for nothing", () => {
-    expect(boardCardNoPullRequest({ ...settled, muted: true })).toBe(false);
   });
 
   it("waits out the settle grace a card that has only just stopped", () => {

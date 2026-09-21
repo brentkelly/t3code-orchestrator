@@ -82,7 +82,6 @@ import type { BoardCardNav } from "./BoardCardNavRails";
 import { useBoardAttentionSettle } from "./boardAttentionSettle";
 // T3o: the card face's amber "No PR" chip (T3O-48).
 import { boardCardNoPullRequest } from "./boardCardNotice";
-import { boardCardSummary } from "./boardCardSummary";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
 import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
@@ -479,7 +478,6 @@ function EnvironmentBoard({
       boardCardNoPullRequest({
         atMergeStage: mergeStageId !== null && card.stage === mergeStageId,
         hasPr: card.hasPr,
-        muted: boardCardSummary(card).muted,
         threadIdleSince: threadIdleSinceByCard.get(String(card.cardId)),
         now: attentionNow,
       }),

@@ -123,8 +123,6 @@ export function boardCardNoPullRequest(input: {
   /** `BoardCardShell.hasPr`: true whatever the pull request's state, so a card
       whose PR is already merged never wears this. */
   readonly hasPr: boolean;
-  /** A Done card is finished and asking for nothing. */
-  readonly muted: boolean;
   /** When the card's active thread last finished a turn, joined from the thread
       shells the board already holds (`deriveBoardThreadIdleSince`). */
   readonly threadIdleSince?: string | null | undefined;
@@ -132,7 +130,9 @@ export function boardCardNoPullRequest(input: {
       `boardCardAttention` takes it: so thirty cards share one clock. */
   readonly now?: number | undefined;
 }): boolean {
-  if (!input.atMergeStage || input.hasPr || input.muted) return false;
+  // A Done card needs no guard of its own: it is not at the merge stage, which
+  // is what `atMergeStage` already says.
+  if (!input.atMergeStage || input.hasPr) return false;
   const idleSince = input.threadIdleSince == null ? Number.NaN : Date.parse(input.threadIdleSince);
   const settling =
     input.now !== undefined &&
