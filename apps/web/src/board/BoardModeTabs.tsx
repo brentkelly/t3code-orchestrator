@@ -16,21 +16,78 @@ import { cn } from "../lib/utils";
 import { modeForHref, useBoardUiStore, type WorkspaceMode } from "./boardUiStore";
 
 /**
- * Switch the workspace to `target` mode, returning to that mode's last-seen
- * location (or its root when there is none, or when the stored location does
- * not actually belong to the target mode).
+ * Where a mode tab points: that mode's last-seen location, or its root when
+ * there is none or when the stored location does not actually belong to it.
  *
- * Two things this must get right, both learned from real bugs:
- *  - Navigate through `router.navigate`, never `router.history.push`: a raw
- *    history push does not re-run route matching in this TanStack version, so
- *    the tab click silently did nothing.
- *  - Only honour a stored location that belongs to `target`. A store poisoned
- *    with a thread href under `board` would otherwise send a Board click to
- *    that thread, and one poisoned with `/settings/...` under `threads` would
- *    send a Threads click into settings. `modeForHref` is the guard — it
- *    returns null for non-workspace routes like settings, so those never match
- *    a target. The store sanitises too, but this keeps navigation correct even
- *    before the store re-hydrates.
+ * Only honour a stored location that belongs to `mode`. A store poisoned with
+ * a thread href under `board` would otherwise send a Board click to that
+ * thread, and one poisoned with `/settings/...` under `threads` would send a
+ * Threads click into settings. `modeForHref` is the guard — it returns null
+ * for non-workspace routes like settings, so those never match a mode. The
+ * store sanitises too, but this keeps navigation correct even before the
+ * store re-hydrates.
+ */
+function locationForMode(
+  mode: WorkspaceMode,
+  lastLocationByMode: Partial<Record<WorkspaceMode, string>>,
+): string {
+  const fallback = mode === "board" ? "/board" : "/";
+  const stored = lastLocationByMode[mode];
+  return stored !== undefined && modeForHref(stored) === mode ? stored : fallback;
+}
+
+/**
+ * The `href` to put on a mode tab's anchor, so the tabs behave like the links
+ * they are: middle-click and ctrl/cmd-click open the other mode in a new tab,
+ * right-click offers copy-link, and the status bar shows where the tab goes.
+ *
+ * `history.createHref` is what makes that address real rather than decorative:
+ * the desktop app runs on hash history, where the location above has to be
+ * written `#/board` to mean anything to the browser.
+ */
+export function modeTabHref(
+  history: { readonly createHref: (href: string) => string },
+  mode: WorkspaceMode,
+  lastLocationByMode: Partial<Record<WorkspaceMode, string>>,
+): string {
+  return history.createHref(locationForMode(mode, lastLocationByMode));
+}
+
+interface ModeTabClick {
+  readonly button: number;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly altKey: boolean;
+  readonly shiftKey: boolean;
+  readonly defaultPrevented: boolean;
+  readonly preventDefault: () => void;
+}
+
+/**
+ * A click on a mode tab: ours, or the browser's.
+ *
+ * A modified or non-primary click is the browser's, and is left strictly
+ * alone — that is how open-in-new-tab (ctrl/cmd or middle), open-in-new-window
+ * (shift) and download (alt) are expressed, and swallowing them is the whole
+ * complaint that made these tabs anchors. Every other click is ours, so an
+ * ordinary one switches mode through the router instead of reloading the app.
+ *
+ * Mirrors what TanStack's own `<Link>` does with a click.
+ */
+export function handleModeTabClick(event: ModeTabClick, onSelect: () => void): void {
+  if (event.button !== 0 || event.defaultPrevented) return;
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+  event.preventDefault();
+  onSelect();
+}
+
+/**
+ * Switch the workspace to `target` mode, returning to that mode's last-seen
+ * location.
+ *
+ * Navigate through `router.navigate`, never `router.history.push`: a raw
+ * history push does not re-run route matching in this TanStack version, so the
+ * tab click silently did nothing.
  *
  * Extracted from the component so it can be regression tested against a real
  * router without a DOM. See BoardModeTabs.test.ts.
@@ -42,10 +99,7 @@ export function navigateToMode(
   lastLocationByMode: Partial<Record<WorkspaceMode, string>>,
 ): void {
   if (target === current) return;
-  const fallback = target === "board" ? "/board" : "/";
-  const stored = lastLocationByMode[target];
-  const href = stored !== undefined && modeForHref(stored) === target ? stored : fallback;
-  void router.navigate({ href });
+  void router.navigate({ href: locationForMode(target, lastLocationByMode) });
 }
 
 export function BoardModeTabs({
@@ -74,6 +128,10 @@ export function BoardModeTabs({
     (target: WorkspaceMode) => navigateToMode(router, mode, target, lastLocationByMode),
     [lastLocationByMode, mode, router],
   );
+  const hrefFor = useCallback(
+    (target: WorkspaceMode) => modeTabHref(router.history, target, lastLocationByMode),
+    [lastLocationByMode, router],
+  );
 
   // After the hooks, never before: the hidden copy must keep recording the
   // last threads location, or the moment the sidebar takes over there is
@@ -94,29 +152,47 @@ export function BoardModeTabs({
     >
       {/* Board leads (T3O-34): the board is the app's primary mode, and the
           tab order is the clearest place to say so. */}
-      <ModeTab active={mode === "board"} label="Board" onSelect={() => switchTo("board")}>
+      <ModeTab
+        active={mode === "board"}
+        href={hrefFor("board")}
+        label="Board"
+        onSelect={() => switchTo("board")}
+      >
         <Columns3Icon />
       </ModeTab>
-      <ModeTab active={mode === "threads"} label="Threads" onSelect={() => switchTo("threads")}>
+      <ModeTab
+        active={mode === "threads"}
+        href={hrefFor("threads")}
+        label="Threads"
+        onSelect={() => switchTo("threads")}
+      >
         <MessageSquareIcon />
       </ModeTab>
     </div>
   );
 }
 
+/**
+ * One tab, and a real link. The anchor carries the mode's address so the
+ * browser's own link affordances work on it; the click handler takes the plain
+ * left click back so switching modes routes in place rather than reloading the
+ * whole app.
+ */
 function ModeTab({
   active,
+  href,
   label,
   onSelect,
   children,
 }: {
   readonly active: boolean;
+  readonly href: string;
   readonly label: string;
   readonly onSelect: () => void;
   readonly children: React.ReactNode;
 }) {
   return (
-    <button
+    <a
       aria-current={active ? "page" : undefined}
       className={cn(
         // Explicit 8px: `rounded-lg` maps to --radius (10px) in this theme,
@@ -127,11 +203,11 @@ function ModeTab({
           ? "bg-card text-foreground shadow-xs"
           : "bg-transparent text-muted-foreground hover:text-foreground",
       )}
-      onClick={onSelect}
-      type="button"
+      href={href}
+      onClick={(event) => handleModeTabClick(event, onSelect)}
     >
       {children}
       <span className="max-sm:sr-only">{label}</span>
-    </button>
+    </a>
   );
 }
