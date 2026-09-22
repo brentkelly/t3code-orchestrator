@@ -2,14 +2,16 @@
  * T3o: the three lines between the board and upstream's forge services.
  *
  * Everything either side of this file is covered elsewhere — the reactor
- * forwards `force` (`cardPullRequest.test.ts`), `branchPullRequest` really does
- * refresh (`GitManager.test.ts`), `runAction` really does merge
+ * forwards `force` (`cardPullRequest.test.ts`), an invalidated checkout really
+ * does re-ask the forge (`GitManager.test.ts`), `runAction` really does merge
  * (`PullRequestService.test.ts`) — and the wiring between them is a handful of
  * lines a refactor could drop while every neighbouring test stayed green.
  *
  * Three things have to hold, and none of them are visible from either side:
  *
- *  1. "Check again" reaches the forge rather than the lookup cache (T3O-48).
+ *  1. "Check again" reaches the forge rather than the lookup cache — including
+ *     a cached lookup FAILURE, whose backoff only the epoch bump clears
+ *     (T3O-48).
  *  2. A pull request is addressed by the project's own repository, resolved
  *     from the read model the way `PullRequestService` resolves its own — a
  *     mismatch here is refused by the service as "not this project's".
@@ -110,12 +112,14 @@ function makeGateway(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(GitManager.GitManager)({
-          branchPullRequest: (input, opts) =>
+          branchPullRequest: (input) =>
             Effect.sync(() => {
-              calls.push(
-                `branchPullRequest:${input.cwd}:${input.branch}:refresh=${opts?.refresh === true}`,
-              );
+              calls.push(`branchPullRequest:${input.cwd}:${input.branch}`);
               return null;
+            }),
+          invalidateStatus: (cwd) =>
+            Effect.sync(() => {
+              calls.push(`invalidateStatus:${cwd}`);
             }),
         }),
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
@@ -166,13 +170,23 @@ function makeGateway(
 }
 
 describe("BoardPullRequestGateway.find", () => {
-  it.effect("asks the forge again when forced", () => {
+  it.effect("invalidates this checkout before a forced lookup", () => {
     const { calls, layer } = makeGateway();
     return Effect.gen(function* () {
       const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
       const found = yield* gateway.find({ cwd: "/repo", branch: "board/t3o-47", force: true });
 
-      assert.deepStrictEqual(calls, ["branchPullRequest:/repo:board/t3o-47:refresh=true"]);
+      // The epoch bump has to come FIRST, and it has to be the bump rather
+      // than `{ refresh: true }`: refresh clears a cached ANSWER, while the
+      // case "Check again" exists for is a cached FAILURE, which upstream
+      // deliberately holds for its backoff
+      // (`GitManager.test.ts`, "branch PR lookup propagates provider
+      // failures"). Only the epoch, which is part of the cache key, gets past
+      // both.
+      assert.deepStrictEqual(calls, [
+        "invalidateStatus:/repo",
+        "branchPullRequest:/repo:board/t3o-47",
+      ]);
       assert.equal(found, null);
     }).pipe(Effect.provide(layer));
   });
@@ -185,8 +199,8 @@ describe("BoardPullRequestGateway.find", () => {
       yield* gateway.find({ cwd: "/repo", branch: "board/t3o-47", force: false });
 
       assert.deepStrictEqual(calls, [
-        "branchPullRequest:/repo:board/t3o-47:refresh=false",
-        "branchPullRequest:/repo:board/t3o-47:refresh=false",
+        "branchPullRequest:/repo:board/t3o-47",
+        "branchPullRequest:/repo:board/t3o-47",
       ]);
     }).pipe(Effect.provide(layer));
   });

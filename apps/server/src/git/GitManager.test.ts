@@ -1582,6 +1582,48 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  // T3o (T3O-48): the board's "Check again" button has to get past the failure
+  // backoff the test above pins — a user pressing it has just read the very
+  // error that is cached, so an answer out of that cache is a button that does
+  // nothing. `{ refresh: true }` cannot do it (upstream applies it to
+  // successful answers only); the epoch bump `invalidateStatus` performs is
+  // what changes the cache key, and that is what `BoardPullRequestGateway.find`
+  // calls on a forced lookup.
+  it.effect("an invalidated checkout retries a failed branch PR lookup at once", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/forced-retry"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/forced-retry"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          failWith: new GitHubCli.GitHubCliUnavailableError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("rate limited"),
+          }),
+        },
+      });
+
+      yield* manager
+        .branchPullRequest({ cwd: repoDir, branch: "feature/forced-retry" })
+        .pipe(Effect.flip);
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
+
+      yield* manager.invalidateStatus(repoDir);
+      const retried = yield* manager
+        .branchPullRequest({ cwd: repoDir, branch: "feature/forced-retry" })
+        .pipe(Effect.flip);
+
+      expect(retried._tag).toBe("SourceControlProviderError");
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
+    }),
+  );
+
   it.effect("status finds a merged PR after its remote branch was deleted", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -2085,7 +2085,7 @@ const make = Effect.gen(function* () {
     // unarmed, while a merge refused for failing checks was never armed at all.
     // Running the conflict prompt blind on that second case spawns an agent to
     // "fix" a branch with nothing wrong with it — the asymmetric mistake
-    // `isMergeConflictRefusal` exists to avoid. Asking the forge again gets a
+    // `probeMergeState` exists to avoid. Asking the forge again gets a
     // conflict re-armed and its step started unattended through the ordinary
     // path below, and gets a policy block onto the activity rail instead.
     //

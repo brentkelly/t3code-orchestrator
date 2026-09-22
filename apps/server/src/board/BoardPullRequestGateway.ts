@@ -163,12 +163,18 @@ export const layer: Layer.Layer<
 
     return BoardPullRequestGateway.of({
       find: (input) =>
-        gitManager
-          .branchPullRequest(
-            { cwd: input.cwd, branch: input.branch },
-            input.force === true ? { refresh: true } : undefined,
-          )
-          .pipe(Effect.catch(fail("find"))),
+        // T3o (T3O-48): a forced lookup bumps this checkout's PR-lookup epoch,
+        // which is part of the cache key — so it bypasses the lookup TTL and
+        // the per-branch failure backoff together. `{ refresh: true }` alone is
+        // not enough: upstream applies it to SUCCESSFUL answers only (see
+        // `GitManager.branchPullRequest`, "keep failed lookups' retry
+        // backoff"), so the very case the button exists for — a user who just
+        // read a lookup error — would be re-served that cached error for up to
+        // 15 minutes without a forge call.
+        (input.force === true ? gitManager.invalidateStatus(input.cwd) : Effect.void).pipe(
+          Effect.andThen(gitManager.branchPullRequest({ cwd: input.cwd, branch: input.branch })),
+          Effect.catch(fail("find")),
+        ),
       merge: (input) =>
         repositoryOf("merge", input.projectId).pipe(
           Effect.flatMap((repository) =>
