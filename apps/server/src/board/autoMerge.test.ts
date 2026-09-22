@@ -151,6 +151,7 @@ const setup = (input: {
   readonly mergeFailure?: string;
   readonly mergeOutcomes?: ReadonlyArray<string | null>;
   readonly mergeState?: BoardMergeState;
+  readonly mergeRefusal?: "host" | "blocked" | "unavailable";
 }) => ({
   board: { cards: input.cards, nextCardNumberByProject: {} },
   settings: settingsWith({
@@ -164,6 +165,7 @@ const setup = (input: {
   ...(input.mergeFailure === undefined ? {} : { mergeFailure: input.mergeFailure }),
   ...(input.mergeOutcomes === undefined ? {} : { mergeOutcomes: input.mergeOutcomes }),
   ...(input.mergeState === undefined ? {} : { mergeState: input.mergeState }),
+  ...(input.mergeRefusal === undefined ? {} : { mergeRefusal: input.mergeRefusal }),
 });
 
 const holdOf = (board: BoardState, id = "card-one"): BoardCardAutoMergeHold | null =>
@@ -394,6 +396,57 @@ it.effect("stops on a block with every check green — that is a decision, not a
         const hold = holdOf(yield* h.board);
         assert.strictEqual(hold?.classification, "approval-required");
         assert.strictEqual(hold?.retryAt, null);
+      }),
+  ),
+);
+
+// A merge refused BEFORE the host was asked (T3O-47). The pull request is
+// green, up to date and unconflicted — because it was never the problem — so
+// probing it and reading the result by elimination would hold the card as
+// "approval-required" and send the user after a reviewer over a merge-strategy
+// setting. The attempt's own sentence is the answer, and no retry can change
+// it.
+it.effect("reports a refusal upstream made itself, without probing the pull request", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge({ autoMerge: true })],
+      mergeFailure: "This host cannot merge with the squash strategy.",
+      mergeRefusal: "blocked",
+      // A probe here WOULD answer, and would answer "blocked, everything
+      // green" — the by-elimination approval verdict. It must never be asked.
+      mergeState: probe({ passed: 4 }),
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeStateProbes, []);
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.reason, "This host cannot merge with the squash strategy.");
+        assert.strictEqual(hold?.classification, "other");
+        assert.strictEqual(hold?.retryAt, null);
+      }),
+  ),
+);
+
+// The other half of the same split: a rate limit or a missing credential also
+// never reached the host, and its words are also the answer — but a retry can
+// clear it, so the ladder keeps climbing.
+it.effect("keeps climbing when the merge could not be attempted at all", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge({ autoMerge: true })],
+      mergeFailure: "API rate limit exceeded.",
+      mergeRefusal: "unavailable",
+      mergeState: probe({ passed: 4 }),
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeStateProbes, []);
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.reason, "API rate limit exceeded.");
+        assert.strictEqual(hold?.classification, "soft");
+        assert.notStrictEqual(hold?.retryAt, null);
       }),
   ),
 );

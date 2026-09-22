@@ -183,6 +183,12 @@ export type BoardMergeAttemptResult =
           the ladder reads as unclassifiable, the safe direction. Internal to
           the supervisor; the RPC layer reads `detail` and nothing else. */
       readonly mergeState?: BoardMergeState | null;
+      /** T3o (T3O-47): the refusal is known to be permanent — a merge strategy
+          this host does not offer, a permission this account lacks — so the
+          ladder must not spend eight rungs re-asking. Reads exactly like the
+          `not-open` / `no-pull-request` outcomes below, which have bypassed the
+          probe since D8. */
+      readonly permanent?: boolean;
     }
   | { readonly outcome: "not-open"; readonly state: "closed" | "merged" }
   | { readonly outcome: "no-pull-request" }
@@ -2603,13 +2609,18 @@ const make = Effect.gen(function* () {
     }
 
     // Structural outcomes bypass the probe entirely (D8): retrying cannot
-    // succeed, so there is nothing to classify and nothing to wait for.
+    // succeed, so there is nothing to classify and nothing to wait for. A
+    // refusal the gateway has already established is permanent — a strategy
+    // this host does not offer, a permission this account lacks (T3O-47) —
+    // belongs in the same bucket, and brings its own sentence with it.
     const structural =
       outcome.outcome === "not-open"
         ? `Its pull request is ${outcome.state}, so there was nothing to merge.`
         : outcome.outcome === "no-pull-request"
           ? "It has no pull request to merge."
-          : null;
+          : outcome.outcome === "refused" && outcome.permanent === true
+            ? outcome.detail
+            : null;
 
     const previous = fresh.autoMergeHold;
     const verdict =
@@ -4391,6 +4402,24 @@ const make = Effect.gen(function* () {
       );
 
     if (failure !== null) {
+      // Only the HOST's own refusal is worth a probe (T3O-47). Everything else
+      // was refused before the merge was ever put to it — a strategy or an
+      // action this host does not offer, a permission this account lacks, a
+      // missing CLI, a rate limit — and those failures carry their own words,
+      // which name the fix. Probing there would describe a pull request that
+      // was never the problem: a green, up-to-date, unconflicted one, which
+      // `boardMergeStateOf` reads BY ELIMINATION as a missing approval, and the
+      // card would send the user chasing a reviewer over a merge-strategy
+      // setting. So: the attempt's own sentence, no probe, no conflict route,
+      // and a ladder that stops where a retry cannot help.
+      if (failure.refusal !== undefined && failure.refusal !== "host") {
+        return {
+          outcome: "refused" as const,
+          detail: failure.detail,
+          mergeState: null,
+          permanent: failure.refusal === "blocked",
+        };
+      }
       // One probe answers both questions: is this a conflict, and what does the
       // card say about it (T3O-47). A probe that itself failed leaves `state`
       // null, which reads as "refused, reason unknown" — never as a conflict,

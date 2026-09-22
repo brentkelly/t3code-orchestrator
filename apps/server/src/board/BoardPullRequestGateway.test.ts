@@ -29,12 +29,29 @@ import type {
   PullRequestInvalidateInput,
   PullRequestRef,
 } from "@t3tools/contracts";
-import { PullRequestOperationError } from "@t3tools/contracts";
+import { PullRequestOperationError, PullRequestUnavailableError } from "@t3tools/contracts";
 
 import * as BoardPullRequestGateway from "./BoardPullRequestGateway.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+
+/** How upstream reports a host that was asked and said no: the placeholder
+    `VcsProcessExitError` leaves behind once the subprocess's stderr is
+    dropped, wrapped with the provider error as its cause. */
+function hostRefusal(reason: PullRequestProviderError["reason"] = "failed") {
+  return new PullRequestOperationError({
+    operation: "runAction",
+    detail: "Process exited with a non-zero status.",
+    cause: new PullRequestProviderError({
+      provider: "github",
+      operation: "runAction",
+      reason,
+      detail: "Process exited with a non-zero status.",
+    }),
+  });
+}
 
 const PROJECT = "project-1" as ProjectId;
 
@@ -105,6 +122,7 @@ function makeGateway(
     readonly repository?: string | null;
     readonly detail?: PullRequestDetail;
     readonly runActionFails?: boolean;
+    readonly runActionError?: unknown;
   } = {},
 ) {
   const calls: string[] = [];
@@ -142,14 +160,10 @@ function makeGateway(
               calls.push(
                 `runAction:${input.repository}:${input.number}:${input.action}:${input.mergeMethod}`,
               );
-              return options.runActionFails === true
-                ? Effect.fail(
-                    new PullRequestOperationError({
-                      operation: "runAction",
-                      detail: "GitHub would not merge it.",
-                    }),
-                  )
-                : Effect.void;
+              if (options.runActionError !== undefined) {
+                return Effect.fail(options.runActionError as PullRequestOperationError);
+              }
+              return options.runActionFails === true ? Effect.fail(hostRefusal()) : Effect.void;
             }),
           invalidate: (input: PullRequestInvalidateInput) =>
             Effect.sync(() => {
@@ -217,7 +231,7 @@ describe("BoardPullRequestGateway.merge", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("carries the host's own refusal out", () => {
+  it.effect("carries the host's own refusal out, marked as the host's", () => {
     const { layer } = makeGateway({ runActionFails: true });
     return Effect.gen(function* () {
       const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
@@ -226,7 +240,67 @@ describe("BoardPullRequestGateway.merge", () => {
       );
 
       assert.strictEqual(error.operation, "merge");
-      assert.strictEqual(error.detail, "GitHub would not merge it.");
+      assert.strictEqual(error.detail, "Process exited with a non-zero status.");
+      // The one refusal a merge-state probe can explain, and the only one
+      // whose `detail` is worth nothing on its own.
+      assert.strictEqual(error.refusal, "host");
+    }).pipe(Effect.provide(layer));
+  });
+
+  // The whole point of `refusal`: upstream refuses several things itself,
+  // BEFORE the host is asked, and each carries a sentence naming the fix. A
+  // caller that cannot tell those from the host's own "no" throws those
+  // sentences away and asks the pull request why it was refused — and the pull
+  // request, never having been the problem, answers that it is perfectly
+  // mergeable.
+  it.effect("marks a refusal upstream made itself as blocked, not the host's", () => {
+    const { layer } = makeGateway({
+      // What `runAction` fails with when the configured strategy is not in
+      // `mergeCapabilities.mergeMethods` — a squash-disabled repository, say.
+      runActionError: new PullRequestOperationError({
+        operation: "runAction",
+        detail: "This host cannot merge with the squash strategy.",
+      }),
+    });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      const error = yield* Effect.flip(
+        gateway.merge({ projectId: PROJECT, number: 110, method: "squash" }),
+      );
+
+      assert.strictEqual(error.refusal, "blocked");
+      assert.strictEqual(error.detail, "This host cannot merge with the squash strategy.");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("marks a rate-limited attempt as unavailable, not as the host's answer", () => {
+    const { layer } = makeGateway({ runActionError: hostRefusal("rate-limited") });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      const error = yield* Effect.flip(
+        gateway.merge({ projectId: PROJECT, number: 110, method: "squash" }),
+      );
+
+      // The backoff stopped the request; the host never weighed the merge.
+      assert.strictEqual(error.refusal, "unavailable");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("marks a host that cannot be reached at all as unavailable", () => {
+    const { layer } = makeGateway({
+      runActionError: new PullRequestUnavailableError({
+        reason: "cli-unauthenticated",
+        provider: "github",
+      }),
+    });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      const error = yield* Effect.flip(
+        gateway.merge({ projectId: PROJECT, number: 110, method: "squash" }),
+      );
+
+      assert.strictEqual(error.refusal, "unavailable");
+      assert.match(error.detail, /not authenticated/iu);
     }).pipe(Effect.provide(layer));
   });
 
@@ -240,6 +314,8 @@ describe("BoardPullRequestGateway.merge", () => {
 
       assert.strictEqual(error.operation, "merge");
       assert.match(error.detail, /source-control remote/u);
+      // A project with no remote is not something a retry fixes.
+      assert.strictEqual(error.refusal, "blocked");
       // Nothing was sent: an unaddressable pull request must not reach a host.
       assert.deepStrictEqual(calls, []);
     }).pipe(Effect.provide(layer));

@@ -20,7 +20,8 @@
  *
  * The error type is flattened to one shape carrying the forge's own words,
  * because that text is what the board actually does with a failure: shows it
- * to the user on the card.
+ * to the user on the card. A refused merge carries one more field —
+ * `BoardPullRequestRefusal` — saying whether the host is the one that refused.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -32,8 +33,33 @@ import type { ProjectId, PullRequestMergeMethod, VcsStatusChangeRequest } from "
 
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { boardMergeStateOf, type BoardMergeState } from "./boardMergeState.ts";
+
+/**
+ * Where a refused merge was refused (T3O-47) — the one bit the board cannot
+ * work out for itself, and the bit that decides what it does next.
+ *
+ * - `host` — the request reached the host, which weighed this merge and said
+ *   no. `detail` is a placeholder: upstream's process layer drops a
+ *   subprocess's stderr on purpose (it can carry credentialed URLs), so `gh pr
+ *   merge`'s own words never get this far. The board has to ask WHY, which is
+ *   what `mergeState` is for.
+ * - `blocked` — refused before the host was asked, and no retry can change it:
+ *   a merge strategy or an action this host does not offer, a permission this
+ *   account lacks, a project with no recognised remote. `detail` is upstream's
+ *   own sentence and names the fix.
+ * - `unavailable` — the attempt could not be made right now: the host's CLI is
+ *   missing or unauthenticated, or the account is rate limited. `detail` again
+ *   names the thing to do; a retry may well work.
+ *
+ * Only `host` is worth a merge-state probe. On the other two the pull request
+ * was never the problem, and a probe would describe a branch that is perfectly
+ * mergeable — which the board would then read, by elimination, as a missing
+ * approval.
+ */
+export type BoardPullRequestRefusal = "host" | "blocked" | "unavailable";
 
 export class BoardPullRequestGatewayError extends Schema.TaggedError<BoardPullRequestGatewayError>()(
   "BoardPullRequestGatewayError",
@@ -43,11 +69,42 @@ export class BoardPullRequestGatewayError extends Schema.TaggedError<BoardPullRe
         a missing approval, an unmergeable branch. Shown verbatim on the card,
         so the user reads the host's reason rather than a paraphrase of it. */
     detail: Schema.String,
+    /** T3o (T3O-47): set by `merge`, which is the only caller whose next move
+        depends on it. Absent on a read, where there is nothing to decide. */
+    refusal: Schema.optional(Schema.Literals(["host", "blocked", "unavailable"])),
   },
 ) {
   override get message(): string {
     return `Board pull-request operation '${this.operation}' failed: ${this.detail}`;
   }
+}
+
+const isProviderError = Schema.is(PullRequestProviderError);
+
+/**
+ * Read `BoardPullRequestRefusal` out of a `PullRequestService` failure.
+ *
+ * `PullRequestOperationError` is upstream's one bucket for both "I refused
+ * this before calling anything" and "the host refused it", so the `cause`
+ * separates them: a provider error is the host's answer, its absence is
+ * upstream's own pre-flight refusal. A provider error that is `rate-limited`
+ * never reached the host either — the backoff stopped it — and `missing-tool`
+ * / `unauthenticated` arrive as `PullRequestUnavailableError`, which has no
+ * cause to read and is unavailable by construction.
+ */
+function refusalOf(error: unknown): BoardPullRequestRefusal {
+  if (typeof error !== "object" || error === null) return "unavailable";
+  const tag = (error as { readonly _tag?: unknown })._tag;
+  // Already classified: the pull request could not even be addressed, which
+  // `repositoryOf` decides before any of this.
+  if (tag === "BoardPullRequestGatewayError") {
+    return (error as BoardPullRequestGatewayError).refusal ?? "unavailable";
+  }
+  if (tag === "PullRequestUnavailableError") return "unavailable";
+  if (tag !== "PullRequestOperationError") return "unavailable";
+  const cause = (error as { readonly cause?: unknown }).cause;
+  if (!isProviderError(cause)) return "blocked";
+  return cause.reason === "failed" ? "host" : "unavailable";
 }
 
 /** Pull the most specific human-readable text out of an unknown failure.
@@ -96,6 +153,13 @@ export class BoardPullRequestGateway extends Context.Service<
        * a button that does nothing. */
       readonly force?: boolean;
     }) => Effect.Effect<VcsStatusChangeRequest | null, BoardPullRequestGatewayError>;
+    /**
+     * Merge it, with the strategy the merge stage is configured for.
+     *
+     * A failure always carries `refusal`, because "the host refused this
+     * merge" and "this merge was never put to the host" need opposite
+     * responses from the caller — see `BoardPullRequestRefusal`.
+     */
     readonly merge: (
       input: BoardPullRequestRef & { readonly method: PullRequestMergeMethod },
     ) => Effect.Effect<void, BoardPullRequestGatewayError>;
@@ -143,7 +207,11 @@ export const layer: Layer.Layer<
      * repository identity. A project whose remote was never resolved has no
      * pull requests to act on, and saying so names the reason.
      */
-    const repositoryOf = (operation: string, projectId: ProjectId) =>
+    const repositoryOf = (
+      operation: string,
+      projectId: ProjectId,
+      refusal?: BoardPullRequestRefusal,
+    ) =>
       projections.getProjectShellById(projectId).pipe(
         Effect.catch(fail(operation)),
         Effect.flatMap((project) => {
@@ -155,6 +223,7 @@ export const layer: Layer.Layer<
                 new BoardPullRequestGatewayError({
                   operation,
                   detail: "This project has no recognised source-control remote.",
+                  ...(refusal === undefined ? {} : { refusal }),
                 }),
               )
             : Effect.succeed(repository);
@@ -176,7 +245,7 @@ export const layer: Layer.Layer<
           Effect.catch(fail("find")),
         ),
       merge: (input) =>
-        repositoryOf("merge", input.projectId).pipe(
+        repositoryOf("merge", input.projectId, "blocked").pipe(
           Effect.flatMap((repository) =>
             pullRequests.runAction({
               projectId: input.projectId,
@@ -186,7 +255,15 @@ export const layer: Layer.Layer<
               mergeMethod: input.method,
             }),
           ),
-          Effect.catch(fail("merge")),
+          Effect.catch((error) =>
+            Effect.fail(
+              new BoardPullRequestGatewayError({
+                operation: "merge",
+                detail: failureDetail(error),
+                refusal: refusalOf(error),
+              }),
+            ),
+          ),
         ),
       mergeState: (input) =>
         repositoryOf("mergeState", input.projectId).pipe(

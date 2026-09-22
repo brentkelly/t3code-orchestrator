@@ -377,7 +377,7 @@ fork owns no forge-merge code below it.
 
 | Board operation | Was                                                                                                                                             | Is                                                                  |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `find`          | fork's `GitManager.findBranchPullRequest`                                                                                                       | upstream's `GitManager.branchPullRequest(input, { refresh })`       |
+| `find`          | fork's `GitManager.findBranchPullRequest`                                                                                                       | upstream's `GitManager.branchPullRequest`, after `invalidateStatus` on a forced lookup |
 | `merge`         | `GitManager.mergeBranchPullRequest` → `SourceControlProvider.mergeChangeRequest` → five provider implementations → `GitHubCli.mergePullRequest` | `PullRequestService.runAction({ action: "merge", mergeMethod })`    |
 | `mergeState`    | `changeRequestMergeState` → `gitHubMergeState.ts` / `forgejoMergeState.ts`                                                                      | `PullRequestService.detail` → fork-owned `board/boardMergeState.ts` |
 
@@ -407,6 +407,19 @@ fork owns no forge-merge code below it.
   protection rule, an unresolved conversation. All need a person, so that is `approval-required`.
   Guarded on a definite `baseComparison: "up-to-date"` — every host but GitHub reports no
   comparison, and a branch that is merely behind must stay soft.
+- **…which is only sound when the HOST is the one that refused.** Upstream refuses several things
+  itself, before any host is asked: a merge strategy or an action outside
+  `capabilities.mergeMethods` / `capabilities.actions`, a permission the viewer lacks. A missing
+  CLI, a missing credential and a rate limit stop the request as well. Each carries a sentence that
+  names the fix, and each would leave the elimination above reading a pull request that was never
+  the problem — a squash-disabled repository would park every card as "needs an approval". So the
+  gateway tags a refused merge with `BoardPullRequestRefusal`: `host` is the only one worth a probe,
+  `blocked` stops the ladder on the spot with upstream's own words (the same bucket as a closed
+  pull request, D8), and `unavailable` shows those words and keeps climbing. `PullRequestService`
+  buckets both its own pre-flight refusals and the host's into `PullRequestOperationError`, so the
+  three are told apart by its `cause`: a `PullRequestProviderError` is the host's answer, its
+  absence is upstream's own. A viewer-permissions LOOKUP that fails is indistinguishable from the
+  host's "no" at this seam and is still probed — the residual, and the narrow one.
 - **One optional field is the whole price.** The ladder resets on a new head sha (`T3O-38`, D9) and
   upstream's `PullRequestDetail` carries none, although GitHub's provider already reads
   `headRefOid` and spreads it. Three one-line `T3o:` markers carry it through

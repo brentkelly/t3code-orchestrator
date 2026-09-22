@@ -72,6 +72,7 @@ import { BoardStepSlots, BoardStepSlotsLive } from "./BoardStepSlots.ts";
 import {
   BoardPullRequestGateway,
   BoardPullRequestGatewayError,
+  type BoardPullRequestRefusal,
 } from "./BoardPullRequestGateway.ts";
 import {
   OrchestrationCommandInvariantError,
@@ -566,6 +567,11 @@ export function withGovernor(
         `mergeFailure` is "refused twice, then merged", which is the whole
         retry-ladder story. */
     readonly mergeOutcomes?: ReadonlyArray<string | null>;
+    /** Which KIND of refusal `mergeFailure` / `mergeOutcomes` describe
+        (T3O-47). `undefined` is the host's own "no" — the case every fixture
+        written before this option existed means — and is the only one the
+        reactor answers with a merge-state probe. */
+    readonly mergeRefusal?: BoardPullRequestRefusal;
     /** What the structured refusal probe answers (T3O-38, D7). `undefined`
         makes the probe FAIL, which is what an unsupported provider does and
         what the reactor must read as "unclassifiable" — the plain ladder. */
@@ -997,7 +1003,13 @@ export function withGovernor(
             const detail = scripted === undefined ? input.mergeFailure : (scripted ?? undefined);
             return detail === undefined
               ? Effect.void
-              : Effect.fail(new BoardPullRequestGatewayError({ operation: "merge", detail }));
+              : Effect.fail(
+                  new BoardPullRequestGatewayError({
+                    operation: "merge",
+                    detail,
+                    refusal: input.mergeRefusal ?? "host",
+                  }),
+                );
           }),
         ),
       mergeState: (request) =>
