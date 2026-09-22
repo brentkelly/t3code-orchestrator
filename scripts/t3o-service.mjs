@@ -347,7 +347,7 @@ function buildBundle() {
     });
   }
 
-  for (const asset of ["bin.mjs", "service-launcher.mjs", "client/index.html"]) {
+  for (const asset of ["bin.mjs", "client/index.html"]) {
     if (!NodeFS.existsSync(NodePath.join(distDir, asset))) {
       fail(`missing build asset apps/server/dist/${asset}. Drop --no-build and try again.`);
     }

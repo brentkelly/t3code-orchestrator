@@ -45,9 +45,10 @@ const binName = flag("bin", packageName);
 const version = flag("version", serverPackageJson.version);
 const outDir = NodePath.resolve(repoRoot, flag("out", "dist-npm"));
 
-// The publish path asserts these three before it will ship anything: the CLI
-// entry, the Windows service launcher, and the bundled web client.
-const requiredAssets = ["dist/bin.mjs", "dist/service-launcher.mjs", "dist/client/index.html"];
+// The publish path asserts these two before it will ship anything: the CLI
+// entry (which also hosts the `__service-launcher` subcommand) and the
+// bundled web client.
+const requiredAssets = ["dist/bin.mjs", "dist/client/index.html"];
 for (const relativePath of requiredAssets) {
   if (!NodeFS.existsSync(NodePath.join(serverDir, relativePath))) {
     console.error(
