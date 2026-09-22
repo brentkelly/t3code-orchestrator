@@ -22,10 +22,11 @@ import {
   type BoardCardAutoMergeHold,
   type BoardCardStepState,
   type BoardState,
-  type ChangeRequestMergeState,
   type OrchestrationCommand,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
+
+import type { BoardMergeState } from "./boardMergeState.ts";
 import { assert, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -77,9 +78,9 @@ const probe = (input: {
   readonly pending?: number;
   readonly failed?: number;
   readonly mergeable?: "mergeable" | "blocked" | "unknown";
-  readonly blockedReason?: ChangeRequestMergeState["blockedReason"];
+  readonly blockedReason?: BoardMergeState["blockedReason"];
   readonly headSha?: string;
-}): ChangeRequestMergeState => {
+}): BoardMergeState => {
   const passed = input.passed ?? 0;
   const pending = input.pending ?? 0;
   const failed = input.failed ?? 0;
@@ -149,7 +150,8 @@ const setup = (input: {
   readonly boardWideAutoMerge?: boolean;
   readonly mergeFailure?: string;
   readonly mergeOutcomes?: ReadonlyArray<string | null>;
-  readonly mergeState?: ChangeRequestMergeState;
+  readonly mergeState?: BoardMergeState;
+  readonly mergeRefusal?: "host" | "blocked" | "unavailable";
 }) => ({
   board: { cards: input.cards, nextCardNumberByProject: {} },
   settings: settingsWith({
@@ -163,6 +165,7 @@ const setup = (input: {
   ...(input.mergeFailure === undefined ? {} : { mergeFailure: input.mergeFailure }),
   ...(input.mergeOutcomes === undefined ? {} : { mergeOutcomes: input.mergeOutcomes }),
   ...(input.mergeState === undefined ? {} : { mergeState: input.mergeState }),
+  ...(input.mergeRefusal === undefined ? {} : { mergeRefusal: input.mergeRefusal }),
 });
 
 const holdOf = (board: BoardState, id = "card-one"): BoardCardAutoMergeHold | null =>
@@ -397,6 +400,57 @@ it.effect("stops on a block with every check green — that is a decision, not a
   ),
 );
 
+// A merge refused BEFORE the host was asked (T3O-47). The pull request is
+// green, up to date and unconflicted — because it was never the problem — so
+// probing it and reading the result by elimination would hold the card as
+// "approval-required" and send the user after a reviewer over a merge-strategy
+// setting. The attempt's own sentence is the answer, and no retry can change
+// it.
+it.effect("reports a refusal upstream made itself, without probing the pull request", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge({ autoMerge: true })],
+      mergeFailure: "This host cannot merge with the squash strategy.",
+      mergeRefusal: "blocked",
+      // A probe here WOULD answer, and would answer "blocked, everything
+      // green" — the by-elimination approval verdict. It must never be asked.
+      mergeState: probe({ passed: 4 }),
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeStateProbes, []);
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.reason, "This host cannot merge with the squash strategy.");
+        assert.strictEqual(hold?.classification, "other");
+        assert.strictEqual(hold?.retryAt, null);
+      }),
+  ),
+);
+
+// The other half of the same split: a rate limit or a missing credential also
+// never reached the host, and its words are also the answer — but a retry can
+// clear it, so the ladder keeps climbing.
+it.effect("keeps climbing when the merge could not be attempted at all", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge({ autoMerge: true })],
+      mergeFailure: "API rate limit exceeded.",
+      mergeRefusal: "unavailable",
+      mergeState: probe({ passed: 4 }),
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        assert.deepStrictEqual(yield* h.mergeStateProbes, []);
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.reason, "API rate limit exceeded.");
+        assert.strictEqual(hold?.classification, "soft");
+        assert.notStrictEqual(hold?.retryAt, null);
+      }),
+  ),
+);
+
 it.effect("gives a provider with NO probe the plain ladder rather than an error (D7)", () =>
   withGovernor(
     setup({
@@ -473,7 +527,11 @@ it.effect("sends a CONFLICT to the conflict-fix step, never to the ladder (D8)",
   withGovernor(
     setup({
       cards: [cardAtMerge({ autoMerge: true })],
-      mergeFailure: "merge conflict between base and head",
+      mergeFailure: "the host refused",
+      // T3o (T3O-47): a conflict is read off the host's structured merge state
+      // rather than out of the refusal's prose, which upstream's process layer
+      // no longer carries out of a subprocess.
+      mergeState: probe({ mergeable: "blocked", blockedReason: "conflict", passed: 1 }),
     }),
     (h) =>
       Effect.gen(function* () {
@@ -481,11 +539,12 @@ it.effect("sends a CONFLICT to the conflict-fix step, never to the ladder (D8)",
         // The existing one-shot fix owns this, and its success finishes the
         // merge. A hold would be describing something that is happening.
         assert.strictEqual(holdOf(yield* h.board), null);
-        // And the ladder never drives it: no probe, no retry.
-        assert.deepStrictEqual(yield* h.mergeStateProbes, []);
         yield* TestClock.adjust(Duration.hours(2));
         yield* h.reactor.drain;
         assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        // ONE probe: the one that identified the conflict. The ladder never
+        // drives it, so there is no second.
+        assert.strictEqual((yield* h.mergeStateProbes).length, 1);
         // The stage's conflict-resolution step was requested.
         assert.isTrue(
           (yield* h.commands).some((command) => command.type === "board.card.start-stage-thread"),

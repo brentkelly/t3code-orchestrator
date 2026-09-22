@@ -527,76 +527,6 @@ describe("GitHubCli.layer", () => {
   );
 });
 
-describe("GitHubCli.mergePullRequest", () => {
-  it.effect("surfaces the forge's own refusal text", () =>
-    Effect.gen(function* () {
-      // The failure this closes: `VcsProcessExitError` deliberately redacts
-      // stderr, so routing the merge through the ordinary error path gave the
-      // board a constant string ("GitHub CLI command failed.") instead of
-      // GitHub's explanation. That silently disabled conflict detection — the
-      // classifier can only ever see this text — and showed the user a message
-      // that says nothing. So the merge reads the refusal as OUTPUT.
-      mockRun.mockReturnValueOnce(
-        Effect.succeed({
-          exitCode: ChildProcessSpawner.ExitCode(1),
-          stdout: "",
-          stderr: "X Pull request is not mergeable: the merge commit cannot be cleanly created\n",
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        }),
-      );
-
-      const github = yield* GitHubCli.GitHubCli;
-      const error = yield* Effect.flip(
-        github.mergePullRequest({ cwd: "/repo", reference: "284", strategy: "squash" }),
-      );
-
-      assert.equal(error._tag, "GitHubPullRequestMergeRefusedError");
-      assert.include(error.detail, "cannot be cleanly created");
-      // `--squash` is always passed: `gh pr merge` with no strategy prompts
-      // interactively, which would hang the server.
-      const call = mockRun.mock.calls[0]?.[0];
-      assert.deepStrictEqual(call?.args, ["pr", "merge", "284", "--squash"]);
-      // Non-zero has to come back as a RESULT, or the stderr never survives.
-      assert.strictEqual(call?.allowNonZeroExit, true);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("strips credentials out of the refusal before it reaches a card", () =>
-    Effect.gen(function* () {
-      // The refusal lands on the card's activity rail and in a durable event
-      // log, so it goes through the free-text scrubber rather than being
-      // passed along raw. A credential inside a SENTENCE is the case that
-      // matters — a URL-parsing sanitizer lets that straight through — so the
-      // fixture wraps it in one.
-      mockRun.mockReturnValueOnce(
-        Effect.succeed({
-          exitCode: ChildProcessSpawner.ExitCode(1),
-          stdout: "",
-          stderr: "X Pull request is not mergeable: https://user:hunter2@github.com/acme/repo.git",
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        }),
-      );
-
-      const github = yield* GitHubCli.GitHubCli;
-      const error = yield* Effect.flip(
-        github.mergePullRequest({ cwd: "/repo", reference: "284", strategy: "squash" }),
-      );
-      assert.notInclude(error.detail, "hunter2");
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("succeeds silently on a clean merge", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
-      const github = yield* GitHubCli.GitHubCli;
-      yield* github.mergePullRequest({ cwd: "/repo", reference: "284", strategy: "merge" });
-      assert.deepStrictEqual(mockRun.mock.calls[0]?.[0]?.args, ["pr", "merge", "284", "--merge"]);
-    }).pipe(Effect.provide(layer)),
-  );
-});
-
 // T3o (T3O-48): `gh` resolves the base repository itself when no repository is
 // named, and its rule PREFERS a remote called `upstream` — so in a fork every
 // unpinned call asks the wrong repository and truthfully answers "no pull
@@ -695,42 +625,6 @@ describe("GitHubCli repository pinning", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("names the repository on a merge, so a fork never merges upstream's PR", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
-      const github = yield* GitHubCli.GitHubCli;
-      yield* github.mergePullRequest({
-        cwd: "/repo",
-        repository,
-        reference: "108",
-        strategy: "squash",
-      });
-      assert.deepStrictEqual(args(), [
-        "pr",
-        "merge",
-        "108",
-        "--repo",
-        "github.com/brentkelly/t3code-orchestrator",
-        "--squash",
-      ]);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("names the repository on the merge-state probe", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
-      const github = yield* GitHubCli.GitHubCli;
-      yield* github.pullRequestMergeState({ cwd: "/repo", repository, reference: "110" });
-      assert.deepStrictEqual(args().slice(0, 5), [
-        "pr",
-        "view",
-        "110",
-        "--repo",
-        "github.com/brentkelly/t3code-orchestrator",
-      ]);
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.effect("names the repository POSITIONALLY on `repo view`, which has no --repo flag", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("t3o\n")));
@@ -766,8 +660,8 @@ describe("GitHubCli repository pinning", () => {
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
       const github = yield* GitHubCli.GitHubCli;
-      yield* github.mergePullRequest({ cwd: "/repo", reference: "108", strategy: "squash" });
-      assert.deepStrictEqual(args(), ["pr", "merge", "108", "--squash"]);
+      yield* github.checkoutPullRequest({ cwd: "/repo", reference: "108" });
+      assert.deepStrictEqual(args(), ["pr", "checkout", "108"]);
       assert.notInclude(args(), "--repo");
     }).pipe(Effect.provide(layer)),
   );

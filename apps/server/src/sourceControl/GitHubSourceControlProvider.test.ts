@@ -541,94 +541,48 @@ it.effect("names the origin repository on a non-open list, which builds its own 
   }),
 );
 
-it.effect("passes the origin repository into a merge, so a fork never merges upstream's PR", () =>
+it.effect("passes the origin repository into create, checkout, view and the default branch", () =>
   Effect.gen(function* () {
     const seen: Array<unknown> = [];
+    const record = (input: { readonly repository?: unknown }) => {
+      seen.push(input.repository);
+    };
     const provider = yield* makeProvider({
-      mergePullRequest: (input) => {
-        seen.push(input.repository);
-        return Effect.void;
-      },
+      createPullRequest: (input) => Effect.sync(() => record(input)),
+      checkoutPullRequest: (input) => Effect.sync(() => record(input)),
+      getDefaultBranch: (input) => Effect.sync(() => record(input)).pipe(Effect.as(null)),
+      getPullRequest: (input) =>
+        Effect.sync(() => record(input)).pipe(
+          Effect.as({
+            number: 110,
+            title: "Upgrade",
+            url: "https://github.com/brentkelly/t3code-orchestrator/pull/110",
+            baseRefName: "t3o",
+            headRefName: "board/t3o-46",
+            state: "open" as const,
+          }),
+        ),
     });
 
-    yield* provider.mergeChangeRequest({
+    yield* provider.createChangeRequest({
       cwd: "/repo",
       context: originContext,
-      reference: "108",
-      strategy: "squash",
+      baseRefName: "t3o",
+      headSelector: "board/t3o-46",
+      title: "Upgrade",
+      bodyFile: "/tmp/body.md",
     });
+    yield* provider.checkoutChangeRequest({
+      cwd: "/repo",
+      context: originContext,
+      reference: "110",
+    });
+    yield* provider.getDefaultBranch({ cwd: "/repo", context: originContext });
+    yield* provider.getChangeRequest({ cwd: "/repo", context: originContext, reference: "110" });
 
-    assert.deepStrictEqual(seen, [
-      { host: "github.com", nameWithOwner: "brentkelly/t3code-orchestrator" },
-    ]);
+    const repository = { host: "github.com", nameWithOwner: "brentkelly/t3code-orchestrator" };
+    assert.deepStrictEqual(seen, [repository, repository, repository, repository]);
   }),
-);
-
-it.effect(
-  "passes the origin repository into create, checkout, view and the merge-state probe",
-  () =>
-    Effect.gen(function* () {
-      const seen: Array<unknown> = [];
-      const record = (input: { readonly repository?: unknown }) => {
-        seen.push(input.repository);
-      };
-      const provider = yield* makeProvider({
-        createPullRequest: (input) => Effect.sync(() => record(input)),
-        checkoutPullRequest: (input) => Effect.sync(() => record(input)),
-        getDefaultBranch: (input) => Effect.sync(() => record(input)).pipe(Effect.as(null)),
-        pullRequestMergeState: (input) =>
-          Effect.sync(() => record(input)).pipe(
-            Effect.as({
-              mergeable: "unknown" as const,
-              blockedReason: null,
-              checks: {
-                total: 0,
-                passed: 0,
-                pending: 0,
-                failed: 0,
-                failing: [],
-                running: [],
-              },
-              headSha: null,
-            }),
-          ),
-        getPullRequest: (input) =>
-          Effect.sync(() => record(input)).pipe(
-            Effect.as({
-              number: 110,
-              title: "Upgrade",
-              url: "https://github.com/brentkelly/t3code-orchestrator/pull/110",
-              baseRefName: "t3o",
-              headRefName: "board/t3o-46",
-              state: "open" as const,
-            }),
-          ),
-      });
-
-      yield* provider.createChangeRequest({
-        cwd: "/repo",
-        context: originContext,
-        baseRefName: "t3o",
-        headSelector: "board/t3o-46",
-        title: "Upgrade",
-        bodyFile: "/tmp/body.md",
-      });
-      yield* provider.checkoutChangeRequest({
-        cwd: "/repo",
-        context: originContext,
-        reference: "110",
-      });
-      yield* provider.getDefaultBranch({ cwd: "/repo", context: originContext });
-      yield* provider.changeRequestMergeState({
-        cwd: "/repo",
-        context: originContext,
-        reference: "110",
-      });
-      yield* provider.getChangeRequest({ cwd: "/repo", context: originContext, reference: "110" });
-
-      const repository = { host: "github.com", nameWithOwner: "brentkelly/t3code-orchestrator" };
-      assert.deepStrictEqual(seen, [repository, repository, repository, repository, repository]);
-    }),
 );
 
 it.effect("leaves a call unpinned when the registry resolved no context at all", () =>

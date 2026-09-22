@@ -159,29 +159,6 @@ export const make = Effect.gen(function* () {
               }),
           ),
         ),
-    // Merging through the board is GitHub-only in v1 (t3o-20 set the
-    // GitHub-mandatory precedent for the review loop). Read operations above
-    // stay provider-agnostic, so a card on Bitbucket still shows its PR badge and
-    // its link — only the merge is gated, and it says so plainly rather than
-    // failing in a way that looks like the merge went wrong.
-    mergeChangeRequest: (input) =>
-      new SourceControlProviderError({
-        provider: "bitbucket",
-        operation: "mergeChangeRequest",
-        cwd: input.cwd,
-        reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
-        detail: "Merging a change request from the board is supported for GitHub only.",
-      }),
-    // T3o (T3O-38, D7): no merge here, so nothing to classify. The board
-    // reads this as "unclassifiable" and falls back to the plain retry ladder.
-    changeRequestMergeState: (input) =>
-      new SourceControlProviderError({
-        provider: "bitbucket",
-        operation: "changeRequestMergeState",
-        cwd: input.cwd,
-        reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.reference),
-        detail: "Reading a change request's merge state is supported for GitHub and Forgejo only.",
-      }),
     checkoutChangeRequest: (input) =>
       bitbucket
         .checkoutPullRequest({

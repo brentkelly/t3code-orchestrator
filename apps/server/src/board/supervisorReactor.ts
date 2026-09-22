@@ -164,7 +164,9 @@ import {
   boardAutoMergeLadderStep,
   classifyBoardAutoMergeRefusal,
   UNCLASSIFIED_AUTO_MERGE_VERDICT,
+  type BoardAutoMergeVerdict,
 } from "./autoMergeClassification.ts";
+import { boardMergeRefusalReason, type BoardMergeState } from "./boardMergeState.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -172,7 +174,22 @@ import { boardReleasedThreadIds } from "./threadRelease.ts";
 export type BoardMergeAttemptResult =
   | { readonly outcome: "merged"; readonly number: number }
   | { readonly outcome: "conflict"; readonly detail: string }
-  | { readonly outcome: "refused"; readonly detail: string }
+  | {
+      readonly outcome: "refused";
+      readonly detail: string;
+      /** T3o (T3O-47): the probe that produced `detail`, for the ladder to
+          classify. Absent where the refusal was decided without asking the
+          forge — a retargeted base, a gate this board applied itself — which
+          the ladder reads as unclassifiable, the safe direction. Internal to
+          the supervisor; the RPC layer reads `detail` and nothing else. */
+      readonly mergeState?: BoardMergeState | null;
+      /** T3o (T3O-47): the refusal is known to be permanent — a merge strategy
+          this host does not offer, a permission this account lacks — so the
+          ladder must not spend eight rungs re-asking. Reads exactly like the
+          `not-open` / `no-pull-request` outcomes below, which have bypassed the
+          probe since D8. */
+      readonly permanent?: boolean;
+    }
   | { readonly outcome: "not-open"; readonly state: "closed" | "merged" }
   | { readonly outcome: "no-pull-request" }
   | { readonly outcome: "no-workspace" }
@@ -2074,7 +2091,7 @@ const make = Effect.gen(function* () {
     // unarmed, while a merge refused for failing checks was never armed at all.
     // Running the conflict prompt blind on that second case spawns an agent to
     // "fix" a branch with nothing wrong with it — the asymmetric mistake
-    // `isMergeConflictRefusal` exists to avoid. Asking the forge again gets a
+    // `probeMergeState` exists to avoid. Asking the forge again gets a
     // conflict re-armed and its step started unattended through the ordinary
     // path below, and gets a policy block onto the activity rail instead.
     //
@@ -2592,19 +2609,24 @@ const make = Effect.gen(function* () {
     }
 
     // Structural outcomes bypass the probe entirely (D8): retrying cannot
-    // succeed, so there is nothing to classify and nothing to wait for.
+    // succeed, so there is nothing to classify and nothing to wait for. A
+    // refusal the gateway has already established is permanent — a strategy
+    // this host does not offer, a permission this account lacks (T3O-47) —
+    // belongs in the same bucket, and brings its own sentence with it.
     const structural =
       outcome.outcome === "not-open"
         ? `Its pull request is ${outcome.state}, so there was nothing to merge.`
         : outcome.outcome === "no-pull-request"
           ? "It has no pull request to merge."
-          : null;
+          : outcome.outcome === "refused" && outcome.permanent === true
+            ? outcome.detail
+            : null;
 
     const previous = fresh.autoMergeHold;
     const verdict =
       structural !== null
         ? { classification: "other" as const, detail: null, headSha: previous?.headSha ?? null }
-        : yield* probeMergeRefusal(fresh);
+        : probeMergeRefusal(outcome.outcome === "refused" ? (outcome.mergeState ?? null) : null);
     const step = boardAutoMergeLadderStep({
       classification: verdict.classification,
       previousAttempt: options.resetLadder ? 0 : (previous?.attempt ?? 0),
@@ -2704,19 +2726,8 @@ const make = Effect.gen(function* () {
    * blip) is `soft`: an answer we cannot read costs a few extra retries and
    * must never produce a hard verdict.
    */
-  const probeMergeRefusal = Effect.fn("board-supervisor-probeMergeRefusal")(function* (
-    card: BoardCard,
-  ) {
-    const pullRequest = card.pullRequest;
-    if (pullRequest === null) return UNCLASSIFIED_AUTO_MERGE_VERDICT;
-    const model = yield* snapshotQuery.getCommandReadModel();
-    const cwd = card.worktree?.path ?? projectCwd(model, card);
-    if (cwd === null) return UNCLASSIFIED_AUTO_MERGE_VERDICT;
-    const state = yield* pullRequests
-      .mergeState({ cwd, number: pullRequest.number })
-      .pipe(Effect.catch(() => Effect.succeed(null)));
-    return state === null ? UNCLASSIFIED_AUTO_MERGE_VERDICT : classifyBoardAutoMergeRefusal(state);
-  });
+  const probeMergeRefusal = (state: BoardMergeState | null): BoardAutoMergeVerdict =>
+    state === null ? UNCLASSIFIED_AUTO_MERGE_VERDICT : classifyBoardAutoMergeRefusal(state);
 
   // A step settled `succeeded`: ask the stage executor what runs NEXT before
   // advancing the card (t3o-16). For a single-step stage the executor reports
@@ -4224,31 +4235,31 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * Whether a forge refusal is a MERGE CONFLICT rather than a policy block.
+   * Ask the forge WHY it just refused a merge, once (T3O-47).
    *
-   * The distinction drives two very different responses — start an agent to
-   * resolve it, or stop and tell the human — and the cost of the two mistakes
-   * is very asymmetric, so this is deliberately NARROW. Mistaking a conflict
-   * for a policy block just means the user reads the real reason and clicks
-   * again; mistaking a policy block for a conflict spawns an agent to "fix" a
-   * branch that has nothing wrong with it, which then merges base into a
-   * healthy branch and pushes for no reason.
+   * The answer drives two very different responses — start an agent to resolve
+   * a conflict, or stop and tell the human — and the cost of the two mistakes
+   * is very asymmetric. Mistaking a conflict for a policy block just means the
+   * user reads the real reason and clicks again; mistaking a policy block for a
+   * conflict spawns an agent to "fix" a branch that has nothing wrong with it,
+   * which then merges base into a healthy branch and pushes for no reason.
    *
-   * In particular "not mergeable" is NOT a conflict signal: GitHub wraps every
-   * refusal in it, failing status checks included. Only phrases that can mean
-   * nothing else count.
+   * It is answered from the host's structured mergeability rather than from
+   * the refusal's prose, which was always the weaker test and which upstream's
+   * process layer no longer carries out of a subprocess at all. The one probe
+   * serves both readers: the conflict route here, and the ladder's
+   * classification in `recordAutoMergeOutcome`, which is handed this state
+   * rather than spending a second round trip on it.
    */
-  const isMergeConflictRefusal = (detail: string): boolean => {
-    const text = detail.toLowerCase();
-    return (
-      text.includes("conflict") ||
-      // GitHub's wording when the merge commit cannot be constructed.
-      text.includes("cannot be cleanly created") ||
-      // The `mergeStateStatus` token, matched with its label so the bare word
-      // "dirty" appearing in some other sentence cannot trigger a fix.
-      text.includes("mergestatestatus: dirty")
-    );
-  };
+  const probeMergeState = Effect.fn("board-supervisor-probeMergeState")(function* (
+    card: BoardCard,
+  ) {
+    const pullRequest = card.pullRequest;
+    if (pullRequest === null) return null;
+    return yield* pullRequests
+      .mergeState({ projectId: card.projectId, number: pullRequest.number })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+  });
 
   /**
    * Merge a card's pull request, then advance it — the blue Merge button.
@@ -4364,12 +4375,15 @@ const make = Effect.gen(function* () {
       };
     }
 
-    const worktree = fresh.worktree;
     const model = yield* snapshotQuery.getCommandReadModel();
-    // The card's own worktree when it still has one, else the project root:
-    // a reclaimed worktree must not make a card unmergeable.
-    const cwd = worktree?.path ?? projectCwd(model, fresh);
-    if (cwd === null) return { outcome: "no-workspace" } as const;
+    // T3o (T3O-47): the PROJECT's checkout, not the card's worktree. The merge
+    // is a forge operation addressed by `{ projectId, repository }`, and
+    // `PullRequestService` runs the host's CLI in the project's own workspace
+    // root — so that is the one path whose absence makes a card unmergeable. A
+    // reclaimed worktree is irrelevant to it, which is what this guard used to
+    // have to say explicitly.
+    const root = projectCwd(model, fresh);
+    if (root === null) return { outcome: "no-workspace" } as const;
 
     const settings = yield* boardSettings;
     // Resolved from the MERGE-ROLE stage, not from `fresh.stage`. They are the
@@ -4380,14 +4394,39 @@ const make = Effect.gen(function* () {
     const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
     const strategy = isBoardMergeStageExecution(exec) ? exec.strategy : "squash";
 
-    const failure = yield* pullRequests.merge({ cwd, number: pullRequest.number, strategy }).pipe(
-      Effect.as(null),
-      Effect.catch((error) => Effect.succeed(error)),
-    );
+    const failure = yield* pullRequests
+      .merge({ projectId: fresh.projectId, number: pullRequest.number, method: strategy })
+      .pipe(
+        Effect.as(null),
+        Effect.catch((error) => Effect.succeed(error)),
+      );
 
     if (failure !== null) {
-      const detail = failure.detail;
-      if (isMergeConflictRefusal(detail) && !viaConflictFix) {
+      // Only the HOST's own refusal is worth a probe (T3O-47). Everything else
+      // was refused before the merge was ever put to it — a strategy or an
+      // action this host does not offer, a permission this account lacks, a
+      // missing CLI, a rate limit — and those failures carry their own words,
+      // which name the fix. Probing there would describe a pull request that
+      // was never the problem: a green, up-to-date, unconflicted one, which
+      // `boardMergeStateOf` reads BY ELIMINATION as a missing approval, and the
+      // card would send the user chasing a reviewer over a merge-strategy
+      // setting. So: the attempt's own sentence, no probe, no conflict route,
+      // and a ladder that stops where a retry cannot help.
+      if (failure.refusal !== undefined && failure.refusal !== "host") {
+        return {
+          outcome: "refused" as const,
+          detail: failure.detail,
+          mergeState: null,
+          permanent: failure.refusal === "blocked",
+        };
+      }
+      // One probe answers both questions: is this a conflict, and what does the
+      // card say about it (T3O-47). A probe that itself failed leaves `state`
+      // null, which reads as "refused, reason unknown" — never as a conflict,
+      // because starting a fix agent is the expensive mistake.
+      const state = yield* probeMergeState(fresh);
+      const detail = boardMergeRefusalReason(state);
+      if (state?.blockedReason === "conflict" && !viaConflictFix) {
         // Ask for the stage's own thread: the merge stage resolves to the
         // conflict-resolution prompt in build mode, so this is the conflict
         // step and nothing else can run here.
@@ -4435,7 +4474,7 @@ const make = Effect.gen(function* () {
         }
         return { outcome: "conflict" as const, detail };
       }
-      return { outcome: "refused" as const, detail };
+      return { outcome: "refused" as const, detail, mergeState: state };
     }
 
     // Record the merged state before moving, so a card arriving at Done is
@@ -4444,14 +4483,13 @@ const make = Effect.gen(function* () {
     const merged = (yield* readCard(cardId)) ?? fresh;
 
     // Pull the just-merged commits into the LOCAL base branch of the project
-    // ROOT checkout (not `cwd`, which may be the card's worktree). The merge ran
-    // on the forge, so the clone new worktrees fork from is now behind; without
-    // this the next card branches off pre-merge history. Best-effort and
-    // fast-forward-only — a base we can't cleanly advance is a staleness the
-    // next fetch fixes, never a reason to fail a merge that already landed.
-    const root = projectCwd(model, fresh);
+    // ROOT checkout, never a card worktree. The merge ran on the forge, so the
+    // clone new worktrees fork from is now behind; without this the next card
+    // branches off pre-merge history. Best-effort and fast-forward-only — a
+    // base we can't cleanly advance is a staleness the next fetch fixes, never
+    // a reason to fail a merge that already landed.
     const baseBranch = merged.pullRequest?.baseRef ?? null;
-    if (root !== null && baseBranch !== null) {
+    if (baseBranch !== null) {
       yield* pullMergedBaseBranch({ git, cwd: root, baseBranch }).pipe(
         Effect.flatMap((sync) =>
           sync.updated || sync.skippedReason === null

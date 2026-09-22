@@ -313,13 +313,8 @@ resolution is regenerate, not hand-merge.
   conflict — check `cloud/serviceProtocol.ts` on every sync.
 - **`migrate-dev-db`** (new upstream script) rebuilds and migrates `state.sqlite` only. It neither
   copies nor migrates `boards.sqlite`. Follow-up, not blocking.
-- **Not adopted yet:** upstream's new `apps/server/src/pullRequest/` module
-  (`PullRequestService.runAction({ action: "merge", mergeMethod })`, `detail`, `list`). It covers
-  what the fork's forge-merge path does by hand across ~250 unmarked lines (`SourceControlProvider`
-  `mergeChangeRequest` + four provider stubs, `GitHubCli.mergePullRequest`,
-  `GitManager.findBranchPullRequest` / `mergeBranchPullRequest`, the `BoardGitLayerLive`
-  substitution in `server.ts`). Moving `BoardPullRequestGateway` onto it is the single largest seam
-  reduction available; separate spec.
+- **Adopted in `T3O-47`:** upstream's `apps/server/src/pullRequest/` module. See the decisions
+  recorded on that card below.
 
 ### Decisions recorded on the `v0.0.42` sync (`T3O-46`)
 
@@ -331,15 +326,14 @@ resolution is regenerate, not hand-merge.
   (`fj` + `tea`, `6fd68f5c3`) at the same file paths as the fork's `fgj`-based `t3o-28`, and its new
   `pullRequest/ForgejoPullRequestProvider.ts` imports symbols only its own `ForgejoCli.ts` exports.
   The fork's 15 Forgejo files and all 26 registration markers are retired. What the board still
-  needs — `mergeChangeRequest` and the `changeRequestMergeState` refusal probe, neither of which
-  upstream's provider has — lives in fork-owned `sourceControl/forgejoMerge.ts` +
-  `forgejoMergeState.ts` and hangs off the provider by one spread. They are built on upstream's
-  `ForgejoCli.api` (the REST API through whichever CLI holds the credentials), so
-  **`ForgejoCli.ts` carries no fork edit at all**. Checks are now read from the head commit's
-  combined status rather than `fgj actions run list`, which also covers external CI.
+  needed — `mergeChangeRequest` and the `changeRequestMergeState` refusal probe, neither of which
+  upstream's `sourceControl` provider has — lived in fork-owned `sourceControl/forgejoMerge.ts` +
+  `forgejoMergeState.ts`, hung off the provider by one spread, until `T3O-47` retired both by
+  moving the board onto upstream's `pullRequest/ForgejoPullRequestProvider.ts`.
+  **`ForgejoCli.ts` and `ForgejoSourceControlProvider.ts` now carry no fork edit at all.**
   Operational consequence: a Forgejo server must be signed in with `fj` or `tea`; an `fgj` login
   no longer counts.
-- **Upstream's `pullRequest/` module is still not adopted** — deferred again, to card `T3O-47`. A
+- **Upstream's `pullRequest/` module was not adopted on this sync** — deferred to card `T3O-47`. A
   250-line architectural move inside a 50-file merge would have made any auto-merge regression
   ambiguous between the two.
 - **The `ws.ts` shell-coalescing seam outgrew the one-line rule, and moved.** Upstream now slims
@@ -372,6 +366,83 @@ resolution is regenerate, not hand-merge.
   both integrity checks `ok`, 866 threads and 111 cards read back. A supervisor kill-switch for
   sandboxes would let the next sync boot for real.
 
+### Decisions recorded on adopting `pullRequest/` (`T3O-47`)
+
+The board's merge path was hand-rolled through `SourceControlProvider` because, when `t3o-16` was
+written, upstream had nothing that merged a pull request. `v0.0.38` shipped
+`apps/server/src/pullRequest/` — a whole provider layer with `runAction`, a mergeability model,
+viewer permissions and per-host capabilities — and made every line of it redundant.
+`BoardPullRequestGateway` now delegates all three of its methods to upstream services and the
+fork owns no forge-merge code below it.
+
+| Board operation | Was                                                                                                                                             | Is                                                                  |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `find`          | fork's `GitManager.findBranchPullRequest`                                                                                                       | upstream's `GitManager.branchPullRequest`, after `invalidateStatus` on a forced lookup |
+| `merge`         | `GitManager.mergeBranchPullRequest` → `SourceControlProvider.mergeChangeRequest` → five provider implementations → `GitHubCli.mergePullRequest` | `PullRequestService.runAction({ action: "merge", mergeMethod })`    |
+| `mergeState`    | `changeRequestMergeState` → `gitHubMergeState.ts` / `forgejoMergeState.ts`                                                                      | `PullRequestService.detail` → fork-owned `board/boardMergeState.ts` |
+
+- **The board merges on every host upstream supports now.** The fork had implemented merging for
+  GitHub and Forgejo and stubbed the rest out with "supported for GitHub only". Upstream's
+  providers cover GitLab, Bitbucket and Azure DevOps as well, so those stubs are gone rather than
+  reimplemented, and `runAction` refuses a strategy the host does not offer instead of silently
+  merging with the host's default.
+- **A pull request is addressed by project, not by checkout.** `PullRequestRef` wants
+  `{ projectId, repository }` where the fork's path passed a `cwd`. The gateway resolves
+  `repository` with `sourceControlRepositorySelector(project.repositoryIdentity)` — the same
+  expression `PullRequestService.listWorkspaceProjects` uses on its own side, so the two can never
+  disagree about what a project's repository is. Nothing is persisted on the card and no migration
+  was needed.
+- **The forge's verbatim refusal is gone, deliberately.** `VcsProcessExitError` drops a
+  subprocess's stderr on purpose (it can carry credentialed URLs), so a refused `gh pr merge`
+  through upstream's path reports "Process exited with a non-zero status." The fork's
+  `allowNonZeroExit` + `GitHubPullRequestMergeRefusedError` existed only to keep that text. The
+  board now asks the host WHY instead: one `detail` read after a refusal, mapped to a merge state,
+  which decides the conflict route AND writes the card's sentence. That is what `T3O-38`'s own doc
+  comment always said the decision should key on — `isMergeConflictRefusal`'s prose matching is
+  retired with it.
+- **"Blocked with everything green" is now read by elimination.** GitHub's `mergeStateStatus`
+  is not in upstream's detail, and its `mergeability` speaks only about conflicts. But the probe
+  runs only after a refusal, so a pull request the host reports as mergeable, green, ready and up
+  to date, that it nonetheless refused, was refused for a reason it does not report: an approval, a
+  protection rule, an unresolved conversation. All need a person, so that is `approval-required`.
+  Guarded on a definite `baseComparison: "up-to-date"` — every host but GitHub reports no
+  comparison, and a branch that is merely behind must stay soft.
+- **…which is only sound when the HOST is the one that refused.** Upstream refuses several things
+  itself, before any host is asked: a merge strategy or an action outside
+  `capabilities.mergeMethods` / `capabilities.actions`, a permission the viewer lacks. A missing
+  CLI, a missing credential and a rate limit stop the request as well. Each carries a sentence that
+  names the fix, and each would leave the elimination above reading a pull request that was never
+  the problem — a squash-disabled repository would park every card as "needs an approval". So the
+  gateway tags a refused merge with `BoardPullRequestRefusal`: `host` is the only one worth a probe,
+  `blocked` stops the ladder on the spot with upstream's own words (the same bucket as a closed
+  pull request, D8), and `unavailable` shows those words and keeps climbing. `PullRequestService`
+  buckets both its own pre-flight refusals and the host's into `PullRequestOperationError`, so the
+  three are told apart by its `cause`: a `PullRequestProviderError` is the host's answer, its
+  absence is upstream's own. A viewer-permissions LOOKUP that fails is indistinguishable from the
+  host's "no" at this seam and is still probed — the residual, and the narrow one.
+- **One optional field is the whole price.** The ladder resets on a new head sha (`T3O-38`, D9) and
+  upstream's `PullRequestDetail` carries none, although GitHub's provider already reads
+  `headRefOid` and spreads it. Three one-line `T3o:` markers carry it through
+  (`contracts/pullRequest.ts`, `PullRequestProvider.ts`, `PullRequestService.ts`); everything else
+  in this card is deletion.
+- **The probe invalidates before it reads.** `runActionAndInvalidate` bumps the detail cache's
+  epoch only after a SUCCESSFUL action, so a refusal would otherwise be explained by a detail read
+  up to fifteen seconds before the merge was attempted. The gateway calls `invalidate({ reference })`
+  and reads with `allowStale: false`.
+- **`BoardGitLayerLive` is retired.** The gateway needs `PullRequestService` as well as
+  `GitManager`, and both already sit in `RuntimeCoreDependenciesLive`. One inserted
+  `Layer.provideMerge(BoardPullRequestGatewayLive)` above them replaces the substitution, and
+  `server.ts` gets upstream's `Layer.provideMerge(GitLayerLive)` line back. The pipe was at
+  thirteen arguments, not the twenty the old comment feared.
+
+Measured: **196 → 178 markers** across upstream-owned files, and 96 → 91 upstream-owned files
+differing from `v0.0.42` at all. Four files became pure upstream again
+(`contracts/sourceControl.ts`, `SourceControlProvider.ts`, `ForgejoSourceControlProvider.ts`,
+`SourceControlProviderRegistry.ts`), as did the three non-GitHub provider stubs and
+`SourceControlRepositoryService.test.ts`. `GitHubCli.ts` went 18 → 6, all `T3O-48` repository
+pinning. Five fork-owned files were deleted outright (`gitHubMergeState.ts`, `forgejoMerge.ts`,
+`forgejoMergeState.ts` and two test files); `board/boardMergeState.ts` is the one added.
+
 ### Unmarked edits (debt)
 
 Upstream-owned files the fork changes **without** a `T3o:` marker, measured after the `v0.0.42`
@@ -380,26 +451,29 @@ merge (`git diff --numstat v0.0.42 HEAD`, files present in `v0.0.42`, excluding 
 sync's non-seam conflicts will come from. Tests, docs and generated files are listed for
 completeness; the code rows are the ones worth seaming.
 
-| File                                                                                                                                                                                                          | +/−       | Owner / what                                                     |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ---------------------------------------------------------------- |
-| `apps/server/src/serviceLauncher.ts`                                                                                                                                                                          | 97/18     | `t3o-26` multi-database backup/restore (protocol 3)              |
-| `apps/server/src/sourceControl/SourceControlProviderRegistry.ts`                                                                                                                                              | 29/0      | `t3o-16` / `T3O-38` unsupported-provider stubs + context binding |
-| `apps/server/src/sourceControl/{AzureDevOps,Bitbucket,GitLab}SourceControlProvider.ts`                                                                                                                        | 23/0 each | `t3o-16` / `T3O-38` `mergeChangeRequest` + probe stubs           |
-| `packages/contracts/src/model.ts`                                                                                                                                                                             | 16/0      | `t3o-21` `RuntimeMode` moved here from `orchestration.ts`        |
-| `apps/server/src/cloud/serviceProtocol.ts`                                                                                                                                                                    | 10/2      | `t3o-26` `SERVICE_LAUNCHER_PROTOCOL = 3`                         |
-| `packages/contracts/src/git.ts`                                                                                                                                                                               | 5/1       | board PR lookup                                                  |
-| `apps/web/src/main.tsx`, `apps/web/src/appearanceFonts.ts`                                                                                                                                                    | 5/0, 4/1  | DM Sans font                                                     |
-| `vite.config.ts`, `package.json`, `scripts/dev-runner.ts`, `apps/web/package.json`                                                                                                                            | ≤6        | tooling                                                          |
-| `apps/web/src/components/chat/TraitsPicker.tsx`                                                                                                                                                               | 1/1       | export                                                           |
-| tests: `serviceLauncher.test.ts` (159), `shared/serverSettings.test.ts` (93), `GitManager.test.ts` (75), `GitHubCli.test.ts` (70), `settingsSearch.test.ts` (6), `SourceControlRepositoryService.test.ts` (3) |           | fork test additions                                              |
-| docs: `docs/user/thread-sidebar.md` (+6)                                                                                                                                                                      |           | the Board/Threads tabs section                                   |
-| generated: `apps/web/src/routeTree.gen.ts` (+63), `apps/mobile/generated-uniwind-themes.css` (+12), `pnpm-lock.yaml` (+8)                                                                                     |           | regenerate / reinstall                                           |
+| File                                                                                                                                                             | +/−      | Owner / what                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------- |
+| `apps/server/src/serviceLauncher.ts`                                                                                                                             | 97/18    | `t3o-26` multi-database backup/restore (protocol 3)       |
+| `packages/contracts/src/model.ts`                                                                                                                                | 16/0     | `t3o-21` `RuntimeMode` moved here from `orchestration.ts` |
+| `apps/server/src/cloud/serviceProtocol.ts`                                                                                                                       | 10/2     | `t3o-26` `SERVICE_LAUNCHER_PROTOCOL = 3`                  |
+| `packages/contracts/src/git.ts`                                                                                                                                  | 5/1      | board PR lookup                                           |
+| `apps/web/src/main.tsx`, `apps/web/src/appearanceFonts.ts`                                                                                                       | 5/0, 4/1 | DM Sans font                                              |
+| `vite.config.ts`, `package.json`, `scripts/dev-runner.ts`, `apps/web/package.json`                                                                               | ≤6       | tooling                                                   |
+| `apps/web/src/components/chat/TraitsPicker.tsx`                                                                                                                  | 1/1      | export                                                    |
+| tests: `serviceLauncher.test.ts` (159), `shared/serverSettings.test.ts` (93), `GitManager.test.ts` (58), `GitHubCli.test.ts` (140), `settingsSearch.test.ts` (6) |          | fork test additions                                       |
+| docs: `docs/user/thread-sidebar.md` (+6)                                                                                                                         |          | the Board/Threads tabs section                            |
+| generated: `apps/web/src/routeTree.gen.ts` (+63), `apps/mobile/generated-uniwind-themes.css` (+12), `pnpm-lock.yaml` (+8)                                        |          | regenerate / reinstall                                    |
 
-Cleared on this sync: `CompactComposerControlsMenu.tsx` and the `ChatComposer.tsx` picker
+Cleared on the `v0.0.42` sync: `CompactComposerControlsMenu.tsx` and the `ChatComposer.tsx` picker
 extraction (both upstream's again — see the decisions above), `GitManager.ts`, `VcsProcess.ts`,
 `SourceControlProvider.ts`, `GitHubSourceControlProvider.ts`, `contracts/sourceControl.ts`,
 `t3-sqlite-state.ts`, `cli/config.test.ts`, `server/serverSettings.test.ts` and
 `docs/internals/server-updates.md` (now marked), and `docs/internals/scripts.md` (deleted upstream).
+
+Cleared by `T3O-47`: `SourceControlProviderRegistry.ts`, the three non-GitHub
+`*SourceControlProvider.ts` stubs and `SourceControlRepositoryService.test.ts` — the whole
+unsupported-provider apron of the hand-rolled merge path. They are byte-identical to `v0.0.42`
+again.
 
 ### Marker census
 
@@ -420,7 +494,8 @@ upstream generalised `requireMcpCapability`, so the fork's note explaining why i
 For reference, the `v0.0.38` sync stood at 121 markers across 44 files. Counts recorded then that
 differ from their rows in the table below:
 `serverSettings.ts` 2 (indivisible settings keys), `GitHubCli.ts` 7 (board merge path),
-`AppSidebarLayout.tsx` 3 (`isOnBoard`), `server.ts` 4 (+`BoardGitLayerLive`), `ChatView.tsx` 5
+`AppSidebarLayout.tsx` 3 (`isOnBoard`), `server.ts` 4 (+`BoardGitLayerLive`, retired by `T3O-47`),
+`ChatView.tsx` 5
 (+`chrome` prop), `contracts/orchestration.ts` 16 (+`RuntimeMode` re-export), `.gitignore` 1
 (`!.plans/`), `AGENTS.md` 5 (+plans policy), `Sqlite.ts` 2 (`t3o-26` attach + board migrations),
 `OrchestrationEventStore.ts` 7 (`t3o-26` retired-event replay), `server.test.ts` 1 and
@@ -438,30 +513,25 @@ claims member, mint case, resolve branch) and `ws.ts` +1 (6). The upload, storag
 manifest all live in board-owned files (`board/attachments.ts`, migration `032`).
 
 Auto-merge's structured refusal probe (`T3O-38`) added 12 markers across 9 upstream-owned files,
-all of them the same shape as the `t3o-16` merge path they sit beside:
-`contracts/sourceControl.ts` 1 (the `ChangeRequestMergeState` block),
-`SourceControlProvider.ts` 1 (`changeRequestMergeState` on the interface),
-`SourceControlProviderRegistry.ts` 1 (the unsupported stub + the context forward),
-`{AzureDevOps,Bitbucket,GitLab}SourceControlProvider.ts` 1 each (unsupported stubs),
-`GitHubSourceControlProvider.ts` 1, `GitHubCli.ts` 3 (interface member, import, `gh pr view`
-implementation), `git/GitManager.ts` 2, and the two test stubs
-(`GitManager.test.ts`, `SourceControlRepositoryService.test.ts`) 1 each. Everything the board
-actually DOES with the answer lives in fork-owned files: the parsers
-(`sourceControl/gitHubMergeState.ts`, `sourceControl/forgejoMergeState.ts` — both new), the
-classifier (`board/autoMergeClassification.ts`, new), the gateway seam
-(`board/BoardPullRequestGateway.ts`) and the reactor. Forgejo's two additions were in the fork's own
-`ForgejoCli.ts` / `ForgejoSourceControlProvider.ts` until the `v0.0.42` sync replaced those files
-with upstream's; they now live in fork-owned `sourceControl/forgejoMerge.ts`.
+all of them the same shape as the `t3o-16` merge path they sat beside. **`T3O-47` removed every one
+of them**, along with the `t3o-16` merge path itself: the probe now reads upstream's
+`PullRequestService.detail`. What survives is one marker in each of `contracts/pullRequest.ts`,
+`PullRequestProvider.ts` and `PullRequestService.ts`, all three the same optional `headSha`
+field. Everything the board DOES with the answer was already in fork-owned files and stayed there:
+the mapper (`board/boardMergeState.ts`, which replaces `sourceControl/gitHubMergeState.ts` and
+`sourceControl/forgejoMergeState.ts`), the classifier (`board/autoMergeClassification.ts`), the
+gateway (`board/BoardPullRequestGateway.ts`) and the reactor.
 
-Pinning `gh` to the project's origin repository (`T3O-48`) touched 2 upstream-owned files, all of
-it the same shape as the `t3o-16` merge path it sits beside. By the census metric
-(`git grep -c "T3o:"`): `GitHubCli.ts` 10 → 18 and `GitHubSourceControlProvider.ts` 1 → 3.
+Pinning `gh` to the project's origin repository (`T3O-48`) touched 2 upstream-owned files. By the
+census metric (`git grep -c "T3o:"`): `GitHubCli.ts` 10 → 18 and `GitHubSourceControlProvider.ts`
+1 → 3. `T3O-47` then took `GitHubCli.ts` to 6 and `GitHubSourceControlProvider.ts` to 2, because
+the `pr merge` and merge-state `pr view` invocations it pinned no longer exist here — upstream's
+`GitHubPullRequestCli.repositoryArgs` pins those itself.
 
-`GitHubCli.ts` gains the import, the `repository` member on the service interface, and one marker
-per `gh` invocation — `pr list`, `pr view` (the lookup and the merge-state probe), `pr create`,
-`pr checkout`, `pr merge` and `repo view`. `GitHubSourceControlProvider.ts` gains the import, the
-context→repository derivation, and the non-open list path, which builds its own args and calls
-`execute` directly. The parser and both arg helpers are in the new fork-owned
+`GitHubCli.ts` carries the import, the `repository` member on the service interface, and one marker
+per remaining `gh` invocation — `pr list`, `pr view`, `pr create`, `pr checkout` and `repo view`.
+`GitHubSourceControlProvider.ts` carries the import and the non-open list path, which builds its
+own args and calls `execute` directly. The parser and both arg helpers are in the new fork-owned
 `sourceControl/githubRemote.ts`, which mirrors `forgejoRemote.ts`; `ForgejoCli.ts` already pinned
 its own repository and needed nothing.
 
@@ -516,8 +586,9 @@ moved, so all 12 are frozen one-line edits rather than growable seams.
 **Forgejo support** (`t3o-28`) once added 26 markers across 13 upstream-owned files (plus 12 in
 four test files), all of them a kind literal, a registration, an icon or a label. **All retired on
 the `v0.0.42` sync (`T3O-46`)**, when upstream shipped its own Forgejo/Gitea support at the same
-paths. What remains is two markers on upstream's `ForgejoSourceControlProvider.ts` and the
-fork-owned `sourceControl/forgejoMerge.ts` + `forgejoMergeState.ts` behind them.
+paths. The two markers that survived it — the board's merge seams on
+`ForgejoSourceControlProvider.ts`, backed by fork-owned `sourceControl/forgejoMerge.ts` +
+`forgejoMergeState.ts` — went with `T3O-47`. **The fork now carries no Forgejo code at all.**
 
 ---
 
@@ -536,114 +607,115 @@ Shapes marked **frozen** are once-only edits that never grow again; every other 
 predicate, spread, injected factory call, or re-export whose growth happens inside board-owned
 files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 
-| File                                                                   | Spec         | Reason                                                                                       | Shape                                                                    |
-| ---------------------------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `AGENTS.md`                                                            | `t3o-01`     | Fork status, branch topology, seam rules                                                     | Self-contained block at the top                                          |
-| `AGENTS.md`                                                            | `t3o-01`     | Rebase-target note (`t3o`, not `main`) in upstream's PR guidance                             | one-line edit (frozen)                                                   |
-| `AGENTS.md`                                                            | `t3o-01`     | PR-target rule (`t3o`, never `main`) in upstream's PR guidance                               | one-line edit (frozen)                                                   |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02`     | `BoardCardId` type import                                                                    | one-line append, import (frozen, D9)                                     |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02a`    | Import board aggregate-ref builder + predicate                                               | one-line append (import)                                                 |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02`     | Widen `commandToAggregateRef` return type with `"card"` / `BoardCardId`                      | two-line edit, type annotation (frozen)                                  |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-06a`    | Widen `commandToAggregateRef` return type with `"label"` / `BoardLabelId`                    | two-line edit, type annotation (frozen, D9-class)                        |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `T3O-22`     | Widen `commandToAggregateRef` return type with `"provider-limit"` / `ProviderInstanceId`     | two-line edit, type annotation (frozen, D9-class)                        |
-| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02a`    | Board commands aggregate on the card                                                         | predicate delegation in `default`                                        |
-| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02`     | Import board projection module                                                               | one-line append (import)                                                 |
-| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02a`    | Board projector names join `ORCHESTRATION_PROJECTOR_NAMES`                                   | registry spread                                                          |
-| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02`     | Board projectors join the projector list                                                     | registry spread (factory call)                                           |
-| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`      | `t3o-02`     | Import board snapshot enrichment                                                             | one-line append (import)                                                 |
-| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`      | `t3o-02a`    | Board-wrapped query methods override the base methods (D2/D8)                                | spread (factory call), after base methods                                |
-| `apps/server/src/orchestration/commandInvariants.ts`                   | `t3o-08`     | `requireProject` rejection names the live projects (bounded to 10)                           | in-place message enrichment (marked)                                     |
-| `apps/server/src/orchestration/decider.ts`                             | `t3o-02`     | Import board decider + predicate                                                             | one-line append (import)                                                 |
-| `apps/server/src/orchestration/decider.ts`                             | `t3o-02a`    | Board commands are decided in the board module                                               | predicate delegation in `default`, before `satisfies never`              |
-| `apps/server/src/orchestration/projector.ts`                           | `t3o-02`     | Import board projector + predicate                                                           | one-line append (import)                                                 |
-| `apps/server/src/orchestration/projector.ts`                           | `t3o-02a`    | Board events are projected in the board module                                               | predicate delegation in `default`                                        |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`     | `BoardCardId` import                                                                         | one-line append, import (frozen, D9)                                     |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`     | Widen append-request `streamId` union                                                        | one-line edit (frozen, D9)                                               |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-06a`    | Widen append-request `streamId` union with `BoardLabelId`                                    | one-line edit (frozen, D9-class)                                         |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `T3O-22`     | Widen append-request `streamId` union with `ProviderInstanceId`                              | one-line edit (frozen, D9-class)                                         |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`     | Widen persisted-row `aggregateId` union                                                      | one-line edit (frozen, D9)                                               |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-06a`    | Widen persisted-row `aggregateId` union with `BoardLabelId`                                  | one-line edit (frozen, D9-class)                                         |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `T3O-17`     | `inferActorKind` reads the shared command-id origin rule (`commandOrigin.ts`)                | import + one delegating call replacing two prefix tests                  |
-| `apps/server/src/persistence/Layers/Sqlite.ts`                         | ledger split | Legacy board-ledger reconcile before upstream migrations (`reconcileLegacyBoardLedger()`)    | one-line append (delegating call)                                        |
-| `apps/server/src/persistence/Layers/Sqlite.ts`                         | ledger split | Board migration lineage runs after upstream's (`runBoardMigrations()`)                       | one-line append (delegating call)                                        |
-| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02`     | `BoardCardId` import                                                                         | one-line append, import (frozen, D9)                                     |
-| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02`     | Widen receipt `aggregateId` union                                                            | one-line edit (frozen, D9)                                               |
-| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-06a`    | Widen receipt `aggregateId` union with `BoardLabelId`                                        | one-line edit (frozen, D9-class)                                         |
-| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `T3O-22`     | Widen receipt `aggregateId` union with `ProviderInstanceId`                                  | one-line edit (frozen, D9-class)                                         |
-| `apps/server/src/ws.ts`                                                | `t3o-02`     | Import board shell-delta mapper + predicate                                                  | one-line append (import)                                                 |
-| `apps/server/src/ws.ts`                                                | `t3o-02a`    | Board events become card shell deltas in `toShellStreamEvent`                                | predicate delegation in `default`, before the thread-aggregate check     |
-| `apps/server/src/ws.ts`                                                | `t3o-18`     | `toShellStreamEvents` fans one event to N deltas (board `card-threads`)                      | one-line wrapper delegating to a board-owned mapper                      |
-| `apps/server/src/ws.ts`                                                | `t3o-18`     | Human actor stamped on board commands before `dispatchCommand` dispatches                    | one-line delegation to a board-owned stamp (D11)                         |
-| `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`     | Import `BoardModeTabs`                                                                       | one-line append (import)                                                 |
-| `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`     | Threads/Board mode tabs before the breadcrumb (D1 shell tab)                                 | one-line append (delegating element)                                     |
-| `apps/web/src/components/NoActiveThreadState.tsx`                      | `t3o-05`     | Import `BoardModeTabs`                                                                       | one-line append (import)                                                 |
-| `apps/web/src/components/NoActiveThreadState.tsx`                      | `t3o-05`     | Mode tabs in the no-thread top bar (Board entry must survive it)                             | one-line append (delegating element)                                     |
-| `apps/web/src/components/sidebar/SidebarChrome.tsx`                    | `T3O-34`     | Import `BoardModeTabsSidebarSlot`                                                            | one-line append (import)                                                 |
-| `apps/web/src/components/sidebar/SidebarChrome.tsx`                    | `T3O-34`     | Mode-tabs slot in the sidebar header (measures its own fit)                                  | one-line append (delegating element)                                     |
-| `apps/web/src/routes/__root.tsx`                                       | `T3O-34`     | Import `redirectColdStartToBoard`                                                            | one-line append (import)                                                 |
-| `apps/web/src/routes/__root.tsx`                                       | `T3O-34`     | Cold start at `/` opens the board (D1); `/` stays threads home after                         | one-line append (delegating call, throws the redirect itself)            |
-| `apps/web/src/routes/pair.tsx`                                         | `T3O-34`     | Import `resolvePairExitTarget`                                                               | one-line append (import)                                                 |
-| `apps/web/src/routes/pair.tsx`                                         | `T3O-34`     | Already-paired client redirects to the board, not `/` (D2/D3)                                | one-line edit (delegating call in the existing `redirect`)               |
-| `apps/web/src/routes/pair.tsx`                                         | `T3O-34`     | Completed pairing navigates to the board, not `/` (D2/D3)                                    | one-line edit (delegating call in the existing `navigate`)               |
-| `packages/client-runtime/src/state/shell.ts`                           | `t3o-02`     | Export board client state through `state/shell`                                              | one-line append (re-export)                                              |
-| `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02`     | Import board reducer + predicate                                                             | one-line append (import)                                                 |
-| `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02a`    | Card deltas delegate to the board reducer                                                    | predicate delegation in `default`                                        |
-| `packages/contracts/src/index.ts`                                      | `t3o-02`     | Export `board.ts`                                                                            | one-line append (re-export)                                              |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02`     | Import board schema + registries                                                             | one-line append (import)                                                 |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02`     | `board` field on `OrchestrationReadModel` (optional)                                         | one-line append (frozen)                                                 |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02`     | `cards` field on `OrchestrationShellSnapshot` (optional)                                     | one-line append (frozen)                                                 |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-06a`    | `boardLabels` field on `OrchestrationShellSnapshot` (catalogue once)                         | one-line append (frozen)                                                 |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-18`     | `boardCardThreads` field on `OrchestrationShellSnapshot` (links + todos)                     | one-line append (frozen)                                                 |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02a`    | Card shell deltas in `OrchestrationShellStreamEvent` union                                   | registry spread (`BOARD_SHELL_STREAM_EVENTS`)                            |
-| `packages/contracts/src/orchestration.ts`                              | `T3O-22`     | `boardProviderLimits` on `OrchestrationShellSnapshot` (one array, board-wide)                | one-line append (optional field)                                         |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02a`    | Board commands in `DispatchableClientOrchestrationCommand`                                   | registry spread (`BOARD_CLIENT_COMMANDS`)                                |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02a`    | Board commands in `ClientOrchestrationCommand`                                               | registry spread (`BOARD_CLIENT_COMMANDS`)                                |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02a`    | Board event types in `OrchestrationEventType`                                                | registry spread (`BOARD_EVENT_TYPES`)                                    |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02`     | `"card"` in `OrchestrationAggregateKind` (D9)                                                | one-line edit (frozen)                                                   |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-06a`    | `"label"` in `OrchestrationAggregateKind` (2nd board aggregate)                              | one-line edit (frozen, D9-class)                                         |
-| `packages/contracts/src/orchestration.ts`                              | `T3O-22`     | `"provider-limit"` in `OrchestrationAggregateKind` (4th board aggregate)                     | one-line edit (frozen, D9-class)                                         |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02`     | `BoardCardId` in event-base `aggregateId` union (D9)                                         | one-line edit (frozen)                                                   |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-06a`    | `BoardLabelId` in event-base `aggregateId` union (label aggregate)                           | one-line edit (frozen, D9-class)                                         |
-| `packages/contracts/src/orchestration.ts`                              | `T3O-22`     | `ProviderInstanceId` in event-base `aggregateId` union (provider-limit aggregate)            | one-line edit (frozen, D9-class)                                         |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-02a`    | Board event members in the `OrchestrationEvent` union                                        | injected factory call (`makeBoardOrchestrationEvents(EventBaseFields)`)  |
-| `packages/contracts/src/rpc.ts`                                        | `t3o-04`     | Import board RPC registries                                                                  | one-line append (import)                                                 |
-| `packages/contracts/src/rpc.ts`                                        | `t3o-04`     | Board methods join `WS_METHODS`                                                              | registry spread (`BOARD_WS_METHODS`)                                     |
-| `packages/contracts/src/rpc.ts`                                        | `t3o-04`     | Board RPCs join `WsRpcGroup` (`RpcGroup.make` is variadic)                                   | registry spread (`BOARD_RPCS`)                                           |
-| `apps/server/src/auth/RpcAuthorization.ts`                             | `t3o-04`     | Import board RPC scope registry                                                              | one-line append (import)                                                 |
-| `apps/server/src/auth/RpcAuthorization.ts`                             | `t3o-04`     | Board scopes join `RPC_REQUIRED_SCOPES`                                                      | registry spread (`BOARD_RPC_SCOPES`)                                     |
-| `apps/server/src/ws.ts`                                                | `t3o-04`     | Import board RPC handler factory                                                             | one-line append (import)                                                 |
-| `apps/server/src/ws.ts`                                                | `t3o-04`     | Board RPC handlers join the `toLayer` handler record                                         | spread (injected factory call, `boardRpcHandlers(deps)`)                 |
-| `apps/server/src/ws.ts`                                                | `t3o-32`     | `board-attachment` asset resources mint like chat attachments                                | one-line predicate widening (frozen)                                     |
-| `packages/contracts/src/assets.ts`                                     | `t3o-32`     | `board-attachment` member of `AssetResource` (card folder + filename)                        | union member (frozen)                                                    |
-| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | Import the board attachment path resolver                                                    | one-line append (import)                                                 |
-| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | `board-attachment` claims member (card folder + filename, download/mime)                     | union member (frozen)                                                    |
-| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | `issueAssetUrl` mints a board attachment (same disposition rules as `attachment`)            | `case` delegating to the board resolver                                  |
-| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | `resolveAsset` serves a board attachment from the card folder                                | predicate branch delegating to the board resolver                        |
-| `packages/client-runtime/src/rpc/client.ts`                            | `t3o-04`     | Import board subscription tag type                                                           | one-line append (type import)                                            |
-| `packages/client-runtime/src/rpc/client.ts`                            | `t3o-04`     | Board tags join `EnvironmentSubscriptionRpcTag`                                              | one-line union member (`BoardSubscriptionRpcTag`, grows in board.ts)     |
-| `packages/contracts/src/settings.ts`                                   | `t3o-07`     | Import `BoardSettings` / `BoardSettingsPatch` from board.ts                                  | one-line append (import)                                                 |
-| `packages/contracts/src/settings.ts`                                   | `t3o-07`     | `board` field on `ServerSettings` (D10)                                                      | one-line append, single field (frozen; shape grows in `BoardSettings`)   |
-| `packages/contracts/src/settings.ts`                                   | `t3o-07`     | `board` field on `ServerSettingsPatch` (D10)                                                 | one-line append, single field (frozen; whole-map, merged by `deepMerge`) |
-| `apps/web/src/components/settings/settingsSearch.ts`                   | `t3o-07`     | Import `BOARD_SETTINGS_SEARCH_ITEMS` from board-owned registry                               | one-line append (import)                                                 |
-| `apps/web/src/components/settings/settingsSearch.ts`                   | `t3o-07`     | `/settings/board` in `SettingsPath` union (single board page, D1)                            | one-line union member (frozen)                                           |
-| `apps/web/src/components/settings/settingsSearch.ts`                   | `t3o-07`     | Board label in `SETTINGS_SECTION_LABELS` (`SETTINGS_NAV_ITEMS` derives)                      | one-line record entry (frozen)                                           |
-| `apps/web/src/components/settings/settingsSearch.ts`                   | `t3o-07`     | Board search items join `SETTINGS_SEARCH_ITEMS`                                              | registry spread (`BOARD_SETTINGS_SEARCH_ITEMS`)                          |
-| `apps/web/src/components/settings/SettingsSidebarNav.tsx`              | `t3o-07`     | `LayoutGridIcon` import for the board nav icon                                               | one-line append (import)                                                 |
-| `apps/web/src/components/settings/SettingsSidebarNav.tsx`              | `t3o-07`     | Board icon in `SETTINGS_SECTION_ICONS`                                                       | one-line record entry (frozen)                                           |
-| `apps/server/src/mcp/McpInvocationContext.ts`                          | `t3o-08`     | `McpCapability` gains `"board"` (D3)                                                         | one-line edit (frozen)                                                   |
-| `apps/server/src/mcp/McpInvocationContext.ts`                          | `t3o-08`     | `requireMcpCapability` stays preview-scoped after the widening                               | one-line edit (frozen)                                                   |
-| `apps/server/src/mcp/McpSessionRegistry.ts`                            | `t3o-08`     | Granted capability set gains `"board"` (D3)                                                  | one-line edit (frozen)                                                   |
-| `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`     | Import `BoardToolkitRegistrationLive`                                                        | one-line append (import)                                                 |
-| `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`     | Board toolkit joins the MCP server layer merge (D3)                                          | spread of a board-owned registration layer                               |
-| `packages/contracts/src/orchestration.ts`                              | `t3o-09`     | Server-internal board commands in `InternalOrchestrationCommand`                             | registry spread (`BOARD_INTERNAL_COMMANDS`)                              |
-| `apps/server/src/server.ts`                                            | `t3o-10`     | Import the supervisor reactor + its slots layer                                              | one-line append (import)                                                 |
-| `apps/server/src/server.ts`                                            | `t3o-10`     | Supervisor reactor joins `ReactorLayerLive`                                                  | provideMerge of a board-owned reactor layer                              |
-| `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Import the supervisor reactor tag                                                            | one-line append (import)                                                 |
-| `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Resolve the supervisor reactor in the startup effect                                         | one-line append (`yield*` the tag)                                       |
-| `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Start the supervisor reactor in the `reactors.start` phase                                   | one-line append (start call)                                             |
-| `apps/server/src/sourceControl/SourceControlProvider.ts`               | `t3o-16`     | Merge-is-GitHub-only note names Forgejo (`forgejoMerge.ts`) as the second implementation     | doc-comment paragraph (frozen)                                           |
-| `apps/server/src/sourceControl/ForgejoSourceControlProvider.ts`        | `T3O-46`     | Import `makeForgejoMergeSeams`                                                               | one-line append (import)                                                 |
-| `apps/server/src/sourceControl/ForgejoSourceControlProvider.ts`        | `T3O-46`     | `mergeChangeRequest` + `changeRequestMergeState` (t3o-16, T3O-38), built on `ForgejoCli.api` | one-line spread into the provider                                        |
+| File                                                                   | Spec         | Reason                                                                                    | Shape                                                                    |
+| ---------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `AGENTS.md`                                                            | `t3o-01`     | Fork status, branch topology, seam rules                                                  | Self-contained block at the top                                          |
+| `AGENTS.md`                                                            | `t3o-01`     | Rebase-target note (`t3o`, not `main`) in upstream's PR guidance                          | one-line edit (frozen)                                                   |
+| `AGENTS.md`                                                            | `t3o-01`     | PR-target rule (`t3o`, never `main`) in upstream's PR guidance                            | one-line edit (frozen)                                                   |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02`     | `BoardCardId` type import                                                                 | one-line append, import (frozen, D9)                                     |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02a`    | Import board aggregate-ref builder + predicate                                            | one-line append (import)                                                 |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02`     | Widen `commandToAggregateRef` return type with `"card"` / `BoardCardId`                   | two-line edit, type annotation (frozen)                                  |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-06a`    | Widen `commandToAggregateRef` return type with `"label"` / `BoardLabelId`                 | two-line edit, type annotation (frozen, D9-class)                        |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `T3O-22`     | Widen `commandToAggregateRef` return type with `"provider-limit"` / `ProviderInstanceId`  | two-line edit, type annotation (frozen, D9-class)                        |
+| `apps/server/src/orchestration/Layers/OrchestrationEngine.ts`          | `t3o-02a`    | Board commands aggregate on the card                                                      | predicate delegation in `default`                                        |
+| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02`     | Import board projection module                                                            | one-line append (import)                                                 |
+| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02a`    | Board projector names join `ORCHESTRATION_PROJECTOR_NAMES`                                | registry spread                                                          |
+| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`           | `t3o-02`     | Board projectors join the projector list                                                  | registry spread (factory call)                                           |
+| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`      | `t3o-02`     | Import board snapshot enrichment                                                          | one-line append (import)                                                 |
+| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`      | `t3o-02a`    | Board-wrapped query methods override the base methods (D2/D8)                             | spread (factory call), after base methods                                |
+| `apps/server/src/orchestration/commandInvariants.ts`                   | `t3o-08`     | `requireProject` rejection names the live projects (bounded to 10)                        | in-place message enrichment (marked)                                     |
+| `apps/server/src/orchestration/decider.ts`                             | `t3o-02`     | Import board decider + predicate                                                          | one-line append (import)                                                 |
+| `apps/server/src/orchestration/decider.ts`                             | `t3o-02a`    | Board commands are decided in the board module                                            | predicate delegation in `default`, before `satisfies never`              |
+| `apps/server/src/orchestration/projector.ts`                           | `t3o-02`     | Import board projector + predicate                                                        | one-line append (import)                                                 |
+| `apps/server/src/orchestration/projector.ts`                           | `t3o-02a`    | Board events are projected in the board module                                            | predicate delegation in `default`                                        |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`     | `BoardCardId` import                                                                      | one-line append, import (frozen, D9)                                     |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`     | Widen append-request `streamId` union                                                     | one-line edit (frozen, D9)                                               |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-06a`    | Widen append-request `streamId` union with `BoardLabelId`                                 | one-line edit (frozen, D9-class)                                         |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `T3O-22`     | Widen append-request `streamId` union with `ProviderInstanceId`                           | one-line edit (frozen, D9-class)                                         |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-02`     | Widen persisted-row `aggregateId` union                                                   | one-line edit (frozen, D9)                                               |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `t3o-06a`    | Widen persisted-row `aggregateId` union with `BoardLabelId`                               | one-line edit (frozen, D9-class)                                         |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`        | `T3O-17`     | `inferActorKind` reads the shared command-id origin rule (`commandOrigin.ts`)             | import + one delegating call replacing two prefix tests                  |
+| `apps/server/src/persistence/Layers/Sqlite.ts`                         | ledger split | Legacy board-ledger reconcile before upstream migrations (`reconcileLegacyBoardLedger()`) | one-line append (delegating call)                                        |
+| `apps/server/src/persistence/Layers/Sqlite.ts`                         | ledger split | Board migration lineage runs after upstream's (`runBoardMigrations()`)                    | one-line append (delegating call)                                        |
+| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02`     | `BoardCardId` import                                                                      | one-line append, import (frozen, D9)                                     |
+| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-02`     | Widen receipt `aggregateId` union                                                         | one-line edit (frozen, D9)                                               |
+| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `t3o-06a`    | Widen receipt `aggregateId` union with `BoardLabelId`                                     | one-line edit (frozen, D9-class)                                         |
+| `apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts` | `T3O-22`     | Widen receipt `aggregateId` union with `ProviderInstanceId`                               | one-line edit (frozen, D9-class)                                         |
+| `apps/server/src/ws.ts`                                                | `t3o-02`     | Import board shell-delta mapper + predicate                                               | one-line append (import)                                                 |
+| `apps/server/src/ws.ts`                                                | `t3o-02a`    | Board events become card shell deltas in `toShellStreamEvent`                             | predicate delegation in `default`, before the thread-aggregate check     |
+| `apps/server/src/ws.ts`                                                | `t3o-18`     | `toShellStreamEvents` fans one event to N deltas (board `card-threads`)                   | one-line wrapper delegating to a board-owned mapper                      |
+| `apps/server/src/ws.ts`                                                | `t3o-18`     | Human actor stamped on board commands before `dispatchCommand` dispatches                 | one-line delegation to a board-owned stamp (D11)                         |
+| `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`     | Import `BoardModeTabs`                                                                    | one-line append (import)                                                 |
+| `apps/web/src/components/ChatView.tsx`                                 | `t3o-05`     | Threads/Board mode tabs before the breadcrumb (D1 shell tab)                              | one-line append (delegating element)                                     |
+| `apps/web/src/components/NoActiveThreadState.tsx`                      | `t3o-05`     | Import `BoardModeTabs`                                                                    | one-line append (import)                                                 |
+| `apps/web/src/components/NoActiveThreadState.tsx`                      | `t3o-05`     | Mode tabs in the no-thread top bar (Board entry must survive it)                          | one-line append (delegating element)                                     |
+| `apps/web/src/components/sidebar/SidebarChrome.tsx`                    | `T3O-34`     | Import `BoardModeTabsSidebarSlot`                                                         | one-line append (import)                                                 |
+| `apps/web/src/components/sidebar/SidebarChrome.tsx`                    | `T3O-34`     | Mode-tabs slot in the sidebar header (measures its own fit)                               | one-line append (delegating element)                                     |
+| `apps/web/src/routes/__root.tsx`                                       | `T3O-34`     | Import `redirectColdStartToBoard`                                                         | one-line append (import)                                                 |
+| `apps/web/src/routes/__root.tsx`                                       | `T3O-34`     | Cold start at `/` opens the board (D1); `/` stays threads home after                      | one-line append (delegating call, throws the redirect itself)            |
+| `apps/web/src/routes/pair.tsx`                                         | `T3O-34`     | Import `resolvePairExitTarget`                                                            | one-line append (import)                                                 |
+| `apps/web/src/routes/pair.tsx`                                         | `T3O-34`     | Already-paired client redirects to the board, not `/` (D2/D3)                             | one-line edit (delegating call in the existing `redirect`)               |
+| `apps/web/src/routes/pair.tsx`                                         | `T3O-34`     | Completed pairing navigates to the board, not `/` (D2/D3)                                 | one-line edit (delegating call in the existing `navigate`)               |
+| `packages/client-runtime/src/state/shell.ts`                           | `t3o-02`     | Export board client state through `state/shell`                                           | one-line append (re-export)                                              |
+| `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02`     | Import board reducer + predicate                                                          | one-line append (import)                                                 |
+| `packages/client-runtime/src/state/shellReducer.ts`                    | `t3o-02a`    | Card deltas delegate to the board reducer                                                 | predicate delegation in `default`                                        |
+| `packages/contracts/src/index.ts`                                      | `t3o-02`     | Export `board.ts`                                                                         | one-line append (re-export)                                              |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02`     | Import board schema + registries                                                          | one-line append (import)                                                 |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02`     | `board` field on `OrchestrationReadModel` (optional)                                      | one-line append (frozen)                                                 |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02`     | `cards` field on `OrchestrationShellSnapshot` (optional)                                  | one-line append (frozen)                                                 |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-06a`    | `boardLabels` field on `OrchestrationShellSnapshot` (catalogue once)                      | one-line append (frozen)                                                 |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-18`     | `boardCardThreads` field on `OrchestrationShellSnapshot` (links + todos)                  | one-line append (frozen)                                                 |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02a`    | Card shell deltas in `OrchestrationShellStreamEvent` union                                | registry spread (`BOARD_SHELL_STREAM_EVENTS`)                            |
+| `packages/contracts/src/orchestration.ts`                              | `T3O-22`     | `boardProviderLimits` on `OrchestrationShellSnapshot` (one array, board-wide)             | one-line append (optional field)                                         |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02a`    | Board commands in `DispatchableClientOrchestrationCommand`                                | registry spread (`BOARD_CLIENT_COMMANDS`)                                |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02a`    | Board commands in `ClientOrchestrationCommand`                                            | registry spread (`BOARD_CLIENT_COMMANDS`)                                |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02a`    | Board event types in `OrchestrationEventType`                                             | registry spread (`BOARD_EVENT_TYPES`)                                    |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02`     | `"card"` in `OrchestrationAggregateKind` (D9)                                             | one-line edit (frozen)                                                   |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-06a`    | `"label"` in `OrchestrationAggregateKind` (2nd board aggregate)                           | one-line edit (frozen, D9-class)                                         |
+| `packages/contracts/src/orchestration.ts`                              | `T3O-22`     | `"provider-limit"` in `OrchestrationAggregateKind` (4th board aggregate)                  | one-line edit (frozen, D9-class)                                         |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02`     | `BoardCardId` in event-base `aggregateId` union (D9)                                      | one-line edit (frozen)                                                   |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-06a`    | `BoardLabelId` in event-base `aggregateId` union (label aggregate)                        | one-line edit (frozen, D9-class)                                         |
+| `packages/contracts/src/orchestration.ts`                              | `T3O-22`     | `ProviderInstanceId` in event-base `aggregateId` union (provider-limit aggregate)         | one-line edit (frozen, D9-class)                                         |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-02a`    | Board event members in the `OrchestrationEvent` union                                     | injected factory call (`makeBoardOrchestrationEvents(EventBaseFields)`)  |
+| `packages/contracts/src/rpc.ts`                                        | `t3o-04`     | Import board RPC registries                                                               | one-line append (import)                                                 |
+| `packages/contracts/src/rpc.ts`                                        | `t3o-04`     | Board methods join `WS_METHODS`                                                           | registry spread (`BOARD_WS_METHODS`)                                     |
+| `packages/contracts/src/rpc.ts`                                        | `t3o-04`     | Board RPCs join `WsRpcGroup` (`RpcGroup.make` is variadic)                                | registry spread (`BOARD_RPCS`)                                           |
+| `apps/server/src/auth/RpcAuthorization.ts`                             | `t3o-04`     | Import board RPC scope registry                                                           | one-line append (import)                                                 |
+| `apps/server/src/auth/RpcAuthorization.ts`                             | `t3o-04`     | Board scopes join `RPC_REQUIRED_SCOPES`                                                   | registry spread (`BOARD_RPC_SCOPES`)                                     |
+| `apps/server/src/ws.ts`                                                | `t3o-04`     | Import board RPC handler factory                                                          | one-line append (import)                                                 |
+| `apps/server/src/ws.ts`                                                | `t3o-04`     | Board RPC handlers join the `toLayer` handler record                                      | spread (injected factory call, `boardRpcHandlers(deps)`)                 |
+| `apps/server/src/ws.ts`                                                | `t3o-32`     | `board-attachment` asset resources mint like chat attachments                             | one-line predicate widening (frozen)                                     |
+| `packages/contracts/src/assets.ts`                                     | `t3o-32`     | `board-attachment` member of `AssetResource` (card folder + filename)                     | union member (frozen)                                                    |
+| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | Import the board attachment path resolver                                                 | one-line append (import)                                                 |
+| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | `board-attachment` claims member (card folder + filename, download/mime)                  | union member (frozen)                                                    |
+| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | `issueAssetUrl` mints a board attachment (same disposition rules as `attachment`)         | `case` delegating to the board resolver                                  |
+| `apps/server/src/assets/AssetAccess.ts`                                | `t3o-32`     | `resolveAsset` serves a board attachment from the card folder                             | predicate branch delegating to the board resolver                        |
+| `packages/client-runtime/src/rpc/client.ts`                            | `t3o-04`     | Import board subscription tag type                                                        | one-line append (type import)                                            |
+| `packages/client-runtime/src/rpc/client.ts`                            | `t3o-04`     | Board tags join `EnvironmentSubscriptionRpcTag`                                           | one-line union member (`BoardSubscriptionRpcTag`, grows in board.ts)     |
+| `packages/contracts/src/settings.ts`                                   | `t3o-07`     | Import `BoardSettings` / `BoardSettingsPatch` from board.ts                               | one-line append (import)                                                 |
+| `packages/contracts/src/settings.ts`                                   | `t3o-07`     | `board` field on `ServerSettings` (D10)                                                   | one-line append, single field (frozen; shape grows in `BoardSettings`)   |
+| `packages/contracts/src/settings.ts`                                   | `t3o-07`     | `board` field on `ServerSettingsPatch` (D10)                                              | one-line append, single field (frozen; whole-map, merged by `deepMerge`) |
+| `apps/web/src/components/settings/settingsSearch.ts`                   | `t3o-07`     | Import `BOARD_SETTINGS_SEARCH_ITEMS` from board-owned registry                            | one-line append (import)                                                 |
+| `apps/web/src/components/settings/settingsSearch.ts`                   | `t3o-07`     | `/settings/board` in `SettingsPath` union (single board page, D1)                         | one-line union member (frozen)                                           |
+| `apps/web/src/components/settings/settingsSearch.ts`                   | `t3o-07`     | Board label in `SETTINGS_SECTION_LABELS` (`SETTINGS_NAV_ITEMS` derives)                   | one-line record entry (frozen)                                           |
+| `apps/web/src/components/settings/settingsSearch.ts`                   | `t3o-07`     | Board search items join `SETTINGS_SEARCH_ITEMS`                                           | registry spread (`BOARD_SETTINGS_SEARCH_ITEMS`)                          |
+| `apps/web/src/components/settings/SettingsSidebarNav.tsx`              | `t3o-07`     | `LayoutGridIcon` import for the board nav icon                                            | one-line append (import)                                                 |
+| `apps/web/src/components/settings/SettingsSidebarNav.tsx`              | `t3o-07`     | Board icon in `SETTINGS_SECTION_ICONS`                                                    | one-line record entry (frozen)                                           |
+| `apps/server/src/mcp/McpInvocationContext.ts`                          | `t3o-08`     | `McpCapability` gains `"board"` (D3)                                                      | one-line edit (frozen)                                                   |
+| `apps/server/src/mcp/McpInvocationContext.ts`                          | `t3o-08`     | `requireMcpCapability` stays preview-scoped after the widening                            | one-line edit (frozen)                                                   |
+| `apps/server/src/mcp/McpSessionRegistry.ts`                            | `t3o-08`     | Granted capability set gains `"board"` (D3)                                               | one-line edit (frozen)                                                   |
+| `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`     | Import `BoardToolkitRegistrationLive`                                                     | one-line append (import)                                                 |
+| `apps/server/src/mcp/McpHttpServer.ts`                                 | `t3o-08`     | Board toolkit joins the MCP server layer merge (D3)                                       | spread of a board-owned registration layer                               |
+| `packages/contracts/src/orchestration.ts`                              | `t3o-09`     | Server-internal board commands in `InternalOrchestrationCommand`                          | registry spread (`BOARD_INTERNAL_COMMANDS`)                              |
+| `apps/server/src/server.ts`                                            | `t3o-10`     | Import the supervisor reactor + its slots layer                                           | one-line append (import)                                                 |
+| `apps/server/src/server.ts`                                            | `t3o-10`     | Supervisor reactor joins `ReactorLayerLive`                                               | provideMerge of a board-owned reactor layer                              |
+| `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Import the supervisor reactor tag                                                         | one-line append (import)                                                 |
+| `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Resolve the supervisor reactor in the startup effect                                      | one-line append (`yield*` the tag)                                       |
+| `apps/server/src/serverRuntimeStartup.ts`                              | `t3o-10`     | Start the supervisor reactor in the `reactors.start` phase                                | one-line append (start call)                                             |
+| `packages/contracts/src/pullRequest.ts`                                | `T3O-47`     | `headSha` on `PullRequestDetail`, for the auto-merge ladder's reset                       | one-line append, optional field                                          |
+| `apps/server/src/pullRequest/PullRequestProvider.ts`                   | `T3O-47`     | `headSha` on `ProviderChangeRequestDetail`                                                | one-line append, optional field                                          |
+| `apps/server/src/pullRequest/PullRequestService.ts`                    | `T3O-47`     | Carry `headSha` into the assembled detail                                                 | one-line append at an object tail                                        |
+| `apps/server/src/server.ts`                                            | `T3O-47`     | The board's PR gateway joins `RuntimeCoreDependenciesLive`                                | provideMerge of a board-owned layer                                      |
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
 (5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the

@@ -1576,6 +1576,8 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.workflowApprovalsRequired === undefined
               ? {}
               : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
+            // T3o: carry the head commit through (T3O-47).
+            ...(changeRequest.headSha == null ? {} : { headSha: changeRequest.headSha }),
           })),
         ),
       ),

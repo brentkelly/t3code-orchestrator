@@ -31,7 +31,6 @@ import {
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
-import { parseGitHubMergeState } from "../sourceControl/gitHubMergeState.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -590,24 +589,6 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
         }).pipe(Effect.asVoid),
-      mergePullRequest: (input) =>
-        execute({
-          cwd: input.cwd,
-          args: ["pr", "merge", input.reference, `--${input.strategy}`],
-        }).pipe(Effect.asVoid),
-      // T3o (T3O-38, D7): the refusal probe. Parsed through the real parser
-      // so a stubbed `gh` body is read exactly as a live one would be.
-      pullRequestMergeState: (input) =>
-        execute({
-          cwd: input.cwd,
-          args: [
-            "pr",
-            "view",
-            input.reference,
-            "--json",
-            "mergeStateStatus,statusCheckRollup,headRefOid",
-          ],
-        }).pipe(Effect.map((result) => parseGitHubMergeState(result.stdout))),
     },
     ghCalls,
   };
@@ -1543,7 +1524,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const beforePush = yield* manager.findBranchPullRequest({
+      const beforePush = yield* manager.branchPullRequest({
         cwd: repoDir,
         branch: "board/pushed-after-skip",
       });
@@ -1551,11 +1532,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(beforePush).toBeNull();
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
 
-      yield* runGit(repoDir, ["push", "-u", "origin", "board/pushed-after-skip"]);
+      // Pushed WITHOUT `-u`, so no upstream is configured and the lookup key is
+      // byte-for-byte the skipped one. Finding the pull request under it is
+      // what proves the skip was not retained; a push that set an upstream
+      // would move to a different key and prove nothing.
+      yield* runGit(repoDir, ["push", "origin", "board/pushed-after-skip"]);
 
-      // Same cache key as the skipped lookup — nothing about the key changes on
-      // a push — so finding the pull request proves the skip was not retained.
-      const afterPush = yield* manager.findBranchPullRequest({
+      const afterPush = yield* manager.branchPullRequest({
         cwd: repoDir,
         branch: "board/pushed-after-skip",
       });
@@ -1596,6 +1579,48 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         .pipe(Effect.flip);
       expect(refreshError._tag).toBe("SourceControlProviderError");
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
+    }),
+  );
+
+  // T3o (T3O-48): the board's "Check again" button has to get past the failure
+  // backoff the test above pins — a user pressing it has just read the very
+  // error that is cached, so an answer out of that cache is a button that does
+  // nothing. `{ refresh: true }` cannot do it (upstream applies it to
+  // successful answers only); the epoch bump `invalidateStatus` performs is
+  // what changes the cache key, and that is what `BoardPullRequestGateway.find`
+  // calls on a forced lookup.
+  it.effect("an invalidated checkout retries a failed branch PR lookup at once", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/forced-retry"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/forced-retry"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          failWith: new GitHubCli.GitHubCliUnavailableError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("rate limited"),
+          }),
+        },
+      });
+
+      yield* manager
+        .branchPullRequest({ cwd: repoDir, branch: "feature/forced-retry" })
+        .pipe(Effect.flip);
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
+
+      yield* manager.invalidateStatus(repoDir);
+      const retried = yield* manager
+        .branchPullRequest({ cwd: repoDir, branch: "feature/forced-retry" })
+        .pipe(Effect.flip);
+
+      expect(retried._tag).toBe("SourceControlProviderError");
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
     }),
   );
 

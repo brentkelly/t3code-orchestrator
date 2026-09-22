@@ -18,9 +18,10 @@ import {
   type BoardSettings,
   type OrchestrationCommand,
   type OrchestrationEvent,
-  type ChangeRequestMergeState,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
+
+import type { BoardMergeState } from "./boardMergeState.ts";
 import { assert, it } from "@effect/vitest";
 
 import * as Effect from "effect/Effect";
@@ -595,13 +596,14 @@ const probeState = (input: {
   readonly pending?: number;
   readonly failed?: number;
   readonly mergeable?: "mergeable" | "blocked" | "unknown";
-}): ChangeRequestMergeState => {
+  readonly blockedReason?: BoardMergeState["blockedReason"];
+}): BoardMergeState => {
   const passed = input.passed ?? 0;
   const pending = input.pending ?? 0;
   const failed = input.failed ?? 0;
   return {
     mergeable: input.mergeable ?? "blocked",
-    blockedReason: null,
+    blockedReason: input.blockedReason ?? null,
     checks: {
       total: passed + pending + failed,
       passed,
@@ -730,7 +732,10 @@ it.effect("stops at a merge the forge REFUSES, and says so on the card", () =>
         assert.strictEqual(holds[0]?.retryAt, null);
         const notes = mergeRefusedNotes(yield* h.commands);
         assert.strictEqual(notes.length, 1);
-        assert.include(String((notes[0] as { readonly detail: string }).detail), "status check");
+        assert.include(
+          String((notes[0] as { readonly detail: string }).detail),
+          "Its checks are failing",
+        );
       }),
   ),
 );
@@ -1230,7 +1235,8 @@ it.effect("a restart that still conflicts runs the conflict prompt UNATTENDED", 
         },
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
         pullRequest: openPr,
-        mergeFailure: "Pull request is not mergeable: merge conflict between base and head",
+        mergeFailure: "the host refused",
+        mergeState: probeState({ passed: 2, blockedReason: "conflict" }),
       },
       (h) =>
         Effect.gen(function* () {

@@ -360,14 +360,6 @@ const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
 );
 
-// T3o: the board's two-method window onto the forge (card→PR link + merge), bundled
-// with the git layer that satisfies it. Bundled rather than added as its own
-// step in `RuntimeCoreDependenciesLive` because that pipe is already at
-// TypeScript's 20-argument ceiling — and this is where its one dependency
-// lives anyway. The supervisor reactor therefore never has to depend on the
-// whole GitManager surface just to link a card to its pull request.
-const BoardGitLayerLive = BoardPullRequestGatewayLive.pipe(Layer.provideMerge(GitLayerLive));
-
 const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
@@ -506,11 +498,14 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),
+  // T3o: the board's narrow window onto the forge, above the pull request
+  // service and the git manager that satisfy it, so the supervisor reactor
+  // never depends on either whole surface to link or merge a card.
+  Layer.provideMerge(BoardPullRequestGatewayLive),
   Layer.provideMerge(
     Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
   ),
-  // T3o: the board's PR gateway rides the git layer (BoardGitLayerLive wraps GitLayerLive).
-  Layer.provideMerge(BoardGitLayerLive),
+  Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),

@@ -1,14 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BOARD_AUTO_MERGE_MAX_ATTEMPTS, type ChangeRequestMergeState } from "@t3tools/contracts";
+import { BOARD_AUTO_MERGE_MAX_ATTEMPTS } from "@t3tools/contracts";
 
 import {
   boardAutoMergeLadderStep,
   classifyBoardAutoMergeRefusal,
 } from "./autoMergeClassification.ts";
+import type { BoardMergeState } from "./boardMergeState.ts";
 
 const MINUTE = 60_000;
 
-const state = (overrides: Partial<ChangeRequestMergeState> = {}): ChangeRequestMergeState => ({
+const state = (overrides: Partial<BoardMergeState> = {}): BoardMergeState => ({
   mergeable: "blocked",
   blockedReason: null,
   checks: { total: 0, passed: 0, pending: 0, failed: 0, failing: [], running: [] },
