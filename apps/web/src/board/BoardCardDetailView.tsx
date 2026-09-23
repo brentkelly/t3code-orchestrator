@@ -1644,16 +1644,16 @@ function ActionsSection({
         </div>
       ) : null}
       {card.backlogParked && props.onUnpark !== undefined ? (
-        <div className="flex items-start justify-between gap-2.5 rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-warning-foreground">
+        <div className="flex items-start justify-between gap-2.5 rounded-lg border border-input bg-popover px-2.5 py-2.5 text-[11.5px]/[1.45]">
           <span className="flex min-w-0 flex-col gap-0.5">
-            <span className="font-medium">Parked in Backlog</span>
-            <span className="text-warning-foreground/80">
+            <span className="font-medium text-foreground">Parked in Backlog</span>
+            <span className="text-muted-foreground">
               This card will stay here until you unpark it, even if nothing is blocking it.
             </span>
           </span>
           <button
             type="button"
-            className="shrink-0 rounded-md border border-warning/40 bg-background px-2 py-1 text-[11.5px] font-medium text-foreground hover:bg-muted"
+            className="shrink-0 rounded-md border border-input bg-background px-2 py-1 text-[11.5px] font-medium text-foreground hover:bg-muted"
             onClick={() => props.onUnpark?.()}
           >
             Unpark

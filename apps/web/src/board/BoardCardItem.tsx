@@ -211,17 +211,20 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
               }
             : notice.kind === "parked"
               ? {
+                  // Neutral: the human put this card in Backlog on purpose, the
+                  // same volume-zero claim Paused uses. Amber is blocked/held
+                  // until someone else acts; Unpark is the reverse of that.
                   icon: <PinIcon className="size-3 shrink-0" />,
                   label: "Parked",
                   tooltip: "Stays in Backlog until you unpark it",
-                  tint: "text-warning-foreground",
+                  tint: "text-muted-foreground",
                 }
-            : {
-                icon: <LockIcon className="size-3 shrink-0" />,
-                label: "Blocked",
-                tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
-                tint: "text-warning-foreground",
-              };
+              : {
+                  icon: <LockIcon className="size-3 shrink-0" />,
+                  label: "Blocked",
+                  tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
+                  tint: "text-warning-foreground",
+                };
   return (
     <BoardHint label={view.tooltip}>
       <span

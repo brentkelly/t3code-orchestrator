@@ -1422,11 +1422,6 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                       : `Card '${card.key}' has no unmet dependencies to wait for, so it cannot be armed to start when they finish.`,
                 );
 
-      // The auto-merge arm (T3O-38, D3). Refused only where it could never
-      // act — a sub-board child (armed unconditionally, so a switch there
-      // would be a control that turns nothing off) and a card already in Done
-      // — through the same predicate the kebab menu gates on, so the control
-      // and this refusal can never disagree.
       // Unpark (t3o-35, K3). `false` is always accepted. `true` is refused:
       // parking is a move into Backlog, not a flag a pane can set. Gaining an
       // unmet dependency also clears the park, so the next time those
@@ -1444,6 +1439,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                 `Card '${card.key}' can only be parked by moving it back to Backlog.`,
               );
 
+      // The auto-merge arm (T3O-38, D3). Refused only where it could never
+      // act — a sub-board child (armed unconditionally, so a switch there
+      // would be a control that turns nothing off) and a card already in Done
+      // — through the same predicate the kebab menu gates on, so the control
+      // and this refusal can never disagree.
       const autoMerge =
         command.autoMerge === undefined
           ? card.autoMerge

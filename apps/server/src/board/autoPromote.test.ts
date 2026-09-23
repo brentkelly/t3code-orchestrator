@@ -187,3 +187,40 @@ it.effect("the sweep is idempotent: a second pass moves nothing", () =>
     }),
   ),
 );
+
+it.effect("does not promote until the project setting is on", () =>
+  withGovernor(
+    {
+      board: { cards: [waiting({})], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.promoteUnblocked;
+        assert.strictEqual(stageOf(yield* h.board, "waiter"), BACKLOG);
+        h.setBoardSettings(promoteSettings());
+        yield* h.reactor.promoteUnblocked;
+        assert.strictEqual(stageOf(yield* h.board, "waiter"), SPRINT);
+      }),
+  ),
+);
+
+it.effect("unparking an eligible card moves it to Sprint", () =>
+  withGovernor(setup([waiting({ backlogParked: true })]), (h) =>
+    Effect.gen(function* () {
+      yield* h.reactor.promoteUnblocked;
+      assert.strictEqual(stageOf(yield* h.board, "waiter"), BACKLOG);
+      const parked = waiting({ backlogParked: true });
+      yield* deliver(h, {
+        type: "board.card-updated",
+        sequence: 1,
+        payload: {
+          cardId: parked.id,
+          card: { ...parked, backlogParked: false },
+          backlogParked: false,
+        },
+      } as OrchestrationEvent);
+      assert.strictEqual(stageOf(yield* h.board, "waiter"), SPRINT);
+    }),
+  ),
+);

@@ -276,7 +276,9 @@ function ProjectRows({
               <span className="flex min-w-0 flex-col">
                 <span className="font-medium text-foreground">Include sub-board children</span>
                 <span className="text-[11px] text-muted-foreground">
-                  Children in Backlog move too. Does nothing unless auto-move is on.
+                  Only if a child can sit in Backlog. On the default pipeline children start at
+                  Ready, so this does nothing unless auto-move is on and the sub-board floor
+                  includes Backlog.
                 </span>
               </span>
               <Switch
