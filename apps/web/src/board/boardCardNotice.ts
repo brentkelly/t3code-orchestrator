@@ -27,9 +27,13 @@
  *    `No convergence`, an approval. Every one of them is the generic reading of
  *    what 2 and 3 say precisely, which is why they lose to them rather than
  *    stacking beside them.
- * 6. **The dependency gate.** Last because it is the one notice whose fact
- *    survives elsewhere on the card: the meta row's chain icon carries the count
- *    and names the dependencies in its tooltip at every stage.
+ * 6. **The dependency gate.** Last-but-one because it is the one notice whose
+ *    fact survives elsewhere on the card: the meta row's chain icon carries
+ *    the count and names the dependencies in its tooltip at every stage.
+ * 7. **Parked in Backlog** (t3o-35). Below blocked: a parked card that is also
+ *    waiting on a dependency is blocked first, and Unpark would not move it
+ *    until those land. Above nothing: it is the reason an unblocked Backlog
+ *    card is sitting still.
  *
  * Pure, and deliberately NOT a tone comparison: amber-vs-violet says how loud a
  * notice is, not which fact the human needs, and `Merge needs you` outranking
@@ -65,7 +69,9 @@ export type BoardCardNotice =
   | { readonly kind: "auto-merge"; readonly pill: BoardAutoMergePill }
   /** T3o (T3O-48): parked at the merge role with nothing to merge. */
   | { readonly kind: "no-pull-request" }
-  | { readonly kind: "blocked"; readonly dependencyCount: number };
+  | { readonly kind: "blocked"; readonly dependencyCount: number }
+  /** t3o-35: parked in Backlog so auto-promote will not bounce it. */
+  | { readonly kind: "parked" };
 
 /** The one notice a card header shows, or null when it has nothing to say. */
 export function boardCardNotice(input: {
@@ -86,6 +92,9 @@ export function boardCardNotice(input: {
       role onward. */
   readonly blocked: boolean;
   readonly dependencyCount: number;
+  /** `BoardCardShell.backlogParked` (t3o-35): a drag back to Backlog that
+      auto-promote must not reverse. */
+  readonly backlogParked: boolean;
 }): BoardCardNotice | null {
   const attention = input.attention;
   if (attention !== null && attention.reason === "input") return { kind: "attention", attention };
@@ -99,6 +108,7 @@ export function boardCardNotice(input: {
   if (input.noPullRequestAtMerge) return { kind: "no-pull-request" };
   if (attention !== null) return { kind: "attention", attention };
   if (input.blocked) return { kind: "blocked", dependencyCount: input.dependencyCount };
+  if (input.backlogParked) return { kind: "parked" };
   return null;
 }
 

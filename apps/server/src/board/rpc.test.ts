@@ -110,6 +110,7 @@ const supervisorStub: SupervisorReactorShape = {
   sweep: Effect.void,
   fireSchedules: Effect.void,
   startArmed: Effect.void,
+  promoteUnblocked: Effect.void,
   fireRetries: Effect.void,
   fireProbes: Effect.void,
   fireAutoMerges: Effect.void,

@@ -78,6 +78,8 @@ export function setBoardProjectSetting(
     keyPrefix: null,
     accentColor: null,
     hidden: false,
+    autoPromoteToSprint: false,
+    autoPromoteChildren: false,
   };
   return { ...projects, [projectId]: { ...current, ...patch } };
 }

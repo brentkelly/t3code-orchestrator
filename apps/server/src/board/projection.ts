@@ -199,6 +199,11 @@ const BoardCardDbRow = Schema.Struct({
       clears it inside the move that leaves the pre-build stage) — indistinguish-
       able on purpose, which is what makes replay equal rehydration (T3O-24). */
   autoStart: Schema.Int,
+  /** 0 for every row written before migration 044, for every card that has
+      never been parked in Backlog, and for every card whose park has been
+      cleared — indistinguishable on purpose, which is what makes replay equal
+      rehydration (t3o-35). */
+  backlogParked: Schema.Int,
   /** 0 for every row written before migration 043 and for every card that has
       never been armed to merge itself — indistinguishable on purpose, which is
       what makes replay equal rehydration (T3O-38). Unlike `auto_start` this
@@ -595,6 +600,10 @@ const BoardCardShellDbRow = Schema.Struct({
       aggregate like `parentCardId`, so this snapshot and the JS delta path both
       carry it — or an armed card's chip would vanish on reconnect. */
   autoStart: Schema.Int,
+  /** The card's Backlog park (t3o-35), 0 when it is not parked. On the
+      aggregate like `autoStart`, so this snapshot and the JS delta path both
+      carry it — or a parked card's chip would vanish on reconnect. */
+  backlogParked: Schema.Int,
   /** The card's auto-merge hold, flattened to the three facts the shell
       carries (T3O-38, D14): when the hold started, whether its ladder is
       spent, and whether the card's own arming is set. Derived in SQL here and
@@ -660,6 +669,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     baseBranch: card.baseBranch,
     scheduledStartAt: card.scheduledStartAt,
     autoStart: card.autoStart ? 1 : 0,
+    backlogParked: card.backlogParked ? 1 : 0,
     autoMerge: card.autoMerge ? 1 : 0,
     autoMergeHold: card.autoMergeHold,
     blocked: card.blocked ? 1 : 0,
@@ -711,6 +721,7 @@ function rowToBoardCard(
     baseBranch: row.baseBranch,
     scheduledStartAt: row.scheduledStartAt,
     autoStart: row.autoStart !== 0,
+    backlogParked: row.backlogParked !== 0,
     autoMerge: row.autoMerge !== 0,
     autoMergeHold: row.autoMergeHold,
     blocked: row.blocked !== 0,
@@ -774,6 +785,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_branch,
         scheduled_start_at,
         auto_start,
+        backlog_parked,
         auto_merge,
         auto_merge_hold,
         blocked,
@@ -805,6 +817,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.baseBranch},
         ${row.scheduledStartAt},
         ${row.autoStart},
+        ${row.backlogParked},
         ${row.autoMerge},
         ${row.autoMergeHold},
         ${row.blocked},
@@ -836,6 +849,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_branch = excluded.base_branch,
         scheduled_start_at = excluded.scheduled_start_at,
         auto_start = excluded.auto_start,
+        backlog_parked = excluded.backlog_parked,
         auto_merge = excluded.auto_merge,
         auto_merge_hold = excluded.auto_merge_hold,
         blocked = excluded.blocked,
@@ -877,6 +891,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
+        backlog_parked AS "backlogParked",
         auto_merge AS "autoMerge",
         auto_merge_hold AS "autoMergeHold",
         blocked,
@@ -970,6 +985,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         parent_card_id AS "parentCardId",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
+        backlog_parked AS "backlogParked",
         -- The SECOND producer of the auto-merge shell trio (T3O-38, D14). The
         -- delta path derives the same three in JS off the card aggregate's
         -- autoMergeHold / autoMerge / parentCardId; these derive them in SQL
@@ -1036,6 +1052,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         parent_card_id AS "parentCardId",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
+        backlog_parked AS "backlogParked",
         -- The SECOND producer of the auto-merge shell trio (T3O-38, D14). The
         -- delta path derives the same three in JS off the card aggregate's
         -- autoMergeHold / autoMerge / parentCardId; these derive them in SQL
@@ -1150,6 +1167,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
+        backlog_parked AS "backlogParked",
         auto_merge AS "autoMerge",
         auto_merge_hold AS "autoMergeHold",
         blocked,
@@ -3455,6 +3473,7 @@ export function withBoardShellCards(
           parentCardId: row.parentCardId,
           scheduledStartAt: row.scheduledStartAt,
           autoStart: row.autoStart !== 0,
+          backlogParked: row.backlogParked !== 0,
           autoMergeHeldSince: row.autoMergeHeldSince,
           autoMergeGaveUp: row.autoMergeGaveUp !== 0,
           autoMergeArmed: row.autoMergeArmed !== 0,
@@ -3550,6 +3569,7 @@ export function withBoardArchivedShellCards(
             parentCardId: row.parentCardId,
             scheduledStartAt: row.scheduledStartAt,
             autoStart: row.autoStart !== 0,
+            backlogParked: row.backlogParked !== 0,
             autoMergeHeldSince: row.autoMergeHeldSince,
             autoMergeGaveUp: row.autoMergeGaveUp !== 0,
             autoMergeArmed: row.autoMergeArmed !== 0,

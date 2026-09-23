@@ -194,6 +194,8 @@ export const makeBoardCard = (input: {
   readonly scheduledStartAt?: string | null;
   /** The card's auto-start arm (T3O-24). Absent is unarmed. */
   readonly autoStart?: boolean;
+  /** Whether the card is parked in Backlog (t3o-35). Absent is unparked. */
+  readonly backlogParked?: boolean;
   /** The per-card auto-merge arm (T3O-38, D3). */
   readonly autoMerge?: boolean;
   /** A recorded auto-merge hold (T3O-38, D4) — the state a refused armed
@@ -230,6 +232,7 @@ export const makeBoardCard = (input: {
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],
   autoStart: input.autoStart ?? false,
+  backlogParked: input.backlogParked ?? false,
   autoMerge: input.autoMerge ?? false,
   autoMergeHold: input.autoMergeHold ?? null,
   worktree: input.worktree ?? null,
@@ -407,8 +410,10 @@ export const settingsWith = (input: {
       Defaults to on (what the stage ships with); a suite proving the DIRECTED
       advance ignores it switches it off. */
   readonly buildAutoAdvance?: boolean;
+  /** Per-project board settings (t3o-35). Absent is the empty map. */
+  readonly projects?: BoardSettings["projects"];
 }): BoardSettings => ({
-  projects: {},
+  projects: input.projects ?? {},
   // The board has no workspace default in the harness: every test stage names
   // its own model, so a fallback firing would be a bug the suite should see.
   defaultModel: null,
@@ -856,6 +861,7 @@ export function withGovernor(
         board: boardSettings,
         textGenerationModelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
       })),
+      streamChanges: Stream.empty,
     } as unknown as ServerSettingsService["Service"];
 
     // Every worktree the reactor removed, so a test can assert that a card

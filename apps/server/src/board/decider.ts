@@ -24,6 +24,7 @@ import {
   areBoardStagesAdjacent,
   BOARD_CARD_BRIEF_BODY_KIND,
   BOARD_CARD_LABELS_MAX,
+  BOARD_SEED_STAGE_IDS,
   boardAppendOrderKey,
   boardArrivalOrderKey,
   boardColumnOrderKeys,
@@ -1215,6 +1216,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // `board.card.reorder`, a different command, and it moves the card
         // nowhere.
         autoStart: false,
+        // Any arrival in Backlog from another stage parks the card (t3o-35,
+        // K3). Set here, inside the move, so the reactor cannot bounce it
+        // on the same event. Leaving Backlog clears the park.
+        backlogParked:
+          command.toStage === BOARD_SEED_STAGE_IDS.backlog
+            ? card.stage !== BOARD_SEED_STAGE_IDS.backlog || card.backlogParked
+            : false,
         blocked: deriveBoardCardBlocked({
           board,
           stage: command.toStage,
@@ -1301,6 +1309,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.baseBranch === undefined &&
         command.scheduledStartAt === undefined &&
         command.autoStart === undefined &&
+        command.backlogParked === undefined &&
         command.autoMerge === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
@@ -1418,6 +1427,23 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // would be a control that turns nothing off) and a card already in Done
       // — through the same predicate the kebab menu gates on, so the control
       // and this refusal can never disagree.
+      // Unpark (t3o-35, K3). `false` is always accepted. `true` is refused:
+      // parking is a move into Backlog, not a flag a pane can set. Gaining an
+      // unmet dependency also clears the park, so the next time those
+      // dependencies land the card auto-promotes like any other.
+      const backlogParked =
+        command.backlogParked === undefined
+          ? proposedDependsOn !== undefined &&
+            unmetBoardCardDependencies({ board, dependsOn, cards: board.cards }).length > 0
+            ? false
+            : card.backlogParked
+          : command.backlogParked === false
+            ? false
+            : yield* invariant(
+                command,
+                `Card '${card.key}' can only be parked by moving it back to Backlog.`,
+              );
+
       const autoMerge =
         command.autoMerge === undefined
           ? card.autoMerge
@@ -1461,6 +1487,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         scheduledStartAt:
           command.scheduledStartAt === undefined ? card.scheduledStartAt : command.scheduledStartAt,
         autoStart,
+        backlogParked,
         autoMerge,
         // Disarming clears the hold (T3O-38, D10): a hold explains a merge
         // that is no longer going to happen by itself, and a card parked with
@@ -1493,6 +1520,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           // between render and click only on an edit that named the field, so
           // an unrelated edit never costs a board scan.
           ...(command.autoStart === undefined ? {} : { autoStart: command.autoStart }),
+          ...(command.backlogParked === undefined ? {} : { backlogParked: command.backlogParked }),
           // Says the edit TOUCHED the arm, not what it is (T3O-38, D3). The
           // supervisor merges a card parked at the merge stage the instant its
           // arm goes on, and only on an edit that named the field — an

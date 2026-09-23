@@ -283,6 +283,8 @@ a human act unless listed below.
 - Building → Code review when the build step reports success.
 - A parent card advances when its last child plan card reaches Done (D12).
 - Done → archived after the configured window (D15).
+- Backlog → Sprint when the project's auto-promote setting is on and the card
+  is unblocked, unparked, and schedule-due (t3o-35). Off by default.
 
 The Ready gate is the one that matters most in daily use: it exists so a planning session can queue
 up a dozen features without a single build starting. Planning is cheap, reversible and read-only

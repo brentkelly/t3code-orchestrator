@@ -18,6 +18,9 @@
  */
 import {
   boardCardAutoStartDue,
+  boardCardAutoPromoteDue,
+  boardProjectAutoPromote,
+  BOARD_SEED_STAGE_IDS,
   boardCardChildren,
   boardBuildHumanInLoopDefault,
   boardCardPendingSplit,
@@ -39,6 +42,7 @@ import {
   boardStepErrorSummary,
   boardStageIndex,
   isBoardStageAtOrAfterBuild,
+  isBoardStageAtOrAfterSubBoardFloor,
   boardCardHasLiveBranch,
   boardStageWithRole,
   parseReviewStepId,
@@ -250,6 +254,10 @@ export interface SupervisorReactorShape {
       boot reconciliation; exposed so a test can drive the self-healing pass
       without wall-clock time. */
   readonly startArmed: Effect.Effect<void>;
+  /** One auto-promote pass: move every eligible Backlog card to Sprint
+      (t3o-35). Same timer and boot reconciliation as auto-start; exposed so a
+      test can drive the sweep without wall-clock time. */
+  readonly promoteUnblocked: Effect.Effect<void>;
   /** One retry pass: requeue every step whose backoff rung has arrived (T3O-22,
       D7). Rides the same 30s timer and boot reconciliation; exposed so a test
       can fire a due rung without waiting two minutes of wall-clock time. */
@@ -5368,6 +5376,10 @@ const make = Effect.gen(function* () {
   ) {
     if (!(yield* clearCardSchedule(card))) return;
     yield* startOrResumeCard(card.id);
+    // A schedule that fired while the card was still blocked is now due
+    // (null schedule). If the last dependency has also landed, promote it
+    // (t3o-35, K4).
+    yield* promoteDueCards((candidate) => candidate.id === card.id);
   });
 
   /**
@@ -5493,6 +5505,67 @@ const make = Effect.gen(function* () {
       whole-board dependency resolution. */
   const startArmedDependents = (dependencyId: BoardCardId) =>
     startArmedCards((card) => card.dependsOn.includes(dependencyId));
+
+  /**
+   * Move every eligible Backlog card the selector picks into Sprint (t3o-35).
+   *
+   * An ordinary adjacent `board.card.move` with no override — Backlog and
+   * Sprint are neighbours on the seed pipeline — so the decider's every gate
+   * still applies. Parked cards fail `boardCardAutoPromoteDue` and stay put.
+   *
+   * Reads the board itself rather than taking its caller's: every call site
+   * is at the end of a handler that has already dispatched.
+   */
+  const promoteDueCards = Effect.fn("board-supervisor-promoteDueCards")(function* (
+    select: (card: BoardCard) => boolean,
+  ) {
+    const board = yield* readBoard;
+    const settings = yield* boardSettings;
+    const nowMs = Date.parse(yield* nowIso);
+    const sprint = boardStageById(board, BOARD_SEED_STAGE_IDS.sprint);
+    if (sprint === null) return;
+    for (const card of board.cards) {
+      if (!select(card)) continue;
+      const flags = boardProjectAutoPromote(settings, card.projectId);
+      if (
+        !boardCardAutoPromoteDue({
+          board,
+          card,
+          nowMs,
+          promoteTopLevel: flags.topLevel,
+          promoteChildren: flags.children,
+        })
+      ) {
+        continue;
+      }
+      // Children cannot enter ideation stages (t3o-23, D3). Skip rather than
+      // teach the floor rule by refusal on every sweep.
+      if (
+        card.parentCardId !== null &&
+        !isBoardStageAtOrAfterSubBoardFloor(board, sprint.stageId)
+      ) {
+        continue;
+      }
+      yield* dispatch({
+        type: "board.card.move",
+        commandId: yield* commandId("auto-promote"),
+        cardId: card.id,
+        toStage: sprint.stageId,
+        createdAt: yield* nowIso,
+      });
+    }
+  });
+
+  const promoteDependents = (dependencyId: BoardCardId) =>
+    promoteDueCards((card) => card.dependsOn.includes(dependencyId));
+
+  const sweepAutoPromote = promoteDueCards(() => true).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: auto-promote sweep failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
 
   /**
    * Requeue every step whose backoff rung has arrived (T3O-22, D7/D10).
@@ -5884,6 +5957,17 @@ const make = Effect.gen(function* () {
     if (event.payload.card.autoStart) {
       yield* startArmedCards((candidate) => candidate.id === event.payload.cardId);
     }
+    // An unpark, a dropped last dependency, or a schedule becoming due can
+    // make a Backlog card eligible (t3o-35). Keyed on the card's state, not
+    // a payload marker: two of the three ways it becomes due (dropping the
+    // last edge, a dependency being deleted from another card's update that
+    // rewrites this card) do not name `backlogParked`.
+    if (
+      event.payload.card.stage === BOARD_SEED_STAGE_IDS.backlog &&
+      !event.payload.card.backlogParked
+    ) {
+      yield* promoteDueCards((candidate) => candidate.id === event.payload.cardId);
+    }
     // Arming a card that is ALREADY parked at the merge stage merges it NOW
     // (T3O-38, D3). It is morally identical to clicking Merge, and a control
     // that visibly does nothing to the card in front of you is the exact
@@ -5996,6 +6080,7 @@ const make = Effect.gen(function* () {
     // An ARCHIVED dependency stops gating (t3o-13, D1), so archiving a blocker
     // frees its dependents exactly as finishing it would (T3O-24, D6).
     yield* startArmedDependents(card.id);
+    yield* promoteDependents(card.id);
   });
 
   /**
@@ -6283,8 +6368,10 @@ const make = Effect.gen(function* () {
     // this (it has no settings, D8), so the reactor does, keyed on the child's
     // `parentCardId`. An ordinary card created straight into an auto stage
     // (D10) has no parent and still kicks off here.
-    if (card.parentCardId !== null) return;
-    yield* beginStageRun({ card, onDemand: false });
+    if (card.parentCardId === null) {
+      yield* beginStageRun({ card, onDemand: false });
+    }
+    yield* promoteDueCards((candidate) => candidate.id === card.id);
   });
 
   /**
@@ -6566,6 +6653,7 @@ const make = Effect.gen(function* () {
     // the same cards, up to half a minute later.
     if (boardStageWithRole(board, "done")?.stageId === event.payload.toStage) {
       yield* startArmedDependents(card.id);
+      yield* promoteDependents(card.id);
     }
   });
 
@@ -7026,6 +7114,7 @@ const make = Effect.gen(function* () {
     // boot needs no backlog to replay — it simply asks the question once, and
     // the 30s sweep asks it again from then on.
     yield* sweepArmedCards;
+    yield* sweepAutoPromote;
     // And every retry rung and probe that came due while the server was down
     // (T3O-22). A predicate over state rather than an event to catch, exactly
     // like the armed-card pass above — and the half of this feature that makes a
@@ -7283,6 +7372,7 @@ const make = Effect.gen(function* () {
           Effect.andThen(releaseFinishedThreads),
           Effect.andThen(sweepSchedules),
           Effect.andThen(sweepArmedCards),
+          Effect.andThen(sweepAutoPromote),
           Effect.andThen(sweepRetries),
           Effect.andThen(sweepProviderLimits),
           Effect.andThen(sweepAutoMergeHolds),
@@ -7390,6 +7480,13 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
+    // Turning auto-promote on is a settings write, not a card event. Sweep
+    // then rather than waiting up to 30s for the tick (t3o-35).
+    yield* forkParked(
+      Stream.runForEach(serverSettings.streamChanges, () =>
+        worker.enqueue({ source: "timeout-sweep" }),
+      ),
+    );
   });
 
   return {
@@ -7398,6 +7495,7 @@ const make = Effect.gen(function* () {
     sweep: sweepTimeouts,
     fireSchedules: sweepSchedules,
     startArmed: sweepArmedCards,
+    promoteUnblocked: sweepAutoPromote,
     fireRetries: sweepRetries,
     fireProbes: sweepProviderLimits,
     fireAutoMerges: sweepAutoMergeHolds,

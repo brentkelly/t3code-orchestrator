@@ -37,6 +37,7 @@ import {
   LayersIcon,
   LockIcon,
   PauseIcon,
+  PinIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import type { DragEvent, ReactNode } from "react";
@@ -208,6 +209,13 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                 tooltip: "Ready to merge, but this card has no pull request — open it to see why",
                 tint: "text-warning-foreground",
               }
+            : notice.kind === "parked"
+              ? {
+                  icon: <PinIcon className="size-3 shrink-0" />,
+                  label: "Parked",
+                  tooltip: "Stays in Backlog until you unpark it",
+                  tint: "text-warning-foreground",
+                }
             : {
                 icon: <LockIcon className="size-3 shrink-0" />,
                 label: "Blocked",
@@ -391,6 +399,7 @@ export function BoardCardContent({
     noPullRequestAtMerge: noPullRequest === true && !summary.muted,
     blocked: card.blocked,
     dependencyCount: card.dependencyCount,
+    backlogParked: card.backlogParked === true,
   });
   // The card's scheduled start (T3O-19, D9/D14). Null on a done card and on
   // one whose time has already passed — the server clears the field within a

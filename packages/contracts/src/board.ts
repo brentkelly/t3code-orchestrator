@@ -1285,6 +1285,15 @@ export const BoardCard = Schema.Struct({
       `auto_start INTEGER NOT NULL DEFAULT 0`, so a from-empty replay of a log
       written before this spec equals a table rehydration. */
   autoStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Whether this card is parked in Backlog (t3o-35, K3). Set by any move
+      INTO Backlog from another stage, so a drag back cannot bounce. False on
+      every card that has never been parked, and cleared by Unpark, by leaving
+      Backlog, or by gaining an unmet dependency.
+
+      Decoding default `false`, matching migration 044's
+      `backlog_parked INTEGER NOT NULL DEFAULT 0`, so a from-empty replay of a
+      log written before this spec equals a table rehydration. */
+  backlogParked: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Whether this card merges its own pull request as soon as the forge
       accepts it (T3O-38, D3), instead of parking in the merge stage until
       somebody clicks Merge.
@@ -2603,6 +2612,46 @@ export function boardCardAutoStartDue(input: {
 }
 
 /**
+ * Whether a Backlog card should move itself to Sprint now (t3o-35, K1/K4).
+ *
+ * ONE predicate for the reactor's targeted paths, its sweep, and boot
+ * reconcile, so a dependency landing and a server that was down while it
+ * landed reach the same conclusion about the same card. Parked cards are
+ * out: a drag back to Backlog is a human (or agent) putting the card there
+ * on purpose (K3). A future scheduled start holds it; a null or past time
+ * is due (`isBoardCardScheduleDue`).
+ *
+ * The caller resolves the two project settings and passes the already-ANDed
+ * children flag, so this function never reads `BoardSettings` — the decider
+ * has no settings (D8) and the reactor is the only place that does.
+ */
+export function boardCardAutoPromoteDue(input: {
+  readonly board: BoardState;
+  readonly card: Pick<
+    BoardCard,
+    "stage" | "parentCardId" | "archivedAt" | "dependsOn" | "backlogParked" | "scheduledStartAt"
+  >;
+  readonly nowMs: number;
+  readonly promoteTopLevel: boolean;
+  readonly promoteChildren: boolean;
+}): boolean {
+  if (input.card.archivedAt !== null) return false;
+  if (input.card.stage !== BOARD_SEED_STAGE_IDS.backlog) return false;
+  if (input.card.backlogParked) return false;
+  if (input.card.parentCardId !== null) {
+    if (!input.promoteChildren) return false;
+  } else if (!input.promoteTopLevel) return false;
+  if (!isBoardCardScheduleDue(input.card.scheduledStartAt, input.nowMs)) return false;
+  return (
+    unmetBoardCardDependencies({
+      board: input.board,
+      dependsOn: input.card.dependsOn,
+      cards: input.board.cards,
+    }).length === 0
+  );
+}
+
+/**
  * Whether this card's merge runs itself (T3O-38, D1) — ONE predicate for all
  * THREE arming conditions, shared by the reactor that merges, the decider that
  * clears a hold, and every surface that draws a chip.
@@ -3715,6 +3764,11 @@ export const BoardCardUpdateCommand = Schema.Struct({
       nothing left to wait for would store a flag no path can ever act on.
       `false` is always accepted: a reverse state must never be refused. */
   autoStart: Schema.optional(Schema.Boolean),
+  /** Unpark a card sitting in Backlog (t3o-35, K3). Absent leaves it
+      unchanged. `false` is always accepted: a reverse state must never be
+      refused. `true` is REFUSED — parking is a move into Backlog, not a flag
+      a pane can set. */
+  backlogParked: Schema.optional(Schema.Boolean),
   /** Arm or disarm the card's auto-merge (T3O-38, D3). Absent leaves it
       unchanged. `true` is REFUSED unless `boardCardCanArmAutoMerge` holds — a
       sub-board child is armed unconditionally and a card already in Done has
@@ -4772,6 +4826,11 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       check an armed card for a dependency that landed between render and click
       without re-scanning the board on every unrelated title edit. */
   autoStart: Schema.optional(Schema.Boolean),
+  /** Whether this edit unparked the card (t3o-35, K3), mirroring `autoStart`
+      above: absent means the edit did not touch it. The supervisor promotes
+      an unparked, due Backlog card on this marker so an unrelated title edit
+      never costs a scan. */
+  backlogParked: Schema.optional(Schema.Boolean),
   /** Whether this edit armed or disarmed auto-merge (T3O-38, D3), on exactly
       the same terms: absent means the edit did not touch it.
 
@@ -5644,6 +5703,15 @@ export const BoardCardShell = Schema.Struct({
       On the card aggregate like `scheduledStartAt`, so it rides every
       card-carrying delta for free and absent really does mean unarmed. */
   autoStart: Schema.optionalKey(Schema.Boolean),
+  /** Whether the card is parked in Backlog (t3o-35, K3), absent when it is
+      not — which is nearly every card, and why this is KEY-optional rather
+      than a plain boolean: the shell is under a fixed per-card byte budget
+      asserted in `board.test.ts`, so an unparked card must cost exactly what
+      it costs today.
+
+      On the card aggregate like `autoStart`, so it rides every card-carrying
+      delta for free and absent really does mean unparked. */
+  backlogParked: Schema.optionalKey(Schema.Boolean),
   /** When this card's auto-merge was first refused (T3O-38, D14), absent when
       nothing is held — which is every card on a healthy board, and why these
       three are KEY-optional: the shell is under a fixed per-card byte budget
@@ -5910,6 +5978,10 @@ export function makeBoardCardShell(input: {
       aggregate like `scheduledStartAt`; the key is omitted for an unarmed card
       to keep its shell byte-identical to a pre-auto-start payload. */
   readonly autoStart?: boolean | null | undefined;
+  /** Whether the card is parked in Backlog (t3o-35). Rides the card
+      aggregate like `autoStart`; the key is omitted for an unparked card
+      to keep its shell byte-identical to a pre-t3o-35 payload. */
+  readonly backlogParked?: boolean | null | undefined;
   /** The auto-merge hold's three shell facts (T3O-38, D14). On the card
       aggregate like `autoStart`, so BOTH producers — the SQL snapshot query
       and the JS delta derivation — must carry them or a held card's pill
@@ -5985,6 +6057,9 @@ export function makeBoardCardShell(input: {
     // The arm (T3O-24, D8): omitted when unarmed — `false` and absent mean the
     // same thing, and only one of them is free.
     ...(input.autoStart === true ? { autoStart: true } : {}),
+    // Parked in Backlog (t3o-35, K3): omitted when unparked — `false` and
+    // absent mean the same thing, and only one of them is free.
+    ...(input.backlogParked === true ? { backlogParked: true } : {}),
     // The auto-merge hold (T3O-38, D14): three byte-cheap facts, each omitted
     // when it has nothing to say, so a board that has never held a merge is
     // byte-identical to a pre-T3O-38 payload.
@@ -6063,6 +6138,7 @@ export function boardCardShellFromCard(
     parentCardId: card.parentCardId,
     scheduledStartAt: card.scheduledStartAt,
     autoStart: card.autoStart,
+    backlogParked: card.backlogParked,
     autoMergeHeldSince: card.autoMergeHold?.heldSince ?? null,
     autoMergeGaveUp: boardCardAutoMergeGaveUp(card.autoMergeHold),
     // The AGGREGATE half of the arm only (T3O-38, D14): a sub-board child or
@@ -7308,6 +7384,14 @@ export const BoardProjectSettings = Schema.Struct({
       this field existed decodable; without it a missing key would fail the
       whole-settings decode and silently revert the user's file to defaults. */
   hidden: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Move unblocked Backlog cards in this project to Sprint (t3o-35, K2).
+      Off by default; a settings file written before this field existed
+      decodes as off rather than failing the whole-settings decode. */
+  autoPromoteToSprint: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Include sub-board children in that auto-promote (t3o-35, K2). Inert
+      unless `autoPromoteToSprint` is on. Off by default for the same
+      upgrade reason. */
+  autoPromoteChildren: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type BoardProjectSettings = typeof BoardProjectSettings.Type;
 
@@ -9151,6 +9235,22 @@ export function assignBoardKeyPrefix(input: {
 /** Whether a project (and its cards) is hidden from the board view. */
 export function isBoardProjectHidden(board: BoardSettings, projectId: ProjectId): boolean {
   return board.projects[projectId]?.hidden ?? false;
+}
+
+/**
+ * Whether this project auto-promotes unblocked Backlog cards to Sprint
+ * (t3o-35, K2). `children` is already ANDed with the parent flag, so a
+ * caller never has to remember that the children setting is inert alone.
+ */
+export function boardProjectAutoPromote(
+  board: BoardSettings,
+  projectId: ProjectId,
+): { readonly topLevel: boolean; readonly children: boolean } {
+  const topLevel = board.projects[projectId]?.autoPromoteToSprint === true;
+  return {
+    topLevel,
+    children: topLevel && board.projects[projectId]?.autoPromoteChildren === true,
+  };
 }
 
 /** The per-project accent colour, or null when unset. */

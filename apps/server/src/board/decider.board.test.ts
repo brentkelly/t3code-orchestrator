@@ -64,6 +64,7 @@ function makeCard(
     baseBranch: null,
     scheduledStartAt: null,
     autoStart: false,
+    backlogParked: false,
     autoMerge: false,
     autoMergeHold: null,
     worktree: null,
@@ -4131,6 +4132,88 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         assert.strictEqual(event.type, "board.card-auto-merge-hold-recorded");
         if (event.type !== "board.card-auto-merge-hold-recorded") return;
         assert.strictEqual(event.payload.card.autoMergeHold?.attempt, 3);
+      }),
+    );
+  });
+
+  describe("auto-promote park (t3o-35)", () => {
+    const modelOf = (card: BoardCard) => makeReadModel({ board: seededBoard([card]) });
+
+    it.effect("parks a card moved into Backlog from Sprint", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          moveCommand({ cardId: "card-1", toStage: "backlog", override: true }),
+          modelOf(makeCard({ id: "card-1", stage: "sprint" })),
+        );
+        assert.strictEqual(event.type, "board.card-moved");
+        if (event.type !== "board.card-moved") return;
+        assert.isTrue(event.payload.card.backlogParked);
+      }),
+    );
+
+    it.effect("clears the park when the card leaves Backlog", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          moveCommand({ cardId: "card-1", toStage: "sprint" }),
+          modelOf(makeCard({ id: "card-1", stage: "backlog", backlogParked: true })),
+        );
+        assert.strictEqual(event.type, "board.card-moved");
+        if (event.type !== "board.card-moved") return;
+        assert.isFalse(event.payload.card.backlogParked);
+      }),
+    );
+
+    it.effect("unparks via update and refuses parking via update", () =>
+      Effect.gen(function* () {
+        const unparked = yield* decide(
+          {
+            type: "board.card.update",
+            commandId: CommandId.make("cmd-unpark"),
+            cardId: BoardCardId.make("card-1"),
+            backlogParked: false,
+            createdAt: NOW,
+          },
+          modelOf(makeCard({ id: "card-1", stage: "backlog", backlogParked: true })),
+        );
+        assert.strictEqual(unparked.type, "board.card-updated");
+        if (unparked.type !== "board.card-updated") return;
+        assert.isFalse(unparked.payload.card.backlogParked);
+
+        const error = yield* decideFail(
+          {
+            type: "board.card.update",
+            commandId: CommandId.make("cmd-park"),
+            cardId: BoardCardId.make("card-1"),
+            backlogParked: true,
+            createdAt: NOW,
+          },
+          modelOf(makeCard({ id: "card-1", stage: "backlog" })),
+        );
+        assert.include(String(error), "can only be parked by moving it back to Backlog");
+      }),
+    );
+
+    it.effect("clears the park when the card gains an unmet dependency", () =>
+      Effect.gen(function* () {
+        const blocker = makeCard({ id: "card-dep", stage: "building" });
+        const event = yield* decide(
+          {
+            type: "board.card.update",
+            commandId: CommandId.make("cmd-dep"),
+            cardId: BoardCardId.make("card-1"),
+            dependsOn: [blocker.id],
+            createdAt: NOW,
+          },
+          makeReadModel({
+            board: seededBoard([
+              makeCard({ id: "card-1", stage: "backlog", backlogParked: true }),
+              blocker,
+            ]),
+          }),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        assert.isFalse(event.payload.card.backlogParked);
       }),
     );
   });
