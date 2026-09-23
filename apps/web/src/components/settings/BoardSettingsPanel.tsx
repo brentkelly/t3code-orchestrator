@@ -272,22 +272,6 @@ function ProjectRows({
                 onCheckedChange={(next) => setProject(project.id, { autoPromoteToSprint: next })}
               />
             </label>
-            <label className="flex w-full items-center justify-between gap-3 text-[12.5px]">
-              <span className="flex min-w-0 flex-col">
-                <span className="font-medium text-foreground">Include sub-board children</span>
-                <span className="text-[11px] text-muted-foreground">
-                  Only if a child can sit in Backlog. On the default pipeline children start at
-                  Ready, so this does nothing unless auto-move is on and the sub-board floor
-                  includes Backlog.
-                </span>
-              </span>
-              <Switch
-                aria-label={`Include sub-board children in auto-move for ${project.title}`}
-                checked={entry?.autoPromoteChildren === true}
-                disabled={entry?.autoPromoteToSprint !== true}
-                onCheckedChange={(next) => setProject(project.id, { autoPromoteChildren: next })}
-              />
-            </label>
           </div>
         );
       })}

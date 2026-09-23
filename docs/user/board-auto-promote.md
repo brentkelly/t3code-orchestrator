@@ -15,11 +15,8 @@ Every Backlog card in that project with no unfinished dependencies moves to Spri
 created in Backlog with nothing waiting do the same. A card that depends on two others stays in
 Backlog until **both** are Done (or archived).
 
-A second switch, **Include sub-board children**, is off by default. On the default pipeline
-children start at Ready, so they never sit in Backlog and this switch does nothing. Turn it on
-only if the sub-board floor includes Backlog.
-
-Turning the setting off leaves cards where they are. It never moves a card backwards.
+Turning the setting off leaves cards where they are. It never moves a card backwards. Sub-board
+children start at Ready, so they are not part of this move.
 
 ## Parking
 

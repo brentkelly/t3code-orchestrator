@@ -37,12 +37,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-projects",
     searchTerms: ["auto promote sprint unblocked dependencies backlog"],
   },
-  {
-    id: "board-auto-promote-children",
-    title: "Include sub-board children in auto-move",
-    to: "/settings/board",
-    targetId: "board-projects",
-  },
+
   { id: "board-pipeline", title: "Pipeline", to: "/settings/board" },
   {
     id: "board-default-model",
