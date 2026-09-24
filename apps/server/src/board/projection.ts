@@ -606,6 +606,8 @@ const BoardCardShellDbRow = Schema.Struct({
   autoMergeArmed: Schema.Int,
   /** 1 when the last publish-on-done attempt failed. */
   publishFailed: Schema.Int,
+  /** 1 when a publish-on-done attempt is in flight. */
+  publishRunning: Schema.Int,
   /** The review-summary CACHE (t3o-22, D7); NULL for a card with no review
       history. Its `outcome` is provisional — `resolveBoardCardReviewOutcome`
       settles it against the card's live step at assembly. */
@@ -1003,6 +1005,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           AS "autoMergeArmed",
         CASE WHEN json_extract(publish, '$.status') = 'failed' THEN 1 ELSE 0 END
           AS "publishFailed",
+        CASE WHEN json_extract(publish, '$.status') = 'running' THEN 1 ELSE 0 END
+          AS "publishRunning",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1071,6 +1075,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
           AS "autoMergeArmed",
         CASE WHEN json_extract(publish, '$.status') = 'failed' THEN 1 ELSE 0 END
           AS "publishFailed",
+        CASE WHEN json_extract(publish, '$.status') = 'running' THEN 1 ELSE 0 END
+          AS "publishRunning",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -3471,6 +3477,7 @@ export function withBoardShellCards(
           autoMergeGaveUp: row.autoMergeGaveUp !== 0,
           autoMergeArmed: row.autoMergeArmed !== 0,
           publishFailed: row.publishFailed !== 0,
+          publishRunning: row.publishRunning !== 0,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
           // it here as well would give the snapshot and the `card-review`
@@ -3567,6 +3574,7 @@ export function withBoardArchivedShellCards(
             autoMergeGaveUp: row.autoMergeGaveUp !== 0,
             autoMergeArmed: row.autoMergeArmed !== 0,
             publishFailed: row.publishFailed !== 0,
+            publishRunning: row.publishRunning !== 0,
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),

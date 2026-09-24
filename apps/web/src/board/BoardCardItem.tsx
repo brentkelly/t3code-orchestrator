@@ -34,6 +34,7 @@ import {
   ClockIcon,
   GitMergeIcon,
   GitPullRequestIcon,
+  GlobeIcon,
   LayersIcon,
   LockIcon,
   PauseIcon,
@@ -208,19 +209,26 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                 tooltip: "Ready to merge, but this card has no pull request — open it to see why",
                 tint: "text-warning-foreground",
               }
-            : notice.kind === "publish-failed"
+            : notice.kind === "publish-running"
               ? {
-                  icon: <TriangleAlertIcon className="size-3 shrink-0" />,
-                  label: "Publish needs you",
-                  tooltip: "Publishing this project's site failed — open the card to retry",
-                  tint: "text-warning-foreground",
+                  icon: <GlobeIcon className="size-3 shrink-0" />,
+                  label: "Publishing",
+                  tooltip: "Publishing this project's site",
+                  tint: "text-info-foreground",
                 }
-              : {
-                  icon: <LockIcon className="size-3 shrink-0" />,
-                  label: "Blocked",
-                  tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
-                  tint: "text-warning-foreground",
-                };
+              : notice.kind === "publish-failed"
+                ? {
+                    icon: <TriangleAlertIcon className="size-3 shrink-0" />,
+                    label: "Publish needs you",
+                    tooltip: "Publishing this project's site failed — open the card to retry",
+                    tint: "text-warning-foreground",
+                  }
+                : {
+                    icon: <LockIcon className="size-3 shrink-0" />,
+                    label: "Blocked",
+                    tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
+                    tint: "text-warning-foreground",
+                  };
   return (
     <BoardHint label={view.tooltip}>
       <span
@@ -396,6 +404,7 @@ export function BoardCardContent({
     // T3o (T3O-48): a Done card is asking for nothing, and the page's predicate
     // already says so — the guard here just refuses to trust a stale prop.
     noPullRequestAtMerge: noPullRequest === true && !summary.muted,
+    publishRunning: card.publishRunning === true,
     publishFailed: card.publishFailed === true,
     blocked: card.blocked,
     dependencyCount: card.dependencyCount,

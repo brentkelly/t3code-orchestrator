@@ -1070,6 +1070,12 @@ export function boardCardPublishNeedsYou(publish: BoardCardPublish | null): bool
   return publish !== null && publish.status === "failed";
 }
 
+/** The column card's blue "Publishing" pill. Live attempts only — Retry stays
+    off until the attempt fails. */
+export function boardCardPublishIsRunning(publish: BoardCardPublish | null): boolean {
+  return publish !== null && publish.status === "running";
+}
+
 export function boardCardPublishesEqual(
   left: BoardCardPublish | null,
   right: BoardCardPublish | null,
@@ -4344,7 +4350,8 @@ export type BoardCardRecordAutoMergeHoldCommand = typeof BoardCardRecordAutoMerg
  * Record — or clear — a card's publish-on-done attempt.
  *
  * Server-internal: only the supervisor reactor ran the script. `publish: null`
- * is the clear, used by Retry so the next run is a fresh attempt for this round.
+ * is a card that has never attempted; Retry leaves the last failed or running
+ * row in place until a new attempt starts.
  */
 export const BoardCardRecordPublishCommand = Schema.Struct({
   type: Schema.Literal("board.card.record-publish"),
@@ -5745,6 +5752,8 @@ export const BoardCardShell = Schema.Struct({
       Absent when it did not — which is every card that has never published —
       so a healthy Done column stays byte-identical to a pre-publish payload. */
   publishFailed: Schema.optionalKey(Schema.Boolean),
+  /** Whether a publish-on-done attempt is in flight. Absent when it is not. */
+  publishRunning: Schema.optionalKey(Schema.Boolean),
   /** The card's linked pull request number, absent when it has none. Sourced
       from `BoardCard.pullRequest`, so — unlike `briefHasImage` / `planCount` —
       it is on the aggregate and every card-carrying delta asserts it; there is
@@ -5997,6 +6006,8 @@ export function makeBoardCardShell(input: {
   /** Whether the last publish-on-done attempt failed. Omitted when it did
       not, so a card that has never published stays byte-identical. */
   readonly publishFailed?: boolean | null | undefined;
+  /** Whether a publish-on-done attempt is in flight. Omitted when it is not. */
+  readonly publishRunning?: boolean | null | undefined;
   /** The card's review-loop summary (t3o-22, D7), or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -6072,6 +6083,7 @@ export function makeBoardCardShell(input: {
     ...(input.autoMergeGaveUp === true ? { autoMergeGaveUp: true } : {}),
     ...(input.autoMergeArmed === true ? { autoMergeArmed: true } : {}),
     ...(input.publishFailed === true ? { publishFailed: true } : {}),
+    ...(input.publishRunning === true ? { publishRunning: true } : {}),
     // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -6154,6 +6166,7 @@ export function boardCardShellFromCard(
     // exists to catch.
     autoMergeArmed: card.parentCardId !== null || card.autoMerge,
     publishFailed: boardCardPublishNeedsYou(card.publish),
+    publishRunning: boardCardPublishIsRunning(card.publish),
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined

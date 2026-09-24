@@ -34,6 +34,7 @@ describe("runPublishScript", () => {
         cwd: process.cwd(),
         command: "sleep 10",
         timeoutMs: 200,
+        killGraceMs: 50,
       }),
     );
     expect(result.timedOut).toBe(true);

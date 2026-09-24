@@ -60,6 +60,7 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
+  boardCardPublishIsRunning,
   boardCardPublishNeedsYou,
   type BoardCardReviewOverrides,
   type BoardReviewRoundOverride,
@@ -1633,6 +1634,11 @@ function ActionsSection({
             <span className="text-muted-foreground">{`#${displayed.number}`}</span>
           </button>
         </BoardHint>
+      ) : null}
+      {boardCardPublishIsRunning(card.publish) ? (
+        <div className="flex items-start gap-[7px] rounded-lg border border-info/35 bg-info/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-info-foreground">
+          <span>{card.publish?.detail ?? "Publishing this project's site."}</span>
+        </div>
       ) : null}
       {boardCardPublishNeedsYou(card.publish) && props.onRetryPublish !== undefined ? (
         <div className="flex items-start gap-[7px] rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-warning-foreground">

@@ -1,6 +1,8 @@
 import { BoardCardId, BoardStageId, ProjectId, type BoardCard } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { boardCardPublishIsRunning, boardCardPublishNeedsYou } from "@t3tools/contracts";
+
 import {
   lastPublishedShaForProject,
   publishAttempt,
@@ -178,6 +180,23 @@ describe("publishSkipBecauseAlreadyLive", () => {
     expect(publishSkipBecauseAlreadyLive("aaa", "aaa")).toBe(true);
     expect(publishSkipBecauseAlreadyLive("aaa", "bbb")).toBe(false);
     expect(publishSkipBecauseAlreadyLive("aaa", null)).toBe(false);
+  });
+});
+
+describe("boardCardPublish pills", () => {
+  it("Retry is failed only, Publishing is running only", () => {
+    expect(boardCardPublishNeedsYou({ round: 0, status: "failed", sha: null, detail: "x" })).toBe(
+      true,
+    );
+    expect(boardCardPublishNeedsYou({ round: 0, status: "running", sha: null, detail: "x" })).toBe(
+      false,
+    );
+    expect(boardCardPublishIsRunning({ round: 0, status: "running", sha: null, detail: "x" })).toBe(
+      true,
+    );
+    expect(boardCardPublishIsRunning({ round: 0, status: "failed", sha: null, detail: "x" })).toBe(
+      false,
+    );
   });
 });
 

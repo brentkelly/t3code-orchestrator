@@ -5,7 +5,10 @@
  * attach a PTY to. The command is the one the project named in t3.json /
  * Project Actions (`runOnCardDone`). Timeout is 15 minutes.
  *
- * The child PID is captured at spawn so a timeout kills only that process.
+ * On Unix the child is a process-group leader so timeout and interrupt can
+ * SIGTERM the whole tree, wait a short grace, then SIGKILL. Windows still
+ * signals only the shell. In-flight groups are SIGKILL'd if this process
+ * exits, so a restart does not leave a detached deploy running.
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
@@ -22,6 +25,29 @@ export interface PublishScriptResult {
 }
 
 const DETAIL_MAX = 400;
+const KILL_GRACE_MS = 2_000;
+
+const inFlight = new Set<number>();
+
+function killProcessTree(
+  pid: number | undefined,
+  child: NodeChildProcess.ChildProcess | undefined,
+  signal: NodeJS.Signals,
+): void {
+  if (pid === undefined) return;
+  try {
+    if (process.platform === "win32") child?.kill(signal);
+    else process.kill(-pid, signal);
+  } catch {
+    // Already gone, or not a process group.
+  }
+}
+
+process.on("exit", () => {
+  for (const pid of inFlight) {
+    killProcessTree(pid, undefined, "SIGKILL");
+  }
+});
 
 function trimDetail(text: string): string {
   const cleaned = text.replace(/\s+/g, " ").trim();
@@ -34,10 +60,16 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
   readonly command: string;
   readonly extraEnv?: Record<string, string>;
   readonly timeoutMs?: number;
+  readonly killGraceMs?: number;
 }) {
   const timeoutMs = input.timeoutMs ?? BOARD_PUBLISH_ON_DONE_TIMEOUT_MS;
+  const killGraceMs = input.killGraceMs ?? KILL_GRACE_MS;
+  let pid: number | undefined;
+  let child: NodeChildProcess.ChildProcess | undefined;
+  let killing = false;
+  const killTree = (signal: NodeJS.Signals) => killProcessTree(pid, child, signal);
   const run = Effect.callback<PublishScriptResult>((resume) => {
-    const child = NodeChildProcess.spawn(input.command, {
+    child = NodeChildProcess.spawn(input.command, {
       cwd: input.cwd,
       env: {
         ...process.env,
@@ -47,16 +79,8 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
       shell: true,
       detached: process.platform !== "win32",
     });
-    const pid = child.pid;
-    const killTree = (signal: NodeJS.Signals) => {
-      if (pid === undefined) return;
-      try {
-        if (process.platform === "win32") child.kill(signal);
-        else process.kill(-pid, signal);
-      } catch {
-        // Already gone, or not a process group.
-      }
-    };
+    pid = child.pid;
+    if (pid !== undefined) inFlight.add(pid);
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -67,6 +91,7 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
     const settle = (result: PublishScriptResult) => {
       if (settled) return;
       settled = true;
+      if (pid !== undefined) inFlight.delete(pid);
       resume(Effect.succeed(result));
     };
     child.stdout?.on("data", (chunk: Buffer | string) => {
@@ -76,6 +101,7 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
       stderr = appendTail(stderr, chunk);
     });
     child.on("close", (code) => {
+      if (killing) return;
       const detail = trimDetail(stderr.length > 0 ? stderr : stdout);
       settle({
         exitCode: code,
@@ -89,6 +115,7 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
       });
     });
     child.on("error", (error) => {
+      if (killing) return;
       settle({
         exitCode: null,
         timedOut: false,
@@ -103,11 +130,26 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
     Effect.timeoutOrElse({
       duration: Duration.millis(timeoutMs),
       orElse: () =>
-        Effect.succeed({
-          exitCode: null,
-          timedOut: true,
-          detail: `Publish timed out after ${Math.round(timeoutMs / 60_000)} minutes.`,
-        } satisfies PublishScriptResult),
+        Effect.sync(() => {
+          killing = true;
+          killTree("SIGTERM");
+        }).pipe(
+          Effect.andThen(Effect.sleep(Duration.millis(killGraceMs))),
+          Effect.andThen(Effect.sync(() => killTree("SIGKILL"))),
+          Effect.map(
+            () =>
+              ({
+                exitCode: null,
+                timedOut: true,
+                detail: `Publish timed out after ${Math.round(timeoutMs / 60_000)} minutes.`,
+              }) satisfies PublishScriptResult,
+          ),
+        ),
     }),
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (pid !== undefined) inFlight.delete(pid);
+      }),
+    ),
   );
 });

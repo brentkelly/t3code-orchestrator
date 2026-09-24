@@ -55,6 +55,7 @@ const notice = (input: Partial<Parameters<typeof boardCardNotice>[0]>) =>
     attention: null,
     conflictFix: null,
     autoMergeHold: null,
+    publishRunning: false,
     publishFailed: false,
     noPullRequestAtMerge: false,
     blocked: false,
@@ -107,8 +108,18 @@ describe("boardCardNotice", () => {
     expect(notice({ attention: stalled })).toEqual({ kind: "attention", attention: stalled });
   });
 
+  it("names a running publish on a Done card", () => {
+    expect(notice({ publishRunning: true })).toEqual({ kind: "publish-running" });
+  });
+
   it("names a failed publish on a Done card", () => {
     expect(notice({ publishFailed: true })).toEqual({ kind: "publish-failed" });
+  });
+
+  it("ranks a running publish above a failed one", () => {
+    expect(notice({ publishRunning: true, publishFailed: true })).toEqual({
+      kind: "publish-running",
+    });
   });
 
   it("ranks the dependency gate last, because the meta row still carries it", () => {
