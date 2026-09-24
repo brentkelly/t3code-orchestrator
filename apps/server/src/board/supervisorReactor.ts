@@ -7386,6 +7386,29 @@ const make = Effect.gen(function* () {
         yield* settleCardAtDone(card);
       }
     }
+    // A publish recorded `running` and the process died before it could
+    // finish: the child is gone, and Retry only appears for `failed`. Convert
+    // those leftovers so the card can be retried. In-process runs are not
+    // reconciled (this pass is boot), so a live script is not marked failed.
+    {
+      const leftover = yield* readBoard;
+      for (const card of leftover.cards) {
+        if (card.publish?.status !== "running") continue;
+        yield* recordPublish(
+          card,
+          publishAttempt({
+            card,
+            status: "failed",
+            sha: card.publish.sha,
+            detail: "Publish did not finish.",
+          }),
+          {
+            kind: "card-publish-failed",
+            detail: "Publish did not finish.",
+          },
+        );
+      }
+    }
     // Settle every thread the board finished with while the server was down —
     // and every one it finished with before this shipped (t3o-13). The release
     // is a predicate over state rather than an event to catch, so boot needs no

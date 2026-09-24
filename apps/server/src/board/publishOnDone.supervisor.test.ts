@@ -270,6 +270,30 @@ it.effect("retry refuses when publish is disabled for the project", () =>
   ),
 );
 
+it.effect("boot reconcile marks a leftover running publish as failed", () =>
+  withGovernor(
+    setup({
+      publishOnDone: true,
+      publish: { round: 0, status: "running", sha: null, detail: "Publish is running." },
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.reconcile;
+        yield* h.reactor.drain;
+        const card = (yield* h.board).cards.find((entry) => String(entry.id) === "card-one");
+        assert.strictEqual(card?.publish?.status, "failed");
+        const failed = (yield* h.commands).filter(
+          (command) =>
+            command.type === "board.card.record-note" && command.kind === "card-publish-failed",
+        );
+        const note = failed.at(-1);
+        assert.ok(note !== undefined && note.type === "board.card.record-note");
+        if (note === undefined || note.type !== "board.card.record-note") return;
+        assert.match(note.detail, /did not finish/);
+      }),
+  ),
+);
+
 it.effect("retry re-runs a failed publish", () =>
   withGovernor(
     setup({
