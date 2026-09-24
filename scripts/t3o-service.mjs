@@ -23,7 +23,8 @@
  * packages external, and outside the worktree there is no node_modules for Node
  * to resolve them from. So the app dir also gets a small manifest of exactly
  * those roots -- the same list the bundler is configured from -- and an npm
- * install that only re-runs when a version moves.
+ * install that only re-runs when a version moves, plus a pass that re-applies
+ * the repo's pnpm patches that npm knows nothing about.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -221,7 +222,8 @@ function buildUnit() {
  * (scripts/lib/cli-external-packages.ts), so this cannot drift from what was
  * actually left external. Versions are pinned to what the worktree resolved, so
  * the service runs the code the bundle was built against rather than whatever a
- * range happens to pick up later. npm is skipped entirely when nothing moved.
+ * range happens to pick up later. npm is skipped entirely when nothing moved,
+ * but the pnpm patches are re-applied either way (see applyPnpmPatches).
  */
 function syncRuntimeDependencies() {
   const declared = JSON.parse(
@@ -253,14 +255,84 @@ function syncRuntimeDependencies() {
     NodeFS.existsSync(NodePath.join(appDir, "node_modules"));
   if (unchanged) {
     console.log("[t3o-service] Native dependencies unchanged.");
-    return;
+  } else {
+    NodeFS.writeFileSync(manifestPath, manifest);
+    console.log(
+      `[t3o-service] Installing native dependencies (${Object.keys(dependencies).join(", ")})...`,
+    );
+    run("npm", ["install", "--no-audit", "--no-fund"], { cwd: appDir });
   }
 
-  NodeFS.writeFileSync(manifestPath, manifest);
-  console.log(
-    `[t3o-service] Installing native dependencies (${Object.keys(dependencies).join(", ")})...`,
+  applyPnpmPatches();
+}
+
+/**
+ * Re-apply the repo's pnpm patches to the app directory's npm install.
+ *
+ * npm knows nothing about pnpm's `patchedDependencies`, so installing these
+ * packages from the registry yields the unpatched originals. That is not
+ * cosmetic: the fff-node patch is what adds the `require` condition to its
+ * `exports`, and the bundle reaches it through `createRequire`, so without the
+ * patch the service exits at startup with ERR_PACKAGE_PATH_NOT_EXPORTED and
+ * the port serves nothing.
+ *
+ * npm hoists, so every patched package -- a declared root or one of their
+ * transitive dependencies -- sits at the top level of node_modules and this
+ * single-level scan finds them all. It runs on every sync, including the path
+ * where nothing was installed, because editing a patch moves no version and
+ * would otherwise never reach the app directory.
+ *
+ * Applying is idempotent: an already-patched package reverse-applies cleanly
+ * and is skipped. A patch edited since it was applied matches neither
+ * direction and stops the sync, which is the right outcome -- the alternative
+ * is a half-patched package nobody notices until the server will not start.
+ */
+function applyPnpmPatches() {
+  const workspace = NodeFS.readFileSync(NodePath.join(repoRoot, "pnpm-workspace.yaml"), "utf8");
+  // The block is flat `name@version: patches/<file>` entries, keys sometimes
+  // quoted. Reading it beats hardcoding a list that would drift on every sync.
+  const block = workspace.match(/^patchedDependencies:\n((?:[ \t]+\S.*\n)*)/m)?.[1] ?? "";
+  const patches = new Map(
+    [...block.matchAll(/^\s+"?([^"\s:]+)"?:\s*(\S+)\s*$/gm)].map(([, key, file]) => [key, file]),
   );
-  run("npm", ["install", "--no-audit", "--no-fund"], { cwd: appDir });
+  if (patches.size === 0) {
+    fail("no patchedDependencies found in pnpm-workspace.yaml — has the format changed?");
+  }
+
+  const modulesDir = NodePath.join(appDir, "node_modules");
+  const installed = NodeFS.readdirSync(modulesDir, { withFileTypes: true }).flatMap((entry) => {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) return [];
+    if (!entry.name.startsWith("@")) return [entry.name];
+    return NodeFS.readdirSync(NodePath.join(modulesDir, entry.name)).map(
+      (scoped) => `${entry.name}/${scoped}`,
+    );
+  });
+
+  for (const name of installed) {
+    const packageDir = NodePath.join(modulesDir, name);
+    const packageJson = NodePath.join(packageDir, "package.json");
+    if (!NodeFS.existsSync(packageJson)) continue;
+    const { version } = JSON.parse(NodeFS.readFileSync(packageJson, "utf8"));
+    const patch = patches.get(`${name}@${version}`);
+    if (patch === undefined) continue;
+
+    const patchPath = NodePath.join(repoRoot, patch);
+    const applied =
+      run("git", ["apply", "--reverse", "--check", patchPath], {
+        cwd: packageDir,
+        stdio: "ignore",
+        allowFailure: true,
+      }) === 0;
+    if (applied) continue;
+
+    console.log(`[t3o-service] Patching ${name}@${version} with ${patch}...`);
+    if (run("git", ["apply", patchPath], { cwd: packageDir, allowFailure: true }) !== 0) {
+      fail(
+        `could not apply ${patch} to ${packageDir}.\n` +
+          `Delete the install and let it rebuild: rm -rf ${modulesDir}`,
+      );
+    }
+  }
 }
 
 const sudoWrite = (path, contents) => {
