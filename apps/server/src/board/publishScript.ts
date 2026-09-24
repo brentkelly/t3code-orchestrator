@@ -45,21 +45,35 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
         ...input.extraEnv,
       },
       shell: true,
+      detached: process.platform !== "win32",
     });
     const pid = child.pid;
+    const killTree = (signal: NodeJS.Signals) => {
+      if (pid === undefined) return;
+      try {
+        if (process.platform === "win32") child.kill(signal);
+        else process.kill(-pid, signal);
+      } catch {
+        // Already gone, or not a process group.
+      }
+    };
     let stdout = "";
     let stderr = "";
     let settled = false;
+    const appendTail = (current: string, chunk: Buffer | string): string => {
+      const next = current + String(chunk);
+      return next.length <= DETAIL_MAX ? next : next.slice(next.length - DETAIL_MAX);
+    };
     const settle = (result: PublishScriptResult) => {
       if (settled) return;
       settled = true;
       resume(Effect.succeed(result));
     };
     child.stdout?.on("data", (chunk: Buffer | string) => {
-      stdout += String(chunk);
+      stdout = appendTail(stdout, chunk);
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
-      stderr += String(chunk);
+      stderr = appendTail(stderr, chunk);
     });
     child.on("close", (code) => {
       const detail = trimDetail(stderr.length > 0 ? stderr : stdout);
@@ -82,13 +96,7 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
       });
     });
     return Effect.sync(() => {
-      if (!settled && pid !== undefined) {
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          // Already gone.
-        }
-      }
+      if (!settled) killTree("SIGTERM");
     });
   });
   return yield* run.pipe(
@@ -98,7 +106,7 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
         Effect.succeed({
           exitCode: null,
           timedOut: true,
-          detail: "Publish timed out after 15 minutes.",
+          detail: `Publish timed out after ${Math.round(timeoutMs / 60_000)} minutes.`,
         } satisfies PublishScriptResult),
     }),
   );

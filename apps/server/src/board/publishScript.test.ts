@@ -27,4 +27,16 @@ describe("runPublishScript", () => {
     expect(result.timedOut).toBe(false);
     expect(result.exitCode).toBe(7);
   });
+
+  it("times out a command that does not finish", async () => {
+    const result = await Effect.runPromise(
+      runPublishScript({
+        cwd: process.cwd(),
+        command: "sleep 10",
+        timeoutMs: 200,
+      }),
+    );
+    expect(result.timedOut).toBe(true);
+    expect(result.detail).toMatch(/timed out/);
+  });
 });

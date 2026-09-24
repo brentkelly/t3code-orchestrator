@@ -1047,7 +1047,7 @@ export const BoardCardAutoMergeHold = Schema.Struct({
 export type BoardCardAutoMergeHold = typeof BoardCardAutoMergeHold.Type;
 
 /** Outcome of one publish-on-done attempt for a card round. */
-export const BOARD_CARD_PUBLISH_STATUSES = ["succeeded", "failed", "skipped"] as const;
+export const BOARD_CARD_PUBLISH_STATUSES = ["running", "succeeded", "failed", "skipped"] as const;
 export const BoardCardPublishStatus = Schema.Literals(BOARD_CARD_PUBLISH_STATUSES);
 export type BoardCardPublishStatus = typeof BoardCardPublishStatus.Type;
 
@@ -6999,6 +6999,7 @@ export type BoardMergeCardPullRequestResult = typeof BoardMergeCardPullRequestRe
 export const BoardRetryPublishResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("started") }),
   Schema.Struct({ outcome: Schema.Literal("not-failed") }),
+  Schema.Struct({ outcome: Schema.Literal("disabled") }),
   Schema.Struct({ outcome: Schema.Literal("wrong-stage") }),
   Schema.Struct({ outcome: Schema.Literal("no-pull-request") }),
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),

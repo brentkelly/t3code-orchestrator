@@ -48,6 +48,8 @@ export function describeBoardRetryPublishOutcome(result: BoardRetryPublishResult
       return "Publishing again.";
     case "not-failed":
       return "Nothing to retry — the last publish did not fail.";
+    case "disabled":
+      return "Publish when done is off for this project.";
     case "wrong-stage":
       return "Publish retry is only available on a Done card.";
     case "no-pull-request":

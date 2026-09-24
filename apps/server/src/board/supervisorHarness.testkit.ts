@@ -199,6 +199,8 @@ export const makeBoardCard = (input: {
   /** A recorded auto-merge hold (T3O-38, D4) — the state a refused armed
       merge leaves behind. */
   readonly autoMergeHold?: BoardCard["autoMergeHold"];
+  /** A recorded publish-on-done attempt. */
+  readonly publish?: BoardCard["publish"];
   /** The cards this one waits on (t3o-13). Absent is nothing. */
   readonly dependsOn?: ReadonlyArray<string>;
   /** The sub-board parent this card is a child of (t3o-23). Absent is
@@ -232,7 +234,7 @@ export const makeBoardCard = (input: {
   autoStart: input.autoStart ?? false,
   autoMerge: input.autoMerge ?? false,
   autoMergeHold: input.autoMergeHold ?? null,
-  publish: null,
+  publish: input.publish ?? null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],
@@ -585,6 +587,14 @@ export function withGovernor(
         can drive the reclaim refusal — the case where the checkout holds work
         that exists nowhere else and must NOT be deleted to save disk. */
     readonly worktreeDirty?: boolean;
+    /** Branch `statusDetails` and `git branch --show-current` answer. Defaults
+        to `main`, matching a project checkout sitting on its base branch. */
+    readonly checkoutBranch?: string;
+    /** What `git rev-parse HEAD` answers in the project checkout. Publish-on-done
+        uses this as the live SHA. */
+    readonly publishHeadSha?: string;
+    /** Scripts on the first harness project (`project-1`). Empty by default. */
+    readonly projectScripts?: OrchestrationReadModel["projects"][number]["scripts"];
     /** The cached todo state per thread id (t3o-18): the reactor reads
         `advancedAt` for the stall-reset / timeout-liveness signal and `hasList`
         for the recovery nudge. Absent threads answer "no list". */
@@ -624,8 +634,16 @@ export function withGovernor(
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
+    const seeded = readModel(input.board);
+    const projectScripts = input.projectScripts;
     const model = yield* Ref.make<OrchestrationReadModel>({
-      ...readModel(input.board),
+      ...seeded,
+      projects:
+        projectScripts === undefined
+          ? seeded.projects
+          : seeded.projects.map((project) =>
+              project.id === projectId ? { ...project, scripts: [...projectScripts] } : project,
+            ),
       threads: [...(input.initialShells ?? new Map()).entries()].map(([threadId, shell]) =>
         seededThreadRow(threadId, shell),
       ),
@@ -858,8 +876,8 @@ export function withGovernor(
     let boardSettings = input.settings;
     const settingsStub = {
       getSettings: Effect.sync(() => ({
+        ...DEFAULT_SERVER_SETTINGS,
         board: boardSettings,
-        textGenerationModelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
       })),
     } as unknown as ServerSettingsService["Service"];
 
@@ -886,6 +904,8 @@ export function withGovernor(
       // testing the refusal sets `worktreeDirty`.
       statusDetails: () =>
         Effect.succeed({
+          isRepo: true,
+          branch: input.checkoutBranch ?? "main",
           hasWorkingTreeChanges: input.worktreeDirty === true,
           hasUpstream: true,
           aheadCount: 0,
@@ -940,6 +960,20 @@ export function withGovernor(
           return input.remoteOnlyBranches?.includes(name) === true
             ? Effect.succeed({ stdout: "remote-tip", stderr: "", exitCode: 0 })
             : Effect.succeed({ stdout: "", stderr: "", exitCode: 1 });
+        }
+        if (request.args?.[0] === "rev-parse" && request.args[1] === "HEAD") {
+          return Effect.succeed({
+            stdout: input.publishHeadSha ?? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+        if (request.args?.[0] === "branch" && request.args[1] === "--show-current") {
+          return Effect.succeed({
+            stdout: input.checkoutBranch ?? "main",
+            stderr: "",
+            exitCode: 0,
+          });
         }
         if (request.args?.[0] === "branch" && request.args[1] !== undefined) {
           createdBranches.add(request.args[1]);

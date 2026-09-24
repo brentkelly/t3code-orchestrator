@@ -135,6 +135,7 @@ import { boardSnapshotQueryMethodsOf } from "./projection.ts";
 import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { pullMergedBaseBranch } from "./baseBranchSync.ts";
 import {
+  boardPublishOnDoneEnabled,
   lastPublishedShaForProject,
   publishAttempt,
   publishSkipBecauseAlreadyLive,
@@ -4243,7 +4244,10 @@ const make = Effect.gen(function* () {
   const recordPublish = Effect.fn("board-supervisor-recordPublish")(function* (
     card: BoardCard,
     publish: BoardCard["publish"],
-    note: { readonly kind: "card-published" | "card-publish-failed"; readonly detail: string },
+    note: {
+      readonly kind: "card-published" | "card-publish-failed";
+      readonly detail: string;
+    } | null,
   ) {
     yield* dispatch({
       type: "board.card.record-publish",
@@ -4252,6 +4256,7 @@ const make = Effect.gen(function* () {
       publish,
       createdAt: yield* nowIso,
     });
+    if (note === null) return;
     yield* dispatch({
       type: "board.card.record-note",
       commandId: yield* commandId("publish-note"),
@@ -4278,6 +4283,16 @@ const make = Effect.gen(function* () {
     ) {
       return;
     }
+    yield* recordPublish(
+      card,
+      publishAttempt({
+        card,
+        status: "running",
+        sha: null,
+        detail: "Publish is running.",
+      }),
+      null,
+    );
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
     if (cwd === null) {
@@ -4301,7 +4316,17 @@ const make = Effect.gen(function* () {
     );
     const project = model.projects.find((entry) => entry.id === card.projectId);
     const scripts =
-      server === null || project === undefined ? [] : resolveProjectScripts(server, project);
+      server === null || project === undefined
+        ? []
+        : resolveProjectScripts(
+            {
+              defaultProjectScripts: server.defaultProjectScripts ?? [],
+              projectScriptOverrides: server.projectScriptOverrides ?? {},
+              projectSettingsOverrides: server.projectSettingsOverrides ?? {},
+              projectSettingsFolded: server.projectSettingsFolded ?? false,
+            },
+            project,
+          );
     const script = resolvePublishScript(scripts);
     if (script === null) {
       yield* recordPublish(
@@ -4372,7 +4397,7 @@ const make = Effect.gen(function* () {
       return;
     }
     if (baseBranch !== null) {
-      yield* pullMergedBaseBranch({ git, cwd, baseBranch }).pipe(
+      const sync = yield* pullMergedBaseBranch({ git, cwd, baseBranch }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("board supervisor: publish pull failed", {
             cardId: card.id,
@@ -4380,6 +4405,22 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.as({ updated: false, skippedReason: "pull failed" })),
         ),
       );
+      if (!sync.updated && sync.skippedReason !== null) {
+        yield* recordPublish(
+          card,
+          publishAttempt({
+            card,
+            status: "failed",
+            sha: null,
+            detail: sync.skippedReason,
+          }),
+          {
+            kind: "card-publish-failed",
+            detail: `Publish skipped — ${sync.skippedReason}`,
+          },
+        );
+        return;
+      }
     }
     const head = yield* git
       .execute({
@@ -4411,11 +4452,12 @@ const make = Effect.gen(function* () {
       extraEnv: sha === null ? {} : { T3CODE_PUBLISH_SHA: sha },
     });
     if (result.timedOut || result.exitCode !== 0) {
-      const detail = result.timedOut
-        ? "Publish timed out after 15 minutes."
-        : result.detail.length > 0
+      const detail =
+        result.detail.length > 0
           ? result.detail
-          : "Publish command failed.";
+          : result.timedOut
+            ? "Publish timed out."
+            : "Publish command failed.";
       yield* recordPublish(card, publishAttempt({ card, status: "failed", sha, detail }), {
         kind: "card-publish-failed",
         detail,
@@ -4441,7 +4483,23 @@ const make = Effect.gen(function* () {
             Effect.logWarning("board supervisor: publish-on-done failed", {
               cardId: card.id,
               cause: Cause.pretty(cause),
-            }),
+            }).pipe(
+              Effect.andThen(
+                recordPublish(
+                  card,
+                  publishAttempt({
+                    card,
+                    status: "failed",
+                    sha: null,
+                    detail: "Publish did not finish.",
+                  }),
+                  {
+                    kind: "card-publish-failed",
+                    detail: "Publish did not finish.",
+                  },
+                ),
+              ),
+            ),
           ),
         );
         current = publishPending.get(projectKey);
@@ -4449,6 +4507,10 @@ const make = Effect.gen(function* () {
       }
       publishRunning.delete(projectKey);
     });
+
+  const publishWorker = yield* makeDrainableWorker((card: BoardCard) =>
+    drainPublish(String(card.projectId), card),
+  );
 
   const enqueuePublishOnDone = Effect.fn("board-supervisor-enqueuePublishOnDone")(function* (
     card: BoardCard,
@@ -4459,7 +4521,7 @@ const make = Effect.gen(function* () {
       return;
     }
     publishRunning.add(projectKey);
-    yield* drainPublish(projectKey, card).pipe(Effect.forkDetach);
+    yield* publishWorker.enqueue(card);
   });
 
   const considerPublishOnDone = Effect.fn("board-supervisor-considerPublishOnDone")(
@@ -4500,23 +4562,22 @@ const make = Effect.gen(function* () {
     if (card.pullRequest === null || card.pullRequest.state !== "merged") {
       return { outcome: "no-pull-request" } as const;
     }
-    if (card.publish === null || card.publish.status !== "failed") {
+    if (
+      card.publish === null ||
+      (card.publish.status !== "failed" && card.publish.status !== "running")
+    ) {
       return { outcome: "not-failed" } as const;
     }
-    yield* dispatch({
-      type: "board.card.record-publish",
-      commandId: yield* commandId("retry-publish"),
-      cardId: card.id,
-      publish: null,
-      createdAt: yield* nowIso,
-    });
-    const cleared = (yield* readCard(card.id)) ?? { ...card, publish: null };
+    const settings = yield* boardSettings;
+    if (!boardPublishOnDoneEnabled(settings.lifecycle, card.projectId)) {
+      return { outcome: "disabled" } as const;
+    }
     yield* considerPublishOnDone({
-      card: cleared,
+      card,
       previousStage: card.stage,
       previousMerged: true,
       isDone: true,
-      force: true as const,
+      force: true,
     });
     return { outcome: "started" } as const;
   });
@@ -7714,7 +7775,7 @@ const make = Effect.gen(function* () {
     fireProbes: sweepProviderLimits,
     fireAutoMerges: sweepAutoMergeHolds,
     releaseThreads: releaseFinishedThreads,
-    drain: worker.drain,
+    drain: Effect.all([worker.drain, publishWorker.drain]).pipe(Effect.asVoid),
     // Both run OUTSIDE the serialised worker: they are request-scoped, the
     // caller is waiting on the answer, and neither touches step state — the
     // conflict step they can start goes through the ordinary
