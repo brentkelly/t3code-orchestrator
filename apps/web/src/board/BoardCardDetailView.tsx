@@ -503,6 +503,8 @@ export interface BoardCardDetailViewProps {
   /** Arm or disarm the card's auto-start (T3O-24). Absent hides the control
       entirely — the eager view is mounted by tests that pass no handler. */
   readonly onSetAutoStart?: ((next: boolean) => void) | undefined;
+  /** Unpark a card sitting in Backlog (t3o-35). Absent hides the button. */
+  readonly onUnpark?: (() => void) | undefined;
   /** Arm or disarm the card's auto-merge (T3O-38, D3). Absent hides the
       control entirely — the eager view is mounted by tests that pass no
       handler. */
@@ -1639,6 +1641,23 @@ function ActionsSection({
               ? "Blocked by unmet dependencies"
               : `Blocked by ${unmet.map((dependency) => dependency.key).join(", ")}`}
           </span>
+        </div>
+      ) : null}
+      {card.backlogParked && props.onUnpark !== undefined ? (
+        <div className="flex items-start justify-between gap-2.5 rounded-lg border border-input bg-popover px-2.5 py-2.5 text-[11.5px]/[1.45]">
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="font-medium text-foreground">Parked in Backlog</span>
+            <span className="text-muted-foreground">
+              This card will stay here until you unpark it, even if nothing is blocking it.
+            </span>
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded-md border border-input bg-background px-2 py-1 text-[11.5px] font-medium text-foreground hover:bg-muted"
+            onClick={() => props.onUnpark?.()}
+          >
+            Unpark
+          </button>
         </div>
       ) : null}
       {autoStart !== null ? (

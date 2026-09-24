@@ -13,6 +13,7 @@
  * card.
  */
 import {
+  DEFAULT_BOARD_AUTO_PROMOTE_TO_SPRINT,
   DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT,
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
@@ -257,6 +258,21 @@ function ProjectRows({
                 ))}
               </SelectPopup>
             </Select>
+            <label className="flex w-full items-center justify-between gap-3 border-t border-border/70 pt-2.5 text-[12.5px]">
+              <span className="flex min-w-0 flex-col">
+                <span className="font-medium text-foreground">
+                  Auto-move unblocked Backlog cards to Sprint
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  Cards with no unmet dependencies leave Backlog on their own.
+                </span>
+              </span>
+              <Switch
+                aria-label={`Auto-move unblocked Backlog cards to Sprint for ${project.title}`}
+                checked={entry?.autoPromoteToSprint ?? DEFAULT_BOARD_AUTO_PROMOTE_TO_SPRINT}
+                onCheckedChange={(next) => setProject(project.id, { autoPromoteToSprint: next })}
+              />
+            </label>
           </div>
         );
       })}

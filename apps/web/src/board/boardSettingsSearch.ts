@@ -30,6 +30,14 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     targetId: "board-projects",
   },
+  {
+    id: "board-auto-promote",
+    title: "Auto-move unblocked Backlog cards to Sprint",
+    to: "/settings/board",
+    targetId: "board-projects",
+    searchTerms: ["auto promote sprint unblocked dependencies backlog"],
+  },
+
   { id: "board-pipeline", title: "Pipeline", to: "/settings/board" },
   {
     id: "board-default-model",

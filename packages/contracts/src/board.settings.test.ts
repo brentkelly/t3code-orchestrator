@@ -18,12 +18,15 @@ import {
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_SUBMIT_PROMPT,
+  DEFAULT_BOARD_AUTO_PROMOTE_CHILDREN,
+  DEFAULT_BOARD_AUTO_PROMOTE_TO_SPRINT,
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_PIPELINE,
   DEFAULT_BOARD_SETTINGS,
   DEFAULT_BOARD_STAGE_EXECUTION,
   effectiveBoardRuntimeMode,
   isBoardProjectHidden,
+  boardProjectAutoPromote,
   isBoardBuildStageExecution,
   isBoardReviewStageExecution,
   resolveBoardKeyPrefix,
@@ -342,6 +345,63 @@ describe("resolveBoard* helpers", () => {
       projects: { [PROJECT]: { keyPrefix: "T3", accentColor: null, hidden: true } },
     });
     expect(isBoardProjectHidden(hiddenSettings, PROJECT)).toBe(true);
+  });
+
+  it("resolves auto-promote flags, and an entry written before they existed still decodes off", () => {
+    expect(DEFAULT_BOARD_AUTO_PROMOTE_TO_SPRINT).toBe(false);
+    expect(DEFAULT_BOARD_AUTO_PROMOTE_CHILDREN).toBe(false);
+    expect(boardProjectAutoPromote(DEFAULT_BOARD_SETTINGS, PROJECT)).toEqual({
+      topLevel: false,
+      children: false,
+    });
+    const encodedDefaults = encodeSettings(DEFAULT_BOARD_SETTINGS);
+    for (const entry of Object.values(encodedDefaults.projects ?? {})) {
+      expect(entry.autoPromoteToSprint).not.toBe(true);
+      expect(entry.autoPromoteChildren).not.toBe(true);
+    }
+    const legacy = decodeSettings({
+      projects: { [PROJECT]: { keyPrefix: "T3", accentColor: null } },
+    });
+    expect(boardProjectAutoPromote(legacy, PROJECT)).toEqual({ topLevel: false, children: false });
+    const on = decodeSettings({
+      projects: {
+        [PROJECT]: {
+          keyPrefix: "T3",
+          accentColor: null,
+          autoPromoteToSprint: true,
+          autoPromoteChildren: true,
+        },
+      },
+    });
+    expect(boardProjectAutoPromote(on, PROJECT)).toEqual({ topLevel: true, children: true });
+    const parentOnly = decodeSettings({
+      projects: {
+        [PROJECT]: {
+          keyPrefix: "T3",
+          accentColor: null,
+          autoPromoteToSprint: true,
+          autoPromoteChildren: false,
+        },
+      },
+    });
+    expect(boardProjectAutoPromote(parentOnly, PROJECT)).toEqual({
+      topLevel: true,
+      children: false,
+    });
+    const childrenOnly = decodeSettings({
+      projects: {
+        [PROJECT]: {
+          keyPrefix: "T3",
+          accentColor: null,
+          autoPromoteToSprint: false,
+          autoPromoteChildren: true,
+        },
+      },
+    });
+    expect(boardProjectAutoPromote(childrenOnly, PROJECT)).toEqual({
+      topLevel: false,
+      children: false,
+    });
   });
 });
 

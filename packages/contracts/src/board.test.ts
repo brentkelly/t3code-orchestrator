@@ -21,6 +21,7 @@ import {
   boardCardAutoMergeArmed,
   boardCardAutoMergeGaveUp,
   boardCardAutoStartDue,
+  boardCardAutoPromoteDue,
   boardCardCanArmAutoMerge,
   isBoardCardAutoMergeSoft,
   boardCardCanArmAutoStart,
@@ -113,8 +114,11 @@ const utf8Bytes = (value: unknown): number =>
  * unheld cards — the real per-card cost on reconnect, and unchanged). The
  * ceiling moved only for a worst case that cannot occur: a card whose merge is
  * held has no live step, so it is not queued, not running and not conflicting.
+ *
+ * t3o-35 raised it to 1432 for `backlogParked`, another key-optional field
+ * that costs a parked card ~20 bytes and every other card exactly zero.
  */
-const BOARD_CARD_SHELL_BYTE_BUDGET = 1408;
+const BOARD_CARD_SHELL_BYTE_BUDGET = 1432;
 
 /** Five UUID-length label ids: a card at exactly `BOARD_CARD_LABELS_MAX`,
     the worst case the shell must lay out for. */
@@ -162,6 +166,9 @@ const fullyPopulatedShell = {
   // Populated (T3O-24, D8) for the same reason: the budget is measured against
   // a card that IS armed, not only against the absent-key case.
   autoStart: true,
+  // Populated (t3o-35, K3) for the same reason: the budget is measured
+  // against a card that IS parked, not only against the absent-key case.
+  backlogParked: true,
   // Populated (T3O-38, D14) for the same reason: the budget is measured
   // against a card whose merge is held, not only against the absent-key case
   // every healthy card sends.
@@ -198,6 +205,7 @@ const typicalCard = (index: number): BoardCard => ({
   baseBranch: null,
   scheduledStartAt: null,
   autoStart: false,
+  backlogParked: false,
   autoMerge: false,
   autoMergeHold: null,
   orderKey: "mmmm",
@@ -280,6 +288,14 @@ describe("BoardCardShell payload discipline", () => {
     // On the card aggregate, so it rides every card-carrying delta and survives
     // an encode/decode round trip rather than needing a dedicated delta.
     expect(decodeShell(encodeShell(scheduled)).scheduledStartAt).toBe("2026-03-04T09:00:00.000Z");
+  });
+
+  it("costs an unparked card nothing and carries a parked card's flag (t3o-35)", () => {
+    const unparked = encodeShell(boardCardShellFromCard(typicalCard(1))) as Record<string, unknown>;
+    expect("backlogParked" in unparked).toBe(false);
+    const parked = boardCardShellFromCard({ ...typicalCard(1), backlogParked: true });
+    expect(parked.backlogParked).toBe(true);
+    expect(decodeShell(encodeShell(parked)).backlogParked).toBe(true);
   });
 
   it("costs an unheld card nothing and carries a held card's clock (T3O-38, D14)", () => {
@@ -2247,6 +2263,87 @@ describe("auto-start (T3O-24)", () => {
         ),
       ).toBe(false);
     });
+  });
+});
+
+describe("auto-promote Backlog → Sprint (t3o-35)", () => {
+  const NOW_MS = Date.parse("2026-01-01T00:00:00.000Z");
+  const FUTURE = "2026-01-01T01:00:00.000Z";
+  const blocker = (id: string, stage: BoardCard["stage"], archivedAt: string | null = null) => ({
+    ...typicalCard(9),
+    id: BoardCardId.make(id),
+    stage,
+    archivedAt,
+  });
+  const waiting = (overrides: Partial<BoardCard> = {}): BoardCard => ({
+    ...typicalCard(1),
+    id: BoardCardId.make("card-waiting"),
+    stage: BOARD_SEED_STAGE_IDS.backlog,
+    ...overrides,
+  });
+  const boardWith = (cards: ReadonlyArray<BoardCard>) => ({ ...EMPTY_BOARD_STATE, cards });
+  const due = (
+    card: BoardCard,
+    blockers: ReadonlyArray<BoardCard> = [],
+    flags: { readonly promoteTopLevel?: boolean; readonly promoteChildren?: boolean } = {},
+  ) =>
+    boardCardAutoPromoteDue({
+      board: boardWith([card, ...blockers]),
+      card,
+      nowMs: NOW_MS,
+      promoteTopLevel: flags.promoteTopLevel ?? true,
+      promoteChildren: flags.promoteChildren ?? false,
+    });
+
+  it("is due with no dependencies when the project setting is on", () => {
+    expect(due(waiting())).toBe(true);
+  });
+
+  it("is due once every dependency is done", () => {
+    const done = blocker("blocker-done", BOARD_SEED_STAGE_IDS.done);
+    expect(due(waiting({ dependsOn: [done.id] }), [done])).toBe(true);
+  });
+
+  it("is not due while one of two dependencies is still outstanding", () => {
+    const done = blocker("blocker-done", BOARD_SEED_STAGE_IDS.done);
+    const open = blocker("blocker-open", BOARD_SEED_STAGE_IDS.building);
+    expect(due(waiting({ dependsOn: [done.id, open.id] }), [done, open])).toBe(false);
+  });
+
+  it("is due on an archived dependency", () => {
+    const archived = blocker(
+      "blocker-archived",
+      BOARD_SEED_STAGE_IDS.building,
+      "2026-01-01T00:00:00.000Z",
+    );
+    expect(due(waiting({ dependsOn: [archived.id] }), [archived])).toBe(true);
+  });
+
+  it("is not due when the project setting is off", () => {
+    expect(due(waiting(), [], { promoteTopLevel: false })).toBe(false);
+  });
+
+  it("is not due for a parked card", () => {
+    expect(due(waiting({ backlogParked: true }))).toBe(false);
+  });
+
+  it("is not due before the scheduled start", () => {
+    expect(due(waiting({ scheduledStartAt: FUTURE }))).toBe(false);
+  });
+
+  it("is due when the scheduled start is in the past", () => {
+    expect(due(waiting({ scheduledStartAt: "2020-01-01T00:00:00.000Z" }))).toBe(true);
+  });
+
+  it("is not due for a child unless the children setting is on", () => {
+    const child = waiting({ parentCardId: BoardCardId.make("card-parent") });
+    expect(due(child)).toBe(false);
+    expect(due(child, [], { promoteChildren: true })).toBe(true);
+  });
+
+  it("is never due outside Backlog, or when archived", () => {
+    expect(due(waiting({ stage: BOARD_SEED_STAGE_IDS.sprint }))).toBe(false);
+    expect(due(waiting({ archivedAt: "2026-01-01T00:00:00.000Z" }))).toBe(false);
   });
 });
 

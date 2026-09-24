@@ -58,6 +58,7 @@ const notice = (input: Partial<Parameters<typeof boardCardNotice>[0]>) =>
     noPullRequestAtMerge: false,
     blocked: false,
     dependencyCount: 0,
+    backlogParked: false,
     ...input,
   });
 
@@ -127,6 +128,14 @@ describe("boardCardNotice", () => {
     });
     // Not blocked is not a notice, however many dependencies the card carries.
     expect(notice({ blocked: false, dependencyCount: 5 })).toBeNull();
+  });
+
+  it("names a parked Backlog card once nothing more urgent is competing", () => {
+    expect(notice({ backlogParked: true })).toEqual({ kind: "parked" });
+    // Blocked is why Unpark would not move it yet.
+    expect(notice({ backlogParked: true, blocked: true, dependencyCount: 1 })?.kind).toBe(
+      "blocked",
+    );
   });
 });
 

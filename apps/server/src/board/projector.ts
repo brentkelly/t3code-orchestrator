@@ -252,6 +252,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // no create-command field to set it with. Nor born auto-merging (T3O-38,
     // D3), for the same reason — and with nothing merged, nothing held.
     autoStart: false,
+    backlogParked: false,
     autoMerge: false,
     autoMergeHold: null,
     // A created card never has a worktree: it is provisioned lazily on its

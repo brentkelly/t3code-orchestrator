@@ -1176,6 +1176,9 @@ export function BoardCardDetail({
       onSetAutoStart={(autoStart) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, autoStart } }))
       }
+      onUnpark={() =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, backlogParked: false } }))
+      }
       onSetAutoMerge={(autoMerge) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, autoMerge } }))
       }
