@@ -5,10 +5,10 @@
  * attach a PTY to. The command is the one the project named in t3.json /
  * Project Actions (`runOnCardDone`). Timeout is 15 minutes.
  *
- * On Unix the child is a process-group leader so timeout and interrupt can
- * SIGTERM the whole tree, wait a short grace, then SIGKILL. Windows still
- * signals only the shell. In-flight groups are SIGKILL'd if this process
- * exits, so a restart does not leave a detached deploy running.
+ * On Unix the child is a process-group leader so timeout can SIGTERM the
+ * whole tree, wait a short grace, then SIGKILL. Fiber interrupt and effect
+ * finalizers SIGKILL immediately, so a SIGTERM-ignoring group does not
+ * survive a server restart. Windows still signals only the shell.
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
@@ -123,7 +123,10 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
       });
     });
     return Effect.sync(() => {
-      if (!settled) killTree("SIGTERM");
+      if (!settled) {
+        killing = true;
+        killTree("SIGKILL");
+      }
     });
   });
   return yield* run.pipe(
@@ -148,7 +151,9 @@ export const runPublishScript = Effect.fn("board-runPublishScript")(function* (i
     }),
     Effect.ensuring(
       Effect.sync(() => {
-        if (pid !== undefined) inFlight.delete(pid);
+        if (pid === undefined) return;
+        if (inFlight.has(pid)) killTree("SIGKILL");
+        inFlight.delete(pid);
       }),
     ),
   );
