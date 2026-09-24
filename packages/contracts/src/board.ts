@@ -7363,6 +7363,12 @@ export const BOARD_RPC_SCOPES = {
 // board-shaped grows here, never at the seam. Compiled-in defaults make an
 // empty settings file a working pipeline.
 
+/** Per-project auto-promote Backlog → Sprint (t3o-35, K2). Off until a
+    human turns it on for that project — a missing key, an empty settings
+    file, and a project entry written before this field existed are all off. */
+export const DEFAULT_BOARD_AUTO_PROMOTE_TO_SPRINT = false;
+export const DEFAULT_BOARD_AUTO_PROMOTE_CHILDREN = false;
+
 /**
  * Per-project card identity (D14). The key prefix is stored, not computed at
  * read time: a project's FIRST card assigns an acronym derived from its name
@@ -7387,11 +7393,15 @@ export const BoardProjectSettings = Schema.Struct({
   /** Move unblocked Backlog cards in this project to Sprint (t3o-35, K2).
       Off by default; a settings file written before this field existed
       decodes as off rather than failing the whole-settings decode. */
-  autoPromoteToSprint: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  autoPromoteToSprint: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_AUTO_PROMOTE_TO_SPRINT)),
+  ),
   /** Include sub-board children in that auto-promote (t3o-35, K2). Inert
       unless `autoPromoteToSprint` is on. Off by default for the same
       upgrade reason. */
-  autoPromoteChildren: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  autoPromoteChildren: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_AUTO_PROMOTE_CHILDREN)),
+  ),
 });
 export type BoardProjectSettings = typeof BoardProjectSettings.Type;
 

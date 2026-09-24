@@ -13,6 +13,7 @@
  * card.
  */
 import {
+  DEFAULT_BOARD_AUTO_PROMOTE_TO_SPRINT,
   DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT,
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
@@ -268,7 +269,7 @@ function ProjectRows({
               </span>
               <Switch
                 aria-label={`Auto-move unblocked Backlog cards to Sprint for ${project.title}`}
-                checked={entry?.autoPromoteToSprint === true}
+                checked={entry?.autoPromoteToSprint ?? DEFAULT_BOARD_AUTO_PROMOTE_TO_SPRINT}
                 onCheckedChange={(next) => setProject(project.id, { autoPromoteToSprint: next })}
               />
             </label>

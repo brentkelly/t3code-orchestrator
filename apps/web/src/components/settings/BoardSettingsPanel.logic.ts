@@ -5,6 +5,8 @@
  * unit-tested directly.
  */
 import {
+  DEFAULT_BOARD_AUTO_PROMOTE_CHILDREN,
+  DEFAULT_BOARD_AUTO_PROMOTE_TO_SPRINT,
   resolveBoardStageExecution,
   type BoardProjectSettings,
   type BoardSettings,
@@ -78,8 +80,8 @@ export function setBoardProjectSetting(
     keyPrefix: null,
     accentColor: null,
     hidden: false,
-    autoPromoteToSprint: false,
-    autoPromoteChildren: false,
+    autoPromoteToSprint: DEFAULT_BOARD_AUTO_PROMOTE_TO_SPRINT,
+    autoPromoteChildren: DEFAULT_BOARD_AUTO_PROMOTE_CHILDREN,
   };
   return { ...projects, [projectId]: { ...current, ...patch } };
 }
