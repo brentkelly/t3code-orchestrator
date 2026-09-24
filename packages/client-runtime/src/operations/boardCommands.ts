@@ -111,6 +111,9 @@ export const refreshBoardCardPullRequest = (input: {
 export const mergeBoardCardPullRequest = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.mergeCardPullRequest, input);
 
+export const retryBoardCardPublish = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.retryPublish, input);
+
 /** Open the card's pull request from Building and route it past Code review
     (t3o-07). Same input shape as the merge action, and the same reason for
     being an RPC: the caller renders the outcome. */

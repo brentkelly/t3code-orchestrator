@@ -200,6 +200,7 @@ const typicalCard = (index: number): BoardCard => ({
   autoStart: false,
   autoMerge: false,
   autoMergeHold: null,
+  publish: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",

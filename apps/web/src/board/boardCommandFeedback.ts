@@ -8,6 +8,7 @@ import type {
   BoardMergeCardPullRequestResult,
   BoardRefreshCardPullRequestResult,
   BoardRequestReviewRoundResult,
+  BoardRetryPublishResult,
   BoardSubmitCardForMergeResult,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -41,6 +42,21 @@ export function describeBoardCommandFailure(result: unknown): string {
  * `merged` returns null: the card visibly moves to Done, which says it better
  * than a sentence would.
  */
+export function describeBoardRetryPublishOutcome(result: BoardRetryPublishResult): string | null {
+  switch (result.outcome) {
+    case "started":
+      return "Publishing again.";
+    case "not-failed":
+      return "Nothing to retry — the last publish did not fail.";
+    case "wrong-stage":
+      return "Publish retry is only available on a Done card.";
+    case "no-pull-request":
+      return "This card has no merged pull request to publish from.";
+    case "unknown-card":
+      return "This card no longer exists.";
+  }
+}
+
 export function describeBoardMergeOutcome(result: BoardMergeCardPullRequestResult): string | null {
   switch (result.outcome) {
     case "merged":

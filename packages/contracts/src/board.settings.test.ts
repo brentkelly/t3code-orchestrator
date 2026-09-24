@@ -54,6 +54,8 @@ describe("board settings defaults", () => {
     expect(settings.projects).toEqual({});
     expect(settings.concurrency.globalMaxConcurrent).toBeGreaterThan(0);
     expect(settings.lifecycle.reclaimWorktreeOnDone).toBe(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE);
+    expect(settings.lifecycle.publishOnDone).toBe(false);
+    expect(settings.lifecycle.publishProjectIds).toEqual([]);
     expect(settings).toEqual(DEFAULT_BOARD_SETTINGS);
   });
 
@@ -71,6 +73,8 @@ describe("board settings defaults", () => {
       lifecycle: { archiveAfterDays: 21, worktreeRetention: "reclaim-on-archive" },
     });
     expect(settings.lifecycle.reclaimWorktreeOnDone).toBe(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE);
+    expect(settings.lifecycle.publishOnDone).toBe(false);
+    expect(settings.lifecycle.publishProjectIds).toEqual([]);
   });
 
   it("the default Building stage is runnable (real instance + model), not a placeholder", () => {

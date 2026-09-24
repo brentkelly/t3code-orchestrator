@@ -136,6 +136,10 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
     // card face.
     case "card-review-round-requested":
       return <RotateCcwIcon className={className} />;
+    case "card-published":
+      return <CheckCircle2Icon className={className} />;
+    case "card-publish-failed":
+      return <TriangleAlertIcon className={cn(className, "text-destructive-foreground")} />;
   }
 }
 
@@ -307,6 +311,14 @@ function activitySentence(
     case "card-review-round-requested":
       return payload.detail === undefined ? (
         <>asked for another review round</>
+      ) : (
+        <>{payload.detail}</>
+      );
+    case "card-published":
+      return payload.detail === undefined ? <>published the project</> : <>{payload.detail}</>;
+    case "card-publish-failed":
+      return payload.detail === undefined ? (
+        <>could not publish the project</>
       ) : (
         <>{payload.detail}</>
       );

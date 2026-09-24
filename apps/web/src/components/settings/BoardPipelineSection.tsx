@@ -52,6 +52,7 @@ import {
   type BoardStageRole,
   type BoardState,
   type EnvironmentId,
+  type ProjectId,
 } from "@t3tools/contracts";
 import {
   DndContext,
@@ -66,6 +67,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
 import {
   ChevronDownIcon,
   GripVerticalIcon,
@@ -79,6 +81,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { environmentShell } from "../../state/shell";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { primaryServerProvidersAtom } from "../../state/server";
@@ -820,6 +823,78 @@ export function BoardPipelineSection() {
  * shows it as the placeholder and is no longer required; with nothing to inherit
  * it keeps the required-field language it had before there was a default.
  */
+function DonePublishBlock() {
+  const board = usePrimarySettings((settings) => settings.board);
+  const update = useUpdatePrimarySettings();
+  const environmentId = usePrimaryEnvironmentId();
+  const shellState = useAtomValue(
+    environmentShell.stateValueAtom(environmentId ?? ("" as EnvironmentId)),
+  );
+  const projects = Option.getOrNull(shellState.snapshot)?.projects ?? [];
+  const enabled = board.lifecycle.publishOnDone;
+  const selected = new Set(board.lifecycle.publishProjectIds);
+
+  const setLifecycle = (patch: {
+    publishOnDone?: boolean;
+    publishProjectIds?: ReadonlyArray<ProjectId>;
+  }) => {
+    update({
+      board: {
+        lifecycle: {
+          ...board.lifecycle,
+          ...patch,
+        },
+      },
+    });
+  };
+
+  return (
+    <div id="board-publish-on-done" className="flex flex-col gap-2 py-2">
+      <ToggleRow
+        label="Publish when done"
+        hint="After a card reaches Done with its pull request merged, run that project's publish script in its default checkout. Off by default. Turning it on does not publish cards already sitting in Done."
+        checked={enabled}
+        ariaLabel="Publish when done"
+        onChange={(checked) => setLifecycle({ publishOnDone: checked })}
+      />
+      {enabled ? (
+        projects.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No projects in this environment yet.</p>
+        ) : (
+          <div className="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
+            <span className="text-[13px] text-foreground">Projects that auto-publish</span>
+            <span className="text-xs text-muted-foreground">
+              Only checked projects run their runOnCardDone script. Unchecked ones stay silent even
+              if they have one.
+            </span>
+            {projects.map((project) => {
+              const checked = selected.has(project.id);
+              return (
+                <label
+                  key={project.id}
+                  className="flex items-center justify-between gap-3 py-1 text-[13px]"
+                >
+                  <span className="min-w-0 truncate text-foreground">{project.title}</span>
+                  <Switch
+                    checked={checked}
+                    aria-label={`Auto-publish ${project.title}`}
+                    onCheckedChange={(next) => {
+                      const ids = new Set(board.lifecycle.publishProjectIds);
+                      if (next) ids.add(project.id);
+                      else ids.delete(project.id);
+                      setLifecycle({ publishProjectIds: [...ids] });
+                    }}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        )
+      ) : null}
+    </div>
+  );
+}
+
 function inheritedModelRowProps(
   inheritedName: string | null,
   requiredMessage: string,
@@ -856,6 +931,7 @@ function StageAccordionRow(props: {
 
   const isReview = isBoardReviewStageExecution(exec);
   const isMerge = isBoardMergeStageExecution(exec);
+  const board = usePrimarySettings((settings) => settings.board);
   const chips: ReadonlyArray<{ text: string; tone: "auto" | "quiet" }> = expanded
     ? []
     : isMerge
@@ -870,17 +946,23 @@ function StageAccordionRow(props: {
           ...(exec.autoMerge ? [{ text: "Auto-merge", tone: "auto" as const }] : []),
           ...(exec.deleteBranchOnDone ? [{ text: "Delete branch", tone: "quiet" as const }] : []),
         ]
-      : [
-          exec.autoExecute
-            ? { text: "Auto", tone: "auto" as const }
-            : { text: "Manual", tone: "quiet" as const },
-          ...(exec.autoExecute && isReview
-            ? [{ text: `${exec.rounds} rounds`, tone: "quiet" as const }]
-            : []),
-          ...(exec.autoExecute && !isReview && role !== "plan"
-            ? [{ text: `${msToMinutes(exec.timeoutMs)} min idle`, tone: "quiet" as const }]
-            : []),
-        ];
+      : role === "done"
+        ? [
+            ...(board.lifecycle.publishOnDone
+              ? [{ text: "Publish", tone: "auto" as const }]
+              : [{ text: "No publish", tone: "quiet" as const }]),
+          ]
+        : [
+            exec.autoExecute
+              ? { text: "Auto", tone: "auto" as const }
+              : { text: "Manual", tone: "quiet" as const },
+            ...(exec.autoExecute && isReview
+              ? [{ text: `${exec.rounds} rounds`, tone: "quiet" as const }]
+              : []),
+            ...(exec.autoExecute && !isReview && role !== "plan"
+              ? [{ text: `${msToMinutes(exec.timeoutMs)} min idle`, tone: "quiet" as const }]
+              : []),
+          ];
 
   return (
     <div
@@ -948,6 +1030,7 @@ function StageAccordionRow(props: {
 
       {expanded ? (
         <div className="flex flex-col px-4 pb-4 pt-0.5 sm:pl-[52px] sm:pr-5">
+          {role === "done" ? <DonePublishBlock /> : null}
           {isReview ? (
             <ReviewStageBody
               stage={stage}

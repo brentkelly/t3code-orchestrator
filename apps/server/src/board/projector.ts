@@ -35,6 +35,7 @@ import {
   BoardCardWorktreeReadyPayload,
   BoardCardWorktreeReclaimedPayload,
   BoardCardAutoMergeHoldRecordedPayload,
+  BoardCardPublishRecordedPayload,
   BoardCardPullRequestRecordedPayload,
   BoardCardStepSelectedPayload,
   BoardCardStepAdmittedPayload,
@@ -150,6 +151,9 @@ const decodeBoardCardPullRequestRecordedPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardAutoMergeHoldRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardAutoMergeHoldRecordedPayload,
 );
+const decodeBoardCardPublishRecordedPayload = Schema.decodeUnknownEffect(
+  BoardCardPublishRecordedPayload,
+);
 const decodeBoardStageCreatedPayload = Schema.decodeUnknownEffect(BoardStageCreatedPayload);
 const decodeBoardStageRenamedPayload = Schema.decodeUnknownEffect(BoardStageRenamedPayload);
 const decodeBoardStageReorderedPayload = Schema.decodeUnknownEffect(BoardStageReorderedPayload);
@@ -254,6 +258,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     autoStart: false,
     autoMerge: false,
     autoMergeHold: null,
+    publish: null,
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
     worktree: null,
@@ -788,6 +793,12 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    case "board.card-publish-recorded":
+      return decodeBoardCardPublishRecordedPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     // Reporting only — it changes no card field, so the read model is
     // unchanged and a replay that includes it lands exactly where a replay
     // without it would.
@@ -984,6 +995,7 @@ export function boardShellStreamEvent(
     // the card aggregate, so this delta carries the real values like any
     // other card field.
     case "board.card-auto-merge-hold-recorded":
+    case "board.card-publish-recorded":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,

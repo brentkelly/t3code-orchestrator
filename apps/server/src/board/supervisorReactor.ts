@@ -92,6 +92,8 @@ import {
   type BoardCardPullRequest,
   // T3o: the refresh answers rather than staying silent (T3O-48).
   type BoardRefreshCardPullRequestResult,
+  type BoardRetryPublishResult,
+  type BoardStageId,
   type BoardCardStepAwaitingReason,
   type BoardCardStepState,
   type BoardSettings,
@@ -105,6 +107,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -131,6 +134,14 @@ import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts"
 import { boardSnapshotQueryMethodsOf } from "./projection.ts";
 import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { pullMergedBaseBranch } from "./baseBranchSync.ts";
+import {
+  lastPublishedShaForProject,
+  publishAttempt,
+  publishSkipBecauseAlreadyLive,
+  resolvePublishScript,
+  shouldPublishAfterRefresh,
+} from "./publishOnDone.ts";
+import { runPublishScript } from "./publishScript.ts";
 import {
   removeBoardCardAttachmentsDir,
   spawnPushesBriefImages,
@@ -293,6 +304,8 @@ export interface SupervisorReactorShape {
   readonly requestReviewRound: (
     cardId: BoardCardId,
   ) => Effect.Effect<BoardRequestReviewRoundResult>;
+  /** Re-run publish-on-done for a card whose last attempt failed. */
+  readonly retryPublish: (cardId: BoardCardId) => Effect.Effect<BoardRetryPublishResult>;
   /** Probe a limited provider NOW (T3O-22, D14) — the popover's "Resume now".
       Wakes exactly ONE card, matching the timed probe: waking the fleet at a
       moment the human picked is the same mistake as waking it at the reset
@@ -3942,15 +3955,26 @@ const make = Effect.gen(function* () {
     movedToStage?: BoardCard["stage"],
     /** T3o (T3O-48): threaded through to the lookup. Only the RPC's "Check
         again" passes it; every internal caller omits it. */
-    options?: { readonly force?: boolean },
+    options?: { readonly force?: boolean; readonly fromStage?: BoardStageId },
   ) {
+    const previousStage = options?.fromStage ?? card.stage;
+    const previousMerged = card.pullRequest?.state === "merged";
     const outcome = yield* refreshCardPullRequestLink(card, options);
     // Re-read for the pull request the refresh may have just recorded.
     const refreshed = yield* readCard(card.id);
     if (refreshed === null) return outcome;
-    yield* settleCardAtDone(
-      movedToStage === undefined ? refreshed : { ...refreshed, stage: movedToStage },
-    );
+    const settledCard =
+      movedToStage === undefined ? refreshed : { ...refreshed, stage: movedToStage };
+    yield* settleCardAtDone(settledCard);
+    const board = yield* readBoard;
+    const stage = boardStageById(board, settledCard.stage);
+    yield* considerPublishOnDone({
+      card: settledCard,
+      previousStage,
+      previousMerged,
+      isDone: stage !== null && effectiveBoardStageRole(stage) === "done",
+      force: false,
+    });
     return outcome;
   });
 
@@ -4207,6 +4231,294 @@ const make = Effect.gen(function* () {
     // and archive reclaims unconditionally — still subject to the same
     // never-delete-uncommitted-work refusal.
     settledAtDone.set(String(card.id), round);
+  });
+
+  /**
+   * Per-project publish-on-done queue. One run at a time per project; extra
+   * cards collapse into a single trailing run so trunk is built once.
+   */
+  const publishRunning = new Set<string>();
+  const publishPending = new Map<string, BoardCard>();
+
+  const recordPublish = Effect.fn("board-supervisor-recordPublish")(function* (
+    card: BoardCard,
+    publish: BoardCard["publish"],
+    note: { readonly kind: "card-published" | "card-publish-failed"; readonly detail: string },
+  ) {
+    yield* dispatch({
+      type: "board.card.record-publish",
+      commandId: yield* commandId("record-publish"),
+      cardId: card.id,
+      publish,
+      createdAt: yield* nowIso,
+    });
+    yield* dispatch({
+      type: "board.card.record-note",
+      commandId: yield* commandId("publish-note"),
+      cardId: card.id,
+      kind: note.kind,
+      detail: note.detail,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  const runPublishOnDone = Effect.fn("board-supervisor-runPublishOnDone")(function* (
+    card: BoardCard,
+  ) {
+    const settings = yield* boardSettings;
+    if (
+      !shouldPublishAfterRefresh({
+        lifecycle: settings.lifecycle,
+        card,
+        previousStage: card.stage,
+        previousMerged: true,
+        isDone: true,
+        force: true,
+      })
+    ) {
+      return;
+    }
+    const model = yield* snapshotQuery.getCommandReadModel();
+    const cwd = projectCwd(model, card);
+    if (cwd === null) {
+      yield* recordPublish(
+        card,
+        publishAttempt({
+          card,
+          status: "failed",
+          sha: null,
+          detail: "Project has no workspace folder.",
+        }),
+        {
+          kind: "card-publish-failed",
+          detail: "Publish skipped — project has no workspace folder.",
+        },
+      );
+      return;
+    }
+    const server = yield* serverSettings.getSettings.pipe(
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+    const project = model.projects.find((entry) => entry.id === card.projectId);
+    const scripts =
+      server === null || project === undefined ? [] : resolveProjectScripts(server, project);
+    const script = resolvePublishScript(scripts);
+    if (script === null) {
+      yield* recordPublish(
+        card,
+        publishAttempt({
+          card,
+          status: "failed",
+          sha: null,
+          detail: "No publish-on-done script.",
+        }),
+        {
+          kind: "card-publish-failed",
+          detail: "Publish skipped — this project has no runOnCardDone script.",
+        },
+      );
+      return;
+    }
+    const status = yield* git
+      .statusDetails(cwd)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    if (status === null || !status.isRepo) {
+      yield* recordPublish(
+        card,
+        publishAttempt({
+          card,
+          status: "failed",
+          sha: null,
+          detail: "Checkout is not a git repository.",
+        }),
+        {
+          kind: "card-publish-failed",
+          detail: "Publish skipped — checkout is not a git repository.",
+        },
+      );
+      return;
+    }
+    if (status.hasWorkingTreeChanges) {
+      yield* recordPublish(
+        card,
+        publishAttempt({
+          card,
+          status: "failed",
+          sha: null,
+          detail: "Checkout has uncommitted changes.",
+        }),
+        {
+          kind: "card-publish-failed",
+          detail: "Publish skipped — the project checkout has uncommitted changes.",
+        },
+      );
+      return;
+    }
+    const baseBranch = card.pullRequest?.baseRef ?? card.worktree?.baseRefName ?? null;
+    if (baseBranch !== null && status.branch !== null && status.branch !== baseBranch) {
+      yield* recordPublish(
+        card,
+        publishAttempt({
+          card,
+          status: "failed",
+          sha: null,
+          detail: `Checkout is on ${status.branch}, not ${baseBranch}.`,
+        }),
+        {
+          kind: "card-publish-failed",
+          detail: `Publish skipped — checkout is on ${status.branch}, not ${baseBranch}.`,
+        },
+      );
+      return;
+    }
+    if (baseBranch !== null) {
+      yield* pullMergedBaseBranch({ git, cwd, baseBranch }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: publish pull failed", {
+            cardId: card.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ updated: false, skippedReason: "pull failed" })),
+        ),
+      );
+    }
+    const head = yield* git
+      .execute({
+        operation: "board.publishOnDone.head",
+        cwd,
+        args: ["rev-parse", "HEAD"],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    const sha =
+      head !== null && head.exitCode === 0 && head.stdout.trim().length > 0
+        ? head.stdout.trim()
+        : null;
+    const board = yield* readBoard;
+    if (
+      sha !== null &&
+      publishSkipBecauseAlreadyLive(sha, lastPublishedShaForProject(board.cards, card.projectId))
+    ) {
+      yield* recordPublish(
+        card,
+        publishAttempt({ card, status: "skipped", sha, detail: "Already published this SHA." }),
+        { kind: "card-published", detail: `Already serving ${sha.slice(0, 7)}.` },
+      );
+      return;
+    }
+    const result = yield* runPublishScript({
+      cwd,
+      command: script.command,
+      extraEnv: sha === null ? {} : { T3CODE_PUBLISH_SHA: sha },
+    });
+    if (result.timedOut || result.exitCode !== 0) {
+      const detail = result.timedOut
+        ? "Publish timed out after 15 minutes."
+        : result.detail.length > 0
+          ? result.detail
+          : "Publish command failed.";
+      yield* recordPublish(card, publishAttempt({ card, status: "failed", sha, detail }), {
+        kind: "card-publish-failed",
+        detail,
+      });
+      return;
+    }
+    yield* recordPublish(card, publishAttempt({ card, status: "succeeded", sha, detail: null }), {
+      kind: "card-published",
+      detail:
+        sha === null
+          ? `Published with ${script.name}.`
+          : `Published ${sha.slice(0, 7)} with ${script.name}.`,
+    });
+  });
+
+  const drainPublish = (projectKey: string, first: BoardCard) =>
+    Effect.gen(function* () {
+      let current: BoardCard | undefined = first;
+      while (current !== undefined) {
+        const card = current;
+        yield* runPublishOnDone(card).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board supervisor: publish-on-done failed", {
+              cardId: card.id,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+        current = publishPending.get(projectKey);
+        publishPending.delete(projectKey);
+      }
+      publishRunning.delete(projectKey);
+    });
+
+  const enqueuePublishOnDone = Effect.fn("board-supervisor-enqueuePublishOnDone")(function* (
+    card: BoardCard,
+  ) {
+    const projectKey = String(card.projectId);
+    if (publishRunning.has(projectKey)) {
+      publishPending.set(projectKey, card);
+      return;
+    }
+    publishRunning.add(projectKey);
+    yield* drainPublish(projectKey, card).pipe(Effect.forkDetach);
+  });
+
+  const considerPublishOnDone = Effect.fn("board-supervisor-considerPublishOnDone")(
+    function* (input: {
+      readonly card: BoardCard;
+      readonly previousStage: BoardStageId;
+      readonly previousMerged: boolean;
+      readonly isDone: boolean;
+      readonly force: boolean;
+    }) {
+      const settings = yield* boardSettings;
+      if (
+        !shouldPublishAfterRefresh({
+          lifecycle: settings.lifecycle,
+          card: input.card,
+          previousStage: input.previousStage,
+          previousMerged: input.previousMerged,
+          isDone: input.isDone,
+          force: input.force,
+        })
+      ) {
+        return;
+      }
+      yield* enqueuePublishOnDone(input.card);
+    },
+  );
+
+  const retryPublishOnDone = Effect.fn("board-supervisor-retryPublishOnDone")(function* (
+    cardId: BoardCardId,
+  ) {
+    const card = yield* readCard(cardId);
+    if (card === null || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
+    const board = yield* readBoard;
+    const stage = boardStageById(board, card.stage);
+    if (stage === null || effectiveBoardStageRole(stage) !== "done") {
+      return { outcome: "wrong-stage" } as const;
+    }
+    if (card.pullRequest === null || card.pullRequest.state !== "merged") {
+      return { outcome: "no-pull-request" } as const;
+    }
+    if (card.publish === null || card.publish.status !== "failed") {
+      return { outcome: "not-failed" } as const;
+    }
+    yield* dispatch({
+      type: "board.card.record-publish",
+      commandId: yield* commandId("retry-publish"),
+      cardId: card.id,
+      publish: null,
+      createdAt: yield* nowIso,
+    });
+    const cleared = (yield* readCard(card.id)) ?? { ...card, publish: null };
+    yield* considerPublishOnDone({
+      card: cleared,
+      previousStage: card.stage,
+      previousMerged: true,
+      isDone: true,
+      force: true as const,
+    });
+    return { outcome: "started" } as const;
   });
 
   /**
@@ -6476,7 +6788,7 @@ const make = Effect.gen(function* () {
     // answer plausibly changed. The arrival-at-Done case needs no branch of its
     // own: `refreshCardPullRequest` settles the card whenever the refresh
     // leaves it in Done with a merged pull request, which is exactly this.
-    yield* refreshCardPullRequest(card, card.stage);
+    yield* refreshCardPullRequest(card, card.stage, { fromStage: event.payload.fromStage });
 
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
     // The card changed stage, so the threads it left behind are finished work
@@ -7429,6 +7741,15 @@ const make = Effect.gen(function* () {
               detail: "The pull request could not be looked up. See the server log for details.",
             } as const),
           ),
+        ),
+      ),
+    retryPublish: (cardId) =>
+      retryPublishOnDone(cardId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: retry publish failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "unknown-card" } as const)),
         ),
       ),
     mergePullRequest: (cardId) =>

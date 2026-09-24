@@ -1046,6 +1046,43 @@ export const BoardCardAutoMergeHold = Schema.Struct({
 });
 export type BoardCardAutoMergeHold = typeof BoardCardAutoMergeHold.Type;
 
+/** Outcome of one publish-on-done attempt for a card round. */
+export const BOARD_CARD_PUBLISH_STATUSES = ["succeeded", "failed", "skipped"] as const;
+export const BoardCardPublishStatus = Schema.Literals(BOARD_CARD_PUBLISH_STATUSES);
+export type BoardCardPublishStatus = typeof BoardCardPublishStatus.Type;
+
+export const BoardCardPublish = Schema.Struct({
+  /** `pullRequestHistory.length` at the attempt — the round index, matching
+      how Done settlement keys a card. */
+  round: NonNegativeInt,
+  status: BoardCardPublishStatus,
+  /** HEAD of the project checkout after the fast-forward pull; null when the
+      attempt never reached a SHA (dirty tree, wrong branch, no script). */
+  sha: Schema.NullOr(TrimmedNonEmptyString),
+  /** Human-facing skip or failure reason; null on a clean success. */
+  detail: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardCardPublish = typeof BoardCardPublish.Type;
+
+/** The column card's amber "Publish needs you" pill. Failed attempts only —
+    a skip because this SHA is already live is not something to retry. */
+export function boardCardPublishNeedsYou(publish: BoardCardPublish | null): boolean {
+  return publish !== null && publish.status === "failed";
+}
+
+export function boardCardPublishesEqual(
+  left: BoardCardPublish | null,
+  right: BoardCardPublish | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.round === right.round &&
+    left.status === right.status &&
+    left.sha === right.sha &&
+    left.detail === right.detail
+  );
+}
+
 /**
  * Whether two holds describe the same state — every field, including
  * `retryAt`, because moving to the next rung IS the change worth recording.
@@ -1316,6 +1353,10 @@ export const BoardCard = Schema.Struct({
   autoMergeHold: Schema.NullOr(BoardCardAutoMergeHold).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The most recent publish-on-done attempt for this card's current round;
+      null when none has run. Decodes to null on every event payload written
+      before this field, matching migration 044's nullable column. */
+  publish: Schema.NullOr(BoardCardPublish).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -1904,6 +1945,11 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
       back to Code review is a move that otherwise explains nothing, and
       `card-moved` says where but never why. */
   "card-review-round-requested",
+  /** The board ran this project's publish-on-done script after the card
+      reached Done with a merged pull request. */
+  "card-published",
+  /** The publish-on-done script was skipped or failed. */
+  "card-publish-failed",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -4243,6 +4289,11 @@ export const BoardCardNoteKind = Schema.Literals([
       (T3O-39, D10) — the only record of WHY the card walked back to Code
       review, and of which round it bought. */
   "card-review-round-requested",
+  /** The board ran this project's publish-on-done script after the card
+      reached Done with a merged pull request. */
+  "card-published",
+  /** The publish-on-done script was skipped or failed. */
+  "card-publish-failed",
 ]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
 
@@ -4288,6 +4339,21 @@ export const BoardCardRecordAutoMergeHoldCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardRecordAutoMergeHoldCommand = typeof BoardCardRecordAutoMergeHoldCommand.Type;
+
+/**
+ * Record — or clear — a card's publish-on-done attempt.
+ *
+ * Server-internal: only the supervisor reactor ran the script. `publish: null`
+ * is the clear, used by Retry so the next run is a fresh attempt for this round.
+ */
+export const BoardCardRecordPublishCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-publish"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  publish: Schema.NullOr(BoardCardPublish),
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordPublishCommand = typeof BoardCardRecordPublishCommand.Type;
 
 // Server-INTERNAL step-lifecycle commands (t3o-10, BOARD_INTERNAL_COMMANDS):
 // the supervisor reactor dispatches them as it drives a card's step through
@@ -5120,6 +5186,13 @@ export const BoardCardAutoMergeHoldRecordedPayload = Schema.Struct({
 export type BoardCardAutoMergeHoldRecordedPayload =
   typeof BoardCardAutoMergeHoldRecordedPayload.Type;
 
+export const BoardCardPublishRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  publish: Schema.NullOr(BoardCardPublish),
+  card: BoardCard,
+});
+export type BoardCardPublishRecordedPayload = typeof BoardCardPublishRecordedPayload.Type;
+
 // Step-lifecycle event payloads (t3o-10). The recipe-snapshot event carries
 // the full post-change `card` (like every worktree event), so the projector
 // upserts it and the shell delta stays a pure function of the event. The step
@@ -5668,6 +5741,10 @@ export const BoardCardShell = Schema.Struct({
       precisely the reconnect flicker `cardMetaShellFields.test.ts` exists to
       catch. Draws the small grey `Auto` glyph, in the merge-role stage only. */
   autoMergeArmed: Schema.optionalKey(Schema.Boolean),
+  /** Whether the last publish-on-done attempt failed and needs a retry.
+      Absent when it did not — which is every card that has never published —
+      so a healthy Done column stays byte-identical to a pre-publish payload. */
+  publishFailed: Schema.optionalKey(Schema.Boolean),
   /** The card's linked pull request number, absent when it has none. Sourced
       from `BoardCard.pullRequest`, so — unlike `briefHasImage` / `planCount` —
       it is on the aggregate and every card-carrying delta asserts it; there is
@@ -5917,6 +5994,9 @@ export function makeBoardCardShell(input: {
   readonly autoMergeHeldSince?: IsoDateTime | null | undefined;
   readonly autoMergeGaveUp?: boolean | null | undefined;
   readonly autoMergeArmed?: boolean | null | undefined;
+  /** Whether the last publish-on-done attempt failed. Omitted when it did
+      not, so a card that has never published stays byte-identical. */
+  readonly publishFailed?: boolean | null | undefined;
   /** The card's review-loop summary (t3o-22, D7), or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -5991,6 +6071,7 @@ export function makeBoardCardShell(input: {
     ...(input.autoMergeHeldSince == null ? {} : { autoMergeHeldSince: input.autoMergeHeldSince }),
     ...(input.autoMergeGaveUp === true ? { autoMergeGaveUp: true } : {}),
     ...(input.autoMergeArmed === true ? { autoMergeArmed: true } : {}),
+    ...(input.publishFailed === true ? { publishFailed: true } : {}),
     // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -6072,6 +6153,7 @@ export function boardCardShellFromCard(
     // compute is exactly the reconnect-flicker `cardMetaShellFields.test.ts`
     // exists to catch.
     autoMergeArmed: card.parentCardId !== null || card.autoMerge,
+    publishFailed: boardCardPublishNeedsYou(card.publish),
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined
@@ -6432,6 +6514,7 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardRecordNoteCommand,
   // T3O-38: the auto-merge hold and its retry ladder.
   BoardCardRecordAutoMergeHoldCommand,
+  BoardCardRecordPublishCommand,
   BoardCardSelectStepCommand,
   BoardCardAdmitStepCommand,
   BoardCardAwaitStepInputCommand,
@@ -6483,6 +6566,7 @@ export const BOARD_EVENT_TYPES = [
   "board.card-pull-request-recorded",
   "board.card-note-recorded",
   "board.card-auto-merge-hold-recorded",
+  "board.card-publish-recorded",
   "board.card-step-selected",
   "board.card-step-admitted",
   "board.card-step-force-start-requested",
@@ -6693,6 +6777,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     }),
     Schema.Struct({
       ...base,
+      type: Schema.Literal("board.card-publish-recorded"),
+      payload: BoardCardPublishRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
       type: Schema.Literal("board.card-step-selected"),
       payload: BoardCardStepSelectedPayload,
     }),
@@ -6797,6 +6886,9 @@ export const BOARD_WS_METHODS = {
       moves, or the executor re-plans a converged loop, completes `succeeded`,
       and bounces the card straight back to Ready for merge. */
   requestReviewRound: "board.requestReviewRound",
+  /** Re-run this project's publish-on-done script for a card whose last
+      attempt failed. An RPC because the caller is waiting on an answer. */
+  retryPublish: "board.retryPublish",
   /** Claim a pending upload into the card's folder and record it on the brief
       (t3o-32, K2). An RPC, not a client command: the copy is a filesystem
       side effect that must land before the record does. */
@@ -6903,6 +6995,15 @@ export const BoardMergeCardPullRequestResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
 ]);
 export type BoardMergeCardPullRequestResult = typeof BoardMergeCardPullRequestResult.Type;
+
+export const BoardRetryPublishResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("started") }),
+  Schema.Struct({ outcome: Schema.Literal("not-failed") }),
+  Schema.Struct({ outcome: Schema.Literal("wrong-stage") }),
+  Schema.Struct({ outcome: Schema.Literal("no-pull-request") }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+]);
+export type BoardRetryPublishResult = typeof BoardRetryPublishResult.Type;
 
 /**
  * What "Submit for merge — no review" did (t3o-07, D1/D9).
@@ -7229,6 +7330,11 @@ export const BOARD_RPCS = [
     success: BoardSubmitCardForMergeResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.retryPublish, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardRetryPublishResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.attachCardFile, {
     payload: BoardAttachCardFileInput,
     success: BoardCardAttachment,
@@ -7269,6 +7375,7 @@ export const BOARD_RPC_SCOPES = {
   // and moves the card: the same mutation tier as merging.
   [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.retryPublish]: AuthOrchestrationOperateScope,
   // Attaching writes a file and a board event; detaching deletes one. Both
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,
@@ -7352,6 +7459,8 @@ export type BoardConcurrencySettings = typeof BoardConcurrencySettings.Type;
  */
 export const DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE = true;
 
+export const DEFAULT_BOARD_PUBLISH_ON_DONE = false;
+
 export const BoardLifecycleSettings = Schema.Struct({
   /** Reclaim a card's worktree on arrival at Done when its pull request is
       merged, instead of waiting for archive. Default on: a busy board otherwise
@@ -7360,8 +7469,36 @@ export const BoardLifecycleSettings = Schema.Struct({
   reclaimWorktreeOnDone: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE)),
   ),
+  /** Master switch for running a project's publish-on-done script when a card
+      reaches Done with a merged pull request. Off by default. */
+  publishOnDone: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_PUBLISH_ON_DONE)),
+  ),
+  /** Projects the master switch applies to. Empty means nobody publishes,
+      even when the switch is on. Turning the switch off keeps this list. */
+  publishProjectIds: Schema.Array(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type BoardLifecycleSettings = typeof BoardLifecycleSettings.Type;
+
+/** Whether this project's cards publish when they hit Done + merged PR. */
+export function boardPublishOnDoneEnabled(
+  lifecycle: Pick<BoardLifecycleSettings, "publishOnDone" | "publishProjectIds">,
+  projectId: ProjectId,
+): boolean {
+  return lifecycle.publishOnDone && lifecycle.publishProjectIds.includes(projectId);
+}
+
+/** Edge into the Done + merged-PR conjunction. Opening an already-qualified
+    card is not an edge, so parked Done cards do not publish when the switch
+    is later turned on. */
+export function boardPublishConjunctionBecameTrue(input: {
+  readonly wasDone: boolean;
+  readonly wasMerged: boolean;
+  readonly isDone: boolean;
+  readonly isMerged: boolean;
+}): boolean {
+  return input.isDone && input.isMerged && !(input.wasDone && input.wasMerged);
+}
 export const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
 export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
 /** Consecutive-stall ceiling per step (t3o-17, D1). Raised from 3 to 5: safe
@@ -8636,6 +8773,8 @@ export const BoardSettings = Schema.Struct({
     Schema.withDecodingDefault(
       Effect.succeed({
         reclaimWorktreeOnDone: DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
+        publishOnDone: DEFAULT_BOARD_PUBLISH_ON_DONE,
+        publishProjectIds: [],
       }),
     ),
   ),
@@ -8667,6 +8806,8 @@ export type BoardConcurrencySettingsPatch = typeof BoardConcurrencySettingsPatch
 
 export const BoardLifecycleSettingsPatch = Schema.Struct({
   reclaimWorktreeOnDone: Schema.optionalKey(Schema.Boolean),
+  publishOnDone: Schema.optionalKey(Schema.Boolean),
+  publishProjectIds: Schema.optionalKey(Schema.Array(ProjectId)),
 });
 export type BoardLifecycleSettingsPatch = typeof BoardLifecycleSettingsPatch.Type;
 

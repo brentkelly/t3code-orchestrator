@@ -65,6 +65,7 @@ export type BoardCardNotice =
   | { readonly kind: "auto-merge"; readonly pill: BoardAutoMergePill }
   /** T3o (T3O-48): parked at the merge role with nothing to merge. */
   | { readonly kind: "no-pull-request" }
+  | { readonly kind: "publish-failed" }
   | { readonly kind: "blocked"; readonly dependencyCount: number };
 
 /** The one notice a card header shows, or null when it has nothing to say. */
@@ -82,6 +83,8 @@ export function boardCardNotice(input: {
       wrong, but it has a running step and its own notices, and the window
       before the build opens one is legitimate. */
   readonly noPullRequestAtMerge: boolean;
+  /** Last publish-on-done attempt failed. Key-optional on the shell. */
+  readonly publishFailed: boolean;
   /** `BoardCardShell.blocked`: the dependency gate, which bites from the build
       role onward. */
   readonly blocked: boolean;
@@ -97,6 +100,7 @@ export function boardCardNotice(input: {
   // below the two pills above because both of those describe a card that does
   // have a pull request, and so are more specific still.
   if (input.noPullRequestAtMerge) return { kind: "no-pull-request" };
+  if (input.publishFailed) return { kind: "publish-failed" };
   if (attention !== null) return { kind: "attention", attention };
   if (input.blocked) return { kind: "blocked", dependencyCount: input.dependencyCount };
   return null;

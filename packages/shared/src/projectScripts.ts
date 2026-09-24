@@ -73,3 +73,8 @@ export function projectScriptRuntimeEnv(
 export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
 }
+
+/** The first project script flagged to run when a card reaches Done. */
+export function publishOnDoneScript(scripts: readonly ProjectScript[]): ProjectScript | null {
+  return scripts.find((script) => script.runOnCardDone === true) ?? null;
+}

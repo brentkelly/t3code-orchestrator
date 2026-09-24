@@ -66,6 +66,7 @@ function makeCard(
     autoStart: false,
     autoMerge: false,
     autoMergeHold: null,
+    publish: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -2010,6 +2011,18 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         // The card starts with no hold, so recording one is a real change and
         // clears the decider's no-op guard. It writes one card field and can
         // emit no move.
+        "board.card.record-publish": {
+          type: "board.card.record-publish",
+          commandId: CommandId.make("cmd-record-publish"),
+          cardId: BoardCardId.make("card-ready"),
+          publish: {
+            round: 0,
+            status: "succeeded",
+            sha: "abc123",
+            detail: null,
+          },
+          createdAt: NOW,
+        },
         "board.card.record-auto-merge-hold": {
           type: "board.card.record-auto-merge-hold",
           commandId: CommandId.make("cmd-record-auto-merge-hold"),

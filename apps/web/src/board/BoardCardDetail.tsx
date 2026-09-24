@@ -98,6 +98,7 @@ import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import {
   describeBoardCommandFailure,
   describeBoardMergeOutcome,
+  describeBoardRetryPublishOutcome,
   // T3o: the forced re-check's answer (T3O-48).
   describeBoardRefreshOutcome,
   describeBoardReviewRoundOutcome,
@@ -199,6 +200,9 @@ export function BoardCardDetail({
     reportFailure: false,
   });
   const mergeCardPullRequest = useAtomCommand(boardEnvironment.mergeCardPullRequest, {
+    reportFailure: false,
+  });
+  const retryCardPublish = useAtomCommand(boardEnvironment.retryCardPublish, {
     reportFailure: false,
   });
   // Same reason as the two above: every refusal is a normal answer with its own
@@ -1066,6 +1070,16 @@ export function BoardCardDetail({
             return;
           }
           setFeedback(describeBoardRefreshOutcome(result.value, branch));
+        });
+      }}
+      onRetryPublish={() => {
+        setFeedback(null);
+        void retryCardPublish({ environmentId, input: { cardId: card.id } }).then((result) => {
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+            return;
+          }
+          setFeedback(describeBoardRetryPublishOutcome(result.value));
         });
       }}
       onMergePullRequest={() => {

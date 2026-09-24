@@ -85,6 +85,8 @@ export interface NewProjectScriptInput {
   command: string;
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
+  /** Run after a card reaches Done with a merged pull request. */
+  runOnCardDone: boolean;
   /** Setup scripts only: hold the agent until the script exits. */
   waitForSetup: boolean;
   keybinding: string | null;
@@ -101,6 +103,7 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   command: "",
   icon: "play",
   runOnWorktreeCreate: false,
+  runOnCardDone: false,
   waitForSetup: false,
   keybinding: null,
   previewUrl: null,
@@ -126,6 +129,7 @@ export function editorRequestForScript(
       command: script.command,
       icon: script.icon,
       runOnWorktreeCreate: script.runOnWorktreeCreate,
+      runOnCardDone: script.runOnCardDone === true,
       waitForSetup: script.runOnWorktreeCreate && script.async === false,
       keybinding: keybindingValueForCommand(keybindings, commandForProjectScript(script.id)),
       previewUrl: script.previewUrl ?? null,
@@ -162,6 +166,7 @@ export function ProjectScriptEditorDialog({
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
+  const [runOnCardDone, setRunOnCardDone] = useState(false);
   const [waitForSetup, setWaitForSetup] = useState(false);
   const [keybinding, setKeybinding] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
@@ -193,6 +198,7 @@ export function ProjectScriptEditorDialog({
     setIcon(request.initial.icon);
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(request.initial.runOnWorktreeCreate);
+    setRunOnCardDone(request.initial.runOnCardDone);
     setWaitForSetup(request.initial.waitForSetup);
     setKeybinding(request.initial.keybinding ?? "");
     setPreviewUrl(request.initial.previewUrl ?? "");
@@ -253,6 +259,7 @@ export function ProjectScriptEditorDialog({
         command: trimmedCommand,
         icon,
         runOnWorktreeCreate,
+        runOnCardDone,
         waitForSetup: runOnWorktreeCreate && waitForSetup,
         keybinding: keybindingRule?.key ?? null,
         previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
@@ -401,6 +408,13 @@ export function ProjectScriptEditorDialog({
                   <Switch
                     checked={runOnWorktreeCreate}
                     onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+                  <span>Run when a card is done and its pull request is merged</span>
+                  <Switch
+                    checked={runOnCardDone}
+                    onCheckedChange={(checked) => setRunOnCardDone(Boolean(checked))}
                   />
                 </label>
                 <label

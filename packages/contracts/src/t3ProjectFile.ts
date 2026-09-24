@@ -42,6 +42,12 @@ export const T3ProjectFileScript = Schema.Struct({
         "When true, the script runs automatically after a worktree is created for a new thread.",
     }),
   ),
+  runOnCardDone: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When true, T3o runs this script in the project checkout after a card reaches Done with its pull request merged, if Publish when done is on for this project.",
+    }),
+  ),
   async: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:

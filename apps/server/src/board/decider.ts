@@ -38,6 +38,7 @@ import {
   isBoardCardBaseBranchShape,
   isEmptyBoardCardModelOverrides,
   boardCardAutoMergeHoldsEqual,
+  boardCardPublishesEqual,
   boardCardCanArmAutoMerge,
   boardCardCanArmAutoStart,
   boardStageBeforeBuild,
@@ -2984,6 +2985,25 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         })),
         type: "board.card-auto-merge-hold-recorded",
         payload: { cardId: command.cardId, hold: command.hold, card: nextCard },
+      };
+    }
+
+    case "board.card.record-publish": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (boardCardPublishesEqual(card.publish, command.publish)) return [];
+      const nextCard: BoardCard = {
+        ...card,
+        publish: command.publish,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-publish-recorded",
+        payload: { cardId: command.cardId, publish: command.publish, card: nextCard },
       };
     }
 

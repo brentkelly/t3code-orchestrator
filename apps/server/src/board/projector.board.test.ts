@@ -70,6 +70,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     autoStart: false,
     autoMerge: false,
     autoMergeHold: null,
+    publish: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

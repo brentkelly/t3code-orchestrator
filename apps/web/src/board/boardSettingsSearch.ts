@@ -44,4 +44,11 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     targetId: "board-lifecycle",
   },
+  {
+    id: "board-publish-on-done",
+    title: "Publish when done",
+    to: "/settings/board",
+    targetId: "board-pipeline",
+    searchTerms: ["publish deploy site web done merged"],
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;

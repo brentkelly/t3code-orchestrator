@@ -232,6 +232,7 @@ export const makeBoardCard = (input: {
   autoStart: input.autoStart ?? false,
   autoMerge: input.autoMerge ?? false,
   autoMergeHold: input.autoMergeHold ?? null,
+  publish: null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],
@@ -435,7 +436,11 @@ export const settingsWith = (input: {
     perInstance: input.perInstance ?? {},
     globalMaxConcurrent: input.globalMaxConcurrent,
   },
-  lifecycle: { reclaimWorktreeOnDone: input.reclaimWorktreeOnDone ?? true },
+  lifecycle: {
+    reclaimWorktreeOnDone: input.reclaimWorktreeOnDone ?? true,
+    publishOnDone: false,
+    publishProjectIds: [],
+  },
 });
 
 export type Harness = {

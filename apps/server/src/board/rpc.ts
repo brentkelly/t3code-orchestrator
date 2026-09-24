@@ -219,6 +219,12 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
         ),
       ),
 
+    [BOARD_WS_METHODS.retryPublish]: (input: BoardCardPullRequestActionInput) =>
+      observeRpcEffect(
+        BOARD_WS_METHODS.retryPublish,
+        authorized(BOARD_WS_METHODS.retryPublish, deps.boardSupervisor.retryPublish(input.cardId)),
+      ),
+
     /**
      * Open the card's pull request from Building and route it past Code review
      * ("Submit for merge — no review", t3o-07). Always human-initiated, and

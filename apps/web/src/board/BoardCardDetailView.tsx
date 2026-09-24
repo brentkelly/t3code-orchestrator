@@ -60,6 +60,7 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
+  boardCardPublishNeedsYou,
   type BoardCardReviewOverrides,
   type BoardReviewRoundOverride,
   type RuntimeMode,
@@ -431,6 +432,8 @@ export interface BoardCardDetailViewProps {
   readonly onMoveStage: (toStage: BoardStageId) => void;
   /** Merge the card's pull request and advance it. */
   readonly onMergePullRequest: () => void;
+  /** Re-run publish-on-done after a failed attempt. */
+  readonly onRetryPublish?: (() => void) | undefined;
   /** Open the card's pull request from Building and route it past Code review
       (t3o-07). Absent hides the caret entirely. */
   readonly onSubmitForMerge?: (() => void) | undefined;
@@ -1630,6 +1633,17 @@ function ActionsSection({
             <span className="text-muted-foreground">{`#${displayed.number}`}</span>
           </button>
         </BoardHint>
+      ) : null}
+      {boardCardPublishNeedsYou(card.publish) && props.onRetryPublish !== undefined ? (
+        <div className="flex items-start gap-[7px] rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-warning-foreground">
+          <TriangleAlertIcon className="mt-px size-3.5 shrink-0" />
+          <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <span>{card.publish?.detail ?? "Publishing this project's site failed."}</span>
+            <Button size="xs" variant="outline" onClick={props.onRetryPublish}>
+              Retry publish
+            </Button>
+          </span>
+        </div>
       ) : null}
       {blocked ? (
         <div className="flex gap-[7px] rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-warning-foreground">

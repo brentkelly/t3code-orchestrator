@@ -55,6 +55,7 @@ const notice = (input: Partial<Parameters<typeof boardCardNotice>[0]>) =>
     attention: null,
     conflictFix: null,
     autoMergeHold: null,
+    publishFailed: false,
     noPullRequestAtMerge: false,
     blocked: false,
     dependencyCount: 0,
@@ -104,6 +105,10 @@ describe("boardCardNotice", () => {
   it("keeps the attention chip when no merge state is competing for the slot", () => {
     const stalled = attention({ reason: "stalled", label: "Stalled" });
     expect(notice({ attention: stalled })).toEqual({ kind: "attention", attention: stalled });
+  });
+
+  it("names a failed publish on a Done card", () => {
+    expect(notice({ publishFailed: true })).toEqual({ kind: "publish-failed" });
   });
 
   it("ranks the dependency gate last, because the meta row still carries it", () => {

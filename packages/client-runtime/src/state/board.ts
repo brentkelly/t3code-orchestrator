@@ -79,6 +79,7 @@ import {
   probeBoardProviderLimit,
   setBoardProviderLimitResumeAt,
   mergeBoardCardPullRequest,
+  retryBoardCardPublish,
   moveBoardCard,
   refreshBoardCardPullRequest,
   renameBoardStage,
@@ -1084,6 +1085,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
     mergeCardPullRequest: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:merge-card-pull-request",
       execute: (input: { readonly cardId: BoardCardId }) => mergeBoardCardPullRequest(input),
+    }),
+    retryCardPublish: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:retry-card-publish",
+      execute: (input: { readonly cardId: BoardCardId }) => retryBoardCardPublish(input),
     }),
     /** Open the card's pull request from Building and route it past Code
         review (t3o-07). Resolves to the outcome the card reports — started, or

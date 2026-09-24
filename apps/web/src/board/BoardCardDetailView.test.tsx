@@ -80,6 +80,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     autoStart: false,
     autoMerge: false,
     autoMergeHold: null,
+    publish: null,
     worktree: null,
     blocked: false,
     archivedAt: null,

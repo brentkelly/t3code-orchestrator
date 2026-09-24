@@ -38,6 +38,11 @@ export function ProjectActionsList({
                 setup
               </span>
             ) : null}
+            {script.runOnCardDone === true ? (
+              <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground">
+                publish
+              </span>
+            ) : null}
             {script.previewUrl ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground max-sm:hidden">
                 preview · desktop only

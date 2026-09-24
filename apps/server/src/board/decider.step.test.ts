@@ -60,6 +60,7 @@ function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: str
     autoStart: false,
     autoMerge: false,
     autoMergeHold: null,
+    publish: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

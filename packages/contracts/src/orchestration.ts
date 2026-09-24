@@ -420,6 +420,12 @@ export const ProjectScript = Schema.Struct({
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
   /**
+   * When true, T3o runs this script in the project's default checkout after a
+   * card reaches Done with its pull request merged, if the board's Publish when
+   * done switch includes this project. Absent means it does not.
+   */
+  runOnCardDone: Schema.optional(Schema.Boolean),
+  /**
    * For `runOnWorktreeCreate` scripts: when false, the agent's first turn waits
    * for the script to exit. Absent or true starts the agent right away and
    * lets the script finish in the background.

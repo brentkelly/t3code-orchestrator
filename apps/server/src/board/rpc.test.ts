@@ -147,6 +147,11 @@ const supervisorStub: SupervisorReactorShape = {
       supervisorCalls.requestRound.push(String(cardId));
       return { outcome: "started", round: 2 } as const;
     }),
+  retryPublish: (cardId) =>
+    Effect.sync(() => {
+      supervisorCalls.requestRound.push(`publish:${String(cardId)}`);
+      return { outcome: "started" } as const;
+    }),
 };
 
 const makeHandlers = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][number]>) =>

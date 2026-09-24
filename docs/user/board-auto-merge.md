@@ -77,3 +77,6 @@ branch moved — drops its hold on the way out.
 - Reading the _reason_ a merge was refused needs GitHub or Forgejo. On other providers the board
   still retries on the same schedule; it just cannot tell a failing check from a passing one, so it
   uses all eight attempts before handing the card back to you.
+
+After the card reaches Done, the board can [publish the site](board-publish-on-done.md) from that
+project's checkout.
