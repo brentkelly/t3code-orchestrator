@@ -1505,10 +1505,67 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       assert.strictEqual(failure.code, "invalid-input");
       assert.include(failure.message, "CARD-1");
       assert.include(failure.message, "ask a human");
-      // Still there, and still archivable — the refusal is delete-specific.
+      // Still there — the refusal happened before any dispatch.
       const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(ownThread));
       assert.isDefined(listed.cards.find((card) => card.cardId === ownCard));
-      yield* boardHandlers.board_archive_card({ cardId: ownCard }).pipe(withScope(ownThread));
+    }),
+  );
+
+  it.effect(
+    "board_archive_card refuses the caller's OWN card — archive reclaims the worktree",
+    () =>
+      Effect.gen(function* () {
+        const { ownCard, ownThread } = yield* seedOwnCard("archive-self");
+        const failure = yield* Effect.flip(
+          boardHandlers.board_archive_card({ cardId: ownCard }).pipe(withScope(ownThread)),
+        );
+        // `handleArchived` reclaims the card's worktree unconditionally, and
+        // unarchive does not bring the checkout back — so archiving your own card
+        // removes the tree the calling turn is running in. Refused like delete.
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "CARD-1");
+        assert.include(failure.message, "ask a human");
+        // Not archived: the refusal is in the handler, before the dispatch.
+        const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(ownThread));
+        assert.strictEqual(listed.cards.find((card) => card.cardId === ownCard)?.archived, false);
+        // Another thread's card is still fair game — the guard is about the
+        // CALLER's worktree, not about archiving in general.
+        yield* boardHandlers.board_archive_card({ cardId: ownCard }).pipe(withScope(orphanThread));
+      }),
+  );
+
+  it.effect("archive and delete surface the decider's 'plan cards still exist' rejection", () =>
+    Effect.gen(function* () {
+      const { ownCard, ownThread } = yield* seedOwnCard("lifecycle-children");
+      const engine = yield* OrchestrationEngineService;
+      // Two plans = a split, so approving materialises the parent's children.
+      yield* boardHandlers
+        .board_propose_plans({
+          plans: [
+            { key: "a", title: "A", summary: "s", dependsOn: [], body: "body" },
+            { key: "b", title: "B", summary: "s", dependsOn: ["a"], body: "body" },
+          ],
+          splitRationale:
+            "Two independently reviewable pieces, each worth its own branch, build and review.",
+        })
+        .pipe(withScope(ownThread));
+      yield* engine.dispatch({
+        type: "board.plans.approve",
+        commandId: CommandId.make("cmd-approve-lifecycle-children"),
+        cardId: ownCard,
+        createdAt: t0,
+      });
+
+      const archive = yield* Effect.flip(
+        boardHandlers.board_archive_card({ cardId: ownCard }).pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(archive.code, "rejected");
+      assert.include(archive.message, "unfinished plan card");
+      const del = yield* Effect.flip(
+        boardHandlers.board_delete_card({ cardId: ownCard }).pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(del.code, "rejected");
+      assert.include(del.message, "materialised plan card");
     }),
   );
 

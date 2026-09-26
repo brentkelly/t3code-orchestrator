@@ -251,6 +251,33 @@ const requireTargetCard = (
 };
 
 /**
+ * Refuse a lifecycle write aimed at the CALLER'S OWN card (T3O-2).
+ *
+ * Both archive and delete reclaim the card's worktree: delete forcibly, archive
+ * whenever the checkout is clean and pushed, and unconditionally as far as the
+ * caller is concerned (`handleArchived` -> `reclaimCardWorktree`, which reads no
+ * setting, and unarchive does not bring the checkout back). Either verb can
+ * therefore remove the worktree the calling turn is running in, and delete also
+ * deletes this very thread, so the call could never report its own result.
+ * Refused with the one thing the agent can actually do about it.
+ */
+const refuseOwnCard = (
+  board: BoardState,
+  scope: McpInvocationScope,
+  card: BoardCard,
+  consequence: string,
+): Effect.Effect<void, BoardToolError> => {
+  const own = resolveBoardCardForThread(board, scope.threadId);
+  if (own === null || own.id !== card.id) return Effect.void;
+  return Effect.fail(
+    new BoardToolError({
+      code: "invalid-input",
+      message: `'${card.key}' is the card you are working on. ${consequence}, so it cannot be done from here — ask a human to do it from the app.`,
+    }),
+  );
+};
+
+/**
  * Which step a completion applies to (t3o-19, D3).
  *
  * The board resolves the caller's own work so an agent never has to name a
@@ -840,6 +867,12 @@ export const boardHandlers = {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
       const card = yield* requireTargetCard(board, input.cardId);
+      yield* refuseOwnCard(
+        board,
+        deps.scope,
+        card,
+        "Archiving it reclaims the worktree this turn is running in, and unarchiving does not bring it back",
+      );
       const command: BoardCardArchiveCommand = {
         type: "board.card.archive",
         commandId: yield* mintCommandId,
@@ -873,18 +906,12 @@ export const boardHandlers = {
       // card left to read one off, and "deleted card-4f3a…" is not an answer a
       // human can check.
       const card = yield* requireTargetCard(board, input.cardId);
-      // Deleting your own card is self-destruction, not a board write: the
-      // reactor deletes the threads on the card's links — including this one —
-      // and force-reclaims the worktree this turn is running in, so the call
-      // could never report its own result. Refused with the one thing the
-      // agent can actually do about it.
-      const own = resolveBoardCardForThread(board, deps.scope.threadId);
-      if (own !== null && own.id === card.id) {
-        return yield* new BoardToolError({
-          code: "invalid-input",
-          message: `'${card.key}' is the card you are working on. Deleting it would delete this thread and reclaim the worktree this turn is running in, so it cannot be done from here — ask a human to delete it from the app.`,
-        });
-      }
+      yield* refuseOwnCard(
+        board,
+        deps.scope,
+        card,
+        "Deleting it would delete this thread and force-reclaim the worktree this turn is running in",
+      );
       const command: BoardCardDeleteCommand = {
         type: "board.card.delete",
         commandId: yield* mintCommandId,
