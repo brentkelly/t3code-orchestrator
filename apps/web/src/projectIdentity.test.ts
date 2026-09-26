@@ -23,7 +23,7 @@ describe("deriveProjectIdentity", () => {
   });
 
   it("uses only colors available in the icon picker", () => {
-    const palette = PROJECT_ICON_COLORS.map(({ value }) => value);
+    const palette = PROJECT_ICON_COLORS.map(({ hex }) => hex);
     for (const name of ["Jobs", "Scripts and Extractors", "T3", "文書", "", "---"]) {
       expect(palette).toContain(deriveProjectIdentity(name).color);
     }

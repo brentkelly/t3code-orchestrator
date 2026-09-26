@@ -156,14 +156,15 @@ describe("ProjectFavicon", () => {
       }),
     }) as ReactElement<{
       readonly children: ReactElement<{
-        readonly children: ReactElement<{ readonly name: string; readonly className: string }>;
+        readonly children: ReactElement<{ readonly name: string }>;
       }>;
-      readonly className: string;
+      readonly style: { readonly color: string };
     }>;
 
     expect(element.props.children.props.children.props.name).toBe("alarm-clock");
-    expect(element.props.className).toContain("text-violet-600");
-    expect(element.props.children.props.children.props.className).toContain("text-violet-600");
+    // "violet" is a retired palette name still sitting in stored events; it has
+    // to render as the muted violet it maps onto.
+    expect(element.props.style.color).toBe("#7b5fa8");
   });
 
   it("renders a saved emoji ahead of an uploaded favicon", () => {

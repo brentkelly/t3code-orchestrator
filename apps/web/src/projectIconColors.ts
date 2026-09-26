@@ -1,125 +1,83 @@
 import type { ProjectIconColor } from "@t3tools/contracts";
 
+/**
+ * The colours offered for a project icon. Labels are UI text only: the hex is
+ * what gets persisted, so re-tuning an entry here cannot silently re-tint a
+ * project that already picked it.
+ */
 export const PROJECT_ICON_COLORS: ReadonlyArray<{
-  readonly value: ProjectIconColor;
+  readonly hex: string;
   readonly label: string;
-  readonly className: string;
-  readonly swatchClassName: string;
 }> = [
-  {
-    value: "gray",
-    label: "Gray",
-    className: "text-gray-600 dark:text-gray-400",
-    swatchClassName: "bg-gray-500",
-  },
-  {
-    value: "red",
-    label: "Red",
-    className: "text-red-600 dark:text-red-400",
-    swatchClassName: "bg-red-500",
-  },
-  {
-    value: "orange",
-    label: "Orange",
-    className: "text-orange-600 dark:text-orange-400",
-    swatchClassName: "bg-orange-500",
-  },
-  {
-    value: "amber",
-    label: "Amber",
-    className: "text-amber-600 dark:text-amber-400",
-    swatchClassName: "bg-amber-500",
-  },
-  {
-    value: "yellow",
-    label: "Yellow",
-    className: "text-yellow-600 dark:text-yellow-400",
-    swatchClassName: "bg-yellow-500",
-  },
-  {
-    value: "lime",
-    label: "Lime",
-    className: "text-lime-600 dark:text-lime-400",
-    swatchClassName: "bg-lime-500",
-  },
-  {
-    value: "green",
-    label: "Green",
-    className: "text-green-600 dark:text-green-400",
-    swatchClassName: "bg-green-500",
-  },
-  {
-    value: "emerald",
-    label: "Emerald",
-    className: "text-emerald-600 dark:text-emerald-400",
-    swatchClassName: "bg-emerald-500",
-  },
-  {
-    value: "teal",
-    label: "Teal",
-    className: "text-teal-600 dark:text-teal-400",
-    swatchClassName: "bg-teal-500",
-  },
-  {
-    value: "cyan",
-    label: "Cyan",
-    className: "text-cyan-600 dark:text-cyan-400",
-    swatchClassName: "bg-cyan-500",
-  },
-  {
-    value: "sky",
-    label: "Sky",
-    className: "text-sky-600 dark:text-sky-400",
-    swatchClassName: "bg-sky-500",
-  },
-  {
-    value: "blue",
-    label: "Blue",
-    className: "text-blue-600 dark:text-blue-400",
-    swatchClassName: "bg-blue-500",
-  },
-  {
-    value: "indigo",
-    label: "Indigo",
-    className: "text-indigo-600 dark:text-indigo-400",
-    swatchClassName: "bg-indigo-500",
-  },
-  {
-    value: "violet",
-    label: "Violet",
-    className: "text-violet-600 dark:text-violet-400",
-    swatchClassName: "bg-violet-500",
-  },
-  {
-    value: "purple",
-    label: "Purple",
-    className: "text-purple-600 dark:text-purple-400",
-    swatchClassName: "bg-purple-500",
-  },
-  {
-    value: "fuchsia",
-    label: "Fuchsia",
-    className: "text-fuchsia-600 dark:text-fuchsia-400",
-    swatchClassName: "bg-fuchsia-500",
-  },
-  {
-    value: "pink",
-    label: "Pink",
-    className: "text-pink-600 dark:text-pink-400",
-    swatchClassName: "bg-pink-500",
-  },
-  {
-    value: "rose",
-    label: "Rose",
-    className: "text-rose-600 dark:text-rose-400",
-    swatchClassName: "bg-rose-500",
-  },
+  { hex: "#c2544f", label: "Brick red" },
+  { hex: "#d08a45", label: "Burnt orange" },
+  { hex: "#c9b34e", label: "Mustard" },
+  { hex: "#7e9a4b", label: "Olive green" },
+  { hex: "#3f9a8c", label: "Teal" },
+  { hex: "#4f7db3", label: "Steel blue" },
+  { hex: "#7b5fa8", label: "Muted violet" },
+  { hex: "#b35f8f", label: "Dusty magenta" },
+  { hex: "#8a5a3c", label: "Walnut brown" },
+  { hex: "#6b7280", label: "Slate grey" },
 ];
 
-const PROJECT_ICON_COLOR_CLASSES = Object.fromEntries(
-  PROJECT_ICON_COLORS.map(({ value, className }) => [value, className]),
-) as Record<ProjectIconColor, string>;
+/** The colour a value that cannot be resolved renders as. */
+export const DEFAULT_PROJECT_ICON_COLOR = "#4f7db3";
 
-export function projectIconColorClassName(color: ProjectIconColor): string {
-  return PROJECT_ICON_COLOR_CLASSES[color];
+/**
+ * The Tailwind palette names projects were saved with before the hex palette.
+ * Lossy and deterministic by design: this runs at render time rather than as a
+ * migration, because the colour lives in immutable events and a rewritten
+ * projection would be undone by the next replay.
+ */
+const LEGACY_COLOR_HEXES: Record<string, string> = {
+  gray: "#6b7280",
+  red: "#c2544f",
+  orange: "#d08a45",
+  amber: "#d08a45",
+  yellow: "#c9b34e",
+  lime: "#7e9a4b",
+  green: "#7e9a4b",
+  emerald: "#3f9a8c",
+  teal: "#3f9a8c",
+  cyan: "#3f9a8c",
+  sky: "#4f7db3",
+  blue: "#4f7db3",
+  indigo: "#7b5fa8",
+  violet: "#7b5fa8",
+  purple: "#7b5fa8",
+  fuchsia: "#b35f8f",
+  pink: "#b35f8f",
+  rose: "#c2544f",
+};
+
+const HEX_PATTERN = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+/**
+ * Normalises typed input into a lowercase six-digit hex, accepting shorthand and
+ * a missing `#`. Returns null for anything that is not a hex colour, which is
+ * what the picker uses to mark its field invalid and block saving.
+ */
+export function parseHexColor(input: string): string | null {
+  const match = HEX_PATTERN.exec(input.trim());
+  const digits = match?.[1]?.toLowerCase();
+  if (!digits) return null;
+  return `#${digits.length === 3 ? Array.from(digits, (digit) => digit + digit).join("") : digits}`;
+}
+
+/** True when a hex is one of the offered palette entries, compared case-insensitively. */
+export function isPaletteColor(hex: string): boolean {
+  const normalized = parseHexColor(hex);
+  return normalized !== null && PROJECT_ICON_COLORS.some((option) => option.hex === normalized);
+}
+
+/**
+ * Resolves any stored colour — a current hex or a retired Tailwind name — into
+ * the hex to render. Every render site goes through this, so no caller can
+ * forget that legacy values are still in the database.
+ */
+export function resolveProjectIconColor(color: ProjectIconColor): string {
+  return (
+    parseHexColor(color) ?? LEGACY_COLOR_HEXES[color.toLowerCase()] ?? DEFAULT_PROJECT_ICON_COLOR
+  );
 }
