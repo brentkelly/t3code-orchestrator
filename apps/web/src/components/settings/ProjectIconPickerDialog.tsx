@@ -61,6 +61,8 @@ export function ProjectIconPickerDialog({
   const [color, setColor] = useState(() =>
     resolveProjectIconColor(current && current.kind !== "emoji" ? current.color : automatic.color),
   );
+  // `color` is always a valid lowercase hex — every writer resolves or parses
+  // first. `hexDraft` is the raw field text, which may not be one yet.
   const [hexDraft, setHexDraft] = useState(color);
   const [letters, setLetters] = useState(
     current?.kind === "lucide" && current.monogram ? current.monogram : automatic.monogram,
@@ -164,13 +166,13 @@ export function ProjectIconPickerDialog({
                 <span
                   className={cn(
                     "flex size-6 items-center justify-center rounded-full border border-dashed border-foreground/32 focus-within:ring-2 focus-within:ring-ring",
-                    validColor && !isPaletteColor(color) && "border-foreground/64 border-solid",
+                    !isPaletteColor(color) && "border-foreground/64 border-solid",
                   )}
                 >
                   <input
                     type="color"
                     aria-label="Custom color"
-                    value={validColor ? color : "#000000"}
+                    value={color}
                     className="size-4 cursor-pointer appearance-none rounded-full border-none bg-transparent p-0 outline-none [&::-moz-color-swatch]:rounded-full [&::-moz-color-swatch]:border-none [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-none"
                     onChange={(event) => selectColor(event.currentTarget.value.toLowerCase())}
                   />
@@ -212,7 +214,7 @@ export function ProjectIconPickerDialog({
                         "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
                         iconName === name && "border-border bg-accent",
                       )}
-                      style={validColor ? { color } : undefined}
+                      style={{ color }}
                       onClick={() => setIconName(name)}
                     >
                       <DynamicIcon name={name} className="size-5" />
