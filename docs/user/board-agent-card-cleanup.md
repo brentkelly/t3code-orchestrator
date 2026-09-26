@@ -30,6 +30,13 @@ one yourself from the card's menu.
 A card that has been split cannot be deleted while its plan cards exist, either — those are separate
 cards with their own branches, and each one has to go first.
 
+Nor will it delete a card that still has work in flight — one whose step has not settled, including a
+step parked on a question or one that has stalled. Another agent is inside that checkout, and
+deleting the card would cut its turn off and throw away whatever it had not pushed yet. Ask for that
+card to be archived instead, which stops the step but leaves an unfinished checkout alone, or wait for
+it to finish. If you do want it gone mid-flight, delete it yourself from the card's menu — the dialog
+there is what makes it your call rather than the agent's.
+
 ## Finding the card
 
 Ask for a card by name and the agent looks it up by ID, title, or column. Archived cards are off the

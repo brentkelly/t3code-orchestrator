@@ -278,6 +278,41 @@ const refuseOwnCard = (
 };
 
 /**
+ * Refuse an IRREVERSIBLE write aimed at a card another agent is still working
+ * on (T3O-2).
+ *
+ * `refuseOwnCard` covers the caller; this covers the peers. `board.card-deleted`
+ * force-reclaims the target's worktree — `force: true`, so a DIRTY, UNPUSHED
+ * checkout goes too — and deletes the card's threads, which `thread.delete`
+ * does for a BUSY thread as readily as an idle one. The reactor's own reason for
+ * forcing is that "the user has just said, at a dialog that spells it out" that
+ * the work is not wanted; reached from a tool there is no dialog and no human,
+ * and `board_list_cards` reports no liveness, so an agent tidying the board
+ * cannot even see that the card it is about to purge has an agent inside it.
+ *
+ * A non-terminal step is exactly the board's own "still supervised" predicate,
+ * so a parked or stalled step counts: the thread and its unpushed commits are
+ * still there, waiting on a human. Archive is the way through — it settles the
+ * step as `abandoned` and reclaims only a clean, pushed checkout — and it is
+ * what the message points at rather than leaving the agent stuck.
+ */
+const refuseLiveWork = (
+  board: BoardState,
+  card: BoardCard,
+): Effect.Effect<void, BoardToolError> => {
+  const state = boardCardStepState(board, card.id);
+  if (state === null || isBoardTerminalStepStatus(state.status)) return Effect.void;
+  return Effect.fail(
+    new BoardToolError({
+      code: "invalid-input",
+      message: `'${card.key}' has work in flight — its ${
+        state.stepLabel ?? state.stageLabel ?? state.stepId
+      } step is ${state.status}. Deleting it would delete that thread mid-turn and force-remove its worktree, unpushed commits included. Archive it with board_archive_card instead (reversible, and it leaves a dirty checkout alone), or wait for the step to settle.`,
+    }),
+  );
+};
+
+/**
  * Which step a completion applies to (t3o-19, D3).
  *
  * The board resolves the caller's own work so an agent never has to name a
@@ -912,6 +947,7 @@ export const boardHandlers = {
         card,
         "Deleting it would delete this thread and force-reclaim the worktree this turn is running in",
       );
+      yield* refuseLiveWork(board, card);
       const command: BoardCardDeleteCommand = {
         type: "board.card.delete",
         commandId: yield* mintCommandId,

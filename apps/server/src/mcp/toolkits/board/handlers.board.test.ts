@@ -1534,6 +1534,43 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       }),
   );
 
+  it.effect(
+    "board_delete_card refuses a PEER card with work in flight, and allows it once settled",
+    () =>
+      Effect.gen(function* () {
+        const suffix = "delete-peer-live";
+        const { ownCard, ownThread } = yield* seedOwnCard(suffix);
+        yield* startStep({ ownCard, ownThread, suffix });
+
+        // A DIFFERENT thread — the self-guard does not apply, and before this
+        // the delete went straight through: `board.card-deleted` force-reclaims
+        // the target's worktree (dirty and unpushed included) and deletes the
+        // threads on it, so an agent tidying the board could destroy a peer's
+        // in-flight work with no human at a dialog.
+        const failure = yield* Effect.flip(
+          boardHandlers.board_delete_card({ cardId: ownCard }).pipe(withScope(orphanThread)),
+        );
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "CARD-1");
+        assert.include(failure.message, "work in flight");
+        // Points at the reversible verb rather than leaving the agent stuck.
+        assert.include(failure.message, "board_archive_card");
+        // Refused in the handler, before dispatch: the card is untouched.
+        const listed = yield* boardHandlers
+          .board_list_cards({ includeArchived: true })
+          .pipe(withScope(orphanThread));
+        assert.isDefined(listed.cards.find((card) => card.cardId === ownCard));
+
+        // The guard is about LIVE work, not about deleting a peer's card: once
+        // the step settles, the same call from the same thread succeeds.
+        yield* settleStep({ ownCard, suffix });
+        const deleted = yield* boardHandlers
+          .board_delete_card({ cardId: ownCard })
+          .pipe(withScope(orphanThread));
+        assert.strictEqual(deleted.key, "CARD-1");
+      }),
+  );
+
   it.effect("archive and delete surface the decider's 'plan cards still exist' rejection", () =>
     Effect.gen(function* () {
       const { ownCard, ownThread } = yield* seedOwnCard("lifecycle-children");
