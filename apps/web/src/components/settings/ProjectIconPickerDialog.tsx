@@ -104,6 +104,12 @@ export function ProjectIconPickerDialog({
     const parsed = parseHexColor(value);
     if (parsed) setColor(parsed);
   };
+  // Typing accepts `#ABC`; leaving the field shows what actually gets stored.
+  // An unparseable draft is left alone so its error stays on screen.
+  const normalizeHexDraft = () => {
+    const parsed = parseHexColor(hexDraft);
+    if (parsed) setHexDraft(parsed);
+  };
   const selectColor = (hex: string) => {
     setColor(hex);
     setHexDraft(hex);
@@ -189,6 +195,7 @@ export function ProjectIconPickerDialog({
                   spellCheck={false}
                   className="w-24 font-mono"
                   onChange={(event) => applyHexDraft(event.currentTarget.value)}
+                  onBlur={normalizeHexDraft}
                 />
                 {validColor ? (
                   <span id="project-icon-hex-hint" className="text-xs text-muted-foreground">

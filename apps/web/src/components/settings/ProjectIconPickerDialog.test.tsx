@@ -4,6 +4,7 @@ import { beforeEach, expect, it, vi } from "vite-plus/test";
 import { visitElements } from "../../test/reactElementTree";
 import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 
+const effects = vi.hoisted(() => [] as (() => void)[]);
 vi.mock("react", async (original) => {
   const actual = await original<typeof import("react")>();
   const { reactHookHarness } = await import("../../test/reactHookHarness");
@@ -11,7 +12,7 @@ vi.mock("react", async (original) => {
     ...actual,
     useCallback: reactHookHarness.useCallback,
     useRef: reactHookHarness.useRef,
-    useEffect: () => undefined,
+    useEffect: (effect: () => void) => effects.push(effect),
     useMemo: reactHookHarness.useMemo,
     useState: reactHookHarness.useState,
   };
@@ -25,16 +26,22 @@ import { ProjectIconPickerDialog } from "./ProjectIconPickerDialog";
 
 const onSelect = vi.fn<(icon: ProjectIconOverride) => void>();
 
-/** Calls the dialog as a plain function, so state survives across renders. */
-function render(current: ProjectIconOverride | null = null) {
+/**
+ * Calls the dialog as a plain function, so state survives across renders, and
+ * flushes its effects the way React would after commit. The returned tree is
+ * the pre-effect one, so observe an effect's writes on the next render.
+ */
+function render(current: ProjectIconOverride | null = null, open = true) {
   hooks.beginRender();
-  return ProjectIconPickerDialog({
+  const tree = ProjectIconPickerDialog({
     current,
     projectName: "Test",
-    open: true,
+    open,
     onOpenChange: () => {},
     onSelect,
   });
+  for (const effect of effects.splice(0)) effect();
+  return tree;
 }
 type Tree = ReturnType<typeof render>;
 
@@ -52,6 +59,7 @@ function hexField(tree: Tree) {
     "aria-invalid": boolean;
     "aria-describedby": string;
     onChange: (event: { currentTarget: { value: string } }) => void;
+    onBlur: () => void;
   };
 }
 function hexHint(tree: Tree) {
@@ -73,6 +81,7 @@ function typeHex(value: string) {
 
 beforeEach(() => {
   hooks.reset();
+  effects.length = 0;
   onSelect.mockReset();
 });
 
@@ -133,10 +142,41 @@ it("opens a project holding a retired colour name on its mapped palette hex", ()
   expect(swatch?.props["aria-pressed"]).toBe(true);
 });
 
+it("normalises the hex field to the stored value on blur, leaving a bad draft visible", () => {
+  hexField(render()).onChange({ currentTarget: { value: "#ABC" } });
+  expect(hexField(render()).value).toBe("#ABC");
+
+  hexField(render()).onBlur();
+  expect(hexField(render()).value).toBe("#aabbcc");
+
+  hexField(render()).onChange({ currentTarget: { value: "#12" } });
+  hexField(render()).onBlur();
+  const tree = render();
+  expect(hexField(tree).value).toBe("#12");
+  expect(hexField(tree)["aria-invalid"]).toBe(true);
+});
+
+it("re-derives the hex draft from the project each time the dialog reopens", () => {
+  const current: ProjectIconOverride = { kind: "lucide", name: "folder-code", color: "#3f9a8c" };
+  render(current);
+  hexField(render(current)).onChange({ currentTarget: { value: "#12" } });
+  expect(hexField(render(current))["aria-invalid"]).toBe(true);
+
+  render(current, false);
+  render(current);
+
+  const tree = render(current);
+  expect(hexField(tree).value).toBe("#3f9a8c");
+  expect(hexField(tree)["aria-invalid"]).toBe(false);
+  expect(saveButton(tree).disabled).toBe(false);
+});
+
 it("shows icons first and offers the colour row for an automatic project", () => {
   const tree = render();
 
-  expect((byAriaLabel(tree, "Icon type") as { value: readonly string[] }).value).toEqual(["lucide"]);
+  expect((byAriaLabel(tree, "Icon type") as { value: readonly string[] }).value).toEqual([
+    "lucide",
+  ]);
   expect(byAriaLabel(tree, "Icon color")).toBeDefined();
   expect(byAriaLabel(tree, "Custom color")).toBeDefined();
 });
