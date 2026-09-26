@@ -61,8 +61,9 @@ export function ProjectIconPickerDialog({
   const [color, setColor] = useState(() =>
     resolveProjectIconColor(current && current.kind !== "emoji" ? current.color : automatic.color),
   );
-  // `color` is always a valid lowercase hex — every writer resolves or parses
-  // first. `hexDraft` is the raw field text, which may not be one yet.
+  // `color` is always a valid lowercase hex: every writer resolves or parses
+  // first, and `<input type="color">` is spec'd to report lowercase #rrggbb.
+  // `hexDraft` is the raw field text, which may not be one yet.
   const [hexDraft, setHexDraft] = useState(color);
   const [letters, setLetters] = useState(
     current?.kind === "lucide" && current.monogram ? current.monogram : automatic.monogram,
@@ -174,7 +175,7 @@ export function ProjectIconPickerDialog({
                     aria-label="Custom color"
                     value={color}
                     className="size-4 cursor-pointer appearance-none rounded-full border-none bg-transparent p-0 outline-none [&::-moz-color-swatch]:rounded-full [&::-moz-color-swatch]:border-none [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-none"
-                    onChange={(event) => selectColor(event.currentTarget.value.toLowerCase())}
+                    onChange={(event) => selectColor(event.currentTarget.value)}
                   />
                 </span>
                 <Input
@@ -182,13 +183,22 @@ export function ProjectIconPickerDialog({
                   size="compact"
                   aria-label="Hex color"
                   aria-invalid={!validColor}
+                  aria-describedby="project-icon-hex-hint"
                   placeholder="#4f7db3"
                   autoComplete="off"
                   spellCheck={false}
                   className="w-24 font-mono"
                   onChange={(event) => applyHexDraft(event.currentTarget.value)}
                 />
-                <span className="text-xs text-muted-foreground">Or pick any color</span>
+                {validColor ? (
+                  <span id="project-icon-hex-hint" className="text-xs text-muted-foreground">
+                    Or pick any color
+                  </span>
+                ) : (
+                  <span id="project-icon-hex-hint" className="text-xs text-destructive">
+                    Enter a hex color like #4f7db3.
+                  </span>
+                )}
               </div>
             </div>
           ) : null}
