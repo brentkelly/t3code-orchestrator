@@ -3831,8 +3831,10 @@ export type BoardCardUnarchiveCommand = typeof BoardCardUnarchiveCommand.Type;
  * excluding each other.
  *
  * Client-dispatchable, unlike most destructive board writes, because a human at
- * a confirmation dialog is the only thing that may ever issue it. No agent
- * write path exposes it: the MCP toolkit can archive, never delete.
+ * a confirmation dialog is one of the two things that issue it. The other is
+ * `board_delete_card` (T3O-2): an agent asked to tidy a board needs the verb,
+ * and the tool refuses only the case the reactor cannot survive — an agent
+ * deleting its OWN card, whose threads and worktree it is running inside.
  */
 export const BoardCardDeleteCommand = Schema.Struct({
   type: Schema.Literal("board.card.delete"),
