@@ -19,6 +19,27 @@ import {
 
 const ICON_COLORS = ProjectIconColor.literals;
 
+/** `hex` at half its HSL saturation, hue and lightness unchanged. */
+function halfSaturation(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map((start) => parseInt(hex.slice(start, start + 2), 16) / 255) as [
+    number,
+    number,
+    number,
+  ];
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const grey = (max + min) / 2;
+  // Halving saturation at fixed lightness halves each channel's distance from
+  // the grey of that lightness.
+  return `#${[r, g, b]
+    .map((channel) =>
+      Math.round((grey + (channel - grey) / 2) * 255)
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
+
 const ALL_ACCENTS: ReadonlyArray<readonly [string, ProjectAccent]> = [
   ...ICON_COLORS.map((name) => [name, PROJECT_ICON_ACCENTS[name]] as const),
   ...PROJECT_HASH_ACCENTS.map((accent, index) => [`hash #${index}`, accent] as const),
@@ -29,19 +50,19 @@ describe("project accent palette", () => {
     expect(Object.keys(PROJECT_ICON_ACCENTS).toSorted()).toEqual([...ICON_COLORS].toSorted());
   });
 
-  it("computes every pill foreground from its own fill", () => {
+  it("fills the pill with the accent at half saturation", () => {
     for (const [name, accent] of ALL_ACCENTS) {
-      const expected = boardLabelForeground(accent.hex);
-      expect(accent.pill, `${name} pill foreground`).toBe(
-        `bg-[${accent.hex}] text-${expected === "#ffffff" ? "white" : `[${expected}]`}`,
-      );
+      expect(accent.pillHex, `${name} pill fill`).toBe(halfSaturation(accent.hex));
+      expect(accent.dot).toBe(`bg-[${accent.hex}]`);
     }
   });
 
-  it("fills the dot and the pill from the same hex", () => {
-    for (const [, accent] of ALL_ACCENTS) {
-      expect(accent.dot).toBe(`bg-[${accent.hex}]`);
-      expect(accent.pill.startsWith(`bg-[${accent.hex}] `)).toBe(true);
+  it("computes every pill foreground from its own fill", () => {
+    for (const [name, accent] of ALL_ACCENTS) {
+      const expected = boardLabelForeground(accent.pillHex);
+      expect(accent.pill, `${name} pill foreground`).toBe(
+        `bg-[${accent.pillHex}] text-${expected === "#ffffff" ? "white" : `[${expected}]`}`,
+      );
     }
   });
 
