@@ -16,6 +16,12 @@ Archiving cleans up a card's checkout, and restoring the card does not bring tha
 an agent archiving its own card would pull the ground out from under itself mid-sentence — archive
 that one yourself from the card's menu.
 
+Archiving a card someone else is still working on is allowed, and it is what an agent falls back to
+when you ask it to delete such a card. It is the gentler of the two, not a free one: the step in
+flight is marked abandoned, so that agent's turn finishes into nothing, and the card's checkout is
+cleaned up unless it holds uncommitted or unpushed work. Nothing is destroyed and unarchiving puts
+the card back, but if you only meant to tidy up, wait for the step to finish first.
+
 ## Delete is final, and it says so
 
 Deleting a card destroys it. The card leaves the board, the conversations attached to it go with it,
