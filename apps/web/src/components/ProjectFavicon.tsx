@@ -10,7 +10,7 @@ import { lazy, Suspense, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { projectFaviconUrlAtom } from "../state/assets";
 import { deriveProjectIdentity } from "../projectIdentity";
-import { resolveProjectIconColor } from "../projectIconColors";
+import { projectIconColorClassName } from "../projectIconColors";
 import { ProjectMonogram } from "./ProjectMonogram";
 import { cn } from "~/lib/utils";
 
@@ -62,21 +62,18 @@ export function ProjectFavicon(input: {
     );
   }
   if (project.projectIcon?.kind === "lucide") {
+    const colorClassName = projectIconColorClassName(project.projectIcon.color);
     const iconClassName = cn(
       "inline-flex size-3.5 shrink-0 items-center justify-center",
+      colorClassName,
       input.className,
     );
-    // The icon inherits currentColor from this wrapper, so the colour is set once.
     return (
-      <span
-        aria-hidden="true"
-        className={iconClassName}
-        style={{ color: resolveProjectIconColor(project.projectIcon.color) }}
-      >
+      <span aria-hidden="true" className={iconClassName}>
         <Suspense fallback={<DynamicProjectIconFallback />}>
           <DynamicIcon
             name={project.projectIcon.name as IconName}
-            className="size-full"
+            className={cn("size-full", colorClassName)}
             fallback={DynamicProjectIconFallback}
           />
         </Suspense>

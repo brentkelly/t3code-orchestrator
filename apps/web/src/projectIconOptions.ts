@@ -1,10 +1,5 @@
 import { iconNames, type IconName } from "lucide-react/dynamic";
-export {
-  isPaletteColor,
-  parseHexColor,
-  PROJECT_ICON_COLORS,
-  resolveProjectIconColor,
-} from "./projectIconColors";
+export { PROJECT_ICON_COLORS, projectIconColorClassName } from "./projectIconColors";
 
 const POPULAR_PROJECT_ICONS = [
   "folder-code",

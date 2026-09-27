@@ -445,13 +445,7 @@ export const ProjectFaviconPath = TrimmedNonEmptyString.check(
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 
-/**
- * The Tailwind palette names this field used to hold. Nothing writes them any
- * more, but they are embedded in persisted event payloads and projection rows,
- * so the schema has to stay total over them or replay fails to decode history.
- * Clients map them onto the current palette when they render.
- */
-const LegacyProjectIconColorName = Schema.Literals([
+export const ProjectIconColor = Schema.Literals([
   "gray",
   "red",
   "orange",
@@ -471,11 +465,6 @@ const LegacyProjectIconColorName = Schema.Literals([
   "pink",
   "rose",
 ]);
-
-/** A six-digit hex colour. What the icon picker writes now, palette or custom. */
-const ProjectIconHexColor = Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/));
-
-export const ProjectIconColor = Schema.Union([ProjectIconHexColor, LegacyProjectIconColorName]);
 export type ProjectIconColor = typeof ProjectIconColor.Type;
 
 const ProjectLucideIconName = TrimmedNonEmptyString.check(
