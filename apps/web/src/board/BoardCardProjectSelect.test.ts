@@ -133,7 +133,6 @@ const settingsWithProjects = (
       {
         keyPrefix: entry.keyPrefix ?? null,
         hidden: entry.hidden ?? false,
-        accentColor: null,
       },
     ]),
   ) as BoardSettings["projects"],
@@ -243,5 +242,23 @@ describe("boardCardProjectOptions", () => {
       ],
     });
     expect(options.find((option) => option.id === beta)?.nextKey).toBe("BE-4");
+  });
+
+  // Each row's dot is the project's Board colour, which is its icon colour.
+  it("colours each option from its project's icon", () => {
+    const options = boardCardProjectOptions({
+      projects: [
+        {
+          ...project(alpha, "Alpha"),
+          projectIcon: { kind: "lucide", name: "rocket", color: "sky" },
+        },
+        { ...project(beta, "Beta"), projectIcon: { kind: "emoji", emoji: "🚀" } },
+        project(gamma, "Gamma"),
+      ],
+      settings: settingsWithProjects({}),
+      currentProjectId: alpha,
+      cardKeys: [],
+    });
+    expect(options.map((option) => option.accent)).toEqual(["sky", null, null]);
   });
 });

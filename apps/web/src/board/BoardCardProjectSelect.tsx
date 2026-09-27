@@ -12,11 +12,10 @@
  * borderless trigger of dot + name + chevron, and a 200px menu opening upward
  * and left-aligned, each row carrying the key the card would be REISSUED as.
  */
-import type { ProjectId } from "@t3tools/contracts";
+import type { ProjectIconColor, ProjectIconOverride, ProjectId } from "@t3tools/contracts";
 import {
   assignBoardKeyPrefix,
   isBoardProjectHidden,
-  resolveBoardProjectAccent,
   type BoardCardProjectLock,
   type BoardSettings,
 } from "@t3tools/contracts";
@@ -26,21 +25,23 @@ import { useState } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import { cn } from "../lib/utils";
 import { BoardHint } from "./BoardHint";
-import { projectAccent } from "./projectAccent";
+import { projectAccent, projectIconColorOf } from "./projectAccent";
 
-/** One project as the row needs it: identity, name, and whether it is on disk
-    here. `workspaceRoot === null` means the project is not on this server. */
+/** One project as the row needs it: identity, name, icon (for its colour),
+    and whether it is on disk here. `workspaceRoot === null` means the project
+    is not on this server. */
 export interface BoardProjectChoice {
   readonly id: ProjectId;
   readonly title: string;
   readonly workspaceRoot: string | null;
+  readonly projectIcon?: ProjectIconOverride | null | undefined;
 }
 
 /** A menu row: the project, and the key the card would carry in it. */
 export interface BoardProjectOption {
   readonly id: ProjectId;
   readonly title: string;
-  readonly accent: string | null;
+  readonly accent: ProjectIconColor | null;
   /** `PREFIX-N`, the key the move would reissue. Empty on the current project's
       row, which shows a check instead. */
   readonly nextKey: string;
@@ -104,7 +105,7 @@ export function boardCardProjectOptions(input: {
       return {
         id: project.id,
         title: project.title,
-        accent: resolveBoardProjectAccent(input.settings, project.id),
+        accent: projectIconColorOf(project),
         nextKey: current ? "" : `${prefix}-${(highest.get(project.id) ?? 0) + 1}`,
         current,
       };
@@ -119,7 +120,13 @@ function boardCardKeyNumber(key: string): number | null {
   return Number.parseInt(tail, 10);
 }
 
-function ProjectDot({ accent, projectId }: { accent: string | null; projectId: ProjectId }) {
+function ProjectDot({
+  accent,
+  projectId,
+}: {
+  accent: ProjectIconColor | null;
+  projectId: ProjectId;
+}) {
   return (
     <span
       className={cn("size-[7px] shrink-0 rounded-full", projectAccent(projectId, accent).dot)}
@@ -138,7 +145,7 @@ export function BoardCardProjectRowValue({
   readonly projectId: ProjectId;
   /** The project's title, or null when it is not on this server. */
   readonly projectName: string | null;
-  readonly accent: string | null;
+  readonly accent: ProjectIconColor | null;
   /** Why the row is pinned; null makes it editable. */
   readonly lock: BoardCardProjectLock | null;
   readonly options: ReadonlyArray<BoardProjectOption>;

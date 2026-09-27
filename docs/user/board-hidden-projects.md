@@ -1,7 +1,7 @@
 # Hide a project from the board
 
 The board shows every project's cards by default. To take a project off the board without
-touching its work, open **Settings** → **Board** and, under **Card keys and colour**, select the
+touching its work, open **Settings** → **Board** and, under **Card keys**, select the
 eye on the project's row. The row shows a **Hidden** badge while the project is hidden; select
 the eye again to bring it back.
 

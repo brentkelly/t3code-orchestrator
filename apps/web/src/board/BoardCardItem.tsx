@@ -28,6 +28,7 @@ import type {
   BoardCardThreadShell,
   BoardLabel,
   BoardLabelId,
+  ProjectIconColor,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -253,8 +254,8 @@ export function BoardCardContent({
   /** The parent card's key when this is a sub-board child (t3o-23); absent on
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
   readonly parentKey?: string | undefined;
-  /** Configured project accent (t3o-07); falls back to the hash colour. */
-  readonly accentName?: string | null | undefined;
+  /** The project's icon colour (T3O-4); null falls back to the hash colour. */
+  readonly accentName?: ProjectIconColor | null | undefined;
   /** Thread todo lists (t3o-18). Absent on surfaces that do not carry them
       (the archive sheet, the drag ghost), where the card renders exactly as it
       did before. */
@@ -693,7 +694,7 @@ export function DraggableBoardCard({
   readonly onDragEnd: () => void;
   /** Keyboard analogue of the pointer drag: move one visible slot up/down. */
   readonly onReorder: (card: BoardCardShell, direction: -1 | 1) => void;
-  readonly accentName?: string | null | undefined;
+  readonly accentName?: ProjectIconColor | null | undefined;
   readonly todos?: BoardCardTodoContext | undefined;
   readonly parentKey?: string | undefined;
   readonly onOpenSubBoard?: (() => void) | undefined;

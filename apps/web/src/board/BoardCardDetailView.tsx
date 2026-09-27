@@ -58,6 +58,7 @@ import {
   type BoardStageId,
   type BoardState,
   type EnvironmentId,
+  type ProjectIconColor,
   type ProjectId,
   type ThreadId,
   type BoardCardReviewOverrides,
@@ -559,8 +560,8 @@ export interface BoardCardDetailViewProps {
     /** The projects the card may move to, each with the key the move would
         reissue. Empty while the row is pinned. */
     readonly options: ReadonlyArray<BoardProjectOption>;
-    /** The card's accent, for the row's dot. */
-    readonly accent: string | null;
+    /** The project's icon colour, for the row's dot. */
+    readonly accent: ProjectIconColor | null;
     /** Whether an agent is working the card right now — the confirm dialog's
         "the running agent is stopped" line. */
     readonly stopsAgent: boolean;

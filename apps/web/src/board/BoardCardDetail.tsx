@@ -26,7 +26,6 @@ import {
   boardStallIsWaiting,
   boardStageWithRole,
   isBoardMergeStageExecution,
-  resolveBoardProjectAccent,
   isBoardCardBaseRetargeted,
   resolveBoardCardEffectiveBase,
   boardSubBoardFloorStage,
@@ -67,6 +66,7 @@ import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardScheduleKind } from "./boardSchedule";
 import { boardQueueInfo } from "./boardQueueInfo";
+import { projectIconColorOf } from "./projectAccent";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
@@ -360,8 +360,8 @@ export function BoardCardDetail({
     if (card === null) return [];
     const shells = snapshot?.cards ?? [];
     const keyById = new Map(shells.map((shell) => [String(shell.cardId), shell.key]));
-    const titleById = new Map(
-      (snapshot?.projects ?? []).map((project) => [String(project.id), project.title]),
+    const projectById = new Map(
+      (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
     );
     const existing = new Set<string>([card.id, ...card.dependsOn]);
     return shells
@@ -379,15 +379,15 @@ export function BoardCardDetail({
           : {
               project: {
                 id: candidate.projectId,
-                title: titleById.get(String(candidate.projectId)) ?? "Another project",
-                accent: resolveBoardProjectAccent(boardSettings, candidate.projectId),
+                title: projectById.get(String(candidate.projectId))?.title ?? "Another project",
+                accent: projectIconColorOf(projectById.get(String(candidate.projectId))),
               },
             }),
         ...(card.parentCardId === null && candidate.parentCardId !== undefined
           ? { parentKey: keyById.get(String(candidate.parentCardId)) }
           : {}),
       }));
-  }, [boardSettings, card, snapshot]);
+  }, [card, snapshot]);
 
   // The child's parent, resolved for the sheet's "part of" chip (t3o-25). An
   // archived parent is off the live shell and its sub-board would redirect
@@ -911,7 +911,9 @@ export function BoardCardDetail({
       project={{
         lock: projectLock,
         options: projectOptions,
-        accent: resolveBoardProjectAccent(boardSettings, card.projectId),
+        accent: projectIconColorOf(
+          (snapshot?.projects ?? []).find((entry) => entry.id === card.projectId),
+        ),
         names: projectNames,
         stopsAgent: isBoardCardRunInFlight(cardShell),
         restartsStage: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,

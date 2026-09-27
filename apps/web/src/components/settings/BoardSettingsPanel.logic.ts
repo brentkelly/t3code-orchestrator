@@ -65,9 +65,9 @@ export function setBoardStageExecution(
  * that reverts to all-defaults is KEPT with null fields rather than deleted:
  * settings patches merge through the stock `deepMerge`, which key-unions maps
  * and cannot delete a key, so omitting the entry would silently retain the old
- * override. A `{ keyPrefix: null, accentColor: null }` entry resolves to the
- * defaults (see `resolveBoardKeyPrefix` / `resolveBoardProjectAccent`), so a
- * null entry and an absent key look identical — and clearing actually persists.
+ * override. A `{ keyPrefix: null }` entry resolves to the default (see
+ * `resolveBoardKeyPrefix`), so a null entry and an absent key look identical —
+ * and clearing actually persists.
  */
 export function setBoardProjectSetting(
   projects: Readonly<Record<string, BoardProjectSettings>>,
@@ -76,7 +76,6 @@ export function setBoardProjectSetting(
 ): Record<string, BoardProjectSettings> {
   const current: BoardProjectSettings = projects[projectId] ?? {
     keyPrefix: null,
-    accentColor: null,
     hidden: false,
   };
   return { ...projects, [projectId]: { ...current, ...patch } };

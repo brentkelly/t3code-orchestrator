@@ -7,7 +7,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   resolveBoardKeyPrefix,
-  resolveBoardProjectAccent,
   UsageLimitSourceId,
   type BoardStageExecution,
   type ServerProvider,
@@ -762,7 +761,7 @@ describe("applyServerSettingsPatch board settings (T3o, D4)", () => {
     const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       board: {
         pipeline: { [BOARD_SEED_STAGE_IDS.building]: buildingWith("model-a") },
-        projects: { [project]: { keyPrefix: "T3", accentColor: null, hidden: false } },
+        projects: { [project]: { keyPrefix: "T3", hidden: false } },
       },
     });
     expect(current.board.pipeline[BOARD_SEED_STAGE_IDS.building]?.model).toEqual({
@@ -785,7 +784,7 @@ describe("applyServerSettingsPatch board settings (T3o, D4)", () => {
 
   it("leaves board settings untouched when a non-board field is patched", () => {
     const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      board: { projects: { [project]: { keyPrefix: "T3", accentColor: "#39d", hidden: false } } },
+      board: { projects: { [project]: { keyPrefix: "T3", hidden: false } } },
     });
     const next = applyServerSettingsPatch(current, { enableProviderUpdateChecks: false });
     expect(next.enableProviderUpdateChecks).toBe(false);
@@ -794,11 +793,10 @@ describe("applyServerSettingsPatch board settings (T3o, D4)", () => {
 
   it("persists clearing a project override through deepMerge (null entry, not a deleted key)", () => {
     const configured = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      board: { projects: { [project]: { keyPrefix: "T3", accentColor: "violet", hidden: false } } },
+      board: { projects: { [project]: { keyPrefix: "T3", hidden: false } } },
     });
     expect(configured.board.projects[project]).toEqual({
       keyPrefix: "T3",
-      accentColor: "violet",
       hidden: false,
     });
 
@@ -806,15 +804,13 @@ describe("applyServerSettingsPatch board settings (T3o, D4)", () => {
     // omitting the key — deepMerge would then keep the old override). deepMerge
     // overwrites the stored override with nulls, which resolve to the defaults.
     const cleared = applyServerSettingsPatch(configured, {
-      board: { projects: { [project]: { keyPrefix: null, accentColor: null, hidden: false } } },
+      board: { projects: { [project]: { keyPrefix: null, hidden: false } } },
     });
     expect(cleared.board.projects[project]).toEqual({
       keyPrefix: null,
-      accentColor: null,
       hidden: false,
     });
     expect(resolveBoardKeyPrefix(cleared.board, project)).toBe(DEFAULT_BOARD_KEY_PREFIX);
-    expect(resolveBoardProjectAccent(cleared.board, project)).toBe(null);
   });
 
   it("persists clearing a per-instance concurrency cap as null", () => {

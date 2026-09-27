@@ -10,7 +10,12 @@
  * `board.subscribeCard` the modal does — one parent per drill-in, so the
  * board at rest still opens none.
  */
-import type { BoardCardId, BoardCardShell, EnvironmentId } from "@t3tools/contracts";
+import type {
+  BoardCardId,
+  BoardCardShell,
+  EnvironmentId,
+  ProjectIconColor,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { GitBranchIcon, GitPullRequestIcon, Link2Icon } from "lucide-react";
 
@@ -34,7 +39,7 @@ export function BoardSubBoardHeader({
   /** The parent's decorated live shell; null until the snapshot arrives (or
       once the parent leaves the board, when the D3 redirect is imminent). */
   readonly parentShell: BoardCardShell | null;
-  readonly accentName: string | null;
+  readonly accentName: ProjectIconColor | null;
   /** The parent's own sheet lives on the ROOT board (D2) — clicking the
       title goes there with the sheet open. */
   readonly onOpenParentCard: () => void;

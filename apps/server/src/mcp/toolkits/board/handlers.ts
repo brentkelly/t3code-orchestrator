@@ -184,7 +184,6 @@ const resolveCardKeyPrefix = (
               ...current.board.projects,
               [projectId]: {
                 keyPrefix: prefix,
-                accentColor: current.board.projects[projectId]?.accentColor ?? null,
                 hidden: current.board.projects[projectId]?.hidden ?? false,
               },
             },
