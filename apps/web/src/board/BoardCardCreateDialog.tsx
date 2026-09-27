@@ -97,8 +97,9 @@ function stageStateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
 export interface BoardCreateProject {
   readonly id: ProjectId;
   readonly title: string;
-  /** For the project's Board colour (its icon colour). */
-  readonly projectIcon?: ProjectIconOverride | null | undefined;
+  /** For the project's Board colour (its icon colour). Required so a caller
+      cannot drop it and silently fall back to the hash colour. */
+  readonly projectIcon: ProjectIconOverride | null | undefined;
 }
 
 export function BoardCardCreateDialog({

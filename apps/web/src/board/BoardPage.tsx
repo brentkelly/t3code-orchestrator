@@ -1136,7 +1136,11 @@ function EnvironmentBoard({
         : scopeProjectId === null
           ? projects
           : projects.filter((project) => project.id === scopeProjectId);
-    return inScope.map((project) => ({ id: project.id, title: project.title }));
+    return inScope.map((project) => ({
+      id: project.id,
+      title: project.title,
+      projectIcon: project.projectIcon,
+    }));
   }, [projects, scope.kind, scopeProjectId, parentShell?.projectId]);
 
   const canCreate = addProjects.length > 0 && firstStageId !== null;

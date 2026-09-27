@@ -128,6 +128,10 @@ would be a regression:
   Same argument: a checked control is UI state. The status surface for that feature — the card
   face's **Auto-start** chip — is neutral, because the card is not running.
 - The teal terminal-process indicator, which deliberately reads as "not agent work".
+- A card's project colour — the key pill, legend and picker dots. It is the project's icon colour
+  (T3O-4), chosen by the user from the full icon palette, so it can be green, blue or violet. It says
+  which project a card belongs to, never how its work is going, and the status indicators beside it
+  keep their own vocabulary.
 
 ## Where the seams are
 
