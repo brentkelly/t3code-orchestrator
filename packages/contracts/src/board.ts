@@ -7294,16 +7294,17 @@ export const BOARD_RPC_SCOPES = {
  * read time: a project's FIRST card assigns an acronym derived from its name
  * (`boardProjectAcronym`) and persists it here, so renaming the project later
  * cannot re-derive a different prefix and split its keys in two. Settings can
- * override it at any point; the accent colours the project's cards. Keyed by
- * `ProjectId` because the board never owns project identity — it references
- * T3's registry.
+ * override it at any point. Keyed by `ProjectId` because the board never owns
+ * project identity — it references T3's registry.
+ *
+ * A project's Board colour is not here: it follows the project's icon colour
+ * (T3O-4). Files written before then still carry an `accentColor` key per
+ * entry; struct decoding drops unknown keys rather than rejecting them, so
+ * those files keep loading (pinned by board.settings.test.ts).
  */
 export const BoardProjectSettings = Schema.Struct({
-  /** Null falls back to `DEFAULT_BOARD_KEY_PREFIX` — so a project entry can
-      carry only a custom accent, or only a custom prefix, or both. */
+  /** Null falls back to `DEFAULT_BOARD_KEY_PREFIX`. */
   keyPrefix: Schema.NullOr(TrimmedNonEmptyString),
-  /** Null means the deterministic hash accent (the `projectAccent` fallback). */
-  accentColor: Schema.NullOr(TrimmedNonEmptyString),
   /** Hidden projects (the settings eye toggle) leave the board VIEW — scope
       picker, legend and columns — while their cards, automation and threads
       run on untouched. The decoding default keeps every entry written before
@@ -8656,8 +8657,8 @@ export const DEFAULT_BOARD_SETTINGS: BoardSettings = Schema.decodeSync(BoardSett
 //   2. `deepMerge` key-unions objects and CANNOT delete a map key. So "revert a
 //      project or instance to the default" is never expressed by omitting its
 //      key (that would silently keep the old value); it is expressed by a
-//      retained entry whose fields are null — `{ keyPrefix: null, accentColor:
-//      null }` for a project, `null` for a per-instance cap. The resolvers treat
+//      retained entry whose fields are null — `{ keyPrefix: null }` for a
+//      project, `null` for a per-instance cap. The resolvers treat
 //      those nulls as "use the default", so a null entry and an absent key are
 //      observationally identical, and clearing an override actually persists.
 
@@ -9153,12 +9154,4 @@ export function assignBoardKeyPrefix(input: {
 /** Whether a project (and its cards) is hidden from the board view. */
 export function isBoardProjectHidden(board: BoardSettings, projectId: ProjectId): boolean {
   return board.projects[projectId]?.hidden ?? false;
-}
-
-/** The per-project accent colour, or null when unset. */
-export function resolveBoardProjectAccent(
-  board: BoardSettings,
-  projectId: ProjectId,
-): string | null {
-  return board.projects[projectId]?.accentColor ?? null;
 }

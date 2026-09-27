@@ -16,6 +16,7 @@ import {
   type BoardLabel,
   type BoardLabelId,
   type BoardStageId,
+  type ProjectIconColor,
   type ProjectId,
 } from "@t3tools/contracts";
 import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
@@ -86,8 +87,8 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   /** Projects new cards may be created in; empty hides the add button, which
       also only shows on creation stages (t3o-06a). */
   readonly addProjects: ReadonlyArray<BoardAddProject>;
-  /** Resolves a project's configured accent name (t3o-07); hash fallback when null. */
-  readonly accentNameFor: (projectId: ProjectId) => string | null;
+  /** Resolves a project's icon colour (T3O-4); hash fallback when null. */
+  readonly accentNameFor: (projectId: ProjectId) => ProjectIconColor | null;
   /** Resolves a sub-board child's parent key for its chip (t3o-23). */
   readonly parentKeyFor: (cardId: string) => string | undefined;
   /** Why a card is waiting on a human, or null (`boardCardAttention`), and the

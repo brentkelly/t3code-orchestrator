@@ -23,12 +23,12 @@ import {
   assignBoardKeyPrefix,
   boardStagesInOrder,
   isBoardStageAtOrAfterSubBoardFloor,
-  resolveBoardProjectAccent,
   resolveBoardStageExecution,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
   type EnvironmentId,
+  type ProjectIconOverride,
   type ProjectId,
 } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
@@ -86,7 +86,7 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import { BoardLabelField } from "./BoardLabelField";
 import { boardStageLabel } from "./boardStages";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
-import { projectAccent } from "./projectAccent";
+import { projectAccent, projectIconColorOf } from "./projectAccent";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply. */
@@ -97,6 +97,9 @@ function stageStateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
 export interface BoardCreateProject {
   readonly id: ProjectId;
   readonly title: string;
+  /** For the project's Board colour (its icon colour). Required so a caller
+      cannot drop it and silently fall back to the hash colour. */
+  readonly projectIcon: ProjectIconOverride | null | undefined;
 }
 
 export function BoardCardCreateDialog({
@@ -180,6 +183,10 @@ export function BoardCardCreateDialog({
     const projectTitleById = new Map(
       projects.map((project) => [String(project.id), project.title]),
     );
+    // Every project, hidden ones included, so a foreign card keeps its colour.
+    const projectById = new Map(
+      (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
+    );
     return allCards
       .filter(
         (card) =>
@@ -196,14 +203,14 @@ export function BoardCardCreateDialog({
               project: {
                 id: card.projectId,
                 title: projectTitleById.get(String(card.projectId)) ?? "Another project",
-                accent: resolveBoardProjectAccent(boardSettings, card.projectId),
+                accent: projectIconColorOf(projectById.get(String(card.projectId))),
               },
             }),
         ...(subBoardParentId === null && card.parentCardId !== undefined
           ? { parentKey: keyById.get(String(card.parentCardId)) }
           : {}),
       }));
-  }, [allCards, boardSettings, dependsOn, projectId, projects, subBoardParentId]);
+  }, [allCards, dependsOn, projectId, projects, snapshot, subBoardParentId]);
 
   /** The chosen dependencies as the card modal's rows — same shape, same
       renderer, so an unresolvable id reads the same in both sheets. */
@@ -641,7 +648,7 @@ export function BoardCardCreateDialog({
                         "size-2 shrink-0 rounded-full",
                         projectAccent(
                           projectId,
-                          resolveBoardProjectAccent(boardSettings, projectId),
+                          projectIconColorOf(projects.find((project) => project.id === projectId)),
                         ).dot,
                       )}
                     />
@@ -655,10 +662,7 @@ export function BoardCardCreateDialog({
                         <span
                           className={cn(
                             "size-2 rounded-full",
-                            projectAccent(
-                              project.id,
-                              resolveBoardProjectAccent(boardSettings, project.id),
-                            ).dot,
+                            projectAccent(project.id, projectIconColorOf(project)).dot,
                           )}
                         />
                         {project.title}

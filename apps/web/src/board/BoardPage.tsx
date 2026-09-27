@@ -20,7 +20,6 @@ import {
   deriveBoardCardThreadState,
   isBoardMergeStageExecution,
   isBoardProjectHidden,
-  resolveBoardProjectAccent,
   resolveBoardStageExecution,
   type BoardCardShell,
   type ProviderInstanceId,
@@ -101,7 +100,7 @@ import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
 import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
 import { BoardProviderUsagePill } from "./BoardProviderUsagePill";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
-import { projectAccent } from "./projectAccent";
+import { projectAccent, projectIconColorOf } from "./projectAccent";
 import { validateBoardSearch, type BoardSearch } from "../routes/board";
 
 const EMPTY_COLUMNS: BoardStageColumns = mergeBoardStageColumns([]);
@@ -316,13 +315,8 @@ function EnvironmentBoard({
   );
 
   // Board settings (t3o-07): the per-project key prefix used when creating a
-  // card, and the configured accent used to colour a project's cards. Read
-  // once here and threaded down, rather than subscribed per card.
+  // card. Read once here and threaded down, rather than subscribed per card.
   const boardSettings = usePrimarySettings((settings) => settings.board);
-  const accentNameFor = useCallback(
-    (projectId: ProjectId) => resolveBoardProjectAccent(boardSettings, projectId),
-    [boardSettings],
-  );
 
   // The board-wide arm (T3O-38, D2) — the third arming condition, and the one
   // the card shell cannot carry, since the SQL snapshot producer cannot see
@@ -338,6 +332,15 @@ function EnvironmentBoard({
     () => Option.getOrNull(shellState.snapshot)?.projects ?? [],
     [shellState.snapshot],
   );
+  // A project's Board colour is its icon colour (T3O-4), read from the live
+  // shell snapshot so an icon change in project settings recolours its cards
+  // without a reload. Keyed once here and threaded down, not looked up per card.
+  const accentNameFor = useMemo(() => {
+    const byProject = new Map(
+      allProjects.map((project) => [project.id, projectIconColorOf(project)] as const),
+    );
+    return (projectId: ProjectId) => byProject.get(projectId) ?? null;
+  }, [allProjects]);
   // A hidden project (the settings eye toggle) leaves the board view entirely
   // — scope picker, legend, add-card list and the merged columns below — while
   // its cards and automation run on untouched.
@@ -1133,7 +1136,11 @@ function EnvironmentBoard({
         : scopeProjectId === null
           ? projects
           : projects.filter((project) => project.id === scopeProjectId);
-    return inScope.map((project) => ({ id: project.id, title: project.title }));
+    return inScope.map((project) => ({
+      id: project.id,
+      title: project.title,
+      projectIcon: project.projectIcon,
+    }));
   }, [projects, scope.kind, scopeProjectId, parentShell?.projectId]);
 
   const canCreate = addProjects.length > 0 && firstStageId !== null;

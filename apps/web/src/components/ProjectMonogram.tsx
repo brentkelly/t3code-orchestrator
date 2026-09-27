@@ -1,5 +1,5 @@
 import type { ProjectIconColor } from "@t3tools/contracts";
-import { resolveProjectIconColor } from "../projectIconColors";
+import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -24,9 +24,11 @@ export function ProjectMonogram({
     >
       <svg
         viewBox="0 0 16 16"
-        className="size-full overflow-hidden rounded-[25%] font-mono select-none"
+        className={cn(
+          "size-full overflow-hidden rounded-[25%] font-mono select-none",
+          projectIconColorClassName(color),
+        )}
         style={{
-          color: resolveProjectIconColor(color),
           backgroundColor: "color-mix(in srgb, currentColor 14%, transparent)",
         }}
       >

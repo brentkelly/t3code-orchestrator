@@ -8,7 +8,7 @@
  * thread pane's add MENU (t3o-14) can swap the same search into a popover it
  * already owns rather than nesting a second one inside a menu item.
  */
-import type { ProjectId } from "@t3tools/contracts";
+import type { ProjectIconColor, ProjectId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -34,7 +34,7 @@ export interface BoardPickerOption {
       dot the board colours their cards with. Absent for same-project options,
       which is every option on a board with one project. */
   readonly project?:
-    | { readonly id: ProjectId; readonly title: string; readonly accent: string | null }
+    | { readonly id: ProjectId; readonly title: string; readonly accent: ProjectIconColor | null }
     | undefined;
 }
 

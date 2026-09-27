@@ -27,7 +27,6 @@ import {
   isBoardBuildStageExecution,
   isBoardReviewStageExecution,
   resolveBoardKeyPrefix,
-  resolveBoardProjectAccent,
   resolveBoardStageExecution,
   resolveBoardDefaultModelSelection,
   resolveBoardStageModelSelection,
@@ -158,7 +157,7 @@ describe("boardStepErrorSummary (t3o-30, D2)", () => {
 describe("board settings round-trip", () => {
   it("survives encode/decode (a restart) unchanged, including a full pipeline", () => {
     const configured = decodeSettings({
-      projects: { [PROJECT]: { keyPrefix: "T3", accentColor: "#39d" } },
+      projects: { [PROJECT]: { keyPrefix: "T3" } },
       pipeline: {
         [BOARD_SEED_STAGE_IDS.building]: {
           autoExecute: true,
@@ -319,14 +318,27 @@ describe("resolveBoard* helpers", () => {
     );
   });
 
-  it("falls back to the default key prefix, or uses the configured one and accent", () => {
+  it("falls back to the default key prefix, or uses the configured one", () => {
     expect(resolveBoardKeyPrefix(DEFAULT_BOARD_SETTINGS, PROJECT)).toBe(DEFAULT_BOARD_KEY_PREFIX);
-    expect(resolveBoardProjectAccent(DEFAULT_BOARD_SETTINGS, PROJECT)).toBe(null);
-    const configured = decodeSettings({
-      projects: { [PROJECT]: { keyPrefix: "T3", accentColor: "#39d" } },
-    });
+    const configured = decodeSettings({ projects: { [PROJECT]: { keyPrefix: "T3" } } });
     expect(resolveBoardKeyPrefix(configured, PROJECT)).toBe("T3");
-    expect(resolveBoardProjectAccent(configured, PROJECT)).toBe("#39d");
+  });
+
+  it("still decodes an entry carrying the retired `accentColor`, and drops it", () => {
+    // Files written before the Board colour followed the project icon (T3O-4)
+    // carry `accentColor` on each project entry. Rejecting the key would fail
+    // the whole-settings decode and silently revert the user's file to
+    // defaults, so it must decode, keep the entry's other fields, and not
+    // survive the next write.
+    const legacy = decodeSettings({
+      projects: { [PROJECT]: { keyPrefix: "T3", accentColor: "violet", hidden: true } },
+    });
+    expect(legacy.projects[PROJECT]).toEqual({ keyPrefix: "T3", hidden: true });
+    expect(encodeSettings(legacy)).not.toHaveProperty(["projects", PROJECT, "accentColor"]);
+    const legacyNull = decodeSettings({
+      projects: { [PROJECT]: { keyPrefix: null, accentColor: null } },
+    });
+    expect(legacyNull.projects[PROJECT]).toEqual({ keyPrefix: null, hidden: false });
   });
 
   it("resolves project visibility, and an entry written before `hidden` existed still decodes", () => {
@@ -335,11 +347,11 @@ describe("resolveBoard* helpers", () => {
     // rather than failing the whole-settings decode (which would silently
     // revert the user's file to compiled-in defaults).
     const legacy = decodeSettings({
-      projects: { [PROJECT]: { keyPrefix: "T3", accentColor: null } },
+      projects: { [PROJECT]: { keyPrefix: "T3" } },
     });
     expect(isBoardProjectHidden(legacy, PROJECT)).toBe(false);
     const hiddenSettings = decodeSettings({
-      projects: { [PROJECT]: { keyPrefix: "T3", accentColor: null, hidden: true } },
+      projects: { [PROJECT]: { keyPrefix: "T3", hidden: true } },
     });
     expect(isBoardProjectHidden(hiddenSettings, PROJECT)).toBe(true);
   });
@@ -376,7 +388,7 @@ describe("project key acronyms (D14)", () => {
 
     // Persisted — a later card (even after a rename) keeps the same keys.
     const stored = decodeSettings({
-      projects: { [PROJECT]: { keyPrefix: "MW", accentColor: null } },
+      projects: { [PROJECT]: { keyPrefix: "MW" } },
     });
     expect(
       assignBoardKeyPrefix({ board: stored, projectId: PROJECT, projectTitle: "mesh.gateway" }),

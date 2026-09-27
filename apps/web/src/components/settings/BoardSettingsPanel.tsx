@@ -17,7 +17,6 @@ import {
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
   ProviderInstanceId,
-  resolveBoardProjectAccent,
   type BoardSettings,
   type EnvironmentId,
   type ProjectId,
@@ -27,19 +26,13 @@ import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { useMemo } from "react";
 import * as Option from "effect/Option";
 
-import {
-  PROJECT_ACCENT_NAMES,
-  isProjectAccentName,
-  projectAccent,
-  type ProjectAccentName,
-} from "../../board/projectAccent";
+import { projectAccent, projectIconColorOf } from "../../board/projectAccent";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
   normalizeKeyPrefixInput,
@@ -49,8 +42,6 @@ import {
 import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
-
-const ACCENT_AUTO = "__auto__";
 
 /** Built-in driver ids (the canonical set is `ServerSettings.providers`, so
     this never drifts from contracts) plus any configured custom instances — the
@@ -113,7 +104,7 @@ function CardRow(props: { label: string; description?: string; control: React.Re
   );
 }
 
-// ── Card keys and colour ───────────────────────────────────────────────
+// ── Card keys ───────────────────────────────────────────────────────
 
 function ProjectsSection({
   board,
@@ -128,10 +119,11 @@ function ProjectsSection({
   return (
     <SettingsSection id="board-projects" title={anchor.title}>
       <p className="max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
-        The prefix for this project's card keys (e.g. T3 → T3-42) and the colour its cards show on
-        the board. A project's first card assigns an acronym from its name (mesh.web → MW) and keeps
-        it; set a prefix here to override it before those keys exist. The eye hides a project and
-        its cards from the board without touching them — running work carries on.
+        The prefix for this project's card keys (e.g. T3 → T3-42). A project's first card assigns an
+        acronym from its name (mesh.web → MW) and keeps it; set a prefix here to override it before
+        those keys exist. Cards take their colour from the project's icon, set in the project's
+        settings. The eye hides a project and its cards from the board without touching them —
+        running work carries on.
       </p>
       {environmentId === null ? (
         <p className="px-3 text-sm text-muted-foreground sm:px-4">
@@ -176,10 +168,6 @@ function ProjectRows({
       {projects.map((project) => {
         const entry = board.projects[project.id];
         const hidden = entry?.hidden ?? false;
-        const accentName = resolveBoardProjectAccent(board, project.id);
-        const accentValue: ProjectAccentName | typeof ACCENT_AUTO = isProjectAccentName(accentName)
-          ? accentName
-          : ACCENT_AUTO;
         return (
           <div
             key={project.id}
@@ -188,7 +176,7 @@ function ProjectRows({
             <span
               className={cn(
                 "size-2 shrink-0 rounded-full",
-                projectAccent(project.id, accentName).dot,
+                projectAccent(project.id, projectIconColorOf(project)).dot,
               )}
             />
             <span
@@ -232,31 +220,6 @@ function ProjectRows({
                   setProject(project.id, { keyPrefix: next });
               }}
             />
-            <Select
-              value={accentValue}
-              onValueChange={(value) =>
-                setProject(project.id, {
-                  accentColor: value === ACCENT_AUTO ? null : (value as ProjectAccentName),
-                })
-              }
-            >
-              <SelectTrigger aria-label={`Accent for ${project.title}`} size="xs" className="w-32">
-                <SelectValue>{accentValue === ACCENT_AUTO ? "Auto" : accentValue}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                <SelectItem value={ACCENT_AUTO}>Auto</SelectItem>
-                {PROJECT_ACCENT_NAMES.map((name) => (
-                  <SelectItem key={name} value={name}>
-                    <span className="inline-flex items-center gap-1.5">
-                      <span
-                        className={cn("size-2 rounded-full", projectAccent(project.id, name).dot)}
-                      />
-                      {name}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
           </div>
         );
       })}

@@ -1120,6 +1120,29 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  // T3O-4 retired the per-project Board accent, but settings files written
+  // before then still carry `accentColor`. A file that fails to decode is
+  // replaced by defaults, which would silently wipe every setting.
+  it.effect("loads a settings file that still carries a retired board accent", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"enableProviderUpdateChecks":false,"board":{"projects":{"project-1":{"keyPrefix":"T3","accentColor":"violet","hidden":true}}}}',
+      );
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.isFalse(settings.enableProviderUpdateChecks);
+      assert.deepEqual(settings.board.projects[ProjectId.make("project-1")], {
+        keyPrefix: "T3",
+        hidden: true,
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   // t3o-30, D1. The board's default model is the pair every unset stage runs on,
   // so a write that silently dropped it would put cards back on the compiled-in
   // codex pair with the settings card still showing the user's choice.
