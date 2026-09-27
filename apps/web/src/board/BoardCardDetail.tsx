@@ -604,7 +604,12 @@ export function BoardCardDetail({
   const projectOptions =
     projectLock === null
       ? boardCardProjectOptions({
-          projects: snapshot?.projects ?? [],
+          projects: (snapshot?.projects ?? []).map((project) => ({
+            id: project.id,
+            title: project.title,
+            workspaceRoot: project.workspaceRoot,
+            projectIcon: project.projectIcon,
+          })),
           settings: boardSettings,
           currentProjectId: card.projectId,
           cardKeys: snapshot?.cards ?? [],

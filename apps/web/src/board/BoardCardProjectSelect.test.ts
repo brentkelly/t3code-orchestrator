@@ -142,6 +142,7 @@ const project = (id: ProjectId, title: string, workspaceRoot: string | null = `/
   id,
   title,
   workspaceRoot,
+  projectIcon: null,
 });
 
 describe("boardCardProjectOptions", () => {

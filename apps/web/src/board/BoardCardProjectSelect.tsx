@@ -34,7 +34,7 @@ export interface BoardProjectChoice {
   readonly id: ProjectId;
   readonly title: string;
   readonly workspaceRoot: string | null;
-  readonly projectIcon?: ProjectIconOverride | null | undefined;
+  readonly projectIcon: ProjectIconOverride | null | undefined;
 }
 
 /** A menu row: the project, and the key the card would carry in it. */
