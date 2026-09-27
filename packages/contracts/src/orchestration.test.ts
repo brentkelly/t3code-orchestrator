@@ -79,6 +79,7 @@ function getOptionValue(
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
+const decodeProjectIconColor = Schema.decodeUnknownEffect(ProjectIconColor);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
@@ -1505,6 +1506,62 @@ it.effect("project icon overrides accept Lucide icons, colors, and emoji", () =>
       }),
     );
     assert.strictEqual(invalid._tag, "Failure");
+  }),
+);
+
+it.effect("project icon colors accept hex values and the retired palette names", () =>
+  Effect.gen(function* () {
+    for (const value of ["#c2544f", "#6b7280", "#AABBCC", "#000000", "#ffffff"]) {
+      assert.strictEqual(yield* decodeProjectIconColor(value), value);
+    }
+
+    // Retired Tailwind names are still embedded in persisted events, so they
+    // have to keep decoding on replay.
+    for (const value of [
+      "gray",
+      "red",
+      "orange",
+      "amber",
+      "yellow",
+      "lime",
+      "green",
+      "emerald",
+      "teal",
+      "cyan",
+      "sky",
+      "blue",
+      "indigo",
+      "violet",
+      "purple",
+      "fuchsia",
+      "pink",
+      "rose",
+    ]) {
+      assert.strictEqual(yield* decodeProjectIconColor(value), value);
+    }
+
+    for (const value of ["red-500", "#xyz", "#abc", "#AABBCCDD", "#aabbc", "aabbcc", "", "#"]) {
+      const result = yield* Effect.exit(decodeProjectIconColor(value));
+      assert.strictEqual(result._tag, "Failure", `expected "${value}" to be rejected`);
+    }
+  }),
+);
+
+it.effect("project icons accept a custom hex color", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "project.meta.update",
+      commandId: "cmd-project-hex-icon",
+      projectId: "project-1",
+      projectIcon: { kind: "lucide", name: "alarm-clock", color: "#8a5a3c" },
+    });
+    assert.strictEqual(command.type, "project.meta.update");
+    if (command.type === "project.meta.update")
+      assert.deepEqual(command.projectIcon, {
+        kind: "lucide",
+        name: "alarm-clock",
+        color: "#8a5a3c",
+      });
   }),
 );
 

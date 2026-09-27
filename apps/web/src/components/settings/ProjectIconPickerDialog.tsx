@@ -1,19 +1,17 @@
 import * as Schema from "effect/Schema";
 import { deriveProjectIdentity } from "../../projectIdentity";
 import { ProjectMonogram } from "../ProjectMonogram";
-import {
-  ProjectMonogramText,
-  type ProjectIconColor,
-  type ProjectIconOverride,
-} from "@t3tools/contracts";
+import { ProjectMonogramText, type ProjectIconOverride } from "@t3tools/contracts";
 import { DynamicIcon, type IconName } from "lucide-react/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   filterProjectIconNames,
   firstEmoji,
+  isPaletteColor,
+  parseHexColor,
   PROJECT_EMOJIS,
   PROJECT_ICON_COLORS,
-  projectIconColorClassName,
+  resolveProjectIconColor,
 } from "../../projectIconOptions";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -60,9 +58,13 @@ export function ProjectIconPickerDialog({
   const [iconName, setIconName] = useState<IconName>(
     current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON,
   );
-  const [color, setColor] = useState<ProjectIconColor>(
-    current && current.kind !== "emoji" ? current.color : automatic.color,
+  const [color, setColor] = useState(() =>
+    resolveProjectIconColor(current && current.kind !== "emoji" ? current.color : automatic.color),
   );
+  // `color` is always a valid lowercase hex: every writer resolves or parses
+  // first, and `<input type="color">` is spec'd to report lowercase #rrggbb.
+  // `hexDraft` is the raw field text, which may not be one yet.
+  const [hexDraft, setHexDraft] = useState(color);
   const [letters, setLetters] = useState(
     current?.kind === "lucide" && current.monogram ? current.monogram : automatic.monogram,
   );
@@ -77,7 +79,11 @@ export function ProjectIconPickerDialog({
         current?.kind === "lucide" && current.monogram ? "monogram" : (current?.kind ?? "lucide"),
       );
       setIconName(current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON);
-      setColor(current && current.kind !== "emoji" ? current.color : automatic.color);
+      const nextColor = resolveProjectIconColor(
+        current && current.kind !== "emoji" ? current.color : automatic.color,
+      );
+      setColor(nextColor);
+      setHexDraft(nextColor);
       setLetters(
         current?.kind === "lucide" && current.monogram ? current.monogram : automatic.monogram,
       );
@@ -89,11 +95,28 @@ export function ProjectIconPickerDialog({
   }, [current, open, automatic.color, automatic.monogram]);
 
   const icons = useMemo(() => filterProjectIconNames(query), [query]);
-  const selectedColorClassName = projectIconColorClassName(color);
   const monogram = letters.normalize("NFKC").trim().toUpperCase();
   const validMonogram = isMonogramText(monogram);
+  const validColor = parseHexColor(hexDraft) !== null;
+  const colorBlocksSave = mode !== "emoji" && !validColor;
+  const applyHexDraft = (value: string) => {
+    setHexDraft(value);
+    const parsed = parseHexColor(value);
+    if (parsed) setColor(parsed);
+  };
+  // Typing accepts `#ABC`; leaving the field shows what actually gets stored.
+  // An unparseable draft is left alone so its error stays on screen.
+  const normalizeHexDraft = () => {
+    const parsed = parseHexColor(hexDraft);
+    if (parsed) setHexDraft(parsed);
+  };
+  const selectColor = (hex: string) => {
+    setColor(hex);
+    setHexDraft(hex);
+  };
   const save = () => {
     if (mode === "monogram" && !validMonogram) return;
+    if (colorBlocksSave) return;
     onSelect(
       mode === "monogram"
         ? { kind: "lucide", name: DEFAULT_ICON, monogram, color }
@@ -132,19 +155,57 @@ export function ProjectIconPickerDialog({
               <div className="flex flex-wrap gap-1.5" role="group" aria-label="Icon color">
                 {PROJECT_ICON_COLORS.map((option) => (
                   <button
-                    key={option.value}
+                    key={option.hex}
                     type="button"
                     aria-label={option.label}
-                    aria-pressed={color === option.value}
+                    aria-pressed={color === option.hex}
                     className={cn(
                       "flex size-6 items-center justify-center rounded-full border border-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      color === option.value && "border-foreground/64",
+                      color === option.hex && "border-foreground/64",
                     )}
-                    onClick={() => setColor(option.value)}
+                    onClick={() => selectColor(option.hex)}
                   >
-                    <span className={cn("size-4 rounded-full", option.swatchClassName)} />
+                    <span className="size-4 rounded-full" style={{ backgroundColor: option.hex }} />
                   </button>
                 ))}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <span
+                  className={cn(
+                    "flex size-6 items-center justify-center rounded-full border border-dashed border-foreground/32 focus-within:ring-2 focus-within:ring-ring",
+                    !isPaletteColor(color) && "border-foreground/64 border-solid",
+                  )}
+                >
+                  <input
+                    type="color"
+                    aria-label="Custom color"
+                    value={color}
+                    className="size-4 cursor-pointer appearance-none rounded-full border-none bg-transparent p-0 outline-none [&::-moz-color-swatch]:rounded-full [&::-moz-color-swatch]:border-none [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-none"
+                    onChange={(event) => selectColor(event.currentTarget.value)}
+                  />
+                </span>
+                <Input
+                  value={hexDraft}
+                  size="compact"
+                  aria-label="Hex color"
+                  aria-invalid={!validColor}
+                  aria-describedby="project-icon-hex-hint"
+                  placeholder="#4f7db3"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="w-24 font-mono"
+                  onChange={(event) => applyHexDraft(event.currentTarget.value)}
+                  onBlur={normalizeHexDraft}
+                />
+                {validColor ? (
+                  <span id="project-icon-hex-hint" className="text-xs text-muted-foreground">
+                    Or pick any color
+                  </span>
+                ) : (
+                  <span id="project-icon-hex-hint" className="text-xs text-destructive">
+                    Enter a hex color like #4f7db3.
+                  </span>
+                )}
               </div>
             </div>
           ) : null}
@@ -169,8 +230,8 @@ export function ProjectIconPickerDialog({
                       className={cn(
                         "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
                         iconName === name && "border-border bg-accent",
-                        selectedColorClassName,
                       )}
+                      style={{ color }}
                       onClick={() => setIconName(name)}
                     >
                       <DynamicIcon name={name} className="size-5" />
@@ -250,7 +311,10 @@ export function ProjectIconPickerDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={mode === "monogram" && !validMonogram}>
+          <Button
+            onClick={save}
+            disabled={(mode === "monogram" && !validMonogram) || colorBlocksSave}
+          >
             Save icon
           </Button>
         </DialogFooter>

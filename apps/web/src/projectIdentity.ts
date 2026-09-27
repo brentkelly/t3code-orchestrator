@@ -1,4 +1,4 @@
-import { PROJECT_ICON_COLORS } from "./projectIconColors";
+import { DEFAULT_PROJECT_ICON_COLOR, PROJECT_ICON_COLORS } from "./projectIconColors";
 import type { ProjectIconColor } from "@t3tools/contracts";
 
 /** Visual identity tokens for a generated project badge. */
@@ -31,7 +31,7 @@ function projectColor(projectName: string): ProjectIconColor {
   for (const glyph of seed) {
     index = (index * 31 + (glyph.codePointAt(0) ?? 0)) % PROJECT_ICON_COLORS.length;
   }
-  return PROJECT_ICON_COLORS[index]?.value ?? "blue";
+  return PROJECT_ICON_COLORS[index]?.hex ?? DEFAULT_PROJECT_ICON_COLOR;
 }
 
 /** Derives the stable monogram and generated colors used when a project has no icon. */
