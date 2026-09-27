@@ -1393,6 +1393,238 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  // ── T3O-2: the card lifecycle verbs ────────────────────────────────
+  //
+  // Archive, unarchive and delete each take an explicit card id — an agent
+  // tidying a board acts on cards that are not its own — so every case below
+  // works on a card of its own (`seedOwnCard`), never the shared `card-1`
+  // whose stage, labels and key earlier tests assert on.
+
+  it.effect(
+    "board_archive_card takes the card off the board, board_unarchive_card puts it back",
+    () =>
+      Effect.gen(function* () {
+        const { ownCard, ownThread } = yield* seedOwnCard("archive-roundtrip");
+        const archived = yield* boardHandlers
+          .board_archive_card({ cardId: ownCard })
+          .pipe(withScope(orphanThread));
+        // The key, not just the id: it is what the agent reports back to a human.
+        assert.strictEqual(archived.cardId, ownCard);
+        assert.strictEqual(archived.key, "CARD-1");
+
+        // Off the default listing, and visible only with includeArchived — the
+        // way to SEE an archived card, and so to find the id to restore it.
+        const columns = yield* boardHandlers.board_list_cards({}).pipe(withScope(ownThread));
+        assert.isUndefined(columns.cards.find((card) => card.cardId === ownCard));
+        const withArchive = yield* boardHandlers
+          .board_list_cards({ includeArchived: true })
+          .pipe(withScope(ownThread));
+        assert.strictEqual(
+          withArchive.cards.find((card) => card.cardId === ownCard)?.archived,
+          true,
+        );
+
+        const restored = yield* boardHandlers
+          .board_unarchive_card({ cardId: ownCard })
+          .pipe(withScope(orphanThread));
+        assert.strictEqual(restored.key, "CARD-1");
+        const back = yield* boardHandlers.board_list_cards({}).pipe(withScope(ownThread));
+        assert.strictEqual(back.cards.find((card) => card.cardId === ownCard)?.archived, false);
+      }),
+  );
+
+  it.effect("archiving twice and unarchiving a live card are both rejected actionably", () =>
+    Effect.gen(function* () {
+      const { ownCard } = yield* seedOwnCard("archive-invariants");
+      const live = yield* Effect.flip(
+        boardHandlers.board_unarchive_card({ cardId: ownCard }).pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(live.code, "rejected");
+      assert.include(live.message, "not archived");
+
+      yield* boardHandlers.board_archive_card({ cardId: ownCard }).pipe(withScope(orphanThread));
+      const again = yield* Effect.flip(
+        boardHandlers.board_archive_card({ cardId: ownCard }).pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(again.code, "rejected");
+      assert.include(again.message, "already archived");
+    }),
+  );
+
+  it.effect(
+    "board_delete_card purges the card and answers with the key nothing can look up after",
+    () =>
+      Effect.gen(function* () {
+        const { ownCard, ownThread } = yield* seedOwnCard("delete-purge");
+        // A plan on the card, so the delete purges a per-card slice as well as
+        // the card row.
+        yield* boardHandlers
+          .board_propose_plans({
+            plans: [{ key: "a", title: "A", summary: "s", dependsOn: [], body: "body" }],
+          })
+          .pipe(withScope(ownThread));
+
+        const deleted = yield* boardHandlers
+          .board_delete_card({ cardId: ownCard })
+          .pipe(withScope(orphanThread));
+        assert.strictEqual(deleted.key, "CARD-1");
+
+        // Gone from the board entirely — not merely archived.
+        const listed = yield* boardHandlers
+          .board_list_cards({ includeArchived: true })
+          .pipe(withScope(orphanThread));
+        assert.isUndefined(listed.cards.find((card) => card.cardId === ownCard));
+        // And a second delete has nothing to work on.
+        const retry = yield* Effect.flip(
+          boardHandlers.board_delete_card({ cardId: ownCard }).pipe(withScope(orphanThread)),
+        );
+        assert.strictEqual(retry.code, "card-not-found");
+      }),
+  );
+
+  it.effect("board_delete_card deletes an ARCHIVED card too — the two verbs compose", () =>
+    Effect.gen(function* () {
+      const { ownCard } = yield* seedOwnCard("delete-archived");
+      yield* boardHandlers.board_archive_card({ cardId: ownCard }).pipe(withScope(orphanThread));
+      yield* boardHandlers.board_delete_card({ cardId: ownCard }).pipe(withScope(orphanThread));
+      const listed = yield* boardHandlers
+        .board_list_cards({ includeArchived: true })
+        .pipe(withScope(orphanThread));
+      assert.isUndefined(listed.cards.find((card) => card.cardId === ownCard));
+    }),
+  );
+
+  it.effect("board_delete_card refuses the caller's OWN card rather than deleting its thread", () =>
+    Effect.gen(function* () {
+      const { ownCard, ownThread } = yield* seedOwnCard("delete-self");
+      const failure = yield* Effect.flip(
+        boardHandlers.board_delete_card({ cardId: ownCard }).pipe(withScope(ownThread)),
+      );
+      // Refused in the handler, before dispatch: the reactor behind the event
+      // would delete this very thread and reclaim the worktree the turn runs in.
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "CARD-1");
+      assert.include(failure.message, "ask a human");
+      // Still there — the refusal happened before any dispatch.
+      const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(ownThread));
+      assert.isDefined(listed.cards.find((card) => card.cardId === ownCard));
+    }),
+  );
+
+  it.effect(
+    "board_archive_card refuses the caller's OWN card — archive reclaims the worktree",
+    () =>
+      Effect.gen(function* () {
+        const { ownCard, ownThread } = yield* seedOwnCard("archive-self");
+        const failure = yield* Effect.flip(
+          boardHandlers.board_archive_card({ cardId: ownCard }).pipe(withScope(ownThread)),
+        );
+        // `handleArchived` reclaims the card's worktree unconditionally, and
+        // unarchive does not bring the checkout back — so archiving your own card
+        // removes the tree the calling turn is running in. Refused like delete.
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "CARD-1");
+        assert.include(failure.message, "ask a human");
+        // Not archived: the refusal is in the handler, before the dispatch.
+        const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(ownThread));
+        assert.strictEqual(listed.cards.find((card) => card.cardId === ownCard)?.archived, false);
+        // Another thread's card is still fair game — the guard is about the
+        // CALLER's worktree, not about archiving in general.
+        yield* boardHandlers.board_archive_card({ cardId: ownCard }).pipe(withScope(orphanThread));
+      }),
+  );
+
+  it.effect(
+    "board_delete_card refuses a PEER card with work in flight, and allows it once settled",
+    () =>
+      Effect.gen(function* () {
+        const suffix = "delete-peer-live";
+        const { ownCard, ownThread } = yield* seedOwnCard(suffix);
+        yield* startStep({ ownCard, ownThread, suffix });
+
+        // A DIFFERENT thread — the self-guard does not apply, and before this
+        // the delete went straight through: `board.card-deleted` force-reclaims
+        // the target's worktree (dirty and unpushed included) and deletes the
+        // threads on it, so an agent tidying the board could destroy a peer's
+        // in-flight work with no human at a dialog.
+        const failure = yield* Effect.flip(
+          boardHandlers.board_delete_card({ cardId: ownCard }).pipe(withScope(orphanThread)),
+        );
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "CARD-1");
+        assert.include(failure.message, "work in flight");
+        // Points at the reversible verb rather than leaving the agent stuck.
+        assert.include(failure.message, "board_archive_card");
+        // Refused in the handler, before dispatch: the card is untouched.
+        const listed = yield* boardHandlers
+          .board_list_cards({ includeArchived: true })
+          .pipe(withScope(orphanThread));
+        assert.isDefined(listed.cards.find((card) => card.cardId === ownCard));
+
+        // The guard is about LIVE work, not about deleting a peer's card: once
+        // the step settles, the same call from the same thread succeeds.
+        yield* settleStep({ ownCard, suffix });
+        const deleted = yield* boardHandlers
+          .board_delete_card({ cardId: ownCard })
+          .pipe(withScope(orphanThread));
+        assert.strictEqual(deleted.key, "CARD-1");
+      }),
+  );
+
+  it.effect("archive and delete surface the decider's 'plan cards still exist' rejection", () =>
+    Effect.gen(function* () {
+      const { ownCard, ownThread } = yield* seedOwnCard("lifecycle-children");
+      const engine = yield* OrchestrationEngineService;
+      // Two plans = a split, so approving materialises the parent's children.
+      yield* boardHandlers
+        .board_propose_plans({
+          plans: [
+            { key: "a", title: "A", summary: "s", dependsOn: [], body: "body" },
+            { key: "b", title: "B", summary: "s", dependsOn: ["a"], body: "body" },
+          ],
+          splitRationale:
+            "Two independently reviewable pieces, each worth its own branch, build and review.",
+        })
+        .pipe(withScope(ownThread));
+      yield* engine.dispatch({
+        type: "board.plans.approve",
+        commandId: CommandId.make("cmd-approve-lifecycle-children"),
+        cardId: ownCard,
+        createdAt: t0,
+      });
+
+      const archive = yield* Effect.flip(
+        boardHandlers.board_archive_card({ cardId: ownCard }).pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(archive.code, "rejected");
+      assert.include(archive.message, "unfinished plan card");
+      const del = yield* Effect.flip(
+        boardHandlers.board_delete_card({ cardId: ownCard }).pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(del.code, "rejected");
+      assert.include(del.message, "materialised plan card");
+    }),
+  );
+
+  it.effect("all three lifecycle verbs name board_list_cards on a card that does not exist", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const ghost = BoardCardId.make("card-ghost-lifecycle");
+      for (const call of [
+        boardHandlers.board_archive_card({ cardId: ghost }),
+        boardHandlers.board_unarchive_card({ cardId: ghost }),
+        boardHandlers.board_delete_card({ cardId: ghost }),
+      ]) {
+        const failure = yield* Effect.flip(call.pipe(withScope(orphanThread)));
+        // Resolved in the handler, so the code is specific and the message says
+        // how to find a real id — a bare decider rejection did neither.
+        assert.strictEqual(failure.code, "card-not-found");
+        assert.include(failure.message, ghost);
+        assert.include(failure.message, "board_list_cards");
+      }
+    }),
+  );
+
   it.effect("the agent write path replays identically from an empty read model (D8)", () =>
     Effect.gen(function* () {
       yield* seed();

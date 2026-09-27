@@ -26,9 +26,12 @@ import {
   EMPTY_BOARD_STATE,
   resolveBoardCardForThread,
   unwrapStringifiedBoardStepPayload,
+  type BoardCardArchiveCommand,
   type BoardCardCreateCommand,
   type BoardCardCompleteStepCommand,
+  type BoardCardDeleteCommand,
   type BoardCardMoveCommand,
+  type BoardCardUnarchiveCommand,
   type BoardCardUpdateCommand,
   type BoardCard,
   type BoardLabelId,
@@ -223,6 +226,90 @@ const requireCallerCard = (
         }),
       )
     : Effect.succeed(card);
+};
+
+/**
+ * A card named by a caller that is NOT resolving its own (the board-scoped
+ * lifecycle writes, T3O-2). Resolved here rather than left to the decider for
+ * two reasons: the caller gets `card-not-found` instead of a generic rejection,
+ * and the handler needs the card's key to answer with — which, after a delete,
+ * nothing can look up any more.
+ */
+const requireTargetCard = (
+  board: BoardState,
+  cardId: BoardCardId,
+): Effect.Effect<BoardCard, BoardToolError> => {
+  const card = board.cards.find((candidate) => candidate.id === cardId);
+  return card === undefined
+    ? Effect.fail(
+        new BoardToolError({
+          code: "card-not-found",
+          message: `No card '${cardId}' on this server. Call board_list_cards (with includeArchived to see the archive) for the ids that exist.`,
+        }),
+      )
+    : Effect.succeed(card);
+};
+
+/**
+ * Refuse a lifecycle write aimed at the CALLER'S OWN card (T3O-2).
+ *
+ * Both archive and delete reclaim the card's worktree: delete forcibly, archive
+ * whenever the checkout is clean and pushed, and unconditionally as far as the
+ * caller is concerned (`handleArchived` -> `reclaimCardWorktree`, which reads no
+ * setting, and unarchive does not bring the checkout back). Either verb can
+ * therefore remove the worktree the calling turn is running in, and delete also
+ * deletes this very thread, so the call could never report its own result.
+ * Refused with the one thing the agent can actually do about it.
+ */
+const refuseOwnCard = (
+  board: BoardState,
+  scope: McpInvocationScope,
+  card: BoardCard,
+  consequence: string,
+): Effect.Effect<void, BoardToolError> => {
+  const own = resolveBoardCardForThread(board, scope.threadId);
+  if (own === null || own.id !== card.id) return Effect.void;
+  return Effect.fail(
+    new BoardToolError({
+      code: "invalid-input",
+      message: `'${card.key}' is the card you are working on. ${consequence}, so it cannot be done from here — ask a human to do it from the app.`,
+    }),
+  );
+};
+
+/**
+ * Refuse an IRREVERSIBLE write aimed at a card another agent is still working
+ * on (T3O-2).
+ *
+ * `refuseOwnCard` covers the caller; this covers the peers. `board.card-deleted`
+ * force-reclaims the target's worktree — `force: true`, so a DIRTY, UNPUSHED
+ * checkout goes too — and deletes the card's threads, which `thread.delete`
+ * does for a BUSY thread as readily as an idle one. The reactor's own reason for
+ * forcing is that "the user has just said, at a dialog that spells it out" that
+ * the work is not wanted; reached from a tool there is no dialog and no human,
+ * and `board_list_cards` reports no liveness, so an agent tidying the board
+ * cannot even see that the card it is about to purge has an agent inside it.
+ *
+ * A non-terminal step is exactly the board's own "still supervised" predicate,
+ * so a parked or stalled step counts: the thread and its unpushed commits are
+ * still there, waiting on a human. Archive is the way through — it settles the
+ * step as `abandoned` and reclaims only a clean, pushed checkout — and it is
+ * what the message points at rather than leaving the agent stuck.
+ */
+const refuseLiveWork = (
+  board: BoardState,
+  card: BoardCard,
+): Effect.Effect<void, BoardToolError> => {
+  const state = boardCardStepState(board, card.id);
+  if (state === null || isBoardTerminalStepStatus(state.status)) return Effect.void;
+  return Effect.fail(
+    new BoardToolError({
+      code: "invalid-input",
+      message: `'${card.key}' has work in flight — its ${
+        state.stepLabel ?? state.stageLabel ?? state.stepId
+      } step is ${state.status}. Deleting it would delete that thread mid-turn and force-remove its worktree, unpushed commits included. Archive it with board_archive_card instead (reversible, and it leaves a dirty checkout alone), or wait for the step to settle.`,
+    }),
+  );
 };
 
 /**
@@ -670,7 +757,10 @@ export const boardHandlers = {
       const board = yield* readBoardState(deps);
       const text = input.text?.toLowerCase();
       const cards = board.cards
-        .filter((card) => card.archivedAt === null)
+        // Archived cards are off the board, so they stay out by default — but
+        // an agent that may unarchive or delete one needs a way to see it
+        // (T3O-2), and `board_get_card_context` only ever resolves its own.
+        .filter((card) => input.includeArchived === true || card.archivedAt === null)
         .filter((card) => input.projectId === undefined || card.projectId === input.projectId)
         .filter((card) => input.stage === undefined || card.stage === input.stage)
         .filter((card) => input.key === undefined || card.key === input.key)
@@ -682,6 +772,7 @@ export const boardHandlers = {
           title: card.title,
           stage: card.stage,
           blocked: card.blocked,
+          archived: card.archivedAt !== null,
         }));
       return { cards };
     }),
@@ -804,6 +895,67 @@ export const boardHandlers = {
       };
       yield* dispatch(deps, command);
       return { cardId: input.cardId };
+    }),
+
+  board_archive_card: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      const board = yield* readBoardState(deps);
+      const card = yield* requireTargetCard(board, input.cardId);
+      yield* refuseOwnCard(
+        board,
+        deps.scope,
+        card,
+        "Archiving it reclaims the worktree this turn is running in, and unarchiving does not bring it back",
+      );
+      const command: BoardCardArchiveCommand = {
+        type: "board.card.archive",
+        commandId: yield* mintCommandId,
+        cardId: card.id,
+        createdAt: yield* nowIso,
+      };
+      yield* dispatch(deps, command);
+      return { cardId: card.id, key: card.key };
+    }),
+
+  board_unarchive_card: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      const board = yield* readBoardState(deps);
+      const card = yield* requireTargetCard(board, input.cardId);
+      const command: BoardCardUnarchiveCommand = {
+        type: "board.card.unarchive",
+        commandId: yield* mintCommandId,
+        cardId: card.id,
+        createdAt: yield* nowIso,
+      };
+      yield* dispatch(deps, command);
+      return { cardId: card.id, key: card.key };
+    }),
+
+  board_delete_card: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      const board = yield* readBoardState(deps);
+      // Resolved before the dispatch for the key: after the purge there is no
+      // card left to read one off, and "deleted card-4f3a…" is not an answer a
+      // human can check.
+      const card = yield* requireTargetCard(board, input.cardId);
+      yield* refuseOwnCard(
+        board,
+        deps.scope,
+        card,
+        "Deleting it would delete this thread and force-reclaim the worktree this turn is running in",
+      );
+      yield* refuseLiveWork(board, card);
+      const command: BoardCardDeleteCommand = {
+        type: "board.card.delete",
+        commandId: yield* mintCommandId,
+        cardId: card.id,
+        createdAt: yield* nowIso,
+      };
+      yield* dispatch(deps, command);
+      return { cardId: card.id, key: card.key };
     }),
 
   board_propose_plans: (input) =>

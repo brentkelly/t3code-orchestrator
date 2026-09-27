@@ -154,6 +154,10 @@ const BoardCardListItem = Schema.Struct({
   title: TrimmedNonEmptyString,
   stage: BoardStageId,
   blocked: Schema.Boolean,
+  /** True for a card sitting in the archive rather than a column. Only ever
+      true when the call passed `includeArchived` (T3O-2): archived cards are
+      how you find the id to unarchive or delete. */
+  archived: Schema.Boolean,
 });
 
 /** A project as an agent needs to identify it: the id to pass to
@@ -236,12 +240,13 @@ export const BoardCompleteStepTool = Tool.make("board_complete_step", {
 
 export const BoardListCardsTool = Tool.make("board_list_cards", {
   description:
-    "List board cards, optionally filtered by project, stage, key, or a free-text match on the title. Use it to find a card id before creating a dependency or moving a card. Returns bounded summaries — fetch full context for one card with board_get_card_context (yours) or open it in the app.",
+    "List board cards, optionally filtered by project, stage, key, or a free-text match on the title. Use it to find a card id before creating a dependency or moving a card. Archived cards are left out unless you pass includeArchived, which is how you find the id of a card to unarchive or delete. Returns bounded summaries — fetch full context for one card with board_get_card_context (yours) or open it in the app.",
   parameters: Schema.Struct({
     projectId: Schema.optional(ProjectId),
     stage: Schema.optional(BoardStageId),
     key: Schema.optional(TrimmedNonEmptyString),
     text: Schema.optional(TrimmedNonEmptyString),
+    includeArchived: Schema.optional(Schema.Boolean),
   }),
   success: Schema.Struct({ cards: Schema.Array(BoardCardListItem) }),
   failure: BoardToolError,
@@ -309,6 +314,44 @@ export const BoardUpdateCardTool = Tool.make("board_update_card", {
   dependencies,
 }).annotate(Tool.Title, "Update board card");
 
+/**
+ * What the three lifecycle writes return: the card's KEY alongside its id.
+ * These tools take a target the agent looked up (T3O-2), and a destructive
+ * confirmation that reads "deleted card-4f3a…" tells a human nothing — the key
+ * is what the board, the branch names and the agent's own prose call the card.
+ */
+const BoardCardWriteResult = Schema.Struct({
+  cardId: BoardCardId,
+  key: TrimmedNonEmptyString,
+});
+
+export const BoardArchiveCardTool = Tool.make("board_archive_card", {
+  description:
+    "Archive a card — the reversible way to take it off the board. The card, its threads, its history and its dependency edges all survive; it leaves the columns, stops gating the cards that depend on it, and is still readable in the archive. Use it for cards that are done with, duplicated, or no longer wanted. Rejected on a card that is already archived, on a card whose plan cards are still unfinished (finish or archive those first), and on YOUR OWN card — archiving reclaims the worktree you are running in and unarchiving does not bring it back, so ask a human to do it from the app. Allowed on a card ANOTHER agent is working on — it is the softer route board_delete_card points at — but it is not free there: the in-flight step is settled as abandoned, so that agent's turn is orphaned, and the card's checkout is reclaimed unless it holds uncommitted or unpushed work. Wait for the step to settle if you are only tidying. Reverse it with board_unarchive_card; use board_delete_card only when nothing should survive.",
+  parameters: Schema.Struct({ cardId: BoardCardId }),
+  success: BoardCardWriteResult,
+  failure: BoardToolError,
+  dependencies,
+}).annotate(Tool.Title, "Archive board card");
+
+export const BoardUnarchiveCardTool = Tool.make("board_unarchive_card", {
+  description:
+    "Restore an archived card to its stage's column, re-arming the dependency edges pointing at it. Rejected on a card that is not archived. Find archived cards with board_list_cards.",
+  parameters: Schema.Struct({ cardId: BoardCardId }),
+  success: BoardCardWriteResult,
+  failure: BoardToolError,
+  dependencies,
+}).annotate(Tool.Title, "Unarchive board card");
+
+export const BoardDeleteCardTool = Tool.make("board_delete_card", {
+  description:
+    "Delete a card outright. IRREVERSIBLE and not what you want in most cases: the card leaves the board entirely, its rows are purged from every board table, the threads linked to it are deleted with their whole conversation, and its worktree and board/* branches are reclaimed — unmerged work on that branch is gone. Its key is never re-issued. Prefer board_archive_card, which is reversible and keeps all of that; delete only when a human asked for a card and its history to be destroyed, or for a card created in error. Rejected on a card whose plan cards still exist (delete those first), on a card with WORK IN FLIGHT — a step that has not settled means an agent is inside that worktree, so archive it or wait instead — and on YOUR OWN card — deleting the card you are working on would delete this thread and the worktree you are running in, so ask a human to do it from the app.",
+  parameters: Schema.Struct({ cardId: BoardCardId }),
+  success: BoardCardWriteResult,
+  failure: BoardToolError,
+  dependencies,
+}).annotate(Tool.Title, "Delete board card");
+
 // ── Plan tools ─────────────────────────────────────────────────────────
 
 export const BoardProposePlansTool = Tool.make("board_propose_plans", {
@@ -364,6 +407,9 @@ export const BoardToolkit = Toolkit.make(
   BoardCreateCardTool,
   BoardMoveCardTool,
   BoardUpdateCardTool,
+  BoardArchiveCardTool,
+  BoardUnarchiveCardTool,
+  BoardDeleteCardTool,
   BoardProposePlansTool,
   BoardGetPlanTool,
   BoardWritePlanTool,

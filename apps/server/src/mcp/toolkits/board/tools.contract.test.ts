@@ -45,6 +45,16 @@ it("advertises board_get_card_context among the board tools", () => {
   expect(boardToolNames).toContain("board_get_card_context");
 });
 
+it("advertises the card lifecycle verbs, delete included (T3O-2)", () => {
+  const boardToolNames = Object.values(BoardToolkit.tools).map((tool) => tool.name);
+  // An agent could create and move cards but never take one off the board, so
+  // the board it populated only ever grew. Delete is the destructive half;
+  // archive and unarchive are the reversible pair it should reach for first.
+  expect(boardToolNames).toContain("board_archive_card");
+  expect(boardToolNames).toContain("board_unarchive_card");
+  expect(boardToolNames).toContain("board_delete_card");
+});
+
 it("no longer advertises the deleted agent-activity tools (t3o-18, D13)", () => {
   const boardToolNames = Object.values(BoardToolkit.tools).map((tool) => tool.name);
   // `tools/list` is all-or-nothing to a client, so this is also the tripwire for
