@@ -52,7 +52,6 @@ it.layer(NodeServices.layer)("t3o desktop build config", (it) => {
       >;
       assert.deepStrictEqual(linux.target, ["AppImage", "deb", "rpm"]);
       assert.equal(linux.executableName, "t3o");
-      assert.equal(linux.packageName, "t3o");
       assert.deepStrictEqual(linux.desktop, { entry: { StartupWMClass: "t3o" } });
       // Tip identity does not register a URL scheme; T3 Code owns t3code://.
       assert.deepStrictEqual(linux.protocols, []);

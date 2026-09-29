@@ -1,0 +1,578 @@
+name: T3o release
+
+# T3o: builds the T3o desktop app for macOS, Windows and Linux, plus the CLI
+# archives the runtime installers download, into a DRAFT GitHub Release on
+# this repository (card T3O-1). A human tests the draft and publishes it; this
+# workflow never publishes anything by itself. Runbook: docs/t3o/release.md.
+#
+# Upstream's release.yml must stay disabled on the fork: its `v*.*.*` tag
+# trigger also matches `v*-t3o.*` tags and would try to publish to npm.
+#
+# Each target is packaged by upstream's release-desktop.yml, unchanged apart
+# from two marked lines that add the deb/rpm packages, on GitHub-hosted runners.
+
+on:
+  push:
+    tags:
+      - "v*-t3o.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "T3o version, <upstream version>-t3o.<n> (for example 0.0.42-t3o.1)"
+        required: true
+        type: string
+
+concurrency:
+  group: t3o-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      name: ${{ steps.version.outputs.name }}
+      ref: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - id: version
+        name: Resolve release version
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          node scripts/t3o-release-version.ts \
+            --event "$GITHUB_EVENT_NAME" \
+            --ref-name "$GITHUB_REF_NAME" \
+            --version "$DISPATCH_VERSION" \
+            --github-output
+
+      # A published release is immutable to this workflow: rebuilding onto it
+      # would swap the bytes under users who already downloaded them.
+      - name: Refuse to overwrite a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "$draft" == "false" ]]; then
+            echo "::error::$TAG is already published. Pick the next -t3o.<n>." >&2
+            exit 1
+          fi
+
+  build_bundle:
+    name: Build JS bundle
+    needs: [preflight]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # T3 Connect is off in T3o builds: an empty Clerk key disables it cleanly.
+    env:
+      T3CODE_CLERK_PUBLISHABLE_KEY: ""
+      T3CODE_CLERK_JWT_TEMPLATE: ""
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ""
+      T3CODE_RELAY_URL: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install bundle dependencies
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      # @t3tools/desktop#build compiles the Linux browser secret helper, which
+      # needs libsecret headers.
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
+      - name: Build JS bundle
+        run: vp run build:desktop
+
+      - name: Upload JS bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
+          if-no-files-found: error
+          retention-days: 1
+
+  # One job per platform and architecture, each on hardware of its own
+  # architecture. The Windows jobs embed the same-arch Linux CLI archive as
+  # their WSL runtime, so they wait for the Linux jobs.
+  desktop_mac_arm64:
+    name: Desktop macOS arm64
+    needs: [preflight, build_bundle]
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      label: macOS arm64
+      runner: macos-15
+      platform: mac
+      target: dmg
+      arch: arm64
+      rust_target: aarch64-apple-darwin
+      resource_key: darwin-arm64
+      cli_archive: true
+
+  desktop_mac_x64:
+    name: Desktop macOS x64
+    needs: [preflight, build_bundle]
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      label: macOS x64
+      runner: macos-15-intel
+      platform: mac
+      target: dmg
+      arch: x64
+      rust_target: x86_64-apple-darwin
+      resource_key: darwin-x64
+      # Node single-executables are unsupported on x64 macOS; there is no
+      # darwin-x64 CLI archive (see CLI_ARCHIVE_PLATFORM_KEYS).
+      cli_archive: false
+
+  desktop_linux_x64:
+    name: Desktop Linux x64
+    needs: [preflight, build_bundle]
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      label: Linux x64
+      runner: ubuntu-24.04
+      # A T3o release's AppImage job also builds the deb and rpm
+      # (scripts/lib/t3o-desktop-build.ts).
+      platform: linux
+      target: AppImage
+      arch: x64
+      rust_target: x86_64-unknown-linux-gnu
+      resource_key: linux-x64
+      cli_archive: true
+
+  desktop_linux_arm64:
+    name: Desktop Linux arm64
+    needs: [preflight, build_bundle]
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      label: Linux arm64
+      runner: ubuntu-24.04-arm
+      platform: linux
+      target: AppImage
+      arch: arm64
+      rust_target: aarch64-unknown-linux-gnu
+      resource_key: linux-arm64
+      cli_archive: true
+
+  desktop_win_x64:
+    name: Desktop Windows x64
+    needs: [preflight, build_bundle, desktop_linux_x64]
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      label: Windows x64
+      runner: windows-2025
+      platform: win
+      target: nsis
+      arch: x64
+      rust_target: x86_64-pc-windows-msvc
+      resource_key: win32-x64
+      cli_archive: true
+
+  desktop_win_arm64:
+    name: Desktop Windows arm64
+    needs: [preflight, build_bundle, desktop_linux_arm64]
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      label: Windows arm64
+      runner: windows-11-arm
+      platform: win
+      target: nsis
+      arch: arm64
+      rust_target: aarch64-pc-windows-msvc
+      resource_key: win32-arm64
+      cli_archive: true
+
+  # Installs or extracts each packaged app the way a user would and boots its
+  # backend with the app's own executable: proof that the fork's server, with
+  # the board, starts and migrates on every target (scripts/t3o-smoke-packaged-backend.ts).
+  smoke_linux:
+    name: Smoke Linux ${{ matrix.arch }}
+    needs: [preflight, desktop_linux_x64, desktop_linux_arm64]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            rpm_arch: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            rpm_arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v8
+        with:
+          name: desktop-linux-${{ matrix.arch }}
+          path: packages
+
+      - name: Smoke the AppImage
+        run: |
+          set -euo pipefail
+          appimage="$(ls packages/*.AppImage)"
+          chmod +x "$appimage"
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null)
+          node scripts/t3o-smoke-packaged-backend.ts --app "$RUNNER_TEMP/squashfs-root"
+
+      - name: Install and smoke the deb
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y "./$(ls packages/*.deb)"
+          grep -q "x-scheme-handler/t3o;" /usr/share/applications/t3o.desktop
+          node scripts/t3o-smoke-packaged-backend.ts --app /opt/T3o
+          sudo apt-get remove -y t3o
+
+      # dnf resolves the rpm's dependencies on a real Fedora, which the
+      # Ubuntu runner cannot prove.
+      - name: Install the rpm on Fedora
+        run: |
+          set -euo pipefail
+          rpm="$(ls packages/*.${{ matrix.rpm_arch }}.rpm)"
+          docker run --rm -v "$PWD/packages:/packages:ro" fedora:latest bash -euo pipefail -c "
+            dnf install -y /packages/$(basename "$rpm")
+            test -x /opt/T3o/t3o
+            grep -q 'x-scheme-handler/t3o;' /usr/share/applications/t3o.desktop
+            ELECTRON_RUN_AS_NODE=1 /opt/T3o/t3o /opt/T3o/resources/app.asar/apps/server/dist/bin.mjs --version
+          "
+
+  smoke_mac:
+    name: Smoke macOS ${{ matrix.arch }}
+    needs: [preflight, desktop_mac_arm64, desktop_mac_x64]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Download macOS packages
+        uses: actions/download-artifact@v8
+        with:
+          name: desktop-mac-${{ matrix.arch }}
+          path: packages
+
+      - name: Smoke the app
+        run: |
+          set -euo pipefail
+          ditto -x -k "$(ls packages/*.zip)" "$RUNNER_TEMP/app"
+          node scripts/t3o-smoke-packaged-backend.ts --app "$RUNNER_TEMP/app/T3o.app"
+
+  smoke_windows:
+    name: Smoke Windows ${{ matrix.arch }}
+    needs: [preflight, desktop_win_x64, desktop_win_arm64]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+          - arch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Download Windows packages
+        uses: actions/download-artifact@v8
+        with:
+          name: desktop-win-${{ matrix.arch }}
+          path: packages
+
+      - name: Install and smoke the app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-ChildItem packages -Filter *.exe | Select-Object -First 1
+          $target = Join-Path $env:RUNNER_TEMP "T3o"
+          # NSIS: /S is silent; /D must be last and unquoted.
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S", "/D=$target" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "The installer exited with $($process.ExitCode)." }
+          node scripts/t3o-smoke-packaged-backend.ts --app $target
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  release:
+    name: Create draft GitHub Release
+    needs:
+      [
+        preflight,
+        desktop_mac_arm64,
+        desktop_mac_x64,
+        desktop_linux_x64,
+        desktop_linux_arm64,
+        desktop_win_x64,
+        desktop_win_arm64,
+        smoke_linux,
+        smoke_mac,
+        smoke_windows,
+      ]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Download all desktop artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Download all CLI archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: release-assets
+
+      # The runtime installers verify every archive against this file
+      # (parseChecksums in packages/shared/src/cliRelease.ts).
+      - name: Write CLI archive checksums
+        run: |
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          archives=(t3-*.tar.gz t3-*.zip)
+          if [[ ${#archives[@]} -ne 5 ]]; then
+            echo "Expected 5 CLI archives, found ${#archives[@]}: ${archives[*]}" >&2
+            exit 1
+          fi
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      # electron-updater reads one manifest per platform, so the per-arch
+      # manifests the build jobs wrote are merged back into one.
+      - name: Merge macOS updater manifests
+        run: |
+          set -euo pipefail
+          node scripts/merge-update-manifests.ts --platform mac release-assets/latest-mac.yml release-assets/latest-mac-x64.yml
+          rm -f release-assets/latest-mac-x64.yml
+
+      - name: Merge Windows updater manifests
+        run: |
+          set -euo pipefail
+          node scripts/merge-update-manifests.ts --platform win release-assets/latest-win-x64.yml release-assets/latest-win-arm64.yml release-assets/latest.yml
+          rm -f release-assets/latest-win-x64.yml release-assets/latest-win-arm64.yml
+
+      # The app follows latest*.yml; a t3o*.yml would mean electron-builder
+      # inferred a channel from the version suffix and no install would update.
+      - name: Check the updater feed
+        run: |
+          set -euo pipefail
+          for manifest in latest.yml latest-mac.yml latest-linux.yml latest-linux-arm64.yml; do
+            test -f "release-assets/$manifest" || { echo "Missing $manifest" >&2; exit 1; }
+          done
+          ls release-assets
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          cat > release-notes.md <<EOF
+          T3o v${VERSION}. Install instructions, including how to open an unsigned build: https://github.com/${GITHUB_REPOSITORY}/blob/t3o/docs/t3o/install.md
+
+          | System | Download |
+          | --- | --- |
+          | macOS (Apple Silicon) | \`T3o-${VERSION}-arm64.dmg\` |
+          | macOS (Intel) | \`T3o-${VERSION}-x64.dmg\` |
+          | Windows | \`T3o-${VERSION}-x64.exe\` (ARM: \`-arm64.exe\`) |
+          | Linux, any distro | \`T3o-${VERSION}-x86_64.AppImage\` (ARM: \`-arm64.AppImage\`) |
+          | Debian, Ubuntu | \`T3o-${VERSION}-amd64.deb\` (ARM: \`-arm64.deb\`) |
+          | Fedora, RHEL, openSUSE | \`T3o-${VERSION}-x86_64.rpm\` (ARM: \`-aarch64.rpm\`) |
+          EOF
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          prerelease: false
+          tag_name: ${{ needs.preflight.outputs.tag }}
+          target_commitish: ${{ needs.preflight.outputs.ref }}
+          name: ${{ needs.preflight.outputs.name }}
+          body_path: release-notes.md
+          generate_release_notes: true
+          files: |
+            release-assets/*.dmg
+            release-assets/*.zip
+            release-assets/*.exe
+            release-assets/*.AppImage
+            release-assets/*.deb
+            release-assets/*.rpm
+            release-assets/*.blockmap
+            release-assets/latest*.yml
+            release-assets/t3-*.tar.gz
+            release-assets/SHA256SUMS
+          fail_on_unmatched_files: true
+          token: ${{ github.token }}
