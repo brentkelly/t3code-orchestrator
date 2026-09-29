@@ -36,15 +36,15 @@ import {
 
 const cardId = BoardCardId.make("card-1");
 
-const reviewCard = () =>
+const reviewCard = (stage: string = String(BOARD_SEED_STAGE_IDS.review)) =>
   makeBoardCard({
     id: "card-1",
-    stage: String(BOARD_SEED_STAGE_IDS.review),
+    stage,
     orderKey: "m",
     worktree: readyWorktree("card-1"),
   });
 
-const settledStep = (stepId: string): BoardCardStepState => ({
+const settledStep = (stepId: string, baseTipAtRoundStart = "main"): BoardCardStepState => ({
   cardId,
   stepId,
   stepLabel: stepId,
@@ -54,7 +54,7 @@ const settledStep = (stepId: string): BoardCardStepState => ({
   stageEntryRecoveries: 0,
   humanTurnAt: null,
   lastNudgeAt: null,
-  baseTipAtRoundStart: "main",
+  baseTipAtRoundStart,
   lastError: null,
   awaitingReason: "question",
   stalledReason: "gave-up",
@@ -80,7 +80,6 @@ const completion = (stepId: string, payload: unknown): BoardStepCompletion => ({
   stepId,
   outcome: "succeeded",
   summary: `${stepId} done`,
-  // @effect-diagnostics-next-line preferSchemaOverJson:off - the stored payload is an opaque JSON string.
   payload: JSON.stringify(payload),
   threadId: null,
   completedAt: NOW,
@@ -141,7 +140,9 @@ const repeatCompletion = (recorded: BoardStepCompletion): OrchestrationEvent =>
 
 const selectedStepIds = (events: ReadonlyArray<OrchestrationEvent>): ReadonlyArray<string> =>
   events.flatMap((event) =>
-    event.type === "board.card-step-selected" ? [event.payload.state.stepId] : [],
+    event.type === "board.card-step-selected" && event.payload.state.cardId === cardId
+      ? [event.payload.state.stepId]
+      : [],
   );
 
 it.effect("boot starts the round a settled review phase owes but never started", () =>
@@ -182,5 +183,62 @@ it.effect("a converged loop is left alone at boot", () =>
         yield* reactor.drain;
         assert.deepStrictEqual(selectedStepIds(yield* decided), []);
       }),
+  ),
+);
+
+it.effect("a converged sub-board child with a moved base is not synced at boot", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [
+          makeBoardCard({ id: "card-parent", stage: "building", orderKey: "a" }),
+          { ...reviewCard(), parentCardId: BoardCardId.make("card-parent") },
+        ],
+        // Recorded at a tip the stub no longer answers, so the base reads
+        // stale. Staleness stays measured at the review→merge crossing and the
+        // Merge click; a restart must not turn it into a rebase-and-force-push.
+        stepStates: [settledStep("review@1", "sha-before-sibling-merged")],
+        stepCompletions: [completion("review@1", { reviewedSha: "abc123", findings: [] })],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ reactor, decided }) =>
+      Effect.gen(function* () {
+        yield* reactor.drain;
+        assert.deepStrictEqual(selectedStepIds(yield* decided), []);
+      }),
+  ),
+);
+
+/** A card dragged back from Code review to Building — a stage that DOES
+    auto-execute — while its step row still names the settled review phase.
+    A re-plan let through here would start a build step nobody asked for. */
+const leftBehind = () => ({
+  board: {
+    cards: [reviewCard(String(BOARD_SEED_STAGE_IDS.building))],
+    stepStates: [settledStep("adjudicate@1")],
+    stepCompletions: [...roundOne],
+    nextCardNumberByProject: {},
+  },
+  settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+});
+
+it.effect("a review step left behind by a card that moved on is not re-planned at boot", () =>
+  withGovernor(leftBehind(), ({ reactor, decided }) =>
+    Effect.gen(function* () {
+      yield* reactor.drain;
+      assert.deepStrictEqual(selectedStepIds(yield* decided), []);
+    }),
+  ),
+);
+
+it.effect("a repeated review completion on a card that moved on is not re-planned", () =>
+  withGovernor(leftBehind(), ({ reactor, pumpDomain, decided }) =>
+    Effect.gen(function* () {
+      yield* reactor.drain;
+      yield* pumpDomain(repeatCompletion(roundOne[2]!));
+      assert.deepStrictEqual(selectedStepIds(yield* decided), []);
+    }),
   ),
 );
