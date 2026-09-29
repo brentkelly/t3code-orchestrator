@@ -7,13 +7,13 @@ that draft.
 
 ## What a release contains
 
-| Platform | Files                                                                                       |
-| -------- | ------------------------------------------------------------------------------------------- |
-| macOS    | `T3o-<v>-arm64.dmg`, `T3o-<v>-x64.dmg`, and a `.zip` of each (the updater reads the zips)   |
-| Windows  | `T3o-<v>-x64.exe`, `T3o-<v>-arm64.exe` (NSIS)                                               |
-| Linux    | AppImage, `.deb` and `.rpm`, each for x64 and arm64                                         |
-| Runtime  | `t3-<v>-<platform>` CLI archives for the five `CLI_ARCHIVE_PLATFORM_KEYS`, and `SHA256SUMS` |
-| Updater  | `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml`, and blockmaps |
+| Platform | Files                                                                                          |
+| -------- | ---------------------------------------------------------------------------------------------- |
+| macOS    | `T3o-<v>-arm64.dmg`, `T3o-<v>-x64.dmg`, and a `.zip` of each (the updater reads the zips)      |
+| Windows  | `T3o-<v>-x64.exe`, `T3o-<v>-arm64.exe` (NSIS)                                                  |
+| Linux    | AppImage, `.deb` and `.rpm`, each for x64 and arm64                                            |
+| Runtime  | `t3-<v>-<platform>` CLI archives for every `CLI_ARCHIVE_PLATFORM_KEYS` entry, and `SHA256SUMS` |
+| Updater  | `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml`, and blockmaps    |
 
 The CLI archives are not optional. SSH remotes, `t3 update` and the boot service download the server from
 this repository's releases (`CLI_RELEASE_REPOSITORY` in `packages/shared/src/cliRelease.ts`), so a release

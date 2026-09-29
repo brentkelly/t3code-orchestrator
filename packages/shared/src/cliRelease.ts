@@ -15,8 +15,9 @@ export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
 /**
  * The archives a release attaches. Kept in step with the build_linux_cli
- * matrix, build_windows_arm64_cli, and the `cli_archive` rows in
- * .github/workflows/release.yml: a key here without a build there produces
+ * matrix, build_windows_arm64_cli, the `cli_archive` rows in
+ * .github/workflows/release.yml, and the checksum step in
+ * .github/workflows/t3o-release.yml: a key here without a build there produces
  * download URLs that 404, and a build there without a key here is
  * unreachable from every installer.
  */

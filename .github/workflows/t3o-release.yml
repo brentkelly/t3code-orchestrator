@@ -497,20 +497,15 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      # Names come from CLI_ARCHIVE_PLATFORM_KEYS (scripts/t3o-write-cli-checksums.ts).
       # The runtime installers verify every archive against this file
       # (parseChecksums in packages/shared/src/cliRelease.ts).
       - name: Write CLI archive checksums
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
-          cd release-assets
-          shopt -s nullglob
-          archives=(t3-*.tar.gz t3-*.zip)
-          if [[ ${#archives[@]} -ne 5 ]]; then
-            echo "Expected 5 CLI archives, found ${#archives[@]}: ${archives[*]}" >&2
-            exit 1
-          fi
-          sha256sum "${archives[@]}" > SHA256SUMS
-          cat SHA256SUMS
+          node scripts/t3o-write-cli-checksums.ts --dir release-assets --version "$VERSION"
 
       # electron-updater reads one manifest per platform, so the per-arch
       # manifests the build jobs wrote are merged back into one.
