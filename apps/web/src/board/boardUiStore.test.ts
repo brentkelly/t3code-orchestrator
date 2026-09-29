@@ -103,6 +103,13 @@ describe("migratePersistedBoardUiState", () => {
     expect(migrated.lastLocationByMode.board).toBe("/board");
   });
 
+  it("drops the tabless pull-requests page filed under threads (T3O-50)", () => {
+    const migrated = migratePersistedBoardUiState({
+      lastLocationByMode: { threads: "/pull-requests", board: "/board" },
+    });
+    expect(migrated.lastLocationByMode).toEqual({ board: "/board" });
+  });
+
   it("repairs a store poisoned with a project-settings redirect under threads (T3O-50)", () => {
     // `/projects/<key>` only ever redirects to `/settings/projects?project=<key>`,
     // so a Threads tab pointing at it opened project settings on every click.
@@ -186,6 +193,15 @@ describe("recordModeLocation", () => {
     // FirstRunGate replaces the location with /welcome while a thread view's
     // tabs are still mounted.
     useBoardUiStore.getState().recordModeLocation("threads", "/welcome");
+    expect(useBoardUiStore.getState().lastLocationByMode.threads).toBe("/env-1/thread-1");
+  });
+
+  it("refuses to file the tabless pull-requests page under threads (T3O-50)", () => {
+    resetStore();
+    useBoardUiStore.getState().recordModeLocation("threads", "/env-1/thread-1");
+    // The sidebar footer's Pull requests link moves the router while the thread
+    // view's tabs are still mounted; the Threads tab must keep leading back.
+    useBoardUiStore.getState().recordModeLocation("threads", "/pull-requests");
     expect(useBoardUiStore.getState().lastLocationByMode.threads).toBe("/env-1/thread-1");
   });
 });

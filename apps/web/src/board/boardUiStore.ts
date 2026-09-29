@@ -61,6 +61,30 @@ export function modeForHref(href: string): WorkspaceMode | null {
   return pathname === "/board" || pathname.startsWith("/board/") ? "board" : "threads";
 }
 
+/**
+ * Workspace routes that render a top bar with no mode tabs. Pull requests is a
+ * footer destination, not a mode: it is a threads-surface page, but it is not
+ * somewhere the Threads tab should lead. The thread view's tabs are still
+ * mounted when the router moves there, so without this they filed it as the
+ * threads location and the next Threads click opened the PR list (T3O-50).
+ */
+const TABLESS_ROOTS = ["/pull-requests"];
+
+/** True at a workspace location whose top bar carries no mode tabs. */
+export function isTablessLocation(href: string): boolean {
+  const pathname = pathnameOf(href);
+  return TABLESS_ROOTS.some((root) => pathname === root || pathname.startsWith(`${root}/`));
+}
+
+/**
+ * Whether `href` may be remembered as `mode`'s last location, and so be where
+ * that mode's tab leads: it must belong to `mode` and carry the tabs itself.
+ * Guards the store's writes, its rehydrate sanitiser and the tab's link alike.
+ */
+export function isModeTabDestination(mode: WorkspaceMode, href: string): boolean {
+  return modeForHref(href) === mode && !isTablessLocation(href);
+}
+
 interface BoardUiState {
   /** The mode the client was last in. */
   mode: WorkspaceMode;
@@ -137,7 +161,7 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
     // sent every Board click back to that thread), and a workspace→settings
     // transition recording `/settings/...` under `threads` (which sent every
     // Threads click into settings).
-    if (typeof href === "string" && href.startsWith("/") && modeForHref(href) === mode) {
+    if (typeof href === "string" && href.startsWith("/") && isModeTabDestination(mode, href)) {
       lastLocationByMode[mode] = href;
     }
   }
@@ -176,8 +200,9 @@ export const useBoardUiStore = create<BoardUiStore>()(
           // under `board`, and a threads→settings transition filed
           // `/settings/...` under `threads`. Only file a location under the
           // mode it actually belongs to, and never file a non-workspace
-          // location (`modeForHref` returns null) under either.
-          if (modeForHref(href) !== mode) return state;
+          // location (`modeForHref` returns null) under either, nor a tabless
+          // page the tab could not have been clicked from.
+          if (!isModeTabDestination(mode, href)) return state;
           return state.mode === mode && state.lastLocationByMode[mode] === href
             ? state
             : { mode, lastLocationByMode: { ...state.lastLocationByMode, [mode]: href } };

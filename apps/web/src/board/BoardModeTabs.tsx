@@ -13,7 +13,7 @@ import { Columns3Icon, MessageSquareIcon } from "lucide-react";
 import { useCallback, useEffect } from "react";
 
 import { cn } from "../lib/utils";
-import { modeForHref, useBoardUiStore, type WorkspaceMode } from "./boardUiStore";
+import { isModeTabDestination, useBoardUiStore, type WorkspaceMode } from "./boardUiStore";
 
 /**
  * Where a mode tab points: that mode's last-seen location, or its root when
@@ -22,8 +22,9 @@ import { modeForHref, useBoardUiStore, type WorkspaceMode } from "./boardUiStore
  * Only honour a stored location that belongs to `mode`. A store poisoned with
  * a thread href under `board` would otherwise send a Board click to that
  * thread, and one poisoned with `/settings/...` under `threads` would send a
- * Threads click into settings. `modeForHref` is the guard — it returns null
- * for non-workspace routes like settings, so those never match a mode. The
+ * Threads click into settings. `isModeTabDestination` is the guard — it
+ * rejects non-workspace routes like settings and tabless pages like the PR
+ * list. The
  * store sanitises too, but this keeps navigation correct even before the
  * store re-hydrates.
  */
@@ -33,7 +34,7 @@ function locationForMode(
 ): string {
   const fallback = mode === "board" ? "/board" : "/";
   const stored = lastLocationByMode[mode];
-  return stored !== undefined && modeForHref(stored) === mode ? stored : fallback;
+  return stored !== undefined && isModeTabDestination(mode, stored) ? stored : fallback;
 }
 
 /**
