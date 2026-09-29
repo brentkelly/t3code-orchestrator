@@ -577,6 +577,51 @@ describe("DesktopUpdates", () => {
     );
   });
 
+  it.effect("clears a prior open-failure message when the release page opens on retry", () => {
+    const appPath = unsignedMacAppPath();
+    let openAttempts = 0;
+    const opened: unknown[] = [];
+    const harness = makeHarness({
+      appPath,
+      shell: stubShell((url) => {
+        opened.push(url);
+        openAttempts += 1;
+        return openAttempts > 1;
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const failed = yield* updates.download;
+        assert.isTrue(failed.accepted);
+        assert.isFalse(failed.completed);
+        assert.equal(
+          failed.state.message,
+          T3oUpdateInstallGate.t3oReleasePageOpenFailureMessage("1.2.4"),
+        );
+
+        const retried = yield* updates.download;
+        assert.isTrue(retried.accepted);
+        assert.isFalse(retried.completed);
+        assert.equal(harness.downloadCount(), 0);
+        assert.isNull(retried.state.message);
+        assert.isNull(retried.state.errorContext);
+        assert.deepEqual(opened, [
+          T3oUpdateInstallGate.t3oReleasePageUrl("1.2.4"),
+          T3oUpdateInstallGate.t3oReleasePageUrl("1.2.4"),
+        ]);
+      }),
+    ).pipe(
+      Effect.provide(Layer.merge(TestClock.layer(), harness.layer)),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(appPath, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("restores download state and permits retry after interruption", () =>
     Effect.gen(function* () {
       const actionStarted = yield* Deferred.make<void>();
