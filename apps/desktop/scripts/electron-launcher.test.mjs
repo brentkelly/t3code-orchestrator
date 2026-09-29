@@ -148,7 +148,8 @@ describe("electron development launcher", () => {
     // The source icons are real repo paths, joined for the host.
     assert.match(development.sourceIconPath, /assets[\\/]dev[\\/]blueprint-macos-1024\.png$/);
     assert.equal(development.generatedIconPath, "/runtime/icon-dev.icns");
-    assert.match(production.sourceIconPath, /assets[\\/]prod[\\/]black-macos-1024\.png$/);
+    // T3o: the derived T3o icon.
+    assert.match(production.sourceIconPath, /assets[\\/]t3o[\\/]t3o-macos-1024\.png$/);
     assert.equal(production.generatedIconPath, "/runtime/icon-prod.icns");
   });
 });
