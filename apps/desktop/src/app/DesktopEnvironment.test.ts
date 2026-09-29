@@ -75,9 +75,15 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.serverRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
-      assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");
-      assert.equal(environment.linuxWmClass, "t3code-dev");
-      assert.equal(environment.linuxDesktopEntryName, "com.t3tools.T3Code.Development.desktop");
+      // T3o: own AUMID, window class and desktop entry.
+      assert.equal(environment.appUserModelId, "io.github.brentkelly.t3o.dev");
+      assert.equal(environment.linuxWmClass, "t3o-dev");
+      assert.equal(
+        environment.linuxDesktopEntryName,
+        "io.github.brentkelly.T3o.Development.desktop",
+      );
+      assert.equal(environment.userDataDirName, "t3o-dev");
+      assert.equal(environment.legacyUserDataDirName, "t3o-dev");
       assert.deepEqual(
         Option.map(environment.devServerUrl, (url) => url.href),
         Option.some("http://localhost:5173/"),
@@ -147,7 +153,11 @@ describe("DesktopEnvironment", () => {
         resourcesPath: "/tmp/.mount_t3code/resources",
       });
 
-      assert.equal(environment.linuxDesktopEntryName, "com.t3tools.T3Code.desktop");
+      // T3o: own desktop entry.
+      assert.equal(environment.linuxDesktopEntryName, "io.github.brentkelly.T3o.desktop");
+      assert.equal(environment.linuxWmClass, "t3o");
+      assert.equal(environment.userDataDirName, "t3o");
+      assert.equal(environment.displayName, "T3o (Alpha)");
     }),
   );
 
@@ -159,8 +169,9 @@ describe("DesktopEnvironment", () => {
       );
       const production = yield* makeEnvironment();
 
-      assert.equal(development.stateDir, "/Users/alice/.t3/dev");
-      assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
+      // T3o: the desktop app's data lives in ~/.t3o.
+      assert.equal(development.stateDir, "/Users/alice/.t3o/dev");
+      assert.equal(production.stateDir, "/Users/alice/.t3o/userdata");
     }),
   );
 
