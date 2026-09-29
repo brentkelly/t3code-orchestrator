@@ -40,6 +40,8 @@ import {
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
+// T3o: the fork has no nightly update track.
+const T3O_HAS_NIGHTLY_UPDATE_TRACK = false;
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import {
   readAppearanceModePreference,
@@ -306,7 +308,8 @@ function AboutVersionSection() {
           </Tooltip>
         }
       />
-      {hasDesktopBridge ? (
+      {/* T3o: no nightly track on the fork, so no track picker in the desktop app. */}
+      {hasDesktopBridge && T3O_HAS_NIGHTLY_UPDATE_TRACK ? (
         <SettingsRow
           {...searchableSetting("update-track")}
           description={
