@@ -27,6 +27,52 @@ import * as NodeSqlite from "node:sqlite";
 import { T3O_EXECUTABLE_NAME, T3O_PRODUCT_NAME } from "@t3tools/shared/t3oIdentity";
 
 const BOOT_TIMEOUT_MS = 120_000;
+const STOP_TIMEOUT_MS = 5_000;
+
+export interface PackagedBackendChild {
+  readonly kill: (signal?: NodeJS.Signals | number) => boolean;
+  readonly once: (event: "exit", listener: () => void) => unknown;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+}
+
+/** Sends SIGTERM (if needed) and waits for the child to leave, up to `timeoutMs`. */
+export async function stopPackagedBackend(
+  child: PackagedBackendChild,
+  alreadyExited: boolean,
+  timeoutMs = STOP_TIMEOUT_MS,
+): Promise<void> {
+  if (alreadyExited || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    child.kill();
+  });
+}
+
+/** Best-effort: a leftover CI temp dir is harmless; a throw after a green probe is not. */
+export function removeSmokeHome(home: string, remove: typeof NodeFS.rmSync = NodeFS.rmSync): void {
+  try {
+    remove(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.warn(`[t3o-smoke] leftover home ${home}: ${error}`);
+  }
+}
+
+export async function cleanupPackagedBackendSmoke(
+  child: PackagedBackendChild,
+  alreadyExited: boolean,
+  home: string,
+  options: { readonly timeoutMs?: number; readonly remove?: typeof NodeFS.rmSync } = {},
+): Promise<void> {
+  await stopPackagedBackend(child, alreadyExited, options.timeoutMs);
+  removeSmokeHome(home, options.remove);
+}
 
 export interface PackagedBackend {
   readonly executable: string;
@@ -142,8 +188,7 @@ async function main(argv: ReadonlyArray<string>): Promise<void> {
     console.error(output.join(""));
     throw error;
   } finally {
-    child.kill();
-    NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    await cleanupPackagedBackendSmoke(child, exit !== null, home);
   }
 }
 
