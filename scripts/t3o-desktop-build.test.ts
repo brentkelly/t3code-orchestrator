@@ -3,8 +3,12 @@ import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 
-import { createBuildConfig } from "../build-desktop-artifact.ts";
-import { t3oLinuxTargets, t3oStagePackageMetadata } from "./t3o-desktop-build.ts";
+import { createBuildConfig } from "./build-desktop-artifact.ts";
+import {
+  T3O_STAGE_PACKAGE,
+  t3oLinuxTargets,
+  t3oStagePackageMetadata,
+} from "./lib/t3o-desktop-build.ts";
 
 const forkRepository = ConfigProvider.layer(
   ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "brentkelly/t3code-orchestrator" } }),
@@ -79,9 +83,8 @@ it("keeps a single Linux target outside T3o releases and for other targets", () 
 });
 
 it("stamps the staged package with the fork's name, homepage and signing state", () => {
+  assert.deepStrictEqual(T3O_STAGE_PACKAGE, { name: "t3o", description: "T3o desktop build" });
   assert.deepStrictEqual(t3oStagePackageMetadata(false), {
-    name: "t3o",
-    description: "T3o desktop build",
     homepage: "https://github.com/brentkelly/t3code-orchestrator",
     t3oCodeSigned: false,
   });

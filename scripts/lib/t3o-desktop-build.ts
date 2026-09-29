@@ -37,16 +37,20 @@ export function t3oLinuxTargets(target: string, version: string): string[] {
     : [target];
 }
 
+/** The staged app's package name and description, which the deb/rpm packages carry. */
+export const T3O_STAGE_PACKAGE = {
+  name: T3O_EXECUTABLE_NAME,
+  description: "T3o desktop build",
+} as const;
+
 /**
- * Fields spread into the staged app's package.json. electron-builder names the
- * deb/rpm package after `name` and refuses to build either without a
- * homepage. `t3oCodeSigned` tells the running app whether macOS can install
- * its own updates (Squirrel.Mac refuses an unsigned app).
+ * Fields spread into the staged app's package.json. electron-builder refuses
+ * to build a deb or rpm without a homepage. `t3oCodeSigned` tells the running
+ * app whether macOS can install its own updates (Squirrel.Mac refuses an
+ * unsigned app).
  */
 export function t3oStagePackageMetadata(signed: boolean) {
   return {
-    name: T3O_EXECUTABLE_NAME,
-    description: "T3o desktop build",
     homepage: T3O_HOMEPAGE,
     t3oCodeSigned: signed,
   };
