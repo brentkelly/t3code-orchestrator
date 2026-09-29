@@ -36,8 +36,8 @@ export const MODE_TABS_MIN_WIDTH = MODE_TABS_WIDTH + MODE_TABS_SLOT_GUTTER;
  * Workspace routes that render a top bar with no mode tabs today. Pull
  * requests is a footer destination, not a mode — giving its sidebar header
  * tabs would invent an entry point rather than move one (D9). `modeForHref`
- * already rules out settings, pairing, connect, usage, project links and the
- * board itself.
+ * already rules out settings, pairing, connect, onboarding, usage, project
+ * links and the board itself.
  */
 const TABLESS_ROOTS = ["/pull-requests"];
 

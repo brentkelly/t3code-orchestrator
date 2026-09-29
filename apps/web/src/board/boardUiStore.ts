@@ -20,8 +20,9 @@ export type WorkspaceMode = "threads" | "board";
 
 /**
  * Routes that are not a workspace location at all: settings (which replaces
- * the whole workspace, tabs included), the auth flow, `/projects/<key>` (a
- * redirect into `/settings/projects`) and the full-page usage view.
+ * the whole workspace, tabs included), the auth flow, onboarding (`/welcome`),
+ * `/projects/<key>` (a redirect into `/settings/projects`) and the full-page
+ * usage view.
  *
  * They must never be filed as a mode's last location. `/settings/general`
  * recorded under `threads` stranded the workspace: clicking Threads reopened
@@ -29,9 +30,11 @@ export type WorkspaceMode = "threads" | "board";
  * reach a thread. `/projects/<key>` did the same by the back door (T3O-50):
  * the router location changes before the thread view's tabs unmount, so
  * they filed the link under `threads`, and every Threads click then followed
- * it into project settings.
+ * it into project settings. `/welcome` is the same shape: the first-run gate
+ * replaces a thread view's location with it, and Threads would then reopen
+ * the onboarding wizard.
  */
-const NON_WORKSPACE_ROOTS = ["/settings", "/pair", "/connect", "/projects", "/usage"];
+const NON_WORKSPACE_ROOTS = ["/settings", "/pair", "/connect", "/welcome", "/projects", "/usage"];
 
 /** The path part of an in-app href, without `?search` or `#hash`. */
 function pathnameOf(href: string): string {
@@ -43,7 +46,8 @@ function pathnameOf(href: string): string {
  * Which workspace mode an href belongs to, or `null` when it belongs to
  * neither. The board surface lives under `/board` (optionally with
  * `?project`/`?card`); threads, drafts and the root are threads-surface
- * locations; settings and the auth flow are not workspace locations.
+ * locations; everything in `NON_WORKSPACE_ROOTS` (settings, the auth flow,
+ * onboarding, project links, usage) is not a workspace location.
  *
  * This is the single source of truth for classifying a location, used both to
  * guard `recordModeLocation` against cross-mode writes and to sanitise

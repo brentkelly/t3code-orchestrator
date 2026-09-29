@@ -140,6 +140,8 @@ describe("modeForHref", () => {
     // T3O-50: a redirect into project settings, and the full-page usage view.
     expect(modeForHref("/projects/github.com%2Fzeald%2Fcore.agent.advisor")).toBeNull();
     expect(modeForHref("/usage")).toBeNull();
+    // The first-run gate replaces a thread view's location with onboarding.
+    expect(modeForHref("/welcome")).toBeNull();
     // Same prefix rule as /board: a longer word is a different route.
     expect(modeForHref("/settingsish")).toBe("threads");
   });
@@ -175,6 +177,15 @@ describe("recordModeLocation", () => {
     // A project link lands on `/projects/<key>` before redirecting to settings,
     // and the router location changes while the thread view's tabs are mounted.
     useBoardUiStore.getState().recordModeLocation("threads", "/projects/github.com%2Fzeald");
+    expect(useBoardUiStore.getState().lastLocationByMode.threads).toBe("/env-1/thread-1");
+  });
+
+  it("refuses to file onboarding under threads, keeping the last thread (T3O-50)", () => {
+    resetStore();
+    useBoardUiStore.getState().recordModeLocation("threads", "/env-1/thread-1");
+    // FirstRunGate replaces the location with /welcome while a thread view's
+    // tabs are still mounted.
+    useBoardUiStore.getState().recordModeLocation("threads", "/welcome");
     expect(useBoardUiStore.getState().lastLocationByMode.threads).toBe("/env-1/thread-1");
   });
 });
