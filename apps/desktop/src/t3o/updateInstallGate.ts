@@ -47,6 +47,11 @@ export function t3oReleasePageUrl(version: string | null): string {
   return trimmed ? `${T3O_RELEASES_URL}/tag/v${encodeURIComponent(trimmed)}` : T3O_RELEASES_URL;
 }
 
+/** Shown when Download on a release-page install fails to open the browser. */
+export function t3oReleasePageOpenFailureMessage(version: string | null): string {
+  return `Couldn't open the release page. Open ${t3oReleasePageUrl(version)} to install the update.`;
+}
+
 const StagedPackageJson = Schema.fromJsonString(
   Schema.Struct({ t3oCodeSigned: Schema.optional(Schema.Boolean) }),
 );
@@ -64,7 +69,7 @@ export interface T3oUpdateInstallGate {
   readonly mode: T3oUpdateInstallMode;
   /**
    * Opens the release page instead of downloading when this install cannot
-   * replace itself. Returns whether it handled the download.
+   * replace itself. Returns whether the page actually opened.
    */
   readonly redirectDownload: (version: string | null) => Effect.Effect<boolean>;
 }
@@ -119,9 +124,8 @@ export const makeInstallGate = Effect.gen(function* () {
       mode === "self-install"
         ? Effect.succeed(false)
         : Option.match(shell, {
-            onNone: () => Effect.succeed(true),
-            onSome: (electronShell) =>
-              electronShell.openExternal(t3oReleasePageUrl(version)).pipe(Effect.as(true)),
+            onNone: () => Effect.succeed(false),
+            onSome: (electronShell) => electronShell.openExternal(t3oReleasePageUrl(version)),
           }),
   } satisfies T3oUpdateInstallGate;
 });

@@ -15,6 +15,7 @@ import { isAppImageProcess } from "./autoUpdater.ts";
 import {
   makeInstallGate,
   resolveT3oUpdateInstallMode,
+  t3oReleasePageOpenFailureMessage,
   t3oReleasePageUrl,
 } from "./updateInstallGate.ts";
 
@@ -24,6 +25,7 @@ interface GateFixture {
   readonly packageJson?: string;
   readonly env?: Record<string, string | undefined>;
   readonly withShell?: boolean;
+  readonly openExternal?: boolean;
 }
 
 function withGate<A, E>(
@@ -50,7 +52,7 @@ function withGate<A, E>(
     openExternal: (url) =>
       Effect.sync(() => {
         opened.push(url);
-        return true;
+        return fixture.openExternal ?? true;
       }),
     openSystemSettings: () => Effect.succeed(true),
     copyText: () => Effect.void,
@@ -148,6 +150,13 @@ describe("t3oReleasePageUrl", () => {
       "https://github.com/brentkelly/t3code-orchestrator/releases",
     );
   });
+
+  it("names the release URL when the page cannot be opened", () => {
+    assert.equal(
+      t3oReleasePageOpenFailureMessage("0.0.43-t3o.1"),
+      "Couldn't open the release page. Open https://github.com/brentkelly/t3code-orchestrator/releases/tag/v0.0.43-t3o.1 to install the update.",
+    );
+  });
 });
 
 describe("makeInstallGate", () => {
@@ -212,7 +221,7 @@ describe("makeInstallGate", () => {
     ),
   );
 
-  it.effect("still refuses to download when no shell can open the page", () =>
+  it.effect("returns false when no shell can open the page", () =>
     withGate(
       {
         platform: "darwin",
@@ -221,7 +230,25 @@ describe("makeInstallGate", () => {
       },
       (gate) =>
         Effect.gen(function* () {
-          assert.isTrue(yield* gate.redirectDownload("0.0.43-t3o.1"));
+          assert.isFalse(yield* gate.redirectDownload("0.0.43-t3o.1"));
+        }),
+    ),
+  );
+
+  it.effect("returns false when the shell cannot open the release page", () =>
+    withGate(
+      {
+        platform: "linux",
+        packageType: "deb",
+        openExternal: false,
+      },
+      (gate, opened) =>
+        Effect.gen(function* () {
+          assert.equal(gate.mode, "release-page");
+          assert.isFalse(yield* gate.redirectDownload("0.0.43-t3o.1"));
+          assert.deepEqual(opened, [
+            "https://github.com/brentkelly/t3code-orchestrator/releases/tag/v0.0.43-t3o.1",
+          ]);
         }),
     ),
   );

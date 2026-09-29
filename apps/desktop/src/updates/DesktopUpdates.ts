@@ -454,8 +454,18 @@ export const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
     // T3o: an install that cannot replace itself opens the release page instead.
-    if (yield* t3oInstallGate.redirectDownload(state.availableVersion))
+    if (t3oInstallGate.mode === "release-page") {
+      const opened = yield* t3oInstallGate.redirectDownload(state.availableVersion);
+      if (!opened) {
+        yield* updateState((current) =>
+          reduceDesktopUpdateStateOnDownloadFailure(
+            current,
+            T3oUpdateInstallGate.t3oReleasePageOpenFailureMessage(state.availableVersion),
+          ),
+        );
+      }
       return { accepted: true, completed: false };
+    }
 
     if (!(yield* tryStartUpdateAction("download"))) {
       return { accepted: false, completed: false };
