@@ -463,6 +463,13 @@ export const make = Effect.gen(function* () {
             T3oUpdateInstallGate.t3oReleasePageOpenFailureMessage(state.availableVersion),
           ),
         );
+      } else {
+        yield* updateState((current) => ({
+          ...current,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        }));
       }
       return { accepted: true, completed: false };
     }
