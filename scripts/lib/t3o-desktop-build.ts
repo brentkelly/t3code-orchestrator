@@ -85,7 +85,6 @@ export function applyT3oBuildConfig(config: BuildConfig, target: string, version
   mergeInto(config, "linux", {
     target: t3oLinuxTargets(target, version),
     executableName: T3O_EXECUTABLE_NAME,
-    packageName: T3O_EXECUTABLE_NAME,
     maintainer: `T3o <${T3O_HOMEPAGE}>`,
     vendor: "T3o",
     synopsis: "A board that supervises coding agents",
