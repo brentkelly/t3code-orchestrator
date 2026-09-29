@@ -102,6 +102,11 @@ describe("ssh tunnel scripts", () => {
       SshTunnel.buildRemoteT3RunnerScript(ARCHIVE),
       "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'",
     );
+    // T3o: SSH remotes install the fork's runtime.
+    assert.include(
+      SshTunnel.buildRemoteT3RunnerScript(ARCHIVE),
+      "T3_RELEASE_BASE_URL='https://github.com/brentkelly/t3code-orchestrator/releases/download'",
+    );
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
