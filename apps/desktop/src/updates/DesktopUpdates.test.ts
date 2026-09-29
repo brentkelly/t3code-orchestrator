@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Builds a real on-disk unsigned-mac app directory for the release-page cases.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -13,13 +18,34 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as T3oUpdateInstallGate from "../t3o/updateInstallGate.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
+
+function unsignedMacAppPath(): string {
+  const appPath = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-unsigned-mac-"));
+  NodeFS.writeFileSync(
+    NodePath.join(appPath, "package.json"),
+    JSON.stringify({ t3oCodeSigned: false }),
+  );
+  return appPath;
+}
+
+function stubShell(
+  openExternal: (url: unknown) => boolean,
+): ElectronShell.ElectronShell["Service"] {
+  return {
+    openExternal: (url) => Effect.sync(() => openExternal(url)),
+    openSystemSettings: () => Effect.succeed(true),
+    copyText: () => Effect.void,
+  };
+}
 
 describe("DesktopUpdates", () => {
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
@@ -318,6 +344,67 @@ describe("DesktopUpdates", () => {
         assert.equal(changedState.channel, "nightly");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("opens the release page for an unsigned mac install without downloading", () => {
+    const appPath = unsignedMacAppPath();
+    const opened: unknown[] = [];
+    const harness = makeHarness({
+      appPath,
+      shell: stubShell((url) => {
+        opened.push(url);
+        return true;
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.download;
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+        assert.equal(harness.downloadCount(), 0);
+        assert.isNull(result.state.message);
+        assert.deepEqual(opened, [T3oUpdateInstallGate.t3oReleasePageUrl("1.2.4")]);
+      }),
+    ).pipe(
+      Effect.provide(Layer.merge(TestClock.layer(), harness.layer)),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(appPath, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("surfaces the release URL when an unsigned mac install cannot open the page", () => {
+    const appPath = unsignedMacAppPath();
+    const harness = makeHarness({
+      appPath,
+      shell: stubShell(() => false),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.download;
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+        assert.equal(harness.downloadCount(), 0);
+        assert.equal(result.state.errorContext, "download");
+        assert.equal(
+          result.state.message,
+          T3oUpdateInstallGate.t3oReleasePageOpenFailureMessage("1.2.4"),
+        );
+      }),
+    ).pipe(
+      Effect.provide(Layer.merge(TestClock.layer(), harness.layer)),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(appPath, { recursive: true, force: true }))),
+    );
   });
 
   it.effect("restores download state and permits retry after interruption", () =>

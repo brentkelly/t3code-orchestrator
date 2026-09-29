@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -36,6 +37,8 @@ export interface UpdatesHarnessOptions {
   readonly packageType?: string | undefined;
   readonly installRecord?: string | undefined;
   readonly appVersion?: string;
+  readonly appPath?: string;
+  readonly shell?: ElectronShell.ElectronShell["Service"];
   /** Starts from in-memory settings with this track saved, as after a restart. */
   readonly savedChannel?: DesktopAppSettings.DesktopSettings["updateChannel"];
   /** Adds a WSL backend beside the primary, as on a Windows host with WSL enabled. */
@@ -175,7 +178,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     platform: options.platform ?? "darwin",
     processArch: "x64",
     appVersion: options.appVersion ?? "1.2.3",
-    appPath: "/repo",
+    appPath: options.appPath ?? "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
     runningUnderArm64Translation: false,
@@ -269,7 +272,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
   });
 
-  const layer = DesktopUpdates.layer.pipe(
+  const provided = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
@@ -287,6 +290,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provideMerge(layerEnvironment),
     Layer.provideMerge(NodeServices.layer),
   );
+  const layer = options.shell
+    ? provided.pipe(Layer.provideMerge(Layer.succeed(ElectronShell.ElectronShell, options.shell)))
+    : provided;
 
   return {
     layer,
