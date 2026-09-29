@@ -330,6 +330,10 @@
     "./cliRelease": {
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
+    },
+    "./t3oIdentity": {
+      "types": "./src/t3oIdentity.ts",
+      "import": "./src/t3oIdentity.ts"
     }
   },
   "scripts": {
