@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off -- A one-shot asset generator, run by hand.
 /**
  * T3o: derives the T3o desktop icon set from upstream's production T3 mark
  * (card T3O-1).

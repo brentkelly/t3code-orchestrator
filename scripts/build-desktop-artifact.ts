@@ -38,6 +38,7 @@ import { loadRepoEnv } from "./lib/public-config.ts";
 import {
   applyT3oBuildConfig,
   T3O_ICON_PATHS,
+  T3O_STAGE_PACKAGE,
   t3oStagePackageMetadata,
 } from "./lib/t3o-desktop-build.ts";
 import { T3O_APP_ID, T3O_PRODUCT_NAME } from "@t3tools/shared/t3oIdentity";
@@ -3652,13 +3653,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    // T3o: the deb/rpm packages are named t3o.
+    name: T3O_STAGE_PACKAGE.name,
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "T3 Code desktop build",
+    // T3o: and described as T3o.
+    description: T3O_STAGE_PACKAGE.description,
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
     // T3o: package name, homepage and signing stamp of the fork's builds.

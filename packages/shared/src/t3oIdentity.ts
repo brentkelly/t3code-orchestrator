@@ -84,3 +84,14 @@ const T3O_RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+-t3o\.\d+$/;
 export function isT3oReleaseVersion(version: string): boolean {
   return T3O_RELEASE_VERSION_PATTERN.test(version.trim());
 }
+
+/**
+ * The fork publishes no nightlies, so the desktop app offers no update-track
+ * picker and treats a persisted `nightly` choice as stable.
+ */
+export const T3O_HAS_NIGHTLY_UPDATE_TRACK: boolean = false;
+
+/** Whether the fork publishes an update channel the desktop app may follow. */
+export function isT3oUpdateChannel(channel: string): boolean {
+  return T3O_HAS_NIGHTLY_UPDATE_TRACK || channel !== "nightly";
+}
