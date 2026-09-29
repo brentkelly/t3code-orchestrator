@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off -- A CI probe that drives a packaged app from outside it.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off globalFetch:off globalTimers:off -- A CI probe that drives a packaged app from outside it.
 /**
  * T3o: boots the backend of a packaged T3o desktop app and proves it works
  * (card T3O-1).
@@ -22,7 +22,7 @@ import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import * as NodeSqlite from "node:sqlite";
 
 import { T3O_EXECUTABLE_NAME, T3O_PRODUCT_NAME } from "@t3tools/shared/t3oIdentity";
 
@@ -88,7 +88,7 @@ async function waitForHttp(url: string, exited: () => string | null): Promise<nu
 }
 
 function boardMigrationCount(home: string): number {
-  const database = new DatabaseSync(NodePath.join(home, "userdata", "boards.sqlite"), {
+  const database = new NodeSqlite.DatabaseSync(NodePath.join(home, "userdata", "boards.sqlite"), {
     readOnly: true,
   });
   try {
@@ -106,6 +106,7 @@ async function main(argv: ReadonlyArray<string>): Promise<void> {
   const app = appIndex >= 0 ? argv[appIndex + 1] : undefined;
   if (!app) throw new Error("Usage: t3o-smoke-packaged-backend.ts --app <path>");
 
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- A standalone CI probe with no Effect runtime.
   const backend = resolvePackagedBackend(process.platform, NodePath.resolve(app));
   if (!NodeFS.existsSync(backend.executable)) {
     throw new Error(`No app executable at ${backend.executable}.`);
