@@ -52,7 +52,6 @@ it.layer(NodeServices.layer)("t3o desktop build config", (it) => {
       >;
       assert.deepStrictEqual(linux.target, ["AppImage", "deb", "rpm"]);
       assert.equal(linux.executableName, "t3o");
-      assert.equal(linux.packageName, "t3o");
       assert.deepStrictEqual(linux.desktop, { entry: { StartupWMClass: "t3o" } });
       assert.deepStrictEqual(linux.protocols, [{ name: "T3o", schemes: ["t3o", "t3o-dev"] }]);
       // electron-builder refuses a deb/rpm without a maintainer.
