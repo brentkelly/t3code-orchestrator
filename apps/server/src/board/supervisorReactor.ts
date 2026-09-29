@@ -391,6 +391,23 @@ function cardStageModelOverride(
   });
 }
 
+/**
+ * Whether the card's step row is a review-loop phase that settled `succeeded`
+ * while the card is still in its review stage — the one quiet state in which
+ * the loop may still owe a phase nobody started (T3O-5). Scoped to the review
+ * stage so a step left behind by a card that has since moved on is never
+ * re-planned against the stage it moved to.
+ */
+function settledReviewPhase(
+  board: BoardState,
+  card: BoardCard,
+  state: BoardCardStepState,
+): boolean {
+  if (state.status !== "succeeded" || parseReviewStepId(state.stepId) === null) return false;
+  const stage = boardStageById(board, card.stage);
+  return stage !== null && effectiveBoardStageRole(stage) === "review";
+}
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const engine = yield* OrchestrationEngineService;
@@ -5099,6 +5116,16 @@ const make = Effect.gen(function* () {
           });
         }
         yield* replanSettledStage(card);
+        return;
+      }
+      // A REPEATED success of a review phase is the agent's retry when the
+      // loop went quiet (T3O-5): the settle landed but the continuation after
+      // it did not (a full disk failed the next phase's dispatch), so the
+      // ledger owes a step nobody started. Ask again — `replanSettledStage`
+      // acts only on a `run` plan, so a loop with nothing left to run stays a
+      // no-op, exactly as an ordinary idempotent retry always was.
+      if (completion.outcome === "succeeded" && settledReviewPhase(board, card, state)) {
+        yield* replanSettledStage(card);
       }
       return;
     }
@@ -6969,6 +6996,19 @@ const make = Effect.gen(function* () {
         if (state !== null && !isBoardTerminalStepStatus(state.status)) continue;
         yield* beginStageRun({ card, onDemand: false, bootPass: true });
       }
+    }
+    // Resume review loops that halted BETWEEN phases (T3O-5). The pass above
+    // only walks steps still in flight, but a loop whose phase settled
+    // `succeeded` while the dispatch of the next one failed has nothing in
+    // flight at all: the ledger owes a step, the row says the stage is quiet,
+    // and no event will ever arrive to ask again. A converged or held loop
+    // plans `complete`, which `replanSettledStage` ignores.
+    const quiet = yield* readBoard;
+    for (const card of quiet.cards) {
+      if (card.archivedAt !== null) continue;
+      const state = boardCardStepState(quiet, card.id);
+      if (state === null || !settledReviewPhase(quiet, card, state)) continue;
+      yield* replanSettledStage(card);
     }
     // Settle the cards that finished while this feature did not exist.
     //
