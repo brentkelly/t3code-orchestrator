@@ -398,10 +398,19 @@ function cardStageModelOverride(
  * stage so a step left behind by a card that has since moved on is never
  * re-planned against the stage it moved to.
  *
- * Known gap: only an owed `run` is resumed. If the loop's FINAL phase settled
- * and the `advanceStage` after it failed, the plan is `complete`, which the
- * re-plan ignores (routing it to `advanceStage` could re-advance a graduated
- * card), so that card stays in Code review until a human moves it.
+ * Known gaps: only an owed `run` is resumed, and the resume never measures
+ * base staleness. So three halts stay parked in Code review until a human
+ * moves the card:
+ * - the loop's FINAL phase settled and the `advanceStage` after it failed. The
+ *   plan is `complete`, which the re-plan ignores, because routing it to
+ *   `advanceStage` could re-advance a graduated card.
+ * - the failed dispatch was an owed `sync@N` (a clean round on a stale base).
+ *   With staleness pinned unmeasured, the resume plans `complete` instead.
+ *   Nothing merges unsynced: the review→merge crossing and the Merge click
+ *   re-measure staleness.
+ * - the stage-entry kickoff failed, so `review@1` never started after the
+ *   move into review. The step row is still the previous stage's, which this
+ *   check rejects.
  */
 function settledReviewPhase(
   board: BoardState,
