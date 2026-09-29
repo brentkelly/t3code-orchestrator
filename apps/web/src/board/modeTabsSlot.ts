@@ -33,13 +33,13 @@ const MODE_TABS_SLOT_GUTTER = 24;
 export const MODE_TABS_MIN_WIDTH = MODE_TABS_WIDTH + MODE_TABS_SLOT_GUTTER;
 
 /**
- * Workspace routes that render a top bar with no mode tabs today. Usage, pull
- * requests and project settings are footer destinations, not a mode — giving
- * their sidebar header tabs would invent an entry point rather than move one
- * (D9). `modeForHref` already rules out settings, pairing, connect and the
+ * Workspace routes that render a top bar with no mode tabs today. Pull
+ * requests is a footer destination, not a mode — giving its sidebar header
+ * tabs would invent an entry point rather than move one (D9). `modeForHref`
+ * already rules out settings, pairing, connect, usage, project links and the
  * board itself.
  */
-const TABLESS_ROOTS = ["/usage", "/pull-requests", "/projects"];
+const TABLESS_ROOTS = ["/pull-requests"];
 
 /** True at the locations whose top bar carries the tabs today. */
 export function locationHasModeTabs(pathname: string): boolean {

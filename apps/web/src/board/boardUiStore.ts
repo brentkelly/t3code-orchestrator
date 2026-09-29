@@ -19,15 +19,19 @@ export const BOARD_UI_STATE_STORAGE_KEY = "t3code:board-ui:v1";
 export type WorkspaceMode = "threads" | "board";
 
 /**
- * Full-surface routes that are not a workspace location at all: settings
- * (which replaces the whole workspace, tabs included) and the auth flow.
+ * Routes that are not a workspace location at all: settings (which replaces
+ * the whole workspace, tabs included), the auth flow, `/projects/<key>` (a
+ * redirect into `/settings/projects`) and the full-page usage view.
  *
  * They must never be filed as a mode's last location. `/settings/general`
  * recorded under `threads` stranded the workspace: clicking Threads reopened
  * settings, and Back out of settings landed on the board, leaving no way to
- * reach a thread.
+ * reach a thread. `/projects/<key>` did the same by the back door (T3O-50):
+ * the router location changes before the thread view's tabs unmount, so
+ * they filed the link under `threads`, and every Threads click then followed
+ * it into project settings.
  */
-const NON_WORKSPACE_ROOTS = ["/settings", "/pair", "/connect"];
+const NON_WORKSPACE_ROOTS = ["/settings", "/pair", "/connect", "/projects", "/usage"];
 
 /** The path part of an in-app href, without `?search` or `#hash`. */
 function pathnameOf(href: string): string {
