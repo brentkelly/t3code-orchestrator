@@ -27,6 +27,7 @@ import {
 } from "./boardCardModelRows";
 
 const boardSettings: BoardSettings = DEFAULT_SERVER_SETTINGS.board;
+const planning = BOARD_SEED_STAGE_IDS.planning;
 const build = BOARD_SEED_STAGE_IDS.building;
 const review = BOARD_SEED_STAGE_IDS.review;
 
@@ -41,9 +42,15 @@ const rows = (
   stages: ReadonlyArray<BoardStageDefinition> = BOARD_SEED_STAGES,
 ) => boardCardModelRows({ stages, boardSettings, parentCard });
 
+/** One stage's row — looked up by stage id so a test reads the row it means,
+    not whatever happens to sit at an index. */
+const rowFor = (stageId: string, parentCard: Parameters<typeof rows>[0] = null) =>
+  rows(parentCard).find((row) => row.stageId === stageId);
+
 describe("boardCardModelRows (t3o-29, D1)", () => {
-  it("offers exactly the build- and review-role rows, in that order", () => {
+  it("offers exactly the plan-, build- and review-role rows, in pipeline order", () => {
     expect(rows().map((row) => [row.stageId, row.label])).toEqual([
+      [planning, "Planning"],
       [build, "Build"],
       [review, "Review"],
     ]);
@@ -52,7 +59,7 @@ describe("boardCardModelRows (t3o-29, D1)", () => {
   it("omits a row whose role-holder stage the board no longer has", () => {
     // Better one row than an override nothing would ever read.
     const withoutReview = BOARD_SEED_STAGES.filter((stage) => stage.stageId !== review);
-    expect(rows(null, withoutReview).map((row) => row.label)).toEqual(["Build"]);
+    expect(rows(null, withoutReview).map((row) => row.label)).toEqual(["Planning", "Build"]);
   });
 
   it("reports the workspace value as the inherited one for a top-level card", () => {
@@ -65,18 +72,30 @@ describe("boardCardModelRows (t3o-29, D1)", () => {
     // The trap this closes: without it the child's row would read "(default)"
     // and name the workspace model, while the card actually ran on its
     // parent's — the user sees one model and gets another.
-    const [buildRow] = rows({ key: "T3O-41", modelOverrides: { [build]: opus } });
+    const buildRow = rowFor(build, { key: "T3O-41", modelOverrides: { [build]: opus } });
     expect(buildRow?.inheritedModel).toEqual(opus);
     expect(buildRow?.inheritedFromCardKey).toBe("T3O-41");
   });
 
+  it("AC5: a child inherits the parent's Planning override, named as the parent's (#119)", () => {
+    const planningRow = rowFor(planning, { key: "T3O-41", modelOverrides: { [planning]: opus } });
+    expect(planningRow?.inheritedModel).toEqual(opus);
+    expect(planningRow?.inheritedFromCardKey).toBe("T3O-41");
+  });
+
+  it("reports the workspace Planning access level when nothing overrides it (#119)", () => {
+    // Planning is a plan-mode stage, so it resolves to approval-required.
+    expect(rowFor(planning)?.inheritedRuntimeMode).toBe("approval-required");
+  });
+
   it("AC5: inheritance is per stage — a parent's Build override leaves Review alone", () => {
-    const [, reviewRow] = rows({ key: "T3O-41", modelOverrides: { [build]: opus } });
-    expect(reviewRow?.inheritedFromCardKey).toBeNull();
+    const parent = { key: "T3O-41", modelOverrides: { [build]: opus } };
+    expect(rowFor(review, parent)?.inheritedFromCardKey).toBeNull();
+    expect(rowFor(planning, parent)?.inheritedFromCardKey).toBeNull();
   });
 
   it("carries the parent's access level as the inherited one when it names one", () => {
-    const [buildRow] = rows({
+    const buildRow = rowFor(build, {
       key: "T3O-41",
       modelOverrides: { [build]: { ...opus, runtimeMode: "approval-required" } },
     });
@@ -84,7 +103,7 @@ describe("boardCardModelRows (t3o-29, D1)", () => {
   });
 
   it("falls back to the workspace access level when the parent names none", () => {
-    const [buildRow] = rows({ key: "T3O-41", modelOverrides: { [build]: opus } });
+    const buildRow = rowFor(build, { key: "T3O-41", modelOverrides: { [build]: opus } });
     // The build stage resolves to `auto` by default (t3o-21, D2).
     expect(buildRow?.inheritedRuntimeMode).toBe("auto");
   });
@@ -106,6 +125,17 @@ describe("boardCardModelOverrideSummary / hasBoardCardModelOverride (AC9)", () =
       "Build · Review",
     );
     expect(hasBoardCardModelOverride(spec, { [build]: opus })).toBe(true);
+  });
+
+  it("names a Planning override, alone or alongside the others (#119)", () => {
+    expect(boardCardModelOverrideSummary(spec, { [planning]: opus })).toBe("Planning");
+    expect(boardCardModelOverrideSummary(spec, { [build]: haiku, [planning]: opus })).toBe(
+      "Planning · Build",
+    );
+    expect(
+      boardCardModelOverrideSummary(spec, { [planning]: opus, [build]: opus, [review]: haiku }),
+    ).toBe("Planning · Build · Review");
+    expect(hasBoardCardModelOverride(spec, { [planning]: opus })).toBe(true);
   });
 
   it("counts only the card's OWN overrides, never an inherited one", () => {
