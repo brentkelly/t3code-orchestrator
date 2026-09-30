@@ -2815,9 +2815,14 @@ export function BoardCardDetailPopup({
         maximised
           ? "fixed inset-0 h-screen max-h-none w-screen max-w-none rounded-none border-0"
           : wide
-            ? "h-[86vh] max-h-[86vh] w-[min(1220px,100%)] max-w-[1220px]"
+            ? // Under 1000px tall the 7vh gaps above and below cost the
+              // thread pane too much, so the sheet takes all but a sliver
+              // (T3O-51). `sm:` leaves the phone bottom sheet alone.
+              "h-[86vh] max-h-[86vh] w-[min(1220px,100%)] max-w-[1220px] sm:[@media(max-height:999.98px)]:h-[calc(100dvh-1rem)] sm:[@media(max-height:999.98px)]:max-h-[calc(100dvh-1rem)]"
             : "max-h-[86vh] w-[min(760px,100%)] max-w-[760px]",
       )}
+      // The sliver itself: the viewport's 1rem padding halves to 0.5rem.
+      viewportClassName={wide && !maximised ? "sm:[@media(max-height:999.98px)]:py-2" : ""}
       ref={setSheet}
       showCloseButton={false}
       {...(cardId === null ? {} : { "data-board-card-detail": cardId })}
