@@ -179,7 +179,8 @@ it.effect("clones a looked-up repository into the requested destination", () =>
       assert.deepStrictEqual(cloneCalls, [
         {
           cwd: parent,
-          args: ["clone", "--progress", CLONE_URLS.url, "t3code"],
+          // T3o: `--` separator (#138).
+          args: ["clone", "--progress", "--", CLONE_URLS.url, "t3code"],
         },
       ]);
     }).pipe(
@@ -195,6 +196,44 @@ it.effect("clones a looked-up repository into the requested destination", () =>
         }),
       ),
     );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// T3o: option-injection guard for free-form clone URLs (#138).
+it.effect("rejects a clone URL that git would parse as an option", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-clone-dash-",
+    });
+    let gitCalls = 0;
+
+    const error = yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* Effect.flip(
+        service.cloneRepository({
+          remoteUrl: "--upload-pack=touch /tmp/pwned",
+          destinationPath: path.join(parent, "t3code"),
+        }),
+      );
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          git: {
+            execute: () =>
+              Effect.sync(() => {
+                gitCalls += 1;
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+
+    assert.strictEqual(error.operation, "cloneRepository");
+    assert.strictEqual(error.detail, "Clone URLs cannot start with a dash.");
+    assert.strictEqual(gitCalls, 0);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

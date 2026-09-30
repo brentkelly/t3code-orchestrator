@@ -269,6 +269,14 @@ export const make = Effect.gen(function* () {
         detail: "Enter a repository path or clone URL before cloning.",
       });
     }
+    // T3o: a leading "-" would be parsed by git as an option (`--upload-pack=<cmd>`) (#138).
+    if (remoteUrl.startsWith("-")) {
+      return yield* new SourceControlRepositoryError({
+        operation: "cloneRepository",
+        provider,
+        detail: "Clone URLs cannot start with a dash.",
+      });
+    }
 
     return {
       destinationPath: preparedDestination.destinationPath,
@@ -303,7 +311,14 @@ export const make = Effect.gen(function* () {
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(prepared.destinationPath),
-        args: ["clone", "--progress", prepared.cloneUrl, path.basename(prepared.destinationPath)],
+        // T3o: `--` so neither the URL nor the directory name can be read as an option (#138).
+        args: [
+          "clone",
+          "--progress",
+          "--",
+          prepared.cloneUrl,
+          path.basename(prepared.destinationPath),
+        ],
         timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
         // Progress redraws add up on a slow multi-GB clone. The buffered copy
         // is never read (the tail is kept by hand above), so keep it small
