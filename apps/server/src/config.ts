@@ -19,6 +19,8 @@ import * as Schema from "effect/Schema";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 // T3o: per-project GitHub token overrides read `<stateDir>/gitenv` (t3o-34).
 import { initGitenv } from "./sourceControl/gitenv.ts";
+// T3o: owner-only state directory (#123).
+import { restrictStateDirectory } from "./privateStateFiles.ts";
 import { OtlpProtocol } from "@t3tools/shared/observability";
 
 export const DEFAULT_PORT = 3773;
@@ -172,6 +174,8 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
     ],
     { concurrency: "unbounded" },
   );
+  // T3o: the state dir holds settings, credentials and the databases; make it 0700 (#123).
+  yield* restrictStateDirectory(derivedPaths.stateDir);
 
   const swept = sweepStalePendingAttachments({
     attachmentsDir: derivedPaths.attachmentsDir,

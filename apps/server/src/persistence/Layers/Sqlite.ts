@@ -8,6 +8,8 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../Migrations.ts";
 import { initialiseBoardDatabase, runBoardMigrations } from "../../board/migrations/index.ts";
 import { ServerConfig } from "../../config.ts";
+// T3o: owner-only database files (#123).
+import { withPrivateSqliteFiles } from "../../privateStateFiles.ts";
 
 const setup = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -44,6 +46,9 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
         "service.name": "t3-server",
       },
     }),
+  ).pipe(
+    // T3o: chmod state.sqlite, boards.sqlite and their -wal/-shm to 0600 once open (#123).
+    withPrivateSqliteFiles(fs, dbPath),
   );
 }, Layer.unwrap);
 
