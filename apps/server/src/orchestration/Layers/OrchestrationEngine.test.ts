@@ -26,6 +26,7 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { TestClock } from "effect/testing";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -89,7 +90,7 @@ function makeOrchestrationLayer(
           )
         : RepositoryIdentityResolver.layer,
     ),
-    Layer.provide(persistence),
+    Layer.provideMerge(persistence),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -2124,5 +2125,74 @@ describe("OrchestrationEngine", () => {
     expect(withoutOrigin?.metadata.origin).toBeUndefined();
 
     await system.dispose();
+  });
+
+  // T3o: commandId dedup compares the command, not only its aggregate (#120).
+  describe("commandId reuse", () => {
+    const projectId = ProjectId.make("project-command-reuse");
+    const commandId = CommandId.make("cmd-command-reuse");
+    const createProject = (overrides: { title?: string; createdAt?: string } = {}) =>
+      ({
+        type: "project.create",
+        commandId,
+        projectId,
+        title: overrides.title ?? "Reuse",
+        workspaceRoot: "/tmp/project-command-reuse",
+        createdAt: overrides.createdAt ?? now(),
+      }) as const;
+
+    effectIt.effect("replays the same command idempotently, even with a fresh createdAt", () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const first = yield* engine.dispatch(createProject());
+        const replay = yield* engine.dispatch(
+          createProject({ createdAt: "2026-01-02T00:00:00.000Z" }),
+        );
+        expect(replay.sequence).toBe(first.sequence);
+        expect(yield* engine.latestSequence).toBe(first.sequence);
+      }).pipe(Effect.provide(makeOrchestrationLayer())),
+    );
+
+    effectIt.effect("rejects a different command type reusing the id on the same aggregate", () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const first = yield* engine.dispatch(createProject());
+        const error = yield* engine
+          .dispatch({ type: "project.meta.update", commandId, projectId, title: "Renamed" })
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("OrchestrationCommandIdConflictError");
+        expect(error.message).toContain("project.create (payload");
+        expect(error.message).toContain("project.meta.update (payload");
+        expect(yield* engine.latestSequence).toBe(first.sequence);
+      }).pipe(Effect.provide(makeOrchestrationLayer())),
+    );
+
+    effectIt.effect("rejects the same command type with a different payload", () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const first = yield* engine.dispatch(createProject());
+        const error = yield* engine
+          .dispatch(createProject({ title: "Different" }))
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("OrchestrationCommandIdConflictError");
+        expect(yield* engine.latestSequence).toBe(first.sequence);
+      }).pipe(Effect.provide(makeOrchestrationLayer())),
+    );
+
+    effectIt.effect("keeps the legacy replay for receipts that predate fingerprints", () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const sql = yield* SqlClient.SqlClient;
+        const first = yield* engine.dispatch(createProject());
+        yield* sql`DELETE FROM boards.board_command_fingerprints WHERE command_id = ${commandId}`;
+        const replay = yield* engine.dispatch({
+          type: "project.meta.update",
+          commandId,
+          projectId,
+          title: "Renamed",
+        });
+        expect(replay.sequence).toBe(first.sequence);
+      }).pipe(Effect.provide(makeOrchestrationLayer())),
+    );
   });
 });
