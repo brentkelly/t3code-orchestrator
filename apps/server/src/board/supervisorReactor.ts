@@ -391,6 +391,37 @@ function cardStageModelOverride(
   });
 }
 
+/**
+ * Whether the card's step row is a review-loop phase that settled `succeeded`
+ * while the card is still in its review stage — the one quiet state in which
+ * the loop may still owe a phase nobody started (T3O-5). Scoped to the review
+ * stage so a step left behind by a card that has since moved on is never
+ * re-planned against the stage it moved to.
+ *
+ * Known gaps: only an owed `run` is resumed, and the resume never measures
+ * base staleness. So three halts stay parked in Code review until a human
+ * moves the card:
+ * - the loop's FINAL phase settled and the `advanceStage` after it failed. The
+ *   plan is `complete`, which the re-plan ignores, because routing it to
+ *   `advanceStage` could re-advance a graduated card.
+ * - the failed dispatch was an owed `sync@N` (a clean round on a stale base).
+ *   With staleness pinned unmeasured, the resume plans `complete` instead.
+ *   Nothing merges unsynced: the review→merge crossing and the Merge click
+ *   re-measure staleness.
+ * - the stage-entry kickoff failed, so `review@1` never started after the
+ *   move into review. The step row is still the previous stage's, which this
+ *   check rejects.
+ */
+function settledReviewPhase(
+  board: BoardState,
+  card: BoardCard,
+  state: BoardCardStepState,
+): boolean {
+  if (state.status !== "succeeded" || parseReviewStepId(state.stepId) === null) return false;
+  const stage = boardStageById(board, card.stage);
+  return stage !== null && effectiveBoardStageRole(stage) === "review";
+}
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const engine = yield* OrchestrationEngineService;
@@ -2883,9 +2914,16 @@ const make = Effect.gen(function* () {
    * straight through — and, more importantly, routing a `complete` back into
    * `advanceStage` would let any card edit re-advance a card that already
    * graduated.
+   *
+   * `resume` marks a re-plan that only resumes a loop halted between phases
+   * (T3O-5) rather than reacting to an edit. It leaves base staleness
+   * unmeasured, so resuming never plans a rebase-and-force-push sync the loop
+   * did not already owe: staleness stays measured lazily at the review→merge
+   * crossing and the Merge click, as it is for any converged, parked card.
    */
   const replanSettledStage = Effect.fn("board-supervisor-replanSettledStage")(function* (
     card: BoardCard,
+    options: { readonly resume?: boolean } = {},
   ) {
     const board = yield* readBoard;
     const stage = boardStageById(board, card.stage);
@@ -2927,7 +2965,7 @@ const make = Effect.gen(function* () {
         completedStepIds,
         liveStepId: null,
         settledStepId: null,
-        baseStale: yield* resolveBaseStale(card),
+        baseStale: options.resume === true ? false : yield* resolveBaseStale(card),
         baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
       },
     });
@@ -5099,6 +5137,16 @@ const make = Effect.gen(function* () {
           });
         }
         yield* replanSettledStage(card);
+        return;
+      }
+      // A REPEATED success of a review phase is the agent's retry when the
+      // loop went quiet (T3O-5): the settle landed but the continuation after
+      // it did not (a full disk failed the next phase's dispatch), so the
+      // ledger owes a step nobody started. Ask again — `replanSettledStage`
+      // acts only on a `run` plan, so a loop with nothing left to run stays a
+      // no-op, exactly as an ordinary idempotent retry always was.
+      if (completion.outcome === "succeeded" && settledReviewPhase(board, card, state)) {
+        yield* replanSettledStage(card, { resume: true });
       }
       return;
     }
@@ -6969,6 +7017,21 @@ const make = Effect.gen(function* () {
         if (state !== null && !isBoardTerminalStepStatus(state.status)) continue;
         yield* beginStageRun({ card, onDemand: false, bootPass: true });
       }
+    }
+    // Resume review loops that halted BETWEEN phases (T3O-5). The pass above
+    // only walks steps still in flight, but a loop whose phase settled
+    // `succeeded` while the dispatch of the next one failed has nothing in
+    // flight at all: the ledger owes a step, the row says the stage is quiet,
+    // and no event will ever arrive to ask again. A converged or held loop
+    // plans `complete`, which `replanSettledStage` ignores; `resume` leaves
+    // base staleness unmeasured so a restart never turns a parked, converged
+    // card into an unattended sync.
+    const quiet = yield* readBoard;
+    for (const card of quiet.cards) {
+      if (card.archivedAt !== null) continue;
+      const state = boardCardStepState(quiet, card.id);
+      if (state === null || !settledReviewPhase(quiet, card, state)) continue;
+      yield* replanSettledStage(card, { resume: true });
     }
     // Settle the cards that finished while this feature did not exist.
     //
