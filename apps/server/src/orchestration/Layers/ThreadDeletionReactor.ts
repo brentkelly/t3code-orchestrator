@@ -6,6 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+// T3o: preview sessions are swept on thread deletion too (#131).
+import * as PreviewManager from "../../preview/Manager.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -42,6 +44,8 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager.TerminalManager;
+  // T3o: see closeThreadPreviews (#131).
+  const previewManager = yield* PreviewManager.PreviewManager;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -57,12 +61,23 @@ const make = Effect.gen(function* () {
       threadId,
     });
 
+  // T3o: no tabId closes every preview tab of the thread; nothing else ever evicts
+  // them from the server-lifetime session map (#131).
+  const closeThreadPreviews = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    logCleanupCauseUnlessInterrupted({
+      effect: previewManager.close({ threadId }),
+      message: "thread deletion cleanup skipped preview close",
+      threadId,
+    });
+
   const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
+    // T3o: (#131).
+    yield* closeThreadPreviews(threadId);
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>

@@ -16,6 +16,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
+import * as PreviewManager from "../../preview/Manager.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -111,6 +112,7 @@ describe("ThreadDeletionReactor drain", () => {
       const layer = ThreadDeletionReactorLive.pipe(
         Layer.provide(Layer.succeed(ProviderService, providerService)),
         Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
+        Layer.provide(PreviewManager.layer),
         Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
       );
 
@@ -132,6 +134,45 @@ describe("ThreadDeletionReactor drain", () => {
           yield* Deferred.succeed(releaseSecondEvent, undefined);
           yield* Fiber.join(drained);
           expect(stops).toEqual([1, 2]);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  effectIt.effect("closes every preview tab of the deleted thread", () =>
+    Effect.gen(function* () {
+      const otherThreadId = ThreadId.make("thread-deletion-reactor-survivor");
+      // The head is 0 when the subscriber starts, so drainThrough(1) waits for
+      // the deletion to be handed to the worker and then for its cleanup.
+      const engine = {
+        latestSequence: Effect.succeed(0),
+        streamDomainEvents: Stream.make(deletedEvent(1)),
+      } as unknown as OrchestrationEngineShape;
+      const providerService = {
+        stopSession: () => Effect.void,
+      } as unknown as ProviderServiceShape;
+      const terminalManager = {
+        close: () => Effect.void,
+      } as unknown as TerminalManager.TerminalManager["Service"];
+      const layer = ThreadDeletionReactorLive.pipe(
+        Layer.provideMerge(PreviewManager.layer),
+        Layer.provide(Layer.succeed(ProviderService, providerService)),
+        Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
+        Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const reactor = yield* ThreadDeletionReactor;
+          const previews = yield* PreviewManager.PreviewManager;
+          yield* previews.open({ threadId });
+          yield* previews.open({ threadId });
+          yield* previews.open({ threadId: otherThreadId });
+          yield* reactor.start();
+          yield* reactor.drainThrough(1);
+
+          expect((yield* previews.list({ threadId })).sessions).toHaveLength(0);
+          expect((yield* previews.list({ threadId: otherThreadId })).sessions).toHaveLength(1);
         }),
       ).pipe(Effect.provide(layer));
     }),
