@@ -2127,7 +2127,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
 
-  // The two rows the card can override, and what each falls back to (t3o-29).
+  // The rows the card can override, and what each falls back to (t3o-29).
   // Derived eagerly — it is picker-free, and the kebab needs the summary to
   // render its item whether or not anyone opens the popover.
   const modelRows = boardCardModelRows({
@@ -2143,8 +2143,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   });
   const modelSummary = boardCardModelOverrideSummary(modelRows, card.modelOverrides);
   const modelOverridden = hasBoardCardModelOverride(modelRows, card.modelOverrides);
-  // The kebab item names the STATE ("Build" / "Build · Review", AC9); the pill
-  // names the MODEL ("Build opus-5", or "Custom models" when both are set, D7)
+  // The kebab item names the STATE ("Build" / "Planning · Build", AC9); the pill
+  // names the MODEL ("Build opus-5", or "Custom models" when several are set, D7)
   // — the pill exists so an override that changes spend/authority is legible
   // from the card without a hover. Resolving the slug to its display name needs
   // the provider list, which the eager view deliberately does not hold; the

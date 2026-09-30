@@ -4,7 +4,7 @@
  *
  * Pure and picker-free on purpose. The popover itself drags the model list, the
  * traits menu and the access picker, so it is lazily loaded — but the kebab
- * needs this card's summary ("Default" / "Build · Review") to render the menu
+ * needs this card's summary ("Default" / "Planning · Build") to render the menu
  * item, before anyone has opened anything. Splitting the derivation out is what
  * lets the summary be eager and the pickers not.
  */
@@ -39,14 +39,17 @@ export interface BoardCardModelRowSpec {
 
 /** The label and note each role's row carries, from the prototype. */
 const ROW_COPY = {
+  plan: { label: "Planning", note: "Shapes the work into a plan" },
   build: { label: "Build", note: "Runs the plan in the worktree" },
   review: { label: "Review", note: "Adversarial review rounds" },
 } as const;
 
 /**
- * The two rows the popover offers, resolved by ROLE — the stages holding the
- * `build` and `review` roles. A board whose role-holder was deleted simply
- * yields one row, rather than offering an override nothing would ever read.
+ * The rows the popover offers, resolved by ROLE — the stages holding the
+ * `plan`, `build` and `review` roles, in pipeline order. A board whose
+ * role-holder was deleted simply yields fewer rows, rather than offering an
+ * override nothing would ever read. Planning is a simple stage, so its row
+ * resolves exactly like Build's (#119).
  *
  * Only the REVIEW PHASE's model is reported for the review row: that is what a
  * card-level review override re-points (D3), so showing the stage's fallback
@@ -58,7 +61,7 @@ export function boardCardModelRows(input: {
   readonly parentCard: Pick<BoardCard, "key" | "modelOverrides"> | null;
 }): ReadonlyArray<BoardCardModelRowSpec> {
   const rows: BoardCardModelRowSpec[] = [];
-  for (const role of ["build", "review"] as const) {
+  for (const role of ["plan", "build", "review"] as const) {
     // Matched on the EFFECTIVE role, so a legacy stage list — Planning and
     // Ready-for-merge were seeded before their roles existed and persist with a
     // null role — still reports its holder.
