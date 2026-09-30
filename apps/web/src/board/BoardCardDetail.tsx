@@ -76,6 +76,7 @@ import { threadEnvironment } from "../state/threads";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
+  boardStageRestartBlockedReason,
   isBoardCardRunInFlight,
   resolveBoardThreadStageRestart,
   runBlankThreadCreation,
@@ -742,11 +743,23 @@ export function BoardCardDetail({
   const reviewPhaseRuntimeMode = isBoardReviewStageExecution(reviewExecution)
     ? effectiveBoardRuntimeMode(reviewExecution.phases.review.runtimeMode, "build")
     : undefined;
+  const unmetDependencyKeys = dependencies
+    .filter(
+      (dependency) =>
+        !dependency.known ||
+        (!dependency.archived && dependency.stage !== BOARD_SEED_STAGE_IDS.done),
+    )
+    .map((dependency) => dependency.key);
+  const restartBlocked =
+    mergeStageId !== card.stage &&
+    isBoardStageAtOrAfterBuild(stageState, card.stage) &&
+    unmetDependencyKeys.length > 0;
   const stageRestart = resolveBoardThreadStageRestart({
     autoExecute: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
     stageLabel: boardStageLabel(stages, card.stage),
     runInFlight: isBoardCardRunInFlight(cardShell),
     stalled: stepStalled,
+    blockedReason: restartBlocked ? boardStageRestartBlockedReason(unmetDependencyKeys) : null,
   });
   /** What the failure banner renders (t3o-30, D3). Gated on `stalled` rather
       than on `stepError` alone: the error text sits on the run row until the
@@ -818,11 +831,8 @@ export function BoardCardDetail({
   // prompt through the same envelope the automatic trigger uses, so the two
   // entry points cannot drift. Failure logs and stops (D4).
   const restartStage = () => {
-    void startStageThread({ environmentId, input: { cardId: card.id } }).then((result) => {
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        console.warn("Could not start a stage thread for the card.", result);
-      }
-    });
+    setFeedback(null);
+    runCommand(startStageThread({ environmentId, input: { cardId: card.id } }));
   };
 
   // "New blank thread" (D3): a real server thread with no first turn, linked so

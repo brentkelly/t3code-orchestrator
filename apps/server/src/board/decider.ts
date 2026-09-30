@@ -253,6 +253,18 @@ function subBoardDependencyScopeViolation(input: {
     : null;
 }
 
+/** Move and start-stage-thread name unmet deps the same way: `KEY "title"`. */
+function formatUnmetDependencies(board: BoardState, unmet: ReadonlyArray<BoardCardId>): string {
+  return unmet
+    .map((dependencyId) => {
+      const dependency = board.cards.find((existing) => existing.id === dependencyId);
+      return dependency === undefined
+        ? `a card that no longer exists ('${dependencyId}')`
+        : `${dependency.key} "${dependency.title}"`;
+    })
+    .join(", ");
+}
+
 /**
  * First dependency edge of `proposed` whose addition closes a cycle, with
  * the closing path for the rejection message. The graph is every card's
@@ -1127,17 +1139,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           cards: board.cards,
         });
         if (unmet.length > 0) {
-          const names = unmet.map((dependencyId) => {
-            const dependency = board.cards.find((existing) => existing.id === dependencyId);
-            return dependency === undefined
-              ? `a card that no longer exists ('${dependencyId}')`
-              : `${dependency.key} "${dependency.title}"`;
-          });
+          const names = formatUnmetDependencies(board, unmet);
           return yield* invariant(
             command,
             `Card '${card.key}' cannot enter '${command.toStage}' until ${
-              names.length === 1 ? "its dependency is" : "its dependencies are"
-            } done: ${names.join(", ")}.`,
+              unmet.length === 1 ? "its dependency is" : "its dependencies are"
+            } done: ${names}.`,
           );
         }
       }
@@ -3239,9 +3246,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           cards: board.cards,
         });
         if (unmet.length > 0) {
+          const names = formatUnmetDependencies(board, unmet);
           return yield* invariant(
             command,
-            `Card '${card.key}' cannot start a thread in '${card.stage}' with unmet dependencies: ${unmet.join(", ")}.`,
+            `Card '${card.key}' cannot start a thread in '${card.stage}' until ${
+              unmet.length === 1 ? "its dependency is" : "its dependencies are"
+            } done: ${names}.`,
           );
         }
       }

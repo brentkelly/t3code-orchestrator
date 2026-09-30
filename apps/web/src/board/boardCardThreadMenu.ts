@@ -17,6 +17,13 @@ import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 export const BOARD_STAGE_RESTART_IN_FLIGHT_REASON =
   "A run is already in flight for this card — drag it out and back to restart.";
 
+/** Disable restart when D11 would refuse `start-stage-thread` (#142). */
+export function boardStageRestartBlockedReason(unmetKeys: ReadonlyArray<string>): string {
+  if (unmetKeys.length === 0) return "This card is blocked by unmet dependencies.";
+  if (unmetKeys.length === 1) return `Blocked until ${unmetKeys[0]} is done.`;
+  return `Blocked until ${unmetKeys.join(", ")} are done.`;
+}
+
 /**
  * Whether a supervised run is in flight for the card (t3o-14 D1). The step-state
  * read model is server-only, so the client reads the card shell's derived live
@@ -66,11 +73,15 @@ export function resolveBoardThreadStageRestart(input: {
   readonly runInFlight: boolean;
   /** Whether the card's live step has given up (t3o-17, D3). */
   readonly stalled: boolean;
+  /** Non-null when start-stage-thread would be refused for unmet deps (#142). */
+  readonly blockedReason?: string | null;
 }): BoardThreadStageRestart | null {
   if (!input.autoExecute && !input.stalled) return null;
   return {
     label: input.stageLabel,
-    disabledReason: input.runInFlight ? BOARD_STAGE_RESTART_IN_FLIGHT_REASON : null,
+    disabledReason: input.runInFlight
+      ? BOARD_STAGE_RESTART_IN_FLIGHT_REASON
+      : (input.blockedReason ?? null),
   };
 }
 
