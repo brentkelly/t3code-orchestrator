@@ -55,6 +55,8 @@ const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
 const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
+// T3o: the untracked fallback spawns one git process per file; bound it (#128).
+const REVIEW_UNTRACKED_DIFF_MAX_FILES = 200;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 // Patches the clients render are parsed against git's default a/ and b/ path
 // prefixes. A repository or global diff.noprefix or diff.mnemonicPrefix would
@@ -2280,39 +2282,60 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { diff: "", truncated: untrackedResult.stdoutTruncated };
     }
 
+    // T3o: diff at most REVIEW_UNTRACKED_DIFF_MAX_FILES files, and stop spawning once the
+    // combined output passes the tracked-diff cap; either marks the result truncated (#128).
+    const pathsToDiff = untrackedPaths.slice(0, REVIEW_UNTRACKED_DIFF_MAX_FILES);
+    let diffedBytes = 0;
+    let skippedForOutputCap = false;
+
     const diffs = yield* Effect.forEach(
-      untrackedPaths,
+      pathsToDiff, // T3o: was `untrackedPaths` (#128).
       (relativePath) =>
-        executeGit(
-          "GitVcsDriver.readUntrackedReviewDiffs.diff",
-          cwd,
-          [
-            "diff",
-            "--no-index",
-            "--patch",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--minimal",
-            ...PATCH_RENDER_PREFIX_ARGS,
-            "--",
-            "/dev/null",
-            relativePath,
-          ],
-          {
-            allowNonZeroExit: true,
-            maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
-            appendTruncationMarker: true,
-          },
-        ),
+        // T3o: skip the spawn once the combined output passes the cap (#128).
+        Effect.suspend(() => {
+          if (diffedBytes >= REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES) {
+            skippedForOutputCap = true;
+            return Effect.succeed(null);
+          }
+          return executeGit(
+            "GitVcsDriver.readUntrackedReviewDiffs.diff",
+            cwd,
+            [
+              "diff",
+              "--no-index",
+              "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--minimal",
+              ...PATCH_RENDER_PREFIX_ARGS,
+              "--",
+              "/dev/null",
+              relativePath,
+            ],
+            {
+              allowNonZeroExit: true,
+              maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
+              appendTruncationMarker: true,
+            },
+          ).pipe(Effect.tap((result) => Effect.sync(() => (diffedBytes += result.stdout.length))));
+        }),
       { concurrency: 4 },
     );
 
     return {
+      // T3o: `null` entries are paths skipped for the output cap (#128).
       diff: Arr.filterMap(diffs, (result) =>
-        result.stdout.trim().length > 0 ? Result.succeed(result.stdout) : Result.failVoid,
+        result !== null && result.stdout.trim().length > 0
+          ? Result.succeed(result.stdout)
+          : Result.failVoid,
       ).join("\n"),
-      truncated: untrackedResult.stdoutTruncated || diffs.some((result) => result.stdoutTruncated),
+      truncated:
+        untrackedResult.stdoutTruncated ||
+        // T3o: file-count and combined-output caps (#128).
+        pathsToDiff.length < untrackedPaths.length ||
+        skippedForOutputCap ||
+        diffs.some((result) => result !== null && result.stdoutTruncated),
     };
   });
 

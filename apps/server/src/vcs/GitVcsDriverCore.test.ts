@@ -1169,6 +1169,45 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    // T3o: the per-file untracked fallback is bounded (#128). With no HEAD the unified
+    // diff fails, so these previews go through `readUntrackedReviewDiffs`.
+    it.effect("caps the number of untracked files diffed by the fallback", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        for (let index = 0; index < 205; index += 1) {
+          yield* writeTextFile(cwd, `untracked-${String(index).padStart(3, "0")}.txt`, "x\n");
+        }
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
+
+        assert.strictEqual(source?.diff.match(/^diff --git /gm)?.length, 200);
+        assert.equal(source?.truncated, true);
+      }),
+    );
+
+    it.effect("stops diffing untracked files once the combined output passes the cap", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        const bigFile = `${"a".repeat(99)}\n`.repeat(500); // ~50KB, under the per-file cap
+        for (let index = 0; index < 12; index += 1) {
+          yield* writeTextFile(cwd, `big-${String(index).padStart(2, "0")}.txt`, bigFile);
+        }
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
+        const diffedFiles = source?.diff.match(/^diff --git /gm)?.length ?? 0;
+
+        assert.isAbove(diffedFiles, 0);
+        assert.isBelow(diffedFiles, 12);
+        assert.equal(source?.truncated, true);
+      }),
+    );
+
     it.effect("loads full file contents for working-tree diff expansion", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
