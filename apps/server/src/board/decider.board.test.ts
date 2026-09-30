@@ -584,7 +584,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         makeReadModel({ board: blockedIn("building") }),
       );
       assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
-      assert.include(String(failure), "unmet dependencies: card-dep");
+      assert.include(String(failure), 'CARD-7 "Ship the decider"');
 
       // Before the build role unmet dependencies block nothing, so a planning
       // restart still lands; and the merge role is exempt, because the
