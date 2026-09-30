@@ -102,6 +102,23 @@ describe("migratePersistedBoardUiState", () => {
     expect(migrated.lastLocationByMode.threads).toBeUndefined();
     expect(migrated.lastLocationByMode.board).toBe("/board");
   });
+
+  it("drops the tabless pull-requests page filed under threads (T3O-50)", () => {
+    const migrated = migratePersistedBoardUiState({
+      lastLocationByMode: { threads: "/pull-requests", board: "/board" },
+    });
+    expect(migrated.lastLocationByMode).toEqual({ board: "/board" });
+  });
+
+  it("repairs a store poisoned with a project-settings redirect under threads (T3O-50)", () => {
+    // `/projects/<key>` only ever redirects to `/settings/projects?project=<key>`,
+    // so a Threads tab pointing at it opened project settings on every click.
+    const migrated = migratePersistedBoardUiState({
+      mode: "threads",
+      lastLocationByMode: { threads: "/projects/github.com%2Fzeald%2Fcore.agent.advisor" },
+    });
+    expect(migrated.lastLocationByMode.threads).toBeUndefined();
+  });
 });
 
 describe("modeForHref", () => {
@@ -127,6 +144,11 @@ describe("modeForHref", () => {
     expect(modeForHref("/settings/board")).toBeNull();
     expect(modeForHref("/pair")).toBeNull();
     expect(modeForHref("/connect")).toBeNull();
+    // T3O-50: a redirect into project settings, and the full-page usage view.
+    expect(modeForHref("/projects/github.com%2Fzeald%2Fcore.agent.advisor")).toBeNull();
+    expect(modeForHref("/usage")).toBeNull();
+    // The first-run gate replaces a thread view's location with onboarding.
+    expect(modeForHref("/welcome")).toBeNull();
     // Same prefix rule as /board: a longer word is a different route.
     expect(modeForHref("/settingsish")).toBe("threads");
   });
@@ -153,6 +175,33 @@ describe("recordModeLocation", () => {
     // Opening settings updates the router location before ChatView unmounts,
     // so the still-mounted threads tab sees "/settings/general".
     useBoardUiStore.getState().recordModeLocation("threads", "/settings/general");
+    expect(useBoardUiStore.getState().lastLocationByMode.threads).toBe("/env-1/thread-1");
+  });
+
+  it("refuses to file a project link under threads, keeping the last thread (T3O-50)", () => {
+    resetStore();
+    useBoardUiStore.getState().recordModeLocation("threads", "/env-1/thread-1");
+    // A project link lands on `/projects/<key>` before redirecting to settings,
+    // and the router location changes while the thread view's tabs are mounted.
+    useBoardUiStore.getState().recordModeLocation("threads", "/projects/github.com%2Fzeald");
+    expect(useBoardUiStore.getState().lastLocationByMode.threads).toBe("/env-1/thread-1");
+  });
+
+  it("refuses to file onboarding under threads, keeping the last thread (T3O-50)", () => {
+    resetStore();
+    useBoardUiStore.getState().recordModeLocation("threads", "/env-1/thread-1");
+    // FirstRunGate replaces the location with /welcome while a thread view's
+    // tabs are still mounted.
+    useBoardUiStore.getState().recordModeLocation("threads", "/welcome");
+    expect(useBoardUiStore.getState().lastLocationByMode.threads).toBe("/env-1/thread-1");
+  });
+
+  it("refuses to file the tabless pull-requests page under threads (T3O-50)", () => {
+    resetStore();
+    useBoardUiStore.getState().recordModeLocation("threads", "/env-1/thread-1");
+    // The sidebar footer's Pull requests link moves the router while the thread
+    // view's tabs are still mounted; the Threads tab must keep leading back.
+    useBoardUiStore.getState().recordModeLocation("threads", "/pull-requests");
     expect(useBoardUiStore.getState().lastLocationByMode.threads).toBe("/env-1/thread-1");
   });
 });

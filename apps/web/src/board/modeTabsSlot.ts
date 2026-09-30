@@ -9,7 +9,7 @@
  * silently wrong on some of those combinations, and wrong here means two
  * pieces of chrome overlapping in the app's most visible row.
  */
-import { modeForHref } from "./boardUiStore";
+import { isTablessLocation, modeForHref } from "./boardUiStore";
 
 /**
  * The rendered width of `BoardModeTabs` with both labels showing: two
@@ -33,18 +33,14 @@ const MODE_TABS_SLOT_GUTTER = 24;
 export const MODE_TABS_MIN_WIDTH = MODE_TABS_WIDTH + MODE_TABS_SLOT_GUTTER;
 
 /**
- * Workspace routes that render a top bar with no mode tabs today. Usage, pull
- * requests and project settings are footer destinations, not a mode — giving
- * their sidebar header tabs would invent an entry point rather than move one
- * (D9). `modeForHref` already rules out settings, pairing, connect and the
- * board itself.
+ * True at the locations whose top bar carries the tabs today. Tabless pages
+ * (pull requests, a footer destination rather than a mode) get no sidebar
+ * header tabs either — that would invent an entry point rather than move one
+ * (D9). `modeForHref` already rules out settings, pairing, connect,
+ * onboarding, usage, project links and the board itself.
  */
-const TABLESS_ROOTS = ["/usage", "/pull-requests", "/projects"];
-
-/** True at the locations whose top bar carries the tabs today. */
 export function locationHasModeTabs(pathname: string): boolean {
-  if (modeForHref(pathname) !== "threads") return false;
-  return !TABLESS_ROOTS.some((root) => pathname === root || pathname.startsWith(`${root}/`));
+  return modeForHref(pathname) === "threads" && !isTablessLocation(pathname);
 }
 
 export function shouldSidebarHostModeTabs({
