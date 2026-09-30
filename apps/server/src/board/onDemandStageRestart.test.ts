@@ -312,3 +312,23 @@ it.effect("restarts a card whose stage has no run row at all", () =>
     assert.strictEqual(outcome.state?.status, "running");
   }),
 );
+
+it.effect("drops a request for a stage that runs nothing — no promptless thread", () =>
+  Effect.gen(function* () {
+    // Backlog ships with auto-execute off and no prompt: there is no stage work
+    // to restart, so the request must not spawn an empty thread for it.
+    const outcome = yield* restartOutcome({
+      card: {
+        ...makeBoardCard({ id: "card-1", stage: String(BOARD_SEED_STAGE_IDS.backlog) }),
+        threadLinks: [],
+      } as BoardCard,
+      stepStates: [],
+    });
+
+    assert.isNull(outcome.state);
+    assert.notInclude(
+      outcome.commands.map((command) => command.type),
+      "board.card.select-step",
+    );
+  }),
+);
