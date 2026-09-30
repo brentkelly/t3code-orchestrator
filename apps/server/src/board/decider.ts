@@ -238,6 +238,22 @@ function requireLiveStepState(input: {
 }
 
 /**
+ * The rejection for a sub-board child's dependency that is not a sibling
+ * (t3o-25, as materialised edges are scoped): a child may never depend on a
+ * top-level card or another sub-board's child, or the out-of-scope edge
+ * freezes the whole split behind it. `null` when in scope, or when the card
+ * is top-level — create and update share this so neither path can drift.
+ */
+function subBoardDependencyScopeViolation(input: {
+  readonly parentCardId: BoardCardId | null;
+  readonly dependency: BoardCard;
+}): string | null {
+  return input.parentCardId !== null && input.dependency.parentCardId !== input.parentCardId
+    ? `Dependency '${input.dependency.id}' is not a sibling in parent '${input.parentCardId}''s sub-board.`
+    : null;
+}
+
+/**
  * First dependency edge of `proposed` whose addition closes a cycle, with
  * the closing path for the rejection message. The graph is every card's
  * `dependsOn` with `cardId`'s list replaced by the proposed one.
@@ -821,16 +837,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         if (dependency === undefined) {
           return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
         }
-        // A child may only depend on siblings (t3o-25, as materialised edges
-        // are scoped): never on a top-level card or another sub-board's child.
-        if (
-          command.parentCardId !== undefined &&
-          dependency.parentCardId !== command.parentCardId
-        ) {
-          return yield* invariant(
-            command,
-            `Dependency '${dependencyId}' is not a sibling in parent '${command.parentCardId}''s sub-board.`,
-          );
+        const scopeViolation = subBoardDependencyScopeViolation({
+          parentCardId: command.parentCardId ?? null,
+          dependency,
+        });
+        if (scopeViolation !== null) {
+          return yield* invariant(command, scopeViolation);
         }
       }
 
@@ -1321,8 +1333,18 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.dependsOn === undefined ? undefined : [...new Set(command.dependsOn)];
       if (proposedDependsOn !== undefined) {
         for (const dependencyId of proposedDependsOn) {
-          if (!board.cards.some((candidate) => candidate.id === dependencyId)) {
+          const dependency = board.cards.find((candidate) => candidate.id === dependencyId);
+          if (dependency === undefined) {
             return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
+          }
+          // The same sibling-only scope create enforces, keyed on the card's
+          // own parent since an update cannot change it.
+          const scopeViolation = subBoardDependencyScopeViolation({
+            parentCardId: card.parentCardId,
+            dependency,
+          });
+          if (scopeViolation !== null) {
+            return yield* invariant(command, scopeViolation);
           }
         }
         const cycle = findDependencyCycle({
@@ -3202,6 +3224,27 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // request event the supervisor reactor reacts to. The reactor decides
       // first-entry-vs-re-entry and whether the stage auto-executes.
       const card = yield* requireActiveBoardCard({ board, command });
+      // The dependency gate (D11) the move and create paths apply, here too: a
+      // restart is otherwise the one way to spawn a thread for a card whose
+      // dependencies are unmet. Derived live rather than read off `blocked`, as
+      // the move and create gates are. The merge role is exempt — its only run
+      // is the conflict fix the supervisor dispatches through this command, for
+      // a merge a human already initiated.
+      const stage = boardStageById(board, card.stage);
+      const mergeRole = stage !== null && effectiveBoardStageRole(stage) === "merge";
+      if (!mergeRole && isBoardStageAtOrAfterBuild(board, card.stage)) {
+        const unmet = unmetBoardCardDependencies({
+          board,
+          dependsOn: card.dependsOn,
+          cards: board.cards,
+        });
+        if (unmet.length > 0) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' cannot start a thread in '${card.stage}' with unmet dependencies: ${unmet.join(", ")}.`,
+          );
+        }
+      }
       return {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,

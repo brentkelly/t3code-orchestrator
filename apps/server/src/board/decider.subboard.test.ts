@@ -1031,6 +1031,43 @@ it.layer(NodeServices.layer)("sub-board child create (t3o-25)", (it) => {
     }),
   );
 
+  it.effect("refuses the same out-of-scope dependency on update as on create", () =>
+    Effect.gen(function* () {
+      const updateDependsOn = (dependsOn: ReadonlyArray<string>): BoardCommand => ({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-update-child"),
+        cardId: BoardCardId.make("card-child"),
+        dependsOn: dependsOn.map((id) => BoardCardId.make(id)),
+        createdAt: NOW,
+      });
+      const board = makeBoard({
+        extraCards: [
+          makeChild("card-child", "ready"),
+          makeChild("card-sibling", "ready"),
+          makeCard({ id: "card-top", key: "T3-1", stage: "ready" }),
+          makeCard({ id: "card-other-parent", key: "T3-2", stage: "building" }),
+          makeCard({
+            id: "card-cousin",
+            key: "T3-3",
+            stage: "ready",
+            parentCardId: BoardCardId.make("card-other-parent"),
+          }),
+        ],
+      });
+
+      // A top-level card and another sub-board's child are both out of scope.
+      const topLevel = yield* decideFail(updateDependsOn(["card-top"]), makeReadModel(board));
+      assert.include(String(topLevel), "not a sibling");
+      const cousin = yield* decideFail(updateDependsOn(["card-cousin"]), makeReadModel(board));
+      assert.include(String(cousin), "not a sibling");
+
+      const events = yield* decideEvents(updateDependsOn(["card-sibling"]), makeReadModel(board));
+      const event = events[0]!;
+      assert.ok(event.type === "board.card-updated");
+      expect(event.payload.card.dependsOn).toEqual([BoardCardId.make("card-sibling")]);
+    }),
+  );
+
   it.effect("refuses a missing or archived parent", () =>
     Effect.gen(function* () {
       const missing = yield* decideFail(
