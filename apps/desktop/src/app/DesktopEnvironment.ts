@@ -17,6 +17,8 @@ import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import type { OtlpProtocol } from "@t3tools/shared/observability";
+// T3o: the desktop app's own identity (T3O-1).
+import { T3O_PRODUCT_NAME, t3oDesktopIdentity } from "@t3tools/shared/t3oIdentity";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -91,7 +93,8 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
+// T3o: windows, menus and the about panel say T3o.
+const APP_BASE_NAME = T3O_PRODUCT_NAME;
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -184,8 +187,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  // T3o: own Electron profile (and single-instance lock), so T3o runs beside T3 Code.
+  const userDataDirName = t3oDesktopIdentity(isDevelopment).userDataDirName;
+  // T3o: never adopt T3 Code's legacy profile; T3o starts clean.
+  const legacyUserDataDirName = userDataDirName;
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -232,11 +237,14 @@ const make = Effect.fn("desktop.environment.make")(function* (
     otlpProtocol: config.otlpProtocol,
     branding,
     displayName,
-    appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+    appUserModelId: Option.getOrElse(
+      config.appUserModelIdOverride,
+      // T3o: own Windows AUMID.
+      () => t3oDesktopIdentity(isDevelopment).appUserModelId,
     ),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    // T3o: own window class.
+    linuxWmClass: t3oDesktopIdentity(isDevelopment).linuxWmClass,
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     userDataDirName,

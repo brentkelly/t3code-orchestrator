@@ -1,8 +1,11 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+// T3o: the fork's release page.
+import { T3O_RELEASES_URL } from "@t3tools/shared/t3oIdentity";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
-const DESKTOP_RELEASE_HISTORY_URL = "https://github.com/pingdotgg/t3code/releases";
+// T3o: release notes and history live on the fork.
+const DESKTOP_RELEASE_HISTORY_URL = T3O_RELEASES_URL;
 const DESKTOP_RELEASE_TAG_URL = `${DESKTOP_RELEASE_HISTORY_URL}/tag`;
 
 /**
