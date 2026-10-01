@@ -1904,6 +1904,13 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
       back to Code review is a move that otherwise explains nothing, and
       `card-moved` says where but never why. */
   "card-review-round-requested",
+  /** A finished card's worktree was kept because removing it would lose work
+      (T3O-52, D5). Written only when the REASON changes, so a refusal repeated
+      on every card open stays one row. */
+  "card-worktree-kept",
+  /** A card's worktree was removed — on its own, or `forced` by a human's
+      "Remove worktree" (T3O-52, D5). */
+  "card-worktree-removed",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -1981,6 +1988,8 @@ export const BoardCardActivityPayload = Schema.Struct({
   /** The pull-request rows: which PR, and what state it moved to. */
   prNumber: Schema.optionalKey(PositiveInt),
   prState: Schema.optionalKey(BoardCardPullRequestState),
+  /** card-worktree-removed: a human forced it past the safety rule. */
+  forced: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCardActivityPayload = typeof BoardCardActivityPayload.Type;
 
@@ -4202,6 +4211,8 @@ export const BoardCardReclaimWorktreeCommand = Schema.Struct({
   outcome: BoardCardWorktreeReclaimOutcome,
   /** Present when `outcome` is `blocked`: why the worktree was kept. */
   reason: Schema.optional(TrimmedNonEmptyString),
+  /** A human's "Remove worktree" (T3O-52, D5): removed past the safety rule. */
+  forced: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardReclaimWorktreeCommand = typeof BoardCardReclaimWorktreeCommand.Type;
@@ -5072,6 +5083,13 @@ export const BoardCardWorktreeReclaimedPayload = Schema.Struct({
   cardId: BoardCardId,
   outcome: BoardCardWorktreeReclaimOutcome,
   reason: Schema.NullOr(TrimmedNonEmptyString),
+  /** T3O-52 (D5): `removed` past the safety rule by a human. */
+  forced: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** T3O-52 (D5): a `blocked` outcome whose reason differs from the one the
+      card already held. Computed by the DECIDER, which holds the prior card,
+      so the projection rails a refusal once rather than on every repeat. False
+      for events written before it existed, which therefore add no row. */
+  reasonChanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   card: BoardCard,
 });
 export type BoardCardWorktreeReclaimedPayload = typeof BoardCardWorktreeReclaimedPayload.Type;
@@ -5670,6 +5688,15 @@ export const BoardCardShell = Schema.Struct({
       precisely the reconnect flicker `cardMetaShellFields.test.ts` exists to
       catch. Draws the small grey `Auto` glyph, in the merge-role stage only. */
   autoMergeArmed: Schema.optionalKey(Schema.Boolean),
+  /** Whether the card still holds a worktree on disk (T3O-52, D5), absent when
+      it does not. Half of the amber "Worktree kept" flag: the other half — is
+      the card archived, or in the done-role stage with `reclaimWorktreeOnDone`
+      on — needs settings the SQL snapshot producer cannot see, so the client
+      derives the flag (`boardCardWorktreeKept`), exactly like `autoMergeArmed`. */
+  worktreeReady: Schema.optionalKey(Schema.Boolean),
+  /** Why the last reclaim kept the worktree (`reclaimBlockedReason`), absent
+      when none has. */
+  worktreeKeptReason: Schema.optionalKey(TrimmedNonEmptyString),
   /** The card's linked pull request number, absent when it has none. Sourced
       from `BoardCard.pullRequest`, so — unlike `briefHasImage` / `planCount` —
       it is on the aggregate and every card-carrying delta asserts it; there is
@@ -5827,6 +5854,31 @@ function boundShellTitle(title: string): string {
 }
 
 /**
+ * Whether a card shows the amber "Worktree kept" flag (T3O-52, D5): it still
+ * holds a worktree AND it is finished with it — archived, or in the done-role
+ * stage while `reclaimWorktreeOnDone` is on. With the setting off a Done card
+ * keeping its worktree is the intended state, so it is not flagged.
+ *
+ * A pure derivation rather than a stored state, so it cannot go stale: the
+ * moment the worktree goes, or the card leaves Done, the flag goes with it.
+ */
+export function boardCardWorktreeKept(input: {
+  readonly worktreeReady: boolean;
+  readonly archived: boolean;
+  readonly inDoneStage: boolean;
+  readonly reclaimWorktreeOnDone: boolean;
+}): boolean {
+  if (!input.worktreeReady) return false;
+  return input.archived || (input.inDoneStage && input.reclaimWorktreeOnDone);
+}
+
+/** The flag's tooltip/banner text: the recorded refusal, or — when no reclaim
+    has run since the card got there — that one has not yet. */
+export function boardCardWorktreeKeptReason(reason: string | null | undefined): string {
+  return reason ?? "Cleanup hasn't run yet";
+}
+
+/**
  * Shell assembly shared by every producer (SQL snapshot rows, event-carried
  * cards, tests), so the not-yet-sourced fields are hardcoded in exactly one
  * place with their owning specs documented on the schema above.
@@ -5919,6 +5971,10 @@ export function makeBoardCardShell(input: {
   readonly autoMergeHeldSince?: IsoDateTime | null | undefined;
   readonly autoMergeGaveUp?: boolean | null | undefined;
   readonly autoMergeArmed?: boolean | null | undefined;
+  /** The worktree pair (T3O-52, D5). On the card aggregate like the auto-merge
+      trio, so both producers carry it; `cardMetaShellFields.test.ts` pins it. */
+  readonly worktreeReady?: boolean | null | undefined;
+  readonly worktreeKeptReason?: string | null | undefined;
   /** The card's review-loop summary (t3o-22, D7), or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -5993,6 +6049,12 @@ export function makeBoardCardShell(input: {
     ...(input.autoMergeHeldSince == null ? {} : { autoMergeHeldSince: input.autoMergeHeldSince }),
     ...(input.autoMergeGaveUp === true ? { autoMergeGaveUp: true } : {}),
     ...(input.autoMergeArmed === true ? { autoMergeArmed: true } : {}),
+    // The worktree pair (T3O-52, D5): omitted when there is nothing on disk,
+    // so a card without a worktree costs what it did before.
+    ...(input.worktreeReady === true ? { worktreeReady: true } : {}),
+    ...(input.worktreeReady === true && input.worktreeKeptReason != null
+      ? { worktreeKeptReason: input.worktreeKeptReason }
+      : {}),
     // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -6074,6 +6136,8 @@ export function boardCardShellFromCard(
     // compute is exactly the reconnect-flicker `cardMetaShellFields.test.ts`
     // exists to catch.
     autoMergeArmed: card.parentCardId !== null || card.autoMerge,
+    worktreeReady: card.worktree?.status === "ready",
+    worktreeKeptReason: card.worktree?.reclaimBlockedReason ?? null,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined
@@ -6799,6 +6863,10 @@ export const BOARD_WS_METHODS = {
       moves, or the executor re-plans a converged loop, completes `succeeded`,
       and bounces the card straight back to Ready for merge. */
   requestReviewRound: "board.requestReviewRound",
+  /** "Remove worktree" on a finished card that kept one (T3O-52, D5): remove
+      it past the safety rule, after a confirm dialog. The branch is kept. An
+      RPC because the git removal must land before the record does. */
+  removeCardWorktree: "board.removeCardWorktree",
   /** Claim a pending upload into the card's folder and record it on the brief
       (t3o-32, K2). An RPC, not a client command: the copy is a filesystem
       side effect that must land before the record does. */
@@ -6969,6 +7037,20 @@ export const BoardRequestReviewRoundResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("failed") }),
 ]);
 export type BoardRequestReviewRoundResult = typeof BoardRequestReviewRoundResult.Type;
+
+/** What "Remove worktree" did (T3O-52, D5). */
+export const BoardRemoveCardWorktreeResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("removed") }),
+  /** Nothing on disk to remove — it already went. */
+  Schema.Struct({ outcome: Schema.Literal("no-worktree") }),
+  /** The card is neither archived nor in Done, so its agent may still be
+      writing to the checkout. The action renders only on finished cards, so
+      this answers a stale client. */
+  Schema.Struct({ outcome: Schema.Literal("not-finished") }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+  Schema.Struct({ outcome: Schema.Literal("failed") }),
+]);
+export type BoardRemoveCardWorktreeResult = typeof BoardRemoveCardWorktreeResult.Type;
 
 export const BoardSubscribeCardInput = Schema.Struct({
   cardId: BoardCardId,
@@ -7226,6 +7308,11 @@ export const BOARD_RPCS = [
     success: BoardRequestReviewRoundResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.removeCardWorktree, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardRemoveCardWorktreeResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.submitCardForMerge, {
     payload: BoardCardPullRequestActionInput,
     success: BoardSubmitCardForMergeResult,
@@ -7271,6 +7358,7 @@ export const BOARD_RPC_SCOPES = {
   // and moves the card: the same mutation tier as merging.
   [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.removeCardWorktree]: AuthOrchestrationOperateScope,
   // Attaching writes a file and a board event; detaching deletes one. Both
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,

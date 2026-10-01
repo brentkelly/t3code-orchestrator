@@ -124,6 +124,11 @@ export const submitBoardCardForMerge = (input: { readonly cardId: BoardCardId })
 export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.requestReviewRound, input);
 
+/** "Remove worktree" on a finished card that kept one (T3O-52): removes it
+    past the safety rule. The branch is kept. */
+export const removeBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.removeCardWorktree, input);
+
 /** Claim a pending upload onto a card's brief (t3o-32): the server copies the
     file into the card's folder and records it, in that order. */
 export const attachBoardCardFile = (input: BoardAttachCardFileInput) =>

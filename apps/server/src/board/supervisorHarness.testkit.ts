@@ -580,6 +580,13 @@ export function withGovernor(
         can drive the reclaim refusal — the case where the checkout holds work
         that exists nowhere else and must NOT be deleted to save disk. */
     readonly worktreeDirty?: boolean;
+    /** Make the durability probe find the worktree's commits nowhere else
+        (T3O-52, D1): no remote ref contains HEAD and two commits are unmerged.
+        Durable by default, since that is what a merged card looks like. */
+    readonly worktreeUndurable?: boolean;
+    /** What `git worktree list --porcelain` answers for the orphan sweep
+        (T3O-52, D4). Empty by default: no registered worktrees. */
+    readonly registeredWorktrees?: string;
     /** The cached todo state per thread id (t3o-18): the reactor reads
         `advancedAt` for the stall-reset / timeout-liveness signal and `hasList`
         for the recovery nudge. Absent threads answer "no list". */
@@ -876,9 +883,6 @@ export function withGovernor(
       // so the cleanup at Done silently did nothing in every test that reached
       // it — which is why nothing in these suites asserted that it fires.
       resolvePrimaryRemoteName: () => Effect.succeed("origin"),
-      // Reclaim's clean-and-pushed gate. Clean and pushed by default, since
-      // that is what a card whose pull request has merged looks like; a suite
-      // testing the refusal sets `worktreeDirty`.
       statusDetails: () =>
         Effect.succeed({
           hasWorkingTreeChanges: input.worktreeDirty === true,
@@ -935,6 +939,40 @@ export function withGovernor(
           return input.remoteOnlyBranches?.includes(name) === true
             ? Effect.succeed({ stdout: "remote-tip", stderr: "", exitCode: 0 })
             : Effect.succeed({ stdout: "", stderr: "", exitCode: 1 });
+        }
+        // The reclaim durability probe (T3O-52, D1). `status --porcelain` is
+        // the dirty check; the ancestry, remote-containment and unmerged-count
+        // reads answer "durable" unless the fixture says otherwise.
+        if (request.args?.[0] === "status" && request.args[1] === "--porcelain") {
+          return Effect.succeed({
+            stdout: input.worktreeDirty === true ? " M README.md\n" : "",
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+        if (request.args?.[0] === "merge-base" && request.args[1] === "--is-ancestor") {
+          return Effect.succeed({
+            stdout: "",
+            stderr: "",
+            exitCode: input.worktreeUndurable === true ? 1 : 0,
+          });
+        }
+        if (request.args?.[0] === "for-each-ref" && request.args[1] === "--contains") {
+          return Effect.succeed({
+            stdout: input.worktreeUndurable === true ? "" : "refs/remotes/origin/main\n",
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+        if (request.args?.[0] === "rev-list" && request.args[1] === "--count") {
+          return Effect.succeed({ stdout: "2\n", stderr: "", exitCode: 0 });
+        }
+        if (request.args?.[0] === "worktree" && request.args[1] === "list") {
+          return Effect.succeed({
+            stdout: input.registeredWorktrees ?? "",
+            stderr: "",
+            exitCode: 0,
+          });
         }
         if (request.args?.[0] === "branch" && request.args[1] !== undefined) {
           createdBranches.add(request.args[1]);

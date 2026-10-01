@@ -3073,6 +3073,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // service refused because deleting would lose work; the card keeps its
       // worktree and records why, never silently discarding uncommitted work.
       const reason = command.reason ?? null;
+      const blockedReason = reason ?? "Worktree not clean and pushed.";
       const nextCard: BoardCard =
         command.outcome === "removed"
           ? {
@@ -3089,7 +3090,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
               ...card,
               worktree: {
                 ...card.worktree,
-                reclaimBlockedReason: reason ?? "Worktree not clean and pushed.",
+                reclaimBlockedReason: blockedReason,
               },
               updatedAt: command.createdAt,
             };
@@ -3103,8 +3104,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         payload: {
           cardId: command.cardId,
           outcome: command.outcome,
-          reason:
-            command.outcome === "removed" ? null : (reason ?? "Worktree not clean and pushed."),
+          reason: command.outcome === "removed" ? null : blockedReason,
+          forced: command.outcome === "removed" && command.forced === true,
+          // T3O-52 (D5): the rail gets one row per distinct refusal, not one
+          // per attempt — a kept worktree is re-checked on every card open.
+          reasonChanged:
+            command.outcome === "blocked" && card.worktree.reclaimBlockedReason !== blockedReason,
           card: nextCard,
         },
       };

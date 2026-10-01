@@ -602,6 +602,11 @@ const BoardCardShellDbRow = Schema.Struct({
   autoMergeHeldSince: Schema.NullOr(IsoDateTime),
   autoMergeGaveUp: Schema.Int,
   autoMergeArmed: Schema.Int,
+  /** The worktree pair (T3O-52, D5): whether one is on disk, and why the last
+      reclaim kept it. Derived in SQL here and in JS on the delta path;
+      `cardMetaShellFields.test.ts` pins the pair. */
+  worktreeReady: Schema.Int,
+  worktreeKeptReason: Schema.NullOr(Schema.String),
   /** The review-summary CACHE (t3o-22, D7); NULL for a card with no review
       history. Its `outcome` is provisional — `resolveBoardCardReviewOutcome`
       settles it against the card's live step at assembly. */
@@ -991,6 +996,11 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- very flicker the pair test exists to prevent.
         CASE WHEN auto_merge <> 0 OR parent_card_id IS NOT NULL THEN 1 ELSE 0 END
           AS "autoMergeArmed",
+        -- The SECOND producer of the worktree pair (T3O-52, D5); the delta
+        -- path reads the same two facts off the aggregate's worktree.
+        CASE WHEN json_extract(worktree, '$.status') = 'ready' THEN 1 ELSE 0 END
+          AS "worktreeReady",
+        json_extract(worktree, '$.reclaimBlockedReason') AS "worktreeKeptReason",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1057,6 +1067,11 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- very flicker the pair test exists to prevent.
         CASE WHEN auto_merge <> 0 OR parent_card_id IS NOT NULL THEN 1 ELSE 0 END
           AS "autoMergeArmed",
+        -- The SECOND producer of the worktree pair (T3O-52, D5); the delta
+        -- path reads the same two facts off the aggregate's worktree.
+        CASE WHEN json_extract(worktree, '$.status') = 'ready' THEN 1 ELSE 0 END
+          AS "worktreeReady",
+        json_extract(worktree, '$.reclaimBlockedReason') AS "worktreeKeptReason",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -2843,8 +2858,31 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       // column rides `board_cards` with the rest of the aggregate.
       case "board.card-worktree-provisioning":
       case "board.card-worktree-ready":
+        yield* upsertCard(event.payload.card);
+        return;
+
       case "board.card-worktree-reclaimed":
         yield* upsertCard(event.payload.card);
+        // T3O-52 (D5): a removal is disk given back, and a kept worktree is a
+        // card holding disk it is finished with — both are worth a row. A
+        // REPEATED refusal is not: the decider marks only a changed reason.
+        if (event.payload.outcome === "removed") {
+          yield* recordActivity({
+            event,
+            cardId: event.payload.cardId,
+            kind: "card-worktree-removed",
+            payload: event.payload.forced ? { forced: true } : {},
+            threadId: null,
+          });
+        } else if (event.payload.reasonChanged && event.payload.reason !== null) {
+          yield* recordActivity({
+            event,
+            cardId: event.payload.cardId,
+            kind: "card-worktree-kept",
+            payload: { detail: event.payload.reason },
+            threadId: null,
+          });
+        }
         return;
 
       case "board.label-created":
@@ -3458,6 +3496,8 @@ export function withBoardShellCards(
           autoMergeHeldSince: row.autoMergeHeldSince,
           autoMergeGaveUp: row.autoMergeGaveUp !== 0,
           autoMergeArmed: row.autoMergeArmed !== 0,
+          worktreeReady: row.worktreeReady !== 0,
+          worktreeKeptReason: row.worktreeKeptReason,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
           // it here as well would give the snapshot and the `card-review`
@@ -3553,6 +3593,8 @@ export function withBoardArchivedShellCards(
             autoMergeHeldSince: row.autoMergeHeldSince,
             autoMergeGaveUp: row.autoMergeGaveUp !== 0,
             autoMergeArmed: row.autoMergeArmed !== 0,
+            worktreeReady: row.worktreeReady !== 0,
+            worktreeKeptReason: row.worktreeKeptReason,
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),

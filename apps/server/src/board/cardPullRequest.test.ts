@@ -1077,9 +1077,12 @@ describe("branch cleanup at Done", () => {
             const done = { ...card, stage: BOARD_SEED_STAGE_IDS.done };
             yield* h.pumpDomain(doneMove(done, 1));
             // Still open: the commits do not live in the base branch, so the
-            // branch is the only place the work exists. Nothing is deleted.
+            // branch is the only place the work exists. It is not deleted.
             assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "open");
-            assert.deepEqual(yield* h.removedWorktrees, []);
+            assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
+            // The CHECKOUT may go, though (T3O-52, D2): the open pull request's
+            // branch is on the remote, so removing it loses nothing.
+            assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
           }),
       );
     }),
@@ -1136,7 +1139,7 @@ describe("branch cleanup at Done", () => {
             assert.deepEqual(yield* h.removedWorktrees, []);
             const settled = (yield* h.board).cards[0]!;
             assert.equal(settled.worktree?.status, "ready");
-            assert.match(String(settled.worktree?.reclaimBlockedReason), /uncommitted changes/);
+            assert.equal(settled.worktree?.reclaimBlockedReason, "1 uncommitted change (README.md)");
           }),
       );
     }),
@@ -1220,18 +1223,18 @@ describe("branch cleanup at Done", () => {
     }),
   );
 
-  it.effect("does not re-attempt a reclaim it was already refused", () =>
+  it.effect("re-attempts a refused reclaim at boot, and says nothing new if it is refused again", () =>
     Effect.gen(function* () {
-      // A dirty tree leaves `status: "ready"` on purpose — the card keeps its
-      // worktree and says why — so `ready` alone cannot retire the card from
-      // the boot sweep, and it would match on every restart forever. The
-      // refusal reason is the durable marker that it has been tried.
+      // T3O-52 (D4): a refusal no longer retires a card from the boot sweep —
+      // a tree that has since become clean or durable must be collected. A
+      // repeat of the SAME refusal dispatches nothing, so a kept card costs
+      // no event and no rail row per boot.
       const card = {
         ...cardInMerge(),
         stage: BOARD_SEED_STAGE_IDS.done,
         worktree: {
           ...readyWorktree("card-1"),
-          reclaimBlockedReason: "Worktree has uncommitted changes.",
+          reclaimBlockedReason: "1 uncommitted change (README.md)",
         },
       };
       yield* withGovernor(
@@ -1243,10 +1246,13 @@ describe("branch cleanup at Done", () => {
         },
         (h) =>
           Effect.gen(function* () {
-            // Boot reconcile has already run by the time the harness hands the
-            // reactor over, so the sweep's decision is visible here.
+            yield* h.reactor.drainWorktreeSweep;
             assert.deepEqual(yield* h.removedWorktrees, []);
             assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
+            const reclaims = (yield* h.commands).filter(
+              (command) => command.type === "board.card.reclaim-worktree",
+            );
+            assert.equal(reclaims.length, 0);
           }),
       );
     }),

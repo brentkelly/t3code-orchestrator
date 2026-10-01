@@ -5,6 +5,7 @@
  * the missing-card failure.
  */
 import {
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
   BoardCardId,
@@ -102,7 +103,16 @@ const supervisorCalls: {
   requestRound: Array<string>;
   probe: Array<string>;
   setResumeAt: Array<string>;
-} = { refresh: [], merge: [], submit: [], requestRound: [], probe: [], setResumeAt: [] };
+  removeWorktree: Array<string>;
+} = {
+  refresh: [],
+  merge: [],
+  submit: [],
+  requestRound: [],
+  probe: [],
+  setResumeAt: [],
+  removeWorktree: [],
+};
 
 const supervisorStub: SupervisorReactorShape = {
   start: () => Effect.void,
@@ -123,6 +133,13 @@ const supervisorStub: SupervisorReactorShape = {
     }),
   releaseThreads: Effect.void,
   drain: Effect.void,
+  sweepWorktrees: () => Effect.void,
+  drainWorktreeSweep: Effect.void,
+  forceRemoveWorktree: (cardId) =>
+    Effect.sync(() => {
+      supervisorCalls.removeWorktree.push(String(cardId));
+      return { outcome: "removed" } as const;
+    }),
   refreshPullRequest: (cardId, options) =>
     Effect.sync(() => {
       // T3o (T3O-48): the forced re-check is recorded distinctly, so a test can
@@ -272,6 +289,33 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-refresh-test-"))(
         const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
         const outcome = yield* handlers["board.refreshCardPullRequest"]({ cardId, force: true });
         assert.deepStrictEqual(outcome, { outcome: "none" });
+      }),
+    );
+  },
+);
+
+// T3O-52 (D5): a forced removal destroys uncommitted work, so it needs the
+// operate scope — reading a board must never be enough to empty a checkout.
+it.layer(makeBoardRpcTestLayer("t3o-board-rpc-remove-worktree-test-"))(
+  "board.removeCardWorktree",
+  (it) => {
+    it.effect("rejects a session with only the read scope", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
+        const failure = yield* Effect.flip(handlers["board.removeCardWorktree"]({ cardId }));
+        assert.strictEqual(failure._tag, "EnvironmentAuthorizationError");
+        assert.deepStrictEqual(supervisorCalls.removeWorktree, []);
+      }),
+    );
+
+    it.effect("reaches the supervisor with the operate scope and returns its outcome", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        const handlers = yield* makeHandlers([AuthOrchestrationOperateScope]);
+        const outcome = yield* handlers["board.removeCardWorktree"]({ cardId });
+        assert.deepStrictEqual(outcome, { outcome: "removed" });
+        assert.deepStrictEqual(supervisorCalls.removeWorktree, [String(cardId)]);
       }),
     );
   },
