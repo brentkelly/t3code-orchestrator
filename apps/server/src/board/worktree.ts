@@ -27,6 +27,7 @@ import { resolveBoardCardEffectiveBase } from "@t3tools/contracts";
 import type { BoardCard, BoardCardWorktreeReclaimOutcome } from "@t3tools/contracts";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -425,6 +426,43 @@ export interface BoardCardWorktreeReclaimResult {
 }
 
 /**
+ * The registered path of a card's checkout whose folder is gone, or null when
+ * the folder may still be there (including when git's list cannot be read).
+ * Gone means `prunable` — git still lists it — or unlisted and absent from
+ * disk, because `git worktree prune` (or a gc) has since dropped it. Matched
+ * on the branch too: git may spell the path differently (symlinks), and a
+ * branch is checked out in one worktree at most. The folder check covers the
+ * rest of that case: a detached checkout spelled through a symlink matches
+ * neither, yet is still on disk.
+ */
+const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function* (
+  input: BoardWorktreeDurabilityInput,
+) {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const listed = yield* git
+    .execute({
+      operation: "boardCardWorktree.reclaim.list",
+      cwd: input.projectCwd,
+      args: ["worktree", "list", "--porcelain"],
+      allowNonZeroExit: true,
+    })
+    .pipe(Effect.catch(() => Effect.succeed(null)));
+  // git always lists the main checkout, so an empty list is no answer at all.
+  const registered =
+    listed === null || listed.exitCode !== 0 ? [] : parseRegisteredWorktrees(listed.stdout);
+  if (registered.length === 0) return null;
+  const matching = registered.filter(
+    (entry) => entry.path === input.worktreePath || entry.branch === input.branch,
+  );
+  if (matching.length > 0) return matching.find((entry) => entry.prunable)?.path ?? null;
+  const onDisk = yield* fileSystem
+    .exists(input.worktreePath)
+    .pipe(Effect.catch(() => Effect.succeed(true)));
+  return onDisk ? null : input.worktreePath;
+});
+
+/**
  * Reclaim a card's worktree (D6/D15, T3O-52): remove it only when it is clean
  * and its work is durable, otherwise leave it and report why so the card can
  * flag it. The caller records the outcome through `board.card.reclaim-worktree`.
@@ -436,36 +474,20 @@ export interface BoardCardWorktreeReclaimResult {
  * owns a checkout that is clean and durable and must still not go. Answering
  * false abandons the reclaim: the result is null and nothing is removed.
  *
- * A checkout whose folder is already gone — deleted by hand to free disk,
- * which git reports as `prunable` — has nothing left to lose and cannot be
- * probed, so only git's registration is dropped. The branch, and any commits on it, stay.
+ * A checkout whose folder is already gone — deleted by hand to free disk —
+ * has nothing left to lose and cannot be probed. Only git's registration is
+ * dropped, if git still holds one. The branch, and any commits on it, stay.
  */
 export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(function* (
   input: BoardWorktreeDurabilityInput,
   stillWanted?: Effect.Effect<boolean>,
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const listed = yield* git
-    .execute({
-      operation: "boardCardWorktree.reclaim.list",
-      cwd: input.projectCwd,
-      args: ["worktree", "list", "--porcelain"],
-      allowNonZeroExit: true,
-    })
-    .pipe(Effect.catch(() => Effect.succeed(null)));
-  // Matched on the branch too: git may spell the path differently (symlinks),
-  // and a branch is checked out in one worktree at most.
-  const gone =
-    listed === null || listed.exitCode !== 0
-      ? undefined
-      : parseRegisteredWorktrees(listed.stdout).find(
-          (registered) =>
-            registered.prunable &&
-            (registered.path === input.worktreePath || registered.branch === input.branch),
-        );
-  if (gone !== undefined) {
+  const gone = yield* goneBoardWorktreePath(input);
+  if (gone !== null) {
     if (stillWanted !== undefined && !(yield* stillWanted)) return null;
-    yield* git.removeWorktree({ cwd: input.projectCwd, path: gone.path, force: true });
+    // Drops a lingering registration; the driver treats an unlisted one as done.
+    yield* git.removeWorktree({ cwd: input.projectCwd, path: gone, force: true });
     return { outcome: "removed", reason: null } satisfies BoardCardWorktreeReclaimResult;
   }
   const facts = yield* probeBoardWorktreeDurability(input);

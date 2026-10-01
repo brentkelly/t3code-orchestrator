@@ -186,6 +186,27 @@ describe("reclaim at Done (D2)", () => {
     ),
   );
 
+  it.effect("reclaims a Done card whose deleted checkout git has already pruned", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings(),
+        pullRequest: null,
+        worktreeUndurable: true,
+        // Only the main checkout is left: /tmp/wt/card-1 is neither listed nor on disk.
+        registeredWorktrees: ["worktree /repo", "branch refs/heads/main", ""].join("\n"),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+          const card = (yield* h.board).cards[0]!;
+          assert.equal(card.worktree?.status, "reclaimed");
+          assert.equal(card.worktree?.reclaimBlockedReason, null);
+        }),
+    ),
+  );
+
   it.effect("Check again on a finished card whose project is gone says it could not check", () =>
     withGovernor(
       {
@@ -770,6 +791,25 @@ describe("Remove worktree (D5)", () => {
           const card = (yield* h.board).cards[0]!;
           const result = yield* h.reactor.forceRemoveWorktree(card.id);
           assert.deepEqual(result, { outcome: "not-finished" });
+          assert.deepEqual(yield* h.removedWorktrees, []);
+        }),
+    ),
+  );
+
+  it.effect("answers failed, not no-worktree, when the card's project is gone", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [{ ...doneCard(), projectId: "project-missing" as BoardCard["projectId"] }],
+        },
+        settings: settings(),
+        pullRequest: null,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const card = (yield* h.board).cards[0]!;
+          assert.deepEqual(yield* h.reactor.forceRemoveWorktree(card.id), { outcome: "failed" });
           assert.deepEqual(yield* h.removedWorktrees, []);
         }),
     ),

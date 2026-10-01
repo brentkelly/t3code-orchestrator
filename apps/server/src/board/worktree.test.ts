@@ -557,6 +557,44 @@ it.effect("reclaims a checkout whose folder is already gone, dropping git's regi
   ).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect(
+  "reclaims a checkout whose folder is gone and whose registration git already pruned",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const setup = yield* setupProjectWithRemote;
+        yield* commitIn(setup.worktreePath, "unpushed.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.remove(setup.worktreePath, { recursive: true });
+        // The routine follow-up: git forgets the checkout, so it is no longer prunable.
+        yield* git(setup.cwd, ["worktree", "prune"]);
+
+        const outcome = yield* reclaimCard(setup);
+        assert.deepStrictEqual(outcome, { outcome: "removed", reason: null });
+        assert.match(
+          yield* git(setup.cwd, ["log", "-1", "--format=%s", "board/card-1"]),
+          /unpushed/,
+        );
+      }),
+    ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("probes, rather than reclaims, a checkout git does not list but which is on disk", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      yield* commitIn(setup.worktreePath, "unpushed.txt");
+      // Detached, so the branch cannot match it; listed under another spelling,
+      // so the path cannot either. The folder on disk is what keeps it.
+      yield* git(setup.worktreePath, ["checkout", "--detach"]);
+
+      const outcome = yield* reclaimCard({ ...setup, worktreePath: `${setup.worktreePath}/.` });
+      assert.strictEqual(outcome.outcome, "blocked");
+      assert.isTrue(yield* worktreeExists(setup.worktreePath));
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("abandons a durable reclaim when the caller no longer wants it, removing nothing", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -685,6 +723,24 @@ it.effect("force-removes a dirty worktree but keeps the branch", () =>
         worktreePath: setup.worktreePath,
       });
       assert.isFalse(yield* worktreeExists(setup.worktreePath));
+      assert.match(yield* git(setup.cwd, ["branch", "--list", "board/card-1"]), /board\/card-1/);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("force-removing a checkout git has already pruned succeeds, keeping the branch", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.remove(setup.worktreePath, { recursive: true });
+      yield* git(setup.cwd, ["worktree", "prune"]);
+
+      // `git worktree remove` exits 128 here; the driver reads that as already gone.
+      yield* forceRemoveBoardCardWorktree({
+        projectCwd: setup.cwd,
+        worktreePath: setup.worktreePath,
+      });
       assert.match(yield* git(setup.cwd, ["branch", "--list", "board/card-1"]), /board\/card-1/);
     }),
   ).pipe(Effect.provide(TestLayer)),

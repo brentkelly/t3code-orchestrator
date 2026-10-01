@@ -4198,6 +4198,7 @@ const make = Effect.gen(function* () {
       cardStillFinished(card, worktree.path),
     ).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: worktree reclaim failed", {
           cardId: card.id,
@@ -4475,6 +4476,7 @@ const make = Effect.gen(function* () {
           ),
         ).pipe(
           Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.catchCause((cause) =>
             Effect.logWarning("board supervisor: orphan worktree check failed", {
               path: registered.path,
@@ -4633,7 +4635,13 @@ const make = Effect.gen(function* () {
     if (!finished) return { outcome: "not-finished" } as const;
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
-    if (cwd === null) return { outcome: "no-worktree" } as const;
+    if (cwd === null) {
+      // The card does hold a worktree; it is the project that cannot be found.
+      yield* Effect.logWarning("board supervisor: forced removal has no project checkout", {
+        cardId: card.id,
+      });
+      return { outcome: "failed" } as const;
+    }
     yield* forceRemoveBoardCardWorktree({ projectCwd: cwd, worktreePath: worktree.path }).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, git),
     );
