@@ -13,7 +13,8 @@ the disk space back.
 - **The server starts, and whenever a worktree is created or removed.** The board checks every
   finished card that still has one, so a worktree that was kept earlier is collected once whatever
   held it back is gone. Leftover `board/*` worktrees that no card owns any more are removed the
-  same way.
+  same way, but only ones inside this server's own worktrees folder: another T3 Code install on
+  the same repository keeps its worktrees.
 
 The card's branch is not deleted with the worktree. Branches are only deleted at Done, after a merged
 pull request, if the merge stage is set to delete them.

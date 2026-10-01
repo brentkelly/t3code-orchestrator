@@ -7,8 +7,14 @@
  * answers "durable" or not, and the assertions are about what the board does
  * with that answer.
  */
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
 import {
@@ -21,6 +27,7 @@ import {
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
+import { layerTest } from "../config.ts";
 import {
   cardMoved,
   codexStep,
@@ -59,6 +66,19 @@ const doneCard = (overrides: Partial<Parameters<typeof makeBoardCard>[0]> = {}):
     worktree: readyWorktree("card-1"),
     ...overrides,
   });
+
+/** A config whose worktrees directory is a fresh temp dir: the orphan
+    sweep only claims checkouts beneath it. */
+const ownWorktrees = () => {
+  const baseDir = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-sweep-")),
+  );
+  const serverConfig = layerTest(process.cwd(), baseDir).pipe(
+    Layer.provide(NodeServices.layer),
+    Layer.orDie,
+  );
+  return { dir: NodePath.join(baseDir, "worktrees"), serverConfig };
+};
 
 /** Change one card in the read model, as a concurrent command would. */
 const editCard = (
@@ -358,6 +378,8 @@ describe("the cleanup sweep (D3/D4)", () => {
         settings: settings(),
         pullRequest: null,
         worktreeUndurable: true,
+        // A pass is counted by its orphan listing, which needs a config.
+        serverConfig: ownWorktrees().serverConfig,
       },
       (h) =>
         Effect.gen(function* () {
@@ -415,33 +437,91 @@ describe("the cleanup sweep (D3/D4)", () => {
       ]),
     ].join("\n");
 
-  it.effect("removes a durable board worktree that no card owns", () =>
-    withGovernor(
+  it.effect("removes a durable board worktree that no card owns", () => {
+    const own = ownWorktrees();
+    const owned = NodePath.join(own.dir, "repo", "board-card-1");
+    const ghost = NodePath.join(own.dir, "repo", "board-ghost");
+    return withGovernor(
       {
         board: {
           nextCardNumberByProject: {},
           // A live card keeps the project on the board, and owns its own
           // checkout — which must NOT be touched.
-          cards: [doneCard({ stage: String(BOARD_SEED_STAGE_IDS.building) })],
+          cards: [
+            doneCard({
+              stage: String(BOARD_SEED_STAGE_IDS.building),
+              worktree: { ...readyWorktree("card-1"), path: owned },
+            }),
+          ],
         },
         settings: settings(),
         pullRequest: null,
+        serverConfig: own.serverConfig,
         registeredWorktrees: porcelain([
-          ["/tmp/wt/card-1", "board/card-1"],
-          ["/tmp/wt/ghost", "board/ghost"],
-          ["/tmp/wt/mine", "feature/not-the-boards"],
+          [owned, "board/card-1"],
+          [ghost, "board/ghost"],
+          [NodePath.join(own.dir, "repo", "mine"), "feature/not-the-boards"],
         ]),
       },
       (h) =>
         Effect.gen(function* () {
           yield* h.reactor.drainWorktreeSweep;
-          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/ghost"]);
+          assert.deepEqual(yield* h.removedWorktrees, [ghost]);
+        }),
+    );
+  });
+
+  it.effect("leaves board worktrees outside its own worktrees directory alone", () => {
+    const own = ownWorktrees();
+    // Another T3 environment on the same repository — the live install, seen
+    // from a dev server seeded with a copy of its database — whose cards this
+    // board does not know.
+    const foreign = ownWorktrees();
+    return withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [doneCard({ stage: String(BOARD_SEED_STAGE_IDS.building), worktree: null })],
+        },
+        settings: settings(),
+        pullRequest: null,
+        serverConfig: own.serverConfig,
+        registeredWorktrees: porcelain([
+          [NodePath.join(foreign.dir, "repo", "board-t3o-99"), "board/t3o-99"],
+          ["/tmp/elsewhere/board-ghost", "board/ghost"],
+        ]),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
+        }),
+    );
+  });
+
+  it.effect("claims no orphans without a worktrees directory to scope them", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [doneCard({ stage: String(BOARD_SEED_STAGE_IDS.building) })],
+        },
+        settings: settings(),
+        pullRequest: null,
+        registeredWorktrees: porcelain([["/tmp/wt/ghost", "board/ghost"]]),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
         }),
     ),
   );
 
-  it.effect("never treats another project's live card, or the main checkout, as an orphan", () =>
-    withGovernor(
+  it.effect("never treats another project's live card, or the main checkout, as an orphan", () => {
+    const own = ownWorktrees();
+    const otherPath = NodePath.join(own.dir, "repo", "board-other-1");
+    return withGovernor(
       {
         board: {
           nextCardNumberByProject: {},
@@ -452,7 +532,7 @@ describe("the cleanup sweep (D3/D4)", () => {
                 id: "other-1",
                 stage: String(BOARD_SEED_STAGE_IDS.building),
                 orderKey: "o",
-                worktree: readyWorktree("other-1"),
+                worktree: { ...readyWorktree("other-1"), path: otherPath },
               }),
               projectId: "project-other" as BoardCard["projectId"],
             },
@@ -460,13 +540,14 @@ describe("the cleanup sweep (D3/D4)", () => {
         },
         settings: settings(),
         pullRequest: null,
+        serverConfig: own.serverConfig,
         registeredWorktrees: [
           // The repository itself, checked out on a board branch by hand.
           "worktree /tmp/project",
           "HEAD 1111111111111111111111111111111111111111",
           "branch refs/heads/board/by-hand",
           "",
-          "worktree /tmp/wt/other-1",
+          `worktree ${otherPath}`,
           "HEAD 2222222222222222222222222222222222222222",
           "branch refs/heads/board/other-1",
           "",
@@ -477,11 +558,13 @@ describe("the cleanup sweep (D3/D4)", () => {
           yield* h.reactor.drainWorktreeSweep;
           assert.deepEqual(yield* h.removedWorktrees, []);
         }),
-    ),
-  );
+    );
+  });
 
-  it.effect("keeps a checkout whose card starts provisioning it while the probe runs", () =>
-    withGovernor(
+  it.effect("keeps a checkout whose card starts provisioning it while the probe runs", () => {
+    const own = ownWorktrees();
+    const path = NodePath.join(own.dir, "repo", "board-card-1");
+    return withGovernor(
       {
         board: {
           nextCardNumberByProject: {},
@@ -491,20 +574,25 @@ describe("the cleanup sweep (D3/D4)", () => {
         },
         settings: settings(),
         pullRequest: null,
-        registeredWorktrees: porcelain([["/tmp/wt/card-1", "board/card-1"]]),
+        serverConfig: own.serverConfig,
+        registeredWorktrees: porcelain([[path, "board/card-1"]]),
         duringDurabilityProbe: (model) =>
-          editCard(model, "card-1", (card) => ({ ...card, worktree: readyWorktree("card-1") })),
+          editCard(model, "card-1", (card) => ({
+            ...card,
+            worktree: { ...readyWorktree("card-1"), path },
+          })),
       },
       (h) =>
         Effect.gen(function* () {
           yield* h.reactor.drainWorktreeSweep;
           assert.deepEqual(yield* h.removedWorktrees, []);
         }),
-    ),
-  );
+    );
+  });
 
-  it.effect("keeps an orphan whose commits exist nowhere else", () =>
-    withGovernor(
+  it.effect("keeps an orphan whose commits exist nowhere else", () => {
+    const own = ownWorktrees();
+    return withGovernor(
       {
         board: {
           nextCardNumberByProject: {},
@@ -513,15 +601,16 @@ describe("the cleanup sweep (D3/D4)", () => {
         settings: settings(),
         pullRequest: null,
         worktreeUndurable: true,
-        registeredWorktrees: porcelain([["/tmp/wt/ghost", "board/ghost"]]),
+        serverConfig: own.serverConfig,
+        registeredWorktrees: porcelain([[NodePath.join(own.dir, "repo", "ghost"), "board/ghost"]]),
       },
       (h) =>
         Effect.gen(function* () {
           yield* h.reactor.drainWorktreeSweep;
           assert.deepEqual(yield* h.removedWorktrees, []);
         }),
-    ),
-  );
+    );
+  });
 });
 
 describe("Remove worktree (D5)", () => {

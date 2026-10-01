@@ -4380,11 +4380,38 @@ const make = Effect.gen(function* () {
     );
   };
 
+  /**
+   * This server's own worktrees directory, as spelled and as resolved through
+   * symlinks — git reports a checkout by either. Empty without a config (the
+   * test harness), which leaves the orphan sweep nothing to claim.
+   */
+  const ownWorktreeRoots = Option.match(serverConfig, {
+    onNone: () => Effect.succeed([] as ReadonlyArray<string>),
+    onSome: (config) => {
+      const spelled = pathService.resolve(config.worktreesDir);
+      return fileSystem.realPath(spelled).pipe(
+        Effect.map((real) => [...new Set([spelled, pathService.resolve(real)])]),
+        Effect.orElseSucceed(() => [spelled]),
+      );
+    },
+  });
+
+  const isWithinRoot = (candidate: string, root: string) => {
+    const relative = pathService.relative(root, candidate);
+    return relative !== "" && !relative.startsWith("..") && !pathService.isAbsolute(relative);
+  };
+
   const sweepOrphanWorktrees = Effect.fn("board-supervisor-sweepOrphanWorktrees")(function* (
     board: BoardState,
     model: OrchestrationReadModel,
     fetchedBases: Set<string>,
   ) {
+    // Only checkouts under THIS server's worktrees directory are ours to
+    // judge. Another T3 environment on the same repository — a dev server
+    // seeded with a copy of the live database, say — has its own board, and
+    // its in-use `board/*` checkouts are no orphans of ours.
+    const roots = yield* ownWorktreeRoots;
+    if (roots.length === 0) return;
     const projectIds = new Set(board.cards.map((card) => card.projectId));
     for (const projectId of projectIds) {
       const project = model.projects.find((entry) => entry.id === projectId);
@@ -4404,6 +4431,8 @@ const make = Effect.gen(function* () {
       for (const registered of parseRegisteredWorktrees(listed.stdout).slice(1)) {
         if (registered.branch === null || !registered.branch.startsWith("board/")) continue;
         if (registered.prunable) continue;
+        const registeredPath = pathService.resolve(registered.path);
+        if (!roots.some((root) => isWithinRoot(registeredPath, root))) continue;
         const candidate = { path: registered.path, branch: registered.branch };
         if (!isOrphanWorktree(board, candidate)) continue;
         const owner = board.cards.find((card) => card.worktree?.branch === registered.branch);
