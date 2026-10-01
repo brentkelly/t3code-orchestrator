@@ -5,6 +5,7 @@ import {
   boardBriefVersion,
   briefHeadingLevel,
   briefSectionBodyBreak,
+  briefUnclosedFence,
   replaceBriefSection,
 } from "./briefEdits.ts";
 
@@ -96,5 +97,17 @@ describe("briefSectionBodyBreak", () => {
 
   it("allows deeper headings and headings inside fences", () => {
     expect(briefSectionBodyBreak(heading, "### Changes\n\n```\n## not one\n```")).toBeNull();
+  });
+});
+
+describe("briefUnclosedFence", () => {
+  it("finds the line opening a fence that never closes", () => {
+    expect(briefUnclosedFence("Intro\n\n  ```ts\ncode")).toBe("```ts");
+    expect(briefUnclosedFence("~~~\n```\nstill code")).toBe("~~~");
+  });
+
+  it("is null when every fence closes, or there is no text", () => {
+    expect(briefUnclosedFence("```\ncode\n```\n\n````\n```\n````")).toBeNull();
+    expect(briefUnclosedFence(null)).toBeNull();
   });
 });

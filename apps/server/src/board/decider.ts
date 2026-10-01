@@ -108,6 +108,7 @@ import {
   boardBriefVersion,
   briefHeadingLevel,
   briefSectionBodyBreak,
+  briefUnclosedFence,
   replaceBriefSection,
 } from "./briefEdits.ts";
 
@@ -851,6 +852,22 @@ const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (in
         return yield* invariant(
           command,
           `briefSection.body contains the heading '${bodyBreak}', which would end the section '${command.briefSection.heading.trim()}' early, so repeating the edit would duplicate everything after it. Use deeper headings (more #s) inside the section body.`,
+        );
+      }
+      // An unclosed fence hides every later heading, so the section would run
+      // to the end of the brief and a repeat would delete what follows it.
+      const bodyFence = briefUnclosedFence(command.briefSection.body);
+      if (bodyFence !== null) {
+        return yield* invariant(
+          command,
+          `briefSection.body opens a code fence ('${bodyFence}') that never closes; close it so the section's end can be found.`,
+        );
+      }
+      const briefFence = briefUnclosedFence(current);
+      if (briefFence !== null) {
+        return yield* invariant(
+          command,
+          `The brief of card '${card.key}' opens a code fence ('${briefFence}') that never closes, so the section '${command.briefSection.heading.trim()}' has no reliable end. Use briefAppend, or fix the fence with a whole-brief replace first.`,
         );
       }
       brief = replaceBriefSection(current, command.briefSection.heading, command.briefSection.body);

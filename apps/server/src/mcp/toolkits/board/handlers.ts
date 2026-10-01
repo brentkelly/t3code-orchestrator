@@ -958,12 +958,15 @@ export const boardHandlers = {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
       // The target takes a key as readily as its dependency fields do (T3O-53).
-      const { id: cardId } = yield* findCardByKeyOrId(board, input.cardId);
+      const target = yield* findCardByKeyOrId(board, input.cardId);
+      const cardId = target.id;
       const labels =
         input.labels === undefined ? undefined : yield* resolveLabelIds(board, input.labels);
       // Single-dependency edits take keys as readily as ids (T3O-53). An added
-      // card must exist; a removed one that cannot be resolved is passed
-      // through as-is, where the decider treats it as the no-op it is.
+      // card must exist. A removed one resolves against the target's own
+      // dependencies, so a key shared across projects finds the right edge; one
+      // that is not a dependency is passed through as-is, where the decider
+      // treats it as the no-op it is.
       const addDependsOn =
         input.addDependsOn === undefined
           ? undefined
@@ -972,9 +975,11 @@ export const boardHandlers = {
             );
       const removeDependsOn = input.removeDependsOn?.map(
         (value) =>
-          board.cards.find(
-            (card) => card.id === value || card.key.toLowerCase() === value.toLowerCase(),
-          )?.id ?? BoardCardId.make(value),
+          target.dependsOn.find(
+            (id) =>
+              id === value ||
+              board.cards.find((card) => card.id === id)?.key.toLowerCase() === value.toLowerCase(),
+          ) ?? BoardCardId.make(value),
       );
       const command: BoardCardUpdateCommand = {
         type: "board.card.update",

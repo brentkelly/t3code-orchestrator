@@ -1848,6 +1848,37 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
     }),
   );
 
+  it.effect("an unclosed code fence in the section body or the brief is rejected", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // Without the check, the second replace runs the section to the end of
+      // the brief (the fence hides '## Later') and deletes that section.
+      const target = yield* createCard("section-fence", "Brief\n\n## Later\n\nKeep me");
+      const update = (cardId: BoardCardId, body: string) =>
+        Effect.flip(
+          boardHandlers
+            .board_update_card({ cardId, briefSection: { heading: "## Notes", body } })
+            .pipe(withScope(linkedThread)),
+        );
+      const fromBody = yield* update(target, "```\nsnippet");
+      assert.strictEqual(fromBody.code, "rejected");
+      assert.include(fromBody.message, "never closes");
+      assert.strictEqual((yield* read(target)).brief, "Brief\n\n## Later\n\nKeep me");
+
+      const broken = yield* createCard(
+        "brief-fence",
+        "## Notes\n\n```\nold\n\n## Later\n\nKeep me",
+      );
+      const fromBrief = yield* update(broken, "New");
+      assert.strictEqual(fromBrief.code, "rejected");
+      assert.include(fromBrief.message, "briefAppend");
+      assert.strictEqual(
+        (yield* read(broken)).brief,
+        "## Notes\n\n```\nold\n\n## Later\n\nKeep me",
+      );
+    }),
+  );
+
   it.effect("an edit guarded by a stale brief version is rejected; a fresh one lands", () =>
     Effect.gen(function* () {
       yield* seed();
@@ -1954,6 +1985,49 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
           [undefined, [firstKey]],
         ],
       );
+    }),
+  );
+
+  it.effect("removing a dependency by a key another project shares removes the dependency", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const engine = yield* OrchestrationEngineService;
+      // A second project with the same title allocates the same keys, so its
+      // first card shares card-1's key; card-1 comes first in the board.
+      const twin = ProjectId.make("project-twin");
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-twin"),
+        projectId: twin,
+        title: "Project A",
+        workspaceRoot: "/tmp/project-twin",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt: t0,
+      });
+      const dependency = BoardCardId.make("twin-dep");
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-create-twin-dep"),
+        cardId: dependency,
+        projectId: twin,
+        title: "Twin dependency",
+        orderKey: "m",
+        createdAt: t0,
+      });
+      const sharedKey = (yield* read(dependency)).key;
+      assert.strictEqual((yield* read(cardId)).key, sharedKey);
+
+      const target = yield* createCard("twin-target");
+      yield* boardHandlers
+        .board_update_card({ cardId: target, addDependsOn: [dependency] })
+        .pipe(withScope(linkedThread));
+      yield* boardHandlers
+        .board_update_card({ cardId: target, removeDependsOn: [sharedKey] })
+        .pipe(withScope(linkedThread));
+      assert.deepStrictEqual((yield* read(target)).dependencies, []);
     }),
   );
 

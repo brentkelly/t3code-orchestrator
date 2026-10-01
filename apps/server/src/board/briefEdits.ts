@@ -30,22 +30,40 @@ export function briefHeadingLevel(line: string): number | null {
   return match === null ? null : match[1]!.length;
 }
 
-/** Indexes of the lines that are markdown structure: everything outside fenced
-    code blocks, fence markers excluded. A heading inside a fence is text. */
-function structuralLineIndexes(lines: ReadonlyArray<string>): Array<number> {
-  const indexes: Array<number> = [];
+/** The lines that are markdown structure — everything outside fenced code
+    blocks, fence markers excluded, so a heading inside a fence is text — and
+    the index of the line opening a fence that never closes, if any. */
+function scanBriefLines(lines: ReadonlyArray<string>): {
+  readonly structural: Array<number>;
+  readonly unclosedFence: number | null;
+} {
+  const structural: Array<number> = [];
   let fence: string | null = null;
+  let fenceStart = -1;
   for (let index = 0; index < lines.length; index += 1) {
     const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(lines[index]!);
     if (fenceMatch !== null) {
       const marker = fenceMatch[1]!;
-      if (fence === null) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      if (fence === null) {
+        fence = marker;
+        fenceStart = index;
+      } else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
       continue;
     }
-    if (fence === null) indexes.push(index);
+    if (fence === null) structural.push(index);
   }
-  return indexes;
+  return { structural, unclosedFence: fence === null ? null : fenceStart };
+}
+
+/**
+ * The line opening a code fence in `text` that never closes, or null. Every
+ * heading after such a fence reads as code, so a section replace can no longer
+ * tell where its section ends and would swallow everything after it.
+ */
+export function briefUnclosedFence(text: string | null): string | null {
+  const lines = (text ?? "").split("\n");
+  const { unclosedFence } = scanBriefLines(lines);
+  return unclosedFence === null ? null : lines[unclosedFence]!.trim();
 }
 
 /**
@@ -57,7 +75,7 @@ function structuralLineIndexes(lines: ReadonlyArray<string>): Array<number> {
 export function briefSectionBodyBreak(heading: string, body: string): string | null {
   const level = briefHeadingLevel(heading.trim()) ?? 1;
   const lines = body.split("\n");
-  for (const index of structuralLineIndexes(lines)) {
+  for (const index of scanBriefLines(lines).structural) {
     const lineLevel = briefHeadingLevel(lines[index]!);
     if (lineLevel !== null && lineLevel <= level) return lines[index]!.trim();
   }
@@ -81,8 +99,9 @@ export function appendToBrief(brief: string | null, text: string): string {
  * the section instead of growing the brief. The first match wins; a brief that
  * somehow carries the heading twice keeps the second untouched.
  *
- * `heading` must be a heading line (`briefHeadingLevel` non-null) — the caller
- * validates, since the rejection belongs in an agent-facing message.
+ * `heading` must be a heading line (`briefHeadingLevel` non-null), and neither
+ * `brief` nor `body` may hold an unclosed fence (`briefUnclosedFence` null) —
+ * the caller validates, since the rejection belongs in an agent-facing message.
  */
 export function replaceBriefSection(brief: string | null, heading: string, body: string): string {
   const target = heading.trim();
@@ -92,7 +111,7 @@ export function replaceBriefSection(brief: string | null, heading: string, body:
 
   let start = -1;
   let end = lines.length;
-  for (const index of structuralLineIndexes(lines)) {
+  for (const index of scanBriefLines(lines).structural) {
     const line = lines[index]!;
     if (start === -1) {
       if (line.trim() === target) start = index;
