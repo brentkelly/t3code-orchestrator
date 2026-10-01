@@ -35,6 +35,7 @@ import {
   ClockIcon,
   GitMergeIcon,
   GitPullRequestIcon,
+  HardDriveIcon,
   LayersIcon,
   LockIcon,
   PauseIcon,
@@ -209,12 +210,21 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                 tooltip: "Ready to merge, but this card has no pull request — open it to see why",
                 tint: "text-warning-foreground",
               }
-            : {
-                icon: <LockIcon className="size-3 shrink-0" />,
-                label: "Blocked",
-                tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
-                tint: "text-warning-foreground",
-              };
+            : notice.kind === "worktree-kept"
+              ? {
+                  // T3O-52. Amber: the card is finished but its cleanup is
+                  // blocked, and only a human can clear what is in the way.
+                  icon: <HardDriveIcon className="size-3 shrink-0" />,
+                  label: "Worktree kept",
+                  tooltip: `Worktree kept: ${notice.reason}`,
+                  tint: "text-warning-foreground",
+                }
+              : {
+                  icon: <LockIcon className="size-3 shrink-0" />,
+                  label: "Blocked",
+                  tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
+                  tint: "text-warning-foreground",
+                };
   return (
     <BoardHint label={view.tooltip}>
       <span
@@ -246,11 +256,17 @@ export function BoardCardContent({
   noPullRequest,
   atMergeStage,
   autoMergeBoardWide,
+  worktreeKeptReason,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly queueSlot: BoardQueueInfo | undefined;
   readonly selected: boolean;
+  /** T3O-52: why this finished card kept its worktree, or null when it has not
+      — `boardCardWorktreeKept`, resolved by the board page, which holds the
+      settings and the stage roles. Absent on the surfaces that do not resolve
+      it (the drag ghost). */
+  readonly worktreeKeptReason?: string | null | undefined;
   /** The parent card's key when this is a sub-board child (t3o-23); absent on
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
   readonly parentKey?: string | undefined;
@@ -392,6 +408,7 @@ export function BoardCardContent({
     noPullRequestAtMerge: noPullRequest === true && !summary.muted,
     blocked: card.blocked,
     dependencyCount: card.dependencyCount,
+    worktreeKeptReason,
   });
   // The card's scheduled start (T3O-19, D9/D14). Null on a done card and on
   // one whose time has already passed — the server clears the field within a
@@ -683,6 +700,7 @@ export function DraggableBoardCard({
   noPullRequest,
   atMergeStage,
   autoMergeBoardWide,
+  worktreeKeptReason,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -705,6 +723,7 @@ export function DraggableBoardCard({
   readonly noPullRequest?: boolean | undefined;
   readonly atMergeStage?: boolean | undefined;
   readonly autoMergeBoardWide?: boolean | undefined;
+  readonly worktreeKeptReason?: string | null | undefined;
 }) {
   return (
     // Keyboard path: the card is a focusable button-role element — Enter/Space
@@ -755,6 +774,7 @@ export function DraggableBoardCard({
         noPullRequest={noPullRequest}
         atMergeStage={atMergeStage}
         autoMergeBoardWide={autoMergeBoardWide}
+        worktreeKeptReason={worktreeKeptReason}
       />
     </div>
   );

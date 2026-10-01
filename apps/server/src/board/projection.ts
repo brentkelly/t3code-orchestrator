@@ -3200,16 +3200,14 @@ export function loadBoardState(
           }))
           .sort(compareBoardLabels);
         const stages = stageRows
-          .map(
-            (row): BoardStageDefinition => ({
-              stageId: row.stageId,
-              label: row.label,
-              role: row.role,
-              orderKey: row.orderKey,
-              createdAt: row.createdAt,
-              updatedAt: row.updatedAt,
-            }),
-          )
+          .map((row): BoardStageDefinition => ({
+            stageId: row.stageId,
+            label: row.label,
+            role: row.role,
+            orderKey: row.orderKey,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+          }))
           .sort(compareBoardStages);
         // A migrated-but-unused board (no cards, catalogue AND stage list still
         // the compiled seeds) reports the board slice as ABSENT — the decider
@@ -3259,43 +3257,41 @@ export function loadBoardState(
           }))
           .sort(compareBoardStepCompletions);
         const stepStates = stepStateRows
-          .map(
-            (row): BoardCardStepState => ({
-              cardId: row.cardId,
-              stepId: row.stepId,
-              stepLabel: row.stepLabel,
-              stageLabel: row.stageLabel,
-              attempt: row.attempt,
-              stallCount: row.stallCount,
-              stageEntryRecoveries: row.stageEntryRecoveries,
-              lastNudgeAt: row.lastNudgeAt,
-              prompt: row.prompt,
-              providerInstanceId: row.providerInstanceId,
-              model: row.model,
-              mode: row.mode,
-              runtimeMode: resolveStoredStepRuntimeMode(row.runtimeMode, row.mode),
-              ...stepModelOptionsPatch(row.modelOptions),
-              baseTipAtRoundStart: row.baseTipAtRoundStart,
-              lastError: row.lastError,
-              // A NULL column reads as `question` (t3o-34, D3): pre-034 rows
-              // could only have parked through the structured-question path.
-              awaitingReason: row.awaitingReason ?? "question",
-              humanTurnAt: row.humanTurnAt,
-              // A NULL column reads as `gave-up` (T3O-22, D10): pre-041 rows
-              // could only have stalled through recovery giving up.
-              stalledReason: row.stalledReason ?? "gave-up",
-              retryAt: row.retryAt,
-              humanInLoop: row.humanInLoop !== 0,
-              maxAttempts: row.maxAttempts,
-              timeoutMs: row.timeoutMs,
-              threadId: row.threadId,
-              status: row.status,
-              slotHeld: row.slotHeld !== 0,
-              forceStart: row.forceStart !== 0,
-              startedAt: row.startedAt,
-              updatedAt: row.updatedAt,
-            }),
-          )
+          .map((row): BoardCardStepState => ({
+            cardId: row.cardId,
+            stepId: row.stepId,
+            stepLabel: row.stepLabel,
+            stageLabel: row.stageLabel,
+            attempt: row.attempt,
+            stallCount: row.stallCount,
+            stageEntryRecoveries: row.stageEntryRecoveries,
+            lastNudgeAt: row.lastNudgeAt,
+            prompt: row.prompt,
+            providerInstanceId: row.providerInstanceId,
+            model: row.model,
+            mode: row.mode,
+            runtimeMode: resolveStoredStepRuntimeMode(row.runtimeMode, row.mode),
+            ...stepModelOptionsPatch(row.modelOptions),
+            baseTipAtRoundStart: row.baseTipAtRoundStart,
+            lastError: row.lastError,
+            // A NULL column reads as `question` (t3o-34, D3): pre-034 rows
+            // could only have parked through the structured-question path.
+            awaitingReason: row.awaitingReason ?? "question",
+            humanTurnAt: row.humanTurnAt,
+            // A NULL column reads as `gave-up` (T3O-22, D10): pre-041 rows
+            // could only have stalled through recovery giving up.
+            stalledReason: row.stalledReason ?? "gave-up",
+            retryAt: row.retryAt,
+            humanInLoop: row.humanInLoop !== 0,
+            maxAttempts: row.maxAttempts,
+            timeoutMs: row.timeoutMs,
+            threadId: row.threadId,
+            status: row.status,
+            slotHeld: row.slotHeld !== 0,
+            forceStart: row.forceStart !== 0,
+            startedAt: row.startedAt,
+            updatedAt: row.updatedAt,
+          }))
           .sort(compareBoardStepStates);
         const plans = planRows.map(rowToBoardPlan).sort(compareBoardPlans);
         // Provider cooldowns (T3O-22). Omitted, not empty, when nothing is
@@ -3683,16 +3679,14 @@ export function withBoardShellStages(
     Effect.map(([shell, rows]) => {
       if (rows.length === 0) return shell;
       const boardStages = rows
-        .map(
-          (row): BoardStageDefinition => ({
-            stageId: row.stageId,
-            label: row.label,
-            role: row.role,
-            orderKey: row.orderKey,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-          }),
-        )
+        .map((row): BoardStageDefinition => ({
+          stageId: row.stageId,
+          label: row.label,
+          role: row.role,
+          orderKey: row.orderKey,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        }))
         .sort(compareBoardStages);
       return { ...shell, boardStages };
     }),

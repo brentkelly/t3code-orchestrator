@@ -71,22 +71,24 @@ const branchCleanupNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
   );
 
 describe("reclaim at Done (D2)", () => {
-  it.effect("reclaims a Done card with NO pull request whose work is durable, keeping its branches", () =>
-    withGovernor(
-      {
-        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
-        settings: settings(),
-        pullRequest: null,
-      },
-      (h) =>
-        Effect.gen(function* () {
-          yield* h.reactor.drainWorktreeSweep;
-          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
-          assert.equal((yield* h.board).cards[0]!.worktree?.status, "reclaimed");
-          // Branch deletion still needs a merged pull request (D2).
-          assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
-        }),
-    ),
+  it.effect(
+    "reclaims a Done card with NO pull request whose work is durable, keeping its branches",
+    () =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+          settings: settings(),
+          pullRequest: null,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.drainWorktreeSweep;
+            assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+            assert.equal((yield* h.board).cards[0]!.worktree?.status, "reclaimed");
+            // Branch deletion still needs a merged pull request (D2).
+            assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
+          }),
+      ),
   );
 
   it.effect("keeps a Done card whose commits exist nowhere else, and says how many", () =>

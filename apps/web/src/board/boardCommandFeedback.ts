@@ -7,6 +7,7 @@
 import type {
   BoardMergeCardPullRequestResult,
   BoardRefreshCardPullRequestResult,
+  BoardRemoveCardWorktreeResult,
   BoardRequestReviewRoundResult,
   BoardSubmitCardForMergeResult,
 } from "@t3tools/contracts";
@@ -169,5 +170,25 @@ export function describeBoardReviewRoundOutcome(
       return "This card no longer exists.";
     case "failed":
       return "The review round could not be started. See the server log for details.";
+  }
+}
+
+/**
+ * The sentence "Remove worktree" leaves on the card (T3O-52), or null when it
+ * did what was asked — the banner disappearing is the acknowledgement.
+ */
+export function describeBoardRemoveWorktreeOutcome(
+  result: BoardRemoveCardWorktreeResult,
+): string | null {
+  switch (result.outcome) {
+    case "removed":
+    case "no-worktree":
+      return null;
+    case "not-finished":
+      return "Only a card in Done or the archive can have its worktree removed.";
+    case "unknown-card":
+      return "This card no longer exists.";
+    case "failed":
+      return "The worktree could not be removed. See the server log for details.";
   }
 }

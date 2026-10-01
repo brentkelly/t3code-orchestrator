@@ -245,7 +245,9 @@ export interface BoardRegisteredWorktree {
 }
 
 /** Every worktree block in `git worktree list --porcelain` output. */
-export function parseRegisteredWorktrees(porcelain: string): ReadonlyArray<BoardRegisteredWorktree> {
+export function parseRegisteredWorktrees(
+  porcelain: string,
+): ReadonlyArray<BoardRegisteredWorktree> {
   const result: Array<BoardRegisteredWorktree> = [];
   let current: { path: string; branch: string | null; prunable: boolean } | null = null;
   const flush = () => {

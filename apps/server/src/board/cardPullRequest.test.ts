@@ -1139,7 +1139,10 @@ describe("branch cleanup at Done", () => {
             assert.deepEqual(yield* h.removedWorktrees, []);
             const settled = (yield* h.board).cards[0]!;
             assert.equal(settled.worktree?.status, "ready");
-            assert.equal(settled.worktree?.reclaimBlockedReason, "1 uncommitted change (README.md)");
+            assert.equal(
+              settled.worktree?.reclaimBlockedReason,
+              "1 uncommitted change (README.md)",
+            );
           }),
       );
     }),
@@ -1223,39 +1226,41 @@ describe("branch cleanup at Done", () => {
     }),
   );
 
-  it.effect("re-attempts a refused reclaim at boot, and says nothing new if it is refused again", () =>
-    Effect.gen(function* () {
-      // T3O-52 (D4): a refusal no longer retires a card from the boot sweep —
-      // a tree that has since become clean or durable must be collected. A
-      // repeat of the SAME refusal dispatches nothing, so a kept card costs
-      // no event and no rail row per boot.
-      const card = {
-        ...cardInMerge(),
-        stage: BOARD_SEED_STAGE_IDS.done,
-        worktree: {
-          ...readyWorktree("card-1"),
-          reclaimBlockedReason: "1 uncommitted change (README.md)",
-        },
-      };
-      yield* withGovernor(
-        {
-          board: { nextCardNumberByProject: {}, cards: [card] },
-          settings: settings(),
-          pullRequest: { ...openPr, state: "merged" },
-          worktreeDirty: true,
-        },
-        (h) =>
-          Effect.gen(function* () {
-            yield* h.reactor.drainWorktreeSweep;
-            assert.deepEqual(yield* h.removedWorktrees, []);
-            assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
-            const reclaims = (yield* h.commands).filter(
-              (command) => command.type === "board.card.reclaim-worktree",
-            );
-            assert.equal(reclaims.length, 0);
-          }),
-      );
-    }),
+  it.effect(
+    "re-attempts a refused reclaim at boot, and says nothing new if it is refused again",
+    () =>
+      Effect.gen(function* () {
+        // T3O-52 (D4): a refusal no longer retires a card from the boot sweep —
+        // a tree that has since become clean or durable must be collected. A
+        // repeat of the SAME refusal dispatches nothing, so a kept card costs
+        // no event and no rail row per boot.
+        const card = {
+          ...cardInMerge(),
+          stage: BOARD_SEED_STAGE_IDS.done,
+          worktree: {
+            ...readyWorktree("card-1"),
+            reclaimBlockedReason: "1 uncommitted change (README.md)",
+          },
+        };
+        yield* withGovernor(
+          {
+            board: { nextCardNumberByProject: {}, cards: [card] },
+            settings: settings(),
+            pullRequest: { ...openPr, state: "merged" },
+            worktreeDirty: true,
+          },
+          (h) =>
+            Effect.gen(function* () {
+              yield* h.reactor.drainWorktreeSweep;
+              assert.deepEqual(yield* h.removedWorktrees, []);
+              assert.equal(branchCleanupNotes(yield* h.commands).length, 0);
+              const reclaims = (yield* h.commands).filter(
+                (command) => command.type === "board.card.reclaim-worktree",
+              );
+              assert.equal(reclaims.length, 0);
+            }),
+        );
+      }),
   );
 
   it.effect("settles a card whose pull request is merged while it SITS in Done", () =>

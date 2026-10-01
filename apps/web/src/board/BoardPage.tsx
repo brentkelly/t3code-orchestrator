@@ -13,6 +13,8 @@ import {
   BOARD_SEED_STAGES,
   areBoardStagesAdjacent,
   boardStageWithRole,
+  boardCardWorktreeKept,
+  boardCardWorktreeKeptReason,
   deriveBoardCardPlanProgress,
   boardCardAttention,
   deriveBoardCardChildAttention,
@@ -292,6 +294,7 @@ function EnvironmentBoard({
   // an armed card in Building looks normal because it is, so the glyph is
   // offered only where the merge is actually imminent.
   const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
+  const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
   // The columns this SCOPE renders (t3o-25, D1): every stage on the root
   // board, the materialisation floor onward inside a sub-board. Stage
   // adjacency and ordering keep reading the FULL `stageState` — the stages a
@@ -485,6 +488,23 @@ function EnvironmentBoard({
         now: attentionNow,
       }),
     [mergeStageId, threadIdleSinceByCard, attentionNow],
+  );
+  // T3O-52: a finished card still holding its worktree — the amber `Worktree
+  // kept` notice. Here because the "finished" half needs the done-role stage
+  // and `reclaimWorktreeOnDone`, which the shell cannot carry (its SQL producer
+  // cannot see settings).
+  const reclaimWorktreeOnDone = boardSettings.lifecycle.reclaimWorktreeOnDone;
+  const worktreeKeptFor = useCallback(
+    (card: BoardCardShell) =>
+      boardCardWorktreeKept({
+        worktreeReady: card.worktreeReady === true,
+        archived: card.archivedAt !== null,
+        inDoneStage: doneStageId !== null && card.stage === doneStageId,
+        reclaimWorktreeOnDone,
+      })
+        ? boardCardWorktreeKeptReason(card.worktreeKeptReason)
+        : null,
+    [doneStageId, reclaimWorktreeOnDone],
   );
   // …and the same question asked of each parent's CHILDREN, folded once for the
   // whole board rather than per card: a split parent builds through its
@@ -1369,6 +1389,7 @@ function EnvironmentBoard({
               label={stage.label}
               atMergeStage={stage.stageId === mergeStageId}
               noPullRequestFor={noPullRequestFor}
+              worktreeKeptFor={worktreeKeptFor}
               autoMergeBoardWide={boardWideAutoMerge}
               onCardDragEnd={handleCardDragEnd}
               onCardReorder={handleCardReorder}

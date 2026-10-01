@@ -10,9 +10,14 @@
  * page you open, never state every client carries, so archived cards stay off
  * the live shell and the delta stream (D15).
  */
-import { type BoardCardId, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import {
+  boardCardWorktreeKeptReason,
+  type BoardCardId,
+  type EnvironmentId,
+  type ProjectId,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { ArchiveRestoreIcon, LayersIcon, Trash2Icon } from "lucide-react";
+import { ArchiveRestoreIcon, HardDriveIcon, LayersIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -149,6 +154,19 @@ function ArchivedCardList({
               <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
                 {card.title}
               </span>
+              {card.worktreeReady === true ? (
+                // T3O-52: archive is the guaranteed cleanup point, so an
+                // archived card still holding a worktree is always flagged.
+                // Amber: its cleanup is blocked. Open the card to act on it.
+                <BoardHint
+                  label={`Worktree kept: ${boardCardWorktreeKeptReason(card.worktreeKeptReason)}`}
+                >
+                  <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-semibold text-warning-foreground">
+                    <HardDriveIcon className="size-3" />
+                    Worktree kept
+                  </span>
+                </BoardHint>
+              ) : null}
               <span className="shrink-0 text-[11px] text-muted-foreground">
                 {boardStageLabel(snapshot?.boardStages ?? [], card.stage)}
               </span>

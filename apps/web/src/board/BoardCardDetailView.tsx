@@ -143,6 +143,7 @@ import {
 } from "./BoardCardFields";
 import { BoardSearchAddPicker, type BoardPickerOption } from "./BoardSearchAddPicker";
 import { BoardCardStepFailure } from "./BoardCardStepFailure";
+import { BoardCardWorktreeKept } from "./BoardCardWorktreeKept";
 import { BoardCardStepPaused } from "./BoardCardStepPaused";
 import { type BoardConflictFixInfo } from "./boardConflictFix";
 import {
@@ -469,6 +470,19 @@ export interface BoardCardDetailViewProps {
   /** Whether that re-check is in flight, so the button can spin and refuse a
       second click across the round trip. */
   readonly checkingForPullRequest?: boolean | undefined;
+  /** T3O-52 (D5): the card is finished and still holds its worktree, or null.
+      Resolved by the container, which holds the settings. */
+  readonly worktreeKept?: {
+    readonly reason: string;
+    readonly path: string | null;
+    readonly branch: string;
+  } | null;
+  /** "Check again": refresh and re-run the cleanup. */
+  readonly onCheckWorktree?: (() => void) | undefined;
+  readonly checkingWorktree?: boolean | undefined;
+  /** "Remove worktree": force it, after the banner's own confirm dialog. */
+  readonly onRemoveWorktree?: (() => void) | undefined;
+  readonly removingWorktree?: boolean | undefined;
   readonly onArchiveToggle: () => void;
   /** Purge the card outright. Always behind `BoardDeleteConfirmDialog` — the
       server does not ask, so this must never be reachable without one. */
@@ -2602,6 +2616,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onRestart={props.stageRestart?.disabledReason == null ? props.onRestartStage : null}
               />
             ) : null}
+            {props.worktreeKept == null ? null : (
+              <BoardCardWorktreeKept
+                className="mx-3.5 mb-3.5"
+                {...worktreeKeptProps(props, props.worktreeKept)}
+              />
+            )}
             {props.stepPaused !== null ? (
               <BoardCardStepPaused
                 className="mx-3.5 mb-3.5"
@@ -2661,6 +2681,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   }
                 />
               ) : null}
+              {props.worktreeKept == null ? null : (
+                <BoardCardWorktreeKept {...worktreeKeptProps(props, props.worktreeKept)} />
+              )}
               {props.stepPaused !== null ? (
                 <BoardCardStepPaused
                   stageLabel={props.stepPaused.stageLabel}
@@ -2743,6 +2766,22 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       )}
     </>
   );
+}
+
+/** The kept-worktree banner's props, shared by the two layouts (T3O-52). */
+function worktreeKeptProps(
+  props: BoardCardDetailViewProps,
+  kept: NonNullable<BoardCardDetailViewProps["worktreeKept"]>,
+) {
+  return {
+    reason: kept.reason,
+    path: kept.path,
+    branch: kept.branch,
+    onCheckAgain: props.onCheckWorktree ?? null,
+    checking: props.checkingWorktree === true,
+    onRemove: props.onRemoveWorktree ?? null,
+    removing: props.removingWorktree === true,
+  };
 }
 
 export function BoardCardDetailView(props: BoardCardDetailViewProps) {

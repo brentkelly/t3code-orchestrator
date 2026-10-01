@@ -289,7 +289,9 @@ export interface SupervisorReactorShape {
       is running or queued (test hook). */
   readonly drainWorktreeSweep: Effect.Effect<void>;
   /** A human's "Remove worktree" on a finished card (T3O-52, D5). */
-  readonly forceRemoveWorktree: (cardId: BoardCardId) => Effect.Effect<BoardForceRemoveWorktreeResult>;
+  readonly forceRemoveWorktree: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<BoardForceRemoveWorktreeResult>;
   /** Re-resolve one card's pull request from the forge and record any change.
       The client-driven refresh triggers (card detail opened, View PR clicked)
       call this through the board RPC.
@@ -4121,7 +4123,10 @@ const make = Effect.gen(function* () {
     const key = String(card.id);
     if (reclaimingCards.has(key)) return;
     reclaimingCards.add(key);
-    const pullRequests = [...card.pullRequestHistory, ...(card.pullRequest === null ? [] : [card.pullRequest])];
+    const pullRequests = [
+      ...card.pullRequestHistory,
+      ...(card.pullRequest === null ? [] : [card.pullRequest]),
+    ];
     const reclaimed = yield* reclaimBoardCardWorktree({
       projectCwd: cwd,
       worktreePath: worktree.path,
@@ -4130,8 +4135,7 @@ const make = Effect.gen(function* () {
       mergedPullRequestNumbers: pullRequests
         .filter((pullRequest) => pullRequest.state === "merged")
         .map((pullRequest) => pullRequest.number),
-      openPullRequestNumber:
-        card.pullRequest?.state === "open" ? card.pullRequest.number : null,
+      openPullRequestNumber: card.pullRequest?.state === "open" ? card.pullRequest.number : null,
       fetchedBases,
     }).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, git),
@@ -4432,7 +4436,7 @@ const make = Effect.gen(function* () {
   // mid-pass queues the follow-up that sees its effect.
   let sweepQueued = false;
   let sweepRefreshQueued = false;
-  const worktreeSweepWorker = yield* makeDrainableWorker((_: void) =>
+  const worktreeSweepWorker = yield* makeDrainableWorker(() =>
     Effect.suspend(() => {
       const refreshOpenPullRequests = sweepRefreshQueued;
       sweepQueued = false;
@@ -7599,7 +7603,10 @@ const make = Effect.gen(function* () {
         // T3O-52 (D4): a worktree provisioned or cleaned up triggers a cleanup
         // pass. Straight to the single-flight sweep, not the worker: the pass
         // never touches step state, and it coalesces a burst into one run.
-        if (event.type === "board.card-worktree-ready" || event.type === "board.card-worktree-reclaimed") {
+        if (
+          event.type === "board.card-worktree-ready" ||
+          event.type === "board.card-worktree-reclaimed"
+        ) {
           return requestWorktreeSweep();
         }
         if (

@@ -310,7 +310,7 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
       <div id="board-reclaim-worktree-on-done" className="px-3 sm:px-4">
         <CardRow
           label={anchor.title}
-          description="Remove a card's git worktree as soon as it reaches Done with its pull request merged, instead of waiting for it to be archived. Archiving always reclaims either way."
+          description="Remove a card's git worktree as soon as it reaches Done, instead of waiting for it to be archived. A worktree holding uncommitted changes or unpushed commits is kept and flagged on the card. Archiving always reclaims either way."
           control={
             <Switch
               checked={board.lifecycle.reclaimWorktreeOnDone}
