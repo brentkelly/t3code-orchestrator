@@ -367,6 +367,46 @@ describe("the cleanup sweep (D3/D4)", () => {
     ),
   );
 
+  it.effect("never treats another project's live card, or the main checkout, as an orphan", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [
+            doneCard({ stage: String(BOARD_SEED_STAGE_IDS.building) }),
+            {
+              ...makeBoardCard({
+                id: "other-1",
+                stage: String(BOARD_SEED_STAGE_IDS.building),
+                orderKey: "o",
+                worktree: readyWorktree("other-1"),
+              }),
+              projectId: "project-other" as BoardCard["projectId"],
+            },
+          ],
+        },
+        settings: settings(),
+        pullRequest: null,
+        registeredWorktrees: [
+          // The repository itself, checked out on a board branch by hand.
+          "worktree /tmp/project",
+          "HEAD 1111111111111111111111111111111111111111",
+          "branch refs/heads/board/by-hand",
+          "",
+          "worktree /tmp/wt/other-1",
+          "HEAD 2222222222222222222222222222222222222222",
+          "branch refs/heads/board/other-1",
+          "",
+        ].join("\n"),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
+        }),
+    ),
+  );
+
   it.effect("keeps an orphan whose commits exist nowhere else", () =>
     withGovernor(
       {

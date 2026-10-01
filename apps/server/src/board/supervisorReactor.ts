@@ -4334,11 +4334,15 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.catch(() => Effect.succeed(null)));
       if (listed === null || listed.exitCode !== 0) continue;
-      const projectCards = board.cards.filter((card) => card.projectId === projectId);
-      for (const registered of parseRegisteredWorktrees(listed.stdout)) {
+      // The first block is the repository's own checkout, never a worktree
+      // to remove — git refuses anyway, but it is not ours to ask about.
+      for (const registered of parseRegisteredWorktrees(listed.stdout).slice(1)) {
         if (registered.branch === null || !registered.branch.startsWith("board/")) continue;
         if (registered.prunable) continue;
-        const owner = projectCards.find((card) => card.worktree?.branch === registered.branch);
+        // Owners are looked up across EVERY project: two board projects can
+        // share one repository, and the other project's live card is not an
+        // orphan just because this project does not know it.
+        const owner = board.cards.find((card) => card.worktree?.branch === registered.branch);
         const ownerWorktree = owner?.worktree ?? null;
         const orphaned =
           ownerWorktree === null ||
