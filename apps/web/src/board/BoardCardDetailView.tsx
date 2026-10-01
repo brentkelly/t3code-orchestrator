@@ -2176,10 +2176,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const liveChildCount = props.detail.children.filter((child) => child.archivedAt === null).length;
   // The Plans panel replaces the markdown pane once, and only once, children
   // exist (t3o-29, D2) — the same predicate that makes Plans the default
-  // pane. Before approval
-  // the markdown IS the surface: it is what the human reads to decide whether
-  // the split is right, and the Approve split gate lives on it. After, the
-  // markdown is each child's brief, one drill-in away.
+  // pane. Before approval the markdown IS the surface: it is what the human
+  // reads to decide whether the split is right, and the Approve split gate
+  // lives on it. After, the markdown is each child's brief, one drill-in away.
   const isSplitParent = liveChildCount > 0;
   const planRows = useMemo(
     () =>

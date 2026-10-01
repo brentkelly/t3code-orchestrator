@@ -91,10 +91,9 @@ each child's brief, and the row's drill-in is the way to it.
 
 The switch is `detail.children.filter(live).length > 0` — the same fact that
 makes Plans the default pane (t3o-28 D4), so the default pane and its contents
-cannot disagree. Before approval, nothing
-changes at all: the markdown pane is exactly where the human decides whether
-the split is right, and taking it away there would be taking it away at the one
-moment it is load-bearing.
+cannot disagree. Before approval, nothing changes at all: the markdown pane is
+exactly where the human decides whether the split is right, and taking it away
+there would be taking it away at the one moment it is load-bearing.
 
 The tab is present at **every** stage a parent with children can occupy, review
 and Done included. What t3o-28 D4 governs is which pane opens by default, and
