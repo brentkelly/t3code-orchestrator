@@ -31,6 +31,7 @@ const snapshotWith = (message: { readonly text: string; readonly createdAt: stri
   Layer.succeed(ProjectionSnapshotQuery, {
     boardCardDetail: () => Effect.succeed(null),
     boardCardActivity: () => Effect.succeed([]),
+    boardCardBrief: () => Effect.succeed(null),
     boardPlanBody: () => Effect.succeed(null),
     boardCardThreads: () => Effect.succeed([]),
     boardCardIdForThread: () => Effect.succeed(null),

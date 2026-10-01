@@ -50,6 +50,7 @@ function fakeDeps(projectOf: { current: ProjectId }) {
         card: { projectId: projectOf.current },
       } as unknown as BoardCardDetail),
     boardCardActivity: () => Effect.succeed([]),
+    boardCardBrief: () => Effect.succeed(null),
     boardPlanBody: () => Effect.succeed(null),
     boardCardThreads: () => Effect.succeed([]),
     boardCardIdForThread: () => Effect.succeed(null),

@@ -172,9 +172,6 @@ function StepOutcomeIcon({ outcome }: { readonly outcome: BoardStepOutcome }) {
   }
 }
 
-/** The sentence for one row, built from its typed payload. A payload field that
-    is absent simply drops out of the sentence — a row from an older schema reads
-    as a shorter, still-true sentence rather than as `undefined`. */
 /** The `card-edited` sentence (T3O-53): each part the edit changed, in one
     line — "appended to the brief and added dependency T3O-4". */
 function describeCardEdit(payload: BoardCardActivityEntry["payload"]): string {
@@ -197,6 +194,9 @@ function describeCardEdit(payload: BoardCardActivityEntry["payload"]): string {
   return parts.length === 0 ? "edited the card" : parts.join(" and ");
 }
 
+/** The sentence for one row, built from its typed payload. A payload field that
+    is absent simply drops out of the sentence — a row from an older schema reads
+    as a shorter, still-true sentence rather than as `undefined`. */
 function activitySentence(
   entry: BoardCardActivityEntry,
   stages: ReadonlyArray<BoardStageDefinition>,

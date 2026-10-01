@@ -957,6 +957,8 @@ export const boardHandlers = {
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
+      // The target takes a key as readily as its dependency fields do (T3O-53).
+      const { id: cardId } = yield* findCardByKeyOrId(board, input.cardId);
       const labels =
         input.labels === undefined ? undefined : yield* resolveLabelIds(board, input.labels);
       // Single-dependency edits take keys as readily as ids (T3O-53). An added
@@ -977,7 +979,7 @@ export const boardHandlers = {
       const command: BoardCardUpdateCommand = {
         type: "board.card.update",
         commandId: yield* mintCommandId,
-        cardId: input.cardId,
+        cardId,
         title: input.title,
         brief: input.brief,
         briefAppend: input.briefAppend,
@@ -991,7 +993,7 @@ export const boardHandlers = {
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps, command);
-      return { cardId: input.cardId };
+      return { cardId };
     }),
 
   board_archive_card: (input) =>

@@ -107,6 +107,7 @@ import {
   appendToBrief,
   boardBriefVersion,
   briefHeadingLevel,
+  briefSectionBodyBreak,
   replaceBriefSection,
 } from "./briefEdits.ts";
 
@@ -840,6 +841,16 @@ const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (in
         return yield* invariant(
           command,
           `briefSection.heading must be a markdown heading line such as '## Notes from ${card.key}'; got '${command.briefSection.heading}'.`,
+        );
+      }
+      const bodyBreak = briefSectionBodyBreak(
+        command.briefSection.heading,
+        command.briefSection.body,
+      );
+      if (bodyBreak !== null) {
+        return yield* invariant(
+          command,
+          `briefSection.body contains the heading '${bodyBreak}', which would end the section '${command.briefSection.heading.trim()}' early, so repeating the edit would duplicate everything after it. Use deeper headings (more #s) inside the section body.`,
         );
       }
       brief = replaceBriefSection(current, command.briefSection.heading, command.briefSection.body);

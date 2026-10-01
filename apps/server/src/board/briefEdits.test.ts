@@ -4,6 +4,7 @@ import {
   appendToBrief,
   boardBriefVersion,
   briefHeadingLevel,
+  briefSectionBodyBreak,
   replaceBriefSection,
 } from "./briefEdits.ts";
 
@@ -82,5 +83,18 @@ describe("replaceBriefSection", () => {
 
   it("leaves a bare heading when the body is empty", () => {
     expect(replaceBriefSection(null, heading, "  ")).toBe(heading);
+  });
+});
+
+describe("briefSectionBodyBreak", () => {
+  const heading = "## Notes from Z5-34";
+
+  it("finds a heading in the body that would end the section", () => {
+    expect(briefSectionBodyBreak(heading, "Intro\n\n## Changes\n\nMore")).toBe("## Changes");
+    expect(briefSectionBodyBreak(heading, "# Top")).toBe("# Top");
+  });
+
+  it("allows deeper headings and headings inside fences", () => {
+    expect(briefSectionBodyBreak(heading, "### Changes\n\n```\n## not one\n```")).toBeNull();
   });
 });

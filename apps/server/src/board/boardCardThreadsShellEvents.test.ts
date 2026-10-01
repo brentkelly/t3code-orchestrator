@@ -22,6 +22,7 @@ const threadId = ThreadId.make("thread-1");
 const snapshotStub = {
   boardCardDetail: () => Effect.succeed(null),
   boardCardActivity: () => Effect.succeed([]),
+  boardCardBrief: () => Effect.succeed(null),
   boardPlanBody: () => Effect.succeed(null),
   boardCardThreads: () => Effect.succeed([{ cardId, threadId }]),
   boardCardIdForThread: (id: ThreadId) =>

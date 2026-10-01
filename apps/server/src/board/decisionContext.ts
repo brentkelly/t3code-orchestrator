@@ -25,6 +25,6 @@ export const loadBoardDecisionContext = (
     // (upstream test mocks); the decider then rejects the edit as unloaded.
     const board = boardSnapshotQueryMethodsOf(snapshotQuery);
     if (board === null) return undefined;
-    const detail = yield* board.boardCardDetail(command.cardId);
-    return { brief: detail?.brief ?? null } satisfies BoardDecisionContext;
+    const brief = yield* board.boardCardBrief(command.cardId);
+    return { brief } satisfies BoardDecisionContext;
   });

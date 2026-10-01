@@ -30,6 +30,40 @@ export function briefHeadingLevel(line: string): number | null {
   return match === null ? null : match[1]!.length;
 }
 
+/** Indexes of the lines that are markdown structure: everything outside fenced
+    code blocks, fence markers excluded. A heading inside a fence is text. */
+function structuralLineIndexes(lines: ReadonlyArray<string>): Array<number> {
+  const indexes: Array<number> = [];
+  let fence: string | null = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(lines[index]!);
+    if (fenceMatch !== null) {
+      const marker = fenceMatch[1]!;
+      if (fence === null) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      continue;
+    }
+    if (fence === null) indexes.push(index);
+  }
+  return indexes;
+}
+
+/**
+ * The first heading line in a section `body` that would end the section under
+ * `heading` — one of the same or a higher level — or null when there is none.
+ * Such a body cannot be replaced as one section: the next replace stops at
+ * that heading and leaves the rest behind as a duplicate.
+ */
+export function briefSectionBodyBreak(heading: string, body: string): string | null {
+  const level = briefHeadingLevel(heading.trim()) ?? 1;
+  const lines = body.split("\n");
+  for (const index of structuralLineIndexes(lines)) {
+    const lineLevel = briefHeadingLevel(lines[index]!);
+    if (lineLevel !== null && lineLevel <= level) return lines[index]!.trim();
+  }
+  return null;
+}
+
 /** The brief with `text` appended after a blank line. */
 export function appendToBrief(brief: string | null, text: string): string {
   const head = (brief ?? "").trimEnd();
@@ -58,17 +92,8 @@ export function replaceBriefSection(brief: string | null, heading: string, body:
 
   let start = -1;
   let end = lines.length;
-  let fence: string | null = null;
-  for (let index = 0; index < lines.length; index += 1) {
+  for (const index of structuralLineIndexes(lines)) {
     const line = lines[index]!;
-    const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(line);
-    if (fenceMatch !== null) {
-      const marker = fenceMatch[1]!;
-      if (fence === null) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
-      continue;
-    }
-    if (fence !== null) continue;
     if (start === -1) {
       if (line.trim() === target) start = index;
       continue;

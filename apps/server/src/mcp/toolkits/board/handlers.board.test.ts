@@ -1817,6 +1817,37 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
     }),
   );
 
+  it.effect("an update can name its target card by key", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("by-key", "Brief");
+      const { key } = yield* read(target);
+      const result = yield* boardHandlers
+        .board_update_card({ cardId: key, briefAppend: "By key" })
+        .pipe(withScope(linkedThread));
+      assert.strictEqual(result.cardId, target);
+      assert.strictEqual((yield* read(target)).brief, "Brief\n\nBy key");
+    }),
+  );
+
+  it.effect("a section body with a heading that would end the section is rejected", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("section-break", "Brief");
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({
+            cardId: target,
+            briefSection: { heading: "## Notes", body: "Intro\n\n## Changes\n\nMore" },
+          })
+          .pipe(withScope(linkedThread)),
+      );
+      assert.strictEqual(failure.code, "rejected");
+      assert.include(failure.message, "'## Changes'");
+      assert.strictEqual((yield* read(target)).brief, "Brief");
+    }),
+  );
+
   it.effect("an edit guarded by a stale brief version is rejected; a fresh one lands", () =>
     Effect.gen(function* () {
       yield* seed();

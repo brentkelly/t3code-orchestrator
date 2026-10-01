@@ -819,6 +819,7 @@ export function withGovernor(
       // fixture-driven; the rest are inert.
       boardCardDetail: () => Effect.succeed(null),
       boardCardActivity: () => Effect.succeed([]),
+      boardCardBrief: () => Effect.succeed(null),
       boardPlanBody: () => Effect.succeed(null),
       boardCardThreads: () => Effect.succeed([]),
       boardCardIdForThread: () => Effect.succeed(null),
