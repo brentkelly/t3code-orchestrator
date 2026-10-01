@@ -3206,6 +3206,29 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("lists without reviewers when the token cannot read team requests", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      assert.strictEqual(batch.items.length, 3);
+      expect(callAt(0).args.at(-1)).toContain("reviewRequests");
+      expect(callAt(1).args.at(-1)).not.toContain("reviewRequests");
+      expect(callAt(1).args.at(-1)).toContain("statusCheckRollup");
+    }),
+  );
+
   for (const kind of ["not-found", "command-failed", "authentication"] as const) {
     it.effect(`does not retry a detail read that fails as ${kind}`, () =>
       Effect.gen(function* () {

@@ -1449,11 +1449,11 @@ export const make = Effect.gen(function* () {
   >[0];
   type PullRequestDetailOperation = "getPullRequestDetail" | "getPullRequestSummary";
   const isVcsProcessExitError = Schema.is(VcsProcessExitError);
-  const PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS = PULL_REQUEST_DETAIL_JSON_FIELDS.split(
-    ",",
-  )
-    .filter((field) => field !== "reviewRequests")
-    .join(",");
+  const withoutReviewRequests = (fields: string) =>
+    fields
+      .split(",")
+      .filter((field) => field !== "reviewRequests")
+      .join(",");
 
   // T3o (T3O-8): hosts already warned about the missing scope, so an affected token logs once
   // per process rather than on every read. The refused full read is still attempted each time,
@@ -1464,27 +1464,32 @@ export const make = Effect.gen(function* () {
   // query without it. Read once more without reviewers rather than lose mergeability and checks
   // over a field nothing blocks on. Only a scope refusal is retried; the reviewer list is then
   // empty, so say so in the log.
-  const readPullRequestDetailWithScopeFallback = (
-    input: PullRequestDetailInput,
-    operation: PullRequestDetailOperation,
-  ) =>
-    readPullRequestDetail(input, PULL_REQUEST_DETAIL_JSON_FIELDS, operation).pipe(
+  const withReviewScopeFallback = <A>(
+    host: string,
+    fields: string,
+    read: (fields: string) => Effect.Effect<A, GitHubPullRequestCliError>,
+  ): Effect.Effect<A, GitHubPullRequestCliError> =>
+    read(fields).pipe(
       Effect.catchTag("GitHubCliCommandError", (error) => {
         if (!isVcsProcessExitError(error.cause) || error.cause.failureKind !== "missing-scope") {
           return Effect.fail(error);
         }
-        const retry = readPullRequestDetail(
-          input,
-          PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS,
-          operation,
-        );
-        if (hostsWarnedMissingReviewScope.has(input.host)) return retry;
-        hostsWarnedMissingReviewScope.add(input.host);
+        const retry = read(withoutReviewRequests(fields));
+        if (hostsWarnedMissingReviewScope.has(host)) return retry;
+        hostsWarnedMissingReviewScope.add(host);
         return Effect.logWarning(
           "GitHub token lacks a scope for review requests (likely read:org); reading pull requests without reviewers",
-          { host: input.host, number: input.number },
+          { host },
         ).pipe(Effect.andThen(retry));
       }),
+    );
+
+  const readPullRequestDetailWithScopeFallback = (
+    input: PullRequestDetailInput,
+    operation: PullRequestDetailOperation,
+  ) =>
+    withReviewScopeFallback(input.host, PULL_REQUEST_DETAIL_JSON_FIELDS, (fields) =>
+      readPullRequestDetail(input, fields, operation),
     );
 
   const getPullRequestDetail: GitHubPullRequestCli["Service"]["getPullRequestDetail"] = (input) =>
@@ -1651,8 +1656,9 @@ export const make = Effect.gen(function* () {
         continues: boolean,
         requestedRows = input.limit + 1,
       ): Effect.Effect<GitHubPullRequestListBatch, GitHubPullRequestCliError> =>
-        github
-          .execute({
+        // T3o (T3O-8): one team-requested row refuses the whole listing without `read:org`.
+        withReviewScopeFallback(input.host, PULL_REQUEST_LIST_JSON_FIELDS, (fields) =>
+          github.execute({
             cwd: input.cwd,
             args: [
               "pr",
@@ -1665,49 +1671,49 @@ export const make = Effect.gen(function* () {
               // One extra row reveals that the repository has more than the page shows.
               String(requestedRows),
               "--json",
-              PULL_REQUEST_LIST_JSON_FIELDS,
+              fields,
             ],
-          })
-          .pipe(
-            Effect.flatMap((result) => {
-              const raw = result.stdout.trim();
-              if (raw.length === 0) {
-                return Effect.succeed({ items: [], truncated: false, continues });
+          }),
+        ).pipe(
+          Effect.flatMap((result) => {
+            const raw = result.stdout.trim();
+            if (raw.length === 0) {
+              return Effect.succeed({ items: [], truncated: false, continues });
+            }
+            const decoded = decodePullRequestListJson(raw);
+            if (Result.isSuccess(decoded)) {
+              const items = continues
+                ? decoded.success.items
+                : decoded.success.items.filter((item) => matchesUnsortedListing(item, input));
+              if (
+                !continues &&
+                items.length < input.limit &&
+                decoded.success.rawCount >= requestedRows &&
+                requestedRows < fallbackMaxRows
+              ) {
+                const nextRows = Math.min(requestedRows * 2, fallbackMaxRows);
+                if (nextRows > requestedRows) return read(false, nextRows);
               }
-              const decoded = decodePullRequestListJson(raw);
-              if (Result.isSuccess(decoded)) {
-                const items = continues
-                  ? decoded.success.items
-                  : decoded.success.items.filter((item) => matchesUnsortedListing(item, input));
-                if (
-                  !continues &&
-                  items.length < input.limit &&
-                  decoded.success.rawCount >= requestedRows &&
-                  requestedRows < fallbackMaxRows
-                ) {
-                  const nextRows = Math.min(requestedRows * 2, fallbackMaxRows);
-                  if (nextRows > requestedRows) return read(false, nextRows);
-                }
-                return Effect.succeed({
-                  items: items.slice(0, input.limit),
-                  // One row over the page size is the probe for a next page, and it is
-                  // counted before decoding: a skipped malformed row must not end paging.
-                  truncated: continues
-                    ? decoded.success.rawCount > input.limit
-                    : items.length > input.limit || decoded.success.rawCount >= requestedRows,
-                  continues,
-                });
-              }
-              return Effect.fail(
-                new GitHubPullRequestReadError({
-                  command: "gh",
-                  cwd: input.cwd,
-                  operation: "listPullRequests",
-                  cause: decoded.failure,
-                }),
-              );
-            }),
-          );
+              return Effect.succeed({
+                items: items.slice(0, input.limit),
+                // One row over the page size is the probe for a next page, and it is
+                // counted before decoding: a skipped malformed row must not end paging.
+                truncated: continues
+                  ? decoded.success.rawCount > input.limit
+                  : items.length > input.limit || decoded.success.rawCount >= requestedRows,
+                continues,
+              });
+            }
+            return Effect.fail(
+              new GitHubPullRequestReadError({
+                command: "gh",
+                cwd: input.cwd,
+                operation: "listPullRequests",
+                cause: decoded.failure,
+              }),
+            );
+          }),
+        );
       // GitHub does not index every repository for search, and one it will not search answers
       // with no rows rather than with an error — so an empty listing is read again the way `gh`
       // lists without one. Those rows come back newest-created first, an order no `updated:`
