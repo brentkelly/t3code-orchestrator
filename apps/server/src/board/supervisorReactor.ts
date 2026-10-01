@@ -4168,7 +4168,14 @@ const make = Effect.gen(function* () {
     if (worktree === null || worktree.status !== "ready" || worktree.path === null) return null;
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
-    if (cwd === null) return null;
+    if (cwd === null) {
+      // A failure, not a quiet skip: the card IS finished, and Check again
+      // must not answer that it isn't.
+      yield* Effect.logWarning("board supervisor: worktree reclaim has no project checkout", {
+        cardId: card.id,
+      });
+      return { outcome: "failed" } satisfies BoardCardReclaimAttempt;
+    }
     const key = String(card.id);
     if (reclaimingCards.has(key)) return { outcome: "busy" } satisfies BoardCardReclaimAttempt;
     reclaimingCards.add(key);
@@ -4362,17 +4369,6 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Remove `board/*` worktrees no card owns any more (T3O-52, D4): the card
-   * was deleted while its removal failed, or the card's worktree record moved
-   * on (reclaimed, or re-provisioned at another path) while the old checkout
-   * stayed registered with git.
-   *
-   * Only durable ones go — proof (1) and (3) of the safety rule, since there
-   * is no card to name a pull request. Anything else is logged: there is no
-   * card to flag. A card that is mid-provisioning, failed or branch-only owns
-   * its branch's checkout and is left alone.
-   */
-  /**
    * Whether no card owns a registered `board/*` checkout. Owners are looked up
    * across EVERY project: two board projects can share one repository, and the
    * other project's live card is not an orphan just because this project does
@@ -4414,6 +4410,17 @@ const make = Effect.gen(function* () {
     return relative !== "" && !relative.startsWith("..") && !pathService.isAbsolute(relative);
   };
 
+  /**
+   * Remove `board/*` worktrees no card owns any more (T3O-52, D4): the card
+   * was deleted while its removal failed, or the card's worktree record moved
+   * on (reclaimed, or re-provisioned at another path) while the old checkout
+   * stayed registered with git.
+   *
+   * Only durable ones go — proof (1) and (3) of the safety rule, since there
+   * is no card to name a pull request. Anything else is logged: there is no
+   * card to flag. A card that is mid-provisioning, failed or branch-only owns
+   * its branch's checkout and is left alone.
+   */
   const sweepOrphanWorktrees = Effect.fn("board-supervisor-sweepOrphanWorktrees")(function* (
     board: BoardState,
     model: OrchestrationReadModel,

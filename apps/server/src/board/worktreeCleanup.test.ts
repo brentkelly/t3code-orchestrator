@@ -157,6 +157,55 @@ describe("reclaim at Done (D2)", () => {
     ),
   );
 
+  it.effect("reclaims a Done card whose checkout folder is already gone", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings(),
+        pullRequest: null,
+        // Not durable, so only the missing folder can account for a removal.
+        worktreeUndurable: true,
+        registeredWorktrees: [
+          "worktree /repo",
+          "branch refs/heads/main",
+          "",
+          "worktree /tmp/wt/card-1",
+          "branch refs/heads/board/card-1",
+          "prunable gitdir file points to non-existent location",
+          "",
+        ].join("\n"),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+          const card = (yield* h.board).cards[0]!;
+          assert.equal(card.worktree?.status, "reclaimed");
+          assert.equal(card.worktree?.reclaimBlockedReason, null);
+        }),
+    ),
+  );
+
+  it.effect("Check again on a finished card whose project is gone says it could not check", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [{ ...doneCard(), projectId: "project-missing" as BoardCard["projectId"] }],
+        },
+        settings: settings(),
+        pullRequest: null,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          const result = yield* h.reactor.checkWorktree((yield* h.board).cards[0]!.id);
+          assert.deepEqual(result, { outcome: "failed" });
+          assert.deepEqual(yield* h.removedWorktrees, []);
+        }),
+    ),
+  );
+
   it.effect("re-checking a kept card with the same refusal writes nothing new", () =>
     withGovernor(
       {

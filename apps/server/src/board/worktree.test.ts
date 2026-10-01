@@ -538,6 +538,25 @@ it.effect("reclaims a worktree whose branch was pushed WITHOUT -u", () =>
   ).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("reclaims a checkout whose folder is already gone, dropping git's registration", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      yield* commitIn(setup.worktreePath, "unpushed.txt");
+      // Deleted by hand to free disk: `git status` there can no longer run.
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.remove(setup.worktreePath, { recursive: true });
+
+      const outcome = yield* reclaimCard(setup);
+      assert.deepStrictEqual(outcome, { outcome: "removed", reason: null });
+      const listed = yield* git(setup.cwd, ["worktree", "list", "--porcelain"]);
+      assert.notInclude(listed, "board/card-1");
+      // The branch keeps the commit the folder no longer holds.
+      assert.match(yield* git(setup.cwd, ["log", "-1", "--format=%s", "board/card-1"]), /unpushed/);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("abandons a durable reclaim when the caller no longer wants it, removing nothing", () =>
   Effect.scoped(
     Effect.gen(function* () {

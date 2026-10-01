@@ -33,6 +33,9 @@ the reason, for example `2 uncommitted changes (.vscode/settings.json, .env.loca
 (`target/`, `node_modules/`, `dist/`) does not count as uncommitted, so it never holds a worktree
 back.
 
+If you delete a finished card's worktree folder yourself, the board notices on its next check and
+tidies git's record of it. The branch and its commits stay.
+
 ## Clearing a kept worktree
 
 Open the card. Its banner names the reason and the worktree's folder, and offers two actions:

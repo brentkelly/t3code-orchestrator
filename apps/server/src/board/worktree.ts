@@ -435,12 +435,39 @@ export interface BoardCardWorktreeReclaimResult {
  * read before it started; a card restarted or provisioned in the meantime
  * owns a checkout that is clean and durable and must still not go. Answering
  * false abandons the reclaim: the result is null and nothing is removed.
+ *
+ * A checkout whose folder is already gone — deleted by hand to free disk,
+ * which git reports as `prunable` — has nothing left to lose and cannot be
+ * probed, so only git's registration is dropped. The branch, and any commits on it, stay.
  */
 export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(function* (
   input: BoardWorktreeDurabilityInput,
   stillWanted?: Effect.Effect<boolean>,
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const listed = yield* git
+    .execute({
+      operation: "boardCardWorktree.reclaim.list",
+      cwd: input.projectCwd,
+      args: ["worktree", "list", "--porcelain"],
+      allowNonZeroExit: true,
+    })
+    .pipe(Effect.catch(() => Effect.succeed(null)));
+  // Matched on the branch too: git may spell the path differently (symlinks),
+  // and a branch is checked out in one worktree at most.
+  const gone =
+    listed === null || listed.exitCode !== 0
+      ? undefined
+      : parseRegisteredWorktrees(listed.stdout).find(
+          (registered) =>
+            registered.prunable &&
+            (registered.path === input.worktreePath || registered.branch === input.branch),
+        );
+  if (gone !== undefined) {
+    if (stillWanted !== undefined && !(yield* stillWanted)) return null;
+    yield* git.removeWorktree({ cwd: input.projectCwd, path: gone.path, force: true });
+    return { outcome: "removed", reason: null } satisfies BoardCardWorktreeReclaimResult;
+  }
   const facts = yield* probeBoardWorktreeDurability(input);
   const decision = boardCardWorktreeReclaimDecision(facts);
   if (!decision.safe) {
