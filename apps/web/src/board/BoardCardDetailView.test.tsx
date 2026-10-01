@@ -43,7 +43,6 @@ const {
   boardCardIsDone,
   initialBoardCardPane,
   initialBoardCardThreadId,
-  isBoardCardThreadLocked,
 } = await import("./BoardCardDetailView");
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -992,7 +991,7 @@ describe("BoardCardDetailPanel", () => {
     expect(html).toContain(">3 plans</button>");
   });
 
-  it("opens a split parent on its plans, with the Thread pill disabled", () => {
+  it("opens a split parent on its plans, with its planning thread one click away", () => {
     const html = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
@@ -1002,11 +1001,27 @@ describe("BoardCardDetailPanel", () => {
       />,
     );
     expect(selectedTab(html)).toBe("3 plans");
-    // The explanation is a BoardHint tooltip (a portal, absent from static
-    // markup), so the markup carries the disabled pill wired as its trigger.
-    expect(html).toMatch(
-      /<button[^>]*disabled=""[^>]*data-base-ui-tooltip-trigger=""[^>]*>(?:(?!<\/button>).)*Thread<\/button>/,
-    );
+    // Plans is only the default: the Thread pill stays an ordinary button, so
+    // the human can go back and keep talking to the planning thread.
+    expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>(?:(?!<\/button>).)*Thread<\/button>/);
+
+    // And picking it lands on the thread, at every stage short of review.
+    for (const stage of [
+      BOARD_SEED_STAGE_IDS.planning,
+      BOARD_SEED_STAGE_IDS.ready,
+      BOARD_SEED_STAGE_IDS.building,
+    ]) {
+      const threadPane = renderToStaticMarkup(
+        <BoardCardDetailPanel
+          {...baseProps}
+          childShells={splitShells(3)}
+          detail={splitDetail({ childCount: 3, stage })}
+          paneChoice="thread"
+          projectName="P"
+        />,
+      );
+      expect(selectedTab(threadPane)).toBe("Thread");
+    }
   });
 
   it("singularises a one-plan split", () => {
@@ -1198,21 +1213,19 @@ describe("initialBoardCardPane", () => {
   });
 
   it("opens a split parent on its plans until review (t3o-28, D4)", () => {
-    // A parent's build IS its sub-board, so every stage short of review lands
-    // on the plan list rather than a thread that finished during planning.
+    // A parent's build IS its sub-board, so every stage short of review opens
+    // on the plan list; its planning thread stays one pill away.
     for (const stage of [
       BOARD_SEED_STAGE_IDS.planning,
       BOARD_SEED_STAGE_IDS.ready,
       BOARD_SEED_STAGE_IDS.building,
     ]) {
       expect(initialBoardCardPane(BOARD_SEED_STAGES, stage, 3)).toBe("plan");
-      expect(isBoardCardThreadLocked(BOARD_SEED_STAGES, stage, 3)).toBe(true);
     }
 
     // At review the parent's own thread wakes up — the final review runs on
     // the integration branch — so the ordinary rules resume.
     expect(initialBoardCardPane(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.review, 3)).toBe("review");
-    expect(isBoardCardThreadLocked(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.review, 3)).toBe(false);
 
     // A card with no live children is untouched at every stage: a plain card,
     // and a parent whose split has been fully archived away.

@@ -39,8 +39,8 @@ unblocks, until the last lands and the parent goes to review.
    moves freely up to and including the build-role stage, never past it.
 3. A reactor cascade: the parent entering build starts every unblocked child,
    and each child finishing starts whatever it unblocked.
-4. The parent's modal opens on the Plans pane, with its own thread locked until
-   the review stage.
+4. The parent's modal opens on the Plans pane until the review stage; its own
+   thread stays one pill away.
 
 **Out**
 
@@ -135,15 +135,19 @@ The concurrency governor needs nothing. Five children cascading into Building
 queue five steps against the same slots as five drags would, and the queue
 drains in the same order.
 
-### D4 — A split parent's own thread is locked until review
+### D4 — A split parent opens on its plans until review
 
-Straight from the prototype (`t3o.dc.html`: `threadLocked = isParent &&
-stageIndex(status) < review`, `pane = threadLocked ? "plans" : "thread"`). A
-card with live children, sitting before the review-role stage, opens on the
-**Plans** pane and its Thread pill is disabled. A split parent has no build
-conversation of its own — its build is the sub-board — so the thread pane can
-only show a dormant planning thread, and the pane that matters is the plan list
-with its child chips and drill-in.
+A card with live children, sitting before the review-role stage, opens on the
+**Plans** pane. A split parent has no build conversation of its own — its build
+is the sub-board — so the pane that matters is the plan list with its child
+chips and drill-in.
+
+Plans is only the default. The Thread pill stays an ordinary, enabled button,
+so the human can go back to the planning thread and keep talking to it after
+Approve split. Nothing needs locking client-side to protect the split: the
+server refuses `board_propose_plans` once live children exist (the plans are
+frozen), so a message to the planning agent cannot rewrite it. A pane the human
+pinned stays pinned; an unpinned pane follows the card onto Plans.
 
 At the review-role stage the parent's own thread wakes up: the final review
 runs on the integration branch, in the parent's thread, and the default returns
@@ -166,21 +170,21 @@ every stage.
 5. A child reaching Done (or being archived, or deleted) moves whatever it
    unblocked into build and starts it; when the last child finishes, the parent
    advances past build exactly as it does today.
-6. A parent with live children opens its modal on the Plans pane with the
-   Thread pill disabled, at every stage before review; from the review stage on,
-   the thread is available and opens by default.
+6. A parent with live children opens its modal on the Plans pane at every
+   stage before review, with the Thread pill enabled so its planning thread
+   stays reachable; from the review stage on, the Review pane opens by default.
 7. A card that never split, and a child card, behave exactly as they do today.
 8. `pnpm test` passes.
 
 ## Files
 
-| File | Change |
-| --- | --- |
-| `apps/server/src/board/decider.ts` | `board.plans.approve` drops the parent move and its dependency gate; the freeze in `board.card.move` becomes a past-build ceiling |
-| `apps/server/src/board/supervisorReactor.ts` | `cascadeUnblockedChildren`, wired into `handleCardMoved` (parent into build, child into done) and the archive/delete arms; `advanceParentIfChildrenDone` and `regressParentIfChildLeftDone` re-read against the new ceiling |
-| `apps/web/src/board/BoardCardDetailView.tsx` | `isBoardCardThreadLocked`; `initialBoardCardPane` takes the live-child count; Plans default and disabled Thread pill for a split parent before review (the panel already holds `detail.children`, so no plumbing) |
-| `apps/server/src/board/decider.subboard.test.ts` | approval is stage-neutral; the ceiling matrix replaces the pin matrix |
-| `apps/server/src/board/decider.board.test.ts` | `board.card.move` becomes the ONLY command that may emit a `board.card-moved` |
-| `apps/web/src/board/BoardCardDetailView.test.tsx` | the pane lock and its release at review |
-| `apps/server/src/board/subBoardSupervisor.test.ts` | the cascade: parent into build, sibling unblocking, the parked-child and blocked-child refusals |
-| `apps/server/src/board/syncBaseSupervisor.test.ts` | parents no longer arrive in build by approval |
+| File                                               | Change                                                                                                                                                                                                                      |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/board/decider.ts`                 | `board.plans.approve` drops the parent move and its dependency gate; the freeze in `board.card.move` becomes a past-build ceiling                                                                                           |
+| `apps/server/src/board/supervisorReactor.ts`       | `cascadeUnblockedChildren`, wired into `handleCardMoved` (parent into build, child into done) and the archive/delete arms; `advanceParentIfChildrenDone` and `regressParentIfChildLeftDone` re-read against the new ceiling |
+| `apps/web/src/board/BoardCardDetailView.tsx`       | `initialBoardCardPane` takes the live-child count; Plans default for a split parent before review, Thread pill still enabled (the panel already holds `detail.children`, so no plumbing)                                    |
+| `apps/server/src/board/decider.subboard.test.ts`   | approval is stage-neutral; the ceiling matrix replaces the pin matrix                                                                                                                                                       |
+| `apps/server/src/board/decider.board.test.ts`      | `board.card.move` becomes the ONLY command that may emit a `board.card-moved`                                                                                                                                               |
+| `apps/web/src/board/BoardCardDetailView.test.tsx`  | the Plans default, the reachable thread, and the review boundary                                                                                                                                                            |
+| `apps/server/src/board/subBoardSupervisor.test.ts` | the cascade: parent into build, sibling unblocking, the parked-child and blocked-child refusals                                                                                                                             |
+| `apps/server/src/board/syncBaseSupervisor.test.ts` | parents no longer arrive in build by approval                                                                                                                                                                               |

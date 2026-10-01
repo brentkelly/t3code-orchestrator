@@ -166,7 +166,7 @@ describe("BoardPlansPanel", () => {
     expect(html).toContain("integration branch pending");
   });
 
-  it("has no Back to thread control, since a split parent's thread is locked", () => {
+  it("has no Back to thread control, since the header's Thread pill is the way back", () => {
     expect(render()).not.toContain("Back to thread");
   });
 });

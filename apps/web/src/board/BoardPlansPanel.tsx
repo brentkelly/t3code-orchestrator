@@ -10,9 +10,9 @@
  * one row per plan, in dependency order, each carrying its child's live stage,
  * what is holding it up, and its PR.
  *
- * No "Back to thread" button, unlike the markdown pane: a split parent's own
- * thread is locked until review (t3o-28, D4), so the control would be dead
- * wherever this panel renders.
+ * No "Back to thread" button, unlike the markdown pane: this panel is a split
+ * parent's default pane (t3o-28, D4), and the header's Thread pill is already
+ * the way to its planning thread.
  *
  * Pure presentation over `deriveBoardPlanRows` — see `boardPlanRows.ts` for
  * why none of this needed a wire change.
