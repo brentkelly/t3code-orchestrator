@@ -29,6 +29,7 @@ import {
   type PullRequestLabelCandidateList,
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateMethod,
+  VcsProcessExitError,
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
@@ -1443,6 +1444,7 @@ export const make = Effect.gen(function* () {
       });
 
   // T3o (T3O-8): the detail read for a token that may not read team review requests.
+  const isVcsProcessExitError = Schema.is(VcsProcessExitError);
   const PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS = PULL_REQUEST_DETAIL_JSON_FIELDS.split(
     ",",
   )
@@ -1452,14 +1454,21 @@ export const make = Effect.gen(function* () {
   const getPullRequestDetail: GitHubPullRequestCli["Service"]["getPullRequestDetail"] = (input) =>
     readPullRequestDetail(input, PULL_REQUEST_DETAIL_JSON_FIELDS).pipe(
       // T3o (T3O-8): reading a team review request needs `read:org`, and GitHub refuses the
-      // whole query without it — which `gh` reports as "not found". Read once more without
-      // reviewers rather than lose mergeability and checks over a field nothing blocks on.
-      Effect.catchTags({
-        GitHubPullRequestNotFoundError: () =>
-          readPullRequestDetail(input, PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS),
-        GitHubCliCommandError: () =>
-          readPullRequestDetail(input, PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS),
-      }),
+      // whole query without it. Read once more without reviewers rather than lose mergeability
+      // and checks over a field nothing blocks on. Only a scope refusal is retried; the
+      // reviewer list is then empty, so say so in the log.
+      Effect.catchTag("GitHubCliCommandError", (error) =>
+        isVcsProcessExitError(error.cause) && error.cause.failureKind === "missing-scope"
+          ? Effect.logWarning(
+              "GitHub token lacks a scope for review requests (likely read:org); reading the pull request without reviewers",
+              { number: input.number },
+            ).pipe(
+              Effect.andThen(
+                readPullRequestDetail(input, PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS),
+              ),
+            )
+          : Effect.fail(error),
+      ),
     );
 
   const readPullRequestDetail = (

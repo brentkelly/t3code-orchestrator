@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { VcsProcessExitError } from "@t3tools/contracts";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -3088,20 +3089,22 @@ layer("GitHubPullRequestCli.layer", (it) => {
   );
 
   // T3o (T3O-8): a team review request needs `read:org`, and GitHub refuses the whole query
-  // without it — which `gh` reports as a pull request that does not exist.
+  // without it. `gh` exits non-zero, which the process layer classifies as a missing scope.
+  const ghExit = (kind: VcsProcessExitError["failureKind"] & string) =>
+    GitHubCli.fromVcsError(
+      { command: "gh", cwd: "/w" },
+      VcsProcessExitError.fromProcessExit(
+        { operation: "GitHubCli.execute", command: "gh", cwd: "/w" },
+        { exitCode: 1, stderr: "", stderrTruncated: false },
+        kind,
+      ),
+    );
+  const readDetail = (cli: GitHubPullRequestCli.GitHubPullRequestCli["Service"]) =>
+    cli.getPullRequestDetail({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 });
+
   it.effect("reads the detail without reviewers when the token cannot read team requests", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.fail(
-          new GitHubCli.GitHubPullRequestNotFoundError({
-            command: "gh",
-            cwd: "/w",
-            cause: new Error(
-              "GraphQL: Your token has not been granted the required scopes to execute this query. The 'login' field requires one of the following scopes: ['read:org']",
-            ),
-          }),
-        ),
-      );
+      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
@@ -3121,12 +3124,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-      const detail = yield* cli.getPullRequestDetail({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
+      const detail = yield* readDetail(cli);
 
       expect(detail.mergeability).toBe("conflicting");
       expect(detail.reviewRequestLogins).toEqual([]);
@@ -3138,55 +3136,31 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
   it.effect("still fails a detail read that fails without reviewers too", () =>
     Effect.gen(function* () {
-      const missing = new GitHubCli.GitHubPullRequestNotFoundError({
-        command: "gh",
-        cwd: "/w",
-        cause: new Error("GraphQL: Could not resolve to a PullRequest with the number of 7."),
-      });
-      mockedExecute.mockReturnValueOnce(Effect.fail(missing));
-      mockedExecute.mockReturnValueOnce(Effect.fail(missing));
+      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
+      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-      const error = yield* Effect.flip(
-        cli.getPullRequestDetail({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-        }),
-      );
+      const error = yield* Effect.flip(readDetail(cli));
 
-      assert.strictEqual(error._tag, "GitHubPullRequestNotFoundError");
+      assert.strictEqual(error._tag, "GitHubCliCommandError");
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
     }),
   );
 
-  it.effect("does not retry a detail read refused for want of credentials", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.fail(
-          new GitHubCli.GitHubCliAuthenticationError({
-            command: "gh",
-            cwd: "/w",
-            cause: new Error("gh auth login"),
-          }),
-        ),
-      );
-      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+  for (const kind of ["not-found", "command-failed", "authentication"] as const) {
+    it.effect(`does not retry a detail read that fails as ${kind}`, () =>
+      Effect.gen(function* () {
+        const failure = ghExit(kind);
+        mockedExecute.mockReturnValueOnce(Effect.fail(failure));
+        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-      const error = yield* Effect.flip(
-        cli.getPullRequestDetail({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-        }),
-      );
+        const error = yield* Effect.flip(readDetail(cli));
 
-      assert.strictEqual(error._tag, "GitHubCliAuthenticationError");
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-    }),
-  );
+        assert.strictEqual(error._tag, failure._tag);
+        assert.strictEqual(mockedExecute.mock.calls.length, 1);
+      }),
+    );
+  }
 
   it.effect("fails a files page too large to read rather than calling the diff whole", () =>
     Effect.gen(function* () {

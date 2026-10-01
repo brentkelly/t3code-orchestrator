@@ -245,6 +245,25 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
+  // T3o (T3O-8): the refusal names `repository.pullRequest`, which used to read as not-found.
+  it.effect(
+    "classifies a GitHub scope refusal as a missing scope, not a missing pull request",
+    () =>
+      Effect.gen(function* () {
+        const providerStderr =
+          "GraphQL: Your token has not been granted the required scopes to execute this query. The 'login' field requires one of the following scopes: ['read:org'], but your token has only been granted the: ['repo'] scopes. (repository.pullRequest.reviewRequests.nodes.0.requestedReviewer.login)";
+        const error = yield* run({
+          operation: "test.missing-scope",
+          command: "node",
+          args: ["-e", "process.stderr.write(process.argv[1]); process.exit(1)", providerStderr],
+          cwd: process.cwd(),
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ failureKind: "missing-scope" });
+        expect(error.message).not.toContain(providerStderr);
+      }).pipe(provideLive),
+  );
+
   it.effect("retains spawn causes without exposing process arguments in the error message", () =>
     Effect.gen(function* () {
       const secretArgument = "--token=super-secret-token";

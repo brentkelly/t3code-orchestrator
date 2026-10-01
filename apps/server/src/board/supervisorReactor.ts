@@ -4465,8 +4465,8 @@ const make = Effect.gen(function* () {
       }
       // One probe answers both questions: is this a conflict, and what does the
       // card say about it (T3O-47). A probe that itself failed leaves `state`
-      // null, which reads as "refused, reason unknown" — never as a conflict,
-      // because starting a fix agent is the expensive mistake.
+      // null, and the card says the read failed and gives its error (T3O-8) —
+      // never a conflict, because starting a fix agent is the expensive mistake.
       const probe = yield* probeMergeState(fresh);
       const state = probe.state;
       const detail = boardMergeRefusalReason(state, probe.failure);
