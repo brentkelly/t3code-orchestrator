@@ -429,11 +429,11 @@ export interface BoardCardWorktreeReclaimResult {
  * The registered path of a card's checkout whose folder is gone, or null when
  * the folder may still be there (including when git's list cannot be read).
  * Gone means `prunable` — git still lists it — or unlisted and absent from
- * disk, because `git worktree prune` (or a gc) has since dropped it. Matched
- * on the branch too: git may spell the path differently (symlinks), and a
- * branch is checked out in one worktree at most. The folder check covers the
- * rest of that case: a detached checkout spelled through a symlink matches
- * neither, yet is still on disk.
+ * disk, because `git worktree prune` (or a gc) has since dropped it. A
+ * prunable entry is matched on the branch too, as git may spell the path
+ * differently (symlinks). Anything else that is not an exact path match falls
+ * to the folder check, which keeps a live checkout spelled through a symlink
+ * and still catches a gone one whose branch is now checked out elsewhere.
  */
 const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function* (
   input: BoardWorktreeDurabilityInput,
@@ -452,10 +452,14 @@ const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function* (
   const registered =
     listed === null || listed.exitCode !== 0 ? [] : parseRegisteredWorktrees(listed.stdout);
   if (registered.length === 0) return null;
-  const matching = registered.filter(
-    (entry) => entry.path === input.worktreePath || entry.branch === input.branch,
+  const exact = registered.find((entry) => entry.path === input.worktreePath);
+  if (exact !== undefined) return exact.prunable ? exact.path : null;
+  // A live branch match proves nothing about this path — the branch may be
+  // checked out elsewhere — so only a prunable one answers; the rest go to disk.
+  const prunableOnBranch = registered.find(
+    (entry) => entry.branch === input.branch && entry.prunable,
   );
-  if (matching.length > 0) return matching.find((entry) => entry.prunable)?.path ?? null;
+  if (prunableOnBranch !== undefined) return prunableOnBranch.path;
   const onDisk = yield* fileSystem
     .exists(input.worktreePath)
     .pipe(Effect.catch(() => Effect.succeed(true)));

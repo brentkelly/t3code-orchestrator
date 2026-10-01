@@ -579,6 +579,26 @@ it.effect(
     ).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("reclaims a gone, pruned checkout whose branch is now checked out elsewhere", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.remove(setup.worktreePath, { recursive: true });
+      yield* git(setup.cwd, ["worktree", "prune"]);
+      // Someone checks the card's branch out again at another path.
+      const elsewhere = `${yield* makeTmpDir("board-worktree-elsewhere-")}/checkout`;
+      yield* git(setup.cwd, ["worktree", "add", elsewhere, "board/card-1"]);
+
+      const outcome = yield* reclaimCard(setup);
+      assert.deepStrictEqual(outcome, { outcome: "removed", reason: null });
+      // Only the card's own (already gone) checkout went; the other stays.
+      assert.isTrue(yield* worktreeExists(elsewhere));
+      assert.include(yield* git(setup.cwd, ["worktree", "list", "--porcelain"]), elsewhere);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("probes, rather than reclaims, a checkout git does not list but which is on disk", () =>
   Effect.scoped(
     Effect.gen(function* () {
