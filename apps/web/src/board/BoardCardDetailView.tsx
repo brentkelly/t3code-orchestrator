@@ -1911,31 +1911,18 @@ function isStageAtOrAfterReview(
 }
 
 /**
- * A split parent has no conversation of its own before review (t3o-28, D4):
- * its build IS the sub-board, so its thread can only show a planning thread
- * that finished. The pane that matters is the plan list with its child chips,
- * and the Thread pill is disabled rather than hidden — the thread exists, it
- * is just not where the work is. At the review stage the parent's own thread
- * wakes up (the final review runs on the integration branch) and the ordinary
- * rules resume.
- */
-export function isBoardCardThreadLocked(
-  stages: ReadonlyArray<BoardStageDefinition>,
-  stage: BoardStageId,
-  liveChildCount: number,
-): boolean {
-  return liveChildCount > 0 && !isStageAtOrAfterReview(stages, stage);
-}
-
-/**
  * The pane a card opens on: the latest surface its stage has produced.
  * Backlog and Sprint open on the brief (nothing has run yet, though every
  * pane is one pill away), Planning and Ready on the conversation, Build on
  * its build thread, and Code review / Ready for merge / Done on the review
  * pane.
  *
- * A split parent short of review opens on its plans instead
- * (`isBoardCardThreadLocked`).
+ * A split parent short of review opens on its plans instead (t3o-28, D4):
+ * its build IS the sub-board, so the plan list with its child chips is where
+ * the work is. Its planning thread stays one pill away — the server freezes
+ * the plans once children exist, so talking to it cannot rewrite the split.
+ * At the review stage the parent's own thread wakes up and the ordinary rules
+ * resume.
  */
 export function initialBoardCardPane(
   stages: ReadonlyArray<BoardStageDefinition>,
@@ -1944,7 +1931,7 @@ export function initialBoardCardPane(
 ): BoardCardPane {
   if (isStageAtOrAfterReview(stages, stage)) return "review";
   if (!boardCardHasThreadPane(stages, stage)) return "brief";
-  return isBoardCardThreadLocked(stages, stage, liveChildCount) ? "plan" : "thread";
+  return liveChildCount > 0 ? "plan" : "thread";
 }
 
 /**
@@ -1990,14 +1977,12 @@ export function initialBoardCardThreadId(
     model set before the pipeline gets there. The Review pill exists whenever
     the board has a review-role stage (or the card carries review-loop
     completions — past reviews stay readable); the Plan pill once the card has
-    a plan. A split parent's Thread pill is disabled until review (t3o-28,
-    D4). */
+    a plan. */
 function PaneTabs({
   pane,
   hasReview,
   hasPlan,
   planCount,
-  threadLocked,
   onSelect,
 }: {
   readonly pane: BoardCardPane;
@@ -2007,7 +1992,6 @@ function PaneTabs({
       then labels the Plans panel by how many rows it holds — "4 plans", not
       "Plan" — because the pill names its pane's contents. */
   readonly planCount: number | null;
-  readonly threadLocked: boolean;
   readonly onSelect: (pane: BoardCardPane) => void;
 }) {
   const tab = (value: BoardCardPane) =>
@@ -2019,23 +2003,10 @@ function PaneTabs({
     );
   return (
     <div className="flex shrink-0 items-center gap-0.5 rounded-[9px] bg-accent p-0.5">
-      <BoardHint
-        label={
-          threadLocked
-            ? "This card builds through its plan cards; its own thread opens at review"
-            : undefined
-        }
-      >
-        <button
-          className={cn(tab("thread"), threadLocked && "cursor-not-allowed opacity-50")}
-          disabled={threadLocked}
-          onClick={() => onSelect("thread")}
-          type="button"
-        >
-          <MessageSquareIcon className="size-3" />
-          Thread
-        </button>
-      </BoardHint>
+      <button className={tab("thread")} onClick={() => onSelect("thread")} type="button">
+        <MessageSquareIcon className="size-3" />
+        Thread
+      </button>
       {hasReview ? (
         <BoardHint label="Adversarial review loop">
           <button className={tab("review")} onClick={() => onSelect("review")} type="button">
@@ -2199,14 +2170,13 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // sizes the frame by it.
   const paneChoice = props.paneChoice;
   const setPane = props.onSelectPane;
-  // A split parent's own thread is dormant while its children build (t3o-28,
-  // D4). Live children only — an archived child is gone (t3o-13, D1), and a
+  // A split parent opens on its plans while its children build (t3o-28, D4).
+  // Live children only — an archived child is gone (t3o-13, D1), and a
   // fully-wrapped split leaves the parent an ordinary card again.
   const liveChildCount = props.detail.children.filter((child) => child.archivedAt === null).length;
-  const threadLocked = isBoardCardThreadLocked(props.stages, card.stage, liveChildCount);
   // The Plans panel replaces the markdown pane once, and only once, children
-  // exist (t3o-29, D2) — the same predicate that locks the thread, so the
-  // pane's contents and the pane's lock can never disagree. Before approval
+  // exist (t3o-29, D2) — the same predicate that makes Plans the default
+  // pane. Before approval
   // the markdown IS the surface: it is what the human reads to decide whether
   // the split is right, and the Approve split gate lives on it. After, the
   // markdown is each child's brief, one drill-in away.
@@ -2240,16 +2210,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // other stage's, and feeding it in would spin the review pill during a
   // build and freeze round models that are still free.
   const onReviewStage = reviewStageId !== null && card.stage === reviewStageId;
-  const fallbackPane: BoardCardPane = threadLocked && hasPlan ? "plan" : "thread";
   const activePane: BoardCardPane =
-    (pane === "plan" && !hasPlan) || (pane === "review" && !hasReview)
-      ? "thread"
-      : // A locked thread is not a place the pane may rest, however it was
-        // chosen — a pinned choice from before the split, or the fallback
-        // above. The plans are where a split parent lives until review.
-        pane === "thread" && threadLocked && hasPlan
-        ? fallbackPane
-        : pane;
+    (pane === "plan" && !hasPlan) || (pane === "review" && !hasReview) ? "thread" : pane;
   // Which tab the thread pane is on. Absent means "whichever thread the card's
   // stage makes current", so the pane follows the card until the user picks a
   // thread, and a since-unlinked selection falls back to that same default.
@@ -2363,7 +2325,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           onSelect={setPane}
           pane={activePane}
           planCount={planRows === null ? null : planRows.rows.length}
-          threadLocked={threadLocked}
         />
         <Menu>
           <MenuTrigger
