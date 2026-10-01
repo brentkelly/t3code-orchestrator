@@ -90,6 +90,7 @@ import {
   startBoardStageThread,
   requestBoardReviewRound,
   removeBoardCardWorktree,
+  checkBoardCardWorktree,
   submitBoardCardForMerge,
   unarchiveBoardCard,
   undeleteBoardLabel,
@@ -1103,6 +1104,11 @@ export function createBoardEnvironmentAtoms<R, ER>(
     removeCardWorktree: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:remove-card-worktree",
       execute: (input: { readonly cardId: BoardCardId }) => removeBoardCardWorktree(input),
+    }),
+    /** Re-run a kept worktree's cleanup and say what it did (T3O-52). */
+    checkCardWorktree: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:check-card-worktree",
+      execute: (input: { readonly cardId: BoardCardId }) => checkBoardCardWorktree(input),
     }),
     /** Attach a pending upload to a card's brief (t3o-32). Resolves with the
         stored record — the name may have been de-duplicated server-side. */

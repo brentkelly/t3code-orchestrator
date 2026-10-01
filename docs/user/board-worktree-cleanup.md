@@ -38,6 +38,7 @@ back.
 Open the card. Its banner names the reason and the worktree's folder, and offers two actions:
 
 - **Check again** looks up the pull request and retries the cleanup. Use it after you have committed
-  or discarded the stray changes, or merged the pull request.
+  or discarded the stray changes, or merged the pull request. If the worktree is still kept, it
+  tells you why.
 - **Remove worktree** removes it anyway, after asking you to confirm. Uncommitted changes in it are
   lost. Committed work is not: the branch stays, so you can check it out again any time.

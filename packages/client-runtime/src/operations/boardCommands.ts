@@ -129,6 +129,10 @@ export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId })
 export const removeBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.removeCardWorktree, input);
 
+/** Re-run a kept worktree's cleanup (T3O-52), answering what it did. */
+export const checkBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.checkCardWorktree, input);
+
 /** Claim a pending upload onto a card's brief (t3o-32): the server copies the
     file into the card's folder and records it, in that order. */
 export const attachBoardCardFile = (input: BoardAttachCardFileInput) =>

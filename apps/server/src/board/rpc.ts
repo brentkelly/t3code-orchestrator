@@ -264,6 +264,17 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
         ),
       ),
 
+    /** "Check again" on a card that kept its worktree (T3O-52): operate, like
+        removal, because a durable checkout is removed by it. */
+    [BOARD_WS_METHODS.checkCardWorktree]: (input: BoardCardPullRequestActionInput) =>
+      observeRpcEffect(
+        BOARD_WS_METHODS.checkCardWorktree,
+        authorized(
+          BOARD_WS_METHODS.checkCardWorktree,
+          deps.boardSupervisor.checkWorktree(input.cardId),
+        ),
+      ),
+
     /**
      * Attach a pending upload to the card's brief (t3o-32, K2). Copy first,
      * record second: the file lands in the card's folder, then the internal

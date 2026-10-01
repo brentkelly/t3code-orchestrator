@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * T3O-52: finished cards give their worktree back, and a kept one says why.
  *
@@ -341,10 +342,74 @@ describe("the cleanup sweep (D3/D4)", () => {
             assert.deepEqual(yield* h.removedWorktrees, []);
             // The work has since reached the remote; the human asks again.
             h.setWorktreeUndurable(false);
-            yield* h.reactor.refreshPullRequest((yield* h.board).cards[0]!.id, { force: true });
+            const result = yield* h.reactor.checkWorktree((yield* h.board).cards[0]!.id);
+            assert.deepEqual(result, { outcome: "removed" });
             assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
           }),
       ),
+  );
+
+  it.effect("Check again answers a repeat refusal, though it writes nothing new", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings(),
+        pullRequest: null,
+        worktreeUndurable: true,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          const before = reclaims(yield* h.commands).length;
+          const result = yield* h.reactor.checkWorktree((yield* h.board).cards[0]!.id);
+          assert.deepEqual(result, {
+            outcome: "kept",
+            reason: "2 commits not in the base branch or a merged pull request",
+          });
+          assert.equal(reclaims(yield* h.commands).length, before);
+        }),
+    ),
+  );
+
+  it.effect("Check again says so when another cleanup of the card is already running", () => {
+    let check: Effect.Effect<unknown> = Effect.void;
+    const answers: Array<unknown> = [];
+    return withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings(),
+        pullRequest: null,
+        worktreeUndurable: true,
+        // The human clicks while the boot sweep's probe of this card runs.
+        duringDurabilityProbe: () =>
+          answers.length > 0
+            ? Effect.void
+            : Effect.asVoid(check.pipe(Effect.tap((a) => Effect.sync(() => answers.push(a))))),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          check = Effect.flatMap(h.board, (board) => h.reactor.checkWorktree(board.cards[0]!.id));
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(answers, [{ outcome: "busy" }]);
+        }),
+    );
+  });
+
+  it.effect("Check again on a Done card with Done cleanup off says it is not reclaimed", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings(false),
+        pullRequest: null,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          const result = yield* h.reactor.checkWorktree((yield* h.board).cards[0]!.id);
+          assert.deepEqual(result, { outcome: "not-finished" });
+          assert.deepEqual(yield* h.removedWorktrees, []);
+        }),
+    ),
   );
 
   it.effect("abandons a reclaim when the card leaves Done while the probe runs", () =>

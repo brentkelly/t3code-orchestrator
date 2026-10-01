@@ -6867,6 +6867,7 @@ export const BOARD_WS_METHODS = {
       it past the safety rule, after a confirm dialog. The branch is kept. An
       RPC because the git removal must land before the record does. */
   removeCardWorktree: "board.removeCardWorktree",
+  checkCardWorktree: "board.checkCardWorktree",
   /** Claim a pending upload into the card's folder and record it on the brief
       (t3o-32, K2). An RPC, not a client command: the copy is a filesystem
       side effect that must land before the record does. */
@@ -7051,6 +7052,22 @@ export const BoardRemoveCardWorktreeResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("failed") }),
 ]);
 export type BoardRemoveCardWorktreeResult = typeof BoardRemoveCardWorktreeResult.Type;
+
+/** What "Check again" on a kept worktree did (T3O-52). */
+export const BoardCheckCardWorktreeResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("removed") }),
+  /** Still refused; `reason` is the refusal, recorded on the card. */
+  Schema.Struct({ outcome: Schema.Literal("kept"), reason: Schema.NullOr(Schema.String) }),
+  /** Another cleanup of this card was already running, so this one stood down. */
+  Schema.Struct({ outcome: Schema.Literal("busy") }),
+  Schema.Struct({ outcome: Schema.Literal("no-worktree") }),
+  /** The card is not one the cleanup reclaims: it left Done, or reclaiming
+      at Done is switched off. */
+  Schema.Struct({ outcome: Schema.Literal("not-finished") }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+  Schema.Struct({ outcome: Schema.Literal("failed") }),
+]);
+export type BoardCheckCardWorktreeResult = typeof BoardCheckCardWorktreeResult.Type;
 
 export const BoardSubscribeCardInput = Schema.Struct({
   cardId: BoardCardId,
@@ -7313,6 +7330,11 @@ export const BOARD_RPCS = [
     success: BoardRemoveCardWorktreeResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.checkCardWorktree, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardCheckCardWorktreeResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.submitCardForMerge, {
     payload: BoardCardPullRequestActionInput,
     success: BoardSubmitCardForMergeResult,
@@ -7359,6 +7381,7 @@ export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.removeCardWorktree]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.checkCardWorktree]: AuthOrchestrationOperateScope,
   // Attaching writes a file and a board event; detaching deletes one. Both
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,

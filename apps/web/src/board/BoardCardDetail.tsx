@@ -98,6 +98,7 @@ import { setBoardProjectSetting } from "../components/settings/BoardSettingsPane
 import { boardCardProjectOptions } from "./BoardCardProjectSelect";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import {
+  describeBoardCheckWorktreeOutcome,
   describeBoardCommandFailure,
   describeBoardMergeOutcome,
   // T3o: the forced re-check's answer (T3O-48).
@@ -217,6 +218,9 @@ export function BoardCardDetail({
   });
   // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
   const removeCardWorktree = useAtomCommand(boardEnvironment.removeCardWorktree, {
+    reportFailure: false,
+  });
+  const checkCardWorktree = useAtomCommand(boardEnvironment.checkCardWorktree, {
     reportFailure: false,
   });
   const createLabel = useAtomCommand(boardEnvironment.createLabel);
@@ -1089,18 +1093,20 @@ export function BoardCardDetail({
       checkingWorktree={checkingWorktree}
       removingWorktree={removingWorktree}
       onCheckWorktree={() => {
-        // A forced refresh settles the card afterwards, which re-runs the
-        // cleanup; the banner clearing is the answer, so only a failure speaks.
+        // The server refreshes the pull request first, then re-runs the
+        // cleanup and answers what it did: a repeat refusal changes nothing on
+        // the card, so it has to be said.
         setFeedback(null);
         setCheckingWorktree(true);
-        void refreshCardPullRequest({
-          environmentId,
-          input: { cardId: card.id, force: true },
-        }).then((result) => {
+        void checkCardWorktree({ environmentId, input: { cardId: card.id } }).then((result) => {
           setCheckingWorktree(false);
-          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-            setFeedback(describeBoardCommandFailure(result));
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+            return;
           }
+          setFeedback(describeBoardCheckWorktreeOutcome(result.value));
+          // The archive list reads a snapshot taken when it opened.
+          if (card.archivedAt !== null) refreshBoardArchivedCards(environmentId);
         });
       }}
       onRemoveWorktree={() => {

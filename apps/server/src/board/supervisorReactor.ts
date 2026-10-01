@@ -89,6 +89,7 @@ import {
   type ChatAttachment,
   type BoardCard,
   type BoardCardId,
+  type BoardCheckCardWorktreeResult,
   type BoardCardPullRequest,
   // T3o: the refresh answers rather than staying silent (T3O-48).
   type BoardRefreshCardPullRequestResult,
@@ -241,6 +242,15 @@ export type BoardForceRemoveWorktreeResult =
   | { readonly outcome: "unknown-card" }
   | { readonly outcome: "failed" };
 
+/** What one reclaim attempt on a card's worktree did (T3O-52): removed, kept
+    with the refusal it recorded, or skipped because another reclaim of the
+    same card was already running. */
+type BoardCardReclaimAttempt =
+  | { readonly outcome: "removed" }
+  | { readonly outcome: "kept"; readonly reason: string | null }
+  | { readonly outcome: "busy" }
+  | { readonly outcome: "failed" };
+
 export interface SupervisorReactorShape {
   /** Reconcile persisted step state, then subscribe to board and thread
       events. Must run in a scope so worker fibers finalize on shutdown. */
@@ -293,6 +303,10 @@ export interface SupervisorReactorShape {
   readonly forceRemoveWorktree: (
     cardId: BoardCardId,
   ) => Effect.Effect<BoardForceRemoveWorktreeResult>;
+  /** A human's "Check again" on a card that kept its worktree (T3O-52): a
+      forced pull-request refresh, then the settle, answering what the reclaim
+      did — so a repeat refusal, which writes nothing, still says so. */
+  readonly checkWorktree: (cardId: BoardCardId) => Effect.Effect<BoardCheckCardWorktreeResult>;
   /** Re-resolve one card's pull request from the forge and record any change.
       The client-driven refresh triggers (card detail opened, View PR clicked)
       call this through the board RPC.
@@ -4151,12 +4165,12 @@ const make = Effect.gen(function* () {
     fetchedBases?: Set<string>,
   ) {
     const worktree = card.worktree;
-    if (worktree === null || worktree.status !== "ready" || worktree.path === null) return;
+    if (worktree === null || worktree.status !== "ready" || worktree.path === null) return null;
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
-    if (cwd === null) return;
+    if (cwd === null) return null;
     const key = String(card.id);
-    if (reclaimingCards.has(key)) return;
+    if (reclaimingCards.has(key)) return { outcome: "busy" } satisfies BoardCardReclaimAttempt;
     reclaimingCards.add(key);
     const pullRequests = [
       ...card.pullRequestHistory,
@@ -4177,25 +4191,21 @@ const make = Effect.gen(function* () {
       cardStillFinished(card, worktree.path),
     ).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-      Effect.map(Option.fromNullishOr),
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: worktree reclaim failed", {
           cardId: card.id,
           cause: Cause.pretty(cause),
-        }).pipe(
-          Effect.as(
-            Option.none<{
-              readonly outcome: "removed" | "blocked";
-              readonly reason: string | null;
-            }>(),
-          ),
-        ),
+        }).pipe(Effect.as("failed" as const)),
       ),
       Effect.ensuring(Effect.sync(() => reclaimingCards.delete(key))),
     );
-    if (Option.isNone(reclaimed)) return;
-    const { outcome, reason } = reclaimed.value;
-    if (outcome === "blocked" && reason === worktree.reclaimBlockedReason) return;
+    if (reclaimed === "failed") return { outcome: "failed" } satisfies BoardCardReclaimAttempt;
+    // Abandoned: the card was no longer finished by the time the probe ended.
+    if (reclaimed === null) return null;
+    const { outcome, reason } = reclaimed;
+    const attempt: BoardCardReclaimAttempt =
+      outcome === "removed" ? { outcome: "removed" } : { outcome: "kept", reason };
+    if (outcome === "blocked" && reason === worktree.reclaimBlockedReason) return attempt;
     // Optional: a concurrent path (card delete, a forced removal) may have
     // settled the worktree while this probed, and the decider's refusal is
     // then the right answer rather than a fault.
@@ -4207,6 +4217,7 @@ const make = Effect.gen(function* () {
       ...(reason === null ? {} : { reason }),
       createdAt: yield* nowIso,
     });
+    return attempt;
   });
 
   /**
@@ -4283,11 +4294,12 @@ const make = Effect.gen(function* () {
     const stage = boardStageById(board, card.stage);
     const inDone = stage !== null && effectiveBoardStageRole(stage) === "done";
     const archived = card.archivedAt !== null;
-    if (!inDone && !archived) return;
+    if (!inDone && !archived) return null;
     const round = boardCardRound(card);
 
     const settings = yield* boardSettings;
     let removedHere = false;
+    let attempt: BoardCardReclaimAttempt | null = null;
     if (archived || settings.lifecycle.reclaimWorktreeOnDone) {
       // Re-assert immediately before the destructive half. Every check above
       // ran against the snapshot this was called with, and there are yields
@@ -4307,15 +4319,15 @@ const make = Effect.gen(function* () {
       const current = yield* readCard(card.id);
       if (current !== null && boardCardRound(current) === round) {
         const wasReady = current.worktree?.status === "ready";
-        yield* reclaimCardWorktree(current, options?.fetchedBases);
+        attempt = yield* reclaimCardWorktree(current, options?.fetchedBases);
         const after = yield* readCard(card.id);
         removedHere = wasReady && after?.worktree?.status === "reclaimed";
       }
     }
 
-    if (!inDone) return;
-    if (card.pullRequest === null || card.pullRequest.state !== "merged") return;
-    if (options?.branchCleanup === "after-reclaim" && !removedHere) return;
+    if (!inDone) return attempt;
+    if (card.pullRequest === null || card.pullRequest.state !== "merged") return attempt;
+    if (options?.branchCleanup === "after-reclaim" && !removedHere) return attempt;
     // Branch cleanup hangs off the pull-request refresh, and a refresh fires
     // every time anyone OPENS the card — so without a guard a card sitting in
     // Done would re-run `git push --delete` on an already-deleted branch and
@@ -4326,10 +4338,10 @@ const make = Effect.gen(function* () {
     // still sitting in Done can settle once more, which costs one idempotent
     // cleanup attempt — the remote delete reports "remote ref does not exist"
     // and is treated as success — rather than an unbounded stream of them.
-    if (settledAtDone.get(String(card.id)) === round) return;
+    if (settledAtDone.get(String(card.id)) === round) return attempt;
     // Both checks and the add are synchronous — nothing yields between them —
     // so a concurrent caller cannot slip through into the same cleanup.
-    if (settlingAtDone.has(String(card.id))) return;
+    if (settlingAtDone.has(String(card.id))) return attempt;
     settlingAtDone.add(String(card.id));
     // `ensuring`, so a failure anywhere below releases the in-flight marker.
     // Leaking it would wedge the card out of ever settling again in this
@@ -4346,6 +4358,7 @@ const make = Effect.gen(function* () {
     // looks; the round index moves when the card next leaves Done carrying a
     // pull request, giving that round its own attempt.
     settledAtDone.set(String(card.id), round);
+    return attempt;
   });
 
   /**
@@ -4545,9 +4558,10 @@ const make = Effect.gen(function* () {
       (request.kind === "settle"
         ? settleCardAtDone(request.card)
         : Effect.flatMap(readCard(request.cardId), (card) =>
-            card === null ? Effect.void : reclaimCardWorktree(card),
+            card === null ? Effect.succeed(null) : reclaimCardWorktree(card),
           )
       ).pipe(
+        Effect.asVoid,
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.failCause(cause)
@@ -4625,6 +4639,29 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     return { outcome: "removed" } as const;
+  });
+
+  const checkCardWorktree = Effect.fn("board-supervisor-checkCardWorktree")(function* (
+    cardId: BoardCardId,
+  ) {
+    const card = yield* readCard(cardId);
+    if (card === null) return { outcome: "unknown-card" } as const;
+    // Forced, so a pull request merged since the last lookup counts. A lookup
+    // that fails still leaves git's own proofs to the reclaim.
+    yield* refreshCardPullRequestLink(card, { force: true }).pipe(Effect.ignore);
+    const refreshed = yield* readCard(cardId);
+    if (refreshed === null) return { outcome: "unknown-card" } as const;
+    if (refreshed.worktree?.status !== "ready") return { outcome: "no-worktree" } as const;
+    const attempt = yield* settleCardAtDone(refreshed);
+    if (attempt === null) {
+      // Ready a moment ago: either it went meanwhile, or the card is not one
+      // the cleanup reclaims (left Done, or the setting is off).
+      const after = yield* readCard(cardId);
+      return after?.worktree?.status === "ready"
+        ? ({ outcome: "not-finished" } as const)
+        : ({ outcome: "no-worktree" } as const);
+    }
+    return attempt;
   });
 
   /**
@@ -7826,6 +7863,15 @@ const make = Effect.gen(function* () {
       Effect.andThen(cardCleanupWorker.drain),
       Effect.andThen(worktreeSweepWorker.drain),
     ),
+    checkWorktree: (cardId) =>
+      checkCardWorktree(cardId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: worktree check failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "failed" } as const)),
+        ),
+      ),
     forceRemoveWorktree: (cardId) =>
       forceRemoveCardWorktree(cardId).pipe(
         Effect.catchCause((cause) =>
