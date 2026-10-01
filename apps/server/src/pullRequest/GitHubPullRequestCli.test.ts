@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -3144,6 +3145,64 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       assert.strictEqual(error._tag, "GitHubCliCommandError");
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
+    }),
+  );
+
+  const conflictedDetailJson = () =>
+    output(
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      JSON.stringify({
+        number: 7,
+        title: "Conflicted",
+        url: "https://github.com/acme/web/pull/7",
+        headRefName: "feature",
+        baseRefName: "main",
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-02T00:00:00Z",
+        mergeable: "CONFLICTING",
+      }),
+    );
+
+  it.effect("reads the summary without reviewers when the token cannot read team requests", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(conflictedDetailJson()));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const summary = yield* cli.getPullRequestSummary({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      expect(summary.mergeability).toBe("conflicting");
+      expect(callAt(0).args.at(-1)).toContain("reviewRequests");
+      expect(callAt(1).args.at(-1)).not.toContain("reviewRequests");
+    }),
+  );
+
+  it.effect("warns about the missing review scope once per host", () =>
+    Effect.gen(function* () {
+      const warnings: Array<unknown> = [];
+      const logger = Logger.make<unknown, void>(({ logLevel, message }) => {
+        if (logLevel === "Warn") warnings.push(message);
+      });
+      for (let read = 0; read < 2; read++) {
+        mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
+        mockedExecute.mockReturnValueOnce(Effect.succeed(conflictedDetailJson()));
+      }
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      // A host no other test reads, since the layer (and its warned-host set) is shared.
+      const input = { cwd: "/w", repository: "acme/web", host: "ghe.warn-once.test", number: 7 };
+
+      yield* Effect.gen(function* () {
+        yield* cli.getPullRequestDetail(input);
+        yield* cli.getPullRequestSummary(input);
+      }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+
+      assert.strictEqual(warnings.length, 1);
+      assert.strictEqual(mockedExecute.mock.calls.length, 4);
     }),
   );
 

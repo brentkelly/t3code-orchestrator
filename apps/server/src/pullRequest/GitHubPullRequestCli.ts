@@ -1444,6 +1444,10 @@ export const make = Effect.gen(function* () {
       });
 
   // T3o (T3O-8): the detail read for a token that may not read team review requests.
+  type PullRequestDetailInput = Parameters<
+    GitHubPullRequestCli["Service"]["getPullRequestDetail"]
+  >[0];
+  type PullRequestDetailOperation = "getPullRequestDetail" | "getPullRequestSummary";
   const isVcsProcessExitError = Schema.is(VcsProcessExitError);
   const PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS = PULL_REQUEST_DETAIL_JSON_FIELDS.split(
     ",",
@@ -1451,29 +1455,45 @@ export const make = Effect.gen(function* () {
     .filter((field) => field !== "reviewRequests")
     .join(",");
 
-  const getPullRequestDetail: GitHubPullRequestCli["Service"]["getPullRequestDetail"] = (input) =>
-    readPullRequestDetail(input, PULL_REQUEST_DETAIL_JSON_FIELDS).pipe(
-      // T3o (T3O-8): reading a team review request needs `read:org`, and GitHub refuses the
-      // whole query without it. Read once more without reviewers rather than lose mergeability
-      // and checks over a field nothing blocks on. Only a scope refusal is retried; the
-      // reviewer list is then empty, so say so in the log.
-      Effect.catchTag("GitHubCliCommandError", (error) =>
-        isVcsProcessExitError(error.cause) && error.cause.failureKind === "missing-scope"
-          ? Effect.logWarning(
-              "GitHub token lacks a scope for review requests (likely read:org); reading the pull request without reviewers",
-              { number: input.number },
-            ).pipe(
-              Effect.andThen(
-                readPullRequestDetail(input, PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS),
-              ),
-            )
-          : Effect.fail(error),
-      ),
+  // T3o (T3O-8): hosts already warned about the missing scope, so an affected token logs once
+  // per process rather than on every read. The refused full read is still attempted each time,
+  // so granting the scope later brings reviewers back without a restart.
+  const hostsWarnedMissingReviewScope = new Set<string>();
+
+  // T3o (T3O-8): reading a team review request needs `read:org`, and GitHub refuses the whole
+  // query without it. Read once more without reviewers rather than lose mergeability and checks
+  // over a field nothing blocks on. Only a scope refusal is retried; the reviewer list is then
+  // empty, so say so in the log.
+  const readPullRequestDetailWithScopeFallback = (
+    input: PullRequestDetailInput,
+    operation: PullRequestDetailOperation,
+  ) =>
+    readPullRequestDetail(input, PULL_REQUEST_DETAIL_JSON_FIELDS, operation).pipe(
+      Effect.catchTag("GitHubCliCommandError", (error) => {
+        if (!isVcsProcessExitError(error.cause) || error.cause.failureKind !== "missing-scope") {
+          return Effect.fail(error);
+        }
+        const retry = readPullRequestDetail(
+          input,
+          PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS,
+          operation,
+        );
+        if (hostsWarnedMissingReviewScope.has(input.host)) return retry;
+        hostsWarnedMissingReviewScope.add(input.host);
+        return Effect.logWarning(
+          "GitHub token lacks a scope for review requests (likely read:org); reading pull requests without reviewers",
+          { host: input.host, number: input.number },
+        ).pipe(Effect.andThen(retry));
+      }),
     );
 
+  const getPullRequestDetail: GitHubPullRequestCli["Service"]["getPullRequestDetail"] = (input) =>
+    readPullRequestDetailWithScopeFallback(input, "getPullRequestDetail");
+
   const readPullRequestDetail = (
-    input: Parameters<GitHubPullRequestCli["Service"]["getPullRequestDetail"]>[0],
+    input: PullRequestDetailInput,
     fields: string,
+    operation: PullRequestDetailOperation,
   ) =>
     github
       .execute({
@@ -1489,7 +1509,7 @@ export const make = Effect.gen(function* () {
                 new GitHubPullRequestReadError({
                   command: "gh",
                   cwd: input.cwd,
-                  operation: "getPullRequestDetail",
+                  operation,
                   cause: decoded.failure,
                 }),
               );
@@ -1827,54 +1847,29 @@ export const make = Effect.gen(function* () {
 
     // One `gh pr view` either way; asking for the detail fields costs nothing extra and hands
     // the thread overview its author, diff stat, review decision and checks in the same read.
+    // T3o (T3O-8): shares the detail read's missing-scope fallback.
     getPullRequestSummary: (input) =>
-      github
-        .execute({
-          cwd: input.cwd,
-          args: [
-            "pr",
-            "view",
-            String(input.number),
-            ...repositoryArgs(input),
-            "--json",
-            PULL_REQUEST_DETAIL_JSON_FIELDS,
-          ],
-        })
-        .pipe(
-          Effect.flatMap((result) => {
-            const decoded = decodePullRequestDetailJson(result.stdout.trim());
-            if (!Result.isSuccess(decoded)) {
-              return Effect.fail(
-                new GitHubPullRequestReadError({
-                  command: "gh",
-                  cwd: input.cwd,
-                  operation: "getPullRequestSummary",
-                  cause: decoded.failure,
-                }),
-              );
-            }
-            const detail = decoded.success;
-            return Effect.succeed({
-              number: detail.number,
-              title: detail.title,
-              url: detail.url,
-              headBranch: detail.headBranch,
-              baseBranch: detail.baseBranch,
-              state: detail.state,
-              updatedAt: detail.updatedAt,
-              closedAt: detail.closedAt ?? null,
-              mergedAt: detail.mergedAt ?? null,
-              isDraft: detail.isDraft,
-              author: detail.author,
-              additions: detail.additions,
-              deletions: detail.deletions,
-              changedFiles: detail.changedFiles,
-              reviewDecision: detail.reviewDecision,
-              checksState: detail.checksState,
-              mergeability: detail.mergeability,
-            });
-          }),
-        ),
+      readPullRequestDetailWithScopeFallback(input, "getPullRequestSummary").pipe(
+        Effect.map((detail) => ({
+          number: detail.number,
+          title: detail.title,
+          url: detail.url,
+          headBranch: detail.headBranch,
+          baseBranch: detail.baseBranch,
+          state: detail.state,
+          updatedAt: detail.updatedAt,
+          closedAt: detail.closedAt ?? null,
+          mergedAt: detail.mergedAt ?? null,
+          isDraft: detail.isDraft,
+          author: detail.author,
+          additions: detail.additions,
+          deletions: detail.deletions,
+          changedFiles: detail.changedFiles,
+          reviewDecision: detail.reviewDecision,
+          checksState: detail.checksState,
+          mergeability: detail.mergeability,
+        })),
+      ),
 
     getPullRequestDetail,
     listWorkflowRunsRequiringApproval,
