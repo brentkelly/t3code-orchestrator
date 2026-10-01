@@ -27,9 +27,12 @@
  *    `No convergence`, an approval. Every one of them is the generic reading of
  *    what 2 and 3 say precisely, which is why they lose to them rather than
  *    stacking beside them.
- * 6. **The dependency gate.** Last because it is the one notice whose fact
- *    survives elsewhere on the card: the meta row's chain icon carries the count
- *    and names the dependencies in its tooltip at every stage.
+ * 6. **The dependency gate.** The one notice whose fact survives elsewhere on
+ *    the card: the meta row's chain icon carries the count and names the
+ *    dependencies in its tooltip at every stage.
+ * 7. **A kept worktree** (T3O-52). A finished card still holding disk. Last
+ *    because it only ever shows on a card that is finished — Done or archived —
+ *    where none of the above can apply.
  *
  * Pure, and deliberately NOT a tone comparison: amber-vs-violet says how loud a
  * notice is, not which fact the human needs, and `Merge needs you` outranking
@@ -65,7 +68,9 @@ export type BoardCardNotice =
   | { readonly kind: "auto-merge"; readonly pill: BoardAutoMergePill }
   /** T3o (T3O-48): parked at the merge role with nothing to merge. */
   | { readonly kind: "no-pull-request" }
-  | { readonly kind: "blocked"; readonly dependencyCount: number };
+  | { readonly kind: "blocked"; readonly dependencyCount: number }
+  /** T3O-52: a finished card still holding its worktree, and why. */
+  | { readonly kind: "worktree-kept"; readonly reason: string };
 
 /** The one notice a card header shows, or null when it has nothing to say. */
 export function boardCardNotice(input: {
@@ -86,6 +91,9 @@ export function boardCardNotice(input: {
       role onward. */
   readonly blocked: boolean;
   readonly dependencyCount: number;
+  /** T3O-52: why a finished card kept its worktree, or null when it has not
+      (`boardCardWorktreeKept`, resolved by the board page). */
+  readonly worktreeKeptReason?: string | null | undefined;
 }): BoardCardNotice | null {
   const attention = input.attention;
   if (attention !== null && attention.reason === "input") return { kind: "attention", attention };
@@ -99,6 +107,9 @@ export function boardCardNotice(input: {
   if (input.noPullRequestAtMerge) return { kind: "no-pull-request" };
   if (attention !== null) return { kind: "attention", attention };
   if (input.blocked) return { kind: "blocked", dependencyCount: input.dependencyCount };
+  if (input.worktreeKeptReason != null) {
+    return { kind: "worktree-kept", reason: input.worktreeKeptReason };
+  }
   return null;
 }
 

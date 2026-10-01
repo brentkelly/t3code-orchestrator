@@ -5,11 +5,14 @@
  * cap), and that is what the user needs to see, not a generic failure.
  */
 import type {
+  BoardCheckCardWorktreeResult,
   BoardMergeCardPullRequestResult,
   BoardRefreshCardPullRequestResult,
+  BoardRemoveCardWorktreeResult,
   BoardRequestReviewRoundResult,
   BoardSubmitCardForMergeResult,
 } from "@t3tools/contracts";
+import { boardCardWorktreeKeptReason } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 /** The invariant `detail` when the failure carries one, else the error
@@ -169,5 +172,51 @@ export function describeBoardReviewRoundOutcome(
       return "This card no longer exists.";
     case "failed":
       return "The review round could not be started. See the server log for details.";
+  }
+}
+
+/**
+ * The sentence "Remove worktree" leaves on the card (T3O-52), or null when it
+ * did what was asked — the banner disappearing is the acknowledgement.
+ */
+export function describeBoardRemoveWorktreeOutcome(
+  result: BoardRemoveCardWorktreeResult,
+): string | null {
+  switch (result.outcome) {
+    case "removed":
+    case "no-worktree":
+      return null;
+    case "not-finished":
+      return "Only a card in Done or the archive can have its worktree removed.";
+    case "unknown-card":
+      return "This card no longer exists.";
+    case "failed":
+      return "The worktree could not be removed. See the server log for details.";
+  }
+}
+
+/**
+ * The sentence "Check again" on a kept worktree leaves on the card (T3O-52),
+ * or null when the worktree went — the banner disappearing says that. A
+ * repeat refusal writes nothing to the card, so without this the banner would
+ * look exactly as it did before the click.
+ */
+export function describeBoardCheckWorktreeOutcome(
+  result: BoardCheckCardWorktreeResult,
+): string | null {
+  switch (result.outcome) {
+    case "removed":
+    case "no-worktree":
+      return null;
+    case "kept":
+      return `Still kept: ${boardCardWorktreeKeptReason(result.reason)}.`;
+    case "busy":
+      return "A cleanup of this worktree is already running. Check again in a moment.";
+    case "not-finished":
+      return "This card's worktree isn't cleaned up automatically: it is not archived, and either not in Done or Done cleanup is off.";
+    case "unknown-card":
+      return "This card no longer exists.";
+    case "failed":
+      return "The worktree could not be checked. See the server log for details.";
   }
 }

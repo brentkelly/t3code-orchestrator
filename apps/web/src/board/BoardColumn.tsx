@@ -106,6 +106,9 @@ export interface BoardColumnProps extends BoardColumnDragProps {
       card's thread went quiet, which is a join across the thread shells only
       the page holds. */
   readonly noPullRequestFor: (card: BoardCardShell) => boolean;
+  /** T3O-52: why a finished card kept its worktree, or null
+      (`boardCardWorktreeKept`). Resolved by the page, which holds the settings. */
+  readonly worktreeKeptFor: (card: BoardCardShell) => string | null;
   /** Thread todo lists for one card (t3o-18) — built once by the page and read
       per card, so the column adds no state of its own. */
   readonly todosFor: (cardId: string) => BoardCardTodoContext;
@@ -177,6 +180,7 @@ function ExpandedColumn({
   childAttentionFor,
   childRunningFor,
   noPullRequestFor,
+  worktreeKeptFor,
   draggedCardId,
   dragOverIndex,
   dragHeight,
@@ -289,6 +293,7 @@ function ExpandedColumn({
                   childAttention={childAttentionFor(card)}
                   childRunning={childRunningFor(card)}
                   noPullRequest={noPullRequestFor(card)}
+                  worktreeKeptReason={worktreeKeptFor(card)}
                   todos={todosFor(card.cardId)}
                   onOpenSubBoard={
                     onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card)

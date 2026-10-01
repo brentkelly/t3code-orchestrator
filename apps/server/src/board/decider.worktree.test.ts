@@ -801,6 +801,65 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
     }),
   );
 
+  // T3O-52 (D5): the rail rows a refusal once per distinct reason, and a
+  // human's forced removal is marked as such.
+  const keptCard = (reclaimBlockedReason: string | null) =>
+    makeCard({
+      id: "card-1",
+      stage: "done",
+      worktree: {
+        branch: "board/card-1",
+        baseRefName: "main",
+        path: "/tmp/worktrees/card-1",
+        status: "ready",
+        attempts: 1,
+        lastError: null,
+        reclaimBlockedReason,
+      },
+    });
+
+  it.effect("a blocked reclaim marks the reason changed only when it differs", () =>
+    Effect.gen(function* () {
+      const reasonChanged = (held: string | null, next: string) =>
+        decide(reclaim("card-1", "blocked", next), makeReadModel(boardWith([keptCard(held)]))).pipe(
+          Effect.map((event) =>
+            event.type === "board.card-worktree-reclaimed" ? event.payload.reasonChanged : null,
+          ),
+        );
+      assert.strictEqual(yield* reasonChanged(null, "1 uncommitted change (a)"), true);
+      assert.strictEqual(
+        yield* reasonChanged("1 uncommitted change (a)", "1 uncommitted change (a)"),
+        false,
+      );
+      assert.strictEqual(
+        yield* reasonChanged("1 uncommitted change (a)", "2 uncommitted changes (a, b)"),
+        true,
+      );
+    }),
+  );
+
+  it.effect("a forced removal is recorded as forced and clears the kept reason", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        { ...reclaim("card-1", "removed"), forced: true },
+        makeReadModel(boardWith([keptCard("1 uncommitted change (a)")])),
+      );
+      assert.strictEqual(event.type, "board.card-worktree-reclaimed");
+      if (event.type === "board.card-worktree-reclaimed") {
+        assert.strictEqual(event.payload.forced, true);
+        assert.strictEqual(event.payload.reasonChanged, false);
+        assert.strictEqual(event.payload.card.worktree?.reclaimBlockedReason, null);
+      }
+      const unforced = yield* decide(
+        reclaim("card-1", "removed"),
+        makeReadModel(boardWith([keptCard(null)])),
+      );
+      if (unforced.type === "board.card-worktree-reclaimed") {
+        assert.strictEqual(unforced.payload.forced, false);
+      }
+    }),
+  );
+
   it.effect("reclaiming a card with no worktree is rejected", () =>
     Effect.gen(function* () {
       const card = makeCard({ id: "card-1", worktree: null });

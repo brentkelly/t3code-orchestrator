@@ -27,9 +27,9 @@ import { resolveBoardCardEffectiveBase } from "@t3tools/contracts";
 import type { BoardCard, BoardCardWorktreeReclaimOutcome } from "@t3tools/contracts";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
-import type { GitStatusDetails } from "../vcs/GitVcsDriver.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 
@@ -172,27 +172,253 @@ export const runBoardCardWorktreeSetup = Effect.fn("runBoardCardWorktreeSetup")(
 });
 
 /**
- * Whether a worktree is safe to reclaim: clean working tree AND every commit
- * pushed to an upstream. Never delete uncommitted work, and never delete a
- * branch that exists only locally — both would lose work to save disk (D6).
- * The `reason` is the card-facing "says why" when a reclaim is skipped. Pure,
- * so it is unit-tested without a git repo.
+ * Whether a worktree is safe to reclaim (T3O-52, D1): a clean working tree AND
+ * work that is DURABLE — local `HEAD` already lives somewhere other than this
+ * checkout (the remote base branch, a merged pull request's head, or any
+ * remote-tracking ref). Never delete uncommitted work, and never delete a
+ * checkout whose commits exist nowhere else — both would lose work to save
+ * disk (D6).
+ *
+ * The `reason` is the card-facing "says why" when a reclaim is skipped, and
+ * carries its evidence. Pure, so it is table-tested without a git repo; the
+ * git probing that produces `durable` is `probeBoardWorktreeDurability`.
  */
-export function boardCardWorktreeReclaimDecision(
-  status: Pick<GitStatusDetails, "hasWorkingTreeChanges" | "hasUpstream" | "aheadCount">,
-): { readonly safe: true } | { readonly safe: false; readonly reason: string } {
-  if (status.hasWorkingTreeChanges) {
-    return { safe: false, reason: "Worktree has uncommitted changes." };
+export function boardCardWorktreeReclaimDecision(input: {
+  readonly hasWorkingTreeChanges: boolean;
+  readonly changedPaths: ReadonlyArray<string>;
+  readonly durable: boolean;
+  /** Commits on `HEAD` that no remote-tracking ref contains. */
+  readonly unmergedCount: number;
+  /** The card's current pull request, when it is still open — the likeliest
+      reason the work is not durable yet, so it is the reason given. */
+  readonly openPullRequestNumber?: number | null | undefined;
+}): { readonly safe: true } | { readonly safe: false; readonly reason: string } {
+  if (input.hasWorkingTreeChanges) {
+    const count = Math.max(input.changedPaths.length, 1);
+    const plural = count === 1 ? "change" : "changes";
+    const shown = input.changedPaths.slice(0, 3).join(", ");
+    const more = input.changedPaths.length > 3 ? ", …" : "";
+    return {
+      safe: false,
+      reason:
+        shown.length === 0
+          ? `${count} uncommitted ${plural}`
+          : `${count} uncommitted ${plural} (${shown}${more})`,
+    };
   }
-  if (!status.hasUpstream) {
-    return { safe: false, reason: "Branch has not been pushed to a remote." };
+  if (input.durable) return { safe: true };
+  if (input.openPullRequestNumber != null) {
+    return { safe: false, reason: `Pull request #${input.openPullRequestNumber} is still open` };
   }
-  if (status.aheadCount > 0) {
-    const plural = status.aheadCount === 1 ? "commit" : "commits";
-    return { safe: false, reason: `${status.aheadCount} ${plural} not pushed to the remote.` };
+  if (input.unmergedCount > 0) {
+    const plural = input.unmergedCount === 1 ? "commit" : "commits";
+    return {
+      safe: false,
+      reason: `${input.unmergedCount} ${plural} not in the base branch or a merged pull request`,
+    };
   }
-  return { safe: true };
+  return {
+    safe: false,
+    reason: "The branch could not be found in the base branch, a merged pull request or a remote",
+  };
 }
+
+/** Paths from `git status --porcelain` (v1). A rename line reads
+    `R  old -> new`; the new name is the one that exists on disk. */
+export function parseStatusPorcelainPaths(porcelain: string): ReadonlyArray<string> {
+  const paths: Array<string> = [];
+  for (const line of porcelain.split("\n")) {
+    if (line.length < 4) continue;
+    const rest = line.slice(3);
+    const arrow = rest.indexOf(" -> ");
+    paths.push(arrow === -1 ? rest : rest.slice(arrow + " -> ".length));
+  }
+  return paths;
+}
+
+/** One registered worktree from `git worktree list --porcelain`. */
+export interface BoardRegisteredWorktree {
+  readonly path: string;
+  /** Short branch name, or null for a detached checkout. */
+  readonly branch: string | null;
+  /** `git worktree prune` would drop it: its directory is already gone. */
+  readonly prunable: boolean;
+}
+
+/** Every worktree block in `git worktree list --porcelain` output. */
+export function parseRegisteredWorktrees(
+  porcelain: string,
+): ReadonlyArray<BoardRegisteredWorktree> {
+  const result: Array<BoardRegisteredWorktree> = [];
+  let current: { path: string; branch: string | null; prunable: boolean } | null = null;
+  const flush = () => {
+    if (current !== null) result.push(current);
+    current = null;
+  };
+  for (const raw of porcelain.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("worktree ")) {
+      flush();
+      current = { path: line.slice("worktree ".length), branch: null, prunable: false };
+    } else if (current !== null && line.startsWith("branch ")) {
+      const ref = line.slice("branch ".length);
+      current.branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+    } else if (current !== null && line.startsWith("prunable")) {
+      current.prunable = true;
+    } else if (line === "") {
+      flush();
+    }
+  }
+  flush();
+  return result;
+}
+
+/** The forge PR-head refs to try, in order: GitHub, Forgejo and Gitea publish
+    `refs/pull/<n>/head`, GitLab `refs/merge-requests/<n>/head`. Forges with
+    neither (Bitbucket, Azure) fall back to the base and remote-ref proofs. */
+const pullRequestHeadRefs = (prNumber: number): ReadonlyArray<string> => [
+  `refs/pull/${prNumber}/head`,
+  `refs/merge-requests/${prNumber}/head`,
+];
+
+export interface BoardWorktreeDurabilityInput {
+  readonly projectCwd: string;
+  readonly worktreePath: string;
+  /** The branch the card was cut from; its REMOTE copy is proof (1). */
+  readonly baseRefName: string;
+  /** The card's branch; its remote copy is fetched for proof (3). */
+  readonly branch: string;
+  /** Every MERGED pull request on the card, current or retired (proof 2).
+      Empty for an orphan, which has no card to carry one. */
+  readonly mergedPullRequestNumbers: ReadonlyArray<number>;
+  readonly openPullRequestNumber?: number | null | undefined;
+  /** Base branches a sweep pass has already fetched, keyed by project and
+      base, so a pass fetches each base once rather than once per card. The
+      probe adds to it. */
+  readonly fetchedBases?: Set<string> | undefined;
+}
+
+/**
+ * Gather the facts `boardCardWorktreeReclaimDecision` rules on (T3O-52, D1).
+ *
+ * Every proof is a git fetch, never a forge API call, so the sweep costs
+ * nothing against a rate limit. A fetch that fails (no remote, no PR refs on
+ * this forge, offline) is "not proven", never an error: the worktree is then
+ * flagged rather than deleted, which is the safe direction to be wrong in.
+ */
+export const probeBoardWorktreeDurability = Effect.fn("probeBoardWorktreeDurability")(function* (
+  input: BoardWorktreeDurabilityInput,
+) {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const run = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
+    git
+      .execute({
+        operation: `boardCardWorktree.durable.${operation}`,
+        cwd,
+        args,
+        allowNonZeroExit: true,
+        timeoutMs: 60_000,
+      })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+  const ok = (result: { readonly exitCode: number } | null) =>
+    result !== null && result.exitCode === 0;
+
+  // Untracked files count — they would be lost too. Ignored files (build
+  // output such as `target/`) do not: they are exactly the disk being freed.
+  const status = yield* git.execute({
+    operation: "boardCardWorktree.durable.status",
+    cwd: input.worktreePath,
+    args: ["status", "--porcelain"],
+    timeoutMs: 30_000,
+  });
+  const changedPaths = parseStatusPorcelainPaths(status.stdout);
+  const facts = {
+    hasWorkingTreeChanges: changedPaths.length > 0,
+    changedPaths,
+    openPullRequestNumber: input.openPullRequestNumber ?? null,
+  };
+  if (changedPaths.length > 0) return { ...facts, durable: false, unmergedCount: 0 };
+
+  const isAncestorOf = (ref: string) =>
+    run(input.worktreePath, "ancestor", ["merge-base", "--is-ancestor", "HEAD", ref]).pipe(
+      Effect.map(ok),
+    );
+
+  const remote = yield* git
+    .resolvePrimaryRemoteName(input.projectCwd)
+    .pipe(Effect.catch(() => Effect.succeed(null)));
+
+  if (remote !== null) {
+    // (1) The remote base branch: merged without a PR, fast-forwarded, or no
+    // new commits at all since the branch was cut.
+    const base = input.baseRefName.startsWith(`${remote}/`)
+      ? input.baseRefName.slice(remote.length + 1)
+      : input.baseRefName;
+    const fetchKey = `${input.projectCwd}\0${base}`;
+    if (input.fetchedBases?.has(fetchKey) !== true) {
+      const baseFetched = yield* run(input.projectCwd, "fetchBase", [
+        "fetch",
+        "--no-tags",
+        remote,
+        `+refs/heads/${base}:refs/remotes/${remote}/${base}`,
+      ]);
+      if (ok(baseFetched)) input.fetchedBases?.add(fetchKey);
+    }
+    if (yield* isAncestorOf(`refs/remotes/${remote}/${base}`)) {
+      return { ...facts, durable: true, unmergedCount: 0 };
+    }
+
+    // (2) A merged pull request's head: a squash merge whose head branch the
+    // forge deleted leaves no other trace of these commits on the remote.
+    // Fetched into a private ref (FETCH_HEAD would race a concurrent fetch)
+    // that is dropped again straight after.
+    for (const prNumber of input.mergedPullRequestNumbers) {
+      for (const ref of pullRequestHeadRefs(prNumber)) {
+        const local = `refs/t3o/reclaim/${prNumber}`;
+        const fetched = yield* run(input.projectCwd, "fetchPullRequest", [
+          "fetch",
+          "--no-tags",
+          remote,
+          `+${ref}:${local}`,
+        ]);
+        if (!ok(fetched)) continue;
+        const proven = yield* isAncestorOf(local);
+        yield* run(input.projectCwd, "dropPullRequestRef", ["update-ref", "-d", local]);
+        if (proven) return { ...facts, durable: true, unmergedCount: 0 };
+        break;
+      }
+    }
+
+    // (3) Any remote-tracking ref, after fetching the card's own branch: a
+    // branch pushed without `-u` has no upstream but is still on the remote.
+    yield* run(input.projectCwd, "fetchBranch", [
+      "fetch",
+      "--no-tags",
+      remote,
+      `+refs/heads/${input.branch}:refs/remotes/${remote}/${input.branch}`,
+    ]);
+  }
+  const containing = yield* run(input.worktreePath, "remoteContains", [
+    "for-each-ref",
+    "--contains",
+    "HEAD",
+    "--format=%(refname)",
+    "refs/remotes",
+  ]);
+  if (containing !== null && containing.exitCode === 0 && containing.stdout.trim().length > 0) {
+    return { ...facts, durable: true, unmergedCount: 0 };
+  }
+  const unmerged = yield* run(input.worktreePath, "unmergedCount", [
+    "rev-list",
+    "--count",
+    "HEAD",
+    "--not",
+    "--remotes",
+  ]);
+  const unmergedCount =
+    unmerged !== null && unmerged.exitCode === 0 ? Number(unmerged.stdout.trim()) || 0 : 0;
+  return { ...facts, durable: false, unmergedCount };
+});
 
 export interface BoardCardWorktreeReclaimResult {
   readonly outcome: BoardCardWorktreeReclaimOutcome;
@@ -200,35 +426,97 @@ export interface BoardCardWorktreeReclaimResult {
 }
 
 /**
- * Reclaim a card's worktree at archive (D6/D15): remove it only when it is
- * clean and pushed, otherwise leave it and report why so the card can flag it.
- * The caller records the outcome through `board.card.reclaim-worktree`.
- *
- * `force` bypasses BOTH the safety decision and git's own refusal to remove a
- * dirty checkout, and exists for exactly one caller: card delete, where a human
- * has confirmed at a dialog that the card and everything under it is going. The
- * refusal this skips is the whole point of the normal path — it never destroys
- * uncommitted work to save disk — so a forced reclaim always returns `removed`
- * or fails; it can never come back `blocked`.
+ * The registered path of a card's checkout whose folder is gone, or null when
+ * the folder may still be there (including when git's list cannot be read).
+ * Gone means `prunable` — git still lists it — or unlisted and absent from
+ * disk, because `git worktree prune` (or a gc) has since dropped it. A
+ * prunable entry is matched on the branch too, as git may spell the path
+ * differently (symlinks). Anything else that is not an exact path match falls
+ * to the folder check, which keeps a live checkout spelled through a symlink
+ * and still catches a gone one whose branch is now checked out elsewhere.
  */
-export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(function* (input: {
-  readonly projectCwd: string;
-  readonly worktreePath: string;
-  readonly force?: boolean | undefined;
-}) {
+const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function* (
+  input: BoardWorktreeDurabilityInput,
+) {
   const git = yield* GitVcsDriver.GitVcsDriver;
-  if (input.force === true) {
-    yield* git.removeWorktree({ cwd: input.projectCwd, path: input.worktreePath, force: true });
+  const fileSystem = yield* FileSystem.FileSystem;
+  const listed = yield* git
+    .execute({
+      operation: "boardCardWorktree.reclaim.list",
+      cwd: input.projectCwd,
+      args: ["worktree", "list", "--porcelain"],
+      allowNonZeroExit: true,
+    })
+    .pipe(Effect.catch(() => Effect.succeed(null)));
+  // git always lists the main checkout, so an empty list is no answer at all.
+  const registered =
+    listed === null || listed.exitCode !== 0 ? [] : parseRegisteredWorktrees(listed.stdout);
+  if (registered.length === 0) return null;
+  const exact = registered.find((entry) => entry.path === input.worktreePath);
+  if (exact !== undefined) return exact.prunable ? exact.path : null;
+  // A live branch match proves nothing about this path — the branch may be
+  // checked out elsewhere — so only a prunable one answers; the rest go to disk.
+  const prunableOnBranch = registered.find(
+    (entry) => entry.branch === input.branch && entry.prunable,
+  );
+  if (prunableOnBranch !== undefined) return prunableOnBranch.path;
+  const onDisk = yield* fileSystem
+    .exists(input.worktreePath)
+    .pipe(Effect.catch(() => Effect.succeed(true)));
+  return onDisk ? null : input.worktreePath;
+});
+
+/**
+ * Reclaim a card's worktree (D6/D15, T3O-52): remove it only when it is clean
+ * and its work is durable, otherwise leave it and report why so the card can
+ * flag it. The caller records the outcome through `board.card.reclaim-worktree`.
+ *
+ * `stillWanted` is asked AFTER the probe and immediately before the removal.
+ * The probe fetches from the remote and can take minutes, and the caller's
+ * reason to remove — the card is finished, the checkout has no owner — was
+ * read before it started; a card restarted or provisioned in the meantime
+ * owns a checkout that is clean and durable and must still not go. Answering
+ * false abandons the reclaim: the result is null and nothing is removed.
+ *
+ * A checkout whose folder is already gone — deleted by hand to free disk —
+ * has nothing left to lose and cannot be probed. Only git's registration is
+ * dropped, if git still holds one. The branch, and any commits on it, stay.
+ */
+export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(function* (
+  input: BoardWorktreeDurabilityInput,
+  stillWanted?: Effect.Effect<boolean>,
+) {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const gone = yield* goneBoardWorktreePath(input);
+  if (gone !== null) {
+    if (stillWanted !== undefined && !(yield* stillWanted)) return null;
+    // Drops a lingering registration; the driver treats an unlisted one as done.
+    yield* git.removeWorktree({ cwd: input.projectCwd, path: gone, force: true });
     return { outcome: "removed", reason: null } satisfies BoardCardWorktreeReclaimResult;
   }
-  const status = yield* git.statusDetails(input.worktreePath);
-  const decision = boardCardWorktreeReclaimDecision(status);
+  const facts = yield* probeBoardWorktreeDurability(input);
+  const decision = boardCardWorktreeReclaimDecision(facts);
   if (!decision.safe) {
     return { outcome: "blocked", reason: decision.reason } satisfies BoardCardWorktreeReclaimResult;
   }
+  if (stillWanted !== undefined && !(yield* stillWanted)) return null;
   yield* git.removeWorktree({ cwd: input.projectCwd, path: input.worktreePath });
   return { outcome: "removed", reason: null } satisfies BoardCardWorktreeReclaimResult;
 });
+
+/**
+ * Remove a worktree whatever it holds, bypassing BOTH the durability decision
+ * and git's own refusal to remove a dirty checkout. For the two callers where
+ * a human has confirmed at a dialog that the work goes: card delete, and the
+ * card's "Remove worktree" action. Neither deletes the BRANCH here, so
+ * committed work survives on it at no disk cost.
+ */
+export const forceRemoveBoardCardWorktree = Effect.fn("forceRemoveBoardCardWorktree")(
+  function* (input: { readonly projectCwd: string; readonly worktreePath: string }) {
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    yield* git.removeWorktree({ cwd: input.projectCwd, path: input.worktreePath, force: true });
+  },
+);
 
 /**
  * Raised when more than one writer would hold a card's single worktree at

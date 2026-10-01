@@ -219,3 +219,19 @@ describe("boardCardNoPullRequest", () => {
     );
   });
 });
+
+describe("the worktree-kept notice (T3O-52)", () => {
+  it("names why a finished card kept its worktree", () => {
+    expect(notice({ worktreeKeptReason: "1 uncommitted change (a.ts)" })).toEqual({
+      kind: "worktree-kept",
+      reason: "1 uncommitted change (a.ts)",
+    });
+  });
+
+  it("ranks last: anything a live card says outranks it", () => {
+    expect(notice({ worktreeKeptReason: "kept", blocked: true, dependencyCount: 1 })?.kind).toBe(
+      "blocked",
+    );
+    expect(notice({ worktreeKeptReason: "kept", attention: attention() })?.kind).toBe("attention");
+  });
+});

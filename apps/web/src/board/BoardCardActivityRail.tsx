@@ -34,6 +34,7 @@ import {
   CloudOffIcon,
   GitMergeIcon,
   GitPullRequestIcon,
+  HardDriveIcon,
   LayersIcon,
   ListTreeIcon,
   FolderSyncIcon,
@@ -136,6 +137,12 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
     // card face.
     case "card-review-round-requested":
       return <RotateCcwIcon className={className} />;
+    // T3O-52: a kept worktree is a cleanup that is blocked — amber; a removal
+    // is disk given back, which claims nothing and stays neutral.
+    case "card-worktree-kept":
+      return <HardDriveIcon className={cn(className, "text-warning-foreground")} />;
+    case "card-worktree-removed":
+      return <HardDriveIcon className={className} />;
   }
 }
 
@@ -309,6 +316,18 @@ function activitySentence(
         <>asked for another review round</>
       ) : (
         <>{payload.detail}</>
+      );
+    case "card-worktree-kept":
+      return payload.detail === undefined ? (
+        <>kept the worktree</>
+      ) : (
+        <>kept the worktree: {payload.detail}</>
+      );
+    case "card-worktree-removed":
+      return payload.forced === true ? (
+        <>removed the worktree (forced)</>
+      ) : (
+        <>removed the worktree</>
       );
   }
 }

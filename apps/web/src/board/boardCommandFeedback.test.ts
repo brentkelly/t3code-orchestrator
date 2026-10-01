@@ -8,7 +8,10 @@
  */
 import { describe, expect, it } from "vite-plus/test";
 
-import { describeBoardRefreshOutcome } from "./boardCommandFeedback";
+import {
+  describeBoardCheckWorktreeOutcome,
+  describeBoardRefreshOutcome,
+} from "./boardCommandFeedback";
 
 describe("describeBoardRefreshOutcome", () => {
   it("stays silent when the pull request turned up", () => {
@@ -63,5 +66,19 @@ describe("describeBoardRefreshOutcome", () => {
 
   it("drops the branch clause rather than printing an empty one", () => {
     expect(describeBoardRefreshOutcome({ outcome: "none" }, null)).toBe("Still no pull request.");
+  });
+});
+
+// T3O-52: a repeat refusal writes nothing to the card, so the banner alone
+// cannot show that Check again ran.
+describe("describeBoardCheckWorktreeOutcome", () => {
+  it("names the refusal when the worktree is still kept", () => {
+    expect(
+      describeBoardCheckWorktreeOutcome({ outcome: "kept", reason: "Uncommitted changes" }),
+    ).toBe("Still kept: Uncommitted changes.");
+  });
+
+  it("stays silent when the worktree went", () => {
+    expect(describeBoardCheckWorktreeOutcome({ outcome: "removed" })).toBe(null);
   });
 });

@@ -23,6 +23,9 @@ import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
   boardCardWorktreeReclaimDecision,
+  forceRemoveBoardCardWorktree,
+  parseRegisteredWorktrees,
+  parseStatusPorcelainPaths,
   parseWorktreePathForBranch,
   provisionBoardCardWorktree,
   reclaimBoardCardWorktree,
@@ -254,50 +257,116 @@ it.effect("returns null when a plan card's parent has no branch yet", () =>
   }),
 );
 
-it.effect("reclaim decision: clean and pushed is safe", () =>
-  Effect.sync(() => {
-    const decision = boardCardWorktreeReclaimDecision({
-      hasWorkingTreeChanges: false,
-      hasUpstream: true,
-      aheadCount: 0,
-    });
-    assert.deepStrictEqual(decision, { safe: true });
-  }),
-);
-
-it.effect("reclaim decision: a dirty tree is refused with a reason", () =>
-  Effect.sync(() => {
-    const decision = boardCardWorktreeReclaimDecision({
+// T3O-52 D1: one rule — clean AND durable — with reasons that carry evidence.
+const decisionCases: ReadonlyArray<{
+  readonly name: string;
+  readonly input: Parameters<typeof boardCardWorktreeReclaimDecision>[0];
+  readonly expected: { readonly safe: true } | { readonly safe: false; readonly reason: string };
+}> = [
+  {
+    name: "clean and durable is safe",
+    input: { hasWorkingTreeChanges: false, changedPaths: [], durable: true, unmergedCount: 0 },
+    expected: { safe: true },
+  },
+  {
+    name: "a dirty tree lists its paths",
+    input: {
       hasWorkingTreeChanges: true,
-      hasUpstream: true,
-      aheadCount: 0,
-    });
-    assert.strictEqual(decision.safe, false);
-    if (!decision.safe) assert.match(decision.reason, /uncommitted/i);
+      changedPaths: [".vscode/settings.json", ".vscode/extensions.json"],
+      durable: true,
+      unmergedCount: 0,
+    },
+    expected: {
+      safe: false,
+      reason: "2 uncommitted changes (.vscode/settings.json, .vscode/extensions.json)",
+    },
+  },
+  {
+    name: "a dirty tree lists at most three paths",
+    input: {
+      hasWorkingTreeChanges: true,
+      changedPaths: ["a", "b", "c", "d"],
+      durable: false,
+      unmergedCount: 0,
+    },
+    expected: { safe: false, reason: "4 uncommitted changes (a, b, c, …)" },
+  },
+  {
+    name: "one uncommitted change is singular",
+    input: { hasWorkingTreeChanges: true, changedPaths: ["x"], durable: false, unmergedCount: 0 },
+    expected: { safe: false, reason: "1 uncommitted change (x)" },
+  },
+  {
+    name: "an open pull request is the reason given for undurable work",
+    input: {
+      hasWorkingTreeChanges: false,
+      changedPaths: [],
+      durable: false,
+      unmergedCount: 3,
+      openPullRequestNumber: 144,
+    },
+    expected: { safe: false, reason: "Pull request #144 is still open" },
+  },
+  {
+    name: "unmerged commits are counted",
+    input: { hasWorkingTreeChanges: false, changedPaths: [], durable: false, unmergedCount: 3 },
+    expected: {
+      safe: false,
+      reason: "3 commits not in the base branch or a merged pull request",
+    },
+  },
+  {
+    name: "one unmerged commit is singular",
+    input: { hasWorkingTreeChanges: false, changedPaths: [], durable: false, unmergedCount: 1 },
+    expected: {
+      safe: false,
+      reason: "1 commit not in the base branch or a merged pull request",
+    },
+  },
+];
+
+for (const testCase of decisionCases) {
+  it.effect(`reclaim decision: ${testCase.name}`, () =>
+    Effect.sync(() => {
+      assert.deepStrictEqual(boardCardWorktreeReclaimDecision(testCase.input), testCase.expected);
+    }),
+  );
+}
+
+it.effect("parses changed paths, taking a rename's new name", () =>
+  Effect.sync(() => {
+    assert.deepStrictEqual(
+      [...parseStatusPorcelainPaths(" M a.ts\n?? new.txt\nR  old.ts -> renamed.ts\n")],
+      ["a.ts", "new.txt", "renamed.ts"],
+    );
   }),
 );
 
-it.effect("reclaim decision: an unpushed branch is refused with a reason", () =>
+it.effect("parses every registered worktree, detached and prunable ones included", () =>
   Effect.sync(() => {
-    const decision = boardCardWorktreeReclaimDecision({
-      hasWorkingTreeChanges: false,
-      hasUpstream: false,
-      aheadCount: 0,
-    });
-    assert.strictEqual(decision.safe, false);
-    if (!decision.safe) assert.match(decision.reason, /pushed/i);
-  }),
-);
-
-it.effect("reclaim decision: unpushed commits are refused with a count", () =>
-  Effect.sync(() => {
-    const decision = boardCardWorktreeReclaimDecision({
-      hasWorkingTreeChanges: false,
-      hasUpstream: true,
-      aheadCount: 2,
-    });
-    assert.strictEqual(decision.safe, false);
-    if (!decision.safe) assert.match(decision.reason, /2 commits not pushed/);
+    const porcelain = [
+      "worktree /repo",
+      "HEAD 1111111111111111111111111111111111111111",
+      "branch refs/heads/main",
+      "",
+      "worktree /wt/a",
+      "HEAD 2222222222222222222222222222222222222222",
+      "branch refs/heads/board/a",
+      "prunable gitdir file points to non-existent location",
+      "",
+      "worktree /wt/detached",
+      "HEAD 3333333333333333333333333333333333333333",
+      "detached",
+      "",
+    ].join("\n");
+    assert.deepStrictEqual(
+      [...parseRegisteredWorktrees(porcelain)],
+      [
+        { path: "/repo", branch: "main", prunable: false },
+        { path: "/wt/a", branch: "board/a", prunable: true },
+        { path: "/wt/detached", branch: null, prunable: false },
+      ],
+    );
   }),
 );
 
@@ -404,64 +473,295 @@ it.effect("re-provisioning after a partial attempt reuses the existing worktree,
   ).pipe(Effect.provide(TestLayer)),
 );
 
-it.effect("reclaims a clean, pushed worktree and removes it from disk", () =>
+// ── Reclaim under the durability rule (T3O-52, D1) ────────────────────
+
+/** A project with a bare `origin` holding its base branch, and a card
+    worktree cut from it. */
+const setupProjectWithRemote = Effect.gen(function* () {
+  const cwd = yield* makeTmpDir();
+  const remote = yield* makeTmpDir("board-worktree-remote-");
+  const { initialBranch } = yield* initRepoWithCommit(cwd);
+  yield* git(remote, ["init", "--bare"]);
+  yield* git(cwd, ["remote", "add", "origin", remote]);
+  yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+  const provisioned = yield* provisionBoardCardWorktree({
+    projectCwd: cwd,
+    branch: "board/card-1",
+    baseRefName: initialBranch,
+  });
+  return { cwd, remote, initialBranch, worktreePath: provisioned.path };
+});
+
+const commitIn = (cwd: string, file: string) =>
+  Effect.gen(function* () {
+    yield* writeTextFile(cwd, file, `${file}\n`);
+    yield* git(cwd, ["add", "."]);
+    yield* git(cwd, ["commit", "-m", `add ${file}`]);
+  });
+
+const reclaimCard = (
+  setup: { readonly cwd: string; readonly initialBranch: string; readonly worktreePath: string },
+  extra: { readonly mergedPullRequestNumbers?: ReadonlyArray<number> } = {},
+) =>
+  reclaimBoardCardWorktree({
+    projectCwd: setup.cwd,
+    worktreePath: setup.worktreePath,
+    baseRefName: setup.initialBranch,
+    branch: "board/card-1",
+    mergedPullRequestNumbers: extra.mergedPullRequestNumbers ?? [],
+  }).pipe(
+    // Only a `stillWanted` that answers no abandons a reclaim, and none is passed.
+    Effect.flatMap((result) =>
+      result === null ? Effect.die("reclaim abandoned") : Effect.succeed(result),
+    ),
+  );
+
+const worktreeExists = (path: string) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem.exists(path);
+  });
+
+it.effect("reclaims a worktree whose branch was pushed WITHOUT -u", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const cwd = yield* makeTmpDir();
-      const remote = yield* makeTmpDir("board-worktree-remote-");
-      const { initialBranch } = yield* initRepoWithCommit(cwd);
-      yield* git(remote, ["init", "--bare"]);
-      yield* git(cwd, ["remote", "add", "origin", remote]);
-      yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+      const setup = yield* setupProjectWithRemote;
+      yield* commitIn(setup.worktreePath, "feature.txt");
+      // No upstream is set, so the old rule refused this as "not pushed".
+      yield* git(setup.worktreePath, ["push", "origin", "board/card-1"]);
+      yield* git(setup.cwd, ["update-ref", "-d", "refs/remotes/origin/board/card-1"]);
 
-      const provisioned = yield* provisionBoardCardWorktree({
-        projectCwd: cwd,
-        branch: "board/card-1",
-        baseRefName: initialBranch,
-      });
-      // Push the card branch so it is fully backed up before reclaim.
-      yield* git(provisioned.path, ["push", "-u", "origin", "board/card-1"]);
-
-      const outcome = yield* reclaimBoardCardWorktree({
-        projectCwd: cwd,
-        worktreePath: provisioned.path,
-      });
-
-      assert.strictEqual(outcome.outcome, "removed");
-      const fileSystem = yield* FileSystem.FileSystem;
-      assert.isFalse(
-        yield* fileSystem.exists(provisioned.path),
-        "reclaimed worktree is gone from disk",
-      );
+      const outcome = yield* reclaimCard(setup);
+      assert.deepStrictEqual(outcome, { outcome: "removed", reason: null });
+      assert.isFalse(yield* worktreeExists(setup.worktreePath));
     }),
   ).pipe(Effect.provide(TestLayer)),
 );
 
-it.effect("refuses to reclaim a dirty worktree and keeps it on disk", () =>
+it.effect("reclaims a checkout whose folder is already gone, dropping git's registration", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const cwd = yield* makeTmpDir();
-      const { initialBranch } = yield* initRepoWithCommit(cwd);
-      const provisioned = yield* provisionBoardCardWorktree({
-        projectCwd: cwd,
-        branch: "board/card-1",
-        baseRefName: initialBranch,
-      });
-      // Modify a tracked file in the worktree — an uncommitted change.
-      yield* writeTextFile(provisioned.path, "README.md", "# changed, not committed\n");
-
-      const outcome = yield* reclaimBoardCardWorktree({
-        projectCwd: cwd,
-        worktreePath: provisioned.path,
-      });
-
-      assert.strictEqual(outcome.outcome, "blocked");
-      assert.match(outcome.reason ?? "", /uncommitted/i);
+      const setup = yield* setupProjectWithRemote;
+      yield* commitIn(setup.worktreePath, "unpushed.txt");
+      // Deleted by hand to free disk: `git status` there can no longer run.
       const fileSystem = yield* FileSystem.FileSystem;
-      assert.isTrue(
-        yield* fileSystem.exists(provisioned.path),
-        "dirty worktree is kept, never deleted to save disk",
+      yield* fileSystem.remove(setup.worktreePath, { recursive: true });
+
+      const outcome = yield* reclaimCard(setup);
+      assert.deepStrictEqual(outcome, { outcome: "removed", reason: null });
+      const listed = yield* git(setup.cwd, ["worktree", "list", "--porcelain"]);
+      assert.notInclude(listed, "board/card-1");
+      // The branch keeps the commit the folder no longer holds.
+      assert.match(yield* git(setup.cwd, ["log", "-1", "--format=%s", "board/card-1"]), /unpushed/);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "reclaims a checkout whose folder is gone and whose registration git already pruned",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const setup = yield* setupProjectWithRemote;
+        yield* commitIn(setup.worktreePath, "unpushed.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.remove(setup.worktreePath, { recursive: true });
+        // The routine follow-up: git forgets the checkout, so it is no longer prunable.
+        yield* git(setup.cwd, ["worktree", "prune"]);
+
+        const outcome = yield* reclaimCard(setup);
+        assert.deepStrictEqual(outcome, { outcome: "removed", reason: null });
+        assert.match(
+          yield* git(setup.cwd, ["log", "-1", "--format=%s", "board/card-1"]),
+          /unpushed/,
+        );
+      }),
+    ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("reclaims a gone, pruned checkout whose branch is now checked out elsewhere", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.remove(setup.worktreePath, { recursive: true });
+      yield* git(setup.cwd, ["worktree", "prune"]);
+      // Someone checks the card's branch out again at another path.
+      const elsewhere = `${yield* makeTmpDir("board-worktree-elsewhere-")}/checkout`;
+      yield* git(setup.cwd, ["worktree", "add", elsewhere, "board/card-1"]);
+
+      const outcome = yield* reclaimCard(setup);
+      assert.deepStrictEqual(outcome, { outcome: "removed", reason: null });
+      // Only the card's own (already gone) checkout went; the other stays.
+      assert.isTrue(yield* worktreeExists(elsewhere));
+      assert.include(yield* git(setup.cwd, ["worktree", "list", "--porcelain"]), elsewhere);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("probes, rather than reclaims, a checkout git does not list but which is on disk", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      yield* commitIn(setup.worktreePath, "unpushed.txt");
+      // Detached, so the branch cannot match it; listed under another spelling,
+      // so the path cannot either. The folder on disk is what keeps it.
+      yield* git(setup.worktreePath, ["checkout", "--detach"]);
+
+      const outcome = yield* reclaimCard({ ...setup, worktreePath: `${setup.worktreePath}/.` });
+      assert.strictEqual(outcome.outcome, "blocked");
+      assert.isTrue(yield* worktreeExists(setup.worktreePath));
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("abandons a durable reclaim when the caller no longer wants it, removing nothing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      // Clean and at the base tip: durable, so only `stillWanted` stops it.
+      const outcome = yield* reclaimBoardCardWorktree(
+        {
+          projectCwd: setup.cwd,
+          worktreePath: setup.worktreePath,
+          baseRefName: setup.initialBranch,
+          branch: "board/card-1",
+          mergedPullRequestNumbers: [],
+        },
+        Effect.succeed(false),
       );
+      assert.isNull(outcome);
+      assert.isTrue(yield* worktreeExists(setup.worktreePath));
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("reclaims a squash-merged worktree whose head branch is gone, via the PR ref", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      yield* commitIn(setup.worktreePath, "feature.txt");
+      // The forge keeps the PR head under refs/pull/<n>/head after it deletes
+      // the branch; the squash commit on base shares no history with HEAD.
+      yield* git(setup.worktreePath, ["push", "origin", "HEAD:refs/pull/7/head"]);
+      yield* git(setup.worktreePath, ["push", "-u", "origin", "board/card-1"]);
+      yield* git(setup.cwd, ["push", "origin", "--delete", "board/card-1"]);
+      yield* git(setup.cwd, ["fetch", "--prune", "origin"]);
+
+      // Without the merged PR number there is nothing proving the commit.
+      const refused = yield* reclaimCard(setup);
+      assert.strictEqual(refused.outcome, "blocked");
+      assert.strictEqual(
+        refused.reason,
+        "1 commit not in the base branch or a merged pull request",
+      );
+
+      const outcome = yield* reclaimCard(setup, { mergedPullRequestNumbers: [7] });
+      assert.strictEqual(outcome.outcome, "removed");
+      // The probe's private ref does not outlive it.
+      assert.strictEqual(yield* git(setup.cwd, ["for-each-ref", "refs/t3o"]), "");
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("reclaims a never-pushed worktree whose HEAD is already in the remote base", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      yield* commitIn(setup.worktreePath, "feature.txt");
+      // Merged straight into base and pushed, no pull request, branch never pushed.
+      yield* git(setup.cwd, ["merge", "--ff-only", "board/card-1"]);
+      yield* git(setup.cwd, ["push", "origin", setup.initialBranch]);
+
+      const outcome = yield* reclaimCard(setup);
+      assert.strictEqual(outcome.outcome, "removed");
+      // Reclaim never touches the branch.
+      assert.match(yield* git(setup.cwd, ["branch", "--list", "board/card-1"]), /board\/card-1/);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("keeps a worktree whose commits exist nowhere else, and counts them", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      yield* commitIn(setup.worktreePath, "one.txt");
+      yield* commitIn(setup.worktreePath, "two.txt");
+
+      const outcome = yield* reclaimCard(setup, { mergedPullRequestNumbers: [9] });
+      assert.deepStrictEqual(outcome, {
+        outcome: "blocked",
+        reason: "2 commits not in the base branch or a merged pull request",
+      });
+      assert.isTrue(yield* worktreeExists(setup.worktreePath));
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("refuses to reclaim a dirty worktree, naming the files, and keeps it on disk", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      yield* writeTextFile(setup.worktreePath, "README.md", "# changed, not committed\n");
+
+      const outcome = yield* reclaimCard(setup);
+      assert.deepStrictEqual(outcome, {
+        outcome: "blocked",
+        reason: "1 uncommitted change (README.md)",
+      });
+      assert.isTrue(yield* worktreeExists(setup.worktreePath));
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("ignored build output does not block a reclaim", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      yield* writeTextFile(setup.worktreePath, ".gitignore", "target/\n");
+      yield* git(setup.worktreePath, ["add", "."]);
+      yield* git(setup.worktreePath, ["commit", "-m", "ignore target"]);
+      yield* git(setup.worktreePath, ["push", "origin", "board/card-1"]);
+      yield* writeTextFile(setup.worktreePath, "target/debug/big.bin", "x");
+
+      const outcome = yield* reclaimCard(setup);
+      assert.strictEqual(outcome.outcome, "removed");
+      assert.isFalse(yield* worktreeExists(setup.worktreePath));
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("force-removes a dirty worktree but keeps the branch", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      yield* commitIn(setup.worktreePath, "unpushed.txt");
+      yield* writeTextFile(setup.worktreePath, "README.md", "# dirty\n");
+
+      yield* forceRemoveBoardCardWorktree({
+        projectCwd: setup.cwd,
+        worktreePath: setup.worktreePath,
+      });
+      assert.isFalse(yield* worktreeExists(setup.worktreePath));
+      assert.match(yield* git(setup.cwd, ["branch", "--list", "board/card-1"]), /board\/card-1/);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("force-removing a checkout git has already pruned succeeds, keeping the branch", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.remove(setup.worktreePath, { recursive: true });
+      yield* git(setup.cwd, ["worktree", "prune"]);
+
+      // `git worktree remove` exits 128 here; the driver reads that as already gone.
+      yield* forceRemoveBoardCardWorktree({
+        projectCwd: setup.cwd,
+        worktreePath: setup.worktreePath,
+      });
+      assert.match(yield* git(setup.cwd, ["branch", "--list", "board/card-1"]), /board\/card-1/);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

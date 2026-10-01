@@ -25,6 +25,8 @@ import {
   boardCardProjectLock,
   boardStallIsWaiting,
   boardStageWithRole,
+  boardCardWorktreeKept,
+  boardCardWorktreeKeptReason,
   isBoardMergeStageExecution,
   isBoardCardBaseRetargeted,
   resolveBoardCardEffectiveBase,
@@ -96,14 +98,17 @@ import { setBoardProjectSetting } from "../components/settings/BoardSettingsPane
 import { boardCardProjectOptions } from "./BoardCardProjectSelect";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import {
+  describeBoardCheckWorktreeOutcome,
   describeBoardCommandFailure,
   describeBoardMergeOutcome,
   // T3o: the forced re-check's answer (T3O-48).
   describeBoardRefreshOutcome,
+  describeBoardRemoveWorktreeOutcome,
   describeBoardReviewRoundOutcome,
   describeBoardSubmitOutcome,
 } from "./boardCommandFeedback";
 import { useOpenLink } from "../browser/useOpenLink";
+import { refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
 
 /** The modal frame, empty, while `board.subscribeCard` opens — same sheet, so
     nothing jumps when the detail lands. */
@@ -211,6 +216,13 @@ export function BoardCardDetail({
   const requestReviewRound = useAtomCommand(boardEnvironment.requestReviewRound, {
     reportFailure: false,
   });
+  // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
+  const removeCardWorktree = useAtomCommand(boardEnvironment.removeCardWorktree, {
+    reportFailure: false,
+  });
+  const checkCardWorktree = useAtomCommand(boardEnvironment.checkCardWorktree, {
+    reportFailure: false,
+  });
   const createLabel = useAtomCommand(boardEnvironment.createLabel);
   const updateLabel = useAtomCommand(boardEnvironment.updateLabel);
   const deleteLabel = useAtomCommand(boardEnvironment.deleteLabel);
@@ -228,6 +240,9 @@ export function BoardCardDetail({
   // T3o (T3O-48): set across the "Check again" round trip, so the button spins
   // and a second click cannot re-enter a lookup already in flight.
   const [checkingForPullRequest, setCheckingForPullRequest] = useState(false);
+  // T3O-52: the kept-worktree banner's two round trips.
+  const [checkingWorktree, setCheckingWorktree] = useState(false);
+  const [removingWorktree, setRemovingWorktree] = useState(false);
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
   // Refresh trigger: the card detail opening. One of the moments the answer
@@ -768,6 +783,23 @@ export function BoardCardDetail({
       `stepFailure` by construction: `paused` and `stalled` are different step
       statuses and a card has one live step. */
   const stepPaused = stepPausedByHuman ? { stageLabel: boardStageLabel(stages, card.stage) } : null;
+  /** The kept-worktree banner (T3O-52, D5): the card is finished — archived, or
+      in Done with `reclaimWorktreeOnDone` on — and still holds its worktree. */
+  const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
+  const worktreeKept =
+    card.worktree !== null &&
+    boardCardWorktreeKept({
+      worktreeReady: card.worktree.status === "ready",
+      archived: card.archivedAt !== null,
+      inDoneStage: doneStageId !== null && card.stage === doneStageId,
+      reclaimWorktreeOnDone: boardSettings.lifecycle.reclaimWorktreeOnDone,
+    })
+      ? {
+          reason: boardCardWorktreeKeptReason(card.worktree.reclaimBlockedReason),
+          path: card.worktree.path,
+          branch: card.worktree.branch,
+        }
+      : null;
 
   /** What the schedule control is offering (T3O-19, D13). Derived from the
       shell's step flags rather than a step row, because those flags are what
@@ -1057,6 +1089,40 @@ export function BoardCardDetail({
       stepHeld={stepHeld}
       merging={merging}
       checkingForPullRequest={checkingForPullRequest}
+      worktreeKept={worktreeKept}
+      checkingWorktree={checkingWorktree}
+      removingWorktree={removingWorktree}
+      onCheckWorktree={() => {
+        // The server refreshes the pull request first, then re-runs the
+        // cleanup and answers what it did: a repeat refusal changes nothing on
+        // the card, so it has to be said.
+        setFeedback(null);
+        setCheckingWorktree(true);
+        void checkCardWorktree({ environmentId, input: { cardId: card.id } }).then((result) => {
+          setCheckingWorktree(false);
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+            return;
+          }
+          setFeedback(describeBoardCheckWorktreeOutcome(result.value));
+          // The archive list reads a snapshot taken when it opened.
+          if (card.archivedAt !== null) refreshBoardArchivedCards(environmentId);
+        });
+      }}
+      onRemoveWorktree={() => {
+        setFeedback(null);
+        setRemovingWorktree(true);
+        void removeCardWorktree({ environmentId, input: { cardId: card.id } }).then((result) => {
+          setRemovingWorktree(false);
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+            return;
+          }
+          setFeedback(describeBoardRemoveWorktreeOutcome(result.value));
+          // The archive list reads a snapshot taken when it opened.
+          if (card.archivedAt !== null) refreshBoardArchivedCards(environmentId);
+        });
+      }}
       onCheckForPullRequest={() => {
         // T3o (T3O-48): `force`, so the answer is not the cached one that
         // produced the empty state being questioned.
