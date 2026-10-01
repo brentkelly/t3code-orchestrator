@@ -2932,6 +2932,18 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
             })
             .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.body:query")));
         }
+        // An incremental edit (T3O-53) is railed, so a card whose brief or
+        // dependencies changed under it says who did it and how. Whole-value
+        // edits carry no summary and stay off the rail.
+        if (event.payload.edit !== undefined) {
+          yield* recordActivity({
+            event,
+            cardId: event.payload.cardId,
+            kind: "card-edited",
+            payload: event.payload.edit,
+            threadId: null,
+          });
+        }
         return;
       }
 
@@ -3874,6 +3886,11 @@ export interface BoardSnapshotQueryMethods {
   readonly boardCardActivity: (
     cardId: BoardCardId,
   ) => Effect.Effect<ReadonlyArray<BoardCardActivityEntry>, ProjectionRepositoryError>;
+  /** One card's brief body, null when it has none — the one row an
+      incremental brief edit is decided against (T3O-53). */
+  readonly boardCardBrief: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<string | null, ProjectionRepositoryError>;
   /** One plan's body for `board_get_plan` (t3o-08); null when absent. */
   readonly boardPlanBody: (
     planId: BoardPlanId,
@@ -3955,6 +3972,7 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
   const candidate = service as Partial<BoardSnapshotQueryMethods>;
   return typeof candidate.boardCardDetail === "function" &&
     typeof candidate.boardCardActivity === "function" &&
+    typeof candidate.boardCardBrief === "function" &&
     typeof candidate.boardPlanBody === "function" &&
     typeof candidate.boardCardThreads === "function" &&
     typeof candidate.boardCardIdForThread === "function" &&
@@ -3966,6 +3984,7 @@ export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQuer
     ? {
         boardCardDetail: candidate.boardCardDetail,
         boardCardActivity: candidate.boardCardActivity,
+        boardCardBrief: candidate.boardCardBrief,
         boardPlanBody: candidate.boardPlanBody,
         boardCardThreads: candidate.boardCardThreads,
         boardCardIdForThread: candidate.boardCardIdForThread,
@@ -4067,6 +4086,14 @@ export function boardSnapshotQueryMethods(
     // Board-only readers for the MCP context / plan tools (t3o-08).
     boardCardActivity: makeBoardCardActivityLoader(queries),
     boardPlanBody: makeBoardPlanBodyLoader(queries),
+    // The brief alone, for the engine's pre-decide read (T3O-53).
+    boardCardBrief: (cardId) =>
+      queries
+        .findBoardCardBodyRow({ cardId, kind: BOARD_CARD_BRIEF_BODY_KIND })
+        .pipe(
+          Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.body })),
+          Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardBrief:query")),
+        ),
     // Board-only readers for thread todos (t3o-18): the shell delta, the MCP
     // context tool, the supervisor's stall signal, and the boot sweep.
     boardCardThreads: (cardId) =>

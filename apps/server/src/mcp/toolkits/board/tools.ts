@@ -23,7 +23,9 @@ import {
   BoardCardExternalRef,
   BoardCardAttachmentId,
   BoardCardId,
+  BoardBriefSectionEdit,
   BoardPlan,
+  BoardPlanWithBody,
   BoardProposedPlanInput,
   BoardStageId,
   BoardStepCompletion,
@@ -106,6 +108,10 @@ const BoardCardContextAttachment = Schema.Struct({
 const BoardCardContext = Schema.Struct({
   card: BoardCard,
   brief: Schema.NullOr(Schema.String),
+  /** The brief's version (T3O-53): pass it back as board_update_card's
+      expectedBriefVersion to have a brief edit rejected if anyone changed the
+      brief since this read. */
+  briefVersion: TrimmedNonEmptyString,
   /** Files attached to the brief (t3o-32), each with an absolute path on this
       machine. Read them on demand; nothing here is pushed into your turn
       except the images a build or planning spawn already showed you. */
@@ -147,6 +153,38 @@ const BoardCardContext = Schema.Struct({
   threads: Schema.Array(BoardCardThreadShell),
 });
 
+/** Another card, read-only (T3O-53): what an agent planning or building one
+    card needs to know about a neighbour before editing it. Deliberately
+    without the orientation that only makes sense for the caller's own card —
+    the work assigned now, thread to-do lists, step history, activity. */
+const BoardCardReadResult = Schema.Struct({
+  cardId: BoardCardId,
+  key: TrimmedNonEmptyString,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  stage: BoardStageId,
+  /** Label NAMES, as board_update_card takes them. */
+  labels: Schema.Array(TrimmedNonEmptyString),
+  blocked: Schema.Boolean,
+  archived: Schema.Boolean,
+  /** The parent card of a sub-board child; null for a top-level card. */
+  parent: Schema.NullOr(
+    Schema.Struct({
+      cardId: BoardCardId,
+      key: TrimmedNonEmptyString,
+      title: TrimmedNonEmptyString,
+    }),
+  ),
+  /** The pinned base branch, or null to follow the project default. */
+  baseBranch: Schema.NullOr(TrimmedNonEmptyString),
+  brief: Schema.NullOr(Schema.String),
+  /** Pass back as board_update_card's expectedBriefVersion to guard an edit. */
+  briefVersion: TrimmedNonEmptyString,
+  dependencies: Schema.Array(BoardCardContextDependency),
+  /** The card's proposed plans, each with its full markdown body. */
+  plans: Schema.Array(BoardPlanWithBody),
+});
+
 const BoardCardListItem = Schema.Struct({
   cardId: BoardCardId,
   key: TrimmedNonEmptyString,
@@ -158,6 +196,8 @@ const BoardCardListItem = Schema.Struct({
       true when the call passed `includeArchived` (T3O-2): archived cards are
       how you find the id to unarchive or delete. */
   archived: Schema.Boolean,
+  /** The cards this one depends on (T3O-53), in order. */
+  dependsOn: Schema.Array(Schema.Struct({ cardId: BoardCardId, key: TrimmedNonEmptyString })),
 });
 
 /** A project as an agent needs to identify it: the id to pass to
@@ -240,7 +280,7 @@ export const BoardCompleteStepTool = Tool.make("board_complete_step", {
 
 export const BoardListCardsTool = Tool.make("board_list_cards", {
   description:
-    "List board cards, optionally filtered by project, stage, key, or a free-text match on the title. Use it to find a card id before creating a dependency or moving a card. Archived cards are left out unless you pass includeArchived, which is how you find the id of a card to unarchive or delete. Returns bounded summaries — fetch full context for one card with board_get_card_context (yours) or open it in the app.",
+    "List board cards, optionally filtered by project, stage, key, or a free-text match on the title. Use it to find a card id before creating a dependency or moving a card. Archived cards are left out unless you pass includeArchived, which is how you find the id of a card to unarchive or delete. Returns bounded summaries, each with the keys of the cards it depends on — read one card in full with board_get_card, or your own with board_get_card_context.",
   parameters: Schema.Struct({
     projectId: Schema.optional(ProjectId),
     stage: Schema.optional(BoardStageId),
@@ -253,6 +293,21 @@ export const BoardListCardsTool = Tool.make("board_list_cards", {
   dependencies,
 })
   .annotate(Tool.Title, "List board cards")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Idempotent, true);
+
+export const BoardGetCardTool = Tool.make("board_get_card", {
+  description:
+    "Read any card on the board by key (e.g. 'Z5-39') or id: its title, stage, labels, blocked and archived state, parent card, base branch, brief, dependencies (with keys, titles and whether each is met) and its plans with their full bodies. Read-only. Use it before editing another card, so you change what is there rather than writing blind. It returns briefVersion: pass that back as board_update_card's expectedBriefVersion to have your edit rejected if someone changed the brief after you read it. For your own card's assigned work, history and thread to-do lists use board_get_card_context instead.",
+  parameters: Schema.Struct({
+    /** A card key such as `Z5-39` (case-insensitive) or a card id. */
+    card: TrimmedNonEmptyString,
+  }),
+  success: BoardCardReadResult,
+  failure: BoardToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Get board card")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Idempotent, true);
 
@@ -300,13 +355,21 @@ export const BoardMoveCardTool = Tool.make("board_move_card", {
 
 export const BoardUpdateCardTool = Tool.make("board_update_card", {
   description:
-    "Update a card's title, brief, labels, dependencies, or external reference. Only the fields you pass change; pass brief or externalRef as null to clear them. Labels are named against the catalogue (unknown names rejected) and replace the card's whole label set. dependsOn replaces the whole dependency set and is rejected if it would form a cycle.",
+    "Update a card's title, brief, labels, dependencies, or external reference. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (named against the catalogue, unknown names rejected); dependsOn (the whole dependency set); externalRef (null clears). ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, and not dependsOn together with addDependsOn/removeDependsOn. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle.",
   parameters: Schema.Struct({
-    cardId: BoardCardId,
+    /** Card key or id. */
+    cardId: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     brief: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    briefAppend: Schema.optional(TrimmedNonEmptyString),
+    briefSection: Schema.optional(BoardBriefSectionEdit),
+    expectedBriefVersion: Schema.optional(TrimmedNonEmptyString),
     labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
     dependsOn: Schema.optional(Schema.Array(BoardCardId)),
+    /** Card keys or ids. */
+    addDependsOn: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+    /** Card keys or ids. */
+    removeDependsOn: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
     externalRef: Schema.optional(Schema.NullOr(BoardCardExternalRef)),
   }),
   success: Schema.Struct({ cardId: BoardCardId }),
@@ -402,6 +465,7 @@ export const BoardWritePlanTool = Tool.make("board_write_plan", {
 export const BoardToolkit = Toolkit.make(
   BoardGetCardContextTool,
   BoardCompleteStepTool,
+  BoardGetCardTool,
   BoardListProjectsTool,
   BoardListCardsTool,
   BoardCreateCardTool,

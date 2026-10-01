@@ -1911,6 +1911,10 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   /** A card's worktree was removed — on its own, or `forced` by a human's
       "Remove worktree" (T3O-52, D5). */
   "card-worktree-removed",
+  /** An incremental edit (T3O-53): text appended to the brief, one section of
+      it replaced, or single dependencies added or removed. Whole-value edits
+      stay off the rail, as they always have. */
+  "card-edited",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -1956,6 +1960,20 @@ export const BOARD_SYSTEM_ACTOR: BoardActivityActor = {
 };
 
 /**
+ * What an incremental card edit did (T3O-53): the kind of brief edit, the
+ * section heading it targeted, and the KEYS of the dependencies it added or
+ * removed — keys, like `fromKey`/`toKey`, because they are what the rail
+ * shows. Only the parts the edit actually changed are present.
+ */
+export const BoardCardEditSummary = Schema.Struct({
+  briefEdit: Schema.optionalKey(Schema.Literals(["appended", "section-replaced"])),
+  briefSection: Schema.optionalKey(TrimmedNonEmptyString),
+  dependenciesAdded: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  dependenciesRemoved: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+});
+export type BoardCardEditSummary = typeof BoardCardEditSummary.Type;
+
+/**
  * The small typed payload an activity row carries (D10). Every field is
  * key-optional: a row carries only what its kind needs, and the client renders
  * the sentence. Deliberately narrow — ids and enums, never prose — so the rail
@@ -1990,6 +2008,8 @@ export const BoardCardActivityPayload = Schema.Struct({
   prState: Schema.optionalKey(BoardCardPullRequestState),
   /** card-worktree-removed: a human forced it past the safety rule. */
   forced: Schema.optionalKey(Schema.Boolean),
+  /** card-edited (T3O-53): what an incremental edit changed. */
+  ...BoardCardEditSummary.fields,
 });
 export type BoardCardActivityPayload = typeof BoardCardActivityPayload.Type;
 
@@ -3673,6 +3693,14 @@ export const BoardCardReorderCommand = Schema.Struct({
 });
 export type BoardCardReorderCommand = typeof BoardCardReorderCommand.Type;
 
+/** A named-section brief edit (T3O-53): the heading line it is keyed on, and
+    the section's new body. */
+export const BoardBriefSectionEdit = Schema.Struct({
+  heading: TrimmedNonEmptyString,
+  body: Schema.String,
+});
+export type BoardBriefSectionEdit = typeof BoardBriefSectionEdit.Type;
+
 /** Partial update: absent fields are unchanged. `brief` and `externalRef`
     accept null to clear. One command with partial semantics rather than five
     near-identical commands. */
@@ -3731,6 +3759,32 @@ export const BoardCardUpdateCommand = Schema.Struct({
       reverse state must never be refused, and a hold about a merge that is no
       longer going to happen is a stale label. */
   autoMerge: Schema.optional(Schema.Boolean),
+  /** Append this text to the end of the brief, after a blank line (T3O-53).
+      Applied by the decider against the brief as it stands when the command
+      is decided, so an edit landing in between is kept rather than
+      overwritten. Mutually exclusive with `brief` and `briefSection`. */
+  briefAppend: Schema.optional(TrimmedNonEmptyString),
+  /** Replace one named section of the brief (T3O-53): `heading` is the whole
+      markdown heading line (`## Notes from Z5-34`). The written section ends
+      with an `<!-- end <heading> -->` marker line and is replaced up to it; a
+      section without one runs to the next heading (or end marker) of the same
+      or a higher level. Appended as a new section
+      when the heading is not there yet, so repeating the call replaces rather
+      than duplicates. Mutually exclusive with `brief` and `briefAppend`. */
+  briefSection: Schema.optional(BoardBriefSectionEdit),
+  /** The brief version the caller read (`boardBriefVersion`, T3O-53). When
+      present, any brief change in this command is rejected if the brief has
+      changed since — the guard that keeps read-change-write from losing a
+      concurrent edit. */
+  expectedBriefVersion: Schema.optional(TrimmedNonEmptyString),
+  /** Add these dependencies, keeping the existing ones (T3O-53). Already
+      present ids are no-ops; the cycle check applies to the result. Mutually
+      exclusive with `dependsOn`. */
+  addDependsOn: Schema.optional(Schema.Array(BoardCardId)),
+  /** Remove these dependencies, keeping the rest (T3O-53). An id that is not
+      a dependency is a no-op, so a repeated removal is harmless. Mutually
+      exclusive with `dependsOn`. */
+  removeDependsOn: Schema.optional(Schema.Array(BoardCardId)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
@@ -4801,6 +4855,10 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       step completion. Absent when the edit cannot touch review, and for every
       event written before this — the SQL cache is refreshed either way. */
   reviewSummary: Schema.optionalKey(BoardCardReviewSummary),
+  /** The incremental edits this update made (T3O-53), for the Activity rail's
+      `card-edited` row. Absent on whole-value edits and on every event written
+      before this — the brief and card above stay the authoritative result. */
+  edit: Schema.optionalKey(BoardCardEditSummary),
 });
 export type BoardCardUpdatedPayload = typeof BoardCardUpdatedPayload.Type;
 

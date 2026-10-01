@@ -124,6 +124,7 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
 import { BoardBaseBranchConfirmDialog } from "./BoardBaseBranchConfirmDialog";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
+import { boardBriefDisplayText } from "./boardBriefDisplay";
 import { BoardCardProjectConfirmDialog } from "./BoardCardProjectConfirmDialog";
 import { BoardCardProjectRowValue, type BoardProjectOption } from "./BoardCardProjectSelect";
 import {
@@ -826,7 +827,9 @@ function BriefBody({
           {brief === null ? (
             <span className="text-muted-foreground">Add a brief…</span>
           ) : (
-            <span className="whitespace-pre-wrap text-pretty text-foreground">{brief}</span>
+            <span className="whitespace-pre-wrap text-pretty text-foreground">
+              {boardBriefDisplayText(brief)}
+            </span>
           )}
         </button>
       </BoardHint>

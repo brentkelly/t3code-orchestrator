@@ -42,6 +42,7 @@ import { ServerConfig } from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
+import { boardSnapshotQueryMethodsOf } from "../../../board/projection.ts";
 import { boardHandlers } from "./handlers.ts";
 import { BoardToolkit } from "./tools.ts";
 
@@ -1648,6 +1649,536 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       for (const event of events) replayed = yield* projectEvent(replayed, event);
       // Read-model step completions and plan metadata rehydrated from the
       // 908/909 tables must equal a from-empty replay of the event log.
+      assert.deepStrictEqual(replayed.board, rehydrated.board);
+    }),
+  );
+});
+
+// T3O-53: reading other cards, and editing a brief or dependency set without
+// replacing it. A fresh database of its own, so each case creates the cards it
+// edits and nothing here can disturb the assertions above.
+it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edits", (it) => {
+  const createCard = Effect.fn("createCard")(function* (id: string, brief?: string) {
+    const engine = yield* OrchestrationEngineService;
+    const card = BoardCardId.make(id);
+    yield* engine.dispatch({
+      type: "board.card.create",
+      commandId: CommandId.make(`cmd-create-${id}`),
+      cardId: card,
+      projectId,
+      title: `Card ${id}`,
+      ...(brief === undefined ? {} : { brief }),
+      orderKey: "m",
+      createdAt: t0,
+    });
+    return card;
+  });
+
+  /** A human (or any other writer) editing the card through the engine. */
+  const humanUpdate = Effect.fn("humanUpdate")(function* (
+    id: string,
+    card: BoardCardId,
+    brief: string,
+  ) {
+    const engine = yield* OrchestrationEngineService;
+    yield* engine.dispatch({
+      type: "board.card.update",
+      commandId: CommandId.make(`cmd-human-${id}`),
+      cardId: card,
+      brief,
+      createdAt: t0,
+    });
+  });
+
+  const activityOf = Effect.fn("activityOf")(function* (card: BoardCardId) {
+    const board = boardSnapshotQueryMethodsOf(yield* ProjectionSnapshotQuery);
+    assert.isNotNull(board);
+    return (yield* board!.boardCardActivity(card)).filter((entry) => entry.kind === "card-edited");
+  });
+
+  const read = (card: string) =>
+    boardHandlers.board_get_card({ card }).pipe(withScope(linkedThread));
+
+  it.effect("reads another card by key: brief, version, dependencies and plans", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const dependency = yield* createCard("read-dep");
+      const target = yield* createCard("read-target", "Target brief");
+      yield* boardHandlers
+        .board_update_card({ cardId: target, addDependsOn: [dependency] })
+        .pipe(withScope(linkedThread));
+      const engine = yield* OrchestrationEngineService;
+      yield* engine.dispatch({
+        type: "board.plans.propose",
+        commandId: CommandId.make("cmd-read-plans"),
+        cardId: target,
+        plans: [{ key: "p", title: "Plan", summary: "Sum", dependsOn: [], body: "Plan body" }],
+        splitRationale: null,
+        createdAt: t0,
+      });
+
+      const byId = yield* read(target);
+      // A key, lower-cased as an agent might type it, resolves the same card.
+      const result = yield* read(byId.key.toLowerCase());
+      assert.strictEqual(result.cardId, target);
+      assert.strictEqual(result.brief, "Target brief");
+      assert.match(result.briefVersion, /^[0-9a-f]{16}$/);
+      assert.deepStrictEqual(
+        result.dependencies.map((entry) => [entry.cardId, entry.met]),
+        [[dependency, false]],
+      );
+      assert.strictEqual(result.dependencies[0]?.key, (yield* read(dependency)).key);
+      assert.deepStrictEqual(
+        result.plans.map((plan) => [plan.title, plan.body]),
+        [["Plan", "Plan body"]],
+      );
+      assert.isNull(result.parent);
+      assert.isFalse(result.archived);
+      // Read-only, and nothing that belongs only to the caller's own card.
+      assert.notProperty(result, "currentStep");
+      assert.notProperty(result, "threads");
+
+      const missing = yield* Effect.flip(read("NOPE-999"));
+      assert.strictEqual(missing.code, "card-not-found");
+    }),
+  );
+
+  it.effect("appending twice keeps the brief and adds both notes, railed as the agent", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("append", "Original brief");
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        yield* boardHandlers
+          .board_update_card({ cardId: target, briefAppend: "A note" })
+          .pipe(withScope(linkedThread));
+      }
+      assert.strictEqual((yield* read(target)).brief, "Original brief\n\nA note\n\nA note");
+      const rows = yield* activityOf(target);
+      assert.strictEqual(rows.length, 2);
+      assert.strictEqual(rows[0]?.payload.briefEdit, "appended");
+      assert.strictEqual(rows[0]?.actor.kind, "agent");
+      assert.strictEqual(rows[0]?.actor.threadId, linkedThread);
+    }),
+  );
+
+  it.effect("appending to a card with no brief gives it one", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("append-empty");
+      yield* boardHandlers
+        .board_update_card({ cardId: target, briefAppend: "First words" })
+        .pipe(withScope(linkedThread));
+      assert.strictEqual((yield* read(target)).brief, "First words");
+    }),
+  );
+
+  it.effect("replacing a named section twice leaves one section with the latest body", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("section", "# Brief\n\nKeep me.\n\n## Later\n\nAlso keep.");
+      const heading = "## Notes from Z5-34";
+      yield* boardHandlers
+        .board_update_card({ cardId: target, briefSection: { heading, body: "First take" } })
+        .pipe(withScope(linkedThread));
+      yield* boardHandlers
+        .board_update_card({ cardId: target, briefSection: { heading, body: "Second take" } })
+        .pipe(withScope(linkedThread));
+      const brief = (yield* read(target)).brief ?? "";
+      assert.strictEqual(
+        brief,
+        `# Brief\n\nKeep me.\n\n## Later\n\nAlso keep.\n\n## Notes from Z5-34\n\nSecond take\n\n<!-- end ${heading} -->`,
+      );
+      assert.strictEqual(brief.split("\n").filter((line) => line === heading).length, 1);
+      const rows = yield* activityOf(target);
+      assert.deepStrictEqual(
+        rows.map((row) => [row.payload.briefEdit, row.payload.briefSection]),
+        [
+          ["section-replaced", heading],
+          ["section-replaced", heading],
+        ],
+      );
+    }),
+  );
+
+  it.effect("a repeated section replace keeps text appended after the section", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("section-append", "Brief");
+      const heading = "## Notes from Z5-34";
+      const section = (body: string) =>
+        boardHandlers
+          .board_update_card({ cardId: target, briefSection: { heading, body } })
+          .pipe(withScope(linkedThread));
+      yield* section("First take");
+      yield* boardHandlers
+        .board_update_card({ cardId: target, briefAppend: "Someone else's note" })
+        .pipe(withScope(linkedThread));
+      yield* section("Second take");
+      assert.strictEqual(
+        (yield* read(target)).brief,
+        `Brief\n\n## Notes from Z5-34\n\nSecond take\n\n<!-- end ${heading} -->\n\nSomeone else's note`,
+      );
+    }),
+  );
+
+  it.effect("a deeper section replace keeps text appended after its enclosing section", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("nested-section-append", "Brief");
+      const heading = "## Notes from Z5-34";
+      yield* boardHandlers
+        .board_update_card({
+          cardId: target,
+          briefSection: { heading, body: "Intro\n\n### Risks\n\nOld risk" },
+        })
+        .pipe(withScope(linkedThread));
+      yield* boardHandlers
+        .board_update_card({ cardId: target, briefAppend: "Someone else's note" })
+        .pipe(withScope(linkedThread));
+      yield* boardHandlers
+        .board_update_card({
+          cardId: target,
+          briefSection: { heading: "### Risks", body: "New risk" },
+        })
+        .pipe(withScope(linkedThread));
+      const brief = (yield* read(target)).brief ?? "";
+      assert.include(brief, `<!-- end ${heading} -->\n\nSomeone else's note`);
+      assert.include(brief, "### Risks\n\nNew risk\n\n<!-- end ### Risks -->");
+      assert.notInclude(brief, "Old risk");
+    }),
+  );
+
+  it.effect("a heading that is not a markdown heading is rejected", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("section-bad", "Brief");
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({
+            cardId: target,
+            briefSection: { heading: "Notes", body: "x" },
+          })
+          .pipe(withScope(linkedThread)),
+      );
+      assert.strictEqual(failure.code, "rejected");
+      assert.include(failure.message, "markdown heading");
+    }),
+  );
+
+  it.effect("an update can name its target card by key", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("by-key", "Brief");
+      const { key } = yield* read(target);
+      const result = yield* boardHandlers
+        .board_update_card({ cardId: key, briefAppend: "By key" })
+        .pipe(withScope(linkedThread));
+      assert.strictEqual(result.cardId, target);
+      assert.strictEqual((yield* read(target)).brief, "Brief\n\nBy key");
+    }),
+  );
+
+  it.effect("a section body with a heading that would end the section is rejected", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("section-break", "Brief");
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({
+            cardId: target,
+            briefSection: { heading: "## Notes", body: "Intro\n\n## Changes\n\nMore" },
+          })
+          .pipe(withScope(linkedThread)),
+      );
+      assert.strictEqual(failure.code, "rejected");
+      assert.include(failure.message, "'## Changes'");
+      assert.strictEqual((yield* read(target)).brief, "Brief");
+    }),
+  );
+
+  it.effect("an unclosed code fence in the section body or the brief is rejected", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // Without the check, the second replace runs the section to the end of
+      // the brief (the fence hides '## Later') and deletes that section.
+      const target = yield* createCard("section-fence", "Brief\n\n## Later\n\nKeep me");
+      const update = (cardId: BoardCardId, body: string) =>
+        Effect.flip(
+          boardHandlers
+            .board_update_card({ cardId, briefSection: { heading: "## Notes", body } })
+            .pipe(withScope(linkedThread)),
+        );
+      const fromBody = yield* update(target, "```\nsnippet");
+      assert.strictEqual(fromBody.code, "rejected");
+      assert.include(fromBody.message, "never closes");
+      assert.strictEqual((yield* read(target)).brief, "Brief\n\n## Later\n\nKeep me");
+
+      const broken = yield* createCard(
+        "brief-fence",
+        "## Notes\n\n```\nold\n\n## Later\n\nKeep me",
+      );
+      const fromBrief = yield* update(broken, "New");
+      assert.strictEqual(fromBrief.code, "rejected");
+      assert.include(fromBrief.message, "briefAppend");
+      assert.strictEqual(
+        (yield* read(broken)).brief,
+        "## Notes\n\n```\nold\n\n## Later\n\nKeep me",
+      );
+    }),
+  );
+
+  it.effect("an edit guarded by a stale brief version is rejected; a fresh one lands", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("version", "Version one");
+      const { briefVersion } = yield* read(target);
+      // Someone else edits the brief after the agent read it.
+      yield* humanUpdate("version", target, "Version two, by a human");
+
+      const stale = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({
+            cardId: target,
+            brief: "Agent rewrite",
+            expectedBriefVersion: briefVersion,
+          })
+          .pipe(withScope(linkedThread)),
+      );
+      assert.strictEqual(stale.code, "rejected");
+      assert.include(stale.message, "changed since you read it");
+      assert.strictEqual((yield* read(target)).brief, "Version two, by a human");
+
+      const fresh = yield* read(target);
+      yield* boardHandlers
+        .board_update_card({
+          cardId: target,
+          brief: "Agent rewrite",
+          expectedBriefVersion: fresh.briefVersion,
+        })
+        .pipe(withScope(linkedThread));
+      assert.strictEqual((yield* read(target)).brief, "Agent rewrite");
+      // The same guard holds on the incremental forms.
+      const staleAppend = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({
+            cardId: target,
+            briefAppend: "late",
+            expectedBriefVersion: fresh.briefVersion,
+          })
+          .pipe(withScope(linkedThread)),
+      );
+      assert.strictEqual(staleAppend.code, "rejected");
+    }),
+  );
+
+  it.effect("an append lands on top of an edit made after the agent read the card", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("concurrent", "Original");
+      yield* read(target);
+      yield* humanUpdate("concurrent", target, "Original, edited by a human");
+      yield* boardHandlers
+        .board_update_card({
+          cardId: target,
+          briefSection: { heading: "## Notes", body: "Agent notes" },
+        })
+        .pipe(withScope(linkedThread));
+      assert.strictEqual(
+        (yield* read(target)).brief,
+        "Original, edited by a human\n\n## Notes\n\nAgent notes\n\n<!-- end ## Notes -->",
+      );
+    }),
+  );
+
+  it.effect("adds and removes single dependencies, by key, leaving the rest", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const first = yield* createCard("deps-first");
+      const second = yield* createCard("deps-second");
+      const target = yield* createCard("deps-target");
+      const secondKey = (yield* read(second)).key;
+      yield* boardHandlers
+        .board_update_card({ cardId: target, addDependsOn: [first] })
+        .pipe(withScope(linkedThread));
+      yield* boardHandlers
+        .board_update_card({ cardId: target, addDependsOn: [secondKey] })
+        .pipe(withScope(linkedThread));
+      assert.deepStrictEqual(
+        (yield* read(target)).dependencies.map((entry) => entry.cardId),
+        [first, second],
+      );
+      // The list shows dependencies too.
+      const listed = yield* boardHandlers.board_list_cards({}).pipe(withScope(linkedThread));
+      assert.deepStrictEqual(
+        listed.cards.find((card) => card.cardId === target)?.dependsOn.map((entry) => entry.key),
+        [(yield* read(first)).key, secondKey],
+      );
+
+      yield* boardHandlers
+        .board_update_card({ cardId: target, removeDependsOn: [first] })
+        .pipe(withScope(linkedThread));
+      assert.deepStrictEqual(
+        (yield* read(target)).dependencies.map((entry) => entry.cardId),
+        [second],
+      );
+      // Rows written in the same millisecond have no defined order, so the
+      // rail is compared as a set.
+      const firstKey = (yield* read(first)).key;
+      const rows = yield* activityOf(target);
+      assert.sameDeepMembers(
+        rows.map((row) => [row.payload.dependenciesAdded, row.payload.dependenciesRemoved]),
+        [
+          [[firstKey], undefined],
+          [[secondKey], undefined],
+          [undefined, [firstKey]],
+        ],
+      );
+    }),
+  );
+
+  it.effect("removing a dependency by a key another project shares removes the dependency", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const engine = yield* OrchestrationEngineService;
+      // A second project with the same title allocates the same keys, so its
+      // first card shares card-1's key; card-1 comes first in the board.
+      const twin = ProjectId.make("project-twin");
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-twin"),
+        projectId: twin,
+        title: "Project A",
+        workspaceRoot: "/tmp/project-twin",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt: t0,
+      });
+      const dependency = BoardCardId.make("twin-dep");
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-create-twin-dep"),
+        cardId: dependency,
+        projectId: twin,
+        title: "Twin dependency",
+        orderKey: "m",
+        createdAt: t0,
+      });
+      const sharedKey = (yield* read(dependency)).key;
+      assert.strictEqual((yield* read(cardId)).key, sharedKey);
+
+      const target = yield* createCard("twin-target");
+      yield* boardHandlers
+        .board_update_card({ cardId: target, addDependsOn: [dependency] })
+        .pipe(withScope(linkedThread));
+      yield* boardHandlers
+        .board_update_card({ cardId: target, removeDependsOn: [sharedKey] })
+        .pipe(withScope(linkedThread));
+      assert.deepStrictEqual((yield* read(target)).dependencies, []);
+    }),
+  );
+
+  it.effect("removing a dependency that is not there is a harmless no-op", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const kept = yield* createCard("noop-kept");
+      const stranger = yield* createCard("noop-stranger");
+      const target = yield* createCard("noop-target");
+      yield* boardHandlers
+        .board_update_card({ cardId: target, addDependsOn: [kept] })
+        .pipe(withScope(linkedThread));
+      yield* boardHandlers
+        .board_update_card({ cardId: target, removeDependsOn: [stranger, "GHOST-1"] })
+        .pipe(withScope(linkedThread));
+      assert.deepStrictEqual(
+        (yield* read(target)).dependencies.map((entry) => entry.cardId),
+        [kept],
+      );
+      // Nothing changed, so nothing is railed for the removal.
+      assert.strictEqual((yield* activityOf(target)).length, 1);
+    }),
+  );
+
+  it.effect("adding a dependency that would form a cycle is rejected", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const upstream = yield* createCard("cycle-a");
+      const downstream = yield* createCard("cycle-b");
+      yield* boardHandlers
+        .board_update_card({ cardId: downstream, addDependsOn: [upstream] })
+        .pipe(withScope(linkedThread));
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: upstream, addDependsOn: [downstream] })
+          .pipe(withScope(linkedThread)),
+      );
+      assert.strictEqual(failure.code, "rejected");
+      assert.include(failure.message, "cycle");
+      assert.deepStrictEqual((yield* read(upstream)).dependencies, []);
+
+      const unknown = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: upstream, addDependsOn: ["GHOST-404"] })
+          .pipe(withScope(linkedThread)),
+      );
+      assert.strictEqual(unknown.code, "card-not-found");
+    }),
+  );
+
+  it.effect("contradictory edits are rejected rather than half-applied", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const other = yield* createCard("contra-other");
+      const target = yield* createCard("contra", "Brief");
+      const failures = yield* Effect.forEach(
+        [
+          { cardId: target, brief: "Whole", briefAppend: "More" },
+          { cardId: target, dependsOn: [other], addDependsOn: [other] },
+          { cardId: target, addDependsOn: [other], removeDependsOn: [other] },
+          { cardId: target, title: "Renamed", expectedBriefVersion: "0000000000000000" },
+        ],
+        (input) =>
+          Effect.flip(boardHandlers.board_update_card(input).pipe(withScope(linkedThread))),
+      );
+      assert.deepStrictEqual(
+        failures.map((failure) => failure.code),
+        ["rejected", "rejected", "rejected", "rejected"],
+      );
+      const after = yield* read(target);
+      assert.strictEqual(after.brief, "Brief");
+      assert.strictEqual(after.title, "Card contra");
+      assert.deepStrictEqual(after.dependencies, []);
+    }),
+  );
+
+  it.effect("the whole-value brief and dependency edits still replace, unrailed", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const dependency = yield* createCard("whole-dep");
+      const target = yield* createCard("whole", "Old");
+      yield* boardHandlers
+        .board_update_card({ cardId: target, brief: "New", dependsOn: [dependency] })
+        .pipe(withScope(linkedThread));
+      const after = yield* read(target);
+      assert.strictEqual(after.brief, "New");
+      assert.deepStrictEqual(
+        after.dependencies.map((entry) => entry.cardId),
+        [dependency],
+      );
+      assert.strictEqual((yield* activityOf(target)).length, 0);
+    }),
+  );
+
+  it.effect("incremental edits replay identically from an empty read model", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const rehydrated = yield* snapshotQuery.getCommandReadModel();
+      const events = Array.from(yield* Stream.runCollect(engine.readEvents(0)));
+      let replayed = createEmptyReadModel(t0);
+      for (const event of events) replayed = yield* projectEvent(replayed, event);
       assert.deepStrictEqual(replayed.board, rehydrated.board);
     }),
   );

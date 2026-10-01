@@ -39,6 +39,7 @@ import {
   ListTreeIcon,
   FolderSyncIcon,
   MoveRightIcon,
+  PencilIcon,
   PlusCircleIcon,
   RotateCcwIcon,
   ScissorsIcon,
@@ -143,6 +144,8 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <HardDriveIcon className={cn(className, "text-warning-foreground")} />;
     case "card-worktree-removed":
       return <HardDriveIcon className={className} />;
+    case "card-edited":
+      return <PencilIcon className={className} />;
   }
 }
 
@@ -167,6 +170,28 @@ function StepOutcomeIcon({ outcome }: { readonly outcome: BoardStepOutcome }) {
         />
       );
   }
+}
+
+/** The `card-edited` sentence (T3O-53): each part the edit changed, in one
+    line — "appended to the brief and added dependency T3O-4". */
+function describeCardEdit(payload: BoardCardActivityEntry["payload"]): string {
+  const dependencies = (verb: string, keys: ReadonlyArray<string>) =>
+    `${verb} ${keys.length === 1 ? "dependency" : "dependencies"} ${keys.join(", ")}`;
+  const parts = [
+    payload.briefEdit === "appended" ? "appended to the brief" : null,
+    payload.briefEdit === "section-replaced"
+      ? payload.briefSection === undefined
+        ? "updated a section of the brief"
+        : `updated the brief section “${payload.briefSection.replace(/^#+\s*/, "")}”`
+      : null,
+    payload.dependenciesAdded === undefined
+      ? null
+      : dependencies("added", payload.dependenciesAdded),
+    payload.dependenciesRemoved === undefined
+      ? null
+      : dependencies("removed", payload.dependenciesRemoved),
+  ].filter((part) => part !== null);
+  return parts.length === 0 ? "edited the card" : parts.join(" and ");
 }
 
 /** The sentence for one row, built from its typed payload. A payload field that
@@ -329,6 +354,8 @@ function activitySentence(
       ) : (
         <>removed the worktree</>
       );
+    case "card-edited":
+      return <>{describeCardEdit(payload)}</>;
   }
 }
 
