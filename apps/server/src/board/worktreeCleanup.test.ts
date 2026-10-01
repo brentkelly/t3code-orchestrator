@@ -9,6 +9,7 @@
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 
 import {
   BOARD_SEED_STAGE_IDS,
@@ -16,6 +17,7 @@ import {
   type BoardCardPullRequest,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type OrchestrationReadModel,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -57,6 +59,23 @@ const doneCard = (overrides: Partial<Parameters<typeof makeBoardCard>[0]> = {}):
     worktree: readyWorktree("card-1"),
     ...overrides,
   });
+
+/** Change one card in the read model, as a concurrent command would. */
+const editCard = (
+  model: Ref.Ref<OrchestrationReadModel>,
+  cardId: string,
+  edit: (card: BoardCard) => BoardCard,
+) =>
+  Ref.update(model, (current) => ({
+    ...current,
+    board:
+      current.board === undefined || current.board === null
+        ? current.board
+        : {
+            ...current.board,
+            cards: current.board.cards.map((card) => (card.id === cardId ? edit(card) : card)),
+          },
+  }));
 
 const reclaims = (commands: ReadonlyArray<OrchestrationCommand>) =>
   commands.flatMap((command) => (command.type === "board.card.reclaim-worktree" ? [command] : []));
@@ -278,6 +297,60 @@ describe("the cleanup sweep (D3/D4)", () => {
     ),
   );
 
+  it.effect(
+    "Check again reclaims a kept archived card outside Done with reclaimWorktreeOnDone off",
+    () =>
+      withGovernor(
+        {
+          board: {
+            nextCardNumberByProject: {},
+            cards: [
+              {
+                ...doneCard({ stage: String(BOARD_SEED_STAGE_IDS.building) }),
+                archivedAt: "2026-01-01T00:00:00.000Z" as BoardCard["archivedAt"],
+              },
+            ],
+          },
+          settings: settings(false),
+          pullRequest: null,
+          worktreeUndurable: true,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.drainWorktreeSweep;
+            assert.deepEqual(yield* h.removedWorktrees, []);
+            // The work has since reached the remote; the human asks again.
+            h.setWorktreeUndurable(false);
+            yield* h.reactor.refreshPullRequest((yield* h.board).cards[0]!.id, { force: true });
+            assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+          }),
+      ),
+  );
+
+  it.effect("abandons a reclaim when the card leaves Done while the probe runs", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [doneCard()] },
+        settings: settings(),
+        pullRequest: null,
+        // A human drags the card back out of Done carrying its pull request
+        // while the fetches run: the round advances under the reclaim.
+        duringDurabilityProbe: (model) =>
+          editCard(model, "card-1", (card) => ({
+            ...card,
+            stage: BOARD_SEED_STAGE_IDS.building,
+            pullRequestHistory: [...card.pullRequestHistory, cachedPr("open")],
+          })),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          assert.equal(reclaims(yield* h.commands).length, 0);
+        }),
+    ),
+  );
+
   it.effect("coalesces a burst of requests into at most one follow-up pass", () =>
     withGovernor(
       {
@@ -398,6 +471,29 @@ describe("the cleanup sweep (D3/D4)", () => {
           "branch refs/heads/board/other-1",
           "",
         ].join("\n"),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepEqual(yield* h.removedWorktrees, []);
+        }),
+    ),
+  );
+
+  it.effect("keeps a checkout whose card starts provisioning it while the probe runs", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          // No worktree yet in the pass's snapshot, so its checkout reads as
+          // an orphan — until the card records it mid-probe.
+          cards: [doneCard({ stage: String(BOARD_SEED_STAGE_IDS.building), worktree: null })],
+        },
+        settings: settings(),
+        pullRequest: null,
+        registeredWorktrees: porcelain([["/tmp/wt/card-1", "board/card-1"]]),
+        duringDurabilityProbe: (model) =>
+          editCard(model, "card-1", (card) => ({ ...card, worktree: readyWorktree("card-1") })),
       },
       (h) =>
         Effect.gen(function* () {

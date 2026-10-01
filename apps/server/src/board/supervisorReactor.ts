@@ -278,7 +278,8 @@ export interface SupervisorReactorShape {
       Runs on the same timer as the sweep and at every step boundary; exposed so
       tests can drive the retry that lands after an agent's turn ends. */
   readonly releaseThreads: Effect.Effect<void>;
-  /** Resolves when the internal queue is empty and idle (test hook). */
+  /** Resolves when the internal queue, and the per-card worktree cleanup it
+      hands off, are empty and idle (test hook). */
   readonly drain: Effect.Effect<void>;
   /** Ask for a worktree-cleanup pass (T3O-52, D4); single-flight, so a burst
       of requests runs at most one pass plus one follow-up. */
@@ -4001,17 +4002,25 @@ const make = Effect.gen(function* () {
         them; overriding with a stage they read EARLIER would be strictly
         staler, not fresher. */
     movedToStage?: BoardCard["stage"],
-    /** T3o (T3O-48): threaded through to the lookup. Only the RPC's "Check
-        again" passes it; every internal caller omits it. */
-    options?: { readonly force?: boolean },
+    /** T3o (T3O-48): `force` is threaded through to the lookup. Only the RPC's
+        "Check again" passes it; every internal caller omits it.
+
+        T3O-52: `deferSettle` hands the settle to `cardCleanupWorker` instead
+        of running it here. The reactor's own worker passes it: the settle's
+        reclaim fetches from the remote, and the serialised worker must not
+        wait on the network. */
+    options?: { readonly force?: boolean; readonly deferSettle?: boolean },
   ) {
     const outcome = yield* refreshCardPullRequestLink(card, options);
     // Re-read for the pull request the refresh may have just recorded.
     const refreshed = yield* readCard(card.id);
     if (refreshed === null) return outcome;
-    yield* settleCardAtDone(
-      movedToStage === undefined ? refreshed : { ...refreshed, stage: movedToStage },
-    );
+    const settling = movedToStage === undefined ? refreshed : { ...refreshed, stage: movedToStage };
+    if (options?.deferSettle === true) {
+      yield* cardCleanupWorker.enqueue({ kind: "settle", card: settling });
+    } else {
+      yield* settleCardAtDone(settling);
+    }
     return outcome;
   });
 
@@ -4098,6 +4107,27 @@ const make = Effect.gen(function* () {
   const reclaimingCards = new Set<string>();
 
   /**
+   * Whether `card` is still finished with the checkout at `path`, read fresh:
+   * the same checkout still `ready`, and the card archived, or in the same
+   * round with no live step — a step queued or running is an agent about to
+   * write there. Not the stage: the read model can lag a move event, which is
+   * why `settleCardAtDone` re-asserts on the round too. A read that fails
+   * answers no — keeping a worktree is always the safe side, and the next
+   * sweep asks again.
+   */
+  const cardStillFinished = (card: BoardCard, path: string) =>
+    Effect.gen(function* () {
+      const board = yield* readBoard;
+      const current = board.cards.find((candidate) => candidate.id === card.id);
+      if (current === undefined || current.worktree?.status !== "ready") return false;
+      if (current.worktree.path !== path) return false;
+      if (current.archivedAt !== null) return true;
+      if (boardCardRound(current) !== boardCardRound(card)) return false;
+      const state = boardCardStepState(board, current.id);
+      return state === null || isBoardTerminalStepStatus(state.status);
+    }).pipe(Effect.orElseSucceed(() => false));
+
+  /**
    * Remove a card's worktree when its work is durable, reporting the outcome
    * onto the card (T3O-52, D1).
    *
@@ -4110,6 +4140,11 @@ const make = Effect.gen(function* () {
    * Idempotent: a worktree that is not `ready` is already gone (or never
    * arrived), and a refusal identical to the one the card already holds
    * dispatches nothing, so re-asking on every card open writes no event.
+   *
+   * The card is re-read between the probe and the removal
+   * (`cardStillFinished`): `card` is the caller's snapshot, and the probe's
+   * fetches leave minutes for a human to unarchive it or drag it back out of
+   * Done and start work in that very checkout.
    */
   const reclaimCardWorktree = Effect.fn("board-supervisor-reclaimCardWorktree")(function* (
     card: BoardCard,
@@ -4127,19 +4162,22 @@ const make = Effect.gen(function* () {
       ...card.pullRequestHistory,
       ...(card.pullRequest === null ? [] : [card.pullRequest]),
     ];
-    const reclaimed = yield* reclaimBoardCardWorktree({
-      projectCwd: cwd,
-      worktreePath: worktree.path,
-      baseRefName: worktree.baseRefName,
-      branch: worktree.branch,
-      mergedPullRequestNumbers: pullRequests
-        .filter((pullRequest) => pullRequest.state === "merged")
-        .map((pullRequest) => pullRequest.number),
-      openPullRequestNumber: card.pullRequest?.state === "open" ? card.pullRequest.number : null,
-      fetchedBases,
-    }).pipe(
+    const reclaimed = yield* reclaimBoardCardWorktree(
+      {
+        projectCwd: cwd,
+        worktreePath: worktree.path,
+        baseRefName: worktree.baseRefName,
+        branch: worktree.branch,
+        mergedPullRequestNumbers: pullRequests
+          .filter((pullRequest) => pullRequest.state === "merged")
+          .map((pullRequest) => pullRequest.number),
+        openPullRequestNumber: card.pullRequest?.state === "open" ? card.pullRequest.number : null,
+        fetchedBases,
+      },
+      cardStillFinished(card, worktree.path),
+    ).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-      Effect.map(Option.some),
+      Effect.map(Option.fromNullishOr),
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: worktree reclaim failed", {
           cardId: card.id,
@@ -4209,8 +4247,11 @@ const make = Effect.gen(function* () {
    * Give a finished card its disk back: reclaim the worktree, then delete the
    * branches. Two halves with two different gates (T3O-52, D2):
    *
-   * - **Worktree.** Any card in the done-role stage, with
-   *   `reclaimWorktreeOnDone` on. No pull-request requirement: the safety rule
+   * - **Worktree.** Any ARCHIVED card, unconditionally — archive is the
+   *   guaranteed cleanup point, so a human's "Check again" on an archived card
+   *   re-runs the reclaim whatever its stage or the setting. Otherwise any card
+   *   in the done-role stage, with `reclaimWorktreeOnDone` on. No
+   *   pull-request requirement: the safety rule
    *   (`reclaimBoardCardWorktree`) asks git whether the work is durable, which
    *   also covers a card merged straight into its base, or one that reached
    *   Done with nothing new to merge.
@@ -4240,12 +4281,14 @@ const make = Effect.gen(function* () {
   ) {
     const board = yield* readBoard;
     const stage = boardStageById(board, card.stage);
-    if (stage === null || effectiveBoardStageRole(stage) !== "done") return;
+    const inDone = stage !== null && effectiveBoardStageRole(stage) === "done";
+    const archived = card.archivedAt !== null;
+    if (!inDone && !archived) return;
     const round = boardCardRound(card);
 
     const settings = yield* boardSettings;
     let removedHere = false;
-    if (settings.lifecycle.reclaimWorktreeOnDone) {
+    if (archived || settings.lifecycle.reclaimWorktreeOnDone) {
       // Re-assert immediately before the destructive half. Every check above
       // ran against the snapshot this was called with, and there are yields
       // in between — long enough for a human to drag the card straight back
@@ -4270,6 +4313,7 @@ const make = Effect.gen(function* () {
       }
     }
 
+    if (!inDone) return;
     if (card.pullRequest === null || card.pullRequest.state !== "merged") return;
     if (options?.branchCleanup === "after-reclaim" && !removedHere) return;
     // Branch cleanup hangs off the pull-request refresh, and a refresh fires
@@ -4315,6 +4359,27 @@ const make = Effect.gen(function* () {
    * card to flag. A card that is mid-provisioning, failed or branch-only owns
    * its branch's checkout and is left alone.
    */
+  /**
+   * Whether no card owns a registered `board/*` checkout. Owners are looked up
+   * across EVERY project: two board projects can share one repository, and the
+   * other project's live card is not an orphan just because this project does
+   * not know it.
+   */
+  const isOrphanWorktree = (
+    board: BoardState,
+    registered: { readonly path: string; readonly branch: string },
+  ): boolean => {
+    const owner = board.cards.find((card) => card.worktree?.branch === registered.branch);
+    const ownerWorktree = owner?.worktree ?? null;
+    return (
+      ownerWorktree === null ||
+      ownerWorktree.status === "reclaimed" ||
+      (ownerWorktree.status === "ready" &&
+        ownerWorktree.path !== null &&
+        pathService.resolve(ownerWorktree.path) !== pathService.resolve(registered.path))
+    );
+  };
+
   const sweepOrphanWorktrees = Effect.fn("board-supervisor-sweepOrphanWorktrees")(function* (
     board: BoardState,
     model: OrchestrationReadModel,
@@ -4339,26 +4404,27 @@ const make = Effect.gen(function* () {
       for (const registered of parseRegisteredWorktrees(listed.stdout).slice(1)) {
         if (registered.branch === null || !registered.branch.startsWith("board/")) continue;
         if (registered.prunable) continue;
-        // Owners are looked up across EVERY project: two board projects can
-        // share one repository, and the other project's live card is not an
-        // orphan just because this project does not know it.
+        const candidate = { path: registered.path, branch: registered.branch };
+        if (!isOrphanWorktree(board, candidate)) continue;
         const owner = board.cards.find((card) => card.worktree?.branch === registered.branch);
-        const ownerWorktree = owner?.worktree ?? null;
-        const orphaned =
-          ownerWorktree === null ||
-          ownerWorktree.status === "reclaimed" ||
-          (ownerWorktree.status === "ready" &&
-            ownerWorktree.path !== null &&
-            pathService.resolve(ownerWorktree.path) !== pathService.resolve(registered.path));
-        if (!orphaned) continue;
-        const outcome = yield* reclaimBoardCardWorktree({
-          projectCwd: cwd,
-          worktreePath: registered.path,
-          baseRefName: ownerWorktree?.baseRefName ?? (yield* projectDefaultBranch(cwd)),
-          branch: registered.branch,
-          mergedPullRequestNumbers: [],
-          fetchedBases,
-        }).pipe(
+        const outcome = yield* reclaimBoardCardWorktree(
+          {
+            projectCwd: cwd,
+            worktreePath: registered.path,
+            baseRefName: owner?.worktree?.baseRefName ?? (yield* projectDefaultBranch(cwd)),
+            branch: registered.branch,
+            mergedPullRequestNumbers: [],
+            fetchedBases,
+          },
+          // Ownership is re-judged on a FRESH board right before removal. The
+          // pass's snapshot is minutes old by now, and a card that started
+          // provisioning in between owns a checkout cut at the base tip —
+          // clean and durable, and anything but an orphan.
+          readBoard.pipe(
+            Effect.map((fresh) => isOrphanWorktree(fresh, candidate)),
+            Effect.orElseSucceed(() => false),
+          ),
+        ).pipe(
           Effect.provideService(GitVcsDriver.GitVcsDriver, git),
           Effect.catchCause((cause) =>
             Effect.logWarning("board supervisor: orphan worktree check failed", {
@@ -4432,6 +4498,36 @@ const make = Effect.gen(function* () {
     }
     yield* sweepOrphanWorktrees(board, model, fetchedBases);
   });
+
+  /**
+   * Per-card cleanup the reactor's own worker asks for (T3O-52): the settle on
+   * a move into Done, and the reclaim on archive. Both probe the remote before
+   * removing anything, so they run here rather than inline — a slow or
+   * unreachable remote then holds up cleanup, never step handling. FIFO, so a
+   * card's requests land in the order its events did; the per-card guards in
+   * `reclaimCardWorktree` and `settleCardAtDone` cover a concurrent sweep.
+   */
+  const cardCleanupWorker = yield* makeDrainableWorker(
+    (
+      request:
+        | { readonly kind: "settle"; readonly card: BoardCard }
+        | { readonly kind: "reclaim"; readonly cardId: BoardCardId },
+    ) =>
+      (request.kind === "settle"
+        ? settleCardAtDone(request.card)
+        : Effect.flatMap(readCard(request.cardId), (card) =>
+            card === null ? Effect.void : reclaimCardWorktree(card),
+          )
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("board supervisor: card worktree cleanup failed", {
+                cause: Cause.pretty(cause),
+              }),
+        ),
+      ),
+  );
 
   // Single-flight (T3O-52, D4): one pass at a time, and triggers that arrive
   // while one runs coalesce into ONE follow-up. Run off the reactor's worker,
@@ -6286,7 +6382,9 @@ const make = Effect.gen(function* () {
     // guaranteed cleanup point: `reclaimWorktreeOnDone` chooses whether a card
     // is reclaimed EARLIER, at Done, and never whether it is reclaimed at all.
     // A worktree may not outlive its card.
-    yield* reclaimCardWorktree(card);
+    //
+    // Off this worker (T3O-52): the reclaim fetches from the remote first.
+    yield* cardCleanupWorker.enqueue({ kind: "reclaim", cardId: card.id });
     // An archived card is done with every thread it holds (t3o-13).
     yield* releaseFinishedThreads;
     // An archived child counts as finished (t3o-23, D6), so this may have
@@ -6778,7 +6876,7 @@ const make = Effect.gen(function* () {
     // answer plausibly changed. The arrival-at-Done case needs no branch of its
     // own: `refreshCardPullRequest` settles the card whenever the refresh
     // leaves it in Done with a merged pull request, which is exactly this.
-    yield* refreshCardPullRequest(card, card.stage);
+    yield* refreshCardPullRequest(card, card.stage, { deferSettle: true });
 
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
     // The card changed stage, so the threads it left behind are finished work
@@ -7691,11 +7789,14 @@ const make = Effect.gen(function* () {
     fireProbes: sweepProviderLimits,
     fireAutoMerges: sweepAutoMergeHolds,
     releaseThreads: releaseFinishedThreads,
-    drain: worker.drain,
+    drain: Effect.andThen(worker.drain, cardCleanupWorker.drain),
     sweepWorktrees: requestWorktreeSweep,
     // The main worker first: boot reconcile and event handlers are what
     // request passes, so a pass may not be queued until they have run.
-    drainWorktreeSweep: Effect.andThen(worker.drain, worktreeSweepWorker.drain),
+    drainWorktreeSweep: worker.drain.pipe(
+      Effect.andThen(cardCleanupWorker.drain),
+      Effect.andThen(worktreeSweepWorker.drain),
+    ),
     forceRemoveWorktree: (cardId) =>
       forceRemoveCardWorktree(cardId).pipe(
         Effect.catchCause((cause) =>

@@ -509,7 +509,12 @@ const reclaimCard = (
     baseRefName: setup.initialBranch,
     branch: "board/card-1",
     mergedPullRequestNumbers: extra.mergedPullRequestNumbers ?? [],
-  });
+  }).pipe(
+    // Only a `stillWanted` that answers no abandons a reclaim, and none is passed.
+    Effect.flatMap((result) =>
+      result === null ? Effect.die("reclaim abandoned") : Effect.succeed(result),
+    ),
+  );
 
 const worktreeExists = (path: string) =>
   Effect.gen(function* () {
@@ -529,6 +534,27 @@ it.effect("reclaims a worktree whose branch was pushed WITHOUT -u", () =>
       const outcome = yield* reclaimCard(setup);
       assert.deepStrictEqual(outcome, { outcome: "removed", reason: null });
       assert.isFalse(yield* worktreeExists(setup.worktreePath));
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("abandons a durable reclaim when the caller no longer wants it, removing nothing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const setup = yield* setupProjectWithRemote;
+      // Clean and at the base tip: durable, so only `stillWanted` stops it.
+      const outcome = yield* reclaimBoardCardWorktree(
+        {
+          projectCwd: setup.cwd,
+          worktreePath: setup.worktreePath,
+          baseRefName: setup.initialBranch,
+          branch: "board/card-1",
+          mergedPullRequestNumbers: [],
+        },
+        Effect.succeed(false),
+      );
+      assert.isNull(outcome);
+      assert.isTrue(yield* worktreeExists(setup.worktreePath));
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

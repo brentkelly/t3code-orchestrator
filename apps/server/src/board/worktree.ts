@@ -428,9 +428,17 @@ export interface BoardCardWorktreeReclaimResult {
  * Reclaim a card's worktree (D6/D15, T3O-52): remove it only when it is clean
  * and its work is durable, otherwise leave it and report why so the card can
  * flag it. The caller records the outcome through `board.card.reclaim-worktree`.
+ *
+ * `stillWanted` is asked AFTER the probe and immediately before the removal.
+ * The probe fetches from the remote and can take minutes, and the caller's
+ * reason to remove — the card is finished, the checkout has no owner — was
+ * read before it started; a card restarted or provisioned in the meantime
+ * owns a checkout that is clean and durable and must still not go. Answering
+ * false abandons the reclaim: the result is null and nothing is removed.
  */
 export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(function* (
   input: BoardWorktreeDurabilityInput,
+  stillWanted?: Effect.Effect<boolean>,
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const facts = yield* probeBoardWorktreeDurability(input);
@@ -438,6 +446,7 @@ export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(fu
   if (!decision.safe) {
     return { outcome: "blocked", reason: decision.reason } satisfies BoardCardWorktreeReclaimResult;
   }
+  if (stillWanted !== undefined && !(yield* stillWanted)) return null;
   yield* git.removeWorktree({ cwd: input.projectCwd, path: input.worktreePath });
   return { outcome: "removed", reason: null } satisfies BoardCardWorktreeReclaimResult;
 });

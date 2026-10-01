@@ -477,6 +477,9 @@ export type Harness = {
   /** Replace the board settings the reactor reads from now on — what flipping
       a switch in the Settings pane does. */
   readonly setBoardSettings: (settings: BoardSettings) => void;
+  /** Flip what the durability probe finds from now on (T3O-52) — a kept
+      worktree whose work later reaches the remote. */
+  readonly setWorktreeUndurable: (undurable: boolean) => void;
   /** Every `git` argv the reactor ran, in order. A test asserting that a
       remote-only base was MATERIALISED (T3O-5, D7) has nowhere else to read it:
       `git branch develop origin/develop` leaves no trace on the card. */
@@ -587,6 +590,12 @@ export function withGovernor(
     /** What `git worktree list --porcelain` answers for the orphan sweep
         (T3O-52, D4). Empty by default: no registered worktrees. */
     readonly registeredWorktrees?: string;
+    /** Runs inside the durability probe, at its dirty check (T3O-52): the
+        window in which the board can change under a reclaim already decided
+        on. Gets the read model to change it. */
+    readonly duringDurabilityProbe?: (
+      model: Ref.Ref<OrchestrationReadModel>,
+    ) => Effect.Effect<void>;
     /** The cached todo state per thread id (t3o-18): the reactor reads
         `advancedAt` for the stall-reset / timeout-liveness signal and `hasList`
         for the recovery nudge. Absent threads answer "no list". */
@@ -869,6 +878,7 @@ export function withGovernor(
     // reaching Done gave its checkout back — and, just as importantly, that a
     // card whose tree is dirty did not.
     const removedWorktrees = yield* Ref.make<ReadonlyArray<string>>([]);
+    let worktreeUndurable = input.worktreeUndurable === true;
     // Movable branch tips for the rev-parse stub (t3o-24) — a plain map, so a
     // test can slide a base tip between pumps without an Effect.
     const baseTips = new Map<string, string>();
@@ -946,22 +956,24 @@ export function withGovernor(
         // the dirty check; the ancestry, remote-containment and unmerged-count
         // reads answer "durable" unless the fixture says otherwise.
         if (request.args?.[0] === "status" && request.args[1] === "--porcelain") {
-          return Effect.succeed({
-            stdout: input.worktreeDirty === true ? " M README.md\n" : "",
-            stderr: "",
-            exitCode: 0,
-          });
+          return (input.duringDurabilityProbe?.(model) ?? Effect.void).pipe(
+            Effect.as({
+              stdout: input.worktreeDirty === true ? " M README.md\n" : "",
+              stderr: "",
+              exitCode: 0,
+            }),
+          );
         }
         if (request.args?.[0] === "merge-base" && request.args[1] === "--is-ancestor") {
           return Effect.succeed({
             stdout: "",
             stderr: "",
-            exitCode: input.worktreeUndurable === true ? 1 : 0,
+            exitCode: worktreeUndurable ? 1 : 0,
           });
         }
         if (request.args?.[0] === "for-each-ref" && request.args[1] === "--contains") {
           return Effect.succeed({
-            stdout: input.worktreeUndurable === true ? "" : "refs/remotes/origin/main\n",
+            stdout: worktreeUndurable ? "" : "refs/remotes/origin/main\n",
             stderr: "",
             exitCode: 0,
           });
@@ -1166,6 +1178,7 @@ export function withGovernor(
           settledThreads: Ref.get(settled),
           setBaseTip: (ref, tip) => void baseTips.set(ref, tip),
           setBoardSettings: (settings) => void (boardSettings = settings),
+          setWorktreeUndurable: (undurable) => void (worktreeUndurable = undurable),
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),
           setUsageVerdict: (threadId, verdict) => void usageVerdicts.set(threadId, verdict),
         });
