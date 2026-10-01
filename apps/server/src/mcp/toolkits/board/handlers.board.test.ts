@@ -1786,9 +1786,9 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
       const brief = (yield* read(target)).brief ?? "";
       assert.strictEqual(
         brief,
-        "# Brief\n\nKeep me.\n\n## Later\n\nAlso keep.\n\n## Notes from Z5-34\n\nSecond take",
+        `# Brief\n\nKeep me.\n\n## Later\n\nAlso keep.\n\n## Notes from Z5-34\n\nSecond take\n\n<!-- end ${heading} -->`,
       );
-      assert.strictEqual(brief.split(heading).length - 1, 1);
+      assert.strictEqual(brief.split("\n").filter((line) => line === heading).length, 1);
       const rows = yield* activityOf(target);
       assert.deepStrictEqual(
         rows.map((row) => [row.payload.briefEdit, row.payload.briefSection]),
@@ -1796,6 +1796,27 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
           ["section-replaced", heading],
           ["section-replaced", heading],
         ],
+      );
+    }),
+  );
+
+  it.effect("a repeated section replace keeps text appended after the section", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("section-append", "Brief");
+      const heading = "## Notes from Z5-34";
+      const section = (body: string) =>
+        boardHandlers
+          .board_update_card({ cardId: target, briefSection: { heading, body } })
+          .pipe(withScope(linkedThread));
+      yield* section("First take");
+      yield* boardHandlers
+        .board_update_card({ cardId: target, briefAppend: "Someone else's note" })
+        .pipe(withScope(linkedThread));
+      yield* section("Second take");
+      assert.strictEqual(
+        (yield* read(target)).brief,
+        `Brief\n\n## Notes from Z5-34\n\nSecond take\n\n<!-- end ${heading} -->\n\nSomeone else's note`,
       );
     }),
   );
@@ -1937,7 +1958,7 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
         .pipe(withScope(linkedThread));
       assert.strictEqual(
         (yield* read(target)).brief,
-        "Original, edited by a human\n\n## Notes\n\nAgent notes",
+        "Original, edited by a human\n\n## Notes\n\nAgent notes\n\n<!-- end ## Notes -->",
       );
     }),
   );

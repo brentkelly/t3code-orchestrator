@@ -851,7 +851,7 @@ const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (in
       if (bodyBreak !== null) {
         return yield* invariant(
           command,
-          `briefSection.body contains the heading '${bodyBreak}', which would end the section '${command.briefSection.heading.trim()}' early, so repeating the edit would duplicate everything after it. Use deeper headings (more #s) inside the section body.`,
+          `briefSection.body contains the line '${bodyBreak}', which would end the section '${command.briefSection.heading.trim()}' early, so repeating the edit would duplicate everything after it. Use deeper headings (more #s) inside the section body, and leave out the section's end marker.`,
         );
       }
       // An unclosed fence hides every later heading, so the section would run
