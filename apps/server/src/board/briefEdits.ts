@@ -76,10 +76,17 @@ export function briefSectionEndMarker(heading: string): string {
   return `<!-- end ${heading.trim()} -->`;
 }
 
+/** The heading level an end-marker line closes (`<!-- end ## Notes -->` → 2),
+    or null when the line is not an end marker. */
+function briefEndMarkerLevel(line: string): number | null {
+  const match = /^<!-- end (.+) -->$/.exec(line.trim());
+  return match === null ? null : briefHeadingLevel(match[1]!);
+}
+
 /**
  * The first line in a section `body` that would end the section under
- * `heading` — a heading of the same or a higher level, or the section's end
- * marker — or null when there is none. Such a body cannot be replaced as one
+ * `heading` — a heading or end marker of the same or a higher level, or the
+ * section's own end marker — or null when there is none. Such a body cannot be replaced as one
  * section: the next replace stops at that line and leaves the rest behind as a
  * duplicate.
  */
@@ -89,7 +96,7 @@ export function briefSectionBodyBreak(heading: string, body: string): string | n
   const lines = body.split("\n");
   for (const index of scanBriefLines(lines).structural) {
     const line = lines[index]!;
-    const lineLevel = briefHeadingLevel(line);
+    const lineLevel = briefHeadingLevel(line) ?? briefEndMarkerLevel(line);
     if ((lineLevel !== null && lineLevel <= level) || line.trim() === marker) return line.trim();
   }
   return null;
@@ -110,7 +117,10 @@ export function appendToBrief(brief: string | null, text: string): string {
  * A section without one — written by hand, or before markers existed — runs
  * to the next heading of the same or a higher level (fewer `#`s), or the end
  * of the brief; a heading like that before the marker also ends the section,
- * so a hand-made heading inside it is kept rather than deleted. Headings inside fenced
+ * so a hand-made heading inside it is kept rather than deleted. Another
+ * section's end marker of the same or a higher level ends it too, so a deeper
+ * heading inside a marked section never runs past that section's marker into
+ * text appended after it. Headings inside fenced
  * code blocks are text, not structure, and are skipped. A heading that is not
  * there yet is appended as a new section, so repeating the same call replaces
  * the section instead of growing the brief. The first match wins; a brief that
@@ -139,7 +149,7 @@ export function replaceBriefSection(brief: string | null, heading: string, body:
       end = index + 1;
       break;
     }
-    const lineLevel = briefHeadingLevel(line);
+    const lineLevel = briefHeadingLevel(line) ?? briefEndMarkerLevel(line);
     if (lineLevel !== null && lineLevel <= level) {
       end = index;
       break;

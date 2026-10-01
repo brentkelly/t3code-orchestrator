@@ -58,6 +58,21 @@ describe("replaceBriefSection", () => {
     );
   });
 
+  it("ends a deeper section at an enclosing section's end marker, keeping text after it", () => {
+    const outer = replaceBriefSection("Brief", heading, "Intro\n\n### Risks\n\nOld risk");
+    const appended = appendToBrief(outer, "Later note");
+    expect(replaceBriefSection(appended, "### Risks", "New risk")).toBe(
+      `Brief\n\n## Notes from Z5-34\n\nIntro\n\n### Risks\n\nNew risk\n\n<!-- end ### Risks -->\n\n${end}\n\nLater note`,
+    );
+  });
+
+  it("runs an outer section past a deeper section's end marker", () => {
+    const brief = `Brief\n\n${heading}\n\nIntro\n\n### Risks\n\nRisk\n\n<!-- end ### Risks -->\n\n${end}`;
+    expect(replaceBriefSection(brief, heading, "Replaced")).toBe(
+      `Brief\n\n${heading}\n\nReplaced\n\n${end}`,
+    );
+  });
+
   it("ends a section at a same-level heading that comes before its marker", () => {
     const brief = `## Notes from Z5-34\n\nOld\n\n## Hand-made\n\nKeep\n\n${end}`;
     expect(replaceBriefSection(brief, heading, "New")).toBe(
@@ -113,10 +128,11 @@ describe("briefSectionBodyBreak", () => {
     expect(briefSectionBodyBreak(heading, "# Top")).toBe("# Top");
   });
 
-  it("finds the section's own end marker in the body", () => {
+  it("finds an end marker in the body that would end the section", () => {
     const end = briefSectionEndMarker(heading);
     expect(briefSectionBodyBreak(heading, `Intro\n${end}\nMore`)).toBe(end);
-    expect(briefSectionBodyBreak(heading, "<!-- end ## Other -->")).toBeNull();
+    expect(briefSectionBodyBreak(heading, "<!-- end ## Other -->")).toBe("<!-- end ## Other -->");
+    expect(briefSectionBodyBreak(heading, "<!-- end ### Deeper -->")).toBeNull();
   });
 
   it("allows deeper headings and headings inside fences", () => {

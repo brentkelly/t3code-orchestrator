@@ -3765,8 +3765,10 @@ export const BoardCardUpdateCommand = Schema.Struct({
       overwritten. Mutually exclusive with `brief` and `briefSection`. */
   briefAppend: Schema.optional(TrimmedNonEmptyString),
   /** Replace one named section of the brief (T3O-53): `heading` is the whole
-      markdown heading line (`## Notes from Z5-34`), and the section runs to the
-      next heading of the same or a higher level. Appended as a new section
+      markdown heading line (`## Notes from Z5-34`). The written section ends
+      with an `<!-- end <heading> -->` marker line and is replaced up to it; a
+      section without one runs to the next heading (or end marker) of the same
+      or a higher level. Appended as a new section
       when the heading is not there yet, so repeating the call replaces rather
       than duplicates. Mutually exclusive with `brief` and `briefAppend`. */
   briefSection: Schema.optional(BoardBriefSectionEdit),

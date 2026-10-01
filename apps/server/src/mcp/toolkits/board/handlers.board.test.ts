@@ -1821,6 +1821,33 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
     }),
   );
 
+  it.effect("a deeper section replace keeps text appended after its enclosing section", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const target = yield* createCard("nested-section-append", "Brief");
+      const heading = "## Notes from Z5-34";
+      yield* boardHandlers
+        .board_update_card({
+          cardId: target,
+          briefSection: { heading, body: "Intro\n\n### Risks\n\nOld risk" },
+        })
+        .pipe(withScope(linkedThread));
+      yield* boardHandlers
+        .board_update_card({ cardId: target, briefAppend: "Someone else's note" })
+        .pipe(withScope(linkedThread));
+      yield* boardHandlers
+        .board_update_card({
+          cardId: target,
+          briefSection: { heading: "### Risks", body: "New risk" },
+        })
+        .pipe(withScope(linkedThread));
+      const brief = (yield* read(target)).brief ?? "";
+      assert.include(brief, `<!-- end ${heading} -->\n\nSomeone else's note`);
+      assert.include(brief, "### Risks\n\nNew risk\n\n<!-- end ### Risks -->");
+      assert.notInclude(brief, "Old risk");
+    }),
+  );
+
   it.effect("a heading that is not a markdown heading is rejected", () =>
     Effect.gen(function* () {
       yield* seed();
