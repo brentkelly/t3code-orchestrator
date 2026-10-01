@@ -3087,6 +3087,107 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  // T3o (T3O-8): a team review request needs `read:org`, and GitHub refuses the whole query
+  // without it — which `gh` reports as a pull request that does not exist.
+  it.effect("reads the detail without reviewers when the token cannot read team requests", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubCli.GitHubPullRequestNotFoundError({
+            command: "gh",
+            cwd: "/w",
+            cause: new Error(
+              "GraphQL: Your token has not been granted the required scopes to execute this query. The 'login' field requires one of the following scopes: ['read:org']",
+            ),
+          }),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 7,
+              title: "Conflicted",
+              url: "https://github.com/acme/web/pull/7",
+              headRefName: "feature",
+              baseRefName: "main",
+              createdAt: "2026-07-01T00:00:00Z",
+              updatedAt: "2026-07-02T00:00:00Z",
+              mergeable: "CONFLICTING",
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const detail = yield* cli.getPullRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      expect(detail.mergeability).toBe("conflicting");
+      expect(detail.reviewRequestLogins).toEqual([]);
+      expect(callAt(0).args.at(-1)).toContain("reviewRequests");
+      expect(callAt(1).args.at(-1)).not.toContain("reviewRequests");
+      expect(callAt(1).args.at(-1)).toContain("mergeable");
+    }),
+  );
+
+  it.effect("still fails a detail read that fails without reviewers too", () =>
+    Effect.gen(function* () {
+      const missing = new GitHubCli.GitHubPullRequestNotFoundError({
+        command: "gh",
+        cwd: "/w",
+        cause: new Error("GraphQL: Could not resolve to a PullRequest with the number of 7."),
+      });
+      mockedExecute.mockReturnValueOnce(Effect.fail(missing));
+      mockedExecute.mockReturnValueOnce(Effect.fail(missing));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.getPullRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubPullRequestNotFoundError");
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+    }),
+  );
+
+  it.effect("does not retry a detail read refused for want of credentials", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubCli.GitHubCliAuthenticationError({
+            command: "gh",
+            cwd: "/w",
+            cause: new Error("gh auth login"),
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.getPullRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubCliAuthenticationError");
+      assert.strictEqual(mockedExecute.mock.calls.length, 1);
+    }),
+  );
+
   it.effect("fails a files page too large to read rather than calling the diff whole", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));

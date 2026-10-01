@@ -1442,18 +1442,34 @@ export const make = Effect.gen(function* () {
         return { oldContents, newContents };
       });
 
+  // T3o (T3O-8): the detail read for a token that may not read team review requests.
+  const PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS = PULL_REQUEST_DETAIL_JSON_FIELDS.split(
+    ",",
+  )
+    .filter((field) => field !== "reviewRequests")
+    .join(",");
+
   const getPullRequestDetail: GitHubPullRequestCli["Service"]["getPullRequestDetail"] = (input) =>
+    readPullRequestDetail(input, PULL_REQUEST_DETAIL_JSON_FIELDS).pipe(
+      // T3o (T3O-8): reading a team review request needs `read:org`, and GitHub refuses the
+      // whole query without it — which `gh` reports as "not found". Read once more without
+      // reviewers rather than lose mergeability and checks over a field nothing blocks on.
+      Effect.catchTags({
+        GitHubPullRequestNotFoundError: () =>
+          readPullRequestDetail(input, PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS),
+        GitHubCliCommandError: () =>
+          readPullRequestDetail(input, PULL_REQUEST_DETAIL_WITHOUT_REVIEWERS_JSON_FIELDS),
+      }),
+    );
+
+  const readPullRequestDetail = (
+    input: Parameters<GitHubPullRequestCli["Service"]["getPullRequestDetail"]>[0],
+    fields: string,
+  ) =>
     github
       .execute({
         cwd: input.cwd,
-        args: [
-          "pr",
-          "view",
-          String(input.number),
-          ...repositoryArgs(input),
-          "--json",
-          PULL_REQUEST_DETAIL_JSON_FIELDS,
-        ],
+        args: ["pr", "view", String(input.number), ...repositoryArgs(input), "--json", fields],
       })
       .pipe(
         Effect.flatMap((result) => {

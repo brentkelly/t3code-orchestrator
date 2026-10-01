@@ -160,11 +160,20 @@ export function boardMergeStateOf(detail: PullRequestDetail): BoardMergeState {
  * derived from the same facts it branches on cannot disagree with the verdict
  * shown beside it.
  *
- * `null` is a probe that itself failed, which says only that the merge was
- * refused.
+ * `null` is a probe that itself failed. The forge may well have a reason the
+ * board could not read, so the card says the READ failed and passes on its
+ * words, which usually name the fix (a missing token scope, a rate limit),
+ * rather than claiming the forge gave no reason (T3O-8).
  */
-export function boardMergeRefusalReason(state: BoardMergeState | null): string {
-  if (state === null) return "The forge refused the merge and did not say why.";
+export function boardMergeRefusalReason(
+  state: BoardMergeState | null,
+  probeFailure?: string,
+): string {
+  if (state === null) {
+    return probeFailure === undefined
+      ? "The forge refused the merge, and asking it why failed."
+      : `The forge refused the merge, and asking it why failed: ${probeFailure}`;
+  }
   if (state.checks.failed > 0) return "Its checks are failing.";
   if (state.checks.pending > 0) return "Its checks have not finished.";
   if (state.mergeable === "unknown") {
