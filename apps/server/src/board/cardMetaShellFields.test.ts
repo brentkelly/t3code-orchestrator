@@ -42,6 +42,7 @@ import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../config.ts";
+import { boardSnapshotQueryMethodsOf } from "./projection.ts";
 
 /** One database per scenario: commands are deduped by `commandId` and every
     scenario shares a seed, so a shared database would let one scenario's writes
@@ -699,6 +700,109 @@ it.layer(makeTestLayer("t3o-card-auto-merge-"))(
         assert.isFalse(cleared !== undefined && "autoMergeHeldSince" in cleared);
         assert.isFalse(cleared !== undefined && "autoMergeGaveUp" in cleared);
         assert.isFalse(cleared !== undefined && "autoMergeArmed" in cleared);
+      }),
+    );
+  },
+);
+
+it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
+  "worktree pair, column to shell (T3O-52)",
+  (it) => {
+    it.effect("carries the worktree pair on the SNAPSHOT and the archive, agreeing with the delta", () =>
+      Effect.gen(function* () {
+        const engine = yield* seedCard();
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const quiet = yield* shellCard;
+        assert.isFalse(quiet !== undefined && "worktreeReady" in quiet);
+        assert.isFalse(quiet !== undefined && "worktreeKeptReason" in quiet);
+
+        yield* engine.dispatch({
+          type: "board.card.provision-worktree",
+          commandId: CommandId.make("cmd-provision"),
+          cardId,
+          branch: "board/card-meta",
+          baseRefName: "main",
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "board.card.record-worktree",
+          commandId: CommandId.make("cmd-record"),
+          cardId,
+          path: "/tmp/worktrees/card-meta",
+          createdAt,
+        });
+        const ready = yield* shellCard;
+        assert.strictEqual(ready?.worktreeReady, true);
+        assert.isFalse(ready !== undefined && "worktreeKeptReason" in ready);
+
+        yield* engine.dispatch({
+          type: "board.card.reclaim-worktree",
+          commandId: CommandId.make("cmd-kept"),
+          cardId,
+          outcome: "blocked",
+          reason: "1 uncommitted change (README.md)",
+          createdAt,
+        });
+        const kept = yield* shellCard;
+        assert.strictEqual(kept?.worktreeReady, true);
+        assert.strictEqual(kept?.worktreeKeptReason, "1 uncommitted change (README.md)");
+
+        // The pair: SQL snapshot against the JS delta over the same aggregate.
+        const model = yield* snapshotQuery.getCommandReadModel();
+        const aggregate = model.board?.cards.find((entry) => entry.id === cardId);
+        assert.isDefined(aggregate);
+        const delta = boardCardShellFromCard(aggregate!);
+        assert.strictEqual(delta.worktreeReady, kept?.worktreeReady);
+        assert.strictEqual(delta.worktreeKeptReason, kept?.worktreeKeptReason);
+
+        yield* engine.dispatch({
+          type: "board.card.reclaim-worktree",
+          commandId: CommandId.make("cmd-kept-again"),
+          cardId,
+          outcome: "blocked",
+          reason: "1 uncommitted change (README.md)",
+          createdAt,
+        });
+
+        // An archived card keeps the flag — archive is where it matters most.
+        yield* engine.dispatch({
+          type: "board.card.archive",
+          commandId: CommandId.make("cmd-archive"),
+          cardId,
+          createdAt,
+        });
+        const archived = cardsOf(yield* snapshotQuery.getArchivedShellSnapshot()).find(
+          (entry) => entry.cardId === cardId,
+        );
+        assert.strictEqual(archived?.worktreeReady, true);
+        assert.strictEqual(archived?.worktreeKeptReason, "1 uncommitted change (README.md)");
+
+        // Removed: both keys go, the reverse state.
+        yield* engine.dispatch({
+          type: "board.card.reclaim-worktree",
+          commandId: CommandId.make("cmd-removed"),
+          cardId,
+          outcome: "removed",
+          forced: true,
+          createdAt,
+        });
+        const gone = cardsOf(yield* snapshotQuery.getArchivedShellSnapshot()).find(
+          (entry) => entry.cardId === cardId,
+        );
+        assert.isFalse(gone !== undefined && "worktreeReady" in gone);
+        assert.isFalse(gone !== undefined && "worktreeKeptReason" in gone);
+
+        // The rail: one `kept` row (a repeated refusal adds none — the decider
+        // marks only a changed reason), and one forced `removed` row.
+        const board = boardSnapshotQueryMethodsOf(snapshotQuery);
+        assert.isNotNull(board);
+        const activity = yield* board!.boardCardActivity(cardId);
+        const keptRows = activity.filter((entry) => entry.kind === "card-worktree-kept");
+        assert.strictEqual(keptRows.length, 1);
+        assert.strictEqual(keptRows[0]?.payload.detail, "1 uncommitted change (README.md)");
+        const removed = activity.filter((entry) => entry.kind === "card-worktree-removed");
+        assert.strictEqual(removed.length, 1);
+        assert.strictEqual(removed[0]?.payload.forced, true);
       }),
     );
   },

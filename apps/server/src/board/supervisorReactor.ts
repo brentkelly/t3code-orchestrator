@@ -285,7 +285,8 @@ export interface SupervisorReactorShape {
   readonly sweepWorktrees: (options?: {
     readonly refreshOpenPullRequests?: boolean;
   }) => Effect.Effect<void>;
-  /** Resolves when no worktree-cleanup pass is running or queued (test hook). */
+  /** Resolves when the reactor's queue is idle and no worktree-cleanup pass
+      is running or queued (test hook). */
   readonly drainWorktreeSweep: Effect.Effect<void>;
   /** A human's "Remove worktree" on a finished card (T3O-52, D5). */
   readonly forceRemoveWorktree: (cardId: BoardCardId) => Effect.Effect<BoardForceRemoveWorktreeResult>;
@@ -7681,7 +7682,9 @@ const make = Effect.gen(function* () {
     releaseThreads: releaseFinishedThreads,
     drain: worker.drain,
     sweepWorktrees: requestWorktreeSweep,
-    drainWorktreeSweep: worktreeSweepWorker.drain,
+    // The main worker first: boot reconcile and event handlers are what
+    // request passes, so a pass may not be queued until they have run.
+    drainWorktreeSweep: Effect.andThen(worker.drain, worktreeSweepWorker.drain),
     forceRemoveWorktree: (cardId) =>
       forceRemoveCardWorktree(cardId).pipe(
         Effect.catchCause((cause) =>

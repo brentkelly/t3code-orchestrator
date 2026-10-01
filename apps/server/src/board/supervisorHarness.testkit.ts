@@ -883,6 +883,8 @@ export function withGovernor(
       // so the cleanup at Done silently did nothing in every test that reached
       // it — which is why nothing in these suites asserted that it fires.
       resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+      // The orphan sweep's base for a worktree no card names (T3O-52, D4).
+      resolveDefaultBranchName: () => Effect.succeed("main"),
       statusDetails: () =>
         Effect.succeed({
           hasWorkingTreeChanges: input.worktreeDirty === true,
