@@ -66,6 +66,7 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import * as ServerConfig from "../../../config.ts";
 import { boardCardAttachmentManifest } from "../../../board/attachments.ts";
 import { boardAgentActor, stampBoardActivityActor } from "../../../board/activityActors.ts";
+import { boardBriefVersion } from "../../../board/briefEdits.ts";
 import { BoardToolError, BoardToolkit } from "./tools.ts";
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
@@ -516,6 +517,57 @@ const resolveProjectId = (
   });
 
 /**
+ * A card named by key or id (T3O-53). An id match wins; otherwise the key is
+ * matched case-insensitively, because agents copy keys out of prose. Keys are
+ * unique per project prefix, so two projects sharing a prefix could collide —
+ * that is reported with both ids rather than guessed between.
+ */
+const findCardByKeyOrId = (
+  board: BoardState,
+  value: string,
+): Effect.Effect<BoardCard, BoardToolError> => {
+  const byId = board.cards.find((card) => card.id === value);
+  if (byId !== undefined) return Effect.succeed(byId);
+  const lowered = value.toLowerCase();
+  const byKey = board.cards.filter((card) => card.key.toLowerCase() === lowered);
+  if (byKey.length === 1) return Effect.succeed(byKey[0]!);
+  return Effect.fail(
+    new BoardToolError(
+      byKey.length === 0
+        ? {
+            code: "card-not-found",
+            message: `No card with key or id '${value}'. Call board_list_cards (with includeArchived to see the archive) for the cards that exist.`,
+          }
+        : {
+            code: "invalid-input",
+            message: `'${value}' matches more than one card by key; pass an id instead: ${byKey.map((card) => `${card.id} (project ${card.projectId})`).join(", ")}.`,
+          },
+    ),
+  );
+};
+
+/** A card's dependencies with keys, titles and whether each is met. `met`
+    uses the ONE shared gating rule (`unmetBoardCardDependencies`, t3o-13 D1):
+    done-role satisfies, and an ARCHIVED dependency stops gating entirely —
+    otherwise this would tell an agent to wait on a dependency the board's own
+    `blocked` flag says is not gating. */
+const describeDependencies = (board: BoardState, card: BoardCard) => {
+  const unmet = new Set(
+    unmetBoardCardDependencies({ board, dependsOn: card.dependsOn, cards: board.cards }),
+  );
+  return card.dependsOn.map((dependencyId) => {
+    const dependency = board.cards.find((candidate) => candidate.id === dependencyId);
+    return {
+      cardId: dependencyId,
+      key: dependency?.key ?? dependencyId,
+      title: dependency?.title ?? dependencyId,
+      stage: dependency?.stage ?? BOARD_SEED_STAGE_IDS.backlog,
+      met: !unmet.has(dependencyId),
+    };
+  });
+};
+
+/**
  * Dispatch a board command from the MCP toolkit, stamping the AGENT actor first
  * (t3o-18, D11). This is one of the three dispatch boundaries that know who
  * called; the projector reads the stamp back off the event's `commandId` when it
@@ -555,26 +607,11 @@ export const boardHandlers = {
       const threads = yield* deps.board
         .boardCardThreads(card.id)
         .pipe(Effect.mapError(internalError));
-      // `met` uses the ONE shared gating rule (`unmetBoardCardDependencies`,
-      // t3o-13 D1): done-role satisfies, and an ARCHIVED dependency stops
-      // gating entirely — otherwise this response would tell an agent to wait
-      // on a dependency the board's own `blocked` flag says is not gating.
-      const unmet = new Set(
-        unmetBoardCardDependencies({ board, dependsOn: card.dependsOn, cards: board.cards }),
-      );
-      const dependencies = card.dependsOn.map((dependencyId) => {
-        const dependency = board.cards.find((candidate) => candidate.id === dependencyId);
-        return {
-          cardId: dependencyId,
-          key: dependency?.key ?? dependencyId,
-          title: dependency?.title ?? dependencyId,
-          stage: dependency?.stage ?? BOARD_SEED_STAGE_IDS.backlog,
-          met: !unmet.has(dependencyId),
-        };
-      });
+      const dependencies = describeDependencies(board, card);
       return {
         card,
         brief: detail?.brief ?? null,
+        briefVersion: boardBriefVersion(detail?.brief ?? null),
         // Pull, not push (K3): every linked thread lists the brief's files
         // with a path it can read; added-later files show on the next call.
         attachments: boardCardAttachmentManifest({
@@ -737,6 +774,42 @@ export const boardHandlers = {
       };
     }),
 
+  board_get_card: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      const board = yield* readBoardState(deps);
+      const card = yield* findCardByKeyOrId(board, input.card);
+      const detail = yield* deps.board
+        .boardCardDetail(card.id)
+        .pipe(Effect.mapError(internalError));
+      const brief = detail?.brief ?? null;
+      const catalogue = boardLabelCatalogue(board);
+      const parent =
+        card.parentCardId === null
+          ? undefined
+          : board.cards.find((candidate) => candidate.id === card.parentCardId);
+      return {
+        cardId: card.id,
+        key: card.key,
+        projectId: card.projectId,
+        title: card.title,
+        stage: card.stage,
+        labels: card.labels.flatMap((labelId) => {
+          const label = catalogue.find((candidate) => candidate.labelId === labelId);
+          return label === undefined ? [] : [label.name];
+        }),
+        blocked: card.blocked,
+        archived: card.archivedAt !== null,
+        parent:
+          parent === undefined ? null : { cardId: parent.id, key: parent.key, title: parent.title },
+        baseBranch: card.baseBranch,
+        brief,
+        briefVersion: boardBriefVersion(brief),
+        dependencies: describeDependencies(board, card),
+        plans: detail?.plans ?? [],
+      };
+    }),
+
   board_list_projects: () =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
@@ -772,6 +845,11 @@ export const boardHandlers = {
           stage: card.stage,
           blocked: card.blocked,
           archived: card.archivedAt !== null,
+          dependsOn: card.dependsOn.map((dependencyId) => ({
+            cardId: dependencyId,
+            key:
+              board.cards.find((candidate) => candidate.id === dependencyId)?.key ?? dependencyId,
+          })),
         }));
       return { cards };
     }),
@@ -881,14 +959,34 @@ export const boardHandlers = {
       const board = yield* readBoardState(deps);
       const labels =
         input.labels === undefined ? undefined : yield* resolveLabelIds(board, input.labels);
+      // Single-dependency edits take keys as readily as ids (T3O-53). An added
+      // card must exist; a removed one that cannot be resolved is passed
+      // through as-is, where the decider treats it as the no-op it is.
+      const addDependsOn =
+        input.addDependsOn === undefined
+          ? undefined
+          : yield* Effect.forEach(input.addDependsOn, (value) =>
+              findCardByKeyOrId(board, value).pipe(Effect.map((card) => card.id)),
+            );
+      const removeDependsOn = input.removeDependsOn?.map(
+        (value) =>
+          board.cards.find(
+            (card) => card.id === value || card.key.toLowerCase() === value.toLowerCase(),
+          )?.id ?? BoardCardId.make(value),
+      );
       const command: BoardCardUpdateCommand = {
         type: "board.card.update",
         commandId: yield* mintCommandId,
         cardId: input.cardId,
         title: input.title,
         brief: input.brief,
+        briefAppend: input.briefAppend,
+        briefSection: input.briefSection,
+        expectedBriefVersion: input.expectedBriefVersion,
         labels,
         dependsOn: input.dependsOn,
+        addDependsOn,
+        removeDependsOn,
         externalRef: input.externalRef,
         createdAt: yield* nowIso,
       };

@@ -78,6 +78,8 @@ import {
   sortBoardCardThreadLinks,
   unmetBoardCardDependencies,
   type BoardCard,
+  type BoardCardEditSummary,
+  type BoardCardUpdateCommand,
   type BoardCardReviewSummary,
   type BoardCardReviewOverrides,
   type BoardPlanId,
@@ -101,6 +103,12 @@ import type * as PlatformError from "effect/PlatformError";
 
 import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import { requireProject } from "../orchestration/commandInvariants.ts";
+import {
+  appendToBrief,
+  boardBriefVersion,
+  briefHeadingLevel,
+  replaceBriefSection,
+} from "./briefEdits.ts";
 
 export type BoardCommand = Extract<OrchestrationCommand, { type: `board.${string}` }>;
 
@@ -736,12 +744,180 @@ function reviewSummaryAfter(input: {
   );
 }
 
+/**
+ * State the engine loads for the one command that needs it before deciding
+ * (T3O-53). The brief body never rides the read model (D8), so an incremental
+ * brief edit is handed the body as it stands inside the engine's serial
+ * command loop — the only place a read-change-write cannot interleave with
+ * another write. Absent for every other command.
+ */
+export interface BoardDecisionContext {
+  /** The card's stored brief, or null when it has none. */
+  readonly brief: string | null;
+}
+
+/** Whether a command needs `BoardDecisionContext` loaded before it is decided
+    (T3O-53): an update that edits the brief incrementally or guards it with a
+    version. */
+export function boardCommandNeedsBrief(
+  command: OrchestrationCommand,
+): command is BoardCardUpdateCommand {
+  return (
+    command.type === "board.card.update" &&
+    (command.briefAppend !== undefined ||
+      command.briefSection !== undefined ||
+      command.expectedBriefVersion !== undefined)
+  );
+}
+
+/**
+ * The brief and dependency set a `board.card.update` leaves behind, and the
+ * incremental edits it made for the Activity rail (T3O-53).
+ *
+ * `brief` and `dependsOn` are undefined when the command does not touch them —
+ * the absent-means-unchanged contract the event payload carries on. Whole-value
+ * edits (`brief`, `dependsOn`) pass through exactly as before and record no
+ * edit summary; the incremental forms are resolved here against the card and
+ * the loaded brief, so nothing written between an agent's read and this
+ * decision is lost.
+ */
+const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (input: {
+  readonly board: BoardState;
+  readonly card: BoardCard;
+  readonly command: BoardCardUpdateCommand;
+  readonly context: BoardDecisionContext | undefined;
+}) {
+  const { board, card, command } = input;
+
+  const briefForms = [command.brief, command.briefAppend, command.briefSection].filter(
+    (value) => value !== undefined,
+  ).length;
+  if (briefForms > 1) {
+    return yield* invariant(
+      command,
+      "Pass only one of brief (replace), briefAppend and briefSection in one update.",
+    );
+  }
+  if (command.expectedBriefVersion !== undefined && briefForms === 0) {
+    return yield* invariant(
+      command,
+      "expectedBriefVersion guards a brief change; pass it with brief, briefAppend or briefSection.",
+    );
+  }
+  const incrementalDeps =
+    command.addDependsOn !== undefined || command.removeDependsOn !== undefined;
+  if (command.dependsOn !== undefined && incrementalDeps) {
+    return yield* invariant(
+      command,
+      "dependsOn replaces the whole dependency set; pass it or addDependsOn/removeDependsOn, not both.",
+    );
+  }
+
+  let brief: string | null | undefined = command.brief;
+  let briefEdit: "appended" | "section-replaced" | undefined;
+  if (boardCommandNeedsBrief(command)) {
+    if (input.context === undefined) {
+      return yield* invariant(
+        command,
+        `The brief of card '${card.key}' was not loaded for this edit; retry the update.`,
+      );
+    }
+    const current = input.context.brief;
+    if (
+      command.expectedBriefVersion !== undefined &&
+      command.expectedBriefVersion !== boardBriefVersion(current)
+    ) {
+      return yield* invariant(
+        command,
+        `The brief of card '${card.key}' has changed since you read it (you expected version ${command.expectedBriefVersion}, it is now ${boardBriefVersion(current)}). Read the card again and reapply your change to the current brief.`,
+      );
+    }
+    if (command.briefAppend !== undefined) {
+      brief = appendToBrief(current, command.briefAppend);
+      briefEdit = "appended";
+    } else if (command.briefSection !== undefined) {
+      if (briefHeadingLevel(command.briefSection.heading) === null) {
+        return yield* invariant(
+          command,
+          `briefSection.heading must be a markdown heading line such as '## Notes from ${card.key}'; got '${command.briefSection.heading}'.`,
+        );
+      }
+      brief = replaceBriefSection(current, command.briefSection.heading, command.briefSection.body);
+      briefEdit = "section-replaced";
+    }
+  }
+
+  // Duplicate edges add nothing to the graph; store each dependency once.
+  let dependsOn: ReadonlyArray<BoardCardId> | undefined;
+  let checkExistence: ReadonlyArray<BoardCardId> = [];
+  if (command.dependsOn !== undefined) {
+    dependsOn = [...new Set(command.dependsOn)];
+    checkExistence = dependsOn;
+  } else if (incrementalDeps) {
+    const adding = command.addDependsOn ?? [];
+    const removing = new Set(command.removeDependsOn ?? []);
+    const both = adding.find((id) => removing.has(id));
+    if (both !== undefined) {
+      return yield* invariant(
+        command,
+        `Dependency '${both}' is both added and removed in one update; pass it to only one of them.`,
+      );
+    }
+    // Only the ADDED ids must exist: an old edge to a since-deleted card is
+    // the card's business, and must not block an unrelated add or remove.
+    checkExistence = adding.filter((id) => !card.dependsOn.includes(id));
+    dependsOn = [...new Set([...card.dependsOn, ...adding])].filter((id) => !removing.has(id));
+  }
+  if (dependsOn !== undefined) {
+    for (const dependencyId of checkExistence) {
+      if (!board.cards.some((candidate) => candidate.id === dependencyId)) {
+        return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
+      }
+    }
+    const cycle = findDependencyCycle({ board, cardId: command.cardId, proposed: dependsOn });
+    if (cycle !== null) {
+      return yield* invariant(
+        command,
+        `Dependency edge '${cycle.edgeFrom} -> ${cycle.edgeTo}' would create a cycle: ${cycle.path.join(" -> ")}.`,
+      );
+    }
+  }
+
+  const keyOf = (id: BoardCardId) =>
+    board.cards.find((candidate) => candidate.id === id)?.key ?? id;
+  const added =
+    incrementalDeps && dependsOn !== undefined
+      ? dependsOn.filter((id) => !card.dependsOn.includes(id)).map(keyOf)
+      : [];
+  const removed =
+    incrementalDeps && dependsOn !== undefined
+      ? card.dependsOn.filter((id) => !dependsOn.includes(id)).map(keyOf)
+      : [];
+  const edit: BoardCardEditSummary = {
+    ...(briefEdit === undefined ? {} : { briefEdit }),
+    ...(briefEdit === "section-replaced" && command.briefSection !== undefined
+      ? { briefSection: command.briefSection.heading.trim() }
+      : {}),
+    ...(added.length === 0 ? {} : { dependenciesAdded: added }),
+    ...(removed.length === 0 ? {} : { dependenciesRemoved: removed }),
+  };
+
+  return {
+    brief,
+    dependsOn,
+    edit: Object.keys(edit).length === 0 ? undefined : edit,
+  };
+});
+
 export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
   command,
   readModel,
+  context,
 }: {
   readonly command: BoardCommand;
   readonly readModel: OrchestrationReadModel;
+  /** Loaded by the engine when `boardCommandNeedsBrief` holds (T3O-53). */
+  readonly context?: BoardDecisionContext;
 }): Effect.fn.Return<
   // Archive and unarchive decide several events at once — the card's own,
   // plus a `blocked` re-flag per affected dependent (t3o-13, D5). The engine
@@ -1301,7 +1477,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.baseBranch === undefined &&
         command.scheduledStartAt === undefined &&
         command.autoStart === undefined &&
-        command.autoMerge === undefined
+        command.autoMerge === undefined &&
+        command.briefAppend === undefined &&
+        command.briefSection === undefined &&
+        command.addDependsOn === undefined &&
+        command.removeDependsOn === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
@@ -1316,27 +1496,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
               existing: card.labels,
             });
 
-      // Duplicate edges add nothing to the graph; store each dependency once.
-      const proposedDependsOn =
-        command.dependsOn === undefined ? undefined : [...new Set(command.dependsOn)];
-      if (proposedDependsOn !== undefined) {
-        for (const dependencyId of proposedDependsOn) {
-          if (!board.cards.some((candidate) => candidate.id === dependencyId)) {
-            return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
-          }
-        }
-        const cycle = findDependencyCycle({
-          board,
-          cardId: command.cardId,
-          proposed: proposedDependsOn,
-        });
-        if (cycle !== null) {
-          return yield* invariant(
-            command,
-            `Dependency edge '${cycle.edgeFrom} -> ${cycle.edgeTo}' would create a cycle: ${cycle.path.join(" -> ")}.`,
-          );
-        }
-      }
+      // Brief and dependency edits, whole-value or incremental (T3O-53).
+      const edits = yield* resolveCardUpdateEdits({ board, card, command, context });
+      const proposedDependsOn = edits.dependsOn;
 
       // The review-loop overrides are validated and normalised before the card
       // is built (t3o-22, D3/D5), so an invalid budget rejects the whole
@@ -1441,9 +1603,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         dependsOn,
         externalRef: command.externalRef === undefined ? card.externalRef : command.externalRef,
         briefRef:
-          command.brief === undefined
+          edits.brief === undefined
             ? card.briefRef
-            : command.brief === null
+            : edits.brief === null
               ? null
               : BOARD_CARD_BRIEF_BODY_KIND,
         blocked:
@@ -1479,7 +1641,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         type: "board.card-updated",
         payload: {
           cardId: command.cardId,
-          ...(command.brief === undefined ? {} : { brief: command.brief }),
+          ...(edits.brief === undefined ? {} : { brief: edits.brief }),
           card: nextCard,
           // Says the edit TOUCHED the schedule, not what it is — the card
           // already carries the value (T3O-19, D3). The supervisor acts only on
@@ -1514,6 +1676,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                 });
                 return summary === null ? {} : { reviewSummary: summary };
               })()),
+          ...(edits.edit === undefined ? {} : { edit: edits.edit }),
         },
       };
     }

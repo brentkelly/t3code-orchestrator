@@ -49,6 +49,8 @@ import {
 import { decideOrchestrationCommand } from "../decider.ts";
 // T3o: board command aggregate refs live in the board module.
 import { boardCommandAggregateRef, isBoardCommand } from "../../board/decider.ts";
+// T3o: durable state a board command is decided against (T3O-53).
+import { loadBoardDecisionContext } from "../../board/decisionContext.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -262,9 +264,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        // T3o: a board brief edit is decided against the stored brief (T3O-53).
+        const boardContext = yield* loadBoardDecisionContext(
+          envelope.command,
+          projectionSnapshotQuery,
+        );
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
+          ...(boardContext === undefined ? {} : { boardContext }), // T3o: T3O-53
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),

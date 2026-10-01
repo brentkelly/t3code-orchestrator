@@ -2932,6 +2932,18 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
             })
             .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.body:query")));
         }
+        // An incremental edit (T3O-53) is railed, so a card whose brief or
+        // dependencies changed under it says who did it and how. Whole-value
+        // edits carry no summary and stay off the rail.
+        if (event.payload.edit !== undefined) {
+          yield* recordActivity({
+            event,
+            cardId: event.payload.cardId,
+            kind: "card-edited",
+            payload: event.payload.edit,
+            threadId: null,
+          });
+        }
         return;
       }
 
