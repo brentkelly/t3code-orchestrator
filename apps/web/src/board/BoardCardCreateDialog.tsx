@@ -22,6 +22,7 @@ import {
   BoardLabelId,
   assignBoardKeyPrefix,
   boardStagesInOrder,
+  isBoardDependencyInScope,
   isBoardStageAtOrAfterSubBoardFloor,
   resolveBoardStageExecution,
   type BoardStageDefinition,
@@ -175,11 +176,10 @@ export function BoardCardCreateDialog({
   // and the decider has never enforced a same-project rule, so a card that
   // changes project inherits cross-project edges — a state the picker should be
   // able to create too. Foreign options carry their project's dot. A child's
-  // picker is narrower still (t3o-25): siblings only — the decider refuses
-  // anything else — while a top-level card's options badge any child with its
-  // parent's key.
+  // picker is scoped to its level (t3o-25, T3O-10): a child sees only its
+  // siblings, a top-level card only other top-level cards — the decider
+  // refuses anything else.
   const dependencyOptions = useMemo(() => {
-    const keyById = new Map(allCards.map((card) => [String(card.cardId), card.key]));
     const projectTitleById = new Map(
       projects.map((project) => [String(project.id), project.title]),
     );
@@ -191,7 +191,10 @@ export function BoardCardCreateDialog({
       .filter(
         (card) =>
           !dependsOn.includes(card.cardId as BoardCardId) &&
-          (subBoardParentId === null || card.parentCardId === subBoardParentId),
+          isBoardDependencyInScope({
+            dependentParentCardId: subBoardParentId,
+            dependencyParentCardId: card.parentCardId,
+          }),
       )
       .map((card) => ({
         id: card.cardId,
@@ -206,9 +209,6 @@ export function BoardCardCreateDialog({
                 accent: projectIconColorOf(projectById.get(String(card.projectId))),
               },
             }),
-        ...(subBoardParentId === null && card.parentCardId !== undefined
-          ? { parentKey: keyById.get(String(card.parentCardId)) }
-          : {}),
       }));
   }, [allCards, dependsOn, projectId, projects, snapshot, subBoardParentId]);
 

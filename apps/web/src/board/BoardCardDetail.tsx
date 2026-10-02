@@ -27,6 +27,7 @@ import {
   boardStageWithRole,
   boardCardWorktreeKept,
   boardCardWorktreeKeptReason,
+  isBoardDependencyInScope,
   isBoardMergeStageExecution,
   isBoardCardBaseRetargeted,
   resolveBoardCardEffectiveBase,
@@ -367,14 +368,13 @@ export function BoardCardDetail({
   // be inherited but not made, the picker offers them and marks them with the
   // owning project's dot.
   //
-  // A sub-board child's picker is narrower still (t3o-25): siblings only, as
-  // materialised edges are scoped; the decider refuses anything else on create,
-  // and offering it here would only teach the rule by refusal. Children offered
-  // to a TOP-LEVEL card carry their parent's key as a badge instead.
+  // Every picker is scoped to the card's own level (t3o-25, T3O-10): a child
+  // sees only its siblings, a top-level card only other top-level cards. The
+  // decider refuses anything else, and offering it here would only teach the
+  // rule by refusal.
   const dependencyOptions = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
     const shells = snapshot?.cards ?? [];
-    const keyById = new Map(shells.map((shell) => [String(shell.cardId), shell.key]));
     const projectById = new Map(
       (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
     );
@@ -383,7 +383,10 @@ export function BoardCardDetail({
       .filter(
         (candidate) =>
           !existing.has(candidate.cardId) &&
-          (card.parentCardId === null || candidate.parentCardId === card.parentCardId),
+          isBoardDependencyInScope({
+            dependentParentCardId: card.parentCardId,
+            dependencyParentCardId: candidate.parentCardId,
+          }),
       )
       .map((candidate) => ({
         id: candidate.cardId,
@@ -398,9 +401,6 @@ export function BoardCardDetail({
                 accent: projectIconColorOf(projectById.get(String(candidate.projectId))),
               },
             }),
-        ...(card.parentCardId === null && candidate.parentCardId !== undefined
-          ? { parentKey: keyById.get(String(candidate.parentCardId)) }
-          : {}),
       }));
   }, [card, snapshot]);
 

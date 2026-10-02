@@ -68,6 +68,7 @@ import {
   EMPTY_BOARD_STATE,
   EventId,
   isBoardCommand,
+  isBoardDependencyInScope,
   isBoardStageAtOrAfterBuild,
   isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
@@ -290,6 +291,34 @@ function findDependencyCycle(input: {
     }
   }
   return null;
+}
+
+/**
+ * Why `dependency` cannot be a new dependency of a card under
+ * `dependentParentCardId`, or null when the edge is in scope (T3O-10). A child
+ * merges into its parent's integration branch, so a top-level card is pointed
+ * at the parent, and a child is pointed back at its own siblings.
+ */
+function dependencyScopeRefusal(input: {
+  readonly board: BoardState;
+  readonly dependentParentCardId: BoardCardId | null;
+  readonly dependency: Pick<BoardCard, "id" | "key" | "parentCardId">;
+}): string | null {
+  const { dependency, dependentParentCardId } = input;
+  if (
+    isBoardDependencyInScope({
+      dependentParentCardId,
+      dependencyParentCardId: dependency.parentCardId,
+    })
+  ) {
+    return null;
+  }
+  const keyOf = (id: BoardCardId) => input.board.cards.find((card) => card.id === id)?.key ?? id;
+  if (dependentParentCardId !== null) {
+    return `Dependency '${dependency.key}' is not a sibling in parent '${keyOf(dependentParentCardId)}''s sub-board; a sub-board child may only depend on its siblings.`;
+  }
+  const parentKey = keyOf(dependency.parentCardId!);
+  return `Dependency '${dependency.key}' is a sub-board child of '${parentKey}' and merges into that card's branch, not the base, so a top-level card would wait on '${parentKey}' anyway. Depend on '${parentKey}' instead.`;
 }
 
 /**
@@ -898,9 +927,19 @@ const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (in
   }
   if (dependsOn !== undefined) {
     for (const dependencyId of checkExistence) {
-      if (!board.cards.some((candidate) => candidate.id === dependencyId)) {
+      const dependency = board.cards.find((candidate) => candidate.id === dependencyId);
+      if (dependency === undefined) {
         return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
       }
+      // Only NEW edges are scoped (T3O-10): an edge made before the rule must
+      // not block re-saving the set it already sits in.
+      if (card.dependsOn.includes(dependencyId)) continue;
+      const scopeRefusal = dependencyScopeRefusal({
+        board,
+        dependentParentCardId: card.parentCardId,
+        dependency,
+      });
+      if (scopeRefusal !== null) return yield* invariant(command, scopeRefusal);
     }
     const cycle = findDependencyCycle({ board, cardId: command.cardId, proposed: dependsOn });
     if (cycle !== null) {
@@ -1025,17 +1064,15 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         if (dependency === undefined) {
           return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
         }
-        // A child may only depend on siblings (t3o-25, as materialised edges
-        // are scoped): never on a top-level card or another sub-board's child.
-        if (
-          command.parentCardId !== undefined &&
-          dependency.parentCardId !== command.parentCardId
-        ) {
-          return yield* invariant(
-            command,
-            `Dependency '${dependencyId}' is not a sibling in parent '${command.parentCardId}''s sub-board.`,
-          );
-        }
+        // Dependencies stay within the card's own level (t3o-25, T3O-10): a
+        // child depends only on its siblings, a top-level card only on other
+        // top-level cards.
+        const scopeRefusal = dependencyScopeRefusal({
+          board,
+          dependentParentCardId: command.parentCardId ?? null,
+          dependency,
+        });
+        if (scopeRefusal !== null) return yield* invariant(command, scopeRefusal);
       }
 
       // Dependency blocking is unconditional from the `build` role onward (D11):

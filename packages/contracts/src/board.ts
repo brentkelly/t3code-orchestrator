@@ -1392,6 +1392,23 @@ export function deriveBoardCardBlocked(input: {
   return unmetBoardCardDependencies(input).length > 0;
 }
 
+/**
+ * Whether a card may depend on another, judged on where each one merges (T3O-10).
+ * A child merges into its parent's integration branch, not the base, so only
+ * its siblings ever see its work. A top-level card that depends on another
+ * parent's child would wait for that parent to merge anyway, so it depends on
+ * the parent. The edge is in scope only when both cards share a parent, or
+ * both are top-level. The decider refuses new edges that fail this, and the
+ * pickers only offer cards that pass it. `undefined` reads as top-level, the
+ * way the bounded shell leaves `parentCardId` absent.
+ */
+export function isBoardDependencyInScope(input: {
+  readonly dependentParentCardId: BoardCardId | null | undefined;
+  readonly dependencyParentCardId: BoardCardId | null | undefined;
+}): boolean {
+  return (input.dependentParentCardId ?? null) === (input.dependencyParentCardId ?? null);
+}
+
 // ── Agent write-path value types (t3o-08) ──────────────────────────────
 // The records the agent-write-path events carry and `BoardState` holds. Their
 // commands and event payloads are further down (with the other commands /
