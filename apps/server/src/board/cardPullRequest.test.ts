@@ -755,7 +755,12 @@ describe("merging a card's pull request", () => {
         Effect.gen(function* () {
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "refused");
-          assert.include(result.outcome === "refused" ? result.detail : "", "did not say why");
+          // The probe's failure is passed on, not dressed up as a forge that
+          // gave no reason (T3O-8).
+          assert.equal(
+            result.outcome === "refused" ? result.detail : "",
+            "The forge refused the merge, and asking it why failed: No provider is registered.",
+          );
           const started = (yield* h.commands).filter(
             (command) => command.type === "board.card.start-stage-thread",
           );

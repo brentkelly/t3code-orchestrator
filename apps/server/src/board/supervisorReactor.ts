@@ -4725,10 +4725,15 @@ const make = Effect.gen(function* () {
     card: BoardCard,
   ) {
     const pullRequest = card.pullRequest;
-    if (pullRequest === null) return null;
+    if (pullRequest === null) return { state: null, failure: undefined };
     return yield* pullRequests
       .mergeState({ projectId: card.projectId, number: pullRequest.number })
-      .pipe(Effect.catch(() => Effect.succeed(null)));
+      .pipe(
+        Effect.map((state) => ({ state, failure: undefined })),
+        // The probe's own words go on the card (T3O-8): a probe that failed is
+        // not a forge that gave no reason, and the failure usually names its fix.
+        Effect.catch((error) => Effect.succeed({ state: null, failure: error.detail })),
+      );
   });
 
   /**
@@ -4892,10 +4897,11 @@ const make = Effect.gen(function* () {
       }
       // One probe answers both questions: is this a conflict, and what does the
       // card say about it (T3O-47). A probe that itself failed leaves `state`
-      // null, which reads as "refused, reason unknown" — never as a conflict,
-      // because starting a fix agent is the expensive mistake.
-      const state = yield* probeMergeState(fresh);
-      const detail = boardMergeRefusalReason(state);
+      // null, and the card says the read failed and gives its error (T3O-8) —
+      // never a conflict, because starting a fix agent is the expensive mistake.
+      const probe = yield* probeMergeState(fresh);
+      const state = probe.state;
+      const detail = boardMergeRefusalReason(state, probe.failure);
       if (state?.blockedReason === "conflict" && !viaConflictFix) {
         // Ask for the stage's own thread: the merge stage resolves to the
         // conflict-resolution prompt in build mode, so this is the conflict

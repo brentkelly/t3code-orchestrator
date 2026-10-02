@@ -142,6 +142,8 @@ export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandEr
           case "rate-limited":
             return new GitLabCliRateLimitError({ ...context, cause });
           case "not-found":
+          // T3o (T3O-8): GitHub-only refusal kind; glab never reports it.
+          case "missing-scope":
           case "command-failed":
           case undefined:
             return new GitLabCliCommandError({ ...context, cause });

@@ -85,6 +85,12 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
     return "rate-limited";
   }
 
+  // T3o (T3O-8): GitHub refuses a query that needs a scope the token lacks, and the GraphQL
+  // path in that refusal (`repository.pullRequest...`) would otherwise read as not-found.
+  if (normalized.includes("has not been granted the required scopes")) {
+    return "missing-scope";
+  }
+
   if (
     (command === "gh" &&
       (normalized.includes("could not resolve to a pullrequest") ||

@@ -77,6 +77,8 @@ export const VcsProcessExitFailureKind = Schema.Literals([
   "authentication",
   "not-found",
   "rate-limited",
+  // T3o (T3O-8): the token is valid but lacks a scope the query needs.
+  "missing-scope",
   "command-failed",
 ]);
 export type VcsProcessExitFailureKind = typeof VcsProcessExitFailureKind.Type;
@@ -137,13 +139,16 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
         ? "Authentication failed."
         : failureKind === "rate-limited"
           ? "API rate limit exceeded."
-          : failureKind === "not-found"
-            ? context.command === "glab"
-              ? "Merge request not found."
-              : context.command === "gh" || context.command === "az"
-                ? "Pull request not found."
-                : "VCS resource not found."
-            : "Process exited with a non-zero status.";
+          : // T3o (T3O-8): a scope refusal is not a missing resource.
+            failureKind === "missing-scope"
+            ? "The token lacks a scope this request needs."
+            : failureKind === "not-found"
+              ? context.command === "glab"
+                ? "Merge request not found."
+                : context.command === "gh" || context.command === "az"
+                  ? "Pull request not found."
+                  : "VCS resource not found."
+              : "Process exited with a non-zero status.";
 
     return new VcsProcessExitError({
       ...context,

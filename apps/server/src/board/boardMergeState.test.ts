@@ -202,10 +202,14 @@ describe("boardMergeRefusalReason", () => {
     );
   });
 
-  it("says only that the merge was refused when the probe itself failed", () => {
+  it("says the read failed, not that the forge gave no reason, when the probe failed", () => {
     assert.strictEqual(
       boardMergeRefusalReason(null),
-      "The forge refused the merge and did not say why.",
+      "The forge refused the merge, and asking it why failed.",
+    );
+    assert.strictEqual(
+      boardMergeRefusalReason(null, "GitHub API rate limit exceeded."),
+      "The forge refused the merge, and asking it why failed: GitHub API rate limit exceeded.",
     );
   });
 });
