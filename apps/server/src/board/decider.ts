@@ -315,7 +315,7 @@ function dependencyScopeRefusal(input: {
   }
   const keyOf = (id: BoardCardId) => input.board.cards.find((card) => card.id === id)?.key ?? id;
   if (dependentParentCardId !== null) {
-    return `Dependency '${dependency.key}' is not a sibling in parent '${keyOf(dependentParentCardId)}''s sub-board; a sub-board child may only depend on its siblings.`;
+    return `Dependency '${dependency.key}' is not a sibling in the sub-board of '${keyOf(dependentParentCardId)}'; a sub-board child may only depend on its siblings.`;
   }
   const parentKey = keyOf(dependency.parentCardId!);
   return `Dependency '${dependency.key}' is a sub-board child of '${parentKey}' and merges into that card's branch, not the base, so a top-level card would wait on '${parentKey}' anyway. Depend on '${parentKey}' instead.`;

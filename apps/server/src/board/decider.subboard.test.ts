@@ -1183,7 +1183,7 @@ it.layer(NodeServices.layer)("dependency scope (T3O-10)", (it) => {
         update("card-child-2", { addDependsOn: ["card-top-7"] }),
         makeReadModel(board()),
       );
-      assert.include(String(failure), "not a sibling in parent 'T3-190''s sub-board");
+      assert.include(String(failure), "not a sibling in the sub-board of 'T3-190'");
     }),
   );
 
