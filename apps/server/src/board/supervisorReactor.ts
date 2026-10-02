@@ -5359,6 +5359,16 @@ const make = Effect.gen(function* () {
       }
       return;
     }
+    // The agent ended its turn to wait on its own background subagents
+    // (T3O-9). The provider wakes it when they report back, so this is a wait,
+    // not a stop: recovering here parked the card as "nothing is running" and
+    // later nudged the agent mid-wait, which made it end another turn and climb
+    // the stall ladder while its subagents did the work. Read the field that
+    // draws the thread's own "N agents working" banner, so the board and the
+    // thread cannot disagree. Watch loops ("monitoring") stay supervised: they
+    // can run indefinitely. A subagent that hangs is still caught by the
+    // timeout sweep.
+    if (shell?.backgroundLiveness === "working") return;
     // The free turn-ending a human's own turn bought (T3O-17, D3). Either this
     // IS that turn completing, or it is the turn the human's message
     // superseded arriving late — neither is a stall, and neither should draw a
