@@ -1076,3 +1076,151 @@ it.layer(NodeServices.layer)("sub-board child create (t3o-25)", (it) => {
     }),
   );
 });
+
+// ── Dependency scope (T3O-10): a card depends only within its own level ──
+
+it.layer(NodeServices.layer)("dependency scope (T3O-10)", (it) => {
+  const update = (
+    cardId: string,
+    fields: {
+      readonly dependsOn?: ReadonlyArray<string>;
+      readonly addDependsOn?: ReadonlyArray<string>;
+      readonly removeDependsOn?: ReadonlyArray<string>;
+    },
+  ): BoardCommand => ({
+    type: "board.card.update",
+    commandId: CommandId.make(`cmd-update-${cardId}`),
+    cardId: BoardCardId.make(cardId),
+    ...(fields.dependsOn === undefined
+      ? {}
+      : { dependsOn: fields.dependsOn.map((id) => BoardCardId.make(id)) }),
+    ...(fields.addDependsOn === undefined
+      ? {}
+      : { addDependsOn: fields.addDependsOn.map((id) => BoardCardId.make(id)) }),
+    ...(fields.removeDependsOn === undefined
+      ? {}
+      : { removeDependsOn: fields.removeDependsOn.map((id) => BoardCardId.make(id)) }),
+    createdAt: NOW,
+  });
+
+  const createTopLevel = (dependsOn: ReadonlyArray<string>): BoardCommand => ({
+    type: "board.card.create",
+    commandId: CommandId.make("cmd-create-top"),
+    cardId: BoardCardId.make("card-new-top"),
+    projectId,
+    title: "Unrelated work",
+    stage: BoardStageId.make("backlog"),
+    orderKey: "m",
+    dependsOn: dependsOn.map((id) => BoardCardId.make(id)),
+    createdAt: NOW,
+  });
+
+  // The default parent T3-190 with child T3-2, a sibling T3-3, and two
+  // unrelated top-level cards T3-7 and T3-8.
+  const board = (overrides?: { readonly top?: Partial<Parameters<typeof makeCard>[0]> }) =>
+    makeBoard({
+      extraCards: [
+        makeChild("card-child-2", "ready", { key: "T3-2" }),
+        makeChild("card-child-3", "ready", { key: "T3-3" }),
+        makeCard({ id: "card-top-7", key: "T3-7", ...overrides?.top }),
+        makeCard({ id: "card-top-8", key: "T3-8" }),
+      ],
+    });
+
+  it.effect(
+    "refuses a new top-level card depending on another card's child, naming the parent",
+    () =>
+      Effect.gen(function* () {
+        const failure = yield* decideFail(createTopLevel(["card-child-2"]), makeReadModel(board()));
+        assert.include(String(failure), "'T3-2' is a sub-board child of 'T3-190'");
+        assert.include(String(failure), "Depend on 'T3-190' instead");
+      }),
+  );
+
+  it.effect("lets a new top-level card depend on the parent and on other top-level cards", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        createTopLevel(["card-parent", "card-top-8"]),
+        makeReadModel(board()),
+      );
+      const event = events[0]!;
+      assert.ok(event.type === "board.card-created");
+      expect(event.payload.dependsOn).toEqual([parentId, BoardCardId.make("card-top-8")]);
+    }),
+  );
+
+  it.effect("refuses a top-level card adding another card's child, whole-set or incremental", () =>
+    Effect.gen(function* () {
+      const whole = yield* decideFail(
+        update("card-top-7", { dependsOn: ["card-top-8", "card-child-2"] }),
+        makeReadModel(board()),
+      );
+      assert.include(String(whole), "Depend on 'T3-190' instead");
+
+      const added = yield* decideFail(
+        update("card-top-7", { addDependsOn: ["card-child-3"] }),
+        makeReadModel(board()),
+      );
+      assert.include(String(added), "'T3-3' is a sub-board child of 'T3-190'");
+    }),
+  );
+
+  it.effect("lets a top-level card switch a dependency from the child to its parent", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        update("card-top-7", { addDependsOn: ["card-parent"] }),
+        makeReadModel(board()),
+      );
+      const event = events[0]!;
+      assert.ok(event.type === "board.card-updated");
+      expect(event.payload.card.dependsOn).toEqual([parentId]);
+    }),
+  );
+
+  it.effect("refuses a child adding a dependency outside its sibling group", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        update("card-child-2", { addDependsOn: ["card-top-7"] }),
+        makeReadModel(board()),
+      );
+      assert.include(String(failure), "not a sibling in the sub-board of 'T3-190'");
+    }),
+  );
+
+  it.effect("lets a child depend on its sibling", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        update("card-child-2", { addDependsOn: ["card-child-3"] }),
+        makeReadModel(board()),
+      );
+      const event = events[0]!;
+      assert.ok(event.type === "board.card-updated");
+      expect(event.payload.card.dependsOn).toEqual([BoardCardId.make("card-child-3")]);
+    }),
+  );
+
+  it.effect("keeps an edge made before the rule editable and removable", () =>
+    Effect.gen(function* () {
+      const legacy = board({ top: { dependsOn: [BoardCardId.make("card-child-2")] } });
+
+      const resaved = yield* decideEvents(
+        update("card-top-7", { dependsOn: ["card-child-2", "card-top-8"] }),
+        makeReadModel(legacy),
+      );
+      const resavedEvent = resaved[0]!;
+      assert.ok(resavedEvent.type === "board.card-updated");
+      expect(resavedEvent.payload.card.dependsOn).toEqual([
+        BoardCardId.make("card-child-2"),
+        BoardCardId.make("card-top-8"),
+      ]);
+
+      const removed = yield* decideEvents(
+        update("card-top-7", { removeDependsOn: ["card-child-2"] }),
+        makeReadModel(legacy),
+      );
+      const removedEvent = removed[0]!;
+      assert.ok(removedEvent.type === "board.card-updated");
+      expect(removedEvent.payload.card.dependsOn).toEqual([]);
+    }),
+  );
+});

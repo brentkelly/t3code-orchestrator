@@ -25,9 +25,6 @@ export interface BoardPickerOption {
   /** Short leading identifier (a card key); empty hides the column. */
   readonly key: string;
   readonly title: string;
-  /** The parent card's key when the option is a sub-board child (t3o-25), so
-      a child offered among top-level cards names whose board it lives on. */
-  readonly parentKey?: string | undefined;
   /** The owning project when the option is OUTSIDE the current card's project
       (T3O-33, D3). Cross-project dependencies are legal — a card that changes
       project inherits them — so the picker offers them, marked with the same
@@ -104,13 +101,6 @@ export function BoardPickerSearchBody({
                   <span className="shrink-0 font-medium text-muted-foreground">{option.key}</span>
                 ) : null}
                 <span className="min-w-0 flex-1 truncate">{option.title}</span>
-                {option.parentKey !== undefined ? (
-                  <BoardHint label={`Part of ${option.parentKey}'s sub-board`}>
-                    <span className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
-                      {option.parentKey}
-                    </span>
-                  </BoardHint>
-                ) : null}
               </button>
             ))}
             {hidden > 0 ? (
