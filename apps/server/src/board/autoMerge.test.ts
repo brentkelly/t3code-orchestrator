@@ -96,6 +96,7 @@ const probe = (input: {
       running: pending > 0 ? ["ci/build"] : [],
     },
     headSha: input.headSha ?? "sha-one",
+    checksUnread: false,
   };
 };
 

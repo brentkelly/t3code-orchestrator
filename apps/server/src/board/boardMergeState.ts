@@ -60,6 +60,10 @@ export interface BoardMergeState {
       is what resets the board's retry ladder (T3O-38, D9). Null where the host
       reported none. */
   readonly headSha: string | null;
+  /** True when the token was refused the checks (T3O-8), so the zero counts
+      above are "could not look". Nothing may then be concluded from a green
+      rollup, least of all a missing approval. */
+  readonly checksUnread: boolean;
 }
 
 /** How many failing/running check names a detail line will ever show. Bounded
@@ -131,24 +135,46 @@ function checksOf(detail: PullRequestDetail): BoardMergeChecks {
 export function boardMergeStateOf(detail: PullRequestDetail): BoardMergeState {
   const checks = checksOf(detail);
   const headSha = detail.headSha ?? null;
+  const checksUnread = detail.checksUnread === true;
   const blocked = (blockedReason: BoardMergeBlockReason): BoardMergeState => ({
     mergeable: "blocked",
     blockedReason,
     checks,
     headSha,
+    checksUnread,
   });
 
   if (detail.mergeability === "conflicting") return blocked("conflict");
   if (detail.isDraft) return blocked("draft");
   if (detail.baseComparison === "behind") return blocked("behind");
   if (detail.mergeability === "unknown") {
-    return { mergeable: "unknown", blockedReason: null, checks, headSha };
+    return { mergeable: "unknown", blockedReason: null, checks, headSha, checksUnread };
   }
-  if (checks.failed > 0 || checks.pending > 0 || detail.baseComparison !== "up-to-date") {
-    return { mergeable: "mergeable", blockedReason: null, checks, headSha };
+  // Unread checks may be running or failing, so elimination proves nothing
+  // here and the refusal stays soft (T3O-8).
+  if (
+    checksUnread ||
+    checks.failed > 0 ||
+    checks.pending > 0 ||
+    detail.baseComparison !== "up-to-date"
+  ) {
+    return { mergeable: "mergeable", blockedReason: null, checks, headSha, checksUnread };
   }
   return blocked("other");
 }
+
+/**
+ * The state of a pull request the forge could not describe but git proved
+ * conflicting (T3O-8) — see `probeLocalMergeConflict`. Nothing was read from
+ * the forge, so the checks are unread and there is no head sha.
+ */
+export const LOCAL_CONFLICT_MERGE_STATE: BoardMergeState = {
+  mergeable: "blocked",
+  blockedReason: "conflict",
+  checks: { total: 0, passed: 0, pending: 0, failed: 0, failing: [], running: [] },
+  headSha: null,
+  checksUnread: true,
+};
 
 /**
  * The sentence a card shows for a refused merge.
@@ -189,6 +215,8 @@ export function boardMergeRefusalReason(
     case "other":
       return "The forge is blocking the merge — it needs a review approval, a protection rule satisfied, or a conversation resolved.";
     case null:
-      return "The forge refused the merge and did not say why.";
+      return state.checksUnread
+        ? "The forge refused the merge, and this token may not read the pull request's checks to see why. Grant it read access to Checks and Commit statuses."
+        : "The forge refused the merge and did not say why.";
   }
 }

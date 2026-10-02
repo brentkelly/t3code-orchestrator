@@ -71,6 +71,7 @@ const refusal = (input: {
       running: [],
     },
     headSha: "sha-one",
+    checksUnread: false,
   };
 };
 
@@ -768,6 +769,61 @@ describe("merging a card's pull request", () => {
         }),
     ),
   );
+
+  it.effect("starts the conflict fix when the probe failed but git proves a conflict (T3O-8)", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+        settings: settings(),
+        pullRequest: openPr,
+        // No `mergeState`: the forge could not say why. A conflict is the one
+        // refusal git can prove without it, and a card must not stop on a
+        // conflict just because a token could not read the pull request.
+        mergeFailure: "the host refused",
+        localMergeConflict: "conflict",
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+          assert.equal(result.outcome, "conflict");
+          assert.equal(
+            result.outcome === "conflict" ? result.detail : "",
+            "Its pull request conflicts with its base branch.",
+          );
+          const started = (yield* h.commands).filter(
+            (command) => command.type === "board.card.start-stage-thread",
+          );
+          assert.equal(started.length, 1);
+        }),
+    ),
+  );
+
+  for (const localMergeConflict of ["unresolvable", "unfetched"] as const) {
+    it.effect(`does NOT start a conflict fix when git could not look (${localMergeConflict})`, () =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: openPr,
+          // `merge-tree` exits 1 for a ref it cannot resolve as well as for a
+          // conflict, and a failed fetch leaves nothing current to compare.
+          // Neither is evidence, and a fix agent started on a guess rewrites a
+          // branch with nothing wrong with it.
+          mergeFailure: "the host refused",
+          localMergeConflict,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+            assert.equal(result.outcome, "refused");
+            const started = (yield* h.commands).filter(
+              (command) => command.type === "board.card.start-stage-thread",
+            );
+            assert.deepStrictEqual(started, []);
+          }),
+      ),
+    );
+  }
 
   it.effect("does NOT read a missing approval as a conflict", () =>
     withGovernor(

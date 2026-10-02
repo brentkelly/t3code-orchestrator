@@ -613,6 +613,7 @@ const probeState = (input: {
       running: pending > 0 ? ["ci/build"] : [],
     },
     headSha: "sha-one",
+    checksUnread: false,
   };
 };
 

@@ -3135,8 +3135,29 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("still fails a detail read that fails without reviewers too", () =>
+  it.effect("reads the detail without checks when the token cannot read them either", () =>
     Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
+      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(conflictedDetailJson()));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const detail = yield* readDetail(cli);
+
+      // Mergeability is what the board routes a conflict on, and it survives.
+      expect(detail.mergeability).toBe("conflicting");
+      // The empty check list is marked as unread, not as "no checks".
+      expect(detail.checksUnread).toBe(true);
+      expect(callAt(1).args.at(-1)).toContain("statusCheckRollup");
+      expect(callAt(2).args.at(-1)).not.toContain("statusCheckRollup");
+      expect(callAt(2).args.at(-1)).not.toContain("reviewRequests");
+      expect(callAt(2).args.at(-1)).toContain("mergeable");
+    }),
+  );
+
+  it.effect("still fails a detail read that fails without every gated field", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
       mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
       mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
@@ -3144,7 +3165,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       const error = yield* Effect.flip(readDetail(cli));
 
       assert.strictEqual(error._tag, "GitHubCliCommandError");
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
     }),
   );
 

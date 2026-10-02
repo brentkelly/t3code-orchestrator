@@ -169,7 +169,12 @@ import {
   UNCLASSIFIED_AUTO_MERGE_VERDICT,
   type BoardAutoMergeVerdict,
 } from "./autoMergeClassification.ts";
-import { boardMergeRefusalReason, type BoardMergeState } from "./boardMergeState.ts";
+import {
+  boardMergeRefusalReason,
+  LOCAL_CONFLICT_MERGE_STATE,
+  type BoardMergeState,
+} from "./boardMergeState.ts";
+import { probeLocalMergeConflict } from "./localMergeConflict.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -4896,11 +4901,24 @@ const make = Effect.gen(function* () {
         };
       }
       // One probe answers both questions: is this a conflict, and what does the
-      // card say about it (T3O-47). A probe that itself failed leaves `state`
-      // null, and the card says the read failed and gives its error (T3O-8) —
-      // never a conflict, because starting a fix agent is the expensive mistake.
+      // card say about it (T3O-47).
       const probe = yield* probeMergeState(fresh);
-      const state = probe.state;
+      // A forge that could not say why leaves one refusal git can still prove
+      // (T3O-8): a conflict. Asked only then, and only `conflict` changes
+      // anything — a failed read used to stop the card with a conflict nobody
+      // was resolving. Otherwise `state` stays null, and the card says the read
+      // failed and gives its error: an unread refusal is never GUESSED to be a
+      // conflict, because starting a fix agent is the expensive mistake.
+      const state =
+        probe.state === null &&
+        (yield* probeLocalMergeConflict({
+          git,
+          cwd: root,
+          headBranch: pullRequest.headBranch,
+          baseBranch: pullRequest.baseRef,
+        })) === "conflict"
+          ? LOCAL_CONFLICT_MERGE_STATE
+          : probe.state;
       const detail = boardMergeRefusalReason(state, probe.failure);
       if (state?.blockedReason === "conflict" && !viaConflictFix) {
         // Ask for the stage's own thread: the merge stage resolves to the

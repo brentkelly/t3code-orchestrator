@@ -14,6 +14,7 @@ const state = (overrides: Partial<BoardMergeState> = {}): BoardMergeState => ({
   blockedReason: null,
   checks: { total: 0, passed: 0, pending: 0, failed: 0, failing: [], running: [] },
   headSha: "abc123",
+  checksUnread: false,
   ...overrides,
 });
 

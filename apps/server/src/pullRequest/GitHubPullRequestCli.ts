@@ -1449,37 +1449,54 @@ export const make = Effect.gen(function* () {
   >[0];
   type PullRequestDetailOperation = "getPullRequestDetail" | "getPullRequestSummary";
   const isVcsProcessExitError = Schema.is(VcsProcessExitError);
-  const withoutReviewRequests = (fields: string) =>
+  const withoutField = (fields: string, dropped: string) =>
     fields
       .split(",")
-      .filter((field) => field !== "reviewRequests")
+      .filter((field) => field !== dropped)
       .join(",");
 
-  // T3o (T3O-8): hosts already warned about the missing scope, so an affected token logs once
-  // per process rather than on every read. The refused full read is still attempted each time,
-  // so granting the scope later brings reviewers back without a restart.
-  const hostsWarnedMissingReviewScope = new Set<string>();
+  // T3o (T3O-8): fields a token may be refused, in the order they are given up. Team review
+  // requests need `read:org` on a classic token; the check rollup needs the Checks and Commit
+  // statuses permissions on a fine-grained one. GitHub refuses the whole query over either, and
+  // nothing the board decides needs reviewers, while mergeability outranks checks.
+  const PERMISSION_GATED_FIELDS = ["reviewRequests", "statusCheckRollup"] as const;
 
-  // T3o (T3O-8): reading a team review request needs `read:org`, and GitHub refuses the whole
-  // query without it. Read once more without reviewers rather than lose mergeability and checks
-  // over a field nothing blocks on. Only a scope refusal is retried; the reviewer list is then
-  // empty, so say so in the log.
+  // T3o (T3O-8): host and field pairs already warned about, so an affected token logs once per
+  // process rather than on every read. The refused full read is still attempted each time, so
+  // granting the permission later brings the field back without a restart.
+  const warnedMissingFieldPermission = new Set<string>();
+
+  // T3o (T3O-8): read once more without each gated field in turn rather than lose mergeability
+  // over a field nothing blocks on. Only a permission refusal is retried, and `read` is told
+  // through `fields` what it was allowed to ask for.
   const withReviewScopeFallback = <A>(
     host: string,
     fields: string,
     read: (fields: string) => Effect.Effect<A, GitHubPullRequestCliError>,
+    gated: ReadonlyArray<string> = PERMISSION_GATED_FIELDS,
   ): Effect.Effect<A, GitHubPullRequestCliError> =>
     read(fields).pipe(
       Effect.catchTag("GitHubCliCommandError", (error) => {
-        if (!isVcsProcessExitError(error.cause) || error.cause.failureKind !== "missing-scope") {
+        const dropped = gated.find((field) => fields.split(",").includes(field));
+        if (
+          dropped === undefined ||
+          !isVcsProcessExitError(error.cause) ||
+          error.cause.failureKind !== "missing-scope"
+        ) {
           return Effect.fail(error);
         }
-        const retry = read(withoutReviewRequests(fields));
-        if (hostsWarnedMissingReviewScope.has(host)) return retry;
-        hostsWarnedMissingReviewScope.add(host);
+        const retry = withReviewScopeFallback(
+          host,
+          withoutField(fields, dropped),
+          read,
+          gated.filter((field) => field !== dropped),
+        );
+        const warned = `${host} ${dropped}`;
+        if (warnedMissingFieldPermission.has(warned)) return retry;
+        warnedMissingFieldPermission.add(warned);
         return Effect.logWarning(
-          "GitHub token lacks a scope for review requests (likely read:org); reading pull requests without reviewers",
-          { host },
+          "GitHub token was refused a pull request read; reading again without a permission-gated field",
+          { host, field: dropped },
         ).pipe(Effect.andThen(retry));
       }),
     );
@@ -1489,7 +1506,14 @@ export const make = Effect.gen(function* () {
     operation: PullRequestDetailOperation,
   ) =>
     withReviewScopeFallback(input.host, PULL_REQUEST_DETAIL_JSON_FIELDS, (fields) =>
-      readPullRequestDetail(input, fields, operation),
+      readPullRequestDetail(input, fields, operation).pipe(
+        // An empty check list read this way is "could not look", not "there are none".
+        Effect.map((detail) =>
+          fields.split(",").includes("statusCheckRollup")
+            ? detail
+            : { ...detail, checksUnread: true },
+        ),
+      ),
     );
 
   const getPullRequestDetail: GitHubPullRequestCli["Service"]["getPullRequestDetail"] = (input) =>

@@ -1075,6 +1075,9 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   readonly mergedAt: string | null;
   readonly closedAt: string | null;
   readonly checks: ReadonlyArray<PullRequestCheck>;
+  /** T3o (T3O-8): true when the token was refused the check rollup, so `checks` is empty
+      because nobody could look. See `PullRequestDetail.checksUnread`. */
+  readonly checksUnread?: boolean;
   /** Absent where `gh` did not answer for auto-merge at all, which is not the same as off. */
   readonly autoMergeEnabled?: boolean;
   /** Absent where auto-merge is off or GitHub did not report the stored strategy. */

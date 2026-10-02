@@ -264,6 +264,24 @@ describe("VcsProcess.run", () => {
       }).pipe(provideLive),
   );
 
+  // T3o (T3O-8): a fine-grained token names the same path when it lacks a repository permission.
+  it.effect(
+    "classifies a fine-grained token's field refusal as a missing scope, not a missing pull request",
+    () =>
+      Effect.gen(function* () {
+        const providerStderr =
+          "GraphQL: Resource not accessible by personal access token (repository.pullRequest.statusCheckRollup.nodes.0.commit.statusCheckRollup.contexts.nodes.0)";
+        const error = yield* run({
+          operation: "test.missing-permission",
+          command: "node",
+          args: ["-e", "process.stderr.write(process.argv[1]); process.exit(1)", providerStderr],
+          cwd: process.cwd(),
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ failureKind: "missing-scope" });
+      }).pipe(provideLive),
+  );
+
   it.effect("retains spawn causes without exposing process arguments in the error message", () =>
     Effect.gen(function* () {
       const secretArgument = "--token=super-secret-token";

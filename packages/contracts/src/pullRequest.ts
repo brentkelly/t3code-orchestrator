@@ -844,6 +844,9 @@ export const PullRequestDetail = Schema.Struct({
   /** T3o: the head commit this detail describes (T3O-47). A new sha means new CI, which is what
       resets the board's auto-merge retry ladder; absent where the host does not report one. */
   headSha: Schema.optional(TrimmedNonEmptyString),
+  /** T3o (T3O-8): true when the host refused to show this token the checks, so an empty `checks`
+      means "could not look" rather than "there are none". Absent otherwise. */
+  checksUnread: Schema.optional(Schema.Boolean),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 

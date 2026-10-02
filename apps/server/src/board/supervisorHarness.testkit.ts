@@ -579,6 +579,12 @@ export function withGovernor(
         makes the probe FAIL, which is what an unsupported provider does and
         what the reactor must read as "unclassifiable" — the plain ladder. */
     readonly mergeState?: BoardMergeState;
+    /** What git itself finds when asked whether the card's branch conflicts
+        with its base (T3O-8) — which the reactor asks only when the probe above
+        failed. `unresolvable` is `merge-tree` exiting 1 WITHOUT having merged,
+        as it does for a ref it cannot resolve; `unfetched` is a fetch that
+        failed. Absent is a clean merge. */
+    readonly localMergeConflict?: "conflict" | "unresolvable" | "unfetched";
     /** Make the stubbed `statusDetails` report uncommitted changes, so a test
         can drive the reclaim refusal — the case where the checkout holds work
         that exists nowhere else and must NOT be deleted to save disk. */
@@ -978,6 +984,19 @@ export function withGovernor(
             stderr: "",
             exitCode: 0,
           });
+        }
+        if (request.args?.[0] === "merge-tree") {
+          const tree = "a".repeat(40);
+          return Effect.succeed(
+            input.localMergeConflict === "conflict"
+              ? { stdout: `${tree}\nREADME.md\n`, stderr: "", exitCode: 1 }
+              : input.localMergeConflict === "unresolvable"
+                ? { stdout: "", stderr: "not something we can merge", exitCode: 1 }
+                : { stdout: `${tree}\n`, stderr: "", exitCode: 0 },
+          );
+        }
+        if (request.args?.[0] === "fetch" && input.localMergeConflict === "unfetched") {
+          return Effect.succeed({ stdout: "", stderr: "", exitCode: 128 });
         }
         if (request.args?.[0] === "rev-list" && request.args[1] === "--count") {
           return Effect.succeed({ stdout: "2\n", stderr: "", exitCode: 0 });

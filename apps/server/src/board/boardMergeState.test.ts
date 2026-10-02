@@ -202,6 +202,20 @@ describe("boardMergeRefusalReason", () => {
     );
   });
 
+  it("concludes nothing from checks the token could not read (T3O-8)", () => {
+    // Green by elimination would read this as a missing approval and stop the
+    // card, when the unread checks may simply still be running.
+    const state = boardMergeStateOf(detail({ baseComparison: "up-to-date", checksUnread: true }));
+    assert.strictEqual(state.mergeable, "mergeable");
+    assert.strictEqual(state.blockedReason, null);
+    assert.include(boardMergeRefusalReason(state), "may not read the pull request's checks");
+  });
+
+  it("still names a conflict when the checks could not be read (T3O-8)", () => {
+    const state = boardMergeStateOf(detail({ mergeability: "conflicting", checksUnread: true }));
+    assert.strictEqual(state.blockedReason, "conflict");
+  });
+
   it("says the read failed, not that the forge gave no reason, when the probe failed", () => {
     assert.strictEqual(
       boardMergeRefusalReason(null),
