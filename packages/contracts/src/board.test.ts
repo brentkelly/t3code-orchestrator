@@ -2062,6 +2062,8 @@ describe("stamping a selected step's label (boardSelectedStepLabel, T3O-9)", () 
   });
 });
 
+const decodePullRequestLink = Schema.decodeUnknownSync(BoardCardPullRequest);
+
 describe("a pull request link's draft flag (T3O-12)", () => {
   const link = {
     number: 412,
@@ -2073,7 +2075,7 @@ describe("a pull request link's draft flag (T3O-12)", () => {
   } as const;
 
   it("decodes a link recorded before the flag existed as not a draft", () => {
-    const decoded = Schema.decodeUnknownSync(BoardCardPullRequest)(link);
+    const decoded = decodePullRequestLink(link);
     expect(boardCardPullRequestIsOpenDraft(decoded)).toBe(false);
   });
 

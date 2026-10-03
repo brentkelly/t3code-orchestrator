@@ -832,6 +832,8 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
   });
 });
 
+const decodeReviewExecution = Schema.decodeUnknownSync(BoardStageExecutionReview);
+
 describe("draft pull requests (T3O-12)", () => {
   const promptOf = (result: BoardStagePlan): string => (result.kind === "run" ? result.prompt : "");
   const drafts = reviewExec({ draftPullRequests: true });
@@ -864,7 +866,7 @@ describe("draft pull requests (T3O-12)", () => {
   });
 
   it("decodes a stored review stage without the field to drafts off", () => {
-    const decoded = Schema.decodeUnknownSync(BoardStageExecutionReview)({ kind: "review" });
+    const decoded = decodeReviewExecution({ kind: "review" });
     expect(decoded.draftPullRequests).toBe(false);
   });
 });
