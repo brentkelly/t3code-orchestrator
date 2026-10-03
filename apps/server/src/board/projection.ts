@@ -61,6 +61,7 @@ import {
   isBoardEvent,
   isEmptyBoardCardModelOverrides,
   isBoardConflictFixLive,
+  isBoardChecksFixLive,
   isBoardTerminalStepStatus,
   makeBoardCardShell,
   ProviderInstanceId,
@@ -602,6 +603,9 @@ const BoardCardShellDbRow = Schema.Struct({
   autoMergeHeldSince: Schema.NullOr(IsoDateTime),
   autoMergeGaveUp: Schema.Int,
   autoMergeArmed: Schema.Int,
+  /** Whether the CURRENT pull request is an open draft (T3O-12) — the SQL
+      twin of `boardCardPullRequestIsOpenDraft`. */
+  prDraft: Schema.Int,
   /** The worktree pair (T3O-52, D5): whether one is on disk, and why the last
       reclaim kept it. Derived in SQL here and in JS on the delta path;
       `cardMetaShellFields.test.ts` pins the pair. */
@@ -996,6 +1000,14 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- very flicker the pair test exists to prevent.
         CASE WHEN auto_merge <> 0 OR parent_card_id IS NOT NULL THEN 1 ELSE 0 END
           AS "autoMergeArmed",
+        -- The SECOND producer of prDraft (T3O-12); the delta path reads it
+        -- through boardCardPullRequestIsOpenDraft. Current link only: a retired
+        -- round's pull request is never a draft worth tagging.
+        CASE
+          WHEN json_extract(pull_request, '$.isDraft') = 1
+            AND json_extract(pull_request, '$.state') = 'open' THEN 1
+          ELSE 0
+        END AS "prDraft",
         -- The SECOND producer of the worktree pair (T3O-52, D5); the delta
         -- path reads the same two facts off the aggregate's worktree.
         CASE WHEN json_extract(worktree, '$.status') = 'ready' THEN 1 ELSE 0 END
@@ -1067,6 +1079,14 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         -- very flicker the pair test exists to prevent.
         CASE WHEN auto_merge <> 0 OR parent_card_id IS NOT NULL THEN 1 ELSE 0 END
           AS "autoMergeArmed",
+        -- The SECOND producer of prDraft (T3O-12); the delta path reads it
+        -- through boardCardPullRequestIsOpenDraft. Current link only: a retired
+        -- round's pull request is never a draft worth tagging.
+        CASE
+          WHEN json_extract(pull_request, '$.isDraft') = 1
+            AND json_extract(pull_request, '$.state') = 'open' THEN 1
+          ELSE 0
+        END AS "prDraft",
         -- The SECOND producer of the worktree pair (T3O-52, D5); the delta
         -- path reads the same two facts off the aggregate's worktree.
         CASE WHEN json_extract(worktree, '$.status') = 'ready' THEN 1 ELSE 0 END
@@ -3417,6 +3437,7 @@ export function withBoardShellCards(
         }
       >();
       const conflictFixByCard = new Set<BoardCardId>();
+      const checksFixByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
         // The second step-state field on the bounded shell (t3o-17, D3): a card
@@ -3466,6 +3487,7 @@ export function withBoardShellCards(
         // restart, which drops the reactor's in-memory merge arm, does not drop
         // the card's explanation with it.
         if (isBoardConflictFixLive(row)) conflictFixByCard.add(row.cardId);
+        if (isBoardChecksFixLive(row)) checksFixByCard.add(row.cardId);
       }
       const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
       const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
@@ -3504,6 +3526,7 @@ export function withBoardShellCards(
           autoMergeHeldSince: row.autoMergeHeldSince,
           autoMergeGaveUp: row.autoMergeGaveUp !== 0,
           autoMergeArmed: row.autoMergeArmed !== 0,
+          prDraft: row.prDraft !== 0,
           worktreeReady: row.worktreeReady !== 0,
           worktreeKeptReason: row.worktreeKeptReason,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
@@ -3520,6 +3543,7 @@ export function withBoardShellCards(
           stepAwaiting: awaitingByCard.get(row.cardId) ?? null,
           ...(stallByCard.get(row.cardId) ?? {}),
           stepConflictFix: conflictFixByCard.has(row.cardId),
+          stepChecksFix: checksFixByCard.has(row.cardId),
           thread: liveThreads,
         });
       });
@@ -3601,6 +3625,7 @@ export function withBoardArchivedShellCards(
             autoMergeHeldSince: row.autoMergeHeldSince,
             autoMergeGaveUp: row.autoMergeGaveUp !== 0,
             autoMergeArmed: row.autoMergeArmed !== 0,
+            prDraft: row.prDraft !== 0,
             worktreeReady: row.worktreeReady !== 0,
             worktreeKeptReason: row.worktreeKeptReason,
             archivedAt: row.archivedAt,

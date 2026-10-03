@@ -692,9 +692,10 @@ export const BoardCardPullRequest = Schema.Struct({
   baseRef: TrimmedNonEmptyString,
   /** Whether the forge reports the pull request as a draft (T3O-12). Drives the
       card's Draft tag; the mark-ready decision re-reads the forge rather than
-      trusting this. Defaults false so a link recorded before it existed still
-      decodes. */
-  isDraft: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+      trusting this. Key-optional and present only when true, so a link
+      recorded before it existed decodes unchanged and a ready link costs no
+      bytes. */
+  isDraft: Schema.optionalKey(Schema.Boolean),
   /** When this state was first observed — NOT when it was last checked.
       Refreshes that find no change record no event at all (the decider's
       no-op guard deliberately excludes this field, or every card open would
@@ -725,7 +726,7 @@ export function boardCardPullRequestsEqual(
     left.url === right.url &&
     left.headBranch === right.headBranch &&
     left.baseRef === right.baseRef &&
-    left.isDraft === right.isDraft
+    (left.isDraft === true) === (right.isDraft === true)
   );
 }
 
@@ -764,7 +765,7 @@ export function boardCardDisplayPullRequest(
 /** Whether a pull request link is an open draft (T3O-12) — the Draft tag's
     one reading, shared by the shell's JS producer and its tests. */
 export function boardCardPullRequestIsOpenDraft(pullRequest: BoardCardPullRequest | null): boolean {
-  return pullRequest !== null && pullRequest.state === "open" && pullRequest.isDraft;
+  return pullRequest !== null && pullRequest.state === "open" && pullRequest.isDraft === true;
 }
 
 export function isBoardCardPullRequestTerminal(pullRequest: BoardCardPullRequest | null): boolean {
@@ -1933,6 +1934,9 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
       back to Code review is a move that otherwise explains nothing, and
       `card-moved` says where but never why. */
   "card-review-round-requested",
+  /** The board marked a draft pull request ready for review (T3O-12), which
+      is what starts the repository's full CI — and the row that says so. */
+  "card-pull-request-ready",
   /** A finished card's worktree was kept because removing it would lose work
       (T3O-52, D5). Written only when the REASON changes, so a refusal repeated
       on every card open stays one row. */
@@ -4371,6 +4375,8 @@ export const BoardCardNoteKind = Schema.Literals([
       (T3O-39, D10) — the only record of WHY the card walked back to Code
       review, and of which round it bought. */
   "card-review-round-requested",
+  /** A draft pull request marked ready for review (T3O-12). */
+  "card-pull-request-ready",
 ]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
 
@@ -6385,8 +6391,9 @@ export const BoardCardStalledShellEvent = Schema.Struct({
       always precedes it, so the flag is never late. */
   stepConflictFix: Schema.Boolean,
   /** And whether the step is a live CI fix (T3O-12), on the same terms.
-      Defaults false so a delta from an older server still decodes. */
-  stepChecksFix: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+      Key-optional, present only when true: this delta is authoritative for
+      it, so absence means false. */
+  stepChecksFix: Schema.optionalKey(Schema.Boolean),
   /** And why the step stalled, plus when it next tries (T3O-22, D10) — key-
       optional exactly as on the shell, and cleared by their absence here. They
       ride this delta rather than one of their own for the reason `held` does:

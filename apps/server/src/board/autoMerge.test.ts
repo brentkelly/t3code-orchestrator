@@ -15,14 +15,18 @@
  * come due.
  */
 import {
+  BOARD_CHECKS_FIX_STEP_LABEL,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
+  EMPTY_BOARD_STATE,
   ProviderInstanceId,
+  ThreadId,
   type BoardCard,
   type BoardCardAutoMergeHold,
   type BoardCardStepState,
   type BoardState,
   type OrchestrationCommand,
+  type OrchestrationEvent,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -30,6 +34,7 @@ import type { BoardMergeState } from "./boardMergeState.ts";
 import { assert, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
@@ -358,26 +363,80 @@ it.effect("holds soft on a pending check and merges on the rung where the forge 
   ),
 );
 
-it.effect("stops the ladder on the FIRST refusal when a required check failed (D6)", () =>
+/** The CI fix running on the merge stage — the state its completion arrives
+    in. The step id IS the stage id, as for the conflict fix. */
+const runningChecksFix = (): BoardCardStepState => ({
+  ...settledReviewStep("main"),
+  stepId: MERGE,
+  stepLabel: BOARD_CHECKS_FIX_STEP_LABEL,
+  stageLabel: "Ready for merge",
+  baseTipAtRoundStart: null,
+  prompt: "fix the CI",
+  threadId: ThreadId.make("thread-ci"),
+  status: "running",
+  slotHeld: true,
+  startedAt: NOW,
+});
+
+const checksFixCompleted = (sequence: number): OrchestrationEvent =>
+  ({
+    type: "board.card-step-completed",
+    sequence,
+    payload: {
+      cardId: BoardCardId.make("card-one"),
+      completion: {
+        cardId: BoardCardId.make("card-one"),
+        stepId: MERGE,
+        outcome: "succeeded",
+        summary: "fixed the failing test",
+        payload: null,
+        threadId: ThreadId.make("thread-ci"),
+        completedAt: NOW,
+      },
+    },
+  }) as unknown as OrchestrationEvent;
+
+it.effect("a failed required check starts ONE CI fix, then stops the ladder (T3O-12, D6)", () =>
   withGovernor(
-    setup({
-      cards: [cardAtMerge({ autoMerge: true })],
-      mergeFailure: "Required status check 'test' is failing.",
-      mergeState: probe({ passed: 3, failed: 1 }),
-    }),
+    {
+      ...setup({
+        cards: [cardAtMerge({ autoMerge: true })],
+        mergeFailure: "Required status check 'test' is failing.",
+        mergeState: probe({ passed: 3, failed: 1 }),
+      }),
+      initialShells: new Map([["thread-ci", { id: "thread-ci" } as never]]),
+    },
     (h) =>
       Effect.gen(function* () {
         yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        // More CI will not happen without a new commit, so the board writes
+        // one: a CI-fix step on the merge stage, not a rung on the ladder.
+        assert.strictEqual(holdOf(yield* h.board), null);
+        const started = (yield* h.commands).filter(
+          (command) => command.type === "board.card.start-stage-thread",
+        );
+        assert.strictEqual(started.length, 1);
+
+        // The fix runs and reports success; its re-attempt finds the checks
+        // STILL failing. That is the hard stop the ladder always made it.
+        yield* Ref.update(h.model, (model) => ({
+          ...model,
+          board: { ...(model.board ?? EMPTY_BOARD_STATE), stepStates: [runningChecksFix()] },
+        }));
+        yield* h.pumpDomain(checksFixCompleted(2));
+        assert.strictEqual((yield* h.mergeAttempts).length, 2);
         const hold = holdOf(yield* h.board);
         assert.strictEqual(hold?.classification, "checks-failed");
-        assert.strictEqual(hold?.attempt, 1);
-        // A hard block is visible within minutes of the first refusal rather
-        // than after an hour and a half of a pill that claimed to be waiting.
         assert.strictEqual(hold?.retryAt, null);
-        // And it is never polled again, however far the clock runs.
+        // No second fix, and nothing polls again however far the clock runs.
         yield* TestClock.adjust(Duration.hours(4));
         yield* h.reactor.drain;
-        assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        assert.strictEqual((yield* h.mergeAttempts).length, 2);
+        assert.strictEqual(
+          (yield* h.commands).filter((command) => command.type === "board.card.start-stage-thread")
+            .length,
+          1,
+        );
         // One rail row, at the moment the ladder actually stopped.
         assert.strictEqual(mergeRefusedNotes(yield* h.commands).length, 1);
       }),

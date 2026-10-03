@@ -273,6 +273,7 @@ function reconcileCommandObjects(input: {
         BoardPullRequestGateway.of({
           find: () => Effect.succeed(null),
           merge: () => Effect.void,
+          markReady: () => Effect.succeed("not-draft" as const),
           mergeState: () =>
             Effect.fail(
               new BoardPullRequestGatewayError({

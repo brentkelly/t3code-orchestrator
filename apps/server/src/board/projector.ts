@@ -71,6 +71,7 @@ import {
   compareBoardStages,
   EMPTY_BOARD_STATE,
   isBoardConflictFixLive,
+  isBoardChecksFixLive,
   isBoardEvent,
   type BoardCard,
   type BoardCardId,
@@ -450,6 +451,14 @@ export function compareBoardStepStates(
   right: BoardCardStepState,
 ): number {
   return compareStrings(left.cardId, right.cardId);
+}
+
+/** The CI-fix flag (T3O-12) for a `card-stalled` delta: present only when a
+    CI fix is live, which that delta's authority reads as false otherwise. */
+function checksFixShellField(state: Parameters<typeof isBoardChecksFixLive>[0]): {
+  readonly stepChecksFix?: true;
+} {
+  return isBoardChecksFixLive(state) ? { stepChecksFix: true } : {};
 }
 
 /** The three step-derived stall fields the `card-stalled` delta carries
@@ -1085,6 +1094,7 @@ export function boardShellStreamEvent(
         // `isBoardConflictFixLive` excludes so the pill hands over to the
         // louder "Stalled" chip rather than fighting it (T3O-9).
         stepConflictFix: isBoardConflictFixLive(event.payload.state),
+        ...checksFixShellField(event.payload.state),
         // Recovery lands on `running` or `stalled` — but a board-driven resume
         // (T3O-23) lands on `queued`, and this is the one delta that carries
         // both the parked chip it clears and the queue pill it raises.
@@ -1115,6 +1125,7 @@ export function boardShellStreamEvent(
         // — including the merge stage's unarmed re-entry conversation, which
         // carries `stepLabel: null` — clears it.
         stepConflictFix: isBoardConflictFixLive(event.payload.state),
+        ...checksFixShellField(event.payload.state),
         // A freshly-selected step is `pending`, not `queued` — it has not been
         // offered to the governor yet — so any badge from a previous run goes.
         queued: false,
@@ -1226,6 +1237,7 @@ export function boardShellStreamEvent(
         // A paused conflict fix hands the card face to the louder Paused chip
         // (`isBoardConflictFixLive` excludes it), so this always clears.
         stepConflictFix: isBoardConflictFixLive(event.payload.state),
+        ...checksFixShellField(event.payload.state),
         // A paused step held a slot and gave it back; it is parked, not waiting
         // in the queue. Pressing Resume is what makes it `queued`.
         queued: false,
@@ -1257,6 +1269,7 @@ export function boardShellStreamEvent(
         // A conflict fix that asks a question is still the same live fix
         // (T3O-9): the merge is still held, so the flag rides through unchanged.
         stepConflictFix: isBoardConflictFixLive(event.payload.state),
+        ...checksFixShellField(event.payload.state),
         // A step parked on a human is admitted and holding its slot, not queued.
         queued: false,
       });

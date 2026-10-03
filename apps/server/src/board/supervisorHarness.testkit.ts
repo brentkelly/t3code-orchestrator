@@ -34,9 +34,11 @@ import {
   type BoardCardStepState,
   DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
   DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
+  DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
   type BoardStepExecution,
   type BoardCardPullRequest,
   type BoardStageExecutionMerge,
+  type BoardStageExecutionReview,
   type VcsStatusChangeRequest,
   type BoardCardWorktree,
   type BoardSettings,
@@ -395,6 +397,9 @@ export const settingsWith = (input: {
       conflict prompt). Absent leaves it at the compiled-in defaults, which is
       what a board nobody has configured actually resolves to. */
   readonly merge?: Partial<BoardStageExecutionMerge>;
+  /** Overrides for the Code review stage's config (T3O-12: `draftPullRequests`).
+      Absent leaves it at the compiled-in defaults. */
+  readonly review?: Partial<BoardStageExecutionReview>;
   /** Whether a card reaching Done with a merged pull request has its worktree
       reclaimed there rather than at archive. Defaults to the shipped default
       (on), so a suite that says nothing exercises what users actually run. */
@@ -430,6 +435,14 @@ export const settingsWith = (input: {
             ...input.merge,
           },
         }),
+    ...(input.review === undefined
+      ? {}
+      : {
+          [BOARD_SEED_STAGE_IDS.review]: {
+            ...DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
+            ...input.review,
+          },
+        }),
   },
   concurrency: {
     perInstance: input.perInstance ?? {},
@@ -460,6 +473,8 @@ export type Harness = {
   readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every structured refusal probe the reactor made (T3O-38, D6). */
   readonly mergeStateProbes: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
+  /** Every mark-ready request the reactor made (T3O-12), in order. */
+  readonly markReadyCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** T3o (T3O-48): every pull request lookup, with whether it was FORCED — so a
       test can tell a human's "Check again" from the automatic cached refresh. */
   readonly pullRequestLookups: Effect.Effect<ReadonlyArray<{ readonly forced: boolean }>>;
@@ -579,6 +594,14 @@ export function withGovernor(
         makes the probe FAIL, which is what an unsupported provider does and
         what the reactor must read as "unclassifiable" — the plain ladder. */
     readonly mergeState?: BoardMergeState;
+    /** What a mark-ready request answers (T3O-12), per CALL and consumed in
+        order; once the script runs out the last entry repeats. A string is a
+        failure with that detail. Absent answers `not-draft` — the gateway's
+        live read found nothing to ready — so every fixture written before
+        this option existed sees no change. */
+    readonly markReadyOutcomes?: ReadonlyArray<
+      "readied" | "not-draft" | { readonly failWith: string }
+    >;
     /** What git itself finds when asked whether the card's branch conflicts
         with its base (T3O-8) — which the reactor asks only when the probe above
         failed. `unresolvable` is `merge-tree` exiting 1 WITHOUT having merged,
@@ -1044,7 +1067,24 @@ export function withGovernor(
     const mergeStateProbes = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     // T3o (T3O-48): see `pullRequestLookups`.
     const pullRequestLookups = yield* Ref.make<ReadonlyArray<{ readonly forced: boolean }>>([]);
+    const markReadyCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     const pullRequestStub = BoardPullRequestGateway.of({
+      markReady: (request) =>
+        Ref.updateAndGet(markReadyCalls, (calls) => [...calls, { number: request.number }]).pipe(
+          Effect.flatMap((calls) => {
+            const script = input.markReadyOutcomes ?? [];
+            const scripted = script[Math.min(calls.length, script.length) - 1] ?? "not-draft";
+            return typeof scripted === "string"
+              ? Effect.succeed(scripted)
+              : Effect.fail(
+                  new BoardPullRequestGatewayError({
+                    operation: "markReady",
+                    detail: scripted.failWith,
+                    refusal: "unavailable",
+                  }),
+                );
+          }),
+        ),
       find: (request) =>
         Ref.update(pullRequestLookups, (lookups) => [
           ...lookups,
@@ -1193,6 +1233,7 @@ export function withGovernor(
           decided: Ref.get(decided),
           mergeAttempts: Ref.get(mergeAttempts),
           mergeStateProbes: Ref.get(mergeStateProbes),
+          markReadyCalls: Ref.get(markReadyCalls),
           pullRequestLookups: Ref.get(pullRequestLookups),
           removedWorktrees: Ref.get(removedWorktrees),
           settledThreads: Ref.get(settled),

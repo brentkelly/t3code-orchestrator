@@ -68,6 +68,7 @@ const makeTestLayer = (prefix: string) =>
 const createdAt = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-board");
 const cardId = BoardCardId.make("card-meta");
+const draftCardId = BoardCardId.make("card-meta-draft");
 
 const createProject = {
   type: "project.create",
@@ -328,6 +329,57 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       assert.strictEqual(cleared?.hasPr, false);
       assert.strictEqual("prNumber" in (cleared ?? {}), false);
     }),
+  );
+
+  it.effect(
+    "carries the Draft tag on the SNAPSHOT and the delta alike, and drops it (T3O-12)",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        yield* engine.dispatch(createProject);
+        yield* engine.dispatch({
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-draft-card"),
+          cardId: draftCardId,
+          projectId,
+          title: "Card with a draft pull request",
+          orderKey: "n",
+          createdAt,
+        });
+        const shellCard = Effect.map(snapshotQuery.getShellSnapshot(), (snapshot) =>
+          cardsOf(snapshot).find((entry) => entry.cardId === draftCardId),
+        );
+        const deltaCard = Effect.map(snapshotQuery.getCommandReadModel(), (model) => {
+          const aggregate = model.board?.cards.find((entry) => entry.id === draftCardId);
+          return aggregate === undefined ? undefined : boardCardShellFromCard(aggregate);
+        });
+        const record = (suffix: string, isDraft: boolean) =>
+          engine.dispatch({
+            type: "board.card.record-pull-request",
+            commandId: CommandId.make(`cmd-record-draft-${suffix}`),
+            cardId: draftCardId,
+            pullRequest: {
+              number: 412,
+              url: "https://github.com/acme/repo/pull/412",
+              state: "open",
+              headBranch: "board/card-draft",
+              baseRef: "main",
+              ...(isDraft ? { isDraft: true } : {}),
+              checkedAt: createdAt,
+            },
+            createdAt,
+          });
+
+        yield* record("draft", true);
+        assert.strictEqual((yield* shellCard)?.prDraft, true);
+        assert.strictEqual((yield* deltaCard)?.prDraft, true);
+
+        // Marked ready: the tag goes, on both producers, and costs no bytes.
+        yield* record("ready", false);
+        assert.isFalse("prDraft" in ((yield* shellCard) ?? {}));
+        assert.isFalse("prDraft" in ((yield* deltaCard) ?? {}));
+      }),
   );
 
   it.effect("keeps the badge on a RETIRED pull request across a round boundary", () =>
