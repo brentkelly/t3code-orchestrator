@@ -752,7 +752,7 @@ describe("merging a card's pull request", () => {
             }));
             yield* h.pumpDomain(mergeStepCompleted(card.id, 2));
             // The re-attempt failed the same way: no second automatic fix, and
-            // the card says why.
+            // the ladder stops the card saying why — armed or not.
             assert.equal(yield* startedFixes, 1);
             const notes = (yield* h.commands).flatMap((command) =>
               command.type === "board.card.record-note" && command.kind === "card-merge-refused"
@@ -760,7 +760,7 @@ describe("merging a card's pull request", () => {
                 : [],
             );
             assert.equal(notes.length, 1);
-            assert.include(notes[0], "CI fix pushed, but the merge was refused");
+            assert.include(notes[0], "Held the merge. Its checks are failing.");
 
             // A human's click is a new decision, and buys one more fix.
             yield* Ref.update(h.model, (model) => ({

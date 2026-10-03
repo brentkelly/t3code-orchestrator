@@ -2782,8 +2782,10 @@ const make = Effect.gen(function* () {
    */
   const mergeCardPullRequestByHand = Effect.fn("board-supervisor-mergeCardPullRequestByHand")(
     function* (cardId: BoardCardId) {
-      // A human's click buys one more automatic CI fix (T3O-12).
+      // A human's click buys one more automatic CI fix (T3O-12), and is a
+      // fresh decision: an unarmed card's wait on its last fix's checks ends.
       checksFixSpent.delete(String(cardId));
+      mergeAwaitingChecks.delete(String(cardId));
       const outcome = yield* mergeCardPullRequest(cardId);
       const card = yield* readCard(cardId);
       if (card !== null && (card.autoMergeHold !== null || (yield* cardAutoMergeArmed(card)))) {
@@ -4741,6 +4743,21 @@ const make = Effect.gen(function* () {
    */
   const checksFixSpent = new Set<string>();
 
+  /**
+   * UNARMED cards whose merge is waiting on the checks their own CI fix
+   * re-ran (T3O-12).
+   *
+   * A human's Merge click started that fix, so the merge it re-attempts is
+   * still the one the human asked for — but the fix's push re-ran CI, so the
+   * re-attempt meets pending checks. An armed card waits on its retry ladder;
+   * this set lets an unarmed card ride the same ladder for that one wait,
+   * rather than stopping with a refusal the moment CI starts. Dropped when
+   * the card leaves the merge stage or a human clicks Merge again. In-memory
+   * like the arm: after a restart the sweep clears the hold and the card waits
+   * for a click, which is never a merge nobody asked for.
+   */
+  const mergeAwaitingChecks = new Set<string>();
+
   /** Drop a card's pending merge. Called from every path that ends a conflict
       fix WITHOUT the success that would complete the merge — settlement,
       recovery escalation and spawn failure — because each of those hands the
@@ -4786,7 +4803,12 @@ const make = Effect.gen(function* () {
         type: "board.card.record-note",
         commandId: yield* commandId("pull-request-ready"),
         cardId: card.id,
-        kind: result === "readied" ? "card-pull-request-ready" : "card-merge-refused",
+        // A failure is a merge refusal only on the merge path. On arrival no
+        // merge was attempted and the next one retries, so it stays neutral.
+        kind:
+          result === "readied" || !options.forMerge
+            ? "card-pull-request-ready"
+            : "card-merge-refused",
         detail:
           result === "readied"
             ? `PR #${pullRequest.number} marked ready; CI started.`
@@ -5844,6 +5866,9 @@ const make = Effect.gen(function* () {
           // A CI fix's re-attempt may still start a conflict fix — the base can
           // have moved while it ran — so only a conflict fix passes the bound.
           // The CI fix's own bound is `checksFixSpent`.
+          // An unarmed card's CI fix hands its merge to the ladder, which
+          // waits out the checks the fix's push just re-ran.
+          if (finishedFix === "checks") mergeAwaitingChecks.add(String(card.id));
           const outcome = yield* mergeCardPullRequest(card.id, finishedFix !== "checks");
           // The hold follows the same rules here as anywhere (T3O-38, D8): a
           // merge that lands clears it, and a conflict fix that resolved into
@@ -5851,19 +5876,21 @@ const make = Effect.gen(function* () {
           // card that has a ladder to place it on. A re-conflict comes back as
           // `refused` (this call passes `viaConflictFix`), so it is a HARD
           // stop rather than a rung: the fix already had its one attempt.
-          const armed = yield* cardAutoMergeArmed(card);
+          const armed =
+            mergeAwaitingChecks.has(String(card.id)) || (yield* cardAutoMergeArmed(card));
           if (armed) {
             yield* recordAutoMergeOutcome(card.id, outcome, { resetLadder: false });
           }
           // A fix that handed over to ANOTHER fix (a CI fix whose re-attempt
           // hit a conflict) has nothing to report yet: that fix will.
-          // And an armed card's CI fix lands on PENDING checks by design — its
-          // push re-ran CI — so the hold pill's wait says it, not a red row.
+          // And a CI fix's re-attempt always went to the ladder above (its
+          // push re-ran CI, so it lands on PENDING checks by design): the hold
+          // pill tells that wait, and the ladder writes the row if it stops.
           if (
             outcome.outcome !== "merged" &&
             outcome.outcome !== "conflict" &&
             outcome.outcome !== "checks-fix" &&
-            !(armed && finishedFix === "checks")
+            finishedFix !== "checks"
           ) {
             yield* dispatch({
               type: "board.card.record-note",
@@ -5875,13 +5902,9 @@ const make = Effect.gen(function* () {
               // another conflict step, so a second conflict comes back as
               // `refused` carrying the forge's text.
               detail:
-                finishedFix === "checks"
-                  ? outcome.outcome === "refused"
-                    ? `CI fix pushed, but the merge was refused: ${outcome.detail}`
-                    : "CI fix pushed, but the pull request could no longer be merged."
-                  : outcome.outcome === "refused"
-                    ? `Conflicts resolved, but the merge was refused: ${outcome.detail}`
-                    : "Conflicts resolved, but the pull request could no longer be merged.",
+                outcome.outcome === "refused"
+                  ? `Conflicts resolved, but the merge was refused: ${outcome.detail}`
+                  : "Conflicts resolved, but the pull request could no longer be merged.",
               createdAt: yield* nowIso,
             });
           }
@@ -6464,6 +6487,7 @@ const make = Effect.gen(function* () {
       if (hold === null && !deferred) continue;
       if (card.archivedAt !== null || card.stage !== mergeStage.stageId) {
         autoMergeDeferredUntilUnblocked.delete(String(card.id));
+        mergeAwaitingChecks.delete(String(card.id));
         continue;
       }
       // A hold on a card that is no longer ARMED is a label about automation
@@ -6473,7 +6497,11 @@ const make = Effect.gen(function* () {
       // lands — for an exhausted hold too, exactly as the per-card disarm
       // clears one. Checked BEFORE the rung is due, or the stale pill would
       // sit there for up to the forty minutes of the last rung.
-      if (!boardCardAutoMergeArmed({ board, card, boardWide })) {
+      // An unarmed card waiting on its CI fix's checks rides the ladder too.
+      if (
+        !boardCardAutoMergeArmed({ board, card, boardWide }) &&
+        !mergeAwaitingChecks.has(String(card.id))
+      ) {
         autoMergeDeferredUntilUnblocked.delete(String(card.id));
         yield* clearAutoMergeHold(card);
         continue;
@@ -7153,12 +7181,14 @@ const make = Effect.gen(function* () {
     // ready and CI starts (T3O-12) — however the card got here: the loop
     // converging, a human drag, a card moved on past the round cap. BEFORE the
     // kickoff and the auto-merge below, so the merge never meets a draft. A
-    // fresh arrival also buys the card a fresh automatic CI fix.
+    // fresh arrival also buys the card a fresh automatic CI fix, and ends any
+    // wait a previous visit's CI fix left behind.
     if (
       boardStageWithRole(board, "merge")?.stageId === event.payload.toStage &&
       event.payload.fromStage !== event.payload.toStage
     ) {
       checksFixSpent.delete(String(card.id));
+      mergeAwaitingChecks.delete(String(card.id));
       yield* markCardPullRequestReady((yield* readCard(card.id)) ?? card, { forMerge: false });
     }
 

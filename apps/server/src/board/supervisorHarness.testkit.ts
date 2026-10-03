@@ -594,6 +594,10 @@ export function withGovernor(
         makes the probe FAIL, which is what an unsupported provider does and
         what the reactor must read as "unclassifiable" — the plain ladder. */
     readonly mergeState?: BoardMergeState;
+    /** T3o (T3O-12): the same answer, read afresh on every probe, for a test
+        whose checks CHANGE between two probes — a failed check a CI fix's
+        push turned into a pending one. Takes precedence over `mergeState`. */
+    readonly mergeStateOf?: () => BoardMergeState;
     /** What a mark-ready request answers (T3O-12), per CALL and consumed in
         order; once the script runs out the last entry repeats. A string is a
         failure with that detail. Absent answers `not-draft` — the gateway's
@@ -1126,16 +1130,17 @@ export function withGovernor(
         ),
       mergeState: (request) =>
         Ref.update(mergeStateProbes, (probes) => [...probes, { number: request.number }]).pipe(
-          Effect.andThen(
-            input.mergeState === undefined
+          Effect.andThen(() => {
+            const configured = input.mergeStateOf?.() ?? input.mergeState;
+            return configured === undefined
               ? Effect.fail(
                   new BoardPullRequestGatewayError({
                     operation: "mergeState",
                     detail: "No provider is registered.",
                   }),
                 )
-              : Effect.succeed(input.mergeState),
-          ),
+              : Effect.succeed(configured);
+          }),
         ),
     });
 

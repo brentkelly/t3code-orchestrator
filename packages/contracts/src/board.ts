@@ -4375,7 +4375,9 @@ export const BoardCardNoteKind = Schema.Literals([
       (T3O-39, D10) — the only record of WHY the card walked back to Code
       review, and of which round it bought. */
   "card-review-round-requested",
-  /** A draft pull request marked ready for review (T3O-12). */
+  /** A draft pull request marked ready for review (T3O-12) — or, on arrival
+      at the merge stage, an attempt to that failed and is left to the next
+      merge attempt, which no merge refusal has happened yet to explain. */
   "card-pull-request-ready",
 ]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;

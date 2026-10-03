@@ -443,6 +443,50 @@ it.effect("a failed required check starts ONE CI fix, then stops the ladder (T3O
   ),
 );
 
+it.effect("an UNARMED card's CI fix waits for the checks its push re-ran, then merges", () => {
+  // The fix's push turns the failed check into a pending one.
+  let checks = probe({ passed: 3, failed: 1 });
+  return withGovernor(
+    {
+      ...setup({
+        cards: [cardAtMerge()],
+        // Refused for the failed check, refused again on the pending re-run,
+        // then accepted once CI passes.
+        mergeOutcomes: ["Required status check 'test' is failing.", "Checks pending.", null],
+      }),
+      mergeStateOf: () => checks,
+      initialShells: new Map([["thread-ci", { id: "thread-ci" } as never]]),
+    },
+    (h) =>
+      Effect.gen(function* () {
+        // A human clicks Merge on a card nobody armed.
+        assert.strictEqual(
+          (yield* h.reactor.mergePullRequest(BoardCardId.make("card-one"))).outcome,
+          "checks-fix",
+        );
+        yield* Ref.update(h.model, (model) => ({
+          ...model,
+          board: { ...(model.board ?? EMPTY_BOARD_STATE), stepStates: [runningChecksFix()] },
+        }));
+        checks = probe({ passed: 3, pending: 1 });
+        yield* h.pumpDomain(checksFixCompleted(2));
+        assert.strictEqual((yield* h.mergeAttempts).length, 2);
+        // Not a refusal the human has to act on: the merge they asked for is
+        // waiting on CI, exactly as an armed card's would.
+        assert.strictEqual(mergeRefusedNotes(yield* h.commands).length, 0);
+        const hold = holdOf(yield* h.board);
+        assert.strictEqual(hold?.classification, "soft");
+        assert.notStrictEqual(hold?.retryAt, null);
+
+        yield* TestClock.adjust(RUNG_ONE);
+        yield* h.reactor.drain;
+        assert.strictEqual((yield* h.mergeAttempts).length, 3);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+        assert.strictEqual(holdOf(yield* h.board), null);
+      }),
+  );
+});
+
 it.effect("stops on a block with every check green — that is a decision, not a wait", () =>
   withGovernor(
     setup({

@@ -170,17 +170,33 @@ it.effect("a failed ready is noted, and the next merge attempt tries it again fi
     (h) =>
       Effect.gen(function* () {
         yield* h.pumpDomain(cardMoved(cardAt(MERGE), REVIEW, MERGE, 1));
-        const refused = notesOf(yield* h.commands, "card-merge-refused");
-        assert.strictEqual(refused.length, 1);
-        assert.include(refused[0], "gh: rate limited");
-        assert.deepStrictEqual(notesOf(yield* h.commands, "card-pull-request-ready"), []);
+        // No merge was attempted on arrival, so the failure is not a merge
+        // refusal: it is a neutral row naming the forge's reason.
+        assert.deepStrictEqual(notesOf(yield* h.commands, "card-merge-refused"), []);
+        const deferred = notesOf(yield* h.commands, "card-pull-request-ready");
+        assert.strictEqual(deferred.length, 1);
+        assert.include(deferred[0], "gh: rate limited");
 
         // The link still says draft, so the Merge click readies it before
         // merging — a transient failure costs one attempt, not the card.
         yield* h.reactor.mergePullRequest(cardAt(MERGE).id);
         assert.strictEqual((yield* h.markReadyCalls).length, 2);
-        assert.strictEqual(notesOf(yield* h.commands, "card-pull-request-ready").length, 1);
+        assert.deepStrictEqual(notesOf(yield* h.commands, "card-pull-request-ready").slice(1), [
+          "PR #412 marked ready; CI started.",
+        ]);
         assert.strictEqual((yield* h.mergeAttempts).length, 1);
+      }),
+  ),
+);
+
+it.effect("a failed ready on the merge path is recorded as a merge refusal", () =>
+  withGovernor(
+    setup({ drafts: true, markReadyOutcomes: [{ failWith: "gh: rate limited" }] }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.mergePullRequest(cardAt(MERGE).id);
+        const refused = notesOf(yield* h.commands, "card-merge-refused");
+        assert.isTrue(refused.some((detail) => detail.includes("gh: rate limited")));
       }),
   ),
 );
