@@ -791,6 +791,36 @@ describe("merging a card's pull request", () => {
     ),
   );
 
+  it.effect(
+    "never starts a CI fix when the forge pins the refusal on a draft or a branch behind its base",
+    () =>
+      Effect.forEach(
+        ["draft", "behind"] as const,
+        (blockedReason) =>
+          withGovernor(
+            {
+              board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+              settings: settings(),
+              pullRequest: openPr,
+              mergeFailure: "the host refused",
+              // A pushed fix clears neither blocker, so the one CI fix must not
+              // be spent on it.
+              mergeState: refusal({ blockedReason, failed: 1 }),
+            },
+            (h) =>
+              Effect.gen(function* () {
+                const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+                assert.equal(result.outcome, "refused", blockedReason);
+                const started = (yield* h.commands).filter(
+                  (command) => command.type === "board.card.start-stage-thread",
+                );
+                assert.equal(started.length, 0, blockedReason);
+              }),
+          ),
+        { discard: true },
+      ),
+  );
+
   it.effect("does not claim a conflict fix that never started", () =>
     Effect.gen(function* () {
       // An archived card is the reachable version of "the kickoff was

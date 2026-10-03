@@ -2179,9 +2179,9 @@ const make = Effect.gen(function* () {
     // It re-attempts the MERGE rather than assuming a conflict, because the
     // arm can be missing for two very different reasons and only the forge can
     // tell them apart: a conflict fix that escalated (`recoverStep` disarms) or
-    // a server restart (the set is in-memory) both leave a real conflict
-    // unarmed, while a merge refused for failing checks was never armed at all.
-    // Running the conflict prompt blind on that second case spawns an agent to
+    // a server restart (the set is in-memory) both leave a real conflict or
+    // CI fix unarmed, while a merge refused for a policy block was never armed
+    // at all. Running a fix prompt blind on that last case spawns an agent to
     // "fix" a branch with nothing wrong with it — the asymmetric mistake
     // `probeMergeState` exists to avoid. Asking the forge again gets a
     // conflict re-armed and its step started unattended through the ordinary
@@ -5067,10 +5067,13 @@ const make = Effect.gen(function* () {
       // CI result says nothing useful. ONE automatic fix until a human clicks
       // Merge again (`checksFixSpent`); after that a failure is the ladder's
       // hard stop, "Merge needs you", exactly as before this existed. Checks
-      // the token could not read are never a failure to fix.
+      // the token could not read are never a failure to fix, and neither is
+      // a refusal the forge pinned on something else (a draft, a branch
+      // behind its base): a pushed fix cannot clear those, so it would spend
+      // the one fix and stop the card on the wrong reason.
       if (
         state !== null &&
-        state.blockedReason !== "conflict" &&
+        state.blockedReason === null &&
         !state.checksUnread &&
         state.checks.failed > 0 &&
         !checksFixSpent.has(String(fresh.id))

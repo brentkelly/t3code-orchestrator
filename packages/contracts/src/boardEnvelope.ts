@@ -292,7 +292,7 @@ export const BOARD_DRAFT_PULL_REQUEST_BUILD = `If you open this card's pull requ
 /** The line every later loop step carries while drafts are on (T3O-12): the
     fix commits the loop pushes must not start the repository's full CI. */
 export const BOARD_DRAFT_PULL_REQUEST_KEEP =
-  "The pull request is a draft; leave it as a draft — the board marks it ready.";
+  "If the pull request is a draft, leave it as a draft — the board marks it ready. If it is not a draft, do not convert it to one.";
 
 /** The draft text a review-loop step carries, or null when drafts are off.
     Only the review phase opens a pull request, so only it gets the open-as-
