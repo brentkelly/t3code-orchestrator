@@ -48,6 +48,7 @@ const conflicts: BoardConflictFixInfo = {
   tooltip: "The merge hit conflicts. A thread is resolving them — nothing is needed from you.",
   headline: "Resolving conflicts against t3o",
   detail: "The merge holds until the thread finishes.",
+  mergeDisabledReason: "Resolving conflicts…",
 };
 
 const notice = (input: Partial<Parameters<typeof boardCardNotice>[0]>) =>

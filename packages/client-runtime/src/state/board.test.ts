@@ -451,6 +451,43 @@ describe("board shell reducer", () => {
     expect(settled.cards?.[0]?.stepConflictFix).toBe(false);
   });
 
+  it("carries the CI-fix flag through a rename, and the settle drops the key (T3O-12)", () => {
+    const fixing = applyShellStreamEvent(
+      snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge })] }),
+      {
+        kind: "card-stalled",
+        sequence: 2,
+        cardId: BoardCardId.make("card-1"),
+        stalled: false,
+        stepRunning: true,
+        held: false,
+        stepAwaiting: null,
+        stepConflictFix: false,
+        stepChecksFix: true,
+        queued: false,
+      },
+    );
+    expect(fixing.cards?.[0]?.stepChecksFix).toBe(true);
+    const renamed = applyShellStreamEvent(fixing, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge, title: "Renamed" }),
+    });
+    expect(renamed.cards?.[0]?.stepChecksFix).toBe(true);
+    const settled = applyShellStreamEvent(renamed, {
+      kind: "card-stalled",
+      sequence: 4,
+      cardId: BoardCardId.make("card-1"),
+      stalled: false,
+      stepRunning: false,
+      held: true,
+      stepAwaiting: null,
+      stepConflictFix: false,
+      queued: false,
+    });
+    expect(settled.cards?.[0]?.stepChecksFix).toBeUndefined();
+  });
+
   it("carries the usage-limit stall slice through a drag, and the resume clears it (T3O-22)", () => {
     const parked = applyShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),

@@ -97,6 +97,9 @@ export interface BoardStagePrimaryActionContext {
       start by hand, which greyed the button out for a fix that did not exist;
       such a click now reaches the server, which refuses it by name. */
   readonly conflictFixLive?: boolean;
+  /** Why Merge is disabled while that fix runs ("Fixing CI…" for a CI fix,
+      T3O-12). Defaults to the conflict wording. */
+  readonly conflictFixReason?: string | null;
   /** Whether the card's step has SETTLED and left the card standing (the
       shell's `held`, ranked by `boardCardAttention`). The build role has no
       human forward gate while the pipeline is driving it — but once its step
@@ -196,7 +199,7 @@ export function boardStagePrimaryAction(
       label: context.pullRequestNumber == null ? "Merge" : `Merge PR #${context.pullRequestNumber}`,
       emphasised: true,
       disabled,
-      disabledReason: disabled ? "Resolving conflicts…" : null,
+      disabledReason: disabled ? (context.conflictFixReason ?? "Resolving conflicts…") : null,
     };
   }
   const next = boardNextStageId(board, stageId);

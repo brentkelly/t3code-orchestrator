@@ -21,6 +21,8 @@ export interface BoardConflictFixInfo {
   readonly headline: string;
   /** What it means for the user: that nothing is expected of them. */
   readonly detail: string;
+  /** Why the Merge button is disabled while the fix runs. */
+  readonly mergeDisabledReason: string;
 }
 
 /**
@@ -33,6 +35,10 @@ export interface BoardConflictFixInfo {
 export function boardConflictFix(input: {
   /** `BoardCardShell.stepConflictFix`: a live conflict fix, running or queued. */
   readonly live: boolean;
+  /** `BoardCardShell.stepChecksFix` (T3O-12): a live CI fix. The merge is held
+      the same way, so it wears the same amber pill and banner with its own
+      words. */
+  readonly checks?: boolean | undefined;
   /** Whether that fix is still waiting for an agent slot rather than running.
       Worth its own words: the card does get a queue pill while it holds,
       but that pill says "Queued #3" and nothing about a merge being held, so
@@ -41,6 +47,7 @@ export function boardConflictFix(input: {
   /** The pull request's base branch, when the surface knows it. */
   readonly baseRef?: string | null | undefined;
 }): BoardConflictFixInfo | null {
+  if (input.checks === true) return boardChecksFix(input.queued === true);
   if (!input.live) return null;
   const base = input.baseRef == null || input.baseRef === "" ? "the base branch" : input.baseRef;
   if (input.queued === true) {
@@ -55,6 +62,7 @@ export function boardConflictFix(input: {
       // override buttons — so repeating "it starts on its own when an agent
       // frees up" here would print the same sentence twice on one screen.
       detail: "The merge holds until an agent is free and the thread finishes.",
+      mergeDisabledReason: "Resolving conflicts…",
     };
   }
   return {
@@ -62,5 +70,28 @@ export function boardConflictFix(input: {
     tooltip: "The merge hit conflicts. A thread is resolving them — nothing is needed from you.",
     headline: `Resolving conflicts against ${base}`,
     detail: "The merge holds until the thread finishes.",
+    mergeDisabledReason: "Resolving conflicts…",
   };
+}
+
+/** The CI-fix story (T3O-12): the merge was refused for failing checks and an
+    agent is fixing them. */
+function boardChecksFix(queued: boolean): BoardConflictFixInfo {
+  return queued
+    ? {
+        label: "Fixing CI",
+        tooltip:
+          "The pull request's checks failed. An agent picks it up when one frees up — nothing is needed from you.",
+        headline: "Waiting for an agent to fix the failing checks",
+        detail: "The merge holds until an agent is free, the fix is pushed and CI passes.",
+        mergeDisabledReason: "Fixing CI…",
+      }
+    : {
+        label: "Fixing CI",
+        tooltip:
+          "The pull request's checks failed. A thread is fixing them — nothing is needed from you.",
+        headline: "Fixing the failing checks",
+        detail: "The merge holds until the fix is pushed and CI passes.",
+        mergeDisabledReason: "Fixing CI…",
+      };
 }

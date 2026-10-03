@@ -388,7 +388,11 @@ export function BoardCardContent({
   // false by then, and the guard just says so out loud.
   const conflictFix = summary.muted
     ? null
-    : boardConflictFix({ live: card.stepConflictFix, queued: card.queued });
+    : boardConflictFix({
+        live: card.stepConflictFix,
+        checks: card.stepChecksFix,
+        queued: card.queued,
+      });
   // "This card's merge was refused and the board is retrying" (T3O-38, D13).
   const autoMergeHold = boardAutoMergePill({
     heldSince: card.autoMergeHeldSince,

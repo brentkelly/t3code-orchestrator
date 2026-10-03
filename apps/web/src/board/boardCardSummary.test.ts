@@ -195,6 +195,7 @@ describe("boardCardMeta", () => {
       threadCount: 1,
       planCount: 3,
       prNumber: 88,
+      prDraft: false,
       briefHasImage: true,
       empty: false,
     });
@@ -222,5 +223,11 @@ describe("boardCardMeta", () => {
     expect(meta.planCount).toBe(0);
     expect(meta.briefHasImage).toBe(false);
     expect(meta.empty).toBe(true);
+  });
+
+  it("tags an open draft pull request, and nothing without a pull request (T3O-12)", () => {
+    expect(boardCardMeta(shell("review", { prNumber: 412, prDraft: true }), 0).prDraft).toBe(true);
+    expect(boardCardMeta(shell("review", { prNumber: 412 }), 0).prDraft).toBe(false);
+    expect(boardCardMeta(shell("review", { prDraft: true }), 0).prDraft).toBe(false);
   });
 });

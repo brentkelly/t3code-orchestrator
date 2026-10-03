@@ -55,6 +55,9 @@ import {
   isBoardCardWorking,
   isBoardConflictFixLive,
   isBoardChecksFixLive,
+  BoardCardPullRequest,
+  boardCardPullRequestIsOpenDraft,
+  boardCardPullRequestsEqual,
   boardSelectedStepLabel,
   reviewStepLabel,
   BOARD_REVIEW_PHASE_IDS,
@@ -2056,6 +2059,35 @@ describe("stamping a selected step's label (boardSelectedStepLabel, T3O-9)", () 
         expect(reviewStepLabel(phase, round)).not.toBe(BOARD_CHECKS_FIX_STEP_LABEL);
       }
     }
+  });
+});
+
+describe("a pull request link's draft flag (T3O-12)", () => {
+  const link = {
+    number: 412,
+    url: "https://example.test/pull/412",
+    state: "open",
+    headBranch: "board/t3o-12",
+    baseRef: "t3o",
+    checkedAt: "2026-10-03T00:00:00.000Z",
+  } as const;
+
+  it("decodes a link recorded before the flag existed as not a draft", () => {
+    const decoded = Schema.decodeUnknownSync(BoardCardPullRequest)(link);
+    expect(boardCardPullRequestIsOpenDraft(decoded)).toBe(false);
+  });
+
+  it("treats a draft flip as a change worth recording, and ready-vs-absent as none", () => {
+    expect(boardCardPullRequestsEqual(link, { ...link, isDraft: true })).toBe(false);
+    expect(boardCardPullRequestsEqual(link, { ...link, isDraft: false })).toBe(true);
+  });
+
+  it("tags only an OPEN draft", () => {
+    expect(boardCardPullRequestIsOpenDraft({ ...link, isDraft: true })).toBe(true);
+    expect(boardCardPullRequestIsOpenDraft({ ...link, state: "closed", isDraft: true })).toBe(
+      false,
+    );
+    expect(boardCardPullRequestIsOpenDraft(null)).toBe(false);
   });
 });
 

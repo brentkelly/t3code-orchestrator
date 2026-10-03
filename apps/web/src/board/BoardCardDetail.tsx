@@ -302,6 +302,7 @@ export function BoardCardDetail({
     if (shell === undefined) return null;
     return boardConflictFix({
       live: shell.stepConflictFix,
+      checks: shell.stepChecksFix,
       queued: shell.queued,
       // Only the modal names the base branch: the shell carries none, and it
       // should not grow one for a tooltip.
