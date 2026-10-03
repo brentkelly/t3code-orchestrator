@@ -3435,6 +3435,27 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // request event the supervisor reactor reacts to. The reactor decides
       // first-entry-vs-re-entry and whether the stage auto-executes.
       const card = yield* requireActiveBoardCard({ board, command });
+      // The dependency gate (D11) the move and create paths apply, here too: a
+      // restart is otherwise the one way to spawn a thread for a card whose
+      // dependencies are unmet. Derived live rather than read off `blocked`, as
+      // the move and create gates are. The merge role is exempt — its only run
+      // is the conflict fix the supervisor dispatches through this command, for
+      // a merge a human already initiated.
+      const stage = boardStageById(board, card.stage);
+      const mergeRole = stage !== null && effectiveBoardStageRole(stage) === "merge";
+      if (!mergeRole && isBoardStageAtOrAfterBuild(board, card.stage)) {
+        const unmet = unmetBoardCardDependencies({
+          board,
+          dependsOn: card.dependsOn,
+          cards: board.cards,
+        });
+        if (unmet.length > 0) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' cannot start a thread in '${card.stage}' with unmet dependencies: ${unmet.join(", ")}.`,
+          );
+        }
+      }
       return {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,

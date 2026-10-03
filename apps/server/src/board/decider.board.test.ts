@@ -551,6 +551,52 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  it.effect("rejects an on-demand thread for a blocked card from the build role on (D11)", () =>
+    Effect.gen(function* () {
+      const dependency = makeCard({
+        id: "card-dep",
+        key: "CARD-7",
+        title: "Ship the decider",
+        stage: "building",
+      });
+      const blockedIn = (stage: string): BoardState => ({
+        cards: [
+          dependency,
+          makeCard({
+            id: "card-1",
+            key: "CARD-9",
+            stage,
+            blocked: true,
+            dependsOn: [BoardCardId.make("card-dep")],
+          }),
+        ],
+        nextCardNumberByProject: {},
+      });
+      const startStageThread: BoardCommand = {
+        type: "board.card.start-stage-thread",
+        commandId: CommandId.make("cmd-start-stage-thread"),
+        cardId: BoardCardId.make("card-1"),
+        createdAt: NOW,
+      };
+
+      const failure = yield* decideFail(
+        startStageThread,
+        makeReadModel({ board: blockedIn("building") }),
+      );
+      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.include(String(failure), "unmet dependencies: card-dep");
+
+      // Before the build role unmet dependencies block nothing, so a planning
+      // restart still lands; and the merge role is exempt, because the
+      // supervisor's conflict fix for a merge a human initiated rides this
+      // command.
+      for (const stage of ["planning", "merge"]) {
+        const allowed = yield* decide(startStageThread, makeReadModel({ board: blockedIn(stage) }));
+        assert.strictEqual(allowed.type, "board.card-stage-thread-requested");
+      }
+    }),
+  );
+
   // ── Dependency cycles ────────────────────────────────────────────────
 
   // ── Per-card review-loop overrides (t3o-22, D3/D5) ───────────────────
