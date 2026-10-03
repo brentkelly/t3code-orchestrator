@@ -758,11 +758,12 @@ export function BoardCardDetail({
   const reviewPhaseRuntimeMode = isBoardReviewStageExecution(reviewExecution)
     ? effectiveBoardRuntimeMode(reviewExecution.phases.review.runtimeMode, "build")
     : undefined;
+  const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
   const unmetDependencyKeys = dependencies
     .filter(
       (dependency) =>
         !dependency.known ||
-        (!dependency.archived && dependency.stage !== BOARD_SEED_STAGE_IDS.done),
+        (!dependency.archived && (doneStageId === null || dependency.stage !== doneStageId)),
     )
     .map((dependency) => dependency.key);
   const restartBlocked =
@@ -798,7 +799,6 @@ export function BoardCardDetail({
   const stepPaused = stepPausedByHuman ? { stageLabel: boardStageLabel(stages, card.stage) } : null;
   /** The kept-worktree banner (T3O-52, D5): the card is finished — archived, or
       in Done with `reclaimWorktreeOnDone` on — and still holds its worktree. */
-  const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
   const worktreeKept =
     card.worktree !== null &&
     boardCardWorktreeKept({
