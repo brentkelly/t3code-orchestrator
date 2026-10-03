@@ -1,0 +1,943 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <meta name="design_doc_mode" content="canvas" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+          href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap"
+          rel="stylesheet"
+        />
+        <style>
+          :root {
+            --bg: #fcfcfc;
+            --fg: #27272a;
+            --card: #ffffff;
+            --popover: #ffffff;
+            --muted: #fafafa;
+            --muted-fg: #71717a;
+            --border: #e4e4e7;
+            --input: #d4d4d8;
+            --column-bg: color-mix(in srgb, var(--fg) 4.5%, transparent);
+            --info: #3b82f6;
+            --info-fg: #1d4ed8;
+            --attention: #8b5cf6;
+            --attention-fg: #6d28d9;
+            --success: #10b981;
+            --success-fg: #047857;
+            --shadow-xs: 0 1px 2px rgb(0 0 0 / 5%);
+            --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            --font-mono: "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, Menlo, monospace;
+          }
+          * {
+            box-sizing: border-box;
+          }
+          body {
+            margin: 0;
+            font-family: var(--font-sans);
+            background: var(--bg);
+            color: var(--fg);
+            -webkit-font-smoothing: antialiased;
+          }
+          a {
+            color: var(--info-fg);
+            text-decoration: none;
+          }
+          a:hover {
+            text-decoration: underline;
+          }
+          @keyframes t3pulse {
+            0%,
+            100% {
+              opacity: 1;
+            }
+            50% {
+              opacity: 0.35;
+            }
+          }
+        </style>
+      </helmet>
+
+      <section style="padding: 34px 40px 60px; display: flex; flex-direction: column; gap: 24px">
+        <div style="display: flex; flex-direction: column; gap: 10px; max-width: 1080px">
+          <div style="display: flex; align-items: baseline; gap: 10px">
+            <span
+              style="
+                font: 600 11px var(--font-mono);
+                color: var(--muted-fg);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 2px 7px;
+              "
+              >TURN 3</span
+            >
+            <h1 style="margin: 0; font: 600 20px var(--font-sans)">
+              Question progress during planning
+            </h1>
+          </div>
+          <p
+            style="
+              margin: 0;
+              max-width: 720px;
+              font: 400 13.5px/1.65 var(--font-sans);
+              color: var(--muted-fg);
+              text-wrap: pretty;
+            "
+          >
+            The agent reports "Question 3 of about 14 (2 answered)". The total is an estimate and
+            moves, so every option treats the remaining part as soft: a tilde in the label and a
+            lighter tail. Answered is solid violet, the open question is violet while it waits on
+            you and blue while the agent drafts the next one. Use the controls to step through.
+          </p>
+          <div
+            style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px"
+          >
+            <button
+              type="button"
+              onClick="{{ answer }}"
+              style="
+                display: inline-flex;
+                align-items: center;
+                height: 28px;
+                padding: 0 11px;
+                border: 1px solid var(--input);
+                border-radius: 8px;
+                background: var(--popover);
+                color: var(--fg);
+                font: 500 12px var(--font-sans);
+                box-shadow: var(--shadow-xs);
+                cursor: pointer;
+              "
+            >
+              {{ answerLabel }}
+            </button>
+            <button
+              type="button"
+              onClick="{{ reset }}"
+              style="
+                display: inline-flex;
+                align-items: center;
+                height: 28px;
+                padding: 0 11px;
+                border: 1px solid transparent;
+                border-radius: 8px;
+                background: transparent;
+                color: var(--muted-fg);
+                font: 500 12px var(--font-sans);
+                cursor: pointer;
+              "
+            >
+              Reset
+            </button>
+            <span style="font: 400 11.5px var(--font-mono); color: var(--muted-fg)"
+              >{{ longLabel }}</span
+            >
+          </div>
+        </div>
+
+        <div style="display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start">
+          <div
+            id="3a"
+            style="
+              display: flex;
+              flex-direction: column;
+              gap: 12px;
+              width: 360px;
+              padding: 16px;
+              border: 1px solid var(--border);
+              border-radius: 16px;
+              background: var(--muted);
+            "
+          >
+            <div style="display: flex; align-items: center; gap: 8px">
+              <span
+                style="
+                  font: 600 11px var(--font-mono);
+                  color: var(--info-fg);
+                  border: 1px solid color-mix(in srgb, var(--info) 40%, transparent);
+                  border-radius: 6px;
+                  padding: 2px 7px;
+                "
+                >3a</span
+              >
+              <span style="font: 600 13.5px var(--font-sans)">Top hairline</span>
+            </div>
+            <p
+              style="
+                margin: 0;
+                font: 400 12px/1.55 var(--font-sans);
+                color: var(--muted-fg);
+                text-wrap: pretty;
+              "
+            >
+              A 3px bar along the card's top edge, count in the meta row. Adds no height. Same bar
+              sits under the tab bar in the thread.
+            </p>
+
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                padding: 10px;
+                border-radius: 12px;
+                background: var(--column-bg);
+              "
+            >
+              <span
+                style="
+                  font: 600 10.5px var(--font-mono);
+                  letter-spacing: 0.04em;
+                  color: var(--muted-fg);
+                "
+                >BOARD · PLANNING</span
+              >
+              <article
+                style="
+                  position: relative;
+                  overflow: hidden;
+                  border: 1px solid var(--border);
+                  border-radius: 10px;
+                  background: var(--card);
+                  padding: 12px 11px 10px;
+                  box-shadow: var(--shadow-xs);
+                  cursor: grab;
+                "
+              >
+                <div
+                  style="
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 3px;
+                    display: flex;
+                    gap: 1px;
+                  "
+                >
+                  <span style="{{ barDone }}"></span><span style="{{ barCur }}"></span
+                  ><span style="{{ barRest }}"></span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px">
+                  <span
+                    style="
+                      display: inline-flex;
+                      align-items: center;
+                      height: 17px;
+                      padding: 0 6px;
+                      border-radius: 5px;
+                      font: 600 10px var(--font-mono);
+                      letter-spacing: 0.02em;
+                      background: color-mix(in srgb, #8b5cf6 14%, transparent);
+                      color: #6d28d9;
+                    "
+                    >T3-201</span
+                  >
+                  <sc-if value="{{ isWaiting }}" hint-placeholder-val="{{ true }}">
+                    <span
+                      style="
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 3px;
+                        font: 500 10.5px var(--font-sans);
+                        color: var(--attention-fg);
+                      "
+                    >
+                      <svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M12 8v5"></path>
+                        <path d="M12 17h.01"></path>
+                        <circle cx="12" cy="12" r="9"></circle>
+                      </svg>
+                      Input needed
+                    </span>
+                  </sc-if>
+                  <sc-if value="{{ isWorking }}" hint-placeholder-val="{{ false }}">
+                    <span
+                      title="Thread running"
+                      style="
+                        width: 8px;
+                        height: 8px;
+                        flex: none;
+                        border-radius: 99px;
+                        background: var(--info-fg);
+                        animation: t3pulse 1.6s ease-in-out infinite;
+                      "
+                    ></span>
+                  </sc-if>
+                  <span style="flex: 1"></span>
+                  <span style="font: 500 10.5px var(--font-mono); color: var(--muted-fg)"
+                    >{{ shortLabel }}</span
+                  >
+                </div>
+                <div
+                  style="font: 500 13px/1.35 var(--font-sans); color: var(--fg); text-wrap: pretty"
+                >
+                  Preview deploys for feature branches
+                </div>
+              </article>
+            </div>
+
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                overflow: hidden;
+                background: color-mix(in srgb, var(--muted) 55%, var(--card));
+              "
+            >
+              <div style="display: flex; align-items: center; height: 40px; padding: 0 10px">
+                <div
+                  style="
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    height: 26px;
+                    padding: 0 9px;
+                    border: 1px solid var(--input);
+                    border-radius: 8px;
+                    background: var(--popover);
+                    font: 500 12px var(--font-sans);
+                    box-shadow: var(--shadow-xs);
+                  "
+                >
+                  Planning thread
+                </div>
+              </div>
+              <div style="height: 2px; display: flex; gap: 1px; background: var(--border)">
+                <span style="{{ barDone }}"></span><span style="{{ barCur }}"></span
+                ><span style="{{ barRest }}"></span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px; padding: 12px 14px 14px">
+                <span style="font: 500 10.5px var(--font-mono); color: var(--muted-fg)"
+                  >{{ threadLabel }}</span
+                >
+                <div
+                  style="font: 400 12.5px/1.6 var(--font-sans); color: var(--fg); text-wrap: pretty"
+                >
+                  {{ questionText }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            id="3b"
+            style="
+              display: flex;
+              flex-direction: column;
+              gap: 12px;
+              width: 360px;
+              padding: 16px;
+              border: 1px solid var(--border);
+              border-radius: 16px;
+              background: var(--muted);
+            "
+          >
+            <div style="display: flex; align-items: center; gap: 8px">
+              <span
+                style="
+                  font: 600 11px var(--font-mono);
+                  color: var(--info-fg);
+                  border: 1px solid color-mix(in srgb, var(--info) 40%, transparent);
+                  border-radius: 6px;
+                  padding: 2px 7px;
+                "
+                >3b</span
+              >
+              <span style="font: 600 13.5px var(--font-sans)">Question pips</span>
+            </div>
+            <p
+              style="
+                margin: 0;
+                font: 400 12px/1.55 var(--font-sans);
+                color: var(--muted-fg);
+                text-wrap: pretty;
+              "
+            >
+              Reuses the todo step line: one pip per question, then count and the open question. The
+              last quarter of the estimate is fainter.
+            </p>
+
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                padding: 10px;
+                border-radius: 12px;
+                background: var(--column-bg);
+              "
+            >
+              <span
+                style="
+                  font: 600 10.5px var(--font-mono);
+                  letter-spacing: 0.04em;
+                  color: var(--muted-fg);
+                "
+                >BOARD · PLANNING</span
+              >
+              <article
+                style="
+                  border: 1px solid var(--border);
+                  border-radius: 10px;
+                  background: var(--card);
+                  padding: 10px 11px;
+                  box-shadow: var(--shadow-xs);
+                  cursor: grab;
+                "
+              >
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px">
+                  <span
+                    style="
+                      display: inline-flex;
+                      align-items: center;
+                      height: 17px;
+                      padding: 0 6px;
+                      border-radius: 5px;
+                      font: 600 10px var(--font-mono);
+                      letter-spacing: 0.02em;
+                      background: color-mix(in srgb, #8b5cf6 14%, transparent);
+                      color: #6d28d9;
+                    "
+                    >T3-201</span
+                  >
+                  <sc-if value="{{ isWaiting }}" hint-placeholder-val="{{ true }}">
+                    <span
+                      style="
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 3px;
+                        font: 500 10.5px var(--font-sans);
+                        color: var(--attention-fg);
+                      "
+                    >
+                      <svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M12 8v5"></path>
+                        <path d="M12 17h.01"></path>
+                        <circle cx="12" cy="12" r="9"></circle>
+                      </svg>
+                      Input needed
+                    </span>
+                  </sc-if>
+                  <sc-if value="{{ isWorking }}" hint-placeholder-val="{{ false }}">
+                    <span
+                      title="Thread running"
+                      style="
+                        width: 8px;
+                        height: 8px;
+                        flex: none;
+                        border-radius: 99px;
+                        background: var(--info-fg);
+                        animation: t3pulse 1.6s ease-in-out infinite;
+                      "
+                    ></span>
+                  </sc-if>
+                </div>
+                <div
+                  style="font: 500 13px/1.35 var(--font-sans); color: var(--fg); text-wrap: pretty"
+                >
+                  Preview deploys for feature branches
+                </div>
+                <div
+                  style="
+                    display: flex;
+                    flex-direction: column;
+                    gap: 6px;
+                    margin-top: 9px;
+                    padding-top: 9px;
+                    border-top: 1px solid var(--border);
+                  "
+                >
+                  <div style="display: flex; gap: 2px">
+                    <sc-for list="{{ pips }}" as="p" hint-placeholder-count="14">
+                      <span style="{{ p.style }}"></span>
+                    </sc-for>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 7px; min-width: 0">
+                    <span style="font: 500 10.5px var(--font-mono); color: var(--fg); flex: none"
+                      >{{ shortLabel }}</span
+                    >
+                    <span
+                      style="
+                        font: 400 10.5px var(--font-sans);
+                        color: var(--muted-fg);
+                        flex: 1;
+                        min-width: 0;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                      "
+                      >{{ questionShort }}</span
+                    >
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                overflow: hidden;
+                background: color-mix(in srgb, var(--muted) 55%, var(--card));
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  height: 40px;
+                  padding: 0 10px;
+                  border-bottom: 1px solid var(--border);
+                "
+              >
+                <div
+                  style="
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    height: 26px;
+                    padding: 0 9px;
+                    border: 1px solid var(--input);
+                    border-radius: 8px;
+                    background: var(--popover);
+                    font: 500 12px var(--font-sans);
+                    box-shadow: var(--shadow-xs);
+                  "
+                >
+                  Planning thread
+                </div>
+              </div>
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  padding: 9px 12px;
+                  border-bottom: 1px solid var(--border);
+                  background: var(--card);
+                "
+              >
+                <span
+                  style="
+                    font: 600 11px var(--font-sans);
+                    letter-spacing: 0.07em;
+                    text-transform: uppercase;
+                    color: var(--muted-fg);
+                  "
+                  >Questions</span
+                >
+                <span style="font: 500 11px var(--font-mono); color: var(--fg)"
+                  >{{ answeredLabel }}</span
+                >
+                <div style="display: flex; gap: 2px; flex: 1; min-width: 60px">
+                  <sc-for list="{{ pips }}" as="p" hint-placeholder-count="14">
+                    <span style="{{ p.style }}"></span>
+                  </sc-for>
+                </div>
+                <span style="font: 400 10.5px var(--font-sans); color: var(--muted-fg); flex: none"
+                  >{{ leftLabel }}</span
+                >
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px; padding: 12px 14px 14px">
+                <div
+                  style="font: 400 12.5px/1.6 var(--font-sans); color: var(--fg); text-wrap: pretty"
+                >
+                  {{ questionText }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            id="3c"
+            style="
+              display: flex;
+              flex-direction: column;
+              gap: 12px;
+              width: 360px;
+              padding: 16px;
+              border: 1px solid var(--border);
+              border-radius: 16px;
+              background: var(--muted);
+            "
+          >
+            <div style="display: flex; align-items: center; gap: 8px">
+              <span
+                style="
+                  font: 600 11px var(--font-mono);
+                  color: var(--info-fg);
+                  border: 1px solid color-mix(in srgb, var(--info) 40%, transparent);
+                  border-radius: 6px;
+                  padding: 2px 7px;
+                "
+                >3c</span
+              >
+              <span style="font: 600 13.5px var(--font-sans)">Ring in the status</span>
+            </div>
+            <p
+              style="
+                margin: 0;
+                font: 400 12px/1.55 var(--font-sans);
+                color: var(--muted-fg);
+                text-wrap: pretty;
+              "
+            >
+              The "Input needed" icon becomes a small progress ring with the count beside it.
+              Smallest footprint; progress only reads at a glance, not precisely.
+            </p>
+
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                padding: 10px;
+                border-radius: 12px;
+                background: var(--column-bg);
+              "
+            >
+              <span
+                style="
+                  font: 600 10.5px var(--font-mono);
+                  letter-spacing: 0.04em;
+                  color: var(--muted-fg);
+                "
+                >BOARD · PLANNING</span
+              >
+              <article
+                style="
+                  border: 1px solid var(--border);
+                  border-radius: 10px;
+                  background: var(--card);
+                  padding: 10px 11px;
+                  box-shadow: var(--shadow-xs);
+                  cursor: grab;
+                "
+              >
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px">
+                  <span
+                    style="
+                      display: inline-flex;
+                      align-items: center;
+                      height: 17px;
+                      padding: 0 6px;
+                      border-radius: 5px;
+                      font: 600 10px var(--font-mono);
+                      letter-spacing: 0.02em;
+                      background: color-mix(in srgb, #8b5cf6 14%, transparent);
+                      color: #6d28d9;
+                    "
+                    >T3-201</span
+                  >
+                  <span
+                    style="display:inline-flex;align-items:center;gap:4px;font:500 10.5px var(--font-sans);color:{{ ringColor }}"
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 16 16"
+                      style="transform: rotate(-90deg); flex: none"
+                    >
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-opacity=".2"
+                        stroke-width="2.2"
+                      ></circle>
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.2"
+                        stroke-linecap="round"
+                        stroke-dasharray="{{ ringDash }}"
+                      ></circle>
+                    </svg>
+                    {{ ringLabel }}
+                  </span>
+                </div>
+                <div
+                  style="font: 500 13px/1.35 var(--font-sans); color: var(--fg); text-wrap: pretty"
+                >
+                  Preview deploys for feature branches
+                </div>
+              </article>
+            </div>
+
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                overflow: hidden;
+                background: color-mix(in srgb, var(--muted) 55%, var(--card));
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  height: 40px;
+                  padding: 0 10px;
+                  border-bottom: 1px solid var(--border);
+                "
+              >
+                <div
+                  style="
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    height: 26px;
+                    padding: 0 9px;
+                    border: 1px solid var(--input);
+                    border-radius: 8px;
+                    background: var(--popover);
+                    font: 500 12px var(--font-sans);
+                    box-shadow: var(--shadow-xs);
+                  "
+                >
+                  Planning thread
+                </div>
+              </div>
+              <div style="display: flex; gap: 9px; padding: 12px 14px 14px">
+                <span
+                  style="
+                    width: 18px;
+                    height: 18px;
+                    flex: none;
+                    margin-top: 2px;
+                    border-radius: 99px;
+                    background: linear-gradient(135deg, #f97316, #ef4444);
+                  "
+                ></span>
+                <div
+                  style="
+                    flex: 1;
+                    min-width: 0;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 7px;
+                    padding: 10px 12px;
+                    border: 1px solid color-mix(in srgb, var(--attention) 45%, transparent);
+                    border-radius: 12px;
+                    background: color-mix(in srgb, var(--attention) 7%, transparent);
+                  "
+                >
+                  <span
+                    style="display:inline-flex;align-items:center;gap:5px;font:500 10.5px var(--font-mono);color:{{ ringColor }}"
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      style="transform: rotate(-90deg); flex: none"
+                    >
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-opacity=".2"
+                        stroke-width="2.2"
+                      ></circle>
+                      <circle
+                        cx="8"
+                        cy="8"
+                        r="6"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.2"
+                        stroke-linecap="round"
+                        stroke-dasharray="{{ ringDash }}"
+                      ></circle>
+                    </svg>
+                    {{ threadLabel }}
+                  </span>
+                  <div
+                    style="
+                      font: 400 12.5px/1.6 var(--font-sans);
+                      color: var(--fg);
+                      text-wrap: pretty;
+                    "
+                  >
+                    {{ questionText }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-wrap: wrap; gap: 18px; max-width: 1116px">
+          <div
+            style="
+              flex: 1;
+              min-width: 300px;
+              padding: 14px 16px;
+              border: 1px solid var(--border);
+              border-radius: 14px;
+              background: var(--card);
+            "
+          >
+            <div style="font: 600 12.5px var(--font-sans); margin-bottom: 7px">
+              When the estimate moves
+            </div>
+            <p
+              style="
+                margin: 0;
+                font: 400 11.5px/1.6 var(--font-sans);
+                color: var(--muted-fg);
+                text-wrap: pretty;
+              "
+            >
+              The bar is re-scaled to the new total, so answered progress can shrink visually when
+              the agent adds questions. The answered count never goes down, which keeps that from
+              reading as lost work.
+            </p>
+          </div>
+          <div
+            style="
+              flex: 1;
+              min-width: 300px;
+              padding: 14px 16px;
+              border: 1px solid var(--border);
+              border-radius: 14px;
+              background: var(--card);
+            "
+          >
+            <div style="font: 600 12.5px var(--font-sans); margin-bottom: 7px">
+              Relation to todo progress
+            </div>
+            <p
+              style="
+                margin: 0;
+                font: 400 11.5px/1.6 var(--font-sans);
+                color: var(--muted-fg);
+                text-wrap: pretty;
+              "
+            >
+              Question progress only shows while a planning thread is asking. Once the agent posts a
+              todo list, todo progress takes the card's slot.
+            </p>
+          </div>
+        </div>
+      </section>
+    </x-dc>
+    <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1200,"height":900}}'>
+      const QUESTIONS = [
+        "Which repo should own the preview config — the app repo or the infra repo?",
+        "Should previews build on every push, or only when a PR is opened?",
+        "Which AWS account and test domain should previews deploy to?",
+        "How long should an idle preview live before it is torn down?",
+        "Do previews need seeded data, or is an empty database fine?",
+        "Should preview URLs be public, or behind the team SSO?",
+        "Is there a cost ceiling per preview I should enforce?",
+        "Which secrets can previews read — staging, or a dedicated set?",
+        "Should the PR get a comment with the preview link?",
+        "Do you want previews for draft PRs too?",
+        "How should failed preview builds surface — PR check or Slack?",
+        "Any branches that should never get a preview?",
+        "Should previews run migrations automatically?",
+        "Who should be able to tear a preview down manually?",
+        "Should preview logs stream into the thread?",
+        "Anything about rollback I should plan for?",
+      ];
+      const INIT = { answered: 2, est: 14, waiting: true };
+
+      class Component extends DCLogic {
+        state = { ...INIT };
+        componentWillUnmount() { clearTimeout(this.t); }
+        answer = () => {
+          const { answered, est, waiting } = this.state;
+          if (!waiting) return;
+          const a = answered + 1;
+          if (a >= est) { this.setState({ answered: a, waiting: false, done: true }); return; }
+          this.setState({ answered: a, waiting: false });
+          clearTimeout(this.t);
+          this.t = setTimeout(() => {
+            // Estimate drifts: grows after Q3, trims later.
+            const next = a === 3 ? est + 2 : a === 7 ? est - 1 : est;
+            this.setState({ waiting: true, est: Math.max(a + 1, next) });
+          }, 1300);
+        };
+        reset = () => { clearTimeout(this.t); this.setState({ ...INIT, done: false }); };
+
+        renderVals() {
+          const { answered, est, waiting, done } = this.state;
+          const q = answered + 1;
+          const curColor = waiting ? "var(--attention)" : "var(--info)";
+          const seg = (w, bg, extra = "") => `flex:${w} 0 0;min-width:0;height:100%;background:${bg};transition:flex .5s ease;${extra}`;
+          const doneBg = done ? "var(--success)" : "var(--attention)";
+          const softFrom = Math.ceil(est * 0.75);
+          const pips = Array.from({ length: est }, (_, i) => {
+            let bg = i < softFrom ? "color-mix(in srgb,var(--fg) 12%,transparent)" : "color-mix(in srgb,var(--fg) 6%,transparent)";
+            let extra = "";
+            if (done || i < answered) bg = doneBg;
+            else if (i === answered) { bg = curColor; extra = waiting ? "" : "animation:t3pulse 1.6s ease-in-out infinite;"; }
+            return { style: `flex:1;height:3px;border-radius:2px;background:${bg};${extra}` };
+          });
+          const C = 2 * Math.PI * 6;
+          const frac = done ? 1 : answered / est;
+          return {
+            answer: done ? this.reset : this.answer,
+            reset: this.reset,
+            answerLabel: done ? "Start over" : waiting ? "Answer question " + q : "Agent drafting…",
+            isWaiting: waiting && !done,
+            isWorking: !waiting && !done,
+            shortLabel: done ? answered + " answered" : waiting ? `Q${q} of ~${est}` : `Drafting Q${q}`,
+            longLabel: done ? `All ${answered} questions answered` : `Question ${q} of about ${est} (${answered} answered)`,
+            threadLabel: done ? `Planning questions done · ${answered} answered` : waiting ? `Question ${q} of about ${est} · ${answered} answered` : `Drafting question ${q} · ${answered} answered`,
+            answeredLabel: answered + "/~" + est,
+            leftLabel: done ? "done" : "~" + (est - answered) + " left",
+            questionText: done ? "That's everything I need. Drafting the plan now." : waiting ? QUESTIONS[answered] : "Thanks — working out the next question.",
+            questionShort: done ? "Drafting the plan" : waiting ? QUESTIONS[answered] : "Thinking about the next question",
+            barDone: seg(done ? 1 : answered, doneBg),
+            barCur: seg(done ? 0 : 1, curColor, waiting ? "" : "animation:t3pulse 1.6s ease-in-out infinite;"),
+            barRest: seg(done ? 0 : est - answered - 1, "color-mix(in srgb,var(--fg) 9%,transparent)"),
+            pips,
+            ringDash: `${(C * frac).toFixed(2)} ${C.toFixed(2)}`,
+            ringColor: done ? "var(--success-fg)" : waiting ? "var(--attention-fg)" : "var(--info-fg)",
+            ringLabel: done ? answered + " answered" : waiting ? `${q} of ~${est}` : `Drafting ${q}`,
+          };
+        }
+      }
+    </script>
+  </body>
+</html>

@@ -2942,6 +2942,58 @@
                                         </div>
                                       </div>
                                     </sc-if>
+                                    <sc-if value="{{ c.qbar }}" hint-placeholder-val="{{ false }}">
+                                      <div
+                                        title="{{ c.qbar.tip }}"
+                                        style="
+                                          display: flex;
+                                          flex-direction: column;
+                                          gap: 6px;
+                                          margin-top: 9px;
+                                          padding-top: 9px;
+                                          border-top: 1px solid var(--border);
+                                        "
+                                      >
+                                        <div style="display: flex; gap: 3px">
+                                          <sc-for
+                                            list="{{ c.qbar.pips }}"
+                                            as="qp"
+                                            hint-placeholder-count="0"
+                                          >
+                                            <span style="{{ qp.style }}"></span>
+                                          </sc-for>
+                                        </div>
+                                        <div
+                                          style="
+                                            display: flex;
+                                            align-items: center;
+                                            gap: 7px;
+                                            min-width: 0;
+                                          "
+                                        >
+                                          <span
+                                            style="
+                                              font: 500 10.5px var(--font-mono);
+                                              color: var(--fg);
+                                              flex: none;
+                                            "
+                                            >{{ c.qbar.label }}</span
+                                          >
+                                          <span
+                                            style="
+                                              font: 400 10.5px var(--font-sans);
+                                              color: var(--muted-fg);
+                                              flex: 1;
+                                              min-width: 0;
+                                              overflow: hidden;
+                                              text-overflow: ellipsis;
+                                              white-space: nowrap;
+                                            "
+                                            >{{ c.qbar.cur }}</span
+                                          >
+                                        </div>
+                                      </div>
+                                    </sc-if>
                                     <sc-if value="{{ c.todo }}" hint-placeholder-val="{{ false }}">
                                       <div
                                         style="
@@ -3950,6 +4002,52 @@
                       </svg>
                       Thread
                     </button>
+                    <sc-if value="{{ hasSummaryTab }}" hint-placeholder-val="{{ false }}">
+                      <button
+                        type="button"
+                        onClick="{{ selectSummary }}"
+                        title="Build summary"
+                        style="{{ summaryTabStyle }}"
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M9 11l3 3L22 4"></path>
+                          <path
+                            d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"
+                          ></path>
+                        </svg>
+                        Summary
+                        <sc-if
+                          value="{{ summary.hasAttention }}"
+                          hint-placeholder-val="{{ false }}"
+                        >
+                          <span
+                            title="{{ summary.attentionTitle }}"
+                            style="
+                              display: inline-flex;
+                              align-items: center;
+                              justify-content: center;
+                              min-width: 15px;
+                              height: 15px;
+                              padding: 0 4px;
+                              border-radius: 99px;
+                              background: var(--attention);
+                              color: #fff;
+                              font: 600 9.5px var(--font-sans);
+                            "
+                            >{{ summary.attentionCount }}</span
+                          >
+                        </sc-if>
+                      </button>
+                    </sc-if>
                     <sc-if value="{{ hasReviewTab }}" hint-placeholder-val="{{ false }}">
                       <button
                         type="button"
@@ -5676,6 +5774,300 @@
                   </section>
                 </sc-if>
 
+                <sc-if value="{{ summaryPane }}" hint-placeholder-val="{{ false }}">
+                  <section
+                    style="
+                      display: flex;
+                      flex-direction: column;
+                      min-width: 0;
+                      min-height: 0;
+                      border-right: 1px solid var(--border);
+                      background: var(--card);
+                    "
+                  >
+                    <div
+                      style="
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        flex: none;
+                        height: 44px;
+                        padding: 0 12px 0 16px;
+                        border-bottom: 1px solid var(--border);
+                      "
+                    >
+                      <span style="font: 600 12.5px var(--font-sans); color: var(--fg)"
+                        >Build summary</span
+                      >
+                      <span
+                        style="
+                          font: 400 11.5px var(--font-sans);
+                          color: var(--muted-fg);
+                          white-space: nowrap;
+                          overflow: hidden;
+                          text-overflow: ellipsis;
+                        "
+                        >{{ summary.meta }}</span
+                      >
+                      <span style="flex: 1"></span>
+                      <button
+                        type="button"
+                        onClick="{{ summary.openThread }}"
+                        style="
+                          height: 24px;
+                          padding: 0 8px;
+                          flex: none;
+                          white-space: nowrap;
+                          border: none;
+                          border-radius: 6px;
+                          background: transparent;
+                          color: var(--muted-fg);
+                          font: 500 11.5px var(--font-sans);
+                          cursor: pointer;
+                        "
+                        style-hover="background:var(--accent);color:var(--fg)"
+                      >
+                        View thread →
+                      </button>
+                    </div>
+                    <div style="flex: 1; min-height: 0; overflow-y: auto">
+                      <div
+                        style="
+                          max-width: 620px;
+                          padding: 22px 22px 36px;
+                          display: flex;
+                          flex-direction: column;
+                          gap: 28px;
+                        "
+                      >
+                        <div style="display: flex; flex-direction: column; gap: 8px">
+                          <div
+                            style="
+                              font: 400 14.5px/1.6 var(--font-sans);
+                              color: var(--fg);
+                              text-wrap: pretty;
+                            "
+                          >
+                            <sc-for list="{{ summary.lead }}" as="pt" hint-placeholder-count="1"
+                              ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                                ><code
+                                  style="
+                                    font: 500 0.92em var(--font-mono);
+                                    color: var(--fg);
+                                    background: var(--muted);
+                                    padding: 0 4px;
+                                    border-radius: 4px;
+                                  "
+                                  >{{ pt.t }}</code
+                                ></sc-if
+                              ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                                ><span>{{ pt.t }}</span></sc-if
+                              ></sc-for
+                            >
+                          </div>
+                          <div
+                            style="
+                              display: flex;
+                              align-items: center;
+                              gap: 6px;
+                              flex-wrap: wrap;
+                              font: 400 11.5px var(--font-sans);
+                              color: var(--muted-fg);
+                            "
+                          >
+                            <span style="font: 400 11px var(--font-mono)"
+                              >{{ summary.branch }}</span
+                            >
+                            <span>·</span>
+                            <span>{{ summary.checks }}</span>
+                          </div>
+                        </div>
+                        <sc-if
+                          value="{{ summary.hasAttention }}"
+                          hint-placeholder-val="{{ false }}"
+                        >
+                          <div
+                            style="
+                              display: flex;
+                              flex-direction: column;
+                              gap: 10px;
+                              padding: 14px 16px;
+                              border-radius: 10px;
+                              background: color-mix(in srgb, var(--attention) 8%, var(--card));
+                            "
+                          >
+                            <div
+                              style="font: 600 12px var(--font-sans); color: var(--attention-fg)"
+                            >
+                              {{ summary.attentionTitle }}
+                            </div>
+                            <sc-for
+                              list="{{ summary.attention }}"
+                              as="a"
+                              hint-placeholder-count="2"
+                            >
+                              <div
+                                style="
+                                  font: 400 13px/1.6 var(--font-sans);
+                                  color: var(--fg);
+                                  text-wrap: pretty;
+                                "
+                              >
+                                <sc-for list="{{ a.parts }}" as="pt" hint-placeholder-count="1"
+                                  ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                                    ><code
+                                      style="
+                                        font: 500 0.92em var(--font-mono);
+                                        color: var(--fg);
+                                        background: var(--muted);
+                                        padding: 0 4px;
+                                        border-radius: 4px;
+                                      "
+                                      >{{ pt.t }}</code
+                                    ></sc-if
+                                  ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                                    ><span>{{ pt.t }}</span></sc-if
+                                  ></sc-for
+                                >
+                              </div>
+                            </sc-for>
+                          </div>
+                        </sc-if>
+                        <div style="display: flex; flex-direction: column; gap: 10px">
+                          <div style="font: 600 12px var(--font-sans); color: var(--fg)">
+                            What was built
+                          </div>
+                          <sc-for list="{{ summary.built }}" as="b" hint-placeholder-count="3">
+                            <div
+                              style="
+                                font: 400 13px/1.6 var(--font-sans);
+                                color: var(--fg);
+                                text-wrap: pretty;
+                              "
+                            >
+                              <span style="font-weight: 600">{{ b.label }}</span>
+                              <span style="color: var(--muted-fg)">—</span>
+                              <sc-for list="{{ b.parts }}" as="pt" hint-placeholder-count="1"
+                                ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                                  ><code
+                                    style="
+                                      font: 500 0.92em var(--font-mono);
+                                      color: var(--fg);
+                                      background: var(--muted);
+                                      padding: 0 4px;
+                                      border-radius: 4px;
+                                    "
+                                    >{{ pt.t }}</code
+                                  ></sc-if
+                                ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                                  ><span>{{ pt.t }}</span></sc-if
+                                ></sc-for
+                              >
+                            </div>
+                          </sc-for>
+                          <sc-if
+                            value="{{ summary.hasNotDone }}"
+                            hint-placeholder-val="{{ false }}"
+                          >
+                            <sc-for list="{{ summary.notDone }}" as="n" hint-placeholder-count="1">
+                              <div
+                                style="
+                                  font: 400 13px/1.6 var(--font-sans);
+                                  color: var(--fg);
+                                  text-wrap: pretty;
+                                  color: var(--muted-fg);
+                                "
+                              >
+                                <span style="font-weight: 600">Not done</span> —
+                                <sc-for list="{{ n.parts }}" as="pt" hint-placeholder-count="1"
+                                  ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                                    ><code
+                                      style="
+                                        font: 500 0.92em var(--font-mono);
+                                        color: var(--fg);
+                                        background: var(--muted);
+                                        padding: 0 4px;
+                                        border-radius: 4px;
+                                      "
+                                      >{{ pt.t }}</code
+                                    ></sc-if
+                                  ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                                    ><span>{{ pt.t }}</span></sc-if
+                                  ></sc-for
+                                >
+                              </div>
+                            </sc-for>
+                          </sc-if>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 8px">
+                          <div style="display: flex; align-items: center; gap: 8px">
+                            <span style="font: 600 12px var(--font-sans); color: var(--fg)"
+                              >Review</span
+                            >
+                            <span style="{{ summary.review.badgeStyle }}"
+                              >{{ summary.review.badge }}</span
+                            >
+                            <span style="flex: 1"></span>
+                            <sc-if
+                              value="{{ summary.review.canOpen }}"
+                              hint-placeholder-val="{{ false }}"
+                            >
+                              <button
+                                type="button"
+                                onClick="{{ summary.review.open }}"
+                                style="
+                                  height: 22px;
+                                  padding: 0 8px;
+                                  flex: none;
+                                  border: none;
+                                  border-radius: 6px;
+                                  background: transparent;
+                                  color: var(--muted-fg);
+                                  font: 500 11.5px var(--font-sans);
+                                  cursor: pointer;
+                                "
+                                style-hover="background:var(--accent);color:var(--fg)"
+                              >
+                                Open review →
+                              </button>
+                            </sc-if>
+                          </div>
+                          <div
+                            style="
+                              font: 400 13px/1.6 var(--font-sans);
+                              color: var(--fg);
+                              text-wrap: pretty;
+                            "
+                          >
+                            <sc-for
+                              list="{{ summary.review.parts }}"
+                              as="pt"
+                              hint-placeholder-count="1"
+                              ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                                ><code
+                                  style="
+                                    font: 500 0.92em var(--font-mono);
+                                    color: var(--fg);
+                                    background: var(--muted);
+                                    padding: 0 4px;
+                                    border-radius: 4px;
+                                  "
+                                  >{{ pt.t }}</code
+                                ></sc-if
+                              ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                                ><span>{{ pt.t }}</span></sc-if
+                              ></sc-for
+                            >
+                          </div>
+                          <div style="font: 400 11.5px var(--font-sans); color: var(--muted-fg)">
+                            {{ summary.review.stats }}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </sc-if>
+
                 <sc-if value="{{ planDocPane }}" hint-placeholder-val="{{ false }}">
                   <section
                     style="
@@ -5723,8 +6115,7 @@
                           color: var(--fg);
                         "
                       >
-{{ planDocBody }}</pre
-                      >
+{{ planDocBody }}</pre>
                     </div>
                   </section>
                 </sc-if>
@@ -6293,6 +6684,59 @@
                       </div>
                     </div>
 
+                    <sc-if value="{{ cardThread.qbar }}" hint-placeholder-val="{{ false }}">
+                      <div
+                        title="{{ cardThread.qbar.tip }}"
+                        style="
+                          flex: none;
+                          display: flex;
+                          align-items: center;
+                          gap: 8px;
+                          padding: 9px 12px;
+                          border-bottom: 1px solid var(--border);
+                          background: var(--card);
+                        "
+                      >
+                        <span
+                          style="
+                            font: 600 11px var(--font-sans);
+                            letter-spacing: 0.07em;
+                            text-transform: uppercase;
+                            color: var(--muted-fg);
+                          "
+                          >Questions</span
+                        >
+                        <span style="font: 500 11px var(--font-mono); color: var(--fg); flex: none"
+                          >{{ cardThread.qbar.count }}</span
+                        >
+                        <div
+                          style="
+                            display: flex;
+                            gap: 3px;
+                            flex: 1;
+                            min-width: 56px;
+                            max-width: 160px;
+                          "
+                        >
+                          <sc-for
+                            list="{{ cardThread.qbar.pips }}"
+                            as="qp"
+                            hint-placeholder-count="0"
+                          >
+                            <span style="{{ qp.style }}"></span>
+                          </sc-for>
+                        </div>
+                        <span
+                          style="
+                            font: 400 10.5px var(--font-sans);
+                            color: var(--muted-fg);
+                            flex: none;
+                          "
+                          >{{ cardThread.qbar.left }}</span
+                        >
+                      </div>
+                    </sc-if>
+
                     <sc-if value="{{ cardThread.todo }}" hint-placeholder-val="{{ false }}">
                       <div
                         style="
@@ -6681,6 +7125,9 @@
                             <div
                               style="
                                 min-width: 0;
+                                display: flex;
+                                flex-direction: column;
+                                gap: 4px;
                                 padding: 10px 12px;
                                 border: 1px solid
                                   color-mix(in srgb, var(--attention) 50%, transparent);
@@ -6691,7 +7138,16 @@
                                 text-wrap: pretty;
                               "
                             >
-                              {{ m.text }}
+                              <sc-if value="{{ m.qLabel }}" hint-placeholder-val="{{ false }}">
+                                <span
+                                  style="
+                                    font: 500 10.5px var(--font-mono);
+                                    color: var(--attention-fg);
+                                  "
+                                  >{{ m.qLabel }}</span
+                                >
+                              </sc-if>
+                              <span>{{ m.text }}</span>
                             </div>
                           </div>
                         </sc-if>
@@ -10106,11 +10562,32 @@
         json: ["J", "#a1761f", "#ffffff"],
       };
 
+      // Planning questions for cards with question progress (c.qs). Index = question number - 1.
+      const QS_TEXT = [
+        "Which repo should own the preview config — the app repo or the infra repo?",
+        "Should previews build on every push, or only when a PR is opened?",
+        "Which AWS account and test domain should previews deploy to?",
+        "How long should an idle preview live before it is torn down?",
+        "Do previews need seeded data, or is an empty database fine?",
+        "Should preview URLs be public, or behind the team SSO?",
+        "Is there a cost ceiling per preview I should enforce?",
+        "Which secrets can previews read — staging, or a dedicated set?",
+        "Should the PR get a comment with the preview link?",
+        "Do you want previews for draft PRs too?",
+        "How should failed preview builds surface — PR check or Slack?",
+        "Any branches that should never get a preview?",
+        "Should previews run migrations automatically?",
+        "Who should be able to tear a preview down manually?",
+        "Should preview logs stream into the thread?",
+        "Anything about rollback I should plan for?",
+      ];
+
       const SEED = [
         { key: "T3-201", p: "advisor", type: "Feature", status: "backlog", title: "Stream tool-call deltas into the timeline", brief: "Tool calls currently land as one block when the turn settles. Stream them so long-running edits show progress inline." },
         { key: "T3-198", p: "advisor", type: "bug", status: "backlog", title: "Context window pill shows a stale token count", brief: "After a compaction the pill keeps the pre-compaction number until the next turn." },
         { key: "T3-195", p: "advisor", type: "Feature", status: "sprint", title: "Persist composer drafts per worktree", brief: "Drafts are keyed by thread today; switching worktrees loses the in-progress prompt." },
         { key: "T3-193", p: "advisor", type: "chore", status: "planning", t: "working", title: "Group worktrees by environment in the branch picker", brief: "The picker lists 40+ worktrees flat. Group by environment with a sticky header per group." },
+        { key: "T3-196", p: "advisor", type: "Feature", status: "planning", t: "waiting", qs: { answered: 2, est: 14 }, title: "Preview deploys for feature branches", brief: "Spin up a preview environment per feature branch so reviewers can click through a change before it merges." },
         { key: "T3-188", p: "advisor", type: "Feature", status: "building", title: "Kanban board mode in the workspace shell", brief: "Add a top-level mode switch: threads or board. Board is per project, with drag between stages.", deps: ["T3-195"], plan: PLAN("Kanban board mode", ["Add workspaceMode atom persisted in client storage", "Mount BoardView beside ChatView under AppSidebarLayout", "Cards are server-authoritative events, same store as threads", "Dependencies are edges on the task record, validated on progress"], ["apps/web/src/components/BoardView.tsx", "apps/web/src/state/board.ts", "packages/contracts/src/task.ts"]) },
         { key: "T3-176", p: "advisor", type: "bug", status: "building", t: "queued", title: "Active dot on a sub-board card doesn't roll up to the parent", brief: "A plan card running a thread shows its dot on the sub-board only, so the parent card looks idle." },
         { key: "T3-171", p: "advisor", type: "chore", status: "building", t: "queued", title: "Prune worktrees for merged branches on launch", brief: "Merged worktrees pile up until someone clears them by hand." },
@@ -10152,6 +10629,63 @@
             { n: 2, title: "Generate the preload surface", status: "review", deps: [1], pr: 291, t: "waiting", add: 402, del: 178 },
             { n: 3, title: "Fail the build on unlisted channels", status: "ready", deps: [2] },
           ],
+        },
+      };
+
+      // Build summary: key points lifted from the build thread's final message, plus a
+      // short account of the review. Backticks mark inline code.
+      const BUILD_SUMMARIES = {
+        "T3-182": {
+          duration: "31m 12s", commits: 6, branch: "feat/typed-ipc", checks: "Typecheck and desktop tests pass",
+          lead: "Every `desktopBridge` channel is now described by an Effect Schema in `packages/contracts`, and the preload surface is generated from it. Failing the build on unlisted channels is plan 3 and isn't part of this PR.",
+          built: [
+            ["Schema", "`ipc.ts` defines 34 channels with request and response schemas. Invalid payloads throw at the boundary instead of falling back to `any`."],
+            ["Codegen", "`scripts/gen.ts` writes `preload.generated.ts`; `preload.ts` re-exports it and adds nothing by hand."],
+            ["Renderer types", "`env.ts` types `window.desktopBridge` from the generated surface, so calls in `apps/web` are checked."],
+          ],
+          notDone: ["Two legacy channels still go through `legacy-bridge.ts` untyped. The schema lists them but the shim bypasses it."],
+          attention: ["`openExternal` now returns `{ ok: boolean }` instead of `void`. Nothing in the repo reads it, but third-party plugins might."],
+        },
+        "T3-180": {
+          duration: "18m 3s", commits: 4, branch: "fix/orphaned-spans", checks: "Runtime and web tests pass",
+          lead: "Live spans now reparent onto the summary turn after a compaction, and spans with no surviving turn are dropped. A replay test over a recorded compaction covers both paths.",
+          built: [
+            ["Reparenting", "`compaction.ts` moves streaming spans onto the summary turn and keeps their tool results attached."],
+            ["Cleanup", "spans whose turn no longer exists are dropped, and their tool results are marked unclaimed rather than lost."],
+            ["Index", "`timeline.ts` keeps a span-to-turn index so orphan checks don't walk the whole timeline."],
+          ],
+          notDone: [],
+          attention: ["The span index lives in memory and grows with the thread. Very long threads may need an LRU."],
+        },
+        "T3-179": {
+          duration: "14m 52s", commits: 4, branch: "chore/t3-179-precommit", checks: "Lint, format and workspace tests pass",
+          lead: "Commits now run oxlint and prettier on staged files only. A commit on a clean tree takes under two seconds. One plan step changed: the escape hatch is an env var rather than a flag.",
+          built: [
+            ["lefthook.yml", "`pre-commit` runs `oxlint --fix` and `prettier --write` on staged `*.ts`, `*.tsx` and `*.css`, then re-stages the fixes."],
+            ["Install", "`bun install` runs `lefthook install` through a `prepare` script, so new clones get the hook without a manual step."],
+            ["Escape hatch", "`T3_SKIP_HOOKS=1` skips the gate for one commit. CI runs the same checks, so nothing skips main."],
+            ["Docs", "a Pre-commit section in `CONTRIBUTING.md` covering the hook, the escape hatch and how to bump pinned versions."],
+          ],
+          notDone: ["The hook is a POSIX shell script and wasn't run on Windows."],
+          attention: [
+            "`prepare` also runs on `npm ci` in the Docker image. It's a no-op there, but confirm the image build doesn't need `git`.",
+            "The plan said `--no-verify` for the escape hatch. I used `T3_SKIP_HOOKS` so skips show up in shell history. Confirm that's acceptable.",
+          ],
+          review: { rounds: 2, outcome: "Converged", fixed: 3, rejected: 1, open: 0,
+            line: "Round 1 caught the hook re-staging partially staged files; fixed with `stage_fixed: true` and a test. The rejected point was a style preference on the lefthook glob." },
+        },
+        "T3-177": {
+          duration: "22m 40s", commits: 3, branch: "fix/t3-177-replay", checks: "Client-runtime tests pass",
+          lead: "Tool results that arrive while the socket is down now replay after reconnect, in order and without duplicates.",
+          built: [
+            ["Outbox", "`socket.ts` holds results that arrive while disconnected in an ordered outbox keyed by `toolCallId`."],
+            ["Replay", "on reconnect the outbox flushes before new sends, and each server ack drops its entry. Duplicate acks are ignored."],
+            ["Test", "`replay.test.ts` drops the socket mid-turn, sends three results, reconnects and asserts order and no duplicates."],
+          ],
+          notDone: ["The outbox is in memory only. A page reload while offline still loses results."],
+          attention: ["The outbox has no size cap. A long offline stretch with a chatty tool could grow it without bound."],
+          review: { rounds: 1, outcome: "Converged", fixed: 2, rejected: 0, open: 0,
+            line: "One round. The reviewer asked for an ack-timeout test and a guard on duplicate acks; both were added." },
         },
       };
 
@@ -10501,6 +11035,7 @@
             depKeys: c.deps || [],
             plan: c.plan || null,
             pr: c.pr || null,
+            qs: c.qs ? { ...c.qs, seedAt: c.qs.answered, seedEst: c.qs.est } : null,
             created: ["2d ago", "3d ago", "5d ago", "1w ago"][i % 4],
           }));
           const planCards = [];
@@ -10662,8 +11197,13 @@
                           : "settled.") +
                       " " + rs.found + " issues raised so far, " + rs.fixed + " fixed and " + rs.rejected + " rejected."
                     : "PR is up and checks are green. Waiting on review feedback.",
+            ql: kind === "planning" && c.qs
+              ? "Question " + (c.qs.seedAt + 1) + " of about " + c.qs.seedEst + " · " + c.qs.seedAt + " answered"
+              : "",
             question:
-              th.state !== "waiting"
+              kind === "planning" && c.qs
+                ? QS_TEXT[c.qs.seedAt]
+                : th.state !== "waiting"
                 ? ""
                 : kind === "planning"
                   ? "Two shapes are possible here. Should the grouped picker stay collapsible, or always expand?"
@@ -10690,7 +11230,7 @@
             { who: "claude", text: copy.summary },
           ];
           if ((TODOS[c.key] || []).length) out.push({ who: "event", text: "Todo list updated" });
-          if (copy.question) out.push({ who: "claude", q: true, text: copy.question });
+          if (copy.question) out.push({ who: "claude", q: true, text: copy.question, ql: copy.ql || "" });
           return out;
         }
 
@@ -10718,8 +11258,36 @@
             () => this.scrollThread(),
           );
           if (this.composerEl) this.composerEl.value = "";
+          const qs =
+            isMain && card.status === "planning" && card.qs && !card.qs.done && card.tstate === "waiting"
+              ? card.qs
+              : null;
+          if (qs) this.patchCard(card.id, { tstate: "working", qs: { ...qs, answered: qs.answered + 1 } });
           clearTimeout(this.replyTimer);
           this.replyTimer = setTimeout(() => {
+            if (qs) {
+              const a = qs.answered + 1;
+              const done = a >= qs.est;
+              // The agent's estimate drifts as answers come in.
+              const est = done ? qs.est : Math.max(a + 1, a === 3 ? qs.est + 2 : a === 7 ? qs.est - 1 : qs.est);
+              const msg = done
+                ? { who: "claude", text: "That's everything I need. Drafting the plan now." }
+                : {
+                    who: "claude",
+                    q: true,
+                    text: QS_TEXT[a] || "One more — anything else I should know before I draft the plan?",
+                    ql: "Question " + (a + 1) + " of about " + est + " · " + a + " answered",
+                  };
+              this.setState(
+                (s) => ({
+                  msgs: { ...s.msgs, [id]: (s.msgs[id] || []).concat([msg]) },
+                  pending: { ...s.pending, [id]: false },
+                }),
+                () => this.scrollThread(),
+              );
+              this.patchCard(card.id, { tstate: done ? "working" : "waiting", qs: { ...qs, answered: a, est, done } });
+              return;
+            }
             const reply = started
               ? "Picking this up now. I'll read the surrounding modules first and come back with a plan before touching anything."
               : "Got it — taking that route. I'll push the change and report back with the diff.";
@@ -10949,6 +11517,94 @@
               } catch (e) {}
             },
           );
+        }
+
+        buildSummaryVm(c, openThread, openReview) {
+          if (!c || this.stageIndex(c.status) < 5) return null;
+          const segs = (s) =>
+            String(s || "").split("`").map((x, i) => ({ t: x, code: i % 2 === 1, plain: i % 2 === 0 })).filter((p) => p.t);
+          const par = c.parentKey ? this.cardByKey(c.parentKey) : null;
+          const data = BUILD_SUMMARIES[c.key] || {
+            duration: "12m 30s",
+            commits: 3,
+            branch: (par ? "plan/" : "feat/") + c.key.toLowerCase().replace(/\./g, "-"),
+            checks: "Checks pass locally",
+            lead: c.brief ? "Built to the brief: " + c.brief : "Built to the plan.",
+            built: ((c.pr && c.pr.files) || []).map((f) => [f.split("/").pop(), "changed in `" + f + "`."]),
+            notDone: [],
+            attention: [],
+          };
+          const attention = data.attention.map((a) => ({ src: "Build", parts: segs(a) }));
+          const chip = (tone) =>
+            "display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:6px;font:500 10.5px var(--font-sans);background:color-mix(in srgb,var(--" +
+            tone + ") 14%,transparent);color:var(--" + tone + "-fg)";
+          let rvOut = null;
+          const live = this.reviewFor(c);
+          if (live) {
+            const all = [].concat.apply([], live.rounds.map((r) => r.issues));
+            const last = live.rounds[live.rounds.length - 1];
+            const inProgress = !last.outcome;
+            const stuck = last.outcome === "No convergence";
+            const disputed = last.issues.filter((i) => i.verdict === "disputed");
+            rvOut = {
+              badge: inProgress ? "Round " + last.n + " in progress" : last.outcome,
+              badgeStyle: inProgress
+                ? "display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:6px;font:500 10.5px var(--font-sans);background:var(--accent);color:var(--fg)"
+                : chip(stuck ? "warning" : "success"),
+              stats: live.rounds.length + (live.rounds.length === 1 ? " round" : " rounds") + " · " +
+                all.filter((i) => i.resolution === "fixed").length + " fixed · " +
+                all.filter((i) => i.resolution === "rejected").length + " rejected · " +
+                all.filter((i) => i.resolution === "open").length + " open",
+              rulings: live.rounds.filter((r) => r.ruling).map((r) => ({ n: "R" + r.n, parts: segs(r.ruling) })),
+            };
+            rvOut.hasRulings = rvOut.rulings.length > 0;
+            rvOut.parts = segs(
+              inProgress
+                ? "The reviewer raised " + last.issues.length + " issues this round; triage is running now."
+                : stuck
+                  ? "The loop hit its round limit before the reviewer and implementer agreed. Nothing was auto-approved."
+                  : "The reviewer and implementer agreed. The PR is clear to merge.",
+            );
+            if (stuck)
+              attention.unshift({
+                src: "Review",
+                parts: segs(
+                  "Review stopped after " + live.rounds.length + " rounds without agreement. Still disputed: " +
+                    disputed.map((i) => i.title.charAt(0).toLowerCase() + i.title.slice(1)).join("; ") + ".",
+                ),
+              });
+          } else {
+            const r = data.review || { rounds: 2, outcome: "Converged", fixed: 3, rejected: 0, open: 0, line: "The reviewer and implementer agreed after two rounds." };
+            rvOut = {
+              badge: r.outcome,
+              badgeStyle: chip("success"),
+              stats: r.rounds + (r.rounds === 1 ? " round" : " rounds") + " · " + r.fixed + " fixed · " + r.rejected + " rejected · " + r.open + " open",
+              parts: segs(r.line),
+              rulings: [],
+              hasRulings: false,
+            };
+          }
+          rvOut.canOpen = !!live;
+          rvOut.open = openReview;
+          const srcStyle = (s) =>
+            "display:inline-flex;align-items:center;height:18px;padding:0 6px;flex:none;margin-top:1px;border-radius:5px;font:500 10.5px var(--font-sans);border:1px solid var(--border);background:var(--card);color:" +
+            (s === "Review" ? "var(--warning-fg)" : "var(--muted-fg)");
+          attention.forEach((a) => (a.srcStyle = srcStyle(a.src)));
+          return {
+            meta: "Worked for " + data.duration + " · " + data.commits + " commits",
+            lead: segs(data.lead),
+            branch: data.branch,
+            checks: data.checks,
+            attention,
+            hasAttention: attention.length > 0,
+            attentionCount: String(attention.length),
+            attentionTitle: attention.length === 1 ? "1 item needs your attention" : attention.length + " items need your attention",
+            built: data.built.map((b) => ({ label: b[0], parts: segs(b[1]) })),
+            notDone: data.notDone.map((n) => ({ parts: segs(n) })),
+            hasNotDone: data.notDone.length > 0,
+            review: rvOut,
+            openThread,
+          };
         }
 
         reviewFor(c) {
@@ -11431,6 +12087,34 @@
 
         todoLists(c) {
           return (c && TODOS[c.key]) || [];
+        }
+        // Planning question progress: answered | open question | estimated remainder.
+        qsBar(c) {
+          const q = c && c.qs;
+          if (!q || q.done || c.status !== "planning") return null;
+          const waiting = c.tstate === "waiting";
+          const n = q.answered + 1;
+          const softFrom = Math.ceil(q.est * 0.75);
+          return {
+            label: waiting ? "Q" + n + " of ~" + q.est : "Drafting Q" + n,
+            count: q.answered + "/~" + q.est,
+            left: "~" + (q.est - q.answered) + " left",
+            cur: waiting ? QS_TEXT[q.answered] || "" : "Thinking about the next question",
+            tip: "Question " + n + " of about " + q.est + " · " + q.answered + " answered",
+            pips: Array.apply(null, { length: q.est }).map((x, i) => ({
+              style:
+                "flex:1;height:3px;border-radius:2px;background:" +
+                (i < q.answered
+                  ? "var(--attention)"
+                  : i === q.answered
+                    ? waiting
+                      ? "color-mix(in srgb,var(--attention) 45%,transparent)"
+                      : "color-mix(in srgb,var(--info) 70%,transparent);animation:t3pulse 1.6s ease-in-out infinite"
+                    : i < softFrom
+                      ? "color-mix(in srgb,var(--fg) 12%,transparent)"
+                      : "color-mix(in srgb,var(--fg) 6%,transparent)"),
+            })),
+          };
         }
         todoStat(l) {
           const done = l.items.filter((i) => i.s === "done").length;
@@ -12400,6 +13084,7 @@
               prTip: hasPr ? "Pull request #" + c.pr.n : "",
               hasImage: c.brief.indexOf("<img") !== -1,
               hasMeta: hasDeps || threadCount > 0 || stacked || hasPlan || hasPr,
+              qbar: this.qsBar(c),
               todo: (() => {
                 const ls = this.todoLists(c);
                 const l = this.activeTodo(c);
@@ -13150,12 +13835,14 @@
           const isReview = !!reviewData;
           let pane =
             (active && st.pane[active.id]) ||
-            (isReview ? "review" : threadLocked ? "plans" : "thread");
+            (isReview ? "review" : threadLocked ? "plans" : active && this.stageIndex(active.status) >= 6 && hasThreadPane ? "summary" : "thread");
           if (pane === "plans" && !isParent) pane = isReview ? "review" : "thread";
           if (pane === "review" && !isReview) pane = "thread";
           if (pane === "thread" && threadLocked && !isReview) pane = "plans";
           const hasPlanDoc = !!(active && active.plan && hasThreadPane);
           if (pane === "plandoc" && !hasPlanDoc) pane = threadLocked ? "plans" : "thread";
+          const hasSummary = !!(active && hasThreadPane && this.stageIndex(active.status) >= 5);
+          if (pane === "summary" && !hasSummary) pane = threadLocked ? "plans" : "thread";
           const setPane = (p) => () => {
             if (!active) return;
             this.setState((s) => ({
@@ -13202,6 +13889,7 @@
                 label: ctCopy ? ctCopy.label : ctAll.length ? "Thread" : "New thread",
                 working: !!ctCopy && isMain && ctCopy.state === "working" && !ctPending,
                 waiting: !!ctCopy && isMain && ctCopy.state === "waiting",
+                qbar: isMain ? this.qsBar(active) : null,
                 tabs: allTabs.map((t, i) => {
                   const on = t.id === tabId;
                   const live = t.id === "main" && ctCopy ? ctCopy.state : null;
@@ -13300,6 +13988,7 @@
                   isUser: m.who === "you",
                   isClaude: m.who === "claude" && !m.q,
                   isQuestion: m.who === "claude" && !!m.q,
+                  qLabel: m.ql || "",
                   isEvent: m.who === "event",
                 })),
                 starters: [
@@ -13783,6 +14472,11 @@
             selectPlans: setPane("plans"),
             briefTabStyle: paneBtn(pane === "brief", false),
             selectBrief: setPane("brief"),
+            hasSummaryTab: hasSummary,
+            summaryTabStyle: paneBtn(pane === "summary", false),
+            selectSummary: setPane("summary"),
+            summaryPane: hasSummary && pane === "summary",
+            summary: hasSummary ? this.buildSummaryVm(active, setPane(threadLocked ? "plans" : "thread"), setPane("review")) : null,
             hasPlanDocTab: hasPlanDoc,
             planDocTabStyle: paneBtn(pane === "plandoc", false),
             selectPlanDoc: setPane("plandoc"),
